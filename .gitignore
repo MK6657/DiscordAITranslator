@@ -1,0 +1,37 @@
+# Dependencies and generated test output
+/node_modules/
+/dist/
+/coverage/
+/outputs/
+/logs/
+/work/
+DiscordAITranslator-handoff-*.zip
+*.zip
+*.7z
+*.tar.gz
+/.cache/
+/.tmp/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+*.local.json
+
+# Installer/runtime artifacts
+*.bak-*
+*.tmp-*
+*.log
+
+# Local reverse-engineering/reference checkout (GPL-2.0; not part of this project)
+/external/
+
+# Local agent state
+/.agents/
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+desktop.ini
