@@ -137,6 +137,46 @@ try {
         throw "Profile enable state was not rolled back."
     }
 
+    # A failure before replacement must never remove or overwrite an existing
+    # destination. Force a backup-name collision deterministically.
+    $collisionPlugins = Join-Path $testRoot "backup-collision"
+    New-Item -ItemType Directory -Path $collisionPlugins | Out-Null
+    $collisionDestination = Join-Path $collisionPlugins "DiscordAITranslator.plugin.js"
+    $collisionBackup = "$collisionDestination.bak-fixed-collision"
+    Set-Utf8NoBomContent -Path $collisionDestination -Value "preserve existing plugin"
+    Set-Utf8NoBomContent -Path $collisionBackup -Value "preserve existing backup"
+    function Get-Date { param([string]$Format) return "fixed-collision" }
+    try {
+        $collisionError = $null
+        try { & $installer -PluginPath $source -PluginsDir $collisionPlugins -NoEnable -SkipSyntaxCheck | Out-Null }
+        catch { $collisionError = $_ }
+        if ($null -eq $collisionError -or $collisionError.ToString() -notlike "*Backup path already exists*") {
+            throw "Expected a backup collision before replacement."
+        }
+        if (-not (Test-Path -LiteralPath $collisionDestination -PathType Leaf)) {
+            throw "Backup collision deleted the original plugin before replacement."
+        }
+        if ((Get-Content -LiteralPath $collisionDestination -Raw) -ne "preserve existing plugin") {
+            throw "Backup collision modified the original plugin."
+        }
+        if ((Get-Content -LiteralPath $collisionBackup -Raw) -ne "preserve existing backup") {
+            throw "Backup collision modified the existing backup."
+        }
+    }
+    finally { Remove-Item -LiteralPath Function:\Get-Date }
+
+    # A failed first install, unlike a pre-replacement failure, must remove the
+    # file it actually installed when there is no previous plugin to restore.
+    $firstInstallPlugins = Join-Path $failureAppData "first-install"
+    New-Item -ItemType Directory -Path $firstInstallPlugins | Out-Null
+    $firstInstallError = $null
+    try { & $installer -PluginPath $source -PluginsDir $firstInstallPlugins -SkipSyntaxCheck | Out-Null }
+    catch { $firstInstallError = $_ }
+    if ($null -eq $firstInstallError) { throw "First install should fail on the invalid profile fixture." }
+    if (Test-Path -LiteralPath (Join-Path $firstInstallPlugins "DiscordAITranslator.plugin.js")) {
+        throw "Failed first install left its new plugin behind."
+    }
+
     Write-Host "Installer verification passed."
 }
 finally {

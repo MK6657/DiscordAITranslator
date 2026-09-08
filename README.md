@@ -117,6 +117,8 @@ npm run release:check  # 与 GitHub Windows CI 相同的完整发布门禁
 
 远程 API endpoint 必须使用 HTTPS。只有 `localhost`、IPv4/IPv6 loopback 和本机通配地址允许 HTTP；URL 中不允许嵌入用户名或密码。
 
+所有 API 请求都禁止自动重定向，避免把消息文本或服务凭据转发到未指定的地址。请直接填写最终可信的 API URL（包括正确路径和末尾斜杠），不要依赖 301/302/303/307/308 跳转。
+
 ## 数据边界
 
 插件使用 `BdApi.Data` 在 BetterDiscord 本地数据目录保存以下内容：
@@ -173,3 +175,5 @@ GitHub Actions 在 `windows-latest` 上使用 Node 22 和 Node 24 执行 `npm ci
 3. 后续考虑仅内存缓存选项、设置导入导出和更明确的数据清理入口。
 
 `HANDOFF.md`、`BASELINE-2026-07-26b.md`、`BASELINE-2026-07-26c.md` 为历史记录。旧源码快照、回退压缩包、运行配置及依赖目录不随仓库提交。安全问题请参阅 [SECURITY.md](SECURITY.md)，不要把真实 key、消息正文或未脱敏日志放进 issue。
+
+后续安装器回滚与 API 重定向修复、回归覆盖及当前产物指纹见 [2026-09-08 复查记录](docs/review-2026-09-08.md)。

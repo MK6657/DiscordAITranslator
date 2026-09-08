@@ -13,6 +13,7 @@ These contracts are release gates for refactoring. A change that intentionally a
 
 - Identical active requests may share one promise.
 - Remote endpoints require HTTPS; only loopback endpoints may use HTTP.
+- API requests never follow redirects, including same-origin or local-provider redirects. Users must configure the final trusted endpoint explicitly; checking only the initial URL is insufficient to protect message bodies and provider headers.
 - Stop aborts active requests, and stale lifecycle results do not start fallback work.
 - Fallback is limited to manual translation and public bilingual translation.
 - Automatic translation, polishing, and local providers never fall back to cloud implicitly.
@@ -46,3 +47,8 @@ These contracts are release gates for refactoring. A change that intentionally a
 - Partial startup failure rolls back observers, patches, listeners, timers, and styles.
 - Stop prevents late promises from mutating DOM, health state, cache, or fallback state.
 - Stop/start on one instance retries dirty persistence without loading over unsaved state.
+
+## Installer
+
+- Failure before destination replacement (including backup collisions and copy failures) leaves the existing plugin untouched.
+- Failure after replacement restores the previous plugin from its backup, or removes the newly installed file when no previous plugin existed.
