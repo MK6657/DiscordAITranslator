@@ -2,6 +2,8 @@
 
 [中文](README.md) | [English](README.en.md)
 
+换机继续开发：[优化清单与接手说明](docs/optimization-handoff.md)（包含未完成项和真机验收步骤）。
+
 Discord AI Translator 是一个 BetterDiscord 桌面插件，用于输入润色、公开双语输入、手动消息翻译和频道自动翻译。
 
 ## 当前版本

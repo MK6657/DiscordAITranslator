@@ -2,6 +2,8 @@
 
 [中文](README.md) | [English](README.en.md)
 
+Continuing on another computer? Read the [optimization handoff](docs/optimization-handoff.md), including pending work, host acceptance, and an English summary.
+
 A Windows-first BetterDiscord desktop plugin for message translation, writing assistance, and public bilingual messages. This is a third-party project, not an official Discord product. Review the rules and risks of client modifications before using it; use a dedicated test account and channel for initial testing.
 
 ## Status
