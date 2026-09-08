@@ -1,5 +1,7 @@
 # Repository intake / 仓库整理 · 2026-09-08
 
+> 本文记录首次整理时的状态；后续运行时修复和最新产物指纹见 [复查记录](review-2026-09-08.md)。This is the initial intake record; see the [follow-up review](review-2026-09-08.md) for subsequent runtime changes and the updated hash.
+
 ## 中文
 
 当前源码来自原始 `DiscordAITranslator-handoff-2026-07-14` 目录，但其内容已经是 2026-07-26 c 版，而不是 7 月 14 日版本。仓库作为该快照的首次 Git 基线，不虚构此前的提交历史。旧快照和 a/b/c 压缩包保留在本地，不在仓库中分发。

@@ -13,6 +13,7 @@ Include the affected version, provider type, minimal reproduction, expected beha
 ## Security Boundaries
 
 - Remote API endpoints must use HTTPS; HTTP is allowed only for loopback endpoints.
+- Provider requests reject redirects before contacting the redirect destination. Configure the final trusted API URL directly, including its required path and trailing slash.
 - Provider fallback is opt-in, never sends Sakura local traffic to cloud providers, and must not reuse credentials across providers.
 - Settings and API credentials are stored by BetterDiscord on the local machine.
 - Translation cache and diagnostics may contain local metadata. Clear them before sharing a BetterDiscord data directory.

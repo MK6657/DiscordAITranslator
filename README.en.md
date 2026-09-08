@@ -51,6 +51,8 @@ Writing and translation keep separate provider, credentials, language, model, an
 
 Remote endpoints must use HTTPS. HTTP is accepted only for local endpoints recognized by the plugin, including localhost, loopback addresses, and 0.0.0.0. Embedded URL usernames/passwords are rejected. Configure only endpoints you trust: they receive the text being translated or polished.
 
+All API requests reject automatic redirects, preventing message bodies and provider headers from being forwarded to an unspecified destination. Configure the final trusted URL directly, including the correct path and trailing slash; do not rely on HTTP 301/302/303/307/308 redirects.
+
 ## Privacy and local data
 
 The plugin uses BetterDiscord's `BdApi.Data` storage:
@@ -110,6 +112,8 @@ The installer checks syntax and SHA256, backs up an existing plugin, and support
 - `HANDOFF.md` and `BASELINE-2026-07-26*.md`: historical snapshot records, not current setup instructions.
 
 Old source snapshots, rollback ZIPs, local reference checkouts, credentials, and `node_modules/` are excluded from the repository. The original packaging manifest is not included; the intake record contains the runtime artifact hash.
+
+The [September 8 follow-up review](docs/review-2026-09-08.md) records subsequent installer rollback and redirect fixes, regression coverage, and the updated artifact hash. The intake hash describes the original c baseline, not the hardened artifact.
 
 ## Updates, removal, and troubleshooting
 

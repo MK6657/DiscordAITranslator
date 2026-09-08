@@ -181,6 +181,7 @@ $target = "BetterDiscord plugin file '$destination'"
 if ($PSCmdlet.ShouldProcess($target, "Install DiscordAITranslator plugin")) {
     $sourceHash = Get-Sha256 -Path $pluginFile
     $backupCreated = $false
+    $destinationReplaced = $false
 
     try {
         if (Test-Path -LiteralPath $destination) {
@@ -197,12 +198,10 @@ if ($PSCmdlet.ShouldProcess($target, "Install DiscordAITranslator plugin")) {
             throw "Hash mismatch before replace. Source=$sourceHash Temp=$tempHash"
         }
         Move-Item -LiteralPath $temp -Destination $destination -Force
+        $destinationReplaced = $true
 
         $destinationHash = Get-Sha256 -Path $destination
         if ($sourceHash -ne $destinationHash) {
-            if ($backupCreated) {
-                Copy-Item -LiteralPath $backup -Destination $destination -Force
-            }
             throw "Hash mismatch after install. Source=$sourceHash Destination=$destinationHash"
         }
 
@@ -213,10 +212,12 @@ if ($PSCmdlet.ShouldProcess($target, "Install DiscordAITranslator plugin")) {
         }
     }
     catch {
-        if ($backupCreated -and (Test-Path -LiteralPath $backup -PathType Leaf)) {
+        # A backup collision/copy error occurs before replacement. In that case
+        # the destination is not ours to roll back, and must be left untouched.
+        if ($destinationReplaced -and $backupCreated -and (Test-Path -LiteralPath $backup -PathType Leaf)) {
             Copy-Item -LiteralPath $backup -Destination $destination -Force -ErrorAction SilentlyContinue
         }
-        elseif (Test-Path -LiteralPath $destination -PathType Leaf) {
+        elseif ($destinationReplaced -and -not $backupCreated -and (Test-Path -LiteralPath $destination -PathType Leaf)) {
             Remove-Item -LiteralPath $destination -Force -ErrorAction SilentlyContinue
         }
         throw

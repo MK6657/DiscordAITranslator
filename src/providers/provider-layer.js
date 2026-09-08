@@ -1189,6 +1189,10 @@ class ProviderLayer {
             const fetchOptions = {
                 method,
                 headers: request.headers,
+                // Endpoint validation applies only to this explicit destination.
+                // Never forward message bodies or provider headers via redirects,
+                // including redirects from a local provider to another service.
+                redirect: "error",
                 signal: controller?.signal
             };
             if (method !== "GET" && method !== "HEAD") {
