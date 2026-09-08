@@ -35,14 +35,20 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-# Get-FileHash is a script function exported by Utility in Windows PowerShell 5.1.
-# Load it explicitly instead of depending on function auto-discovery in a fresh
-# npm/CI child process. Do this before any installer side effects.
-Import-Module Microsoft.PowerShell.Utility -ErrorAction Stop
-
 function Get-Sha256 {
     param([Parameter(Mandatory = $true)][string]$Path)
-    return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
+    # Get-FileHash is not reliably available in fresh Windows PowerShell hosts,
+    # including CI. Use the built-in .NET stream API without module discovery.
+    $stream = $null
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $stream = [System.IO.File]::OpenRead($Path)
+        return [System.BitConverter]::ToString($sha.ComputeHash($stream)).Replace("-", "")
+    }
+    finally {
+        if ($null -ne $stream) { $stream.Dispose() }
+        $sha.Dispose()
+    }
 }
 
 function Set-Utf8NoBomContent {

@@ -4,8 +4,22 @@ param()
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-# The assertions also use Get-FileHash; do not rely on a caller's loaded modules.
-Import-Module Microsoft.PowerShell.Utility -ErrorAction Stop
+# Reproduce hosts where Get-FileHash is unavailable, even on machines where it
+# normally works. Every installer fixture below must pass without this command.
+function Get-FileHash {
+    throw "Get-FileHash is deliberately unavailable in this regression fixture."
+}
+
+function Get-TestSha256 {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return [System.BitConverter]::ToString($sha.ComputeHash([System.IO.File]::ReadAllBytes($Path))).Replace("-", "")
+    }
+    finally {
+        $sha.Dispose()
+    }
+}
 
 function Set-Utf8NoBomContent {
     param(
@@ -59,7 +73,7 @@ try {
     }
 
     & $installer -PluginPath $source -PluginsDir $successPlugins -NoEnable | Out-Null
-    if ((Get-FileHash -LiteralPath $installed -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash) {
+    if ((Get-TestSha256 -Path $installed) -ne (Get-TestSha256 -Path $source)) {
         throw "Installed plugin hash mismatch."
     }
     $noEnableState = Get-Content -LiteralPath $successProfileJson -Raw -Encoding UTF8 | ConvertFrom-Json
