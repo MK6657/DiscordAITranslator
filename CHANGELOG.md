@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- Explain and disable unavailable local-provider scheduling controls (prefetch/range, fixed DOM discovery, concurrency 1 and cloud fallback), instead of accepting changes that silently revert or have no effect.
+- Distinguish request cancellation from timer expiry using explicit error codes and localized messages. Cancelled model discovery and long-text rescue no longer continue with new requests; cancelled work does not penalize provider health or populate failure records. Reject late responses from transports that ignore abort.
+- Localize invalid/unsafe endpoint errors and classify them as configuration/client failures; retain the actual timeout message for local-provider timeouts.
+
 - Reject all API redirects so only explicitly configured endpoints receive translation text and provider headers; cover HTTP 301/302/303/307/308 with real loopback HTTP fixtures against both source and generated artifact. Configure canonical endpoint URLs directly.
 - Fix installer error cleanup deleting the original plugin when a backup collision occurs before replacement. Roll back only after this installation has replaced the destination; add collision-preservation and failed-first-install cleanup regressions.
 - Refresh GitHub CI actions to verified, full-SHA-pinned checkout v7.0.1 and setup-node v7.0.0, disable persisted checkout credentials, and bound job runtime. Core test discovery now includes all *.test.js files.

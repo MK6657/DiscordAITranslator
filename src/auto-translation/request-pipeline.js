@@ -1190,7 +1190,7 @@ class AutoTranslationRequestPipeline {
                 translated = await this.plugin.runAutoTranslationTaskWithOptions(chunks[index], chunkOptions, taskOptions);
             }
             catch (error) {
-                if (error?.autoTranslationStale) throw error;
+                if (error?.autoTranslationStale || this.plugin.isRequestCancelled(error)) throw error;
                 const rescued = taskOptions?.manualRescue
                     ? await this.plugin.runLongAutoTranslationChunkManualRescue(chunks[index], chunkOptions, error, taskOptions, {
                         sourceHash,
@@ -1316,6 +1316,7 @@ class AutoTranslationRequestPipeline {
             }
             catch (error) {
                 lastError = error;
+                if (this.plugin.isRequestCancelled(error)) throw error;
                 this.plugin.logDiagnostic("auto.long-text.chunk-rescue", "failed", {
                     sourceHash: meta.sourceHash || this.plugin.getStrongTextFingerprint(chunkText),
                     chunkIndex: Number(meta.chunkIndex || 0),
@@ -1378,6 +1379,7 @@ class AutoTranslationRequestPipeline {
                 else failures.push({ index, reason: validation.reasonCode || "invalid-output" });
             }
             catch (error) {
+                if (this.plugin.isRequestCancelled(error)) throw error;
                 failures.push({ index, reason: error?.autoTranslationInvalidReason || this.plugin.getAutoTranslationFailureType(error) });
                 this.plugin.logDiagnostic("auto.long-text.subchunk-rescue", "failed", {
                     sourceHash: meta.sourceHash || this.plugin.getStrongTextFingerprint(text),
@@ -2599,7 +2601,7 @@ class AutoTranslationRequestPipeline {
             return translated;
         }
         catch (error) {
-            if (error?.autoTranslationStale) throw error;
+            if (error?.autoTranslationStale || this.plugin.isRequestCancelled(error)) throw error;
             this.plugin.logDiagnostic("manual.long-text.whole-pass", "failed", {
                 ...this.plugin.getTranslationDiagnosticMeta("manual", {
                     requestOptions: wholeOptions,

@@ -1880,6 +1880,10 @@ class AutoTranslationQueueCore {
     }
 
     markAutoTranslationFailure(item, error, options = {}) {
+        if (this.plugin.isRequestCancelled(error)) {
+            this.plugin.clearPendingAutoTranslationItemSafely(item);
+            return;
+        }
         const storageError = this.plugin.getAutoTranslationStorageErrorForItem(item, error);
         const failure = this.plugin.createAutoTranslationFailure(item.cacheKey, storageError);
         storageError.autoTranslationFailureCount = failure.count;
@@ -2108,6 +2112,8 @@ class AutoTranslationQueueCore {
     }
 
     getAutoTranslationFailureType(error) {
+        if (this.plugin.isRequestCancelled(error)) return "cancelled";
+        if (["INVALID_API_ENDPOINT", "UNSAFE_API_ENDPOINT"].includes(error?.code)) return "client";
         const status = Number(error?.status || 0);
         if (error?.modelOutputTruncated) return "truncated";
         if (error?.localProviderUnavailable) return "local-unavailable";

@@ -1796,26 +1796,31 @@ module.exports = class DiscordAITranslator {
     createAutoTranslateSection() {
         const section = document.createElement("section");
         section.className = "dait-settings-section dait-section-auto-translate";
+        const provider = this.getProviderDefaults(this.settings.translation.provider);
+        const local = this.isLocalTranslationProvider(this.settings.translation);
+        const noPrefetch = provider?.autoTranslatePrefetchAllowed === false;
+        const fixedIntake = Boolean(provider?.autoTranslateIntakeMode);
+        const maxConcurrency = this.getProviderAutoTranslateConcurrencyMax(this.settings.translation.provider) || AUTO_TRANSLATE_MAX_CONCURRENCY;
 
         const title = document.createElement("h3");
         title.textContent = this.t("autoTranslateSettingsTitle");
         section.appendChild(title);
 
         section.appendChild(this.createCheckboxRow("ui.autoTranslateMessages", this.t("autoTranslateMessages"), { description: this.t("autoTranslateMessagesDesc") }));
-        section.appendChild(this.createCheckboxRow("ui.autoTranslatePrefetch", this.t("autoTranslatePrefetch"), { description: this.t("autoTranslatePrefetchDesc") }));
-        section.appendChild(this.createSelectRow("ui.autoTranslatePrefetchRange", this.t("autoTranslatePrefetchRange"), AUTO_TRANSLATE_PREFETCH_RANGES.map(value => [String(value), String(value)]), { description: this.t("autoTranslatePrefetchRangeDesc") }));
+        section.appendChild(this.createCheckboxRow("ui.autoTranslatePrefetch", this.t("autoTranslatePrefetch"), { disabled: noPrefetch, description: this.t(noPrefetch ? "localPrefetchUnavailable" : "autoTranslatePrefetchDesc") }));
+        section.appendChild(this.createSelectRow("ui.autoTranslatePrefetchRange", this.t("autoTranslatePrefetchRange"), AUTO_TRANSLATE_PREFETCH_RANGES.map(value => [String(value), String(value)]), { disabled: noPrefetch, description: this.t(noPrefetch ? "localPrefetchUnavailable" : "autoTranslatePrefetchRangeDesc") }));
         section.appendChild(this.createSelectRow("ui.autoTranslateIntakeMode", this.t("autoTranslateIntakeMode"), [
             ["auto", this.t("autoTranslateIntakeAuto")],
             ["dom", this.t("autoTranslateIntakeDom")],
             ["bdfdb", this.t("autoTranslateIntakeBdfdb")]
-        ], { description: this.t("autoTranslateIntakeModeDesc") }));
-        section.appendChild(this.createInputRow("ui.autoTranslateConcurrency", this.t("autoTranslateConcurrency"), "number", String(AUTO_TRANSLATE_DEFAULT_CONCURRENCY), { min: String(AUTO_TRANSLATE_MIN_CONCURRENCY), max: String(AUTO_TRANSLATE_MAX_CONCURRENCY), step: "1" }, { description: this.t("autoTranslateConcurrencyDesc") }));
+        ], { disabled: fixedIntake, description: this.t(fixedIntake ? "localIntakeFixed" : "autoTranslateIntakeModeDesc") }));
+        section.appendChild(this.createInputRow("ui.autoTranslateConcurrency", this.t("autoTranslateConcurrency"), "number", String(AUTO_TRANSLATE_DEFAULT_CONCURRENCY), { min: String(AUTO_TRANSLATE_MIN_CONCURRENCY), max: String(maxConcurrency), step: "1" }, { disabled: maxConcurrency === 1, description: this.t(maxConcurrency === 1 ? "localConcurrencyFixed" : "autoTranslateConcurrencyDesc") }));
         section.appendChild(this.createCheckboxRow("ui.autoTranslateStrictRetry", this.t("autoTranslateStrictRetry"), { description: this.t("autoTranslateStrictRetryDesc") }));
         section.appendChild(this.createCurrentChannelPolicyRow());
         section.appendChild(this.createCheckboxRow("ui.historyBackfillEnabled", this.t("historyBackfillEnabled"), { description: this.t("historyBackfillEnabledDesc") }));
         section.appendChild(this.createInputRow("ui.historyBackfillLimit", this.t("historyBackfillLimit"), "number", String(DEFAULT_SETTINGS.ui.historyBackfillLimit), { min: "1", max: "100", step: "1" }, { description: this.t("historyBackfillLimitDesc") }));
         section.appendChild(this.createHistoryBackfillActionRow());
-        section.appendChild(this.createCheckboxRow("ui.providerFallbackEnabled", this.t("providerFallbackEnabled"), { description: this.t("providerFallbackEnabledDesc") }));
+        section.appendChild(this.createCheckboxRow("ui.providerFallbackEnabled", this.t("providerFallbackEnabled"), { disabled: local, description: this.t(local ? "localFallbackUnavailable" : "providerFallbackEnabledDesc") }));
         section.appendChild(this.createProviderFallbackOrderRow());
 
         return section;
@@ -1853,7 +1858,8 @@ module.exports = class DiscordAITranslator {
             this.preserveSettingsScroll(textarea, () => this.setSetting("ui.providerFallbackOrder", textarea.value));
         });
         return this.createRow(this.t("providerFallbackOrder"), textarea, {
-            description: this.t("providerFallbackOrderDesc", { providers: PROVIDER_ORDER.join(", ") }),
+            disabled: this.isLocalTranslationProvider(this.settings.translation),
+            description: this.isLocalTranslationProvider(this.settings.translation) ? this.t("localFallbackUnavailable") : this.t("providerFallbackOrderDesc", { providers: PROVIDER_ORDER.join(", ") }),
             wide: true
         });
     }
@@ -2864,6 +2870,7 @@ module.exports = class DiscordAITranslator {
     }
 
     createRow(labelText, control, options = {}) {
+        if (options.disabled) control.disabled = true;
         const row = document.createElement("label");
         row.className = "dait-settings-row";
         if (options.checkbox) row.classList.add("dait-settings-row-checkbox");
@@ -11016,6 +11023,7 @@ module.exports = class DiscordAITranslator {
             }
             catch (error) {
                 lastError = error;
+                if (this.isRequestCancelled(error)) throw error;
                 previousReason = error?.autoTranslationInvalidReason || error?.autoTranslationCancelReason || this.getAutoTranslationFailureType(error) || "invalid-output";
                 this.logManualRescueAttempt(plan, attemptName, index, requestOptions, previousOutput, null, error);
                 attempts.push({
@@ -13249,12 +13257,15 @@ module.exports = class DiscordAITranslator {
     getFriendlyErrorMessage(error) {
         const status = Number(error?.status || 0);
         let message = "";
-        if (error?.manualTranslationRescueFailed) message = this.t("manualTranslateRescueFailed");
+        if (this.isRequestCancelled(error)) message = this.t("errorCancelled");
+        else if (error?.code === "INVALID_API_ENDPOINT") message = this.t("errorInvalidEndpoint");
+        else if (error?.code === "UNSAFE_API_ENDPOINT") message = this.t("errorUnsafeEndpoint");
+        else if (error?.manualTranslationRescueFailed) message = this.t("manualTranslateRescueFailed");
+        else if (this.isTimeoutError(error)) message = this.t("errorTimeout");
         else if (error?.localProviderUnavailable) message = this.t("errorLocalProviderUnavailable");
         else if (status === 401 || status === 403) message = this.t("errorUnauthorized");
         else if (status === 429) message = this.t("errorRateLimited");
         else if (status >= 500) message = this.t("errorServer");
-        else if (this.isTimeoutError(error)) message = this.t("errorTimeout");
         else if (this.isNetworkError(error)) message = this.t("errorNetwork");
         else if (String(error?.message || "") === "API_ERROR") message = status ? `API ${status}` : this.t("unknownError");
         else message = String(error?.message || error || this.t("unknownError"));
@@ -13407,6 +13418,7 @@ module.exports = class DiscordAITranslator {
     isLoopbackEndpoint(...args) { return this.providerLayer.isLoopbackEndpoint(...args); }
     assertSafeRequestEndpoint(...args) { return this.providerLayer.assertSafeRequestEndpoint(...args); }
     isTimeoutError(...args) { return this.providerLayer.isTimeoutError(...args); }
+    isRequestCancelled(...args) { return this.providerLayer.isRequestCancelled(...args); }
     isNetworkError(...args) { return this.providerLayer.isNetworkError(...args); }
     isLocalProviderEmptyResponseError(...args) { return this.providerLayer.isLocalProviderEmptyResponseError(...args); }
     isLocalProviderInvalidResponseError(...args) { return this.providerLayer.isLocalProviderInvalidResponseError(...args); }

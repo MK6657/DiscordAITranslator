@@ -4836,7 +4836,7 @@ var require_request_pipeline = __commonJS({
           try {
             translated = await this.plugin.runAutoTranslationTaskWithOptions(chunks[index], chunkOptions, taskOptions);
           } catch (error) {
-            if (error?.autoTranslationStale) throw error;
+            if (error?.autoTranslationStale || this.plugin.isRequestCancelled(error)) throw error;
             const rescued = taskOptions?.manualRescue ? await this.plugin.runLongAutoTranslationChunkManualRescue(chunks[index], chunkOptions, error, taskOptions, {
               sourceHash,
               chunkIndex: index,
@@ -4951,6 +4951,7 @@ var require_request_pipeline = __commonJS({
             });
           } catch (error) {
             lastError = error;
+            if (this.plugin.isRequestCancelled(error)) throw error;
             this.plugin.logDiagnostic("auto.long-text.chunk-rescue", "failed", {
               sourceHash: meta.sourceHash || this.plugin.getStrongTextFingerprint(chunkText),
               chunkIndex: Number(meta.chunkIndex || 0),
@@ -5008,6 +5009,7 @@ var require_request_pipeline = __commonJS({
             if (validation.renderable) translatedParts.push(String(translated || "").trim());
             else failures.push({ index, reason: validation.reasonCode || "invalid-output" });
           } catch (error) {
+            if (this.plugin.isRequestCancelled(error)) throw error;
             failures.push({ index, reason: error?.autoTranslationInvalidReason || this.plugin.getAutoTranslationFailureType(error) });
             this.plugin.logDiagnostic("auto.long-text.subchunk-rescue", "failed", {
               sourceHash: meta.sourceHash || this.plugin.getStrongTextFingerprint(text),
@@ -6082,7 +6084,7 @@ var require_request_pipeline = __commonJS({
           });
           return translated;
         } catch (error) {
-          if (error?.autoTranslationStale) throw error;
+          if (error?.autoTranslationStale || this.plugin.isRequestCancelled(error)) throw error;
           this.plugin.logDiagnostic("manual.long-text.whole-pass", "failed", {
             ...this.plugin.getTranslationDiagnosticMeta("manual", {
               requestOptions: wholeOptions,
@@ -7802,6 +7804,10 @@ var require_queue_core = __commonJS({
         }
       }
       markAutoTranslationFailure(item, error, options = {}) {
+        if (this.plugin.isRequestCancelled(error)) {
+          this.plugin.clearPendingAutoTranslationItemSafely(item);
+          return;
+        }
         const storageError = this.plugin.getAutoTranslationStorageErrorForItem(item, error);
         const failure = this.plugin.createAutoTranslationFailure(item.cacheKey, storageError);
         storageError.autoTranslationFailureCount = failure.count;
@@ -8006,6 +8012,8 @@ var require_queue_core = __commonJS({
         return Math.min(AUTO_TRANSLATE_FAILURE_MAX_TTL, AUTO_TRANSLATE_FAILURE_TTL * Math.pow(2, Math.max(0, count - 1)));
       }
       getAutoTranslationFailureType(error) {
+        if (this.plugin.isRequestCancelled(error)) return "cancelled";
+        if (["INVALID_API_ENDPOINT", "UNSAFE_API_ENDPOINT"].includes(error?.code)) return "client";
         const status = Number(error?.status || 0);
         if (error?.modelOutputTruncated) return "truncated";
         if (error?.localProviderUnavailable) return "local-unavailable";
@@ -9741,6 +9749,7 @@ var require_provider_layer = __commonJS({
             return model;
           } catch (error) {
             const previous = this.plugin.localProviderDetectedModels.get(key) || {};
+            if (this.plugin.isRequestCancelled(error)) throw error;
             this.plugin.localProviderDetectedModels.set(key, {
               ...previous,
               retryAt: Date.now() + Math.max(1e3, Number(options.retryMs || LOCAL_PROVIDER_MODEL_DETECTION_RETRY_MS) || LOCAL_PROVIDER_MODEL_DETECTION_RETRY_MS)
@@ -10505,6 +10514,7 @@ var require_provider_layer = __commonJS({
           }
           return { text: result, fallbackProvider: "" };
         }).catch(async (error) => {
+          if (this.plugin.isRequestCancelled(error)) throw error;
           this.plugin.annotateModelRequestError(error, kind, endpoint, taskConfig, options);
           const requestStillCurrent = this.plugin.isLifecycleTokenCurrent(lifecycleToken) && (!providerSnapshotKey || this.plugin.isAutoTranslationProviderSnapshotCurrent(providerSnapshotKey, { configOverrides: taskConfig }));
           if (error?.googleTranslateApiKey) {
@@ -10598,6 +10608,7 @@ var require_provider_layer = __commonJS({
         return error;
       }
       isLocalProviderUnavailableError(error, endpoint, config, options = {}) {
+        if (this.plugin.isRequestCancelled(error)) return false;
         if (error?.localProviderUnavailable) return true;
         if (!this.plugin.isLocalTranslationProvider(config) || !this.plugin.isLoopbackEndpoint(endpoint || config?.endpoint)) return false;
         const status = Number(error?.status || 0);
@@ -10638,9 +10649,14 @@ var require_provider_layer = __commonJS({
         throw error;
       }
       isTimeoutError(error) {
-        return error?.name === "AbortError" || /timed out|timeout|ETIMEDOUT/i.test(this.plugin.getErrorSignalText(error));
+        if (this.plugin.isRequestCancelled(error)) return false;
+        return error?.code === "REQUEST_TIMEOUT" || error?.name === "TimeoutError" || /timed out|timeout|ETIMEDOUT/i.test(this.plugin.getErrorSignalText(error));
+      }
+      isRequestCancelled(error) {
+        return error?.code === "REQUEST_CANCELLED" || error?.name === "AbortError" && error?.code !== "REQUEST_TIMEOUT";
       }
       isNetworkError(error) {
+        if (this.plugin.isRequestCancelled(error)) return false;
         return /Failed to fetch|NetworkError|Load failed|fetch failed|Network request failed|ERR_[A-Z_]+|ECONNREFUSED|ECONNRESET|ECONNABORTED|ENOTFOUND|EHOSTUNREACH|ENETUNREACH|connection refused|connection reset|socket hang up|NS_ERROR_CONNECTION_REFUSED/i.test(this.plugin.getErrorSignalText(error));
       }
       isLocalProviderEmptyResponseError(error) {
@@ -10655,7 +10671,12 @@ var require_provider_layer = __commonJS({
         this.plugin.assertSafeRequestEndpoint(endpoint);
         const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
         if (controller) this.plugin.activeApiControllers.add(controller);
-        const timeout = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+        let timedOut = false;
+        const timeout = controller ? setTimeout(() => {
+          if (controller.signal.aborted) return;
+          timedOut = true;
+          controller.abort();
+        }, timeoutMs) : null;
         try {
           const method = String(request?.method || "POST").trim().toUpperCase() || "POST";
           const fetchOptions = {
@@ -10672,6 +10693,7 @@ var require_provider_layer = __commonJS({
           }
           const response = await fetch(endpoint, fetchOptions);
           const raw = await response.text();
+          if (controller?.signal.aborted) throw Object.assign(new Error("Request aborted"), { name: "AbortError" });
           if (!response.ok) {
             const apiError = this.plugin.createApiError(response, raw);
             if (request?.provider === "googleCloud") {
@@ -10682,7 +10704,12 @@ var require_provider_layer = __commonJS({
           }
           return raw;
         } catch (error) {
-          if (error?.name === "AbortError") throw new Error(`API request timed out after ${Math.round(timeoutMs / 1e3)}s`);
+          if (controller?.signal.aborted || error?.name === "AbortError") {
+            throw Object.assign(new Error(timedOut ? `API request timed out after ${Math.round(timeoutMs / 1e3)}s` : "Request cancelled", { cause: error }), {
+              name: timedOut ? "TimeoutError" : "AbortError",
+              code: timedOut ? "REQUEST_TIMEOUT" : "REQUEST_CANCELLED"
+            });
+          }
           throw error;
         } finally {
           if (timeout) clearTimeout(timeout);
@@ -12297,6 +12324,13 @@ var require_i18n = __commonJS({
         errorUnauthorized: "API Key 无效或没有权限。",
         errorRateLimited: "API 请求过快，已进入冷却。",
         errorServer: "API 服务暂时不可用。",
+        errorCancelled: "请求已取消。",
+        errorInvalidEndpoint: "接口地址无效，请填写完整的 API 地址。",
+        errorUnsafeEndpoint: "接口地址不安全：远程服务须使用 HTTPS，本机服务可用 HTTP，地址中不能包含用户名或密码。",
+        localPrefetchUnavailable: "当前本地服务不启用预翻译，因此范围设置不生效。可见消息翻译仍可使用。",
+        localIntakeFixed: "当前本地服务固定使用 DOM 发现消息，此项无需修改。",
+        localConcurrencyFixed: "当前本地服务逐条翻译，并发固定为 1，避免挤占模型上下文。此项不是下拉菜单。",
+        localFallbackUnavailable: "本地服务不会自动转发到云端，因此云端回退及顺序在当前模式下不可用。",
         errorTimeout: "API 请求超时。",
         errorNetwork: "网络连接失败。",
         unknownError: "未知错误"
@@ -12564,6 +12598,13 @@ var require_i18n = __commonJS({
         errorUnauthorized: "API key is invalid or does not have permission.",
         errorRateLimited: "API rate limit reached; automatic retries are cooling down.",
         errorServer: "API service is temporarily unavailable.",
+        errorCancelled: "Request cancelled.",
+        errorInvalidEndpoint: "Invalid endpoint. Enter a complete API URL.",
+        errorUnsafeEndpoint: "Unsafe endpoint: remote services require HTTPS; loopback services may use HTTP. Do not embed a username or password in the URL.",
+        localPrefetchUnavailable: "Prefetch is unavailable for this local provider, so the range does not apply. Visible-message translation remains available.",
+        localIntakeFixed: "This local provider uses DOM message discovery. No change is required.",
+        localConcurrencyFixed: "This local provider translates one message at a time to preserve model context. Concurrency is fixed at 1; this is not a dropdown.",
+        localFallbackUnavailable: "Local providers never forward requests to the cloud. Cloud fallback and its order are unavailable in this mode.",
         errorTimeout: "API request timed out.",
         errorNetwork: "Network request failed.",
         errorLocalProviderUnavailable: "Sakura local service is not reachable. Auto-translation is paused; start Sakura or test the connection to resume.",
@@ -14392,24 +14433,29 @@ var require_discord_ai_translator = __commonJS({
       createAutoTranslateSection() {
         const section = document.createElement("section");
         section.className = "dait-settings-section dait-section-auto-translate";
+        const provider = this.getProviderDefaults(this.settings.translation.provider);
+        const local = this.isLocalTranslationProvider(this.settings.translation);
+        const noPrefetch = provider?.autoTranslatePrefetchAllowed === false;
+        const fixedIntake = Boolean(provider?.autoTranslateIntakeMode);
+        const maxConcurrency = this.getProviderAutoTranslateConcurrencyMax(this.settings.translation.provider) || AUTO_TRANSLATE_MAX_CONCURRENCY;
         const title = document.createElement("h3");
         title.textContent = this.t("autoTranslateSettingsTitle");
         section.appendChild(title);
         section.appendChild(this.createCheckboxRow("ui.autoTranslateMessages", this.t("autoTranslateMessages"), { description: this.t("autoTranslateMessagesDesc") }));
-        section.appendChild(this.createCheckboxRow("ui.autoTranslatePrefetch", this.t("autoTranslatePrefetch"), { description: this.t("autoTranslatePrefetchDesc") }));
-        section.appendChild(this.createSelectRow("ui.autoTranslatePrefetchRange", this.t("autoTranslatePrefetchRange"), AUTO_TRANSLATE_PREFETCH_RANGES.map((value) => [String(value), String(value)]), { description: this.t("autoTranslatePrefetchRangeDesc") }));
+        section.appendChild(this.createCheckboxRow("ui.autoTranslatePrefetch", this.t("autoTranslatePrefetch"), { disabled: noPrefetch, description: this.t(noPrefetch ? "localPrefetchUnavailable" : "autoTranslatePrefetchDesc") }));
+        section.appendChild(this.createSelectRow("ui.autoTranslatePrefetchRange", this.t("autoTranslatePrefetchRange"), AUTO_TRANSLATE_PREFETCH_RANGES.map((value) => [String(value), String(value)]), { disabled: noPrefetch, description: this.t(noPrefetch ? "localPrefetchUnavailable" : "autoTranslatePrefetchRangeDesc") }));
         section.appendChild(this.createSelectRow("ui.autoTranslateIntakeMode", this.t("autoTranslateIntakeMode"), [
           ["auto", this.t("autoTranslateIntakeAuto")],
           ["dom", this.t("autoTranslateIntakeDom")],
           ["bdfdb", this.t("autoTranslateIntakeBdfdb")]
-        ], { description: this.t("autoTranslateIntakeModeDesc") }));
-        section.appendChild(this.createInputRow("ui.autoTranslateConcurrency", this.t("autoTranslateConcurrency"), "number", String(AUTO_TRANSLATE_DEFAULT_CONCURRENCY), { min: String(AUTO_TRANSLATE_MIN_CONCURRENCY), max: String(AUTO_TRANSLATE_MAX_CONCURRENCY), step: "1" }, { description: this.t("autoTranslateConcurrencyDesc") }));
+        ], { disabled: fixedIntake, description: this.t(fixedIntake ? "localIntakeFixed" : "autoTranslateIntakeModeDesc") }));
+        section.appendChild(this.createInputRow("ui.autoTranslateConcurrency", this.t("autoTranslateConcurrency"), "number", String(AUTO_TRANSLATE_DEFAULT_CONCURRENCY), { min: String(AUTO_TRANSLATE_MIN_CONCURRENCY), max: String(maxConcurrency), step: "1" }, { disabled: maxConcurrency === 1, description: this.t(maxConcurrency === 1 ? "localConcurrencyFixed" : "autoTranslateConcurrencyDesc") }));
         section.appendChild(this.createCheckboxRow("ui.autoTranslateStrictRetry", this.t("autoTranslateStrictRetry"), { description: this.t("autoTranslateStrictRetryDesc") }));
         section.appendChild(this.createCurrentChannelPolicyRow());
         section.appendChild(this.createCheckboxRow("ui.historyBackfillEnabled", this.t("historyBackfillEnabled"), { description: this.t("historyBackfillEnabledDesc") }));
         section.appendChild(this.createInputRow("ui.historyBackfillLimit", this.t("historyBackfillLimit"), "number", String(DEFAULT_SETTINGS.ui.historyBackfillLimit), { min: "1", max: "100", step: "1" }, { description: this.t("historyBackfillLimitDesc") }));
         section.appendChild(this.createHistoryBackfillActionRow());
-        section.appendChild(this.createCheckboxRow("ui.providerFallbackEnabled", this.t("providerFallbackEnabled"), { description: this.t("providerFallbackEnabledDesc") }));
+        section.appendChild(this.createCheckboxRow("ui.providerFallbackEnabled", this.t("providerFallbackEnabled"), { disabled: local, description: this.t(local ? "localFallbackUnavailable" : "providerFallbackEnabledDesc") }));
         section.appendChild(this.createProviderFallbackOrderRow());
         return section;
       }
@@ -14443,7 +14489,8 @@ var require_discord_ai_translator = __commonJS({
           this.preserveSettingsScroll(textarea, () => this.setSetting("ui.providerFallbackOrder", textarea.value));
         });
         return this.createRow(this.t("providerFallbackOrder"), textarea, {
-          description: this.t("providerFallbackOrderDesc", { providers: PROVIDER_ORDER.join(", ") }),
+          disabled: this.isLocalTranslationProvider(this.settings.translation),
+          description: this.isLocalTranslationProvider(this.settings.translation) ? this.t("localFallbackUnavailable") : this.t("providerFallbackOrderDesc", { providers: PROVIDER_ORDER.join(", ") }),
           wide: true
         });
       }
@@ -15309,6 +15356,7 @@ var require_discord_ai_translator = __commonJS({
         return this.createRow(this.t("localModelPreset"), select, { description: this.t("localModelPresetDesc") });
       }
       createRow(labelText, control, options = {}) {
+        if (options.disabled) control.disabled = true;
         const row = document.createElement("label");
         row.className = "dait-settings-row";
         if (options.checkbox) row.classList.add("dait-settings-row-checkbox");
@@ -22811,6 +22859,7 @@ var require_discord_ai_translator = __commonJS({
             });
           } catch (error) {
             lastError = error;
+            if (this.isRequestCancelled(error)) throw error;
             previousReason = error?.autoTranslationInvalidReason || error?.autoTranslationCancelReason || this.getAutoTranslationFailureType(error) || "invalid-output";
             this.logManualRescueAttempt(plan, attemptName, index, requestOptions, previousOutput, null, error);
             attempts.push({
@@ -24748,12 +24797,15 @@ var require_discord_ai_translator = __commonJS({
       getFriendlyErrorMessage(error) {
         const status = Number(error?.status || 0);
         let message = "";
-        if (error?.manualTranslationRescueFailed) message = this.t("manualTranslateRescueFailed");
+        if (this.isRequestCancelled(error)) message = this.t("errorCancelled");
+        else if (error?.code === "INVALID_API_ENDPOINT") message = this.t("errorInvalidEndpoint");
+        else if (error?.code === "UNSAFE_API_ENDPOINT") message = this.t("errorUnsafeEndpoint");
+        else if (error?.manualTranslationRescueFailed) message = this.t("manualTranslateRescueFailed");
+        else if (this.isTimeoutError(error)) message = this.t("errorTimeout");
         else if (error?.localProviderUnavailable) message = this.t("errorLocalProviderUnavailable");
         else if (status === 401 || status === 403) message = this.t("errorUnauthorized");
         else if (status === 429) message = this.t("errorRateLimited");
         else if (status >= 500) message = this.t("errorServer");
-        else if (this.isTimeoutError(error)) message = this.t("errorTimeout");
         else if (this.isNetworkError(error)) message = this.t("errorNetwork");
         else if (String(error?.message || "") === "API_ERROR") message = status ? `API ${status}` : this.t("unknownError");
         else message = String(error?.message || error || this.t("unknownError"));
@@ -25089,6 +25141,9 @@ var require_discord_ai_translator = __commonJS({
       }
       isTimeoutError(...args) {
         return this.providerLayer.isTimeoutError(...args);
+      }
+      isRequestCancelled(...args) {
+        return this.providerLayer.isRequestCancelled(...args);
       }
       isNetworkError(...args) {
         return this.providerLayer.isNetworkError(...args);

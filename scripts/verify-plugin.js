@@ -10521,7 +10521,7 @@ assert.equal(menuTree.props.children[0], menuItem);
     assert.equal(apiAbortSignal.aborted, false);
     apiAbortPlugin.abortActiveApiRequests();
     assert.equal(apiAbortSignal.aborted, true);
-    await assert.rejects(apiAbortPromise, /timed out/);
+    await assert.rejects(apiAbortPromise, { code: "REQUEST_CANCELLED" });
     assert.equal(apiAbortPlugin.activeApiControllers.size, 0);
     global.fetch = savedFetchForAbort;
 

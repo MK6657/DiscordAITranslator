@@ -156,6 +156,7 @@ class ProviderLayer {
             }
             catch (error) {
                 const previous = this.plugin.localProviderDetectedModels.get(key) || {};
+                if (this.plugin.isRequestCancelled(error)) throw error;
                 this.plugin.localProviderDetectedModels.set(key, {
                     ...previous,
                     retryAt: Date.now() + Math.max(1000, Number(options.retryMs || LOCAL_PROVIDER_MODEL_DETECTION_RETRY_MS) || LOCAL_PROVIDER_MODEL_DETECTION_RETRY_MS)
@@ -1011,6 +1012,7 @@ class ProviderLayer {
                 return { text: result, fallbackProvider: "" };
             })
             .catch(async error => {
+                if (this.plugin.isRequestCancelled(error)) throw error;
                 this.plugin.annotateModelRequestError(error, kind, endpoint, taskConfig, options);
                 const requestStillCurrent = this.plugin.isLifecycleTokenCurrent(lifecycleToken)
                     && (!providerSnapshotKey || this.plugin.isAutoTranslationProviderSnapshotCurrent(providerSnapshotKey, { configOverrides: taskConfig }));
@@ -1114,6 +1116,7 @@ class ProviderLayer {
     }
 
     isLocalProviderUnavailableError(error, endpoint, config, options = {}) {
+        if (this.plugin.isRequestCancelled(error)) return false;
         if (error?.localProviderUnavailable) return true;
         if (!this.plugin.isLocalTranslationProvider(config) || !this.plugin.isLoopbackEndpoint(endpoint || config?.endpoint)) return false;
         const status = Number(error?.status || 0);
@@ -1161,10 +1164,16 @@ class ProviderLayer {
     }
 
     isTimeoutError(error) {
-        return error?.name === "AbortError" || /timed out|timeout|ETIMEDOUT/i.test(this.plugin.getErrorSignalText(error));
+        if (this.plugin.isRequestCancelled(error)) return false;
+        return error?.code === "REQUEST_TIMEOUT" || error?.name === "TimeoutError" || /timed out|timeout|ETIMEDOUT/i.test(this.plugin.getErrorSignalText(error));
+    }
+
+    isRequestCancelled(error) {
+        return error?.code === "REQUEST_CANCELLED" || (error?.name === "AbortError" && error?.code !== "REQUEST_TIMEOUT");
     }
 
     isNetworkError(error) {
+        if (this.plugin.isRequestCancelled(error)) return false;
         return /Failed to fetch|NetworkError|Load failed|fetch failed|Network request failed|ERR_[A-Z_]+|ECONNREFUSED|ECONNRESET|ECONNABORTED|ENOTFOUND|EHOSTUNREACH|ENETUNREACH|connection refused|connection reset|socket hang up|NS_ERROR_CONNECTION_REFUSED/i
             .test(this.plugin.getErrorSignalText(error));
     }
@@ -1183,7 +1192,12 @@ class ProviderLayer {
         this.plugin.assertSafeRequestEndpoint(endpoint);
         const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
         if (controller) this.plugin.activeApiControllers.add(controller);
-        const timeout = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+        let timedOut = false;
+        const timeout = controller ? setTimeout(() => {
+            if (controller.signal.aborted) return;
+            timedOut = true;
+            controller.abort();
+        }, timeoutMs) : null;
         try {
             const method = String(request?.method || "POST").trim().toUpperCase() || "POST";
             const fetchOptions = {
@@ -1203,6 +1217,8 @@ class ProviderLayer {
             const response = await fetch(endpoint, fetchOptions);
 
             const raw = await response.text();
+            // Some transports resolve despite aborting. Never expose their late data.
+            if (controller?.signal.aborted) throw Object.assign(new Error("Request aborted"), { name: "AbortError" });
             if (!response.ok) {
                 const apiError = this.plugin.createApiError(response, raw);
                 if (request?.provider === "googleCloud") {
@@ -1215,7 +1231,14 @@ class ProviderLayer {
             return raw;
         }
         catch (error) {
-            if (error?.name === "AbortError") throw new Error(`API request timed out after ${Math.round(timeoutMs / 1000)}s`);
+            if (controller?.signal.aborted || error?.name === "AbortError") {
+                throw Object.assign(new Error(timedOut
+                    ? `API request timed out after ${Math.round(timeoutMs / 1000)}s`
+                    : "Request cancelled", { cause: error }), {
+                    name: timedOut ? "TimeoutError" : "AbortError",
+                    code: timedOut ? "REQUEST_TIMEOUT" : "REQUEST_CANCELLED"
+                });
+            }
             throw error;
         }
         finally {
