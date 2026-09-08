@@ -115,7 +115,7 @@ const PROVIDER_DEFAULTS = {
         endpoint: "http://127.0.0.1:8080/v1/chat/completions",
         model: "local-model",
         apiKeyOptional: true,
-        autoTranslateConcurrencyMax: 1,
+        autoTranslateConcurrencyMax: 10,
         autoTranslatePrefetchAllowed: false,
         autoTranslateIntakeMode: "dom",
         autoTranslateRequestBatchSize: 1,
@@ -338,7 +338,7 @@ const CUSTOM_LANGUAGE_VALUE = "__custom";
 const AUTO_LANGUAGE_VALUE = "auto";
 const AUTO_TRANSLATE_DEFAULT_CONCURRENCY = 4;
 const AUTO_TRANSLATE_MIN_CONCURRENCY = 1;
-const AUTO_TRANSLATE_MAX_CONCURRENCY = 8;
+const AUTO_TRANSLATE_MAX_CONCURRENCY = 10;
 const AUTO_TRANSLATE_MIN_BATCH_SIZE = 8;
 const AUTO_TRANSLATE_BATCH_MULTIPLIER = 4;
 const AUTO_TRANSLATE_QUEUE_MULTIPLIER = 5;

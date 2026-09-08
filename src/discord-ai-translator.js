@@ -1814,7 +1814,7 @@ module.exports = class DiscordAITranslator {
             ["dom", this.t("autoTranslateIntakeDom")],
             ["bdfdb", this.t("autoTranslateIntakeBdfdb")]
         ], { disabled: fixedIntake, description: this.t(fixedIntake ? "localIntakeFixed" : "autoTranslateIntakeModeDesc") }));
-        section.appendChild(this.createInputRow("ui.autoTranslateConcurrency", this.t("autoTranslateConcurrency"), "number", String(AUTO_TRANSLATE_DEFAULT_CONCURRENCY), { min: String(AUTO_TRANSLATE_MIN_CONCURRENCY), max: String(maxConcurrency), step: "1" }, { disabled: maxConcurrency === 1, description: this.t(maxConcurrency === 1 ? "localConcurrencyFixed" : "autoTranslateConcurrencyDesc") }));
+        section.appendChild(this.createInputRow("ui.autoTranslateConcurrency", this.t("autoTranslateConcurrency"), "number", String(AUTO_TRANSLATE_DEFAULT_CONCURRENCY), { min: String(AUTO_TRANSLATE_MIN_CONCURRENCY), max: String(maxConcurrency), step: "1" }, { description: this.t(local ? "localConcurrencyDesc" : "autoTranslateConcurrencyDesc") }));
         section.appendChild(this.createCheckboxRow("ui.autoTranslateStrictRetry", this.t("autoTranslateStrictRetry"), { description: this.t("autoTranslateStrictRetryDesc") }));
         section.appendChild(this.createCurrentChannelPolicyRow());
         section.appendChild(this.createCheckboxRow("ui.historyBackfillEnabled", this.t("historyBackfillEnabled"), { description: this.t("historyBackfillEnabledDesc") }));

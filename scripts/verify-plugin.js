@@ -2568,9 +2568,9 @@ const sakuraQueueLimitPlugin = new Plugin();
 sakuraQueueLimitPlugin.settings.translation.provider = "sakuraLocal";
 sakuraQueueLimitPlugin.settings.ui.autoTranslateMessages = true;
 sakuraQueueLimitPlugin.settings.ui.autoTranslatePrefetch = true;
-assert.equal(sakuraQueueLimitPlugin.getAutoTranslateConcurrency(), 1);
-assert.equal(sakuraQueueLimitPlugin.getAutoTranslateBatchSize(), 1);
-assert.equal(sakuraQueueLimitPlugin.getAutoTranslateQueueLimit(), 1);
+assert.equal(sakuraQueueLimitPlugin.getAutoTranslateConcurrency(), 4);
+assert.equal(sakuraQueueLimitPlugin.getAutoTranslateBatchSize(), 4);
+assert.equal(sakuraQueueLimitPlugin.getAutoTranslateQueueLimit(), 4);
 assert.equal(sakuraQueueLimitPlugin.isAutoTranslationPrefetchConfigured(), false);
 assert.equal(sakuraQueueLimitPlugin.getAutoTranslatePrefetchRange(), 0);
 plugin.autoTranslationPrefetchInFlight = 1;
@@ -3823,12 +3823,12 @@ global.document = savedDocumentForViewport;
 plugin.settings.translation.provider = "deepseek";
 plugin.settings.ui.autoTranslateMessages = true;
 plugin.settings.ui.autoTranslateConcurrency = 99;
-assert.equal(plugin.getAutoTranslateConcurrency(), 8);
+assert.equal(plugin.getAutoTranslateConcurrency(), 10);
 plugin.settings.ui.autoTranslateConcurrency = 0;
 assert.equal(plugin.getAutoTranslateConcurrency(), 1);
 plugin.settings.ui.autoTranslateConcurrency = 4;
 plugin.settings.translation.provider = "sakuraLocal";
-assert.equal(plugin.getAutoTranslateConcurrency(), 1);
+assert.equal(plugin.getAutoTranslateConcurrency(), 4);
 plugin.settings.translation.provider = "deepseek";
 const numericInputCreated = [];
 global.document = {
@@ -3842,7 +3842,7 @@ numericInputPlugin.saveData = key => {
     if (key === "settings") numericInputSaves++;
     return true;
 };
-numericInputPlugin.createInputRow("ui.autoTranslateConcurrency", "Concurrency", "number", "4", { min: "1", max: "8", step: "1" });
+numericInputPlugin.createInputRow("ui.autoTranslateConcurrency", "Concurrency", "number", "4", { min: "1", max: "10", step: "1" });
 const numericInput = numericInputCreated.find(element => element.dataset?.daitPath === "ui.autoTranslateConcurrency");
 numericInput.value = "7";
 numericInput.listeners.input();
@@ -3878,9 +3878,9 @@ global.document = {
     activeElement: localConcurrencyInput,
     querySelectorAll: selector => selector === "[data-dait-path='ui.autoTranslateConcurrency']" ? [localConcurrencyInput] : []
 };
-localClampPlugin.setSetting("ui.autoTranslateConcurrency", 8);
-assert.equal(localClampPlugin.settings.ui.autoTranslateConcurrency, 1);
-assert.equal(localConcurrencyInput.value, 1);
+localClampPlugin.setSetting("ui.autoTranslateConcurrency", 11);
+assert.equal(localClampPlugin.settings.ui.autoTranslateConcurrency, 10);
+assert.equal(localConcurrencyInput.value, 10);
 const localPrefetchCheckbox = { type: "checkbox", checked: true, dataset: { daitPath: "ui.autoTranslatePrefetch" } };
 global.document = {
     activeElement: localPrefetchCheckbox,
@@ -4232,7 +4232,7 @@ assert.equal(sakuraPlugin.settings.translation.endpoint, "http://127.0.0.1:8080/
 assert.equal(sakuraPlugin.settings.translation.model, "local-model");
 sakuraPlugin.settings.ui.autoTranslateMessages = true;
 sakuraPlugin.settings.ui.autoTranslateConcurrency = 8;
-assert.equal(sakuraPlugin.getAutoTranslateConcurrency(), 1);
+assert.equal(sakuraPlugin.getAutoTranslateConcurrency(), 8);
 assert.equal(sakuraPlugin.getAutoTranslationRequestBatchSize(), 1);
 
 const googlePlugin = new Plugin();
@@ -6343,6 +6343,42 @@ fullConcurrencyPlugin.drainAutoTranslationQueue();
 assert.deepEqual(fullConcurrencyBatches, [6, 6, 6, 6]);
 assert.equal(fullConcurrencyPlugin.autoTranslationInFlight, 4);
 assert.equal(fullConcurrencyPlugin.autoTranslationQueue.length, 0);
+
+const localTenPlugin = new Plugin();
+localTenPlugin.settings.translation.provider = "sakuraLocal";
+localTenPlugin.settings.ui.autoTranslateMessages = true;
+localTenPlugin.settings.ui.autoTranslateConcurrency = 10;
+localTenPlugin.shouldBlockAutoTranslationForLocalProviderHealth = () => false;
+localTenPlugin.isElementVisibleInViewport = item => item?.visible === true;
+localTenPlugin.isAutoTranslationTargetInScanRange = () => true;
+localTenPlugin.hasCurrentTranslationLine = () => false;
+localTenPlugin.getElementText = content => content.text;
+const localStarted = [];
+localTenPlugin.autoTranslateQueuedMessage = item => localStarted.push(item);
+for (let index = 0; index < 11; index++) {
+    const item = {
+        messageNode: { isConnected: true, visible: true },
+        content: { dataset: {}, isConnected: true, visible: true, text: `local-${index}` },
+        text: `local-${index}`,
+        cacheKey: `local-ten-${index}`,
+        requestOptions: localTenPlugin.getAutoTranslationOptions()
+    };
+    localTenPlugin.enqueueAutoTranslationItem(item);
+    localTenPlugin.addAutoTranslationPendingTarget(item.cacheKey, item);
+}
+localTenPlugin.drainAutoTranslationQueue();
+assert.equal(localStarted.length, 10);
+assert.equal(localTenPlugin.autoTranslationInFlight, 10);
+assert.equal(localTenPlugin.autoTranslationQueue.length, 1);
+localTenPlugin.drainAutoTranslationQueue();
+assert.equal(localStarted.length, 10);
+// Releasing one active request allows exactly one waiting message to start.
+localTenPlugin.autoTranslationInFlight--;
+localTenPlugin.autoTranslationInFlightItems--;
+localTenPlugin.drainAutoTranslationQueue();
+assert.equal(localStarted.length, 11);
+assert.equal(localTenPlugin.autoTranslationInFlight, 10);
+assert.equal(localTenPlugin.autoTranslationQueue.length, 0);
 
 const googleBatchPlugin = new Plugin();
 googleBatchPlugin.settings.ui.autoTranslateMessages = true;

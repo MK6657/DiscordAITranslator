@@ -4,7 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
-- Explain and disable unavailable local-provider scheduling controls (prefetch/range, fixed DOM discovery, concurrency 1 and cloud fallback), instead of accepting changes that silently revert or have no effect.
+- Allow 1–10 automatic translation requests for both local and cloud providers; preserve saved values and explain local server capacity in settings.
+
+- Explain and disable unavailable local-provider scheduling controls (prefetch/range, fixed DOM discovery and cloud fallback), instead of accepting changes that silently revert or have no effect.
 - Distinguish request cancellation from timer expiry using explicit error codes and localized messages. Cancelled model discovery and long-text rescue no longer continue with new requests; cancelled work does not penalize provider health or populate failure records. Reject late responses from transports that ignore abort.
 - Localize invalid/unsafe endpoint errors and classify them as configuration/client failures; retain the actual timeout message for local-provider timeouts.
 

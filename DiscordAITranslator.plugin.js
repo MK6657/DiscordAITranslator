@@ -2976,7 +2976,7 @@ var require_constants = __commonJS({
         endpoint: "http://127.0.0.1:8080/v1/chat/completions",
         model: "local-model",
         apiKeyOptional: true,
-        autoTranslateConcurrencyMax: 1,
+        autoTranslateConcurrencyMax: 10,
         autoTranslatePrefetchAllowed: false,
         autoTranslateIntakeMode: "dom",
         autoTranslateRequestBatchSize: 1,
@@ -3194,7 +3194,7 @@ var require_constants = __commonJS({
     var AUTO_LANGUAGE_VALUE = "auto";
     var AUTO_TRANSLATE_DEFAULT_CONCURRENCY = 4;
     var AUTO_TRANSLATE_MIN_CONCURRENCY = 1;
-    var AUTO_TRANSLATE_MAX_CONCURRENCY = 8;
+    var AUTO_TRANSLATE_MAX_CONCURRENCY = 10;
     var AUTO_TRANSLATE_MIN_BATCH_SIZE = 8;
     var AUTO_TRANSLATE_BATCH_MULTIPLIER = 4;
     var AUTO_TRANSLATE_QUEUE_MULTIPLIER = 5;
@@ -12222,7 +12222,7 @@ var require_i18n = __commonJS({
         autoTranslatePrefetchRange: "预翻译范围",
         autoTranslatePrefetchRangeDesc: "控制可见区域前后各预取多少条消息。快速滚动时远离视口的预翻译会被丢弃。",
         autoTranslateConcurrency: "自动翻译并发数",
-        autoTranslateConcurrencyDesc: "同时请求多少条可见消息。默认 4，范围 1-8；数值越高越快，但 API 消耗峰值也更高。",
+        autoTranslateConcurrencyDesc: "同时发起的翻译请求数。默认 4，范围 1-10；提高并发会增加资源消耗，实际速度取决于服务性能。",
         autoTranslateStrictRetry: "失败后自动严格重试",
         autoTranslateStrictRetryDesc: "模型输出不是目标语言时，先重试失败条目，再严格单条翻译；仍失败才显示重试按钮。",
         showAutoTranslateWarnings: "开启后显示普通自动翻译失败提示",
@@ -12329,7 +12329,7 @@ var require_i18n = __commonJS({
         errorUnsafeEndpoint: "接口地址不安全：远程服务须使用 HTTPS，本机服务可用 HTTP，地址中不能包含用户名或密码。",
         localPrefetchUnavailable: "当前本地服务不启用预翻译，因此范围设置不生效。可见消息翻译仍可使用。",
         localIntakeFixed: "当前本地服务固定使用 DOM 发现消息，此项无需修改。",
-        localConcurrencyFixed: "当前本地服务逐条翻译，并发固定为 1，避免挤占模型上下文。此项不是下拉菜单。",
+        localConcurrencyDesc: "本地模型也可设置 1-10 个并发请求，每个请求翻译一条消息。请配合本地服务的并发槽位和可用显存调整。",
         localFallbackUnavailable: "本地服务不会自动转发到云端，因此云端回退及顺序在当前模式下不可用。",
         errorTimeout: "API 请求超时。",
         errorNetwork: "网络连接失败。",
@@ -12465,7 +12465,7 @@ var require_i18n = __commonJS({
         autoTranslatePrefetchRange: "Prefetch range",
         autoTranslatePrefetchRangeDesc: "How many messages above and below the visible area should be prefetched. Far prefetch work is dropped during fast scrolling.",
         autoTranslateConcurrency: "Auto-translation concurrency",
-        autoTranslateConcurrencyDesc: "How many visible messages to translate at once. Default 4, range 1-8. Higher is faster but increases API burst usage.",
+        autoTranslateConcurrencyDesc: "Simultaneous translation requests. Default 4, range 1-10. Higher concurrency uses more resources; actual speed depends on the service.",
         autoTranslateStrictRetry: "Strict retry after invalid output",
         autoTranslateStrictRetryDesc: "When model output is not in the target language, retry failed items, then use strict single-message translation before showing a retry button.",
         showAutoTranslateWarnings: "Show normal auto-translation failures when enabled",
@@ -12603,7 +12603,7 @@ var require_i18n = __commonJS({
         errorUnsafeEndpoint: "Unsafe endpoint: remote services require HTTPS; loopback services may use HTTP. Do not embed a username or password in the URL.",
         localPrefetchUnavailable: "Prefetch is unavailable for this local provider, so the range does not apply. Visible-message translation remains available.",
         localIntakeFixed: "This local provider uses DOM message discovery. No change is required.",
-        localConcurrencyFixed: "This local provider translates one message at a time to preserve model context. Concurrency is fixed at 1; this is not a dropdown.",
+        localConcurrencyDesc: "Local models support 1-10 concurrent requests, with one message per request. Adjust to match your local server's parallel slots and available VRAM.",
         localFallbackUnavailable: "Local providers never forward requests to the cloud. Cloud fallback and its order are unavailable in this mode.",
         errorTimeout: "API request timed out.",
         errorNetwork: "Network request failed.",
@@ -14449,7 +14449,7 @@ var require_discord_ai_translator = __commonJS({
           ["dom", this.t("autoTranslateIntakeDom")],
           ["bdfdb", this.t("autoTranslateIntakeBdfdb")]
         ], { disabled: fixedIntake, description: this.t(fixedIntake ? "localIntakeFixed" : "autoTranslateIntakeModeDesc") }));
-        section.appendChild(this.createInputRow("ui.autoTranslateConcurrency", this.t("autoTranslateConcurrency"), "number", String(AUTO_TRANSLATE_DEFAULT_CONCURRENCY), { min: String(AUTO_TRANSLATE_MIN_CONCURRENCY), max: String(maxConcurrency), step: "1" }, { disabled: maxConcurrency === 1, description: this.t(maxConcurrency === 1 ? "localConcurrencyFixed" : "autoTranslateConcurrencyDesc") }));
+        section.appendChild(this.createInputRow("ui.autoTranslateConcurrency", this.t("autoTranslateConcurrency"), "number", String(AUTO_TRANSLATE_DEFAULT_CONCURRENCY), { min: String(AUTO_TRANSLATE_MIN_CONCURRENCY), max: String(maxConcurrency), step: "1" }, { description: this.t(local ? "localConcurrencyDesc" : "autoTranslateConcurrencyDesc") }));
         section.appendChild(this.createCheckboxRow("ui.autoTranslateStrictRetry", this.t("autoTranslateStrictRetry"), { description: this.t("autoTranslateStrictRetryDesc") }));
         section.appendChild(this.createCurrentChannelPolicyRow());
         section.appendChild(this.createCheckboxRow("ui.historyBackfillEnabled", this.t("historyBackfillEnabled"), { description: this.t("historyBackfillEnabledDesc") }));

@@ -4,6 +4,13 @@
 
 The current artifact received a limited local-model smoke test on the actual usage computer on September 8, recorded below. Full live-host acceptance remains incomplete. The July record applies only to its explicitly identified older artifact. Local offline/installer tests are documented in [repository-intake-2026-09-08.md](repository-intake-2026-09-08.md).
 
+## 2026-09-08 — adjustable concurrency follow-up
+
+- Local and cloud concurrency now support 1–10. Installed artifact: 1,340,800 bytes; SHA256 `4AC8EC6D99BEC51ECB98E8FF45D347E86D00FA8DBF54478BC23E851A8DCBEC7C`.
+- Complete `release:check` passed, including a scheduler regression proving ten active local requests and an eleventh waiting for capacity.
+- In Discord, edited local concurrency to 10 and verified the rendered value and persisted JSON; restored the original value 1 afterward. Automatic translation remained off. This verifies control persistence, not ten-way live model throughput.
+- The fixed-concurrency record below describes the superseded artifact.
+
 ## 2026-09-08 — settings and cancellation follow-up
 
 - Final updated artifact: 1,340,766 bytes; SHA256 `245A4573954F2A043D82653D74C02BA0403E538F11C904371D50653921E48AB9`.
