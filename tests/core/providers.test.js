@@ -426,7 +426,7 @@ test("user-facing errors are localized and never show internal codes", async t =
 
     for (const [reason, expectedKey, type] of [
         ["verification-failed", "errorComposerWriteFailed", "error"],
-        ["write-cancelled", "publicBilingualInputChanged", "info"]
+        ["write-cancelled", "composerResultHeld", "info"]
     ]) {
         await t.test(reason, async () => {
             const plugin = new Plugin();

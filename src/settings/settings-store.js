@@ -825,6 +825,9 @@ class SettingsStore {
                 this.plugin.syncInputActionGroupState(group);
             });
         }
+        if (path === "polish.enabled" || path === "translation.enabled") {
+            this.plugin.syncInputActionButtonsForSettings();
+        }
         if (typeof document !== "undefined" && path === "ui.showQuickSettingsRailButton" && value === false) {
             document.querySelectorAll?.(".dait-quick-settings-rail")?.forEach(node => node.remove());
         }
