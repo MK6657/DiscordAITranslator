@@ -17,8 +17,20 @@ const {
     SETTINGS_SECTION_IDS,
     SETTINGS_TABS,
     SETTINGS_WRITE_DEBOUNCE_MS,
-    TRANSLATION_CACHE_WRITE_DEBOUNCE_MS
+    TRANSLATION_CACHE_WRITE_DEBOUNCE_MS,
+    TRANSLATION_LINE_STYLES,
+    TRANSLATION_LINE_TEXT_SCALES
 } = require("../constants");
+
+function normalizeTranslationLineStyle(value) {
+    const style = String(value || "");
+    return TRANSLATION_LINE_STYLES.includes(style) ? style : DEFAULT_SETTINGS.ui.translationStyle;
+}
+
+function normalizeTranslationLineTextScale(value) {
+    const scale = Number(value);
+    return TRANSLATION_LINE_TEXT_SCALES.includes(scale) ? scale : DEFAULT_SETTINGS.ui.translationTextScale;
+}
 
 class SettingsStore {
     constructor(plugin) {
@@ -462,6 +474,16 @@ class SettingsStore {
             this.plugin.settings.ui.hideOriginalAfterTranslation = DEFAULT_SETTINGS.ui.hideOriginalAfterTranslation;
             changed = true;
         }
+        const translationStyle = normalizeTranslationLineStyle(this.plugin.settings.ui.translationStyle);
+        if (translationStyle !== this.plugin.settings.ui.translationStyle) {
+            this.plugin.settings.ui.translationStyle = translationStyle;
+            changed = true;
+        }
+        const translationTextScale = normalizeTranslationLineTextScale(this.plugin.settings.ui.translationTextScale);
+        if (translationTextScale !== this.plugin.settings.ui.translationTextScale) {
+            this.plugin.settings.ui.translationTextScale = translationTextScale;
+            changed = true;
+        }
         if (changed) this.plugin.saveSettings();
     }
 
@@ -621,6 +643,12 @@ class SettingsStore {
         if (path === "translation.deeplPlan") {
             value = ["free", "pro"].includes(String(value || "")) ? String(value) : DEFAULT_SETTINGS.translation.deeplPlan;
         }
+        if (path === "ui.translationStyle") {
+            value = normalizeTranslationLineStyle(value);
+        }
+        if (path === "ui.translationTextScale") {
+            value = normalizeTranslationLineTextScale(value);
+        }
         let cursor = this.plugin.settings;
         for (let index = 0; index < parts.length - 1; index++) {
             cursor = cursor[parts[index]];
@@ -713,7 +741,7 @@ class SettingsStore {
         if (path === "ui.hideOriginalAfterTranslation") {
             this.plugin.syncAllTranslationSourceVisibility();
         }
-        if (path === "ui.maskTranslations" || path === "ui.translationPosition") {
+        if (path === "ui.maskTranslations" || path === "ui.translationPosition" || path === "ui.translationStyle" || path === "ui.translationTextScale") {
             this.plugin.syncAllTranslationDisplaySettings();
         }
         this.plugin.queueScan();

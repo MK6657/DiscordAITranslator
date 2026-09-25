@@ -415,6 +415,11 @@ const INCREMENTAL_MESSAGE_WORK_BUDGET_MS = 8;
 const INCREMENTAL_MESSAGE_WORK_MAX_PER_SLICE = 1;
 const MESSAGE_BUTTON_VISIBILITY_ALWAYS = "always";
 const MESSAGE_BUTTON_VISIBILITY_HOVER = "hover";
+// How a translated line looks in chat (Display settings): faint background, dimmer text, or a small tag.
+const TRANSLATION_LINE_STYLES = Object.freeze(["tint", "muted", "tag"]);
+const TRANSLATION_LINE_TEXT_SCALES = Object.freeze([100, 90]);
+// Target languages written right to left; their translation lines get dir="rtl".
+const RTL_LANGUAGE_CODES = Object.freeze(["ar", "fa", "he", "iw", "ur", "ps", "yi", "dv", "ug", "ckb", "sd"]);
 const POLISH_REPOLISH_SOURCE_ORIGINAL = "original";
 const POLISH_REPOLISH_SOURCE_LAST_RESULT = "lastResult";
 const TRANSLATION_CACHE_DEFAULT_TTL_HOURS = 48;
@@ -742,6 +747,8 @@ const DEFAULT_SETTINGS = {
         translationPosition: "before",
         maskTranslations: false,
         hideOriginalAfterTranslation: false,
+        translationStyle: "tint",
+        translationTextScale: 100,
         injectMessageContextMenu: true,
         enablePolishHotkey: true,
         polishHotkey: "Ctrl+Alt+P",
@@ -863,6 +870,9 @@ module.exports = {
     INCREMENTAL_MESSAGE_WORK_MAX_PER_SLICE,
     MESSAGE_BUTTON_VISIBILITY_ALWAYS,
     MESSAGE_BUTTON_VISIBILITY_HOVER,
+    TRANSLATION_LINE_STYLES,
+    TRANSLATION_LINE_TEXT_SCALES,
+    RTL_LANGUAGE_CODES,
     POLISH_REPOLISH_SOURCE_ORIGINAL,
     POLISH_REPOLISH_SOURCE_LAST_RESULT,
     TRANSLATION_CACHE_DEFAULT_TTL_HOURS,
