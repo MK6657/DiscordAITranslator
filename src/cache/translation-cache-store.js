@@ -139,7 +139,7 @@ class TranslationCacheStore {
     }
 
     buildTranslationCacheKey(text, options = {}, sourceTextHash = this.plugin.getStrongTextFingerprint(text), cacheOptions = {}) {
-        const config = this.plugin.getCacheConfigSnapshot("translation", this.plugin.getEffectiveTaskConfig("translation", options.configOverrides));
+        const config = this.plugin.getCacheConfigSnapshot("translation", this.plugin.getEffectiveTaskConfig("translation", options.configOverrides), { servedModel: true });
         config.promptPolicyVersion = this.plugin.getPromptPolicyCacheVersion("translation", options, config);
         const messageIdentity = this.plugin.normalizeTranslationMessageIdentity(options.messageIdentity) || `text:${sourceTextHash}`;
         const configParts = cacheOptions.fullConfig
@@ -186,7 +186,11 @@ class TranslationCacheStore {
         ];
     }
 
-    getCacheConfigSnapshot(kind, config) {
+    // options.servedModel: for cache keys, name the model the local server actually serves
+    // when the setting is the "local-model" placeholder, so swapping the loaded model stops
+    // matching the old model's translations. Provider keys leave it out on purpose: health
+    // and cooldowns belong to the server, not to the model it has loaded.
+    getCacheConfigSnapshot(kind, config, options = {}) {
         const defaults = DEFAULT_SETTINGS[kind] || {};
         const provider = String(config.provider || defaults.provider || "").trim();
         const snapshot = {
@@ -224,6 +228,16 @@ class TranslationCacheStore {
                 snapshot.endpoint = this.plugin.normalizeDeepLPlan(config.deeplPlan) === "pro"
                     ? PROVIDER_DEFAULTS.deepl.endpoint.replace("api-free.deepl.com", "api.deepl.com")
                     : PROVIDER_DEFAULTS.deepl.endpoint;
+            }
+        }
+        if (options.servedModel) {
+            if (provider === "deepl" && this.plugin.getDeepLLanguageCode(config.targetLanguageCode || config.targetLanguage) === "ZH-HANT") {
+                // DeepL used to receive "ZH" (Simplified) for Traditional Chinese; a distinct
+                // value retires the Simplified text cached as Traditional.
+                snapshot.model = "zh-hant";
+            }
+            else if (this.plugin.shouldAutoDetectLocalProviderModel(config, defaults)) {
+                snapshot.model = this.plugin.getCachedLocalProviderDetectedModel(config, { defaultConfig: defaults }) || snapshot.model;
             }
         }
         return snapshot;
@@ -415,6 +429,7 @@ class TranslationCacheStore {
         this.plugin.translationCacheMeta.clear();
         this.plugin.clearTranslationCacheNegativeLookups();
         const payload = this.plugin.loadData(CACHE_DATA_KEY);
+        this.plugin.restoreLocalProviderDetectedModels(payload?.localModels);
         const entries = Array.isArray(payload) ? payload : payload?.entries;
         if (!Array.isArray(entries)) {
             this.plugin.persistentTranslationCacheCount = 0;
@@ -500,6 +515,8 @@ class TranslationCacheStore {
             savedAt: Date.now(),
             ttlHours: this.plugin.normalizeTranslationCacheTtlHours(this.plugin.settings.ui?.translationCacheTtlHours),
             maxEntries: this.plugin.getTranslationCacheMaxEntries(),
+            // Cache keys of local models name the served model; see getCacheConfigSnapshot.
+            localModels: this.plugin.getPersistableLocalProviderDetectedModels(),
             strings,
             entries
         };

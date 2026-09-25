@@ -4302,7 +4302,8 @@ googlePlugin.settings.googleTranslate.keyPoolText = "main|AIza-main|450000\nback
 googlePlugin.settings.googleTranslate.keys = googlePlugin.normalizeGoogleTranslateKeyPool(googlePlugin.settings.googleTranslate).keys;
 assert.equal(googlePlugin.hasUsableApiConfig("translation"), true);
 const googleRequest = googlePlugin.buildModelRequest("translation", "bonjour");
-assert.match(googleRequest.endpoint, /^https:\/\/translation\.googleapis\.com\/language\/translate\/v2\?key=AIza-main$/);
+assert.equal(googleRequest.endpoint, "https://translation.googleapis.com/language/translate/v2");
+assert.equal(googleRequest.request.headers["X-Goog-Api-Key"], "AIza-main");
 assert.equal(googleRequest.request.provider, "googleCloud");
 assert.equal(googleRequest.request.responseParser, "googleTranslate");
 assert.equal(googleRequest.request.headers.Authorization, undefined);
@@ -4369,7 +4370,7 @@ assert.equal(
 );
 googlePlugin.settings.googleTranslate.keys[0].usedChars = 449998;
 const googleSwitchRequest = googlePlugin.buildGoogleTranslateRequest("bonjour", googlePlugin.settings.translation);
-assert.match(googleSwitchRequest.endpoint, /key=AIza-backup$/);
+assert.equal(googleSwitchRequest.request.headers["X-Goog-Api-Key"], "AIza-backup");
 googlePlugin.settings.googleTranslate.keys[1].usedChars = 449998;
 expectThrowsMessage(() => googlePlugin.buildGoogleTranslateRequest("bonjour", googlePlugin.settings.translation), "Google");
 
@@ -4420,7 +4421,8 @@ const deeplFreeRequest = deeplPlugin.buildModelRequest("translation", ["hello", 
 assert.equal(deeplFreeRequest.endpoint, "https://api-free.deepl.com/v2/translate");
 assert.equal(deeplFreeRequest.request.provider, "deepl");
 assert.equal(deeplFreeRequest.request.headers.Authorization, "DeepL-Auth-Key deepl-key");
-assert.deepEqual(deeplFreeRequest.request.body, { text: ["hello", "world"], target_lang: "ZH" });
+// As a target DeepL needs the explicit variant; plain "ZH" is only valid as source_lang.
+assert.deepEqual(deeplFreeRequest.request.body, { text: ["hello", "world"], target_lang: "ZH-HANS" });
 deeplPlugin.settings.translation.deeplPlan = "pro";
 const deeplProRequest = deeplPlugin.buildModelRequest("translation", "hello");
 assert.equal(deeplProRequest.endpoint, "https://api.deepl.com/v2/translate");
@@ -4493,10 +4495,10 @@ googleReservationPlugin.settings.googleTranslate.keyPoolText = "main|AIza-main|5
 googleReservationPlugin.settings.googleTranslate.keys = googleReservationPlugin.normalizeGoogleTranslateKeyPool(googleReservationPlugin.settings.googleTranslate).keys;
 googleReservationPlugin.settings.googleTranslate.keys[0].usedChars = 3;
 const googleReservedMain = googleReservationPlugin.buildGoogleTranslateRequest("ab", googleReservationPlugin.settings.translation, { reserve: true });
-assert.match(googleReservedMain.endpoint, /key=AIza-main$/);
+assert.equal(googleReservedMain.request.headers["X-Goog-Api-Key"], "AIza-main");
 assert.equal(googleReservationPlugin.getGoogleTranslateReservedChars(googleReservedMain.request.googleTranslate.keyId), 2);
 const googleReservedBackup = googleReservationPlugin.buildGoogleTranslateRequest("c", googleReservationPlugin.settings.translation, { reserve: true });
-assert.match(googleReservedBackup.endpoint, /key=AIza-backup$/);
+assert.equal(googleReservedBackup.request.headers["X-Goog-Api-Key"], "AIza-backup");
 googleReservationPlugin.releaseGoogleTranslateRequestReservation(googleReservedMain.request);
 googleReservationPlugin.releaseGoogleTranslateRequestReservation(googleReservedBackup.request);
 assert.equal([...googleReservationPlugin.googleTranslateReservedChars.values()].reduce((sum, value) => sum + value, 0), 0);
@@ -11013,7 +11015,7 @@ assert.equal(menuTree.props.children[0], menuItem);
     const googleRunReservationEndpoints = [];
     let googleRunReservationReleaseFirst = null;
     googleRunReservationPlugin.fetchApiResponseText = (endpoint, request) => {
-        googleRunReservationEndpoints.push(endpoint);
+        googleRunReservationEndpoints.push(request.headers["X-Goog-Api-Key"]);
         if (request.body.q === "abc") {
             return new Promise(resolve => {
                 googleRunReservationReleaseFirst = () => resolve(JSON.stringify({ data: { translations: [{ translatedText: "first" }] } }));
@@ -11022,11 +11024,11 @@ assert.equal(menuTree.props.children[0], menuItem);
         return Promise.resolve(JSON.stringify({ data: { translations: [{ translatedText: "second" }] } }));
     };
     const googleRunReservationFirst = googleRunReservationPlugin.runModelTask("translation", "abc");
-    assert.match(googleRunReservationEndpoints[0], /key=AIza-main$/);
+    assert.equal(googleRunReservationEndpoints[0], "AIza-main");
     assert.equal(googleRunReservationPlugin.getGoogleTranslateReservedChars(googleRunReservationPlugin.settings.googleTranslate.keys[0]), 3);
     const googleRunReservationSecond = await googleRunReservationPlugin.runModelTask("translation", "d");
     assert.equal(googleRunReservationSecond, "second");
-    assert.match(googleRunReservationEndpoints[1], /key=AIza-backup$/);
+    assert.equal(googleRunReservationEndpoints[1], "AIza-backup");
     assert.equal(googleRunReservationPlugin.settings.googleTranslate.keys[1].usedChars, 1);
     googleRunReservationReleaseFirst();
     assert.equal(await googleRunReservationFirst, "first");
@@ -11913,7 +11915,10 @@ global.document = {
     assert.equal(publicWriteFailurePanelTitle, publicWriteFailurePlugin.t("publicBilingualButton"));
     assert.equal(publicWriteFailureResult.fallbackText, publicWriteFailurePanelText);
     assert.equal(publicWriteFailureResult.wrote, false);
-    assert.equal(publicWriteFailureToasts.some(toast => toast.type === "error" && /verification-failed/.test(toast.text)), true);
+    // The toast explains the failure in words; the internal reason code stays out of it.
+    assert.equal(publicWriteFailureToasts.some(toast => toast.type === "error"
+        && toast.text === publicWriteFailurePlugin.t("publicBilingualFailed", { error: publicWriteFailurePlugin.t("errorComposerWriteFailed") })), true);
+    assert.equal(publicWriteFailureToasts.some(toast => /verification-failed/.test(toast.text)), false);
 
     const appendGuardPlugin = new Plugin();
     const appendGuardTextbox = {

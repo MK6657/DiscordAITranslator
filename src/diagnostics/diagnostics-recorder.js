@@ -354,7 +354,7 @@ class DiagnosticsRecorder {
             },
             settings: {
                 provider: this.plugin.settings.translation?.provider,
-                model: this.plugin.settings.translation?.model,
+                model: this.plugin.getDiagnosticModelLabel(this.plugin.settings.translation?.model),
                 targetLanguage: this.plugin.settings.translation?.targetLanguage,
                 autoTranslateMessages: this.plugin.settings.ui?.autoTranslateMessages,
                 autoTranslatePrefetch: this.plugin.settings.ui?.autoTranslatePrefetch,

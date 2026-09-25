@@ -2369,13 +2369,18 @@ module.exports = class DiscordAITranslator {
 
     getGoogleTranslateStatsText() {
         const stats = this.getGoogleTranslateUsageSummary();
-        return this.t("googleTranslateStatsDesc", {
+        const text = this.t("googleTranslateStatsDesc", {
             used: stats.used,
             limit: stats.limit,
             available: stats.available,
             total: stats.total,
             month: stats.monthKey
         });
+        if (!stats.coolingDown) return text;
+        return `${text} ${this.t("googleTranslateStatsCooldown", {
+            count: stats.coolingDown,
+            time: this.formatDiagnosticSummaryTime(stats.nextCooldownEndsAt)
+        })}`;
     }
 
     getTranslationCacheStatsText() {
@@ -3681,6 +3686,9 @@ module.exports = class DiscordAITranslator {
                 return String(value ?? "").trim() ? "[hidden]" : "";
             }
             if (name === "endpoint") return this.getSettingsSnapshotEndpoint(value);
+            // A model can be a local file path that contains the Windows user name.
+            if (name === "model") return this.getDiagnosticModelLabel(value);
+            if (name === "usagebyid") return `[hidden: ${Object.keys(value || {}).length}]`;
             if (name === "prompt") return value === defaults ? "default" : `custom (${String(value ?? "").length} chars)`;
             if (name === "prompttemplates") return `${Array.isArray(value) ? value.length : 0} templates`;
             if (name === "channelautotranslatepolicies") {
@@ -3760,7 +3768,7 @@ module.exports = class DiscordAITranslator {
 
     copyTextToClipboardFallback(text) {
         if (typeof document === "undefined" || !document.body?.appendChild) {
-            throw new Error("clipboard unavailable");
+            throw Object.assign(new Error(this.t("clipboardUnavailable")), { code: "CLIPBOARD_UNAVAILABLE" });
         }
         const previousFocus = document.activeElement || null;
         const fallback = document.createElement("textarea");
@@ -3783,7 +3791,7 @@ module.exports = class DiscordAITranslator {
                 }
             }
         }
-        if (!ok) throw new Error("document.execCommand copy failed");
+        if (!ok) throw Object.assign(new Error(this.t("clipboardUnavailable")), { code: "CLIPBOARD_UNAVAILABLE" });
     }
 
     getSettingsScrollSnapshot(anchor) {
@@ -9368,7 +9376,7 @@ module.exports = class DiscordAITranslator {
         const now = Date.now();
         if (now - this.autoTranslationLastToastAt < 10000) return;
         this.autoTranslationLastToastAt = now;
-        this.showToast(this.t("autoTranslateFailed", { error: this.formatError(error) }), "error");
+        this.showToast(this.t("autoTranslateFailed", { error: this.formatError(error, { includeRetry: true }) }), "error");
     }
 
     isElementVisibleInViewport(element, rect = null) {
@@ -10406,6 +10414,7 @@ module.exports = class DiscordAITranslator {
             model: baseConfig.model,
             sourceLanguage: AUTO_LANGUAGE_VALUE,
             targetLanguage,
+            targetLanguageCode: this.getTargetLanguageCode(targetLanguageValue),
             temperature: 0,
             maxTokens,
             enableThinking: false,
@@ -10690,7 +10699,13 @@ module.exports = class DiscordAITranslator {
                     ariaLabel: this.t("publicBilingualTitleAttr", { targetLanguage: this.getDisplayLanguage(this.getPublicBilingualTargetLanguage()) }),
                     adjustTextboxSelection: false
                 });
-                this.showToast(this.t("publicBilingualFailed", { error: this.formatError(new Error(writeResult.reason || "verification-failed")) }), "error");
+                // The draft changed under us (typing, a newer write): say so instead of the raw reason.
+                if (["write-cancelled", "stale-input", "superseded", "user-input"].includes(writeResult.reason)) {
+                    this.showToast(this.t("publicBilingualInputChanged"), "info");
+                }
+                else {
+                    this.showToast(this.t("publicBilingualFailed", { error: this.t("errorComposerWriteFailed") }), "error");
+                }
                 return { ok: false, wrote: false, reason: writeResult.reason || "verification-failed", fallbackText: composed };
             }
 
@@ -11758,17 +11773,20 @@ module.exports = class DiscordAITranslator {
     annotateTranslateProviderApiError(error, raw = "", request = {}) {
         if (!error || !["microsoft", "deepl", "baidu"].includes(String(request?.provider || ""))) return error;
         error.providerKey = request.providerKey || "";
-        const signal = `${Number(error.status || 0)} ${String(raw || "").slice(0, 4000)}`;
-        if (/quota|limit exceeded|daily limit|monthly limit|character limit|456|54003|54004|54005/i.test(signal)) {
+        // Decide by the HTTP status and whole words only: digits such as "456" also appear in
+        // request ids. Baidu error codes arrive with HTTP 200 and are mapped by its parser.
+        const status = Number(error.status || 0);
+        const text = String(raw || "").slice(0, 4000);
+        if (status === 456 || /\b(?:quota|limit exceeded|daily limit|monthly limit|character limit)\b/i.test(text)) {
             error.providerQuotaExceeded = true;
         }
-        if (/invalid key|unauthorized|forbidden|401|403|52003|54001/i.test(signal)) {
+        if (status === 401 || status === 403 || /\b(?:invalid (?:auth(?:entication)? )?key|unauthorized|forbidden)\b/i.test(text)) {
             error.providerAuthFailed = true;
         }
-        if (/too many|rate.?limit|429|54003/i.test(signal)) {
+        if (status === 429 || /\b(?:too many requests|rate.?limit(?:ed)?)\b/i.test(text)) {
             error.providerRateLimited = true;
         }
-        if (Number(error.status || 0) >= 500) {
+        if (status >= 500) {
             error.providerServerError = true;
         }
         return error;
@@ -13795,29 +13813,58 @@ module.exports = class DiscordAITranslator {
         return this.messageTracker.getIdentity(messageNode, content, text);
     }
 
-    formatError(error) {
-        const message = this.getFriendlyErrorMessage(error);
+    formatError(error, options = {}) {
+        const message = this.getFriendlyErrorMessage(error, options);
         return message.length > 480 ? `${message.slice(0, 480)}...` : message;
     }
 
-    getFriendlyErrorMessage(error) {
+    // options.includeRetry: add the automatic retry wait; only auto-translation notices
+    // want it (for polish or manual translation it is an internal scheduling detail).
+    getFriendlyErrorMessage(error, options = {}) {
         const status = Number(error?.status || 0);
+        const rawMessage = String(error?.message || "");
+        // HTTP errors and Baidu error codes carry provider text, never shown as-is.
+        const providerCoded = rawMessage === "API_ERROR" || Boolean(error?.baiduApiError);
+        const internalMessageKeys = {
+            MODEL_OUTPUT_TRUNCATED: "errorOutputTruncated",
+            DATA_SAVE_FAILED: "errorSaveFailed",
+            DATA_SAVE_UNAVAILABLE: "errorSaveFailed"
+        };
         let message = "";
         if (this.isRequestCancelled(error)) message = this.t("errorCancelled");
         else if (Object.hasOwn(API_ENDPOINT_ERROR_MESSAGE_KEYS, error?.code)) message = this.t(API_ENDPOINT_ERROR_MESSAGE_KEYS[error.code]);
+        else if (error?.code === "CLIPBOARD_UNAVAILABLE") message = this.t("clipboardUnavailable");
         else if (error?.manualTranslationRescueFailed) message = this.t("manualTranslateRescueFailed");
+        else if (error?.modelOutputTruncated) message = this.t("errorOutputTruncated");
         else if (this.isTimeoutError(error)) message = this.t("errorTimeout");
         else if (error?.localProviderUnavailable) message = this.t("errorLocalProviderUnavailable");
+        else if (providerCoded && error?.providerLanguageUnsupported) message = this.t("errorLanguageUnsupported");
+        else if (providerCoded && error?.providerIpRejected) message = this.t("errorIpNotAllowed");
+        else if (providerCoded && error?.providerRequestRejected) message = this.t("errorProviderRequestRejected");
+        else if (providerCoded && (error?.providerRateLimited || status === 429)) message = this.t("errorRateLimited");
+        else if (providerCoded && (error?.providerQuotaExceeded || error?.googleTranslateQuotaExceeded || status === 402)) message = this.t("errorQuotaExceeded");
+        else if (providerCoded && (error?.providerAuthFailed || status === 401 || status === 403)) message = this.t("errorUnauthorized");
+        else if (providerCoded && (error?.providerServerError || status >= 500)) message = this.t("errorServer");
         else if (status === 401 || status === 403) message = this.t("errorUnauthorized");
         else if (status === 429) message = this.t("errorRateLimited");
         else if (status >= 500) message = this.t("errorServer");
         else if (this.isNetworkError(error)) message = this.t("errorNetwork");
-        else if (String(error?.message || "") === "API_ERROR") message = status ? `API ${status}` : this.t("unknownError");
+        else if (error?.baiduApiError) message = this.t("errorProviderRequestRejected");
+        else if (rawMessage === "API_ERROR") {
+            message = status >= 400 && status < 500 ? this.t("errorProviderRequestRejected") : status ? `API ${status}` : this.t("unknownError");
+        }
+        else if (Object.hasOwn(internalMessageKeys, rawMessage)) message = this.t(internalMessageKeys[rawMessage]);
+        // Any other ALL_CAPS code is internal; never show it to the user.
+        else if (/^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/.test(rawMessage)) message = this.t("unknownError");
         else message = String(error?.message || error || this.t("unknownError"));
 
         const details = [];
         if (status) details.push(String(status));
-        if (Number(error?.retryAfterMs) > 0) details.push(`${Math.ceil(Number(error.retryAfterMs) / 1000)}s`);
+        if (error?.baiduErrorCode) details.push(String(error.baiduErrorCode));
+        const retryAfterMs = Number(error?.retryAfterMs) || 0;
+        if (options.includeRetry && retryAfterMs > 0 && retryAfterMs <= 60 * 60 * 1000 && !error?.modelOutputTruncated) {
+            details.push(`${Math.ceil(retryAfterMs / 1000)}s`);
+        }
         if (error?.requestId) details.push(`id:${error.requestId}`);
         else if (error?.bodyHash) details.push(`ref:${error.bodyHash}`);
         return details.length ? `${message} (${details.join(", ")})` : message;
@@ -13904,6 +13951,8 @@ module.exports = class DiscordAITranslator {
     getLocalProviderModelDetectionCacheKey(...args) { return this.providerLayer.getLocalProviderModelDetectionCacheKey(...args); }
     getCachedLocalProviderDetectedModel(...args) { return this.providerLayer.getCachedLocalProviderDetectedModel(...args); }
     setCachedLocalProviderDetectedModel(...args) { return this.providerLayer.setCachedLocalProviderDetectedModel(...args); }
+    getPersistableLocalProviderDetectedModels(...args) { return this.providerLayer.getPersistableLocalProviderDetectedModels(...args); }
+    restoreLocalProviderDetectedModels(...args) { return this.providerLayer.restoreLocalProviderDetectedModels(...args); }
     getEffectiveChatCompletionModel(...args) { return this.providerLayer.getEffectiveChatCompletionModel(...args); }
     refreshLocalProviderDetectedModel(...args) { return this.providerLayer.refreshLocalProviderDetectedModel(...args); }
     fetchLocalProviderDetectedModel(...args) { return this.providerLayer.fetchLocalProviderDetectedModel(...args); }
@@ -13922,6 +13971,7 @@ module.exports = class DiscordAITranslator {
     createGoogleTranslateQuotaError(...args) { return this.providerLayer.createGoogleTranslateQuotaError(...args); }
     createGoogleTranslateNoKeyError(...args) { return this.providerLayer.createGoogleTranslateNoKeyError(...args); }
     getGoogleTranslateQuotaRetryAfterMs(...args) { return this.providerLayer.getGoogleTranslateQuotaRetryAfterMs(...args); }
+    getGoogleTranslateDailyQuotaRetryAfterMs(...args) { return this.providerLayer.getGoogleTranslateDailyQuotaRetryAfterMs(...args); }
     releaseGoogleTranslateRequestReservation(...args) { return this.providerLayer.releaseGoogleTranslateRequestReservation(...args); }
     getGoogleTranslateUsageSummary(...args) { return this.providerLayer.getGoogleTranslateUsageSummary(...args); }
     saveGoogleTranslateRuntimeState(...args) { return this.providerLayer.saveGoogleTranslateRuntimeState(...args); }
@@ -13932,6 +13982,7 @@ module.exports = class DiscordAITranslator {
     markGoogleTranslateKeyFailure(...args) { return this.providerLayer.markGoogleTranslateKeyFailure(...args); }
     markGoogleTranslateProviderSuccess(...args) { return this.providerLayer.markGoogleTranslateProviderSuccess(...args); }
     getGoogleLanguageCode(...args) { return this.providerLayer.getGoogleLanguageCode(...args); }
+    getTargetLanguageCode(...args) { return this.providerLayer.getTargetLanguageCode(...args); }
     getEffectiveRequestApiKey(...args) { return this.providerLayer.getEffectiveRequestApiKey(...args); }
     getRequestHeaders(...args) { return this.providerLayer.getRequestHeaders(...args); }
     hasUsableApiConfig(...args) { return this.providerLayer.hasUsableApiConfig(...args); }
@@ -13953,6 +14004,7 @@ module.exports = class DiscordAITranslator {
     parseGoogleTranslateKeyPoolText(...args) { return this.providerLayer.parseGoogleTranslateKeyPoolText(...args); }
     formatGoogleTranslateKeyPoolText(...args) { return this.providerLayer.formatGoogleTranslateKeyPoolText(...args); }
     normalizeGoogleTranslateKeyPool(...args) { return this.providerLayer.normalizeGoogleTranslateKeyPool(...args); }
+    getGoogleTranslateUsageLedger(...args) { return this.providerLayer.getGoogleTranslateUsageLedger(...args); }
     getAutoTranslationProviderKey(...args) { return this.providerLayer.getAutoTranslationProviderKey(...args); }
     getGoogleTranslateProviderKey(...args) { return this.providerLayer.getGoogleTranslateProviderKey(...args); }
     runModelTask(...args) { return this.providerLayer.runModelTask(...args); }

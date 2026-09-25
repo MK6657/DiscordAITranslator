@@ -299,6 +299,10 @@ class SettingsStore {
             this.plugin.settings.googleTranslate.keyPoolText = normalizedGoogleKeys.keyPoolText;
             changed = true;
         }
+        if (JSON.stringify(normalizedGoogleKeys.usageById) !== JSON.stringify(this.plugin.settings.googleTranslate.usageById ?? null)) {
+            this.plugin.settings.googleTranslate.usageById = normalizedGoogleKeys.usageById;
+            changed = true;
+        }
         if (!this.plugin.settings.ui || typeof this.plugin.settings.ui !== "object") {
             this.plugin.settings.ui = this.plugin.clone(DEFAULT_SETTINGS.ui);
             changed = true;
@@ -639,6 +643,8 @@ class SettingsStore {
         cursor[leaf] = value;
         if (parts[0] === "googleTranslate") {
             if (path === "googleTranslate.keyPoolText" && !String(value || "").trim()) {
+                // Keep the removed keys' usage so pasting them back cannot reset it.
+                this.plugin.settings.googleTranslate.usageById = this.plugin.getGoogleTranslateUsageLedger(this.plugin.settings.googleTranslate);
                 this.plugin.settings.googleTranslate.keys = [];
                 this.plugin.settings.googleTranslate.keyPoolText = "";
             }
@@ -646,6 +652,7 @@ class SettingsStore {
                 const normalized = this.plugin.normalizeGoogleTranslateKeyPool(this.plugin.settings.googleTranslate);
                 this.plugin.settings.googleTranslate.keys = normalized.keys;
                 this.plugin.settings.googleTranslate.keyPoolText = normalized.keyPoolText;
+                this.plugin.settings.googleTranslate.usageById = normalized.usageById;
             }
         }
         if (path === "translation.provider") this.plugin.applyProviderIntakeMode(value);

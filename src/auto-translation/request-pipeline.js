@@ -2122,6 +2122,7 @@ class AutoTranslationRequestPipeline {
             model: this.plugin.settings.translation.model,
             sourceLanguage: AUTO_LANGUAGE_VALUE,
             targetLanguage,
+            targetLanguageCode: this.plugin.getTargetLanguageCode(this.plugin.settings.translation.targetLanguage),
             temperature: 0,
             maxTokens: this.plugin.settings.translation.maxTokens,
             enableThinking: false,
@@ -2147,7 +2148,10 @@ class AutoTranslationRequestPipeline {
             deeplPlan: config.deeplPlan,
             appId: config.appId,
             secretKey: config.secretKey,
-            maxTokens: config.maxTokens
+            maxTokens: config.maxTokens,
+            // Builders replace targetLanguage with the LLM instruction; direct translation
+            // APIs read this raw code instead.
+            targetLanguageCode: this.plugin.getTargetLanguageCode(this.plugin.getAutoTranslationTargetLanguage(options || {}))
         };
     }
 
@@ -2558,6 +2562,7 @@ class AutoTranslationRequestPipeline {
                 ...raised.configOverrides,
                 sourceLanguage: AUTO_LANGUAGE_VALUE,
                 targetLanguage: this.plugin.getAutoTranslationTargetInstruction(this.plugin.getAutoTranslationTargetLanguage(raised)),
+                targetLanguageCode: this.plugin.getTargetLanguageCode(this.plugin.getAutoTranslationTargetLanguage(raised)),
                 temperature: 0,
                 enableThinking: false,
                 promptPolicyVersion: this.plugin.getPromptPolicyVersion("longText"),
