@@ -166,7 +166,7 @@ var require_composer_writer = __commonJS({
           if (event?.isTrusted !== true) return;
           this.cancelWriteToken(token, "user-input");
         };
-        const events = ["beforeinput", "input", "paste", "drop", "compositionstart", "keydown"];
+        const events = ["beforeinput", "input", "paste", "cut", "drop", "compositionstart"];
         events.forEach((type) => textbox.addEventListener(type, cancel, true));
         return () => events.forEach((type) => textbox.removeEventListener?.(type, cancel, true));
       }
@@ -1026,26 +1026,43 @@ var require_quick_settings = __commonJS({
 var require_chat_line_base = __commonJS({
   "src/css/03-chat-line-base.js"(exports2, module2) {
     "use strict";
+    var SOURCE_MASKED = '[data-dait-source-hidden="true"]:not(:hover):not(:focus-within):not(:is([id^="chat-messages-"], [data-list-item-id*="chat-messages"]):focus-within *)';
     module2.exports = `.dait-translation-line {
-    --dait-danger: #d83c3e;
+    --dait-line-text: var(--text-strong, var(--header-primary, #f2f3f5));
+    --dait-line-muted: var(--text-muted, #b5bac1);
+    --dait-line-danger: var(--text-danger, #fa777c);
+    --dait-line-danger-accent: var(--status-danger, #f23f43);
+    --dait-line-warning: var(--text-warning, #f0b232);
+    --dait-line-warning-accent: var(--status-warning, #f0b232);
+    --dait-line-tint: color-mix(in srgb, var(--dait-line-text) 8%, transparent);
+    --dait-line-chip: color-mix(in srgb, var(--dait-line-text) 10%, transparent);
+    --dait-line-hover: color-mix(in srgb, var(--dait-line-text) 12%, transparent);
+    --dait-line-border: color-mix(in srgb, var(--dait-line-text) 18%, transparent);
+    --dait-line-surface: var(--background-floating, var(--background-secondary, #2b2d31));
+    --dait-line-button: var(--button-secondary-background, #4e5058);
+    --dait-line-button-text: var(--white-500, #ffffff);
+    --dait-line-focus: var(--focus-primary, #00a8fc);
     --dait-chat-mask: rgba(106, 111, 123, 0.72);
     --dait-chat-mask-border: rgba(255, 255, 255, 0.1);
-    --dait-chat-revealed-bg: rgba(255, 255, 255, 0.08);
-    --dait-chat-revealed-text: #f2f3f5;
 }
 
 .theme-light .dait-translation-line {
+    --dait-line-text: var(--text-strong, var(--header-primary, #060607));
+    --dait-line-muted: var(--text-muted, #5c5e66);
+    --dait-line-danger: var(--text-danger, #c9252d);
+    --dait-line-warning: var(--text-warning, #8a5a00);
+    --dait-line-surface: var(--background-floating, #ffffff);
+    --dait-line-button: var(--button-secondary-background, #6d6f78);
     --dait-chat-mask: rgba(123, 130, 145, 0.48);
     --dait-chat-mask-border: rgba(48, 56, 70, 0.12);
-    --dait-chat-revealed-bg: rgba(30, 36, 50, 0.08);
-    --dait-chat-revealed-text: #1f232b;
 }
 
-[data-dait-source-hidden="true"] {
+${SOURCE_MASKED} {
     color: transparent !important;
     display: inline-block;
     font-size: 0 !important;
     line-height: 0 !important;
+    max-width: 100%;
     min-height: 0 !important;
     position: relative;
     text-shadow: none !important;
@@ -1053,22 +1070,26 @@ var require_chat_line_base = __commonJS({
     vertical-align: baseline;
 }
 
-[data-dait-source-hidden="true"]::before {
+/* The bar is the masked element's only content, so its width must not depend on the element's
+   (shrink-to-fit) width, and its ch units need a real font size: the masked text has font-size 0. */
+${SOURCE_MASKED}::before {
     background: var(--dait-chat-mask, rgba(106, 111, 123, 0.72));
     border: 1px solid var(--dait-chat-mask-border, rgba(255, 255, 255, 0.1));
     border-radius: 3px;
+    box-sizing: border-box;
     content: "";
     display: block;
+    font-size: 1rem;
     height: calc(max(1, var(--dait-source-mask-lines, 1)) * 1.15rem);
-    max-width: min(100%, 42ch);
-    width: min(var(--dait-source-mask-width, 18ch), 100%);
+    max-width: 100%;
+    width: var(--dait-source-mask-width, 18ch);
 }
 
-[data-dait-source-hidden="true"] > :not(.dait-message-button):not(.dait-translation-line) {
+${SOURCE_MASKED} > :not(.dait-message-button):not(.dait-translation-line) {
     display: none !important;
 }
 
-[data-dait-source-hidden="true"] > .dait-message-button {
+${SOURCE_MASKED} > .dait-message-button {
     font-size: 12px;
     line-height: 1;
 }
@@ -2394,6 +2415,12 @@ var require_composer = __commonJS({
 var require_messages_and_lines = __commonJS({
   "src/css/06-messages-and-lines.js"(exports2, module2) {
     "use strict";
+    var svgIcon = (body) => `url("data:image/svg+xml,${encodeURIComponent(`<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>${body}</svg>`)}")`;
+    var ICON_COPY = svgIcon("<rect x='9' y='9' width='12' height='12' rx='2'/><path d='M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1'/>");
+    var ICON_RETRANSLATE = svgIcon("<path d='M21 12a9 9 0 1 1-3-6.7L21 8'/><path d='M21 3v5h-5'/>");
+    var ICON_HIDE = svgIcon("<path d='M17.9 17.9A10 10 0 0 1 12 20c-7 0-10-8-10-8a18 18 0 0 1 5.1-5.9M9.9 4.2A9 9 0 0 1 12 4c7 0 10 8 10 8a18 18 0 0 1-2.2 3.2'/><path d='M1 1l22 22'/>");
+    var ICON_ALERT = svgIcon("<circle cx='12' cy='12' r='10'/><path d='M12 7v6'/><path d='M12 17h.01'/>");
+    var ICON_CLOCK = svgIcon("<circle cx='12' cy='12' r='10'/><path d='M12 6v6l4 2'/>");
     module2.exports = `.dait-message-button {
     display: inline-flex;
     align-items: center;
@@ -2501,7 +2528,7 @@ var require_messages_and_lines = __commonJS({
 }
 
 .dait-translation-line {
-    color: var(--text-normal);
+    color: var(--dait-line-text);
     display: block;
     font-size: 1rem;
     line-height: 1.375rem;
@@ -2511,20 +2538,69 @@ var require_messages_and_lines = __commonJS({
     overflow-anchor: none;
     overflow-wrap: anywhere;
     position: relative;
-    text-align: left;
+    text-align: start;
     white-space: pre-wrap;
-    width: auto;
+    width: fit-content;
 }
 
 .dait-translation-line.dait-translation-revealed {
-    background: var(--dait-chat-revealed-bg);
-    border-radius: 3px;
+    background: var(--dait-line-tint);
+    border-radius: 4px;
     box-decoration-break: clone;
     -webkit-box-decoration-break: clone;
-    color: var(--dait-chat-revealed-text);
+    color: var(--dait-line-text);
     font-weight: inherit;
-    padding: 0 3px;
+    padding: 0 6px;
     user-select: text;
+}
+
+.dait-translation-line.dait-translation-revealed.dait-translation-style-muted,
+.dait-translation-line.dait-translation-revealed.dait-translation-style-tag {
+    background: transparent;
+    padding: 0;
+}
+
+.dait-translation-line.dait-translation-revealed.dait-translation-style-muted {
+    color: var(--dait-line-muted);
+}
+
+/* With a note under the text, the faint background marks only the translated text. */
+.dait-translation-line.dait-translation-revealed.dait-translation-style-tint:has(> .dait-translation-note) {
+    background: transparent;
+    padding: 0;
+}
+
+.dait-translation-line.dait-translation-revealed.dait-translation-style-tint:has(> .dait-translation-note) > .dait-translation-text {
+    background: var(--dait-line-tint);
+    border-radius: 4px;
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+    padding: 1px 6px;
+}
+
+.dait-translation-line.dait-translation-style-tag:not(.dait-translation-preview)::before {
+    background: var(--dait-line-chip);
+    border-radius: 3px;
+    color: var(--dait-line-text);
+    content: attr(data-dait-tag);
+    display: inline-block;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 16px;
+    margin-inline-end: 6px;
+    padding: 0 5px;
+    user-select: none;
+    vertical-align: 1px;
+}
+
+.dait-translation-line.dait-translation-scale-90:not(.dait-translation-preview) {
+    font-size: 0.9rem;
+    line-height: 1.25rem;
+    min-height: 1.25rem;
+}
+
+.dait-translation-line.dait-translation-dismissed {
+    display: none !important;
 }
 
 .dait-translation-line.dait-translation-preview {
@@ -2536,47 +2612,230 @@ var require_messages_and_lines = __commonJS({
     max-inline-size: 100%;
     min-height: 1em;
     vertical-align: baseline;
+    width: auto;
 }
 
 .dait-translation-line.dait-translation-preview.dait-translation-revealed {
     padding: 0 2px;
 }
 
-.dait-translation-line.dait-translation-error {
+.dait-translation-actions {
     align-items: center;
-    background: color-mix(in srgb, var(--dait-danger, #d83c3e) 12%, transparent);
-    border: 1px solid color-mix(in srgb, var(--dait-danger, #d83c3e) 34%, transparent);
-    border-radius: 5px;
-    color: var(--dait-danger, #d83c3e);
+    background: var(--dait-line-surface);
+    border: 1px solid var(--dait-line-border);
+    border-radius: 6px;
+    box-shadow: var(--shadow-low, 0 2px 8px rgba(0, 0, 0, 0.24));
+    box-sizing: border-box;
     display: inline-flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    max-width: 100%;
-    min-width: 0;
-    padding: 3px 6px;
-    user-select: text;
+    gap: 2px;
+    height: 28px;
+    inset-inline-start: calc(100% + 6px);
+    line-height: 0;
+    opacity: 0;
+    padding: 1px;
+    pointer-events: none;
+    position: absolute;
+    top: -3px;
+    user-select: none;
+    white-space: nowrap;
+    z-index: 2;
 }
 
-.dait-translation-error-message {
+.dait-translation-actions::before {
+    content: "";
+    inset-block: 0;
+    inset-inline-start: -8px;
+    position: absolute;
+    width: 8px;
+}
+
+.dait-translation-actions[data-dait-placement="inside"] {
+    bottom: -3px;
+    inset-inline-end: 0;
+    inset-inline-start: auto;
+    top: auto;
+}
+
+.dait-translation-actions[data-dait-placement="inside"]::before {
+    content: none;
+}
+
+.dait-translation-line.dait-translation-revealed:hover > .dait-translation-actions,
+.dait-translation-line.dait-translation-revealed:focus-within > .dait-translation-actions {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.dait-translation-line.dait-translation-masked > .dait-translation-actions,
+.dait-translation-line.dait-translation-preview > .dait-translation-actions {
+    display: none;
+}
+
+.dait-translation-action {
+    align-items: center;
+    background: transparent;
+    border: 0;
+    border-radius: 4px;
+    box-sizing: border-box;
+    color: var(--dait-line-muted);
+    cursor: pointer;
+    display: inline-flex;
+    height: 24px;
+    justify-content: center;
+    margin: 0;
+    padding: 0;
+    width: 28px;
+}
+
+.dait-translation-action::before {
+    background-color: currentColor;
+    content: "";
+    height: 16px;
+    -webkit-mask: var(--dait-icon) center / 16px 16px no-repeat;
+    mask: var(--dait-icon) center / 16px 16px no-repeat;
+    width: 16px;
+}
+
+.dait-translation-action-copy {
+    --dait-icon: ${ICON_COPY};
+}
+
+.dait-translation-action-retranslate {
+    --dait-icon: ${ICON_RETRANSLATE};
+}
+
+.dait-translation-action-hide {
+    --dait-icon: ${ICON_HIDE};
+}
+
+.dait-translation-action:hover {
+    background: var(--dait-line-hover);
+    color: var(--dait-line-text);
+}
+
+.dait-translation-line.dait-translation-error {
+    align-items: center;
+    background: color-mix(in srgb, var(--dait-line-danger-accent) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--dait-line-danger-accent) 45%, transparent);
+    border-radius: 6px;
+    color: var(--dait-line-danger);
+    column-gap: 8px;
+    display: flex;
+    flex-wrap: wrap;
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+    min-height: 1.75rem;
+    padding: 1px 4px 1px 8px;
+    row-gap: 2px;
+    user-select: text;
+    white-space: normal;
+}
+
+.dait-translation-line.dait-translation-error[data-dait-error-action="wait"] {
+    background: color-mix(in srgb, var(--dait-line-warning-accent) 12%, transparent);
+    border-color: color-mix(in srgb, var(--dait-line-warning-accent) 45%, transparent);
+    color: var(--dait-line-warning);
+}
+
+.dait-translation-error-message,
+.dait-translation-note-message {
+    align-items: center;
+    display: inline-flex;
+    gap: 6px;
     min-width: 0;
     overflow-wrap: anywhere;
 }
 
-.dait-translation-retry {
-    background: transparent;
-    border: 1px solid color-mix(in srgb, var(--dait-danger, #d83c3e) 42%, transparent);
-    border-radius: 5px;
-    color: var(--dait-danger, #d83c3e);
-    cursor: pointer;
-    font-size: 12px;
-    font-weight: 720;
-    line-height: 1;
-    padding: 3px 7px;
+.dait-translation-error-message::before,
+.dait-translation-note-message::before {
+    background-color: currentColor;
+    content: "";
+    flex: 0 0 16px;
+    height: 16px;
+    -webkit-mask: var(--dait-icon, ${ICON_ALERT}) center / 16px 16px no-repeat;
+    mask: var(--dait-icon, ${ICON_ALERT}) center / 16px 16px no-repeat;
+    width: 16px;
 }
 
-.dait-translation-retry:hover,
-.dait-translation-retry:focus-visible {
-    background: color-mix(in srgb, var(--dait-danger, #d83c3e) 14%, transparent);
+.dait-translation-line.dait-translation-error[data-dait-error-action="wait"] > .dait-translation-error-message {
+    --dait-icon: ${ICON_CLOCK};
+}
+
+.dait-translation-error-button,
+.dait-translation-retry,
+.dait-translation-note-button {
+    align-items: center;
+    border-radius: 4px;
+    box-sizing: border-box;
+    cursor: pointer;
+    display: inline-flex;
+    font-family: inherit;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    height: 24px;
+    line-height: 1;
+    margin: 0;
+    padding: 0 10px;
+    white-space: nowrap;
+}
+
+.dait-translation-error-button,
+.dait-translation-note-button {
+    background: var(--dait-line-button);
+    border: 0;
+    color: var(--dait-line-button-text);
+}
+
+.dait-translation-error-button:hover,
+.dait-translation-note-button:hover {
+    filter: brightness(1.15);
+}
+
+.dait-translation-error-button:disabled {
+    cursor: default;
+    opacity: 0.72;
+}
+
+.dait-translation-retry {
+    background: transparent;
+    border: 1px solid var(--dait-line-border);
+    color: var(--dait-line-text);
+}
+
+.dait-translation-retry:hover {
+    background: var(--dait-line-hover);
+}
+
+.dait-translation-action:focus-visible,
+.dait-translation-error-button:focus-visible,
+.dait-translation-retry:focus-visible,
+.dait-translation-note-button:focus-visible,
+.dait-translation-line.dait-translation-masked:focus-visible {
+    outline: 2px solid var(--dait-line-focus);
+    outline-offset: 1px;
+}
+
+.dait-translation-note {
+    align-items: center;
+    background: color-mix(in srgb, var(--dait-line-warning-accent) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--dait-line-warning-accent) 45%, transparent);
+    border-radius: 6px;
+    box-sizing: border-box;
+    color: var(--dait-line-warning);
+    column-gap: 8px;
+    display: flex;
+    flex-wrap: wrap;
+    font-size: 0.875rem;
+    font-weight: 400;
+    line-height: 1.25rem;
+    margin: 4px 0 2px;
+    max-width: 100%;
+    min-height: 1.75rem;
+    padding: 1px 4px 1px 8px;
+    row-gap: 2px;
+    user-select: text;
+    white-space: normal;
+    width: fit-content;
 }
 
 .dait-translation-line.dait-translation-masked {
@@ -2617,19 +2876,6 @@ var require_messages_and_lines = __commonJS({
     opacity: 0;
 }
 
-.dait-translation-line.dait-translation-loading {
-    background: var(--dait-chat-mask);
-    border: 1px solid var(--dait-chat-mask-border);
-    border-radius: 3px;
-    display: block;
-    height: 1.25rem;
-    opacity: 0.86;
-}
-
-.dait-translation-line.dait-translation-preview.dait-translation-loading {
-    height: 1em;
-}
-
 .dait-translation-line.dait-translation-masked .dait-translation-text::before {
     background: var(--dait-chat-mask);
     border: 1px solid var(--dait-chat-mask-border);
@@ -2644,19 +2890,46 @@ var require_messages_and_lines = __commonJS({
 }
 
 .dait-translation-line.dait-translation-loading {
-    color: transparent;
-    max-width: 164px;
+    background: var(--dait-line-chip);
+    border-radius: 4px;
+    color: var(--dait-line-muted);
+    font-size: 0.8125rem;
+    height: 1.375rem;
+    line-height: 1.375rem;
+    max-width: 100%;
+    min-width: 7.5rem;
+    overflow: hidden;
+    padding: 0 10px;
     position: relative;
-    width: min(48%, 164px);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dait-translation-line.dait-translation-preview.dait-translation-loading {
+    display: inline-block;
+    font-size: 12px;
+    height: auto;
+    line-height: inherit;
+    max-width: min(40%, 12rem);
+    min-height: 0;
+    min-width: 0;
+    padding: 0 6px;
+    vertical-align: baseline;
 }
 
 .dait-translation-line.dait-translation-loading::after {
-    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.16), transparent);
+    background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--dait-line-text) 10%, transparent), transparent);
     content: "";
     inset: 0;
+    pointer-events: none;
     position: absolute;
     transform: translateX(-100%);
-    animation: dait-loading-sheen 1.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+    .dait-translation-line.dait-translation-loading::after {
+        animation: dait-loading-sheen 1.6s ease-in-out infinite;
+    }
 }
 
 @keyframes dait-loading-sheen {
@@ -2937,6 +3210,8 @@ var require_constants = __commonJS({
     var DATA_KEY = "settings";
     var CACHE_DATA_KEY = "translationCache";
     var DIAGNOSTIC_DATA_KEY = "diagnosticLogs";
+    var CACHE_DATA_STORE = `${PLUGIN_NAME}.cache`;
+    var DIAGNOSTIC_DATA_STORE = `${PLUGIN_NAME}.diagnostics`;
     var STYLE_ID = "discord-ai-translator-style";
     var DISCORD_THEME_CLASSES = ["theme-light", "theme-midnight", "theme-darker", "theme-dark"];
     var DISCORD_DEFAULT_THEME_CLASS = "theme-dark";
@@ -3276,6 +3551,8 @@ var require_constants = __commonJS({
     var AUTO_TRANSLATE_FINAL_INVALID_OUTPUT_FAILURE_TTL = 2 * 60 * 1e3;
     var AUTO_TRANSLATE_TRANSIENT_FAILURE_TTL = 1e4;
     var AUTO_TRANSLATE_PROVIDER_FAILURE_TTL = 6e4;
+    var AUTO_TRANSLATE_TRUNCATED_FAILURE_TTL = 2 * 60 * 1e3;
+    var AUTO_TRANSLATE_TRUNCATED_FAILURE_MAX_TTL = 30 * 60 * 1e3;
     var LOCAL_PROVIDER_UNAVAILABLE_RETRY_MS = 6e4;
     var LOCAL_PROVIDER_HEALTH_RETRY_MS = 5e3;
     var LOCAL_PROVIDER_AUTO_MODEL_VALUE = "local-model";
@@ -3299,6 +3576,7 @@ var require_constants = __commonJS({
     var AUTO_TRANSLATE_LONG_TEXT_TIMEOUT_MAX_MS = 9e4;
     var AUTO_TRANSLATE_CLOUD_LONG_TEXT_TIMEOUT_MAX_MS = 45e3;
     var MANUAL_LONG_TEXT_WHOLE_PASS_MAX_LENGTH = 1800;
+    var MANUAL_TRANSLATION_REQUEST_BUDGET = 8;
     var MODEL_REQUEST_TIMEOUT_MS = 45e3;
     var API_TEST_REQUEST_TIMEOUT_MS = 15e3;
     var API_ENDPOINT_ERROR_MESSAGE_KEYS = Object.freeze({
@@ -3335,6 +3613,9 @@ var require_constants = __commonJS({
     var INCREMENTAL_MESSAGE_WORK_MAX_PER_SLICE = 1;
     var MESSAGE_BUTTON_VISIBILITY_ALWAYS = "always";
     var MESSAGE_BUTTON_VISIBILITY_HOVER = "hover";
+    var TRANSLATION_LINE_STYLES = Object.freeze(["tint", "muted", "tag"]);
+    var TRANSLATION_LINE_TEXT_SCALES = Object.freeze([100, 90]);
+    var RTL_LANGUAGE_CODES = Object.freeze(["ar", "fa", "he", "iw", "ur", "ps", "yi", "dv", "ug", "ckb", "sd"]);
     var POLISH_REPOLISH_SOURCE_ORIGINAL = "original";
     var POLISH_REPOLISH_SOURCE_LAST_RESULT = "lastResult";
     var TRANSLATION_CACHE_DEFAULT_TTL_HOURS = 48;
@@ -3352,6 +3633,8 @@ var require_constants = __commonJS({
     var AUTO_TRANSLATE_PRECHECK_SKIP_MAX = 2e3;
     var AUTO_TRANSLATE_RECENT_RENDER_TTL_MS = 60 * 1e3;
     var AUTO_TRANSLATE_RECENT_RENDER_MAX = 1200;
+    var AUTO_TRANSLATE_PARTIAL_RESULT_TTL_MS = 10 * 60 * 1e3;
+    var AUTO_TRANSLATE_PARTIAL_RESULT_MAX = 300;
     var AUTO_TRANSLATE_LAST_DECISION_MAX = 600;
     var AUTO_TRANSLATE_INTAKE_MODES = ["auto", "dom", "bdfdb"];
     var STORE_MESSAGE_ID_NEGATIVE_LOOKUP_TTL_MS = 3e3;
@@ -3623,6 +3906,8 @@ var require_constants = __commonJS({
       googleTranslate: {
         keyPoolText: "",
         keys: [],
+        // This month's usage per key fingerprint, kept after a key's line is removed.
+        usageById: {},
         defaultMonthlyLimit: GOOGLE_TRANSLATE_DEFAULT_MONTHLY_LIMIT,
         allowPrefetch: true
       },
@@ -3659,6 +3944,8 @@ var require_constants = __commonJS({
         translationPosition: "before",
         maskTranslations: false,
         hideOriginalAfterTranslation: false,
+        translationStyle: "tint",
+        translationTextScale: 100,
         injectMessageContextMenu: true,
         enablePolishHotkey: true,
         polishHotkey: "Ctrl+Alt+P",
@@ -3671,6 +3958,8 @@ var require_constants = __commonJS({
       DATA_KEY,
       CACHE_DATA_KEY,
       DIAGNOSTIC_DATA_KEY,
+      CACHE_DATA_STORE,
+      DIAGNOSTIC_DATA_STORE,
       STYLE_ID,
       DISCORD_THEME_CLASSES,
       DISCORD_DEFAULT_THEME_CLASS,
@@ -3723,6 +4012,8 @@ var require_constants = __commonJS({
       AUTO_TRANSLATE_FINAL_INVALID_OUTPUT_FAILURE_TTL,
       AUTO_TRANSLATE_TRANSIENT_FAILURE_TTL,
       AUTO_TRANSLATE_PROVIDER_FAILURE_TTL,
+      AUTO_TRANSLATE_TRUNCATED_FAILURE_TTL,
+      AUTO_TRANSLATE_TRUNCATED_FAILURE_MAX_TTL,
       LOCAL_PROVIDER_UNAVAILABLE_RETRY_MS,
       LOCAL_PROVIDER_HEALTH_RETRY_MS,
       LOCAL_PROVIDER_AUTO_MODEL_VALUE,
@@ -3746,6 +4037,7 @@ var require_constants = __commonJS({
       AUTO_TRANSLATE_LONG_TEXT_TIMEOUT_MAX_MS,
       AUTO_TRANSLATE_CLOUD_LONG_TEXT_TIMEOUT_MAX_MS,
       MANUAL_LONG_TEXT_WHOLE_PASS_MAX_LENGTH,
+      MANUAL_TRANSLATION_REQUEST_BUDGET,
       MODEL_REQUEST_TIMEOUT_MS,
       API_TEST_REQUEST_TIMEOUT_MS,
       API_ENDPOINT_ERROR_MESSAGE_KEYS,
@@ -3779,6 +4071,9 @@ var require_constants = __commonJS({
       INCREMENTAL_MESSAGE_WORK_MAX_PER_SLICE,
       MESSAGE_BUTTON_VISIBILITY_ALWAYS,
       MESSAGE_BUTTON_VISIBILITY_HOVER,
+      TRANSLATION_LINE_STYLES,
+      TRANSLATION_LINE_TEXT_SCALES,
+      RTL_LANGUAGE_CODES,
       POLISH_REPOLISH_SOURCE_ORIGINAL,
       POLISH_REPOLISH_SOURCE_LAST_RESULT,
       TRANSLATION_CACHE_DEFAULT_TTL_HOURS,
@@ -3796,6 +4091,8 @@ var require_constants = __commonJS({
       AUTO_TRANSLATE_PRECHECK_SKIP_MAX,
       AUTO_TRANSLATE_RECENT_RENDER_TTL_MS,
       AUTO_TRANSLATE_RECENT_RENDER_MAX,
+      AUTO_TRANSLATE_PARTIAL_RESULT_TTL_MS,
+      AUTO_TRANSLATE_PARTIAL_RESULT_MAX,
       AUTO_TRANSLATE_LAST_DECISION_MAX,
       AUTO_TRANSLATE_INTAKE_MODES,
       STORE_MESSAGE_ID_NEGATIVE_LOOKUP_TTL_MS,
@@ -3858,6 +4155,7 @@ var require_request_pipeline = __commonJS({
       DIAGNOSTIC_REASON_CODES,
       LOCAL_PROVIDER_HEALTH_RETRY_MS,
       MANUAL_LONG_TEXT_WHOLE_PASS_MAX_LENGTH,
+      MANUAL_TRANSLATION_REQUEST_BUDGET,
       MODEL_REQUEST_TIMEOUT_MS,
       TRANSLATION_VALIDATION_QUALITIES
     } = require_constants();
@@ -4112,7 +4410,7 @@ var require_request_pipeline = __commonJS({
         const cacheAliases = this.plugin.getTranslationCacheAliases(text, targetRequestOptions);
         const lineCacheAliases = this.plugin.getTranslationLineCacheAliases(text, targetRequestOptions);
         const canRenderCacheHit = targetVisible && !scanState.renderPaused && !scanState.layoutUnstable;
-        if (this.plugin.hasCurrentTranslationLine(target.content, cacheKey, text, lineCacheAliases, targetRequestOptions)) {
+        if (this.plugin.hasCurrentTranslationLine(target.content, cacheKey, this.plugin.getAutoTranslationTargetDomText(target), lineCacheAliases, targetRequestOptions, text)) {
           return {
             action: "skip",
             status: "skipped",
@@ -4186,6 +4484,27 @@ var require_request_pipeline = __commonJS({
               extra: { textCacheKey: this.plugin.getTextFingerprint(textCacheKey), canRender: canRenderCacheHit, targetVisible }
             };
           }
+        }
+        const partialResult = this.plugin.getAutoTranslationPartialResult(cacheKey, text, now);
+        if (partialResult && !this.plugin.hasActiveAutoTranslationKey(cacheKey)) {
+          return {
+            action: "render-cache",
+            status: "cache-hit",
+            state: DIAGNOSTIC_MESSAGE_STATES.CACHE_HIT,
+            reasonCode: DIAGNOSTIC_REASON_CODES.CACHE_HIT,
+            cacheKey,
+            requestOptions: targetRequestOptions,
+            cachedTranslation: partialResult.translated,
+            renderMeta: {
+              partial: true,
+              validationQuality: partialResult.validationQuality,
+              validationReason: partialResult.validationReason,
+              partialInfo: partialResult.partialInfo
+            },
+            canRender: canRenderCacheHit,
+            counts: { eligible: 1, cacheHits: 1 },
+            extra: { partialResult: true, canRender: canRenderCacheHit, targetVisible }
+          };
         }
         const recentRender = this.plugin.getRecentAutoTranslationRender(cacheKey, text, targetRequestOptions, now);
         if (recentRender) {
@@ -4368,7 +4687,9 @@ var require_request_pipeline = __commonJS({
             decision.cacheKey,
             decision.canRender,
             decision.requestOptions,
-            candidate.textOptions
+            candidate.textOptions,
+            decision.renderMeta || null,
+            candidate.domText
           );
           return;
         }
@@ -4470,7 +4791,7 @@ var require_request_pipeline = __commonJS({
       isLongAutoTranslationItem(item) {
         return this.plugin.translationScheduler.isLongItem(item);
       }
-      async runAutoTranslationFallbackItems(pending) {
+      async runAutoTranslationFallbackItems(pending, taskOptions = {}) {
         const queue = this.plugin.takeAutoTranslationFallbackQueue(pending);
         if (queue.length) this.plugin.logDiagnostic("auto.fallback", "start", { count: queue.length, pending: pending.size });
         for (const item of queue) {
@@ -4492,7 +4813,7 @@ var require_request_pipeline = __commonJS({
               DIAGNOSTIC_MESSAGE_STATES.RETRYING,
               DIAGNOSTIC_REASON_CODES.RETRYING
             );
-            translated = await this.plugin.runAutoTranslationStrictFallbackTask(item.text, item.requestOptions);
+            translated = await this.plugin.runAutoTranslationStrictFallbackTask(item.text, item.requestOptions, { signal: taskOptions?.signal });
           } catch (error) {
             if (!this.plugin.isAutoTranslationWorkCurrent(item)) {
               pending.delete(item);
@@ -4566,7 +4887,7 @@ var require_request_pipeline = __commonJS({
         }
         return queue;
       }
-      async runAutoTranslationBatchRetryItems(pending) {
+      async runAutoTranslationBatchRetryItems(pending, taskOptions = {}) {
         const items = [...pending].filter((item) => this.plugin.isAutoTranslationWorkCurrent(item));
         if (!items.length) return;
         if (this.plugin.isAutoTranslationProviderCoolingDown(items[0]?.requestOptions)) return;
@@ -4580,7 +4901,7 @@ var require_request_pipeline = __commonJS({
             DIAGNOSTIC_MESSAGE_STATES.RETRYING,
             DIAGNOSTIC_REASON_CODES.RETRYING
           ));
-          const translations = await this.plugin.runAutoTranslationBatchTask(items.map((item) => item.text), items[0]?.requestOptions, { retry: true });
+          const translations = await this.plugin.runAutoTranslationBatchTask(items.map((item) => item.text), items[0]?.requestOptions, { retry: true, signal: taskOptions?.signal });
           if (!items.some((item) => this.plugin.isAutoTranslationWorkCurrent(item))) {
             items.forEach((item) => pending.delete(item));
             return;
@@ -4910,11 +5231,16 @@ var require_request_pipeline = __commonJS({
       }
       async runLongAutoTranslationTask(text, options = this.plugin.getAutoTranslationOptions(), taskOptions = {}) {
         const longOptions = options?.mode === "long-text" ? options : this.plugin.getLongTextTranslationOptions(options, text);
+        delete taskOptions.longTextPartial;
+        delete taskOptions.longTextFailedChunks;
+        delete taskOptions.longTextSuccessfulChunks;
+        delete taskOptions.longTextPartialInfo;
         const chunks = this.plugin.splitLongAutoTranslationText(text, this.plugin.getLongAutoTranslationChunkLength(longOptions));
         if (chunks.length <= 1) return this.plugin.runAutoTranslationTaskWithOptions(text, longOptions, taskOptions);
         const translatedChunks = [];
         const chunkFailures = [];
         const sourceHash = this.plugin.getStrongTextFingerprint(text);
+        let budgetError = null;
         for (let index = 0; index < chunks.length; index++) {
           if (typeof taskOptions.heartbeat === "function" && taskOptions.heartbeat() === false) {
             throw this.plugin.createAutoTranslationStaleError("long-text-stale-before-chunk");
@@ -4925,11 +5251,22 @@ var require_request_pipeline = __commonJS({
             translated = await this.plugin.runAutoTranslationTaskWithOptions(chunks[index], chunkOptions, taskOptions);
           } catch (error) {
             if (this.plugin.isAbandonedTranslationError(error)) throw error;
-            const rescued = taskOptions?.manualRescue ? await this.plugin.runLongAutoTranslationChunkManualRescue(chunks[index], chunkOptions, error, taskOptions, {
-              sourceHash,
-              chunkIndex: index,
-              chunkTotal: chunks.length
-            }) : null;
+            if (this.plugin.shouldStopLongAutoTranslationOnChunkError(error)) throw error;
+            if (this.plugin.isAutoTranslationRequestBudgetError(error)) budgetError = error;
+            let rescued = null;
+            if (taskOptions?.manualRescue && !budgetError) {
+              try {
+                rescued = await this.plugin.runLongAutoTranslationChunkManualRescue(chunks[index], chunkOptions, error, taskOptions, {
+                  sourceHash,
+                  chunkIndex: index,
+                  chunkTotal: chunks.length
+                });
+              } catch (rescueError) {
+                if (this.plugin.isAbandonedTranslationError(rescueError) || this.plugin.shouldStopLongAutoTranslationOnChunkError(rescueError)) throw rescueError;
+                if (this.plugin.isAutoTranslationRequestBudgetError(rescueError)) budgetError = rescueError;
+                rescued = { translated: "", error };
+              }
+            }
             if (rescued?.translated) {
               translated = rescued.translated;
               if (rescued.validation?.quality === TRANSLATION_VALIDATION_QUALITIES.PARTIAL) {
@@ -4956,6 +5293,13 @@ var require_request_pipeline = __commonJS({
             throw this.plugin.createAutoTranslationStaleError("long-text-stale-after-chunk");
           }
           translatedChunks.push(String(translated || "").trim());
+          if (budgetError) {
+            for (let rest = index + 1; rest < chunks.length; rest++) {
+              chunkFailures.push({ index: rest, error: budgetError });
+              translatedChunks.push("");
+            }
+            break;
+          }
         }
         const successfulChunks = translatedChunks.filter((chunk) => chunk && !this.plugin.hasLongAutoTranslationChunkFailurePlaceholder(chunk));
         if (!successfulChunks.length) {
@@ -4965,12 +5309,13 @@ var require_request_pipeline = __commonJS({
         if (chunkFailures.length) {
           const firstFailure = chunkFailures[0]?.error;
           const successRatio = successfulChunks.length / Math.max(1, chunks.length);
-          longOptions.longTextPartial = true;
-          longOptions.longTextFailedChunks = chunkFailures.length;
-          longOptions.longTextSuccessfulChunks = successfulChunks.length;
           taskOptions.longTextPartial = true;
           taskOptions.longTextFailedChunks = chunkFailures.length;
           taskOptions.longTextSuccessfulChunks = successfulChunks.length;
+          taskOptions.longTextPartialInfo = {
+            missingSegments: [...new Set(chunkFailures.map((failure) => failure.index + 1))].sort((left, right) => left - right),
+            totalSegments: chunks.length
+          };
           this.plugin.logDiagnostic("auto.long-text", successRatio >= 0.6 ? "partial" : "low-partial", {
             sourceHash,
             chunkTotal: chunks.length,
@@ -5050,6 +5395,7 @@ var require_request_pipeline = __commonJS({
               invalidReason: error?.autoTranslationInvalidReason || "",
               validationQuality: error?.autoTranslationValidationQuality || ""
             });
+            if (!this.plugin.isManualRescueRetryableError(error)) throw error;
           }
         }
         const subchunkRescue = await this.plugin.runLongAutoTranslationSubchunkManualRescue(chunkText, chunkOptions, taskOptions, meta);
@@ -5109,6 +5455,7 @@ var require_request_pipeline = __commonJS({
               invalidReason: error?.autoTranslationInvalidReason || "",
               validationQuality: error?.autoTranslationValidationQuality || ""
             });
+            if (!this.plugin.isManualRescueRetryableError(error)) throw error;
           }
         }
         const merged = translatedParts.filter(Boolean).join("\n\n").trim();
@@ -5165,7 +5512,7 @@ var require_request_pipeline = __commonJS({
           configOverrides
         };
       }
-      async runAutoTranslationModelAttempt(text, options = this.plugin.getAutoTranslationOptions()) {
+      async runAutoTranslationModelAttempt(text, options = this.plugin.getAutoTranslationOptions(), taskOptions = {}) {
         const timeoutMs = this.plugin.getAutoTranslationRequestTimeoutMs(options, text);
         const translated = await this.plugin.runModelTask("translation", text, {
           configOverrides: options.configOverrides,
@@ -5173,7 +5520,8 @@ var require_request_pipeline = __commonJS({
           mode: options.mode || "auto",
           requestContext: options.requestContext,
           longTextChunk: Boolean(options.longTextChunk),
-          longTextSourceLength: Number(options.longTextSourceLength || String(text || "").length) || 0
+          longTextSourceLength: Number(options.longTextSourceLength || String(text || "").length) || 0,
+          ...taskOptions?.signal ? { signal: taskOptions.signal } : {}
         });
         return this.plugin.sanitizeAutoTranslationOutput(text, translated, this.plugin.getAutoTranslationTargetLanguage(options), this.plugin.getAutoTranslationOutputValidationOptions(text, translated, options));
       }
@@ -5251,17 +5599,17 @@ var require_request_pipeline = __commonJS({
             shouldRepair: true
           };
         }
+        const partialLongText = Boolean(options?.partialLongText || requestOptions?.longTextPartial);
         if (policy === "trust-provider") {
           return {
             ...base,
-            quality: TRANSLATION_VALIDATION_QUALITIES.GOOD,
-            reasonCode: invalidReason,
+            quality: partialLongText ? TRANSLATION_VALIDATION_QUALITIES.PARTIAL : TRANSLATION_VALIDATION_QUALITIES.GOOD,
+            reasonCode: partialLongText ? invalidReason || "long-text-partial" : invalidReason,
             renderable: true,
-            cacheable: true,
+            cacheable: !partialLongText,
             shouldRepair: false
           };
         }
-        const partialLongText = Boolean(options?.partialLongText || requestOptions?.longTextPartial);
         if (partialLongText && !invalidReason) {
           return {
             ...base,
@@ -5424,12 +5772,14 @@ var require_request_pipeline = __commonJS({
         let firstInvalidReason = "";
         let firstValidation = null;
         try {
-          translated = await this.plugin.runAutoTranslationModelAttempt(text, options);
+          this.plugin.consumeAutoTranslationRequestBudget(taskOptions);
+          translated = await this.plugin.runAutoTranslationModelAttempt(text, options, taskOptions);
           const firstValidationOptions = this.plugin.getAutoTranslationOutputValidationOptions(text, translated, options);
           firstValidation = this.plugin.getAutoTranslationOutputValidationResult(text, translated, this.plugin.getAutoTranslationTargetLanguage(options), firstValidationOptions, options);
           firstInvalidReason = firstValidation.reasonCode || "";
         } catch (error) {
-          if (!error?.modelOutputTruncated || taskOptions.retryInvalidOutput === false || !this.plugin.isAutoTranslationStrictRetryEnabled()) throw error;
+          if (!error?.modelOutputTruncated || taskOptions.retryInvalidOutput === false) throw error;
+          if (!this.plugin.isAutoTranslationStrictRetryEnabled()) return this.plugin.runTruncatedAutoTranslationRetry(text, options, taskOptions);
           firstInvalidReason = "truncated";
         }
         if (firstValidation?.renderable) {
@@ -5448,7 +5798,8 @@ var require_request_pipeline = __commonJS({
         if (this.plugin.shouldRunLocalAutoTranslationRepairRetry(firstInvalidReason, text, translated, options, taskOptions)) {
           let repairOptions = this.plugin.getAutoTranslationFinalFallbackOptions(text, options);
           if (firstInvalidReason === "truncated") repairOptions = this.plugin.withRaisedAutoTranslationMaxTokens(repairOptions, text, 1.8);
-          const repaired = await this.plugin.runAutoTranslationModelAttempt(text, repairOptions);
+          this.plugin.consumeAutoTranslationRequestBudget(taskOptions);
+          const repaired = await this.plugin.runAutoTranslationModelAttempt(text, repairOptions, taskOptions);
           const repairValidationOptions = this.plugin.getAutoTranslationOutputValidationOptions(text, repaired, repairOptions);
           const repairValidation = this.plugin.getAutoTranslationOutputValidationResult(text, repaired, this.plugin.getAutoTranslationTargetLanguage(repairOptions), repairValidationOptions, repairOptions);
           const repairInvalidReason = repairValidation.reasonCode || "";
@@ -5461,7 +5812,8 @@ var require_request_pipeline = __commonJS({
         let retried = "";
         let retryInvalidReason = "";
         try {
-          retried = await this.plugin.runAutoTranslationModelAttempt(text, retryOptions);
+          this.plugin.consumeAutoTranslationRequestBudget(taskOptions);
+          retried = await this.plugin.runAutoTranslationModelAttempt(text, retryOptions, taskOptions);
           const retryValidationOptions = this.plugin.getAutoTranslationOutputValidationOptions(text, retried, retryOptions);
           const retryValidation = this.plugin.getAutoTranslationOutputValidationResult(text, retried, this.plugin.getAutoTranslationTargetLanguage(retryOptions), retryValidationOptions, retryOptions);
           retryInvalidReason = retryValidation.reasonCode || "";
@@ -5472,12 +5824,62 @@ var require_request_pipeline = __commonJS({
         }
         let lastChanceOptions = this.plugin.getAutoTranslationFinalFallbackOptions(text, options);
         if (retryInvalidReason === "truncated" || firstInvalidReason === "truncated") lastChanceOptions = this.plugin.withRaisedAutoTranslationMaxTokens(lastChanceOptions, text, 2.2);
-        const finalText = await this.plugin.runAutoTranslationModelAttempt(text, lastChanceOptions);
+        this.plugin.consumeAutoTranslationRequestBudget(taskOptions);
+        const finalText = await this.plugin.runAutoTranslationModelAttempt(text, lastChanceOptions, taskOptions);
         const finalValidationOptions = this.plugin.getAutoTranslationOutputValidationOptions(text, finalText, lastChanceOptions);
         const finalValidation = this.plugin.getAutoTranslationOutputValidationResult(text, finalText, this.plugin.getAutoTranslationTargetLanguage(lastChanceOptions), finalValidationOptions, lastChanceOptions);
         const finalInvalidReason = finalValidation.reasonCode || "";
         if (finalValidation.renderable) return finalText;
         throw this.plugin.createFinalInvalidAutoTranslationError(finalInvalidReason);
+      }
+      // With strict retry off, a cut-off output still gets one retry with a larger max_tokens. If
+      // that is cut off too, its truncation error ends the task and the failure layer backs off.
+      async runTruncatedAutoTranslationRetry(text, options = this.plugin.getAutoTranslationOptions(), taskOptions = {}) {
+        const raisedOptions = this.plugin.withRaisedAutoTranslationMaxTokens(options, text, 1.8);
+        this.plugin.logDiagnostic("auto.truncated", "retry", {
+          sourceHash: this.plugin.getStrongTextFingerprint(text),
+          mode: options?.mode || "auto",
+          maxTokens: Number(raisedOptions?.configOverrides?.maxTokens || 0)
+        });
+        this.plugin.consumeAutoTranslationRequestBudget(taskOptions);
+        const retried = await this.plugin.runAutoTranslationModelAttempt(text, raisedOptions, taskOptions);
+        const validation = this.plugin.getAutoTranslationOutputValidationResult(
+          text,
+          retried,
+          this.plugin.getAutoTranslationTargetLanguage(raisedOptions),
+          this.plugin.getAutoTranslationOutputValidationOptions(text, retried, raisedOptions),
+          raisedOptions
+        );
+        if (validation.renderable) return retried;
+        throw this.plugin.createFinalInvalidAutoTranslationError(validation.reasonCode || "invalid-output", { validationQuality: validation.quality });
+      }
+      // A per-click budget of model requests (manual translation). Every attempt, rescue and chunk
+      // request takes one; when none are left the attempt fails without sending anything.
+      createAutoTranslationRequestBudget(limit = MANUAL_TRANSLATION_REQUEST_BUDGET) {
+        return { limit: Math.max(1, Math.floor(Number(limit) || MANUAL_TRANSLATION_REQUEST_BUDGET)), used: 0 };
+      }
+      consumeAutoTranslationRequestBudget(taskOptions = {}) {
+        const budget = taskOptions?.requestBudget;
+        if (!budget) return;
+        if (this.plugin.isAutoTranslationRequestBudgetExhausted(budget)) {
+          const error = new Error("REQUEST_BUDGET_EXHAUSTED");
+          error.code = "REQUEST_BUDGET_EXHAUSTED";
+          error.autoTranslationRequestBudgetExhausted = true;
+          error.requestBudgetLimit = budget.limit;
+          throw error;
+        }
+        budget.used++;
+      }
+      isAutoTranslationRequestBudgetExhausted(budget) {
+        return Boolean(budget && Number(budget.used || 0) >= Number(budget.limit || 0));
+      }
+      isAutoTranslationRequestBudgetError(error) {
+        return Boolean(error?.autoTranslationRequestBudgetExhausted);
+      }
+      // Errors that say the provider (not this chunk) is failing: sending the remaining chunks of a
+      // long message would only fail too and make rate limits worse.
+      shouldStopLongAutoTranslationOnChunkError(error) {
+        return ["auth", "quota", "rate-limit", "server", "local-unavailable", "network", "timeout"].includes(this.plugin.getAutoTranslationFailureType(error));
       }
       shouldRunLocalAutoTranslationRepairRetry(reason, text, translated, options = this.plugin.getAutoTranslationOptions(), taskOptions = {}) {
         if (taskOptions.retryInvalidOutput === false) return false;
@@ -5533,14 +5935,15 @@ var require_request_pipeline = __commonJS({
       isAbandonedTranslationError(error) {
         return Boolean(error?.autoTranslationStale) || this.plugin.isRequestCancelled(error);
       }
-      async runAutoTranslationStrictFallbackTask(text, options = this.plugin.getAutoTranslationOptions()) {
+      async runAutoTranslationStrictFallbackTask(text, options = this.plugin.getAutoTranslationOptions(), taskOptions = {}) {
         const strictOptions = this.plugin.getAutoTranslationRetryOptions(text, "", options);
+        const signalOptions = taskOptions?.signal ? { signal: taskOptions.signal } : {};
         try {
-          return await this.plugin.runAutoTranslationTask(text, strictOptions, { retryInvalidOutput: false });
+          return await this.plugin.runAutoTranslationTask(text, strictOptions, { retryInvalidOutput: false, ...signalOptions });
         } catch (error) {
           if (!error?.autoTranslationFinalInvalidOutput) throw error;
           const lastChanceOptions = this.plugin.getAutoTranslationFinalFallbackOptions(text, options);
-          const translated = await this.plugin.runAutoTranslationModelAttempt(text, lastChanceOptions);
+          const translated = await this.plugin.runAutoTranslationModelAttempt(text, lastChanceOptions, signalOptions);
           const finalInvalidReason = this.plugin.getAutoTranslationInvalidOutputReason(
             text,
             translated,
@@ -5556,7 +5959,7 @@ var require_request_pipeline = __commonJS({
           throw this.plugin.createAutoBatchParseError("Long text is handled by LongTextStrategy");
         }
         if (this.plugin.isDirectTranslateProvider(this.plugin.getEffectiveTaskConfig("translation", options?.configOverrides))) {
-          return this.plugin.runDirectTranslationBatchTask(texts, options);
+          return this.plugin.runDirectTranslationBatchTask(texts, options, taskOptions);
         }
         const batch = texts.map((text, index) => ({
           id: String(index + 1).padStart(3, "0"),
@@ -5566,7 +5969,8 @@ var require_request_pipeline = __commonJS({
         const output = await this.plugin.runModelTask("translation", JSON.stringify(batch), {
           configOverrides: batchOptions.configOverrides,
           timeoutMs: this.plugin.getAutoTranslationRequestTimeoutMs(batchOptions),
-          mode: batchOptions.mode || "auto-batch"
+          mode: batchOptions.mode || "auto-batch",
+          ...taskOptions?.signal ? { signal: taskOptions.signal } : {}
         });
         const rows = this.plugin.parseAutoTranslationBatchOutput(output);
         const byId = /* @__PURE__ */ new Map();
@@ -5758,6 +6162,7 @@ var require_request_pipeline = __commonJS({
           model: this.plugin.settings.translation.model,
           sourceLanguage: AUTO_LANGUAGE_VALUE,
           targetLanguage,
+          targetLanguageCode: this.plugin.getTargetLanguageCode(this.plugin.settings.translation.targetLanguage),
           temperature: 0,
           maxTokens: this.plugin.settings.translation.maxTokens,
           enableThinking: false,
@@ -5780,7 +6185,10 @@ var require_request_pipeline = __commonJS({
           deeplPlan: config.deeplPlan,
           appId: config.appId,
           secretKey: config.secretKey,
-          maxTokens: config.maxTokens
+          maxTokens: config.maxTokens,
+          // Builders replace targetLanguage with the LLM instruction; direct translation
+          // APIs read this raw code instead.
+          targetLanguageCode: this.plugin.getTargetLanguageCode(this.plugin.getAutoTranslationTargetLanguage(options || {}))
         };
       }
       getAutoTranslationTargetInstruction(language) {
@@ -6127,6 +6535,7 @@ var require_request_pipeline = __commonJS({
             ...raised.configOverrides,
             sourceLanguage: AUTO_LANGUAGE_VALUE,
             targetLanguage: this.plugin.getAutoTranslationTargetInstruction(this.plugin.getAutoTranslationTargetLanguage(raised)),
+            targetLanguageCode: this.plugin.getTargetLanguageCode(this.plugin.getAutoTranslationTargetLanguage(raised)),
             temperature: 0,
             enableThinking: false,
             promptPolicyVersion: this.plugin.getPromptPolicyVersion("longText"),
@@ -6177,6 +6586,9 @@ var require_request_pipeline = __commonJS({
           return translated;
         } catch (error) {
           if (this.plugin.isAbandonedTranslationError(error)) throw error;
+          if (this.plugin.isAutoTranslationRequestBudgetError(error) || this.plugin.shouldStopLongAutoTranslationOnChunkError(error) && !this.plugin.isTimeoutError(error)) {
+            throw error;
+          }
           this.plugin.logDiagnostic("manual.long-text.whole-pass", "failed", {
             ...this.plugin.getTranslationDiagnosticMeta("manual", {
               requestOptions: wholeOptions,
@@ -6208,7 +6620,7 @@ var require_request_pipeline = __commonJS({
       withAutoTranslationCandidateIdentity(options, candidate = {}) {
         return {
           ...options,
-          messageIdentity: candidate.messageIdentity || this.plugin.getMessageIdentity(candidate.messageNode, candidate.content, candidate.text || "")
+          messageIdentity: candidate.messageIdentity || this.plugin.getMessageIdentity(candidate.messageNode, candidate.content, this.plugin.getAutoTranslationTargetDomText(candidate))
         };
       }
     };
@@ -6239,6 +6651,8 @@ var require_queue_core = __commonJS({
       AUTO_TRANSLATE_MAX_CONCURRENCY,
       AUTO_TRANSLATE_MIN_BATCH_SIZE,
       AUTO_TRANSLATE_MIN_CONCURRENCY,
+      AUTO_TRANSLATE_PARTIAL_RESULT_MAX,
+      AUTO_TRANSLATE_PARTIAL_RESULT_TTL_MS,
       AUTO_TRANSLATE_PREFETCH_RANGES,
       AUTO_TRANSLATE_PROVIDER_FAILURE_TTL,
       AUTO_TRANSLATE_PROVIDER_REQUEST_BATCH_MAX,
@@ -6251,6 +6665,8 @@ var require_queue_core = __commonJS({
       AUTO_TRANSLATE_SCROLL_STILL_MS,
       AUTO_TRANSLATE_TERMINAL_FAILURE_TTL,
       AUTO_TRANSLATE_TRANSIENT_FAILURE_TTL,
+      AUTO_TRANSLATE_TRUNCATED_FAILURE_MAX_TTL,
+      AUTO_TRANSLATE_TRUNCATED_FAILURE_TTL,
       AUTO_TRANSLATE_VIEWPORT_JUMP_COOLDOWN_MS,
       AUTO_TRANSLATE_VIEWPORT_JUMP_SETTLE_MS,
       AUTO_TRANSLATE_VIEWPORT_SETTLE_MS,
@@ -6297,6 +6713,8 @@ var require_queue_core = __commonJS({
         this.plugin.autoTranslationQueue = [];
         this.plugin.autoTranslationQueuedKeys.clear();
         if (!options.preserveVersion) {
+          this.plugin.abortAutoTranslationRequests("invalidated");
+          this.plugin.autoTranslationPartialResults?.clear?.();
           this.plugin.autoTranslationInFlight = 0;
           this.plugin.autoTranslationInFlightKeys.clear();
           this.plugin.autoTranslationVisibleLongInFlightKeys.clear();
@@ -6903,7 +7321,7 @@ var require_queue_core = __commonJS({
       shouldRetainAutoTranslationFailureItem(item, error) {
         if (!item?.cacheKey || item?.daitPrefetchRequest) return false;
         const type = this.plugin.getAutoTranslationFailureType(error);
-        if (!["local-unavailable", "timeout", "network", "server", "rate-limit", "truncated"].includes(type)) return false;
+        if (!["local-unavailable", "timeout", "network", "server", "rate-limit"].includes(type)) return false;
         return this.plugin.shouldRetainAutoTranslationProviderBlockedItem(item);
       }
       getAutoTranslationProviderBlockedRetryMs(providerFailure = null, localProviderHealthBlocked = false, now = Date.now()) {
@@ -7125,18 +7543,15 @@ var require_queue_core = __commonJS({
       isAutoTranslationTargetReady(target, cacheKey = target?.cacheKey) {
         if (!target?.messageNode?.isConnected || !target?.content?.isConnected) return false;
         if (!this.plugin.isAutoTranslationTargetIdentityCurrent(target)) return false;
-        if (this.plugin.hasCurrentTranslationLine(target.content, cacheKey, target.text, this.plugin.getTranslationLineCacheAliases(target.text, target.requestOptions || {}))) return false;
+        const domText = this.plugin.getAutoTranslationTargetDomText(target);
+        if (this.plugin.hasCurrentTranslationLine(target.content, cacheKey, domText, this.plugin.getTranslationLineCacheAliases(target.text, target.requestOptions || {}), null, target.text)) return false;
         const messageInRange = this.plugin.isAutoTranslationTargetInScanRange(target.messageNode);
         const contentInRange = this.plugin.isAutoTranslationTargetInScanRange(target.content);
         if (!target.daitHistoryRequest) {
           if (!messageInRange && !contentInRange) return false;
           if (!contentInRange && !this.plugin.isAutoTranslationContentInsideMessage(target)) return false;
         }
-        const currentText = this.plugin.getElementText(target.content, target.textOptions);
-        if (currentText === target.text) return true;
-        if (target.sourceTextKind === "store-full" && this.plugin.isManualTranslationSourceCompatible(target.text, currentText)) return true;
-        if (target.domText && currentText === target.domText && this.plugin.isManualTranslationSourceCompatible(target.text, target.domText)) return true;
-        return false;
+        return this.plugin.isAutoTranslationTargetDomTextCurrent(target);
       }
       getAutoTranslateConcurrency() {
         if (!this.plugin.isAutoTranslateEnabled()) return 0;
@@ -7149,8 +7564,10 @@ var require_queue_core = __commonJS({
       isAutoTranslationPrefetchConfigured() {
         return Boolean(this.plugin.settings.ui?.autoTranslatePrefetch);
       }
+      // Channel rule (v0.4.0): 'enabled' is an allow-list that works even while the main
+      // auto-translate switch is off, 'disabled' always wins, 'inherit' follows the main switch.
       isAutoTranslateEnabled() {
-        return Boolean(this.plugin.isStarted && this.plugin.settings?.translation?.enabled && this.plugin.settings?.ui?.autoTranslateMessages && this.plugin.isCurrentChannelAutoTranslateAllowed());
+        return Boolean(this.plugin.isStarted && this.plugin.settings?.translation?.enabled && this.plugin.isCurrentChannelAutoTranslateAllowed());
       }
       cancelAutoTranslationRuntimeWork(reason = "disabled") {
         const hasRetryTimer = Boolean(this.plugin.autoTranslationRetryTimer);
@@ -7213,8 +7630,9 @@ var require_queue_core = __commonJS({
       setCurrentChannelAutoTranslatePolicyMode(mode, routeKey = this.plugin.getCurrentRouteKey(), options = {}) {
         const normalized = this.plugin.normalizeChannelAutoTranslatePolicyMode(mode);
         const key = this.plugin.getChannelAutoTranslatePolicyStorageKey(routeKey);
+        const syncOptions = { includeActive: true, routeKey };
         if (!key) {
-          this.plugin.syncSettingControls("ui.currentChannelAutoTranslatePolicy", "inherit", { includeActive: true });
+          this.plugin.syncSettingControls("ui.currentChannelAutoTranslatePolicy", "inherit", syncOptions);
           return false;
         }
         if (!this.plugin.settings.ui.channelAutoTranslatePolicies || typeof this.plugin.settings.ui.channelAutoTranslatePolicies !== "object" || Array.isArray(this.plugin.settings.ui.channelAutoTranslatePolicies)) {
@@ -7227,7 +7645,7 @@ var require_queue_core = __commonJS({
         if (normalized === "inherit") delete policies[key];
         else policies[key] = { mode: normalized };
         if (previous === normalized) {
-          this.plugin.syncSettingControls("ui.currentChannelAutoTranslatePolicy", normalized, { includeActive: true });
+          this.plugin.syncSettingControls("ui.currentChannelAutoTranslatePolicy", normalized, syncOptions);
           if (options.save === "immediate" || options.forceSave === true) this.plugin.saveSettings({ retryOnError: options.retryOnError });
           else if (options.save === "debounce") this.plugin.saveSettings({ debounce: true, delayMs: options.delayMs });
           return false;
@@ -7235,9 +7653,9 @@ var require_queue_core = __commonJS({
         if (options.save === false) {
         } else if (options.save === "immediate") this.plugin.saveSettings({ retryOnError: options.retryOnError });
         else this.plugin.saveSettings({ debounce: true, delayMs: options.delayMs });
-        this.plugin.syncSettingControls("ui.currentChannelAutoTranslatePolicy", normalized, { includeActive: true });
+        this.plugin.syncSettingControls("ui.currentChannelAutoTranslatePolicy", normalized, syncOptions);
         this.plugin.invalidateAutoTranslationQueue();
-        if (normalized === "disabled") this.plugin.cancelAutoTranslationRuntimeWork("channel-policy-disabled");
+        if (!this.plugin.isAutoTranslateEnabled()) this.plugin.cancelAutoTranslationRuntimeWork("channel-policy-disabled");
         this.plugin.logDiagnostic("auto.channel-policy", "updated", {
           ...this.plugin.getDiagnosticBaseMeta("auto", "settings", normalized === "disabled" ? "channel-disabled" : "channel-policy"),
           routeKeyHash: this.plugin.getDiagnosticRouteKeyHash(routeKey),
@@ -7262,7 +7680,9 @@ var require_queue_core = __commonJS({
       }
       isCurrentChannelAutoTranslateAllowed(routeKey = this.plugin.getCurrentRouteKey()) {
         const policy = this.plugin.getCurrentChannelAutoTranslatePolicy(routeKey);
-        return policy.enabled !== false;
+        if (policy.mode === "enabled") return true;
+        if (policy.mode === "disabled") return false;
+        return Boolean(this.plugin.settings?.ui?.autoTranslateMessages);
       }
       isAutoTranslationRequestCurrent(requestOptions) {
         const versionCurrent = Number(requestOptions?.version ?? this.plugin.autoTranslationConfigVersion) === this.plugin.autoTranslationConfigVersion;
@@ -7293,9 +7713,11 @@ var require_queue_core = __commonJS({
         const startedAt = Date.now();
         try {
           if (this.plugin.isAutoTranslationWorkCurrent(item)) this.plugin.renderPendingAutoTranslationLoadingSafely(item);
-          const translated = await this.plugin.runAutoTranslationTask(item.text, item.requestOptions, {
-            heartbeat: () => this.plugin.heartbeatAutoTranslationInFlightItem(item)
-          });
+          const taskOptions = {
+            heartbeat: () => this.plugin.heartbeatAutoTranslationInFlightItem(item),
+            signal: this.plugin.getAutoTranslationAbortSignal()
+          };
+          const translated = await this.plugin.runAutoTranslationTask(item.text, item.requestOptions, taskOptions);
           if (this.plugin.isAutoTranslationWorkCurrent(item)) {
             this.plugin.logDiagnostic("auto.message", "success", {
               ...this.plugin.getAutoTranslationDiagnosticMeta(item, DIAGNOSTIC_MESSAGE_STATES.VALIDATING, DIAGNOSTIC_REASON_CODES.OUTPUT_RECEIVED),
@@ -7312,7 +7734,7 @@ var require_queue_core = __commonJS({
               DIAGNOSTIC_REASON_CODES.OUTPUT_RECEIVED,
               { ms: Date.now() - startedAt }
             );
-            this.plugin.renderAutoTranslationResultSafely(item, translated);
+            this.plugin.renderAutoTranslationResultSafely(item, translated, taskOptions.longTextPartialInfo ? { partialInfo: taskOptions.longTextPartialInfo } : void 0);
           }
         } catch (error) {
           if (this.plugin.isAutoTranslationWorkCurrent(item)) {
@@ -7355,12 +7777,15 @@ var require_queue_core = __commonJS({
             if (this.plugin.isAutoTranslationWorkCurrent(item)) this.plugin.renderPendingAutoTranslationLoadingSafely(item);
           });
           let translations = [];
+          let requestError = null;
+          const taskOptions = { signal: this.plugin.getAutoTranslationAbortSignal() };
           try {
-            translations = await this.plugin.runAutoTranslationBatchTask(items.map((item) => item.text), items[0]?.requestOptions);
+            translations = await this.plugin.runAutoTranslationBatchTask(items.map((item) => item.text), items[0]?.requestOptions, taskOptions);
           } catch (error) {
             if (!items.some((item) => this.plugin.isAutoTranslationWorkCurrent(item))) {
               pending.clear();
             } else if (this.plugin.shouldFallbackAutoTranslationBatchRequestError(error)) {
+              requestError = error;
               this.plugin.logDiagnostic("auto.batch", "fallback", {
                 type: this.plugin.getAutoTranslationFailureType(error),
                 batchSize: items.length,
@@ -7434,7 +7859,9 @@ var require_queue_core = __commonJS({
               ms: Date.now() - startedAt
             });
           }
-          if (pending.size && !this.plugin.isAutoTranslationStrictRetryEnabled()) {
+          if (pending.size && requestError && !translations.length && !this.plugin.isAutoTranslationStrictRetryEnabled()) {
+            this.plugin.settleFailedAutoTranslationBatchRequest(pending, requestError);
+          } else if (pending.size && !this.plugin.isAutoTranslationStrictRetryEnabled()) {
             pending.forEach((item) => {
               if (this.plugin.isAutoTranslationWorkCurrent(item)) {
                 this.plugin.logAutoTranslationMessageState(
@@ -7450,8 +7877,8 @@ var require_queue_core = __commonJS({
               pending.delete(item);
             });
           } else {
-            await this.plugin.runAutoTranslationBatchRetryItems(pending);
-            await this.plugin.runAutoTranslationFallbackItems(pending);
+            await this.plugin.runAutoTranslationBatchRetryItems(pending, taskOptions);
+            await this.plugin.runAutoTranslationFallbackItems(pending, taskOptions);
           }
           pending.forEach((item) => {
             if (this.plugin.isAutoTranslationWorkCurrent(item)) this.plugin.clearPendingAutoTranslationItemSafely(item);
@@ -7484,6 +7911,43 @@ var require_queue_core = __commonJS({
             this.plugin.queueScan();
           }
         }
+      }
+      // A batch request that failed as a whole says nothing about each message's output, so it must
+      // not end as a final invalid-output failure. An unusable batch reply (unreadable, empty or cut
+      // off) is sent again as single requests; a request error (timeout, network, client error) gets
+      // that error's own backoff, with the provider marked once for the whole batch.
+      settleFailedAutoTranslationBatchRequest(pending, error) {
+        const current = [...pending].filter((item) => this.plugin.isAutoTranslationWorkCurrent(item));
+        const formatError = this.plugin.isAutoTranslationBatchFormatError(error);
+        this.plugin.logDiagnostic("auto.batch", formatError ? "single-fallback" : "request-failed", {
+          type: this.plugin.getAutoTranslationFailureType(error),
+          batchSize: pending.size,
+          current: current.length
+        });
+        if (!formatError && current.length && this.plugin.shouldMarkAutoTranslationProviderFailureForItem(current[0], error)) {
+          this.plugin.markAutoTranslationProviderFailure(current[0]?.requestOptions, error);
+        }
+        current.forEach((item) => {
+          pending.delete(item);
+          if (formatError) {
+            item.daitSingleRequest = true;
+            this.plugin.requeueAutoTranslationItem(item, { allowActiveRequeue: true, preserveLoading: true });
+            return;
+          }
+          this.plugin.logAutoTranslationMessageState(
+            "auto.message.state",
+            "failed",
+            item,
+            DIAGNOSTIC_MESSAGE_STATES.FAILED,
+            DIAGNOSTIC_REASON_CODES.FAILURE,
+            { type: this.plugin.getAutoTranslationFailureType(error), batchRequestFailed: true }
+          );
+          this.plugin.markAutoTranslationFailureSafely(item, error, { markProvider: false });
+        });
+      }
+      isAutoTranslationBatchFormatError(error) {
+        if (this.plugin.isAutoBatchFallbackError(error) || error?.modelOutputTruncated) return true;
+        return this.plugin.getAutoTranslationFailureType(error) === "invalid-output";
       }
       requeueAutoTranslationItem(item, options = {}) {
         if (!item?.cacheKey) return;
@@ -7665,6 +8129,78 @@ var require_queue_core = __commonJS({
           this.plugin.autoTranslationRecentRenders.delete(this.plugin.autoTranslationRecentRenders.keys().next().value);
         }
       }
+      // Partial results (for example a long message with a failed chunk) must not enter the
+      // persistent cache, but are kept here briefly so a rebuilt or prefetched message is redrawn
+      // instead of requested again. A complete cached result replaces them.
+      rememberAutoTranslationPartialResult(cacheKey, text, translated, meta = {}) {
+        const key = String(cacheKey || "");
+        const value = String(translated || "").trim();
+        if (!key || !value) return;
+        if (!this.plugin.autoTranslationPartialResults?.set) this.plugin.autoTranslationPartialResults = /* @__PURE__ */ new Map();
+        const now = Date.now();
+        const partialInfo = meta.partialInfo && typeof meta.partialInfo === "object" ? {
+          missingSegments: Array.isArray(meta.partialInfo.missingSegments) ? [...meta.partialInfo.missingSegments] : [],
+          totalSegments: Number(meta.partialInfo.totalSegments || 0) || 0
+        } : null;
+        this.plugin.autoTranslationPartialResults.delete(key);
+        this.plugin.autoTranslationPartialResults.set(key, {
+          sourceSig: this.plugin.getStrongTextFingerprint(text),
+          translated: value,
+          partialInfo,
+          validationQuality: String(meta.validationQuality || ""),
+          validationReason: String(meta.validationReason || ""),
+          at: now,
+          expiresAt: now + AUTO_TRANSLATE_PARTIAL_RESULT_TTL_MS
+        });
+        this.plugin.pruneAutoTranslationPartialResults(now);
+      }
+      getAutoTranslationPartialResult(cacheKey, text, now = Date.now()) {
+        const key = String(cacheKey || "");
+        const entry = key ? this.plugin.autoTranslationPartialResults?.get?.(key) : null;
+        if (!entry) return null;
+        if (Number(entry.expiresAt || 0) <= now || entry.sourceSig !== this.plugin.getStrongTextFingerprint(text)) {
+          this.plugin.autoTranslationPartialResults.delete(key);
+          return null;
+        }
+        return entry;
+      }
+      clearAutoTranslationPartialResult(...cacheKeys) {
+        if (!this.plugin.autoTranslationPartialResults?.size) return;
+        cacheKeys.forEach((cacheKey) => {
+          if (cacheKey) this.plugin.autoTranslationPartialResults.delete(String(cacheKey));
+        });
+      }
+      pruneAutoTranslationPartialResults(now = Date.now()) {
+        const results = this.plugin.autoTranslationPartialResults;
+        if (!results?.size) return;
+        for (const [key, entry] of [...results.entries()]) {
+          if (Number(entry?.expiresAt || 0) <= now) results.delete(key);
+        }
+        while (results.size > AUTO_TRANSLATE_PARTIAL_RESULT_MAX) {
+          results.delete(results.keys().next().value);
+        }
+      }
+      // Every request made for queued auto-translation work carries this signal. A full invalidation
+      // orphans that work and aborts the signal; work started afterwards gets a fresh one.
+      getAutoTranslationAbortSignal() {
+        if (typeof AbortController === "undefined") return void 0;
+        if (!this.plugin.autoTranslationAbortController || this.plugin.autoTranslationAbortController.signal.aborted) {
+          this.plugin.autoTranslationAbortController = new AbortController();
+        }
+        return this.plugin.autoTranslationAbortController.signal;
+      }
+      abortAutoTranslationRequests(reason = "invalidated") {
+        const controller = this.plugin.autoTranslationAbortController;
+        this.plugin.autoTranslationAbortController = null;
+        if (!controller || controller.signal.aborted) return false;
+        const inFlight = Number(this.plugin.autoTranslationInFlight || 0);
+        try {
+          controller.abort();
+        } catch {
+        }
+        if (inFlight) this.plugin.logDiagnostic("auto.queue.abort", "ok", { reason, inFlight });
+        return true;
+      }
       createAutoTranslationInFlightToken(cacheKey = "") {
         this.plugin.autoTranslationInFlightTokenCounter++;
         return `${Date.now().toString(36)}:${this.plugin.autoTranslationInFlightTokenCounter.toString(36)}:${this.plugin.getTextFingerprint(cacheKey)}`;
@@ -7772,6 +8308,7 @@ var require_queue_core = __commonJS({
           return;
         }
         this.plugin.setTranslationCache(cacheKey, translated);
+        this.plugin.clearAutoTranslationPartialResult(cacheKey);
         if (this.plugin.shouldStoreAutoTextTranslationCache(text, requestOptions, translated)) {
           this.plugin.setAutoTextTranslationCache(text, requestOptions, translated);
         } else {
@@ -7795,14 +8332,14 @@ var require_queue_core = __commonJS({
       hasCacheableAutoTranslationTarget(item) {
         return this.plugin.getAutoTranslationPendingTargets(item).some((target) => {
           if (!target?.messageNode?.isConnected || !target?.content?.isConnected) return false;
-          if (this.plugin.getElementText(target.content, target.textOptions) !== target.text) return false;
+          if (!this.plugin.isAutoTranslationTargetDomTextCurrent(target)) return false;
           return this.plugin.isAutoTranslationTargetIdentityCurrent(target, item) || Boolean(this.plugin.getAutoTranslationTargetIdentityUpgrade(target, item));
         });
       }
       hasInvalidAutoTranslationTarget(item) {
         return this.plugin.getAutoTranslationPendingTargets(item).some((target) => {
           if (!target?.messageNode?.isConnected || !target?.content?.isConnected) return false;
-          if (this.plugin.getElementText(target.content, target.textOptions) !== target.text) return true;
+          if (!this.plugin.isAutoTranslationTargetDomTextCurrent(target)) return false;
           return !this.plugin.isAutoTranslationTargetIdentityCurrent(target, item) && !this.plugin.getAutoTranslationTargetIdentityUpgrade(target, item);
         });
       }
@@ -7824,7 +8361,8 @@ var require_queue_core = __commonJS({
         const requestOptions = target?.requestOptions || item?.requestOptions || {};
         const expected = this.plugin.normalizeTranslationMessageIdentity(requestOptions.messageIdentity);
         if (!expected || !text) return null;
-        const current = this.plugin.normalizeTranslationMessageIdentity(this.plugin.getMessageIdentity(target.messageNode, target.content, text));
+        const domText = this.plugin.getAutoTranslationTargetDomText(target.text ? target : item);
+        const current = this.plugin.normalizeTranslationMessageIdentity(this.plugin.getMessageIdentity(target.messageNode, target.content, domText));
         if (!current || current === expected || !this.plugin.isSafeTranslationIdentityUpgrade(expected, current, target)) return null;
         const upgradedOptions = { ...requestOptions, messageIdentity: current };
         return {
@@ -7837,7 +8375,7 @@ var require_queue_core = __commonJS({
         const requestOptions = target?.requestOptions || item?.requestOptions || {};
         const expected = this.plugin.normalizeTranslationMessageIdentity(requestOptions.messageIdentity);
         if (!expected) return true;
-        const current = this.plugin.normalizeTranslationMessageIdentity(this.plugin.getMessageIdentity(target.messageNode, target.content, target.text));
+        const current = this.plugin.normalizeTranslationMessageIdentity(this.plugin.getMessageIdentity(target.messageNode, target.content, this.plugin.getAutoTranslationTargetDomText(target)));
         return current === expected;
       }
       markAutoTranslationFailureSafely(item, error, options = {}) {
@@ -7859,6 +8397,8 @@ var require_queue_core = __commonJS({
             this.plugin.autoTranslationFailures.set(item.cacheKey, failure);
             this.plugin.pruneAutoTranslationFailureMapSize();
             this.plugin.markAutoTextTranslationFailure(item, error, failure);
+          } else {
+            this.plugin.rememberAutoTranslationFailureHistory(item.cacheKey, failure);
           }
           if (options.markProvider !== false) {
             const retainedKeys = retained && item?.cacheKey ? /* @__PURE__ */ new Set([item.cacheKey]) : /* @__PURE__ */ new Set();
@@ -7950,12 +8490,24 @@ var require_queue_core = __commonJS({
           if (retained && item?.cacheKey) retainedKeys.add(item.cacheKey);
         }
         if (item?.cacheKey && retainedKeys.has(item.cacheKey)) {
+          this.plugin.rememberAutoTranslationFailureHistory(item.cacheKey, failure);
           this.plugin.autoTranslationFailures.delete(item.cacheKey);
           this.plugin.clearAutoTextTranslationFailure(item.text, item.requestOptions);
         }
         if (this.plugin.shouldMarkAutoTranslationProviderFailureForItem(item, error, options)) this.plugin.markAutoTranslationProviderFailure(item.requestOptions, error, failure, { skipCacheKeys: retainedKeys });
         if (!failure.terminal) this.plugin.scheduleAutoTranslationRetryScan(failure.retryAfterMs);
         if (!storageError?.autoTranslationWeakFailure) this.plugin.showAutoTranslateError(error);
+      }
+      // A result that cannot be drawn (its emoji images cannot be restored) is recorded as a final
+      // invalid output, so the scan does not request the same message again on every pass.
+      markAutoTranslationUndrawableResult(cacheKey, reason = "emoji-restore-failed") {
+        const key = String(cacheKey || "");
+        if (!key) return null;
+        const failure = this.plugin.createAutoTranslationFailure(key, this.plugin.createFinalInvalidAutoTranslationError(reason));
+        this.plugin.autoTranslationFailures.set(key, failure);
+        this.plugin.pruneAutoTranslationFailureMapSize();
+        this.plugin.clearAutoTranslationPartialResult(key);
+        return failure;
       }
       getAutoTranslationStorageErrorForItem(item, error) {
         if (!item?.daitPrefetchRequest || !this.plugin.isWeakAutoTranslationPrefetchFailure(error)) return error;
@@ -7964,6 +8516,7 @@ var require_queue_core = __commonJS({
         storageError.autoTranslationTerminalFailure = Boolean(error?.autoTranslationTerminalFailure);
         storageError.autoTranslationInvalidReason = error?.autoTranslationInvalidReason || this.plugin.getAutoTranslationFailureType(error) || "invalid-output";
         storageError.autoTranslationWeakFailure = true;
+        if (error?.modelOutputTruncated) storageError.modelOutputTruncated = true;
         storageError.retryAfterMs = Math.min(
           storageError.autoTranslationTerminalFailure ? AUTO_TRANSLATE_FINAL_INVALID_OUTPUT_FAILURE_TTL : AUTO_TRANSLATE_INVALID_OUTPUT_FAILURE_TTL,
           Math.max(1e3, Number(error?.retryAfterMs || AUTO_TRANSLATE_INVALID_OUTPUT_FAILURE_TTL))
@@ -8088,8 +8641,11 @@ var require_queue_core = __commonJS({
         return failure || null;
       }
       getAutoTranslationRetryAfter(error, count = 1) {
-        if (Number(error?.retryAfterMs) > 0) return Math.min(AUTO_TRANSLATE_FAILURE_MAX_TTL, Number(error.retryAfterMs));
         const type = this.plugin.getAutoTranslationFailureType(error);
+        if (type === "truncated") {
+          return Math.min(AUTO_TRANSLATE_TRUNCATED_FAILURE_MAX_TTL, AUTO_TRANSLATE_TRUNCATED_FAILURE_TTL * Math.pow(2, Math.max(0, count - 1)));
+        }
+        if (Number(error?.retryAfterMs) > 0) return Math.min(AUTO_TRANSLATE_FAILURE_MAX_TTL, Number(error.retryAfterMs));
         if (type === "local-unavailable") return LOCAL_PROVIDER_UNAVAILABLE_RETRY_MS;
         if (["quota", "rate-limit", "server", "parse"].includes(type)) {
           return Math.min(AUTO_TRANSLATE_FAILURE_MAX_TTL, AUTO_TRANSLATE_PROVIDER_FAILURE_TTL * Math.pow(2, Math.max(0, count - 1)));
@@ -8117,6 +8673,7 @@ var require_queue_core = __commonJS({
         if (error?.googleTranslateQuotaExceeded) return "quota";
         if (error?.googleTranslateNoKey) return "auth";
         if (status === 401 || status === 403) return "auth";
+        if (status === 402) return "quota";
         if (status === 429) return "rate-limit";
         if (status >= 500) return "server";
         if (this.plugin.isTimeoutError(error)) return "timeout";
@@ -8532,7 +9089,7 @@ var require_diagnostics_recorder = __commonJS({
           },
           settings: {
             provider: this.plugin.settings.translation?.provider,
-            model: this.plugin.settings.translation?.model,
+            model: this.plugin.getDiagnosticModelLabel(this.plugin.settings.translation?.model),
             targetLanguage: this.plugin.settings.translation?.targetLanguage,
             autoTranslateMessages: this.plugin.settings.ui?.autoTranslateMessages,
             autoTranslatePrefetch: this.plugin.settings.ui?.autoTranslatePrefetch,
@@ -8601,6 +9158,30 @@ var require_diagnostics_recorder = __commonJS({
             if (Number.isFinite(Number(entry.ms))) compact.ms = Number(entry.ms);
             return compact;
           })
+        };
+      }
+      // Used once when the log moves to its own data file: keeps the entries of both copies (the old copy may
+      // hold entries written by an older plugin version after a downgrade), oldest first, without duplicates.
+      mergePersistedDiagnosticLogsPayloads(current, legacy) {
+        const logsOf = (payload) => Array.isArray(payload) ? payload : Array.isArray(payload?.logs) ? payload.logs : null;
+        const currentLogs = logsOf(current);
+        const legacyLogs = logsOf(legacy);
+        if (!legacyLogs) return current;
+        if (!currentLogs) return legacy;
+        const seen = /* @__PURE__ */ new Set();
+        const logs = [...legacyLogs, ...currentLogs].filter((entry) => entry && typeof entry === "object").filter((entry) => {
+          const id = JSON.stringify([entry.ts, entry.lastTs, entry.action, entry.status, entry.key, entry.count]);
+          if (seen.has(id)) return false;
+          seen.add(id);
+          return true;
+        }).sort((left, right) => (Number(left.ts) || 0) - (Number(right.ts) || 0)).slice(-DIAGNOSTICS_MAX_ENTRIES);
+        const compressed = (count) => Math.max(0, Number(count || 0) || 0);
+        return {
+          version: 1,
+          savedAt: Date.now(),
+          maxEntries: DIAGNOSTICS_MAX_ENTRIES,
+          compressed: compressed(current?.compressed) + compressed(legacy?.compressed),
+          logs
         };
       }
       scheduleDiagnosticLogsPersist(delayMs = DIAGNOSTICS_WRITE_DEBOUNCE_MS, options = {}) {
@@ -9143,9 +9724,63 @@ var require_translation_cache_store = __commonJS({
       TRANSLATION_CACHE_TTL_OPTIONS,
       TRANSLATION_CACHE_WRITE_DEBOUNCE_MS
     } = require_constants();
+    var TRANSLATION_CACHE_MAX_KEYS_PER_MESSAGE = 4;
     var TranslationCacheStore = class {
       constructor(plugin) {
         this.plugin = plugin;
+        this.valueRefs = null;
+        this.valueRefsCache = null;
+        this.valueRefsSize = -1;
+      }
+      getTranslationCacheValueRefs() {
+        const cache = this.plugin.translationCache;
+        if (this.hasCurrentTranslationCacheValueRefs()) return this.valueRefs;
+        const refs = /* @__PURE__ */ new Map();
+        for (const value of cache.values()) refs.set(value, (refs.get(value) || 0) + 1);
+        this.valueRefs = refs;
+        this.valueRefsCache = cache;
+        this.valueRefsSize = cache.size;
+        return refs;
+      }
+      hasCurrentTranslationCacheValueRefs() {
+        const cache = this.plugin.translationCache;
+        return Boolean(this.valueRefs) && this.valueRefsCache === cache && this.valueRefsSize === cache.size;
+      }
+      invalidateTranslationCacheValueRefs() {
+        this.valueRefs = null;
+        this.valueRefsCache = null;
+        this.valueRefsSize = -1;
+      }
+      releaseTranslationCacheValueRef(value) {
+        const count = (this.valueRefs.get(value) || 0) - 1;
+        if (count > 0) this.valueRefs.set(value, count);
+        else this.valueRefs.delete(value);
+      }
+      // Map writes that keep the value counts current (when they have been built).
+      setTranslationCacheEntry(key, value) {
+        const cache = this.plugin.translationCache;
+        const tracked = this.hasCurrentTranslationCacheValueRefs();
+        if (cache.has(key)) {
+          if (tracked) this.releaseTranslationCacheValueRef(cache.get(key));
+          cache.delete(key);
+        }
+        cache.set(key, value);
+        if (tracked) {
+          this.valueRefs.set(value, (this.valueRefs.get(value) || 0) + 1);
+          this.valueRefsSize = cache.size;
+        }
+      }
+      deleteTranslationCacheEntry(key) {
+        const cache = this.plugin.translationCache;
+        if (!cache.has(key)) return false;
+        const tracked = this.hasCurrentTranslationCacheValueRefs();
+        if (tracked) this.releaseTranslationCacheValueRef(cache.get(key));
+        cache.delete(key);
+        if (tracked) this.valueRefsSize = cache.size;
+        return true;
+      }
+      getTranslationCacheMessageCount() {
+        return this.getTranslationCacheValueRefs().size;
       }
       normalizeTranslationCacheTtlHours(value) {
         const number = Number(value);
@@ -9179,6 +9814,7 @@ var require_translation_cache_store = __commonJS({
         return this.plugin.translationScheduler.isAutoCacheMode(mode);
       }
       isVolatileTranslationCacheKey(cacheKey) {
+        if (String(this.getTranslationCacheMode(cacheKey)).startsWith("public-bilingual")) return true;
         return this.plugin.isVolatileTranslationIdentity(this.plugin.getTranslationIdentityFromCacheKey(cacheKey));
       }
       getTranslationCacheKey(text, options = {}) {
@@ -9241,7 +9877,7 @@ var require_translation_cache_store = __commonJS({
         return this.plugin.buildTranslationCacheKey(text, options, sourceTextHash, { ...cacheOptions, omitMessageIdentity: true });
       }
       buildTranslationCacheKey(text, options = {}, sourceTextHash = this.plugin.getStrongTextFingerprint(text), cacheOptions = {}) {
-        const config = this.plugin.getCacheConfigSnapshot("translation", this.plugin.getEffectiveTaskConfig("translation", options.configOverrides));
+        const config = this.plugin.getCacheConfigSnapshot("translation", this.plugin.getEffectiveTaskConfig("translation", options.configOverrides), { servedModel: true });
         config.promptPolicyVersion = this.plugin.getPromptPolicyCacheVersion("translation", options, config);
         const messageIdentity = this.plugin.normalizeTranslationMessageIdentity(options.messageIdentity) || `text:${sourceTextHash}`;
         const configParts = cacheOptions.fullConfig ? [
@@ -9284,7 +9920,11 @@ var require_translation_cache_store = __commonJS({
           `prompt:${this.plugin.getStrongTextFingerprint(config.prompt)}`
         ];
       }
-      getCacheConfigSnapshot(kind, config) {
+      // options.servedModel: for cache keys, name the model the local server actually serves
+      // when the setting is the "local-model" placeholder, so swapping the loaded model stops
+      // matching the old model's translations. Provider keys leave it out on purpose: health
+      // and cooldowns belong to the server, not to the model it has loaded.
+      getCacheConfigSnapshot(kind, config, options = {}) {
         const defaults = DEFAULT_SETTINGS[kind] || {};
         const provider = String(config.provider || defaults.provider || "").trim();
         const snapshot = {
@@ -9319,6 +9959,13 @@ var require_translation_cache_store = __commonJS({
           snapshot.prompt = "";
           if (provider === "deepl") {
             snapshot.endpoint = this.plugin.normalizeDeepLPlan(config.deeplPlan) === "pro" ? PROVIDER_DEFAULTS.deepl.endpoint.replace("api-free.deepl.com", "api.deepl.com") : PROVIDER_DEFAULTS.deepl.endpoint;
+          }
+        }
+        if (options.servedModel) {
+          if (provider === "deepl" && this.plugin.getDeepLLanguageCode(config.targetLanguageCode || config.targetLanguage) === "ZH-HANT") {
+            snapshot.model = "zh-hant";
+          } else if (this.plugin.shouldAutoDetectLocalProviderModel(config, defaults)) {
+            snapshot.model = this.plugin.getCachedLocalProviderDetectedModel(config, { defaultConfig: defaults }) || snapshot.model;
           }
         }
         return snapshot;
@@ -9377,7 +10024,7 @@ var require_translation_cache_store = __commonJS({
           if (!this.plugin.translationCache.has(hitKey)) continue;
           const meta = this.plugin.translationCacheMeta.get(hitKey) || {};
           if (this.plugin.isTranslationCacheEntryExpired(meta)) {
-            this.plugin.translationCache.delete(hitKey);
+            this.deleteTranslationCacheEntry(hitKey);
             this.plugin.translationCacheMeta.delete(hitKey);
             this.plugin.scheduleTranslationCachePersist();
             this.plugin.logDiagnostic("cache.lookup", "expired", {
@@ -9412,8 +10059,7 @@ var require_translation_cache_store = __commonJS({
         const now = Date.now();
         const sourceMeta = this.plugin.translationCacheMeta.get(sourceKey) || {};
         const value = this.plugin.translationCache.get(sourceKey);
-        if (this.plugin.translationCache.has(targetKey)) this.plugin.translationCache.delete(targetKey);
-        this.plugin.translationCache.set(targetKey, value);
+        this.setTranslationCacheEntry(targetKey, value);
         this.plugin.translationCacheMeta.set(targetKey, {
           createdAt: Number(sourceMeta.createdAt || now),
           touchedAt: now,
@@ -9428,8 +10074,7 @@ var require_translation_cache_store = __commonJS({
         if (!key) return;
         const now = Date.now();
         const previous = this.plugin.translationCacheMeta.get(key);
-        if (this.plugin.translationCache.has(key)) this.plugin.translationCache.delete(key);
-        this.plugin.translationCache.set(key, String(value || ""));
+        this.setTranslationCacheEntry(key, String(value || ""));
         this.plugin.translationCacheMeta.set(key, {
           createdAt: Number(previous?.createdAt || now),
           touchedAt: now,
@@ -9451,7 +10096,7 @@ var require_translation_cache_store = __commonJS({
         const uniqueKeys = [...new Set(keys.filter(Boolean))];
         let removed = 0;
         uniqueKeys.forEach((key) => {
-          if (this.plugin.translationCache.delete(key)) removed++;
+          if (this.deleteTranslationCacheEntry(key)) removed++;
           if (this.plugin.translationCacheMeta.delete(key) && !this.plugin.translationCache.has(key)) removed++;
         });
         if (!removed) return false;
@@ -9471,7 +10116,7 @@ var require_translation_cache_store = __commonJS({
         const meta = this.plugin.translationCacheMeta.get(key) || {};
         const now = Date.now();
         const currentExpiresAt = this.plugin.getTranslationCacheEntryExpiresAt(meta, now);
-        const nextExpiresAt = options.extendExpiry ? Math.max(currentExpiresAt, now + TRANSLATION_CACHE_HIT_EXTEND_MS) : currentExpiresAt;
+        const nextExpiresAt = options.extendExpiry ? Math.max(currentExpiresAt, now + Math.min(TRANSLATION_CACHE_HIT_EXTEND_MS, this.plugin.getTranslationCacheTtlMs())) : currentExpiresAt;
         this.plugin.translationCacheMeta.set(key, {
           createdAt: Number(meta.createdAt || now),
           touchedAt: now,
@@ -9488,8 +10133,10 @@ var require_translation_cache_store = __commonJS({
       loadTranslationCache() {
         this.plugin.translationCache.clear();
         this.plugin.translationCacheMeta.clear();
+        this.invalidateTranslationCacheValueRefs();
         this.plugin.clearTranslationCacheNegativeLookups();
         const payload = this.plugin.loadData(CACHE_DATA_KEY);
+        this.plugin.restoreLocalProviderDetectedModels(payload?.localModels);
         const entries = Array.isArray(payload) ? payload : payload?.entries;
         if (!Array.isArray(entries)) {
           this.plugin.persistentTranslationCacheCount = 0;
@@ -9515,9 +10162,68 @@ var require_translation_cache_store = __commonJS({
           this.plugin.translationCacheMeta.set(key, meta);
           restoredEntries++;
         }
+        const clamped = this.plugin.clampTranslationCacheExpiryToCurrentTtl(now);
         this.plugin.pruneTranslationCache({ scanExpired: true });
-        this.plugin.persistentTranslationCacheCount = this.plugin.translationCache.size;
-        if (this.plugin.translationCache.size !== entries.length || restoredEntries !== entries.length || payload?.version !== 3) this.plugin.scheduleTranslationCachePersist();
+        this.plugin.persistentTranslationCacheCount = this.plugin.getTranslationCacheMessageCount();
+        if (clamped || this.plugin.translationCache.size !== entries.length || restoredEntries !== entries.length || payload?.version !== 3) this.plugin.scheduleTranslationCachePersist();
+      }
+      // Used once when the cache moves to its own data file (and after a downgrade left an old copy behind):
+      // keeps every key of both payloads, the more recently used copy of a key wins, oldest first (LRU order).
+      mergePersistedTranslationCachePayloads(current, legacy) {
+        const now = Date.now();
+        const decode = (payload) => {
+          const entries2 = Array.isArray(payload) ? payload : payload?.entries;
+          if (!Array.isArray(entries2)) return null;
+          const strings2 = Array.isArray(payload?.strings) ? payload.strings.map((value) => String(value || "")) : [];
+          const ttlMs = this.plugin.normalizeTranslationCacheTtlHours(payload?.ttlHours) * 60 * 60 * 1e3;
+          return entries2.map((entry) => {
+            const key = this.plugin.decodePersistedTranslationCacheKey(entry, strings2);
+            const value = this.plugin.decodePersistedTranslationCacheValue(entry, strings2);
+            if (!key || !value) return null;
+            const createdAt = Number(entry?.createdAt ?? entry?.c ?? now);
+            return {
+              key,
+              value,
+              createdAt,
+              touchedAt: Number(entry?.touchedAt ?? entry?.lastUsedAt ?? entry?.t ?? createdAt),
+              expiresAt: Number(entry?.expiresAt ?? entry?.e ?? createdAt + ttlMs)
+            };
+          }).filter(Boolean);
+        };
+        const currentEntries = decode(current);
+        const legacyEntries = decode(legacy);
+        if (!legacyEntries) return current;
+        if (!currentEntries) return legacy;
+        const byKey = /* @__PURE__ */ new Map();
+        [...legacyEntries, ...currentEntries].forEach((item) => {
+          const existing = byKey.get(item.key);
+          if (!existing || item.touchedAt >= existing.touchedAt) byKey.set(item.key, item);
+        });
+        const strings = [];
+        const stringIndexes = /* @__PURE__ */ new Map();
+        const encodeString = (value) => {
+          const text = String(value || "");
+          if (!stringIndexes.has(text)) {
+            stringIndexes.set(text, strings.length);
+            strings.push(text);
+          }
+          return stringIndexes.get(text);
+        };
+        const entries = [...byKey.values()].sort((left, right) => left.touchedAt - right.touchedAt).map((item) => ({
+          k: item.key.split("\n---\n").map(encodeString),
+          v: encodeString(item.value),
+          c: item.createdAt,
+          t: item.touchedAt,
+          e: item.expiresAt
+        }));
+        return {
+          version: 3,
+          savedAt: now,
+          ttlHours: this.plugin.normalizeTranslationCacheTtlHours(current?.ttlHours ?? legacy?.ttlHours),
+          maxEntries: Number(current?.maxEntries || legacy?.maxEntries || 0) || this.plugin.getTranslationCacheMaxEntries(),
+          strings,
+          entries
+        };
       }
       decodePersistedTranslationCacheKey(entry, strings = []) {
         const direct = String(entry?.key || "");
@@ -9569,6 +10275,8 @@ var require_translation_cache_store = __commonJS({
           savedAt: Date.now(),
           ttlHours: this.plugin.normalizeTranslationCacheTtlHours(this.plugin.settings.ui?.translationCacheTtlHours),
           maxEntries: this.plugin.getTranslationCacheMaxEntries(),
+          // Cache keys of local models name the served model; see getCacheConfigSnapshot.
+          localModels: this.plugin.getPersistableLocalProviderDetectedModels(),
           strings,
           entries
         };
@@ -9603,7 +10311,7 @@ var require_translation_cache_store = __commonJS({
         try {
           const payload = this.plugin.createPersistedTranslationCachePayload();
           if (this.plugin.saveData(CACHE_DATA_KEY, payload) !== true) throw new Error("DATA_SAVE_FAILED");
-          this.plugin.persistentTranslationCacheCount = payload.entries.length;
+          this.plugin.persistentTranslationCacheCount = new Set(payload.entries.map((entry) => entry.v)).size;
           this.plugin.translationCacheDirty = false;
           this.plugin.translationCacheTouchDirtyCount = 0;
           this.plugin.translationCachePersistenceDeferredSince = 0;
@@ -9640,6 +10348,7 @@ var require_translation_cache_store = __commonJS({
         this.plugin.translationCacheDirty = false;
         this.plugin.translationCache.clear();
         this.plugin.translationCacheMeta.clear();
+        this.invalidateTranslationCacheValueRefs();
         this.plugin.clearTranslationCacheNegativeLookups();
         this.plugin.translationCacheStats = { hits: 0, misses: 0 };
         this.plugin.persistentTranslationCacheCount = 0;
@@ -9688,6 +10397,7 @@ var require_translation_cache_store = __commonJS({
         const scanExpired = options.scanExpired !== false;
         let removed = false;
         if (scanExpired) {
+          this.invalidateTranslationCacheValueRefs();
           for (const [key, meta] of this.plugin.translationCacheMeta) {
             if (this.plugin.isTranslationCacheEntryExpired(meta, now)) {
               this.plugin.translationCache.delete(key);
@@ -9696,9 +10406,12 @@ var require_translation_cache_store = __commonJS({
             }
           }
         }
-        while (this.plugin.translationCache.size > this.plugin.getTranslationCacheMaxEntries()) {
-          const oldestKey = this.plugin.translationCache.keys().next().value;
-          this.plugin.translationCache.delete(oldestKey);
+        const cache = this.plugin.translationCache;
+        const maxMessages = this.plugin.getTranslationCacheMaxEntries();
+        const maxKeys = maxMessages * TRANSLATION_CACHE_MAX_KEYS_PER_MESSAGE;
+        while (cache.size > maxKeys || cache.size > maxMessages && this.getTranslationCacheValueRefs().size > maxMessages) {
+          const oldestKey = cache.keys().next().value;
+          this.deleteTranslationCacheEntry(oldestKey);
           this.plugin.translationCacheMeta.delete(oldestKey);
           removed = true;
         }
@@ -9736,6 +10449,7 @@ var require_provider_layer = __commonJS({
       AUTO_LANGUAGE_VALUE,
       AUTO_TRANSLATE_FAILURE_MAX_TTL,
       AUTO_TRANSLATE_INVALID_OUTPUT_FAILURE_TTL,
+      AUTO_TRANSLATE_PROVIDER_FAILURE_TTL,
       AUTO_TRANSLATE_VIEWPORT_STABLE_RESCAN_MS,
       DEFAULT_SETTINGS,
       DIAGNOSTIC_REASON_CODES,
@@ -9823,13 +10537,29 @@ var require_provider_layer = __commonJS({
         const key = this.plugin.getLocalProviderModelDetectionCacheKey(config, options.defaultConfig);
         if (!key || !normalized) return "";
         const now = Date.now();
+        const previousModel = String(this.plugin.localProviderDetectedModels.get(key)?.model || "");
         this.plugin.localProviderDetectedModels.set(key, {
           model: normalized,
           detectedAt: now,
           expiresAt: now + Math.max(1e3, Number(options.ttlMs || LOCAL_PROVIDER_MODEL_DETECTION_TTL_MS) || LOCAL_PROVIDER_MODEL_DETECTION_TTL_MS),
           retryAt: 0
         });
+        if (previousModel !== normalized) this.plugin.scheduleTranslationCachePersist();
         return normalized;
+      }
+      getPersistableLocalProviderDetectedModels() {
+        return [...this.plugin.localProviderDetectedModels?.entries?.() || []].filter(([key, entry]) => key && String(entry?.model || "").trim()).sort((left, right) => Number(right[1].detectedAt || 0) - Number(left[1].detectedAt || 0)).slice(0, 8).map(([key, entry]) => ({ key, model: String(entry.model).trim() }));
+      }
+      // Restores the last served model per local server after a restart, so cached lines keep
+      // their keys (and draw) before the server answers again; the next request re-detects.
+      restoreLocalProviderDetectedModels(list) {
+        if (!Array.isArray(list)) return;
+        list.slice(0, 8).forEach((item) => {
+          const key = String(item?.key || "");
+          const model = this.plugin.normalizeLocalProviderModelId(item?.model);
+          if (!key || !model || this.plugin.localProviderDetectedModels.get(key)?.model) return;
+          this.plugin.localProviderDetectedModels.set(key, { model, detectedAt: 0, expiresAt: 0, retryAt: 0 });
+        });
       }
       getEffectiveChatCompletionModel(kind, config = {}, defaultConfig = DEFAULT_SETTINGS[kind] || {}) {
         const providerDefault = PROVIDER_DEFAULTS[config.provider] || {};
@@ -9976,6 +10706,7 @@ var require_provider_layer = __commonJS({
         const normalized = this.plugin.normalizeGoogleTranslateKeyPool(this.plugin.settings.googleTranslate || {});
         this.plugin.settings.googleTranslate.keys = normalized.keys;
         this.plugin.settings.googleTranslate.keyPoolText = normalized.keyPoolText;
+        this.plugin.settings.googleTranslate.usageById = normalized.usageById;
         return normalized.keys;
       }
       countGoogleTranslateChars(texts) {
@@ -9989,7 +10720,7 @@ var require_provider_layer = __commonJS({
         const now = Date.now();
         const keys = this.plugin.getGoogleTranslateKeys();
         const needed = Math.max(1, Math.round(Number(charCount) || 1));
-        const available = keys.find((key) => key.enabled !== false && Number(key.cooldownUntil || 0) <= now && Number(key.usedChars || 0) + (options.ignoreReservations ? 0 : this.plugin.getGoogleTranslateReservedChars(key)) + needed <= Number(key.monthlyLimit || GOOGLE_TRANSLATE_DEFAULT_MONTHLY_LIMIT));
+        const available = keys.find((key) => key.enabled !== false && (options.ignoreCooldown || Number(key.cooldownUntil || 0) <= now) && Number(key.usedChars || 0) + (options.ignoreReservations ? 0 : this.plugin.getGoogleTranslateReservedChars(key)) + needed <= Number(key.monthlyLimit || GOOGLE_TRANSLATE_DEFAULT_MONTHLY_LIMIT));
         if (available || options.persist === false) return available || null;
         this.plugin.saveGoogleTranslateRuntimeState();
         return null;
@@ -10054,12 +10785,15 @@ var require_provider_layer = __commonJS({
       getGoogleTranslateUsageSummary() {
         const keys = this.plugin.getGoogleTranslateKeys();
         const now = Date.now();
+        const coolingUntil = keys.filter((key) => key.enabled !== false && Number(key.cooldownUntil || 0) > now).map((key) => Number(key.cooldownUntil));
         return {
           monthKey: this.plugin.getCurrentMonthKey(),
           total: keys.length,
           available: keys.filter((key) => key.enabled !== false && Number(key.cooldownUntil || 0) <= now && Number(key.usedChars || 0) + this.plugin.getGoogleTranslateReservedChars(key) < Number(key.monthlyLimit || 0)).length,
           used: keys.reduce((sum, key) => sum + Math.max(0, Number(key.usedChars || 0) || 0), 0),
-          limit: keys.reduce((sum, key) => sum + Math.max(0, Number(key.monthlyLimit || 0) || 0), 0)
+          limit: keys.reduce((sum, key) => sum + Math.max(0, Number(key.monthlyLimit || 0) || 0), 0),
+          coolingDown: coolingUntil.length,
+          nextCooldownEndsAt: coolingUntil.length ? Math.min(...coolingUntil) : 0
         };
       }
       saveGoogleTranslateRuntimeState() {
@@ -10086,6 +10820,7 @@ var require_provider_layer = __commonJS({
         const normalized = this.plugin.normalizeGoogleTranslateKeyPool(this.plugin.settings.googleTranslate || {});
         this.plugin.settings.googleTranslate.keys = normalized.keys;
         this.plugin.settings.googleTranslate.keyPoolText = normalized.keyPoolText;
+        this.plugin.settings.googleTranslate.usageById = normalized.usageById;
         if (this.plugin.saveSettings() === true) {
           this.plugin.googleTranslateRuntimeDirty = false;
           return true;
@@ -10099,12 +10834,15 @@ var require_provider_layer = __commonJS({
         this.plugin.settings.googleTranslate.keys = this.plugin.getGoogleTranslateKeys().map((key) => ({
           ...key,
           usedChars: 0,
-          monthKey
+          monthKey,
+          cooldownUntil: 0,
+          lastError: ""
         }));
+        this.plugin.settings.googleTranslate.usageById = {};
         this.plugin.saveGoogleTranslateRuntimeState();
         this.plugin.showToast(this.plugin.t("googleTranslateStatsReset"), "success");
       }
-      markGoogleTranslateKeyUsage(apiKey, charCount) {
+      markGoogleTranslateKeyUsage(apiKey, charCount, options = {}) {
         const keyHash = this.plugin.getTextFingerprint(String(apiKey || "").trim());
         const monthKey = this.plugin.getCurrentMonthKey();
         const usedDelta = Math.max(0, Math.round(Number(charCount) || 0));
@@ -10114,10 +10852,17 @@ var require_provider_layer = __commonJS({
             ...key,
             monthKey,
             usedChars: Math.max(0, Number(key.usedChars || 0) || 0) + usedDelta,
+            // A passing API test brings a cooling key back right away.
+            ...options.clearCooldown ? { cooldownUntil: 0 } : {},
             lastError: ""
           };
         });
         this.plugin.settings.googleTranslate.keys = keys;
+        const usageById = this.plugin.settings.googleTranslate.usageById || {};
+        keys.forEach((key) => {
+          if (key.id && key.usedChars > 0) usageById[key.id] = { monthKey, usedChars: key.usedChars };
+        });
+        this.plugin.settings.googleTranslate.usageById = usageById;
         this.plugin.saveGoogleTranslateRuntimeState();
       }
       markGoogleTranslateKeyFailure(apiKey, error, options = {}) {
@@ -10166,9 +10911,16 @@ var require_provider_layer = __commonJS({
         if (preset?.code) return preset.code === "zh" ? "zh-CN" : preset.code;
         const value = String(language || "").trim();
         if (/^[a-z]{2,3}(-[A-Za-z0-9]+)?$/.test(value)) return value;
-        const embedded = value.match(/\b([a-z]{2,3}(?:-[A-Za-z0-9]+)?)\b/);
+        const explicit = value.match(/[(,]\s*([a-z]{2,3}(?:-[A-Za-z0-9]+)?)\s*\)/);
+        const embedded = explicit || value.match(/(?<![\p{L}\p{N}_-])([a-z]{2,3}(?:-[A-Za-z0-9]+)?)(?![\p{L}\p{N}_-])/u);
         if (embedded?.[1]) return embedded[1] === "zh" ? "zh-CN" : embedded[1];
         return value;
+      }
+      // The raw target of a request for direct translation APIs, resolved from the user's
+      // language setting rather than from the LLM instruction text.
+      getTargetLanguageCode(language) {
+        if (!language || language === AUTO_LANGUAGE_VALUE) return "";
+        return this.plugin.getGoogleLanguageCode(language);
       }
       getEffectiveRequestApiKey(config) {
         if (config?.provider === "googleCloud") {
@@ -10492,30 +11244,60 @@ var require_provider_layer = __commonJS({
         const defaultLimit = this.plugin.normalizeGoogleTranslateMonthlyLimit(settings.defaultMonthlyLimit, GOOGLE_TRANSLATE_DEFAULT_MONTHLY_LIMIT);
         const hasKeyPoolText = Object.prototype.hasOwnProperty.call(settings || {}, "keyPoolText");
         const source = hasKeyPoolText ? this.plugin.parseGoogleTranslateKeyPoolText(settings.keyPoolText, settings.keys) : Array.isArray(settings.keys) ? settings.keys : [];
+        const usageById = this.plugin.getGoogleTranslateUsageLedger(settings, currentMonth);
         const seen = /* @__PURE__ */ new Set();
         const keys = [];
         source.forEach((entry, index) => {
           const apiKey = String(entry?.apiKey || "").trim();
           if (!apiKey || seen.has(apiKey)) return;
           seen.add(apiKey);
+          const id = this.plugin.getTextFingerprint(apiKey);
           const monthKey = /^\d{4}-\d{2}$/.test(String(entry?.monthKey || "")) ? String(entry.monthKey) : currentMonth;
           const sameMonth = monthKey === currentMonth;
+          const usedChars = sameMonth ? Math.max(0, Math.round(Number(entry?.usedChars || 0) || 0)) : 0;
           keys.push({
-            id: this.plugin.getTextFingerprint(apiKey),
+            id,
             label: String(entry?.label || `Google ${index + 1}`).trim() || `Google ${index + 1}`,
             apiKey,
             enabled: entry?.enabled !== false,
             monthlyLimit: this.plugin.normalizeGoogleTranslateMonthlyLimit(entry?.monthlyLimit, defaultLimit),
-            usedChars: sameMonth ? Math.max(0, Math.round(Number(entry?.usedChars || 0) || 0)) : 0,
+            // A key pasted back after its line was removed keeps this month's usage.
+            usedChars: Math.max(usedChars, Number(usageById[id]?.usedChars || 0)),
             monthKey: currentMonth,
             cooldownUntil: Math.max(0, Math.round(Number(entry?.cooldownUntil || 0) || 0)),
             lastError: String(entry?.lastError || "").slice(0, 160)
           });
         });
+        keys.forEach((key) => {
+          if (key.usedChars > 0) usageById[key.id] = { monthKey: currentMonth, usedChars: key.usedChars };
+        });
         return {
           keys,
-          keyPoolText: this.plugin.formatGoogleTranslateKeyPoolText(keys)
+          keyPoolText: this.plugin.formatGoogleTranslateKeyPoolText(keys),
+          usageById
         };
+      }
+      // This month's usage per key fingerprint (never the key itself). It outlives the key's
+      // line in the pool, so removing a key and pasting it back cannot reset its usage.
+      getGoogleTranslateUsageLedger(settings = this.plugin.settings.googleTranslate || {}, currentMonth = this.plugin.getCurrentMonthKey()) {
+        const ledger = {};
+        const remember = (id, value) => {
+          const usedChars = Math.max(0, Math.round(Number(value) || 0));
+          if (!id || !usedChars || Number(ledger[id]?.usedChars || 0) >= usedChars) return;
+          ledger[id] = { monthKey: currentMonth, usedChars };
+        };
+        const stored = settings?.usageById;
+        if (stored && typeof stored === "object" && !Array.isArray(stored)) {
+          Object.entries(stored).forEach(([id, record]) => {
+            if (/^[a-z0-9]{1,16}$/.test(id) && record?.monthKey === currentMonth) remember(id, record.usedChars);
+          });
+        }
+        (Array.isArray(settings?.keys) ? settings.keys : []).forEach((entry) => {
+          const apiKey = String(entry?.apiKey || "").trim();
+          const monthKey = /^\d{4}-\d{2}$/.test(String(entry?.monthKey || "")) ? String(entry.monthKey) : currentMonth;
+          if (apiKey && monthKey === currentMonth) remember(this.plugin.getTextFingerprint(apiKey), entry?.usedChars);
+        });
+        return ledger;
       }
       getAutoTranslationProviderKey(requestOptions = this.plugin.getAutoTranslationOptions()) {
         if (requestOptions?.providerKey) return requestOptions.providerKey;
@@ -10610,12 +11392,16 @@ var require_provider_layer = __commonJS({
         promise = this.plugin.fetchModelResponse(endpoint, request, options.timeoutMs || MODEL_REQUEST_TIMEOUT_MS, {
           googleTranslateAsArray: Boolean(options.googleTranslateAsArray),
           translateAsArray: Boolean(options.translateAsArray || options.googleTranslateAsArray),
-          lifecycleToken
+          lifecycleToken,
+          signal: options.signal
         }).then((result) => {
           const requestStillCurrent = this.plugin.isLifecycleTokenCurrent(lifecycleToken) && (!providerSnapshotKey || this.plugin.isAutoTranslationProviderSnapshotCurrent(providerSnapshotKey, { configOverrides: taskConfig }));
           if (requestStillCurrent && providerSnapshotKey && kind === "translation" && this.plugin.isLocalTranslationProvider(taskConfig)) {
             this.plugin.markLocalProviderHealthy(providerSnapshotKey);
             this.plugin.setApiRuntimeStatus("translation", "success", this.plugin.t("apiStatusSuccess"));
+          }
+          if (requestStillCurrent && kind === "translation" && this.plugin.autoTranslationProviderNoticeAt?.size) {
+            this.plugin.endTranslationAttentionEpisode?.(providerSnapshotKey || this.plugin.getAutoTranslationProviderKey({ configOverrides: taskConfig }));
           }
           if (requestStillCurrent) {
             this.plugin.logDiagnostic("model.request", "success", {
@@ -10681,13 +11467,15 @@ var require_provider_layer = __commonJS({
       }
       async fetchModelResponse(endpoint, request, timeoutMs = MODEL_REQUEST_TIMEOUT_MS, options = {}) {
         try {
-          const raw = await this.plugin.fetchApiResponseText(endpoint, request, timeoutMs);
+          const raw = await this.plugin.fetchApiResponseText(endpoint, request, timeoutMs, options.signal ? { signal: options.signal } : void 0);
           if (request?.responseParser === "googleTranslate") {
             const result = this.plugin.parseGoogleTranslateResponse(raw, request?.googleTranslate?.expectedCount || 1, {
               asArray: Boolean(options.googleTranslateAsArray || options.translateAsArray),
               restoreMaps: request?.googleTranslate?.restoreMaps
             });
-            this.plugin.markGoogleTranslateKeyUsage(request.googleTranslate?.apiKey, request.googleTranslate?.charCount || 0);
+            this.plugin.markGoogleTranslateKeyUsage(request.googleTranslate?.apiKey, request.googleTranslate?.charCount || 0, {
+              clearCooldown: Boolean(options.connectionTest)
+            });
             this.plugin.markGoogleTranslateProviderSuccess(request);
             return result;
           }
@@ -10727,8 +11515,7 @@ var require_provider_layer = __commonJS({
         const status = Number(error?.status || 0);
         if (this.plugin.isTimeoutError(error)) return !this.plugin.isLongAutoTranslationRequestOptions(options);
         if (this.plugin.isNetworkError(error)) return true;
-        if (status >= 500) return true;
-        return this.plugin.isLocalProviderEmptyResponseError(error) || this.plugin.isLocalProviderInvalidResponseError(error);
+        return status >= 500;
       }
       isLoopbackEndpoint(endpoint) {
         const value = String(endpoint || "").trim();
@@ -10780,13 +11567,20 @@ var require_provider_layer = __commonJS({
         const message = String(error?.message || "");
         return message === this.plugin.t("invalidJson") || /invalid json|unexpected token|not valid json/i.test(message);
       }
-      async fetchApiResponseText(endpoint, request, timeoutMs = MODEL_REQUEST_TIMEOUT_MS) {
+      async fetchApiResponseText(endpoint, request, timeoutMs = MODEL_REQUEST_TIMEOUT_MS, callerOptions = {}) {
         this.plugin.assertSafeRequestEndpoint(endpoint);
         const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
         if (controller) this.plugin.activeApiControllers.add(controller);
         const timeout = controller ? setTimeout(() => controller.abort(new DOMException("API request timed out", "TimeoutError")), timeoutMs) : null;
+        const callerSignal = callerOptions?.signal || null;
+        const abortFromCaller = () => controller?.abort();
+        if (callerSignal && controller) {
+          if (callerSignal.aborted) controller.abort();
+          else callerSignal.addEventListener?.("abort", abortFromCaller, { once: true });
+        }
         try {
           if (this.plugin.apiRequestsClosed) throw new DOMException("API requests are closed until the plugin starts", "AbortError");
+          controller?.signal.throwIfAborted();
           const method = String(request?.method || "POST").trim().toUpperCase() || "POST";
           const fetchOptions = {
             method,
@@ -10822,6 +11616,7 @@ var require_provider_layer = __commonJS({
         } finally {
           if (timeout) clearTimeout(timeout);
           if (controller) this.plugin.activeApiControllers.delete(controller);
+          if (callerSignal) callerSignal.removeEventListener?.("abort", abortFromCaller);
         }
       }
       abortActiveApiRequests() {
@@ -10839,12 +11634,39 @@ var require_provider_layer = __commonJS({
         error.providerKey = request.providerKey || this.plugin.getGoogleTranslateProviderKey();
         error.googleTranslateApiKey = request.googleTranslate?.apiKey || "";
         error.googleTranslateKeyId = request.googleTranslate?.keyId || "";
-        const signal = `${Number(error.status || 0)} ${String(raw || "").slice(0, 4e3)}`;
-        if (/RESOURCE_EXHAUSTED|quota|limit exceeded|daily limit|monthly limit|rateLimitExceeded|userRateLimitExceeded/i.test(signal)) {
+        const status = Number(error.status || 0);
+        const text = String(raw || "").slice(0, 4e3);
+        const dailyLimit = /dailyLimitExceeded|daily limit|per\s*day\b/i.test(text);
+        const shortWindowLimit = /userRateLimitExceeded|rateLimitExceeded|per\s*(?:minute|second|100\s*seconds)\b/i.test(text);
+        if (!dailyLimit && (shortWindowLimit || status === 429)) {
+          error.providerRateLimited = true;
+          error.retryAfterMs = Number(error.retryAfterMs || 0) > 0 ? Number(error.retryAfterMs) : AUTO_TRANSLATE_PROVIDER_FAILURE_TTL;
+        } else if (dailyLimit) {
+          error.googleTranslateQuotaExceeded = true;
+          error.retryAfterMs = Math.max(Number(error.retryAfterMs || 0), this.plugin.getGoogleTranslateDailyQuotaRetryAfterMs());
+        } else if (/RESOURCE_EXHAUSTED|quota|limit exceeded|monthly limit/i.test(text)) {
           error.googleTranslateQuotaExceeded = true;
           error.retryAfterMs = Math.max(Number(error.retryAfterMs || 0), this.plugin.getGoogleTranslateQuotaRetryAfterMs());
         }
         return error;
+      }
+      // Google resets daily quota at midnight Pacific Time.
+      getGoogleTranslateDailyQuotaRetryAfterMs(now = Date.now()) {
+        const day = 24 * 60 * 60 * 1e3;
+        try {
+          const parts = new Intl.DateTimeFormat("en-US", {
+            timeZone: "America/Los_Angeles",
+            hourCycle: "h23",
+            hour: "2-digit",
+            minute: "2-digit",
+            second: "2-digit"
+          }).formatToParts(new Date(now));
+          const part = (type) => Number(parts.find((item) => item.type === type)?.value || 0);
+          const elapsedMs = (part("hour") % 24 * 3600 + part("minute") * 60 + part("second")) * 1e3;
+          return Math.max(AUTO_TRANSLATE_FAILURE_MAX_TTL, day - elapsedMs + 5 * 60 * 1e3);
+        } catch {
+          return day;
+        }
       }
       getModelRequestKey(endpoint, request, input) {
         const body = request?.body || {};
@@ -10889,7 +11711,7 @@ var require_provider_layer = __commonJS({
           }
           const test = this.plugin.buildConnectionTestRequest(kind);
           endpoint = test.endpoint;
-          await this.plugin.fetchModelResponse(test.endpoint, test.request, API_TEST_REQUEST_TIMEOUT_MS, { lifecycleToken });
+          await this.plugin.fetchModelResponse(test.endpoint, test.request, API_TEST_REQUEST_TIMEOUT_MS, { lifecycleToken, connectionTest: true });
           if (!this.plugin.isLifecycleTokenCurrent(lifecycleToken) || kind === "translation" && !this.plugin.isAutoTranslationProviderSnapshotCurrent(providerSnapshotKey, { configOverrides: testConfig })) return;
           this.plugin.clearAutoTranslationProviderFailureForCurrentConfig(kind);
           if (kind === "translation" && this.plugin.isLocalTranslationProvider(testConfig)) this.plugin.markLocalProviderHealthy(providerSnapshotKey);
@@ -10928,23 +11750,20 @@ var require_provider_layer = __commonJS({
         }
       }
       buildConnectionTestRequest(kind) {
-        const { config, endpoint, apiKey, model } = this.plugin.getApiConfig(kind);
-        if (this.plugin.isDirectTranslateProvider(config)) {
+        const taskConfig = this.plugin.getTaskConfig(kind);
+        if (this.plugin.isDirectTranslateProvider(taskConfig)) {
+          const targetLanguage = taskConfig.targetLanguage || this.plugin.settings.translation?.targetLanguage;
           return this.plugin.buildModelRequest("translation", "hello", {
             configOverrides: {
-              ...config,
+              ...taskConfig,
               sourceLanguage: AUTO_LANGUAGE_VALUE,
-              targetLanguage: "en"
-            }
+              targetLanguage,
+              targetLanguageCode: this.plugin.getTargetLanguageCode(targetLanguage)
+            },
+            ignoreGoogleTranslateCooldown: true
           });
         }
-        if (this.plugin.isGoogleTranslateProvider(config)) {
-          return this.plugin.buildGoogleTranslateRequest("hello", {
-            ...config,
-            sourceLanguage: AUTO_LANGUAGE_VALUE,
-            targetLanguage: "en"
-          });
-        }
+        const { config, endpoint, apiKey, model } = this.plugin.getApiConfig(kind);
         const body = this.plugin.applyProviderBodyOptions(config, {
           model,
           messages: [
@@ -10972,6 +11791,7 @@ var require_provider_layer = __commonJS({
           if (kind !== "translation") throw new Error(this.plugin.t("translationDisabled"));
           return this.plugin.buildGoogleTranslateRequest(input, effectiveConfig, {
             ignoreReservations: Boolean(options.deferGoogleTranslateReservation),
+            ignoreCooldown: Boolean(options.ignoreGoogleTranslateCooldown),
             reserve: Boolean(options.reserveGoogleTranslateQuota)
           });
         }
@@ -11025,10 +11845,13 @@ var require_provider_layer = __commonJS({
         const protectedTexts = protectedPayloads.map((payload) => payload.text);
         const charCount = this.plugin.countGoogleTranslateChars(protectedTexts);
         const endpoint = String(PROVIDER_DEFAULTS.googleCloud.endpoint).trim();
-        const target = this.plugin.getGoogleLanguageCode(config.targetLanguage);
+        const target = this.plugin.getGoogleLanguageCode(config.targetLanguageCode || config.targetLanguage);
         if (!target || target === AUTO_LANGUAGE_VALUE) throw new Error(this.plugin.t("targetLanguageDesc"));
         const source = this.plugin.getGoogleLanguageCode(config.sourceLanguage, { source: true });
-        const key = this.plugin.selectGoogleTranslateKey(charCount, { ignoreReservations: Boolean(options.ignoreReservations) });
+        const key = this.plugin.selectGoogleTranslateKey(charCount, {
+          ignoreReservations: Boolean(options.ignoreReservations),
+          ignoreCooldown: Boolean(options.ignoreCooldown)
+        });
         if (!key) {
           const hasKeys = this.plugin.getGoogleTranslateKeys().length > 0;
           throw hasKeys ? this.plugin.createGoogleTranslateQuotaError({ charCount }) : this.plugin.createGoogleTranslateNoKeyError();
@@ -11041,13 +11864,15 @@ var require_provider_layer = __commonJS({
         };
         if (source) body.source = source;
         return {
-          endpoint: this.plugin.appendQueryParam(endpoint, "key", key.apiKey),
+          // The key goes in a header so it never shows up in logged or wrapped request URLs.
+          endpoint,
           request: {
             provider: "googleCloud",
             providerKey: this.plugin.getGoogleTranslateProviderKey(key),
             responseParser: "googleTranslate",
             headers: {
-              "Content-Type": "application/json"
+              "Content-Type": "application/json",
+              "X-Goog-Api-Key": key.apiKey
             },
             body,
             googleTranslate: {
@@ -11067,7 +11892,7 @@ var require_provider_layer = __commonJS({
         const apiKey = this.plugin.getEffectiveRequestApiKey(config);
         if (!endpoint) throw new Error(this.plugin.t("endpointMissing"));
         if (!apiKey) throw new Error(this.plugin.t("apiKeyMissingTranslation"));
-        const target = this.plugin.getMicrosoftLanguageCode(config.targetLanguage);
+        const target = this.plugin.getMicrosoftLanguageCode(config.targetLanguageCode || config.targetLanguage);
         if (!target || target === AUTO_LANGUAGE_VALUE) throw new Error(this.plugin.t("targetLanguageDesc"));
         const source = this.plugin.getMicrosoftLanguageCode(config.sourceLanguage, { source: true });
         const params = new URLSearchParams({ "api-version": "3.0", to: target });
@@ -11093,7 +11918,7 @@ var require_provider_layer = __commonJS({
         const apiKey = this.plugin.getEffectiveRequestApiKey(config);
         if (!endpoint) throw new Error(this.plugin.t("endpointMissing"));
         if (!apiKey) throw new Error(this.plugin.t("apiKeyMissingTranslation"));
-        const target = this.plugin.getDeepLLanguageCode(config.targetLanguage);
+        const target = this.plugin.getDeepLLanguageCode(config.targetLanguageCode || config.targetLanguage);
         if (!target || target === AUTO_LANGUAGE_VALUE) throw new Error(this.plugin.t("targetLanguageDesc"));
         const source = this.plugin.getDeepLLanguageCode(config.sourceLanguage, { source: true });
         const body = {
@@ -11122,7 +11947,7 @@ var require_provider_layer = __commonJS({
         const secretKey = String(config.secretKey || "").trim();
         if (!endpoint) throw new Error(this.plugin.t("endpointMissing"));
         if (!appId || !secretKey) throw new Error(this.plugin.t("apiKeyMissingTranslation"));
-        const target = this.plugin.getBaiduLanguageCode(config.targetLanguage);
+        const target = this.plugin.getBaiduLanguageCode(config.targetLanguageCode || config.targetLanguage);
         if (!target || target === AUTO_LANGUAGE_VALUE) throw new Error(this.plugin.t("targetLanguageDesc"));
         const source = this.plugin.getBaiduLanguageCode(config.sourceLanguage, { source: true }) || "auto";
         const lineGroups = texts.map((text) => {
@@ -11172,7 +11997,10 @@ var require_provider_layer = __commonJS({
         const code = this.plugin.getGoogleLanguageCode(language, options);
         if (options.source && (!code || code === AUTO_LANGUAGE_VALUE)) return "";
         const upper = String(code || "").replace("_", "-").toUpperCase();
-        if (upper === "ZH-CN" || upper === "ZH-TW" || upper === "ZH-HANS" || upper === "ZH-HANT") return "ZH";
+        if (upper === "ZH-CN" || upper === "ZH-TW" || upper === "ZH-HANS" || upper === "ZH-HANT") {
+          if (options.source) return "ZH";
+          return upper === "ZH-TW" || upper === "ZH-HANT" ? "ZH-HANT" : "ZH-HANS";
+        }
         if (upper === "EN") return "EN";
         if (upper === "PT") return "PT";
         return upper;
@@ -11364,7 +12192,7 @@ var require_provider_layer = __commonJS({
       }
       parseBaiduTranslateResponse(raw, expectedCount = 1, options = {}) {
         const data = this.plugin.parseProviderJson(raw, "baidu");
-        if (data?.error_code) {
+        if (data?.error_code && String(data.error_code) !== "52000") {
           throw this.plugin.createBaiduTranslateError(data);
         }
         const results = data?.trans_result;
@@ -11417,10 +12245,27 @@ var require_provider_layer = __commonJS({
         const error = new Error(message);
         error.baiduApiError = true;
         error.baiduErrorCode = code;
-        if (["52003", "54001"].includes(code)) error.providerAuthFailed = true;
-        if (["54003"].includes(code)) error.providerRateLimited = true;
-        if (["54004", "54005"].includes(code)) error.providerQuotaExceeded = true;
-        if (["52001", "52002"].includes(code)) error.providerServerError = true;
+        if (["52003", "54001", "58002", "90107"].includes(code)) error.providerAuthFailed = true;
+        else if (code === "58000") {
+          error.providerAuthFailed = true;
+          error.providerIpRejected = true;
+        } else if (["54000", "58001"].includes(code)) {
+          error.providerAuthFailed = true;
+          error.providerRequestRejected = true;
+          if (code === "58001") error.providerLanguageUnsupported = true;
+        } else if (code === "54003") error.providerRateLimited = true;
+        else if (code === "54005") {
+          error.providerRateLimited = true;
+          error.retryAfterMs = 3e3;
+        } else if (code === "54004") error.providerQuotaExceeded = true;
+        else if (code === "20003") {
+          error.providerRequestRejected = true;
+          error.autoTranslationTerminalFailure = true;
+        } else if (["52001", "52002"].includes(code)) error.providerServerError = true;
+        else {
+          error.providerServerError = true;
+          error.providerRequestRejected = true;
+        }
         return error;
       }
       decodeHtmlEntities(text) {
@@ -11460,10 +12305,13 @@ var require_settings_store = __commonJS({
   "src/settings/settings-store.js"(exports2, module2) {
     "use strict";
     var {
+      CACHE_DATA_KEY,
+      CACHE_DATA_STORE,
       DATA_KEY,
       DEFAULT_PROMPT_TEMPLATES,
       DEFAULT_SETTINGS,
       DIAGNOSTIC_DATA_KEY,
+      DIAGNOSTIC_DATA_STORE,
       GOOGLE_TRANSLATE_DEFAULT_MONTHLY_LIMIT,
       LEGACY_TRANSLATION_NATURAL_PROMPTS,
       PLUGIN_NAME,
@@ -11473,8 +12321,19 @@ var require_settings_store = __commonJS({
       SETTINGS_SECTION_IDS,
       SETTINGS_TABS,
       SETTINGS_WRITE_DEBOUNCE_MS,
-      TRANSLATION_CACHE_WRITE_DEBOUNCE_MS
+      TRANSLATION_CACHE_WRITE_DEBOUNCE_MS,
+      TRANSLATION_LINE_STYLES,
+      TRANSLATION_LINE_TEXT_SCALES
     } = require_constants();
+    var RESET_KEPT_CREDENTIAL_FIELDS = ["apiKey", "appId", "secretKey", "region", "deeplPlan"];
+    function normalizeTranslationLineStyle(value) {
+      const style = String(value || "");
+      return TRANSLATION_LINE_STYLES.includes(style) ? style : DEFAULT_SETTINGS.ui.translationStyle;
+    }
+    function normalizeTranslationLineTextScale(value) {
+      const scale = Number(value);
+      return TRANSLATION_LINE_TEXT_SCALES.includes(scale) ? scale : DEFAULT_SETTINGS.ui.translationTextScale;
+    }
     var SettingsStore = class {
       constructor(plugin) {
         this.plugin = plugin;
@@ -11493,6 +12352,7 @@ var require_settings_store = __commonJS({
         let changed = false;
         const used = /* @__PURE__ */ new Set();
         templates.forEach((template) => {
+          if (!template || typeof template !== "object") return;
           const serial = this.plugin.normalizePromptTemplateSerial(template.serial);
           if (serial && !used.has(serial)) {
             template.serial = serial;
@@ -11594,9 +12454,12 @@ var require_settings_store = __commonJS({
         const storedValue = this.plugin.loadData(DATA_KEY);
         if (this.plugin.dataLoadFailures.has(DATA_KEY)) {
           this.plugin.settingsLoadBlocked = true;
+          this.settingsLoadBlockedNoticeShown = false;
+          this.notifySettingsLoadBlocked();
           return false;
         }
         this.plugin.settingsLoadBlocked = false;
+        this.settingsLoadBlockedNoticeShown = false;
         if (wasBlocked) {
           if (this.plugin.settingsDirtyTimer) clearTimeout(this.plugin.settingsDirtyTimer);
           this.plugin.settingsDirtyTimer = null;
@@ -11637,6 +12500,14 @@ var require_settings_store = __commonJS({
           if (targetLanguage !== this.plugin.settings[kind].targetLanguage) {
             this.plugin.settings[kind].targetLanguage = targetLanguage;
             changed = true;
+          }
+          if (Array.isArray(this.plugin.settings[kind].promptTemplates)) {
+            const templates = this.plugin.settings[kind].promptTemplates;
+            const validTemplates = templates.filter((template) => template && typeof template === "object" && !Array.isArray(template));
+            if (validTemplates.length !== templates.length) {
+              this.plugin.settings[kind].promptTemplates = validTemplates;
+              changed = true;
+            }
           }
           if (!Array.isArray(this.plugin.settings[kind].promptTemplates) || !this.plugin.settings[kind].promptTemplates.length) {
             this.plugin.settings[kind].promptTemplates = this.plugin.clone(DEFAULT_PROMPT_TEMPLATES[kind] || []);
@@ -11715,7 +12586,11 @@ var require_settings_store = __commonJS({
           this.plugin.settings.googleTranslate.keyPoolText = normalizedGoogleKeys.keyPoolText;
           changed = true;
         }
-        if (!this.plugin.settings.ui || typeof this.plugin.settings.ui !== "object") {
+        if (JSON.stringify(normalizedGoogleKeys.usageById) !== JSON.stringify(this.plugin.settings.googleTranslate.usageById ?? null)) {
+          this.plugin.settings.googleTranslate.usageById = normalizedGoogleKeys.usageById;
+          changed = true;
+        }
+        if (!this.plugin.settings.ui || typeof this.plugin.settings.ui !== "object" || Array.isArray(this.plugin.settings.ui)) {
           this.plugin.settings.ui = this.plugin.clone(DEFAULT_SETTINGS.ui);
           changed = true;
         }
@@ -11875,11 +12750,33 @@ var require_settings_store = __commonJS({
           this.plugin.settings.ui.hideOriginalAfterTranslation = DEFAULT_SETTINGS.ui.hideOriginalAfterTranslation;
           changed = true;
         }
+        const translationStyle = normalizeTranslationLineStyle(this.plugin.settings.ui.translationStyle);
+        if (translationStyle !== this.plugin.settings.ui.translationStyle) {
+          this.plugin.settings.ui.translationStyle = translationStyle;
+          changed = true;
+        }
+        const translationTextScale = normalizeTranslationLineTextScale(this.plugin.settings.ui.translationTextScale);
+        if (translationTextScale !== this.plugin.settings.ui.translationTextScale) {
+          this.plugin.settings.ui.translationTextScale = translationTextScale;
+          changed = true;
+        }
         if (changed) this.plugin.saveSettings();
+      }
+      // While the stored settings cannot be read, saves are blocked so the unreadable file is not overwritten.
+      // Tell the user once per episode instead of silently dropping their changes.
+      notifySettingsLoadBlocked() {
+        if (this.settingsLoadBlockedNoticeShown) return false;
+        this.settingsLoadBlockedNoticeShown = true;
+        try {
+          this.plugin.showToast(this.plugin.t("settingsLoadBlocked"), "error");
+        } catch {
+        }
+        return true;
       }
       saveSettings(options = {}) {
         if (this.plugin.settingsLoadBlocked) {
           this.plugin.settingsDirty = true;
+          this.notifySettingsLoadBlocked();
           return false;
         }
         if (options.debounce === true) {
@@ -11920,26 +12817,55 @@ var require_settings_store = __commonJS({
         if (options.retryOnError !== false) this.plugin.scheduleSettingsPersist(SETTINGS_WRITE_DEBOUNCE_MS);
         return result;
       }
+      // BetterDiscord keeps one <name>.config.json per data name and rewrites the whole file on every save.
+      // Settings stay under PLUGIN_NAME; the large cache and the diagnostics log use their own names (persist-1).
+      getDataStoreName(key) {
+        if (key === CACHE_DATA_KEY) return CACHE_DATA_STORE;
+        if (key === DIAGNOSTIC_DATA_KEY) return DIAGNOSTIC_DATA_STORE;
+        return PLUGIN_NAME;
+      }
+      readDataStore(storeName, key) {
+        const bdApi = globalThis.BdApi;
+        if (!bdApi) return null;
+        if (bdApi.Data?.load) return bdApi.Data.load(storeName, key);
+        if (bdApi.loadData) return bdApi.loadData(storeName, key);
+        return null;
+      }
+      // Returns true or false; throws DATA_SAVE_UNAVAILABLE when BetterDiscord offers no save API.
+      writeDataStore(storeName, key, value) {
+        const bdApi = globalThis.BdApi;
+        if (bdApi?.Data?.save) return bdApi.Data.save(storeName, key, value) === false ? false : true;
+        if (bdApi?.saveData) return bdApi.saveData(storeName, key, value) === false ? false : true;
+        throw new Error("DATA_SAVE_UNAVAILABLE");
+      }
+      deleteDataStoreKey(storeName, key) {
+        const bdApi = globalThis.BdApi;
+        if (bdApi?.Data?.delete) return bdApi.Data.delete(storeName, key) === false ? false : true;
+        if (bdApi?.deleteData) return bdApi.deleteData(storeName, key) === false ? false : true;
+        return this.writeDataStore(storeName, key, null);
+      }
       loadData(key) {
+        const bdApi = globalThis.BdApi;
+        if (!bdApi) return null;
+        if (!bdApi.Data?.load && !bdApi.loadData) return null;
+        const storeName = this.plugin.getDataStoreName(key);
+        let value = null;
         try {
-          const bdApi = globalThis.BdApi;
-          if (!bdApi) return null;
-          if (bdApi.Data?.load) {
-            const value = bdApi.Data.load(PLUGIN_NAME, key);
-            this.plugin.dataLoadFailures.delete(key);
-            return value;
-          }
-          if (bdApi.loadData) {
-            const value = bdApi.loadData(PLUGIN_NAME, key);
-            this.plugin.dataLoadFailures.delete(key);
-            return value;
-          }
-          return null;
+          value = this.readDataStore(storeName, key);
+          this.plugin.dataLoadFailures.delete(key);
         } catch (error) {
           this.plugin.dataLoadFailures.add(key);
           this.plugin.recordDataIoFailure("load", key, error);
-          return null;
+          value = null;
         }
+        if (storeName !== PLUGIN_NAME && (value === null || value === void 0)) {
+          try {
+            const legacy = this.readDataStore(PLUGIN_NAME, key);
+            if (legacy !== null && legacy !== void 0) return legacy;
+          } catch {
+          }
+        }
+        return value;
       }
       saveData(key, value) {
         try {
@@ -11948,11 +12874,8 @@ var require_settings_store = __commonJS({
             if (key !== DIAGNOSTIC_DATA_KEY) this.plugin.recordDataIoFailure("save", key, new Error("DATA_SAVE_UNAVAILABLE"));
             return false;
           }
-          if (bdApi.Data?.save) {
-            return bdApi.Data.save(PLUGIN_NAME, key, value) === false ? false : true;
-          }
-          if (bdApi.saveData) {
-            return bdApi.saveData(PLUGIN_NAME, key, value) === false ? false : true;
+          if (bdApi.Data?.save || bdApi.saveData) {
+            return this.writeDataStore(this.plugin.getDataStoreName(key), key, value);
           }
           if (key !== DIAGNOSTIC_DATA_KEY) this.plugin.recordDataIoFailure("save", key, new Error("DATA_SAVE_UNAVAILABLE"));
           return false;
@@ -11960,6 +12883,59 @@ var require_settings_store = __commonJS({
           if (key !== DIAGNOSTIC_DATA_KEY) this.plugin.recordDataIoFailure("save", key, error);
           return false;
         }
+      }
+      // One-time move of the cache and diagnostics out of the settings file (v0.3.0 and older kept them there).
+      // The old copy is merged into the new file and deleted only after the new file was written, so a failed
+      // step keeps the old copy and simply retries on the next start. Returns a status per key.
+      migrateLegacyDataStores() {
+        const results = {};
+        [CACHE_DATA_KEY, DIAGNOSTIC_DATA_KEY].forEach((key) => {
+          results[key] = this.plugin.migrateLegacyDataStoreKey(key);
+        });
+        return results;
+      }
+      migrateLegacyDataStoreKey(key) {
+        const storeName = this.plugin.getDataStoreName(key);
+        if (storeName === PLUGIN_NAME) return "not-separated";
+        let legacy;
+        try {
+          legacy = this.readDataStore(PLUGIN_NAME, key);
+        } catch (error) {
+          this.plugin.recordDataIoFailure("load", `legacy:${key}`, error);
+          return "legacy-unreadable";
+        }
+        if (legacy === null || legacy === void 0) return "none";
+        let current;
+        try {
+          current = this.readDataStore(storeName, key);
+        } catch (error) {
+          this.plugin.recordDataIoFailure("load", key, error);
+          return "store-unreadable";
+        }
+        const hasCurrent = current !== null && current !== void 0;
+        const payload = hasCurrent ? this.plugin.mergeLegacyDataPayload(key, current, legacy) : legacy;
+        try {
+          if (this.writeDataStore(storeName, key, payload) !== true) throw new Error("DATA_SAVE_FAILED");
+        } catch (error) {
+          this.plugin.recordDataIoFailure("save", key, error);
+          return "save-failed";
+        }
+        try {
+          if (this.deleteDataStoreKey(PLUGIN_NAME, key) !== true) throw new Error("DATA_DELETE_FAILED");
+        } catch (error) {
+          this.plugin.recordDataIoFailure("save", `legacy:${key}`, error);
+          return "delete-failed";
+        }
+        try {
+          this.plugin.logDiagnostic("data.migrate", "ok", { key, merged: hasCurrent });
+        } catch {
+        }
+        return hasCurrent ? "merged" : "migrated";
+      }
+      mergeLegacyDataPayload(key, current, legacy) {
+        if (key === CACHE_DATA_KEY) return this.plugin.mergePersistedTranslationCachePayloads(current, legacy);
+        if (key === DIAGNOSTIC_DATA_KEY) return this.plugin.mergePersistedDiagnosticLogsPayloads(current, legacy);
+        return current;
       }
       recordDataIoFailure(action, key, error) {
         const safeKey = String(key || "");
@@ -11986,7 +12962,8 @@ var require_settings_store = __commonJS({
       setSetting(path, value, options = {}) {
         const parts = path.split(".");
         if (path === "ui.currentChannelAutoTranslatePolicy") {
-          return this.plugin.setCurrentChannelAutoTranslatePolicyMode(value, this.plugin.getCurrentRouteKey(), options);
+          const routeKey = options.routeKey !== void 0 ? options.routeKey : this.plugin.getCurrentRouteKey();
+          return this.plugin.setCurrentChannelAutoTranslatePolicyMode(value, routeKey, options);
         }
         if (path === "ui.settingsActiveTab") {
           value = SETTINGS_SECTION_IDS.includes(value) || SETTINGS_TABS.includes(value) ? value : SETTINGS_SECTION_GENERAL;
@@ -12025,6 +13002,12 @@ var require_settings_store = __commonJS({
         if (path === "translation.deeplPlan") {
           value = ["free", "pro"].includes(String(value || "")) ? String(value) : DEFAULT_SETTINGS.translation.deeplPlan;
         }
+        if (path === "ui.translationStyle") {
+          value = normalizeTranslationLineStyle(value);
+        }
+        if (path === "ui.translationTextScale") {
+          value = normalizeTranslationLineTextScale(value);
+        }
         let cursor = this.plugin.settings;
         for (let index = 0; index < parts.length - 1; index++) {
           cursor = cursor[parts[index]];
@@ -12042,12 +13025,14 @@ var require_settings_store = __commonJS({
         cursor[leaf] = value;
         if (parts[0] === "googleTranslate") {
           if (path === "googleTranslate.keyPoolText" && !String(value || "").trim()) {
+            this.plugin.settings.googleTranslate.usageById = this.plugin.getGoogleTranslateUsageLedger(this.plugin.settings.googleTranslate);
             this.plugin.settings.googleTranslate.keys = [];
             this.plugin.settings.googleTranslate.keyPoolText = "";
           } else {
             const normalized = this.plugin.normalizeGoogleTranslateKeyPool(this.plugin.settings.googleTranslate);
             this.plugin.settings.googleTranslate.keys = normalized.keys;
             this.plugin.settings.googleTranslate.keyPoolText = normalized.keyPoolText;
+            this.plugin.settings.googleTranslate.usageById = normalized.usageById;
           }
         }
         if (path === "translation.provider") this.plugin.applyProviderIntakeMode(value);
@@ -12061,7 +13046,7 @@ var require_settings_store = __commonJS({
         if (this.plugin.shouldInvalidateAutoTranslationForSetting(path)) {
           this.plugin.invalidateAutoTranslationQueue();
         }
-        if (path === "ui.autoTranslateMessages" && value === false) {
+        if (path === "ui.autoTranslateMessages" && value === false && !this.plugin.isAutoTranslateEnabled()) {
           this.plugin.cancelAutoTranslationRuntimeWork("setting-disabled");
         }
         if (path === "ui.language") {
@@ -12070,6 +13055,9 @@ var require_settings_store = __commonJS({
         if (path === "ui.injectMessageContextMenu") {
           this.plugin.unpatchContextMenus();
           this.plugin.patchMessageContextMenu();
+        }
+        if (path === "translation.enabled") {
+          this.plugin.syncMessageTranslationEntryPoints();
         }
         if (path === "ui.messageButtonVisibility") {
           this.plugin.applyMessageButtonVisibilityToButtons();
@@ -12090,6 +13078,9 @@ var require_settings_store = __commonJS({
             node.remove();
             this.plugin.syncInputActionGroupState(group);
           });
+        }
+        if (path === "polish.enabled" || path === "translation.enabled") {
+          this.plugin.syncInputActionButtonsForSettings();
         }
         if (typeof document !== "undefined" && path === "ui.showQuickSettingsRailButton" && value === false) {
           document.querySelectorAll?.(".dait-quick-settings-rail")?.forEach((node) => node.remove());
@@ -12115,10 +13106,126 @@ var require_settings_store = __commonJS({
         if (path === "ui.hideOriginalAfterTranslation") {
           this.plugin.syncAllTranslationSourceVisibility();
         }
-        if (path === "ui.maskTranslations" || path === "ui.translationPosition") {
+        if (path === "ui.maskTranslations" || path === "ui.translationPosition" || path === "ui.translationStyle" || path === "ui.translationTextScale") {
           this.plugin.syncAllTranslationDisplaySettings();
         }
         this.plugin.queueScan();
+      }
+      // Restores the defaults. With keepCredentials (default) it keeps API keys and the other credential fields of
+      // every provider profile, the Google key pool with its usage counters and monthly limit, and the prompt
+      // templates. The UI language is kept unless keepLanguage is false. Applies the same runtime effects
+      // setSetting applies to each changed setting. Stable entry point for the reset dialog.
+      resetSettingsToDefaults({ keepCredentials = true, keepLanguage = true } = {}) {
+        const previous = this.plugin.settings && typeof this.plugin.settings === "object" ? this.plugin.settings : {};
+        const next = this.plugin.clone(DEFAULT_SETTINGS);
+        if (keepCredentials) this.carryOverResetCredentials(previous, next);
+        const usageById = previous.googleTranslate?.usageById;
+        if (usageById && typeof usageById === "object" && !Array.isArray(usageById)) {
+          next.googleTranslate.usageById = this.plugin.clone(usageById);
+        }
+        const language = previous.ui?.language;
+        if (keepLanguage && typeof language === "string" && language) next.ui.language = language;
+        this.plugin.settings = next;
+        this.plugin.ensureSettingsShape();
+        const saved = this.plugin.saveSettings();
+        this.plugin.applySettingsResetEffects(previous);
+        this.plugin.logDiagnostic("settings.reset", saved === false ? "not-saved" : "ok", { keepCredentials: Boolean(keepCredentials) });
+        return saved !== false;
+      }
+      carryOverResetCredentials(previous, next) {
+        const isObject = (value) => Boolean(value) && typeof value === "object" && !Array.isArray(value);
+        const pickCredentials = (source) => {
+          const picked = {};
+          RESET_KEPT_CREDENTIAL_FIELDS.forEach((field) => {
+            if (typeof source?.[field] === "string" && source[field].trim()) picked[field] = source[field];
+          });
+          return picked;
+        };
+        ["polish", "translation"].forEach((kind) => {
+          const before = previous[kind];
+          const after = next[kind];
+          if (!isObject(before) || !isObject(after)) return;
+          const profiles = {};
+          Object.entries(isObject(before.providerProfiles) ? before.providerProfiles : {}).forEach(([provider, profile]) => {
+            if (!isObject(profile)) return;
+            const kept = pickCredentials(profile);
+            if (Object.keys(kept).length) profiles[provider] = kept;
+          });
+          const activeProvider = String(before.provider || "").trim();
+          const live = pickCredentials(before);
+          if (activeProvider && Object.keys(live).length) profiles[activeProvider] = { ...profiles[activeProvider] || {}, ...live };
+          after.providerProfiles = profiles;
+          const own = profiles[after.provider];
+          if (own) {
+            RESET_KEPT_CREDENTIAL_FIELDS.forEach((field) => {
+              if (own[field] !== void 0 && Object.prototype.hasOwnProperty.call(after, field)) after[field] = own[field];
+            });
+          }
+          const templates = Array.isArray(before.promptTemplates) ? before.promptTemplates.filter(isObject).map((template) => this.plugin.clone(template)) : [];
+          if (templates.length) {
+            const ids = new Set(templates.map((template) => template.id));
+            const missingDefaults = (DEFAULT_PROMPT_TEMPLATES[kind] || []).filter((template) => !ids.has(template.id)).map((template) => this.plugin.clone(template));
+            after.promptTemplates = [...missingDefaults, ...templates];
+            const active = after.promptTemplates.find((template) => template.id === after.activePromptTemplate);
+            if (typeof active?.prompt === "string") after.prompt = active.prompt;
+          }
+        });
+        const google = previous.googleTranslate;
+        if (isObject(google)) {
+          if (Array.isArray(google.keys)) next.googleTranslate.keys = this.plugin.clone(google.keys);
+          if (typeof google.keyPoolText === "string") next.googleTranslate.keyPoolText = google.keyPoolText;
+          if (google.defaultMonthlyLimit !== void 0) next.googleTranslate.defaultMonthlyLimit = google.defaultMonthlyLimit;
+        }
+        return next;
+      }
+      // Open settings controls show the new values (so closing quick settings cannot commit the old ones back),
+      // then each runtime effect of a changed setting runs as setSetting would run it.
+      applySettingsResetEffects(previous = {}) {
+        const prevUi = previous?.ui && typeof previous.ui === "object" ? previous.ui : {};
+        const ui = this.plugin.settings.ui;
+        const changed = (key) => !Object.is(prevUi[key], ui[key]);
+        const turnedOff = (key) => ui[key] === false && prevUi[key] !== false;
+        this.plugin.syncAllSettingControls();
+        this.plugin.invalidateAutoTranslationQueue();
+        if (!this.plugin.isAutoTranslateEnabled()) this.plugin.cancelAutoTranslationRuntimeWork("settings-reset");
+        if (changed("language")) {
+          this.plugin.refreshLocalizedUi();
+        } else if (changed("injectMessageContextMenu")) {
+          this.plugin.unpatchContextMenus();
+          this.plugin.patchMessageContextMenu();
+        }
+        if (changed("messageButtonVisibility")) this.plugin.applyMessageButtonVisibilityToButtons();
+        if (typeof document !== "undefined" && document.querySelectorAll) {
+          const removeNodes = (selector, inputGroup) => document.querySelectorAll(selector)?.forEach((node) => {
+            const group = inputGroup ? node.closest?.(".dait-input-action-group") : null;
+            node.remove();
+            if (inputGroup) this.plugin.syncInputActionGroupState(group);
+          });
+          if (turnedOff("injectMessageButtons")) removeNodes(".dait-message-button", false);
+          if (turnedOff("injectInputButton")) removeNodes(".dait-polish-button", true);
+          if (turnedOff("publicBilingualInputButton")) removeNodes(".dait-public-bilingual-button", true);
+          if (turnedOff("showQuickSettingsRailButton")) removeNodes(".dait-quick-settings-rail", false);
+          if (turnedOff("showQuickSettingsPanelButton")) removeNodes(".dait-quick-settings-panel", false);
+        }
+        if (changed("translationCacheTtlHours")) this.plugin.clampTranslationCacheExpiryToCurrentTtl();
+        if (changed("translationCacheTtlHours") || changed("translationCacheMaxEntries")) {
+          this.plugin.pruneTranslationCache({ scanExpired: true });
+          this.plugin.scheduleTranslationCachePersist(TRANSLATION_CACHE_WRITE_DEBOUNCE_MS);
+        }
+        if (turnedOff("showAutoTranslateWarnings") || turnedOff("showAutoTranslateToasts")) this.plugin.hideAutoTranslationWarningLines();
+        if (prevUi.diagnosticsEnabled === true && ui.diagnosticsEnabled !== true) this.plugin.disableDiagnosticLogging();
+        if (changed("hideOriginalAfterTranslation")) this.plugin.syncAllTranslationSourceVisibility();
+        if (changed("maskTranslations") || changed("translationPosition")) this.plugin.syncAllTranslationDisplaySettings();
+        this.plugin.queueScan();
+      }
+      syncAllSettingControls() {
+        if (typeof document === "undefined" || !document.querySelectorAll) return;
+        const paths = /* @__PURE__ */ new Set();
+        document.querySelectorAll("[data-dait-path]")?.forEach((control) => {
+          const path = String(control?.dataset?.daitPath || "");
+          if (path) paths.add(path);
+        });
+        paths.forEach((path) => this.plugin.syncSettingControls(path, this.plugin.getSetting(path), { includeActive: true }));
       }
       setTaskProvider(kind, provider) {
         if (!this.plugin.settings[kind]) return;
@@ -12188,6 +13295,84 @@ var require_settings_store = __commonJS({
   }
 });
 
+// src/intake/discord-markup.js
+var require_discord_markup = __commonJS({
+  "src/intake/discord-markup.js"(exports2, module2) {
+    "use strict";
+    var PLACEHOLDER_START = "";
+    var PLACEHOLDER_END = "";
+    var PLACEHOLDER_PATTERN = /\uE000(\d+)\uE001/g;
+    var CODE_BLOCK_PATTERN = /```(?:[A-Za-z0-9_+.#-]{1,32}\n)?([\s\S]*?)```/g;
+    var INLINE_CODE_PATTERN = /``([\s\S]+?)``|`([^`]+?)`/g;
+    var ESCAPED_CHARACTER_PATTERN = /\\([^A-Za-z0-9\s])/g;
+    var BARE_URL_PATTERN = /(?:https?|steam|discord):\/\/[^\s<>]*[^\s<>.,:;"')\]]/g;
+    var SPOILER_PATTERN = /\|\|[\s\S]+?\|\|/;
+    var TIMESTAMP_PATTERN = /<t:-?\d+(?::[A-Za-z])?>/;
+    var GUILD_NAVIGATION_PATTERN = /<id:[A-Za-z_]+>/;
+    var CUSTOM_EMOJI_PATTERN = /<a?:([A-Za-z0-9_~]{1,64}):\d{15,25}>/g;
+    var SLASH_COMMAND_PATTERN = /<\/([^:<>\n]{1,100}):\d{15,25}>/g;
+    var USER_MENTION_PATTERN = /<@!?(\d{15,25})>/g;
+    var ROLE_MENTION_PATTERN = /<@&(\d{15,25})>/g;
+    var CHANNEL_MENTION_PATTERN = /<#(\d{15,25})>/g;
+    var AUTOLINK_PATTERN = /<((?:https?|steam|discord):\/\/[^\s<>]+)>/g;
+    var MASKED_LINK_PATTERN = /\[([^[\]\n]+?)\]\(\s*<?(?:https?:\/\/[^\s()<>]+)>?\s*\)/g;
+    var UNKNOWN_MARKUP_PATTERN = /<[^<>\s]*\d{15,25}[^<>\s]*>/;
+    function convertDiscordMarkupToDisplayText(text, resolvers = {}) {
+      let value = String(text ?? "");
+      if (!value) return "";
+      if (value.includes(PLACEHOLDER_START) || value.includes(PLACEHOLDER_END)) return "";
+      const protectedParts = [];
+      const protect = (part) => {
+        protectedParts.push(part);
+        return `${PLACEHOLDER_START}${protectedParts.length - 1}${PLACEHOLDER_END}`;
+      };
+      value = value.replace(CODE_BLOCK_PATTERN, (match, code) => `
+${protect(code)}
+`);
+      value = value.replace(INLINE_CODE_PATTERN, (match, doubled, single) => protect(doubled ?? single ?? ""));
+      value = value.replace(ESCAPED_CHARACTER_PATTERN, (match, character) => protect(character));
+      if (SPOILER_PATTERN.test(value)) return "";
+      if (TIMESTAMP_PATTERN.test(value) || GUILD_NAVIGATION_PATTERN.test(value)) return "";
+      let unresolved = false;
+      const resolveName = (kind, id) => {
+        let name = "";
+        try {
+          name = String(resolvers?.[kind]?.(id) || "").trim();
+        } catch {
+          name = "";
+        }
+        if (!name) unresolved = true;
+        return name;
+      };
+      value = value.replace(CUSTOM_EMOJI_PATTERN, (match, name) => `:${name}:`);
+      value = value.replace(SLASH_COMMAND_PATTERN, (match, name) => `/${name.trim()}`);
+      value = value.replace(ROLE_MENTION_PATTERN, (match, id) => `@${resolveName("role", id)}`);
+      value = value.replace(USER_MENTION_PATTERN, (match, id) => `@${resolveName("user", id)}`);
+      value = value.replace(CHANNEL_MENTION_PATTERN, (match, id) => `#${resolveName("channel", id)}`);
+      if (unresolved || UNKNOWN_MARKUP_PATTERN.test(value)) return "";
+      value = value.replace(MASKED_LINK_PATTERN, (match, label) => label);
+      value = value.replace(AUTOLINK_PATTERN, (match, url) => protect(url));
+      value = value.replace(BARE_URL_PATTERN, (url) => protect(url));
+      value = value.replace(/^>>> ?/m, "");
+      value = value.replace(/^> /gm, "");
+      value = value.replace(/^#{1,3} +/gm, "");
+      value = value.replace(/^-# +/gm, "");
+      value = value.replace(/^( *)[-*] +/gm, "$1");
+      value = value.replace(/^( *)\d{1,9}[.)] +/gm, "$1");
+      for (let pass = 0; pass < 2; pass++) {
+        value = value.replace(/\*\*(?=\S)([\s\S]*?\S)\*\*/g, "$1");
+        value = value.replace(/__(?=\S)([\s\S]*?\S)__/g, "$1");
+        value = value.replace(/~~(?=\S)([\s\S]*?\S)~~/g, "$1");
+        value = value.replace(/\*(?=\S)([^*]*?\S)\*/g, "$1");
+        value = value.replace(/(^|[^A-Za-z0-9_])_(?=\S)([^_]*?\S)_(?![A-Za-z0-9_])/g, "$1$2");
+      }
+      return value.replace(PLACEHOLDER_PATTERN, (match, index) => protectedParts[Number(index)] ?? "");
+    }
+    var DISCORD_MARKUP_DISPLAY_TEXT_MEMO_MAX = 600;
+    module2.exports = { convertDiscordMarkupToDisplayText, DISCORD_MARKUP_DISPLAY_TEXT_MEMO_MAX };
+  }
+});
+
 // src/i18n.js
 var require_i18n = __commonJS({
   "src/i18n.js"(exports2, module2) {
@@ -12225,6 +13410,7 @@ var require_i18n = __commonJS({
         googleTranslateAllowPrefetchDesc: "关闭后，Google Key 池只服务当前可见消息，预翻译不会消耗 Google 字符。",
         googleTranslateStats: "Google 用量",
         googleTranslateStatsDesc: "本月 {used}/{limit} 字符；可用 Key {available}/{total}；当前月份 {month}。",
+        googleTranslateStatsCooldown: "冷却中的 Key {count} 个，最早 {time} 恢复。",
         googleTranslateResetStats: "重置本月 Google 统计",
         googleTranslateResetConfirm: "确认重置本地记录的 Google 本月字符统计？不会影响 Google Cloud 后台真实用量。",
         googleTranslateStatsReset: "Google 本月统计已重置。",
@@ -12280,6 +13466,7 @@ var require_i18n = __commonJS({
         polishResultCopy: "复制",
         polishResultCopied: "已复制",
         polishResultReplace: "写入输入框",
+        polishResultApplyFailed: "没能写入输入框，请点“复制”后手动粘贴。",
         polishResultClose: "关闭",
         prompt: "提示词",
         promptDesc: "告诉模型要怎么润色或翻译。模板可以用中文保存，外层指令会把它当作规则解释，不会当成待翻译文本。",
@@ -12295,6 +13482,7 @@ var require_i18n = __commonJS({
         promptCopy: "复制提示词",
         promptCopied: "提示词已复制。",
         promptCopyFailed: "复制失败：{error}",
+        clipboardUnavailable: "无法访问剪贴板，请手动选中文字复制。",
         promptNamePlaceholder: "给这个模板起个名字",
         promptNameRequired: "模板名称不能为空。",
         promptSaved: "模板已保存：{code} · {name}",
@@ -12324,10 +13512,10 @@ var require_i18n = __commonJS({
         showAutoTranslateToastsDesc: "开启后，自动翻译失败会弹出底部红色提示；关闭后所有自动翻译失败弹窗都静默，只保留必要的行内状态。",
         translationCacheTtl: "缓存时间",
         translationCacheTtlDesc: "译文持久保存在本机，重启 Discord 后仍可复用；过期后会自动重新翻译。",
-        translationCacheMaxEntries: "最大缓存数量",
-        translationCacheMaxEntriesDesc: "超过上限会按最近使用顺序淘汰旧译文。默认 4000 条，最高 15000 条。",
+        translationCacheMaxEntries: "最多缓存消息数",
+        translationCacheMaxEntriesDesc: "按消息计数，超过上限会按最近使用顺序淘汰旧译文。默认 4000 条，最高 15000 条。",
         translationCacheStats: "缓存命中统计",
-        translationCacheStatsDesc: "本次会话命中 {hits} 次，未命中 {misses} 次；内存 {memory} 条，已保存 {persistent} 条。",
+        translationCacheStatsDesc: "本次会话命中 {hits} 次，未命中 {misses} 次；内存 {memory} 条消息，已保存 {persistent} 条消息。",
         clearTranslationCacheStats: "清空统计",
         clearTranslationCache: "清空翻译缓存",
         clearTranslationCacheConfirm: "确认删除所有本地已保存译文缓存？之后相同内容需要重新请求翻译。",
@@ -12344,7 +13532,15 @@ var require_i18n = __commonJS({
         translationBeforeOriginal: "译文在前，原文在后",
         translationAfterOriginal: "原文在前，译文在后",
         maskTranslations: "默认遮蔽译文",
-        maskTranslationsDesc: "开启后译文先显示为灰条，点击后才展开。关闭后译文默认清晰显示，只保留淡背景区分。",
+        maskTranslationsDesc: "开启后译文先显示为灰条，点击或按 Enter 才展开。关闭后译文默认清晰显示。",
+        translationStyle: "译文样式",
+        translationStyleDesc: "三种样式都跟随 Discord 主题颜色。",
+        translationStyleTint: "淡底色",
+        translationStyleMuted: "弱化文字",
+        translationStyleTag: "带“译”标记",
+        translationTextScale: "译文字号",
+        translationTextScaleDesc: "相对聊天正文的大小。",
+        translationTag: "译",
         showContextMenu: "在消息右键菜单显示翻译入口",
         showContextMenuDesc: "右键消息时显示翻译菜单项。若 Discord 更新导致失效，消息旁按钮仍可用。",
         enableHotkey: "启用输入润色快捷键",
@@ -12356,7 +13552,7 @@ var require_i18n = __commonJS({
         hotkeyReset: "恢复默认",
         hotkeyNotSet: "未设置",
         hotkeySaved: "快捷键已保存：{shortcut}",
-        hotkeyInvalid: "快捷键无效，请使用 Ctrl、Alt、Shift 或 Win 加一个按键。",
+        hotkeyInvalid: "快捷键无效：请用 Ctrl、Alt 或 Win 加一个按键（可再加 Shift），且不能占用复制、粘贴等编辑快捷键。",
         testMode: "启用测试模式",
         testModeDesc: "开启后在下方展开独立测试区，用当前配置测试润色/翻译效果。关闭设置页后仍会记住开关状态。",
         testModeTitle: "测试模式",
@@ -12381,10 +13577,14 @@ var require_i18n = __commonJS({
         testModeOutputReady: "测试完成。",
         testModeConfig: "当前配置：{provider} / {model} / 输出 {targetLanguage}",
         reset: "恢复默认设置",
-        resetConfirm: "确定要重置 Discord AI 翻译助手设置？",
+        resetConfirm: "确定要恢复默认设置？API Key、Google Key 池（含本月用量）和提示词模板会保留。",
+        settingsLoadBlocked: "无法读取已保存的设置，本次修改不会保存。请检查插件文件夹中的 DiscordAITranslator.config.json，修复后重新启用插件。",
         pluginStarted: "Discord AI 翻译助手 v{version} 已启动。",
         polishButton: "润色",
         polishBusy: "润色中",
+        polishRunning: "正在润色当前草稿...",
+        composerChanged: "输入框已切换，请再试一次。",
+        composerResultHeld: "结果没有自动写入：草稿已改变，或你正在别处输入。可在弹出的面板里复制或写入。",
         polishTitleAttr: "用 AI 润色当前草稿。快捷键：{shortcut}。",
         translateButton: "翻译",
         translateBusy: "翻译中...",
@@ -12393,7 +13593,33 @@ var require_i18n = __commonJS({
         translateRetry: "重试",
         translateRetryTitle: "重新翻译这条消息",
         translationFailedInline: "翻译失败：{error}",
+        translationLoading: "翻译中…",
+        translationRevealLabel: "显示被遮蔽的译文",
+        translationActionsLabel: "译文操作",
+        translationActionCopy: "复制译文",
+        translationActionRetranslate: "重新翻译（不用缓存）",
+        translationActionHide: "隐藏译文",
+        translationCopied: "已复制译文。",
+        translationPartialOne: "第 {parts} 段（共 {total} 段）没有翻译出来",
+        translationPartialMany: "第 {parts} 段（共 {total} 段）没有翻译出来",
+        translationPartialUnknown: "有一部分没有翻译出来",
+        translationRetranslate: "重新翻译",
+        translationRetranslateTitle: "不用缓存，重新翻译整条消息",
+        translationErrorAuth: "翻译服务拒绝了 API Key",
+        translationErrorMissingKey: "还没有填写翻译用的 API Key",
+        translationErrorMissingEndpoint: "还没有填写翻译接口地址",
+        translationErrorMissingModel: "还没有选择翻译模型",
+        translationErrorQuota: "翻译服务的额度用完了",
+        translationErrorLocal: "本地翻译服务没有响应",
+        translationErrorLocalAt: "本地翻译服务没有响应（{host}）",
+        translationErrorRateLimit: "请求太多，请稍后再试",
+        translationErrorRateLimitWait: "请求太多，请 {seconds} 秒后再试",
+        translationOpenSettings: "打开设置",
+        translationOpenSettingsTitle: "打开翻译设置",
+        translationTestConnection: "测试连接",
+        translationTestConnectionTitle: "测试翻译服务能不能连上",
         autoTranslateFailed: "自动翻译失败：{error}",
+        autoTranslateNeedsAttention: "自动翻译需要你处理：{error}",
         autoTranslateTargetFailed: "模型输出不是目标语言，已跳过这条译文。",
         manualTranslateRescueFailed: "手动翻译未得到可用译文，已尝试普通翻译/强制目标语言/修复，可再次重试。",
         contextPatchFailed: "无法注入消息右键菜单：{error}",
@@ -12416,6 +13642,12 @@ var require_i18n = __commonJS({
         emptyResult: "API 返回了空结果。",
         errorUnauthorized: "API Key 无效或没有权限。",
         errorRateLimited: "API 请求过快，已进入冷却。",
+        errorQuotaExceeded: "API 额度或账户余额已用完。",
+        errorLanguageUnsupported: "当前服务商不支持所选目标语言，请换一个目标语言或服务商。",
+        errorIpNotAllowed: "服务商拒绝了当前 IP 地址，请检查服务商后台的 IP 白名单。",
+        errorProviderRequestRejected: "服务商拒绝了请求，请检查账号权限、目标语言和服务设置。",
+        errorOutputTruncated: "模型输出被截断，请在设置中调高最大输出 token 后重试。",
+        errorSaveFailed: "无法保存到本地，请稍后重试。",
         errorServer: "API 服务暂时不可用。",
         errorCancelled: "请求已取消。",
         errorInvalidEndpoint: "接口地址无效，请填写完整的 API 地址。",
@@ -12455,6 +13687,7 @@ var require_i18n = __commonJS({
         googleTranslateAllowPrefetchDesc: "When disabled, the Google key pool is used only for currently visible messages; prefetch will not spend Google characters.",
         googleTranslateStats: "Google usage",
         googleTranslateStatsDesc: "This month {used}/{limit} chars; available keys {available}/{total}; month {month}.",
+        googleTranslateStatsCooldown: "{count} key(s) cooling down; the first comes back at {time}.",
         googleTranslateResetStats: "Reset Google monthly stats",
         googleTranslateResetConfirm: "Reset locally recorded Google character usage for this month? This does not change real Google Cloud usage.",
         googleTranslateStatsReset: "Google monthly stats reset.",
@@ -12510,6 +13743,7 @@ var require_i18n = __commonJS({
         polishResultCopy: "Copy",
         polishResultCopied: "Copied",
         polishResultReplace: "Insert into input",
+        polishResultApplyFailed: "Could not insert into the input box. Use Copy and paste it instead.",
         polishResultClose: "Close",
         prompt: "Prompt",
         promptDesc: "Instructions for the model. Templates may be written in Chinese; the wrapper treats them as rules, not source text.",
@@ -12525,6 +13759,7 @@ var require_i18n = __commonJS({
         promptCopy: "Copy prompt",
         promptCopied: "Prompt copied.",
         promptCopyFailed: "Copy failed: {error}",
+        clipboardUnavailable: "The clipboard is not available. Select the text and copy it manually.",
         promptNamePlaceholder: "Name this template",
         promptNameRequired: "Template name cannot be empty.",
         promptSaved: "Template saved: {code} · {name}",
@@ -12592,10 +13827,10 @@ var require_i18n = __commonJS({
         settingsSnapshotCopied: "Settings snapshot copied; secrets are hidden.",
         translationCacheTtl: "Cache lifetime",
         translationCacheTtlDesc: "Translations are persisted locally and reused after Discord restarts. Expired entries are translated again.",
-        translationCacheMaxEntries: "Max cache entries",
-        translationCacheMaxEntriesDesc: "Older translations are evicted by recent use when the limit is exceeded. Default is 4000, maximum is 15000.",
+        translationCacheMaxEntries: "Max cached messages",
+        translationCacheMaxEntriesDesc: "Counted per message. Older translations are evicted by recent use when the limit is exceeded. Default is 4000, maximum is 15000.",
         translationCacheStats: "Cache hit stats",
-        translationCacheStatsDesc: "This session: hits {hits}, misses {misses}; memory {memory}, saved {persistent}.",
+        translationCacheStatsDesc: "This session: hits {hits}, misses {misses}; {memory} messages in memory, {persistent} saved.",
         clearTranslationCacheStats: "Clear stats",
         clearTranslationCache: "Clear translation cache",
         clearTranslationCacheConfirm: "Delete all saved local translations? The same content will need to be translated again.",
@@ -12612,9 +13847,17 @@ var require_i18n = __commonJS({
         translationBeforeOriginal: "Translation first, original below",
         translationAfterOriginal: "Original first, translation below",
         maskTranslations: "Mask translations by default",
-        maskTranslationsDesc: "When enabled, translations appear as a gray bar until clicked. When disabled, translations are readable by default with a subtle background.",
+        maskTranslationsDesc: "When enabled, translations appear as a gray bar until you click it or press Enter. When disabled, translations are readable right away.",
+        translationStyle: "Translation style",
+        translationStyleDesc: "All styles follow Discord's theme colors.",
+        translationStyleTint: "Faint background",
+        translationStyleMuted: "Dimmer text",
+        translationStyleTag: '"TR" tag',
+        translationTextScale: "Translation text size",
+        translationTextScaleDesc: "Relative to the chat text size.",
+        translationTag: "TR",
         hideOriginalAfterTranslation: "Mask original text after translation",
-        hideOriginalAfterTranslationDesc: "When enabled, successful translations locally turn the original message text into a gray mask bar. This only affects your client.",
+        hideOriginalAfterTranslationDesc: "Turns the original text into a gray bar once the translation shows. Hover over the bar or focus the message to read the original. Only affects your client.",
         showContextMenu: "Show Translate action in message right-click menus",
         showContextMenuDesc: "Adds a translate menu item when right-clicking a message. The message button remains available as fallback.",
         enableHotkey: "Enable input polishing hotkey",
@@ -12626,7 +13869,7 @@ var require_i18n = __commonJS({
         hotkeyReset: "Reset default",
         hotkeyNotSet: "Not set",
         hotkeySaved: "Shortcut saved: {shortcut}",
-        hotkeyInvalid: "Invalid shortcut. Use Ctrl, Alt, Shift, or Win plus another key.",
+        hotkeyInvalid: "Invalid shortcut. Use Ctrl, Alt, or Win plus a key (Shift is optional); editing shortcuts such as copy and paste are not allowed.",
         testMode: "Enable test mode",
         testModeDesc: "Expands a test panel below using the current polishing/translation configuration. The toggle is remembered.",
         testModeTitle: "Test Mode",
@@ -12651,10 +13894,14 @@ var require_i18n = __commonJS({
         testModeOutputReady: "Test complete.",
         testModeConfig: "Current config: {provider} / {model} / output {targetLanguage}",
         reset: "Reset to defaults",
-        resetConfirm: "Reset Discord AI Translator settings?",
+        resetConfirm: "Reset settings to defaults? API keys, the Google key pool (with this month's usage) and prompt templates are kept.",
+        settingsLoadBlocked: "Saved settings could not be read, so changes will not be saved. Check DiscordAITranslator.config.json in the plugins folder, then re-enable the plugin.",
         pluginStarted: "Discord AI Translator v{version} started.",
         polishButton: "Polish",
         polishBusy: "Polishing",
+        polishRunning: "Polishing the current draft...",
+        composerChanged: "The input box changed. Please try again.",
+        composerResultHeld: "The result was not inserted because the draft changed or you were typing elsewhere. Copy or insert it from the panel.",
         polishTitleAttr: "Polish current draft with AI. Shortcut: {shortcut}.",
         publicBilingualButton: "Bilingual",
         publicBilingualBusy: "Translating",
@@ -12662,6 +13909,7 @@ var require_i18n = __commonJS({
         publicBilingualReady: "Bilingual message is ready. Review it, then send.",
         publicBilingualFailed: "Could not write the bilingual message: {error}",
         publicBilingualInputChanged: "Input changed while translating, so the bilingual result was not written.",
+        errorComposerWriteFailed: "The input box did not accept the text. The result is shown in the panel so you can copy it.",
         publicBilingualTooLong: "Bilingual message is too long for one Discord message ({length}/{limit}).",
         publicBilingualPolishSkipped: "Polishing is disabled, so the bilingual message used the current draft.",
         translateButton: "Translate",
@@ -12671,7 +13919,33 @@ var require_i18n = __commonJS({
         translateRetry: "Retry",
         translateRetryTitle: "Retry translating this message",
         translationFailedInline: "Translation failed: {error}",
+        translationLoading: "Translating…",
+        translationRevealLabel: "Show hidden translation",
+        translationActionsLabel: "Translation actions",
+        translationActionCopy: "Copy translation",
+        translationActionRetranslate: "Translate again (skip cache)",
+        translationActionHide: "Hide translation",
+        translationCopied: "Translation copied.",
+        translationPartialOne: "Part {parts} of {total} could not be translated",
+        translationPartialMany: "Parts {parts} of {total} could not be translated",
+        translationPartialUnknown: "Part of this message could not be translated",
+        translationRetranslate: "Retranslate",
+        translationRetranslateTitle: "Translate the whole message again without the cache",
+        translationErrorAuth: "The translation service rejected the API key",
+        translationErrorMissingKey: "No API key is set for translation",
+        translationErrorMissingEndpoint: "No endpoint is set for translation",
+        translationErrorMissingModel: "No model is chosen for translation",
+        translationErrorQuota: "The translation service quota is used up",
+        translationErrorLocal: "The local translation service is not responding",
+        translationErrorLocalAt: "The local translation service is not responding ({host})",
+        translationErrorRateLimit: "Too many requests. Try again shortly",
+        translationErrorRateLimitWait: "Too many requests. Try again in {seconds} s",
+        translationOpenSettings: "Open settings",
+        translationOpenSettingsTitle: "Open translation settings",
+        translationTestConnection: "Test connection",
+        translationTestConnectionTitle: "Check whether the translation service can be reached",
         autoTranslateFailed: "Auto-translation failed: {error}",
+        autoTranslateNeedsAttention: "Auto-translation needs your attention: {error}",
         autoTranslateTargetFailed: "Model output was not in the target language, so this translation was skipped.",
         manualTranslateRescueFailed: "Manual translation did not produce a usable result after normal, forced-target, and repair attempts. You can retry.",
         contextPatchFailed: "Could not patch message context menu: {error}",
@@ -12694,6 +13968,12 @@ var require_i18n = __commonJS({
         emptyResult: "API returned an empty result.",
         errorUnauthorized: "API key is invalid or does not have permission.",
         errorRateLimited: "API rate limit reached; automatic retries are cooling down.",
+        errorQuotaExceeded: "API quota or account balance is used up.",
+        errorLanguageUnsupported: "This service does not support the selected target language. Choose another language or service.",
+        errorIpNotAllowed: "The service rejected your IP address. Check the IP allowlist in the service console.",
+        errorProviderRequestRejected: "The service rejected the request. Check account permissions, target language and service settings.",
+        errorOutputTruncated: "The model's reply was cut off. Raise the max output tokens in settings and try again.",
+        errorSaveFailed: "Could not save locally. Try again later.",
         errorServer: "API service is temporarily unavailable.",
         errorCancelled: "Request cancelled.",
         errorInvalidEndpoint: "Invalid endpoint. Enter a complete API URL.",
@@ -12881,7 +14161,7 @@ var require_i18n = __commonJS({
     });
     Object.assign(I18N["zh-CN"], {
       hideOriginalAfterTranslation: "翻译后遮挡原文",
-      hideOriginalAfterTranslationDesc: "开启后，译文成功显示时会在本机把原消息文字变成灰色遮挡条，只影响你自己的客户端。",
+      hideOriginalAfterTranslationDesc: "译文显示后把原文变成灰条；鼠标移到灰条上或键盘聚焦到消息时显示原文。只影响你自己的客户端。",
       publicBilingualInputButton: "在输入框附近显示公开双语按钮",
       publicBilingualInputButtonDesc: "将当前草稿翻译后写成“译文 + 隐藏原文”的 Discord 原生消息，发送后所有人都能看到；不会自动发送。",
       publicBilingualUseInitialOriginal: "双语隐藏原文使用最初草稿",
@@ -12896,6 +14176,7 @@ var require_i18n = __commonJS({
       publicBilingualReady: "双语消息已写入，检查后再发送。",
       publicBilingualFailed: "无法写入双语消息：{error}",
       publicBilingualInputChanged: "翻译期间输入已改变，未覆盖当前草稿。",
+      errorComposerWriteFailed: "输入框没有接受写入，结果已显示在面板中，可手动复制。",
       publicBilingualTooLong: "双语消息超过 Discord 单条长度（{length}/{limit}）。",
       publicBilingualPolishSkipped: "润色功能已关闭，本次双语直接使用当前草稿。",
       errorLocalProviderUnavailable: "Sakura 本地服务无法连接，自动翻译已暂停；启动 Sakura 后等待自动恢复，或在设置里点击测试连接立即恢复。"
@@ -12921,6 +14202,7 @@ var require_discord_ai_translator = __commonJS({
     var { PLUGIN_VERSION } = require_version();
     var { ProviderLayer } = require_provider_layer();
     var { SettingsStore } = require_settings_store();
+    var { convertDiscordMarkupToDisplayText, DISCORD_MARKUP_DISPLAY_TEXT_MEMO_MAX } = require_discord_markup();
     var {
       PLUGIN_NAME,
       DATA_KEY,
@@ -13034,6 +14316,7 @@ var require_discord_ai_translator = __commonJS({
       INCREMENTAL_MESSAGE_WORK_MAX_PER_SLICE,
       MESSAGE_BUTTON_VISIBILITY_ALWAYS,
       MESSAGE_BUTTON_VISIBILITY_HOVER,
+      RTL_LANGUAGE_CODES,
       POLISH_REPOLISH_SOURCE_ORIGINAL,
       POLISH_REPOLISH_SOURCE_LAST_RESULT,
       TRANSLATION_CACHE_DEFAULT_TTL_HOURS,
@@ -13493,6 +14776,7 @@ var require_discord_ai_translator = __commonJS({
       }
       shouldRunItemSingle(item) {
         if (!item) return false;
+        if (item.daitSingleRequest) return true;
         const config = this.plugin.getEffectiveTaskConfig("translation", item?.requestOptions?.configOverrides);
         if (this.plugin.isLocalTranslationProvider(config)) return true;
         return this.isLongItem(item);
@@ -13526,6 +14810,7 @@ var require_discord_ai_translator = __commonJS({
         } else if (type === "quota" || type === "auth") {
           plugin.setApiRuntimeStatus("translation", "failed", plugin.t("apiStatusFailed"), plugin.formatError(error));
         }
+        plugin.notifyTranslationNeedsAttention?.(error, key);
         plugin.logDiagnostic("auto.provider.failure", "cooldown", {
           key: plugin.getTextFingerprint(key),
           type,
@@ -13704,6 +14989,8 @@ var require_discord_ai_translator = __commonJS({
         this.autoTranslationFailureHistory = /* @__PURE__ */ new Map();
         this.autoTranslationProviderFailures = /* @__PURE__ */ new Map();
         this.autoTranslationProviderNoticeAt = /* @__PURE__ */ new Map();
+        this.dismissedTranslationMessages = /* @__PURE__ */ new Map();
+        this.translationLineTexts = typeof WeakMap === "function" ? /* @__PURE__ */ new WeakMap() : null;
         this.autoTranslationPrecheckSkips = /* @__PURE__ */ new Map();
         this.autoTranslationRecentRenders = /* @__PURE__ */ new Map();
         this.autoTranslationLastExternalScrollAt = 0;
@@ -13779,7 +15066,9 @@ var require_discord_ai_translator = __commonJS({
         this.activeApiControllers = /* @__PURE__ */ new Set();
         this.apiRequestsClosed = false;
         this.hotkeyRecordTimer = null;
+        this.hotkeyRecordTimeout = null;
         this.hotkeyRecordCleanup = null;
+        this.hotkeyRecordButton = null;
         this.observer = null;
         this.observerRoot = null;
         this.observerLifecycle = null;
@@ -13840,6 +15129,11 @@ var require_discord_ai_translator = __commonJS({
           } else {
             this.loadSettings();
           }
+          try {
+            this.migrateLegacyDataStores();
+          } catch (error) {
+            this.warnSanitized("Data store migration failed; old data kept", error);
+          }
           if (this.settings.ui?.diagnosticsEnabled) {
             if (this.diagnosticLogsDirty) this.flushDiagnosticLogs({ retryOnError: false });
             if (!this.diagnosticLogsDirty) this.loadDiagnosticLogs();
@@ -13861,6 +15155,8 @@ var require_discord_ai_translator = __commonJS({
           window.addEventListener("resize", this.boundViewportScan, { capture: true, passive: true });
           window.addEventListener("focus", this.boundViewportScan, { capture: true, passive: true });
           document.addEventListener("visibilitychange", this.boundViewportScan, true);
+          window.addEventListener("pagehide", this.getPageHideHandler(), true);
+          window.addEventListener("beforeunload", this.getPageHideHandler(), true);
           this.queueScan();
           this.showToast(this.t("pluginStarted", { version: PLUGIN_VERSION }), "success");
           return true;
@@ -13922,6 +15218,8 @@ var require_discord_ai_translator = __commonJS({
         window.removeEventListener("resize", this.boundViewportScan, { capture: true });
         window.removeEventListener("focus", this.boundViewportScan, { capture: true });
         document.removeEventListener("visibilitychange", this.boundViewportScan, true);
+        window.removeEventListener("pagehide", this.getPageHideHandler(), true);
+        window.removeEventListener("beforeunload", this.getPageHideHandler(), true);
         this.removePolishResultPanel();
         this.removePolishRestoreControl();
         this.removeInputActionMenu();
@@ -13967,6 +15265,9 @@ var require_discord_ai_translator = __commonJS({
         this.cachedDrawMemo.clear();
         this.cachedDrawMessageMemo = /* @__PURE__ */ new WeakMap();
         this.cachedDrawScroller = null;
+        this.elementTextCache = typeof WeakMap === "function" ? /* @__PURE__ */ new WeakMap() : null;
+        this.translationSourceStyleMutationCounts = typeof WeakMap === "function" ? /* @__PURE__ */ new WeakMap() : null;
+        this.pendingMutationScanRoots?.clear?.();
         this.autoTranslationOwnScrolls = /* @__PURE__ */ new WeakMap();
         this.autoTranslationLastExternalScrollAt = 0;
         this.lastAutoTranslationDecisions.clear();
@@ -14008,6 +15309,29 @@ var require_discord_ai_translator = __commonJS({
         this.discordThemeCacheEpoch++;
         this.discordThemeGlobalCandidatesCache = null;
         this.discordThemeVariableValuesCache = null;
+      }
+      getPageHideHandler() {
+        if (!this.boundPageHide) this.boundPageHide = () => this.flushPendingPersistence("pagehide");
+        return this.boundPageHide;
+      }
+      // A reload or quit may not call stop(), so save what the debounce and busy-deferral timers still hold.
+      // Each flush is a no-op when nothing is dirty; none of them schedules a retry.
+      flushPendingPersistence(reason = "pagehide") {
+        const results = {};
+        [
+          ["cache", () => this.flushTranslationCache({ retryOnError: false })],
+          ["google", () => this.flushGoogleTranslateRuntimeState({ retryOnError: false })],
+          ["settings", () => this.flushSettings({ retryOnError: false })],
+          ["diagnostics", () => this.flushDiagnosticLogs({ retryOnError: false })]
+        ].forEach(([name, flush]) => {
+          try {
+            results[name] = flush() !== false;
+          } catch (error) {
+            results[name] = false;
+            this.warnSanitized(`Persist on ${reason} failed for ${name}`, error);
+          }
+        });
+        return results;
       }
       getLifecycleToken() {
         return this.lifecycleToken;
@@ -14078,12 +15402,9 @@ var require_discord_ai_translator = __commonJS({
         reset.textContent = this.t("reset");
         reset.addEventListener("click", () => {
           if (!window.confirm(this.t("resetConfirm"))) return;
-          this.settings = this.clone(DEFAULT_SETTINGS);
-          this.invalidateAutoTranslationQueue();
-          this.saveSettings();
+          this.resetSettingsToDefaults({ keepCredentials: true });
           const currentPanel = panel || reset.closest?.(".dait-settings");
           this.replaceSettingsPanelElement(currentPanel);
-          this.queueScan();
         });
         tabs.appendChild(reset);
         return tabs;
@@ -14399,6 +15720,7 @@ var require_discord_ai_translator = __commonJS({
         if (panel) panel.__daitSettingsModalSizingSchedule = null;
       }
       destroySettingsModalSizing(panel) {
+        this.clearHotkeyRecordingWithin(panel);
         this.cleanupSettingsScrollTracking(panel);
         this.clearSettingsModalSizingSchedule(panel);
         if (panel?.__daitSettingsModalCleanupObserver) {
@@ -14411,6 +15733,7 @@ var require_discord_ai_translator = __commonJS({
         if (!panel?.isConnected || panel.__daitSettingsModalCleanupObserver || typeof MutationObserver !== "function" || typeof document === "undefined" || !document.body) return;
         const observer = new MutationObserver(() => {
           if (panel.isConnected) return;
+          this.clearHotkeyRecordingWithin(panel);
           this.cleanupSettingsScrollTracking(panel);
           this.clearSettingsModalSizingSchedule(panel);
           this.cleanupSettingsModalSizing(panel);
@@ -14595,7 +15918,7 @@ var require_discord_ai_translator = __commonJS({
           ["inherit", this.t("channelPolicyInherit")],
           ["enabled", this.t("channelPolicyEnabled")],
           ["disabled", this.t("channelPolicyDisabled")]
-        ], { description: this.t("currentChannelAutoTranslatePolicyDesc") });
+        ], { description: this.t("currentChannelAutoTranslatePolicyDesc"), routeKey: this.getCurrentRouteKey() });
       }
       createHistoryBackfillActionRow() {
         const controls = document.createElement("div");
@@ -14668,6 +15991,15 @@ var require_discord_ai_translator = __commonJS({
           ["before", this.t("translationBeforeOriginal")],
           ["after", this.t("translationAfterOriginal")]
         ], { description: this.t("translationPositionDesc") }));
+        section.appendChild(this.createSelectRow("ui.translationStyle", this.t("translationStyle"), [
+          ["tint", this.t("translationStyleTint")],
+          ["muted", this.t("translationStyleMuted")],
+          ["tag", this.t("translationStyleTag")]
+        ], { description: this.t("translationStyleDesc") }));
+        section.appendChild(this.createSelectRow("ui.translationTextScale", this.t("translationTextScale"), [
+          ["100", "100%"],
+          ["90", "90%"]
+        ], { description: this.t("translationTextScaleDesc") }));
         section.appendChild(this.createCheckboxRow("ui.maskTranslations", this.t("maskTranslations"), { description: this.t("maskTranslationsDesc") }));
         section.appendChild(this.createCheckboxRow("ui.hideOriginalAfterTranslation", this.t("hideOriginalAfterTranslation"), { description: this.t("hideOriginalAfterTranslationDesc") }));
         return section;
@@ -15036,19 +16368,24 @@ var require_discord_ai_translator = __commonJS({
       }
       getGoogleTranslateStatsText() {
         const stats = this.getGoogleTranslateUsageSummary();
-        return this.t("googleTranslateStatsDesc", {
+        const text = this.t("googleTranslateStatsDesc", {
           used: stats.used,
           limit: stats.limit,
           available: stats.available,
           total: stats.total,
           month: stats.monthKey
         });
+        if (!stats.coolingDown) return text;
+        return `${text} ${this.t("googleTranslateStatsCooldown", {
+          count: stats.coolingDown,
+          time: this.formatDiagnosticSummaryTime(stats.nextCooldownEndsAt)
+        })}`;
       }
       getTranslationCacheStatsText() {
         return this.t("translationCacheStatsDesc", {
           hits: this.translationCacheStats.hits,
           misses: this.translationCacheStats.misses,
-          memory: this.translationCache.size,
+          memory: this.getTranslationCacheMessageCount(),
           persistent: this.persistentTranslationCacheCount
         });
       }
@@ -15246,7 +16583,9 @@ var require_discord_ai_translator = __commonJS({
       createSelectRow(path, labelText, options, rowOptions = {}) {
         const select = document.createElement("select");
         select.dataset.daitPath = path;
-        const current = this.getSetting(path);
+        const routeKey = typeof rowOptions.routeKey === "string" ? rowOptions.routeKey : null;
+        if (routeKey !== null) select.dataset.daitRouteKey = routeKey;
+        const current = routeKey !== null && path === "ui.currentChannelAutoTranslatePolicy" ? this.getCurrentChannelAutoTranslatePolicyMode(routeKey) : this.getSetting(path);
         options.forEach(([value, text]) => {
           const option = document.createElement("option");
           option.value = value;
@@ -15260,7 +16599,7 @@ var require_discord_ai_translator = __commonJS({
             this.replaceSettingsPanelFrom(select);
             return;
           }
-          this.setSetting(path, select.value);
+          this.setSetting(path, select.value, routeKey !== null ? { routeKey } : void 0);
           if (path === "ui.language") {
             const panel = select.closest(".dait-settings");
             if (panel) this.replaceSettingsPanelElement(panel);
@@ -15717,9 +17056,12 @@ var require_discord_ai_translator = __commonJS({
       syncSettingControls(path, value, options = {}) {
         if (typeof document === "undefined") return;
         if (path === "ui.providerFallbackOrder") value = this.formatProviderFallbackOrder(value);
-        if (path === "ui.currentChannelAutoTranslatePolicy") value = this.normalizeChannelAutoTranslatePolicyMode(value);
+        const channelRule = path === "ui.currentChannelAutoTranslatePolicy";
+        if (channelRule) value = this.normalizeChannelAutoTranslatePolicyMode(value);
+        const syncedChannel = channelRule && typeof options.routeKey === "string" ? this.getChannelAutoTranslatePolicyStorageKey(options.routeKey) : null;
         document.querySelectorAll(`[data-dait-path='${path}']`).forEach((control) => {
           if (control === document.activeElement && options.includeActive !== true) return;
+          if (syncedChannel !== null && typeof control.dataset?.daitRouteKey === "string" && this.getChannelAutoTranslatePolicyStorageKey(control.dataset.daitRouteKey) !== syncedChannel) return;
           if (control.type === "checkbox") {
             control.checked = Boolean(value);
             return;
@@ -15733,6 +17075,7 @@ var require_discord_ai_translator = __commonJS({
         scope.querySelectorAll("[data-dait-path]").forEach((control) => {
           const path = String(control?.dataset?.daitPath || "");
           if (!path) return;
+          if (path === "ui.currentChannelAutoTranslatePolicy") return;
           if (control.tagName === "TEXTAREA") {
             this.setSetting(path, control.value);
             return;
@@ -16182,6 +17525,8 @@ var require_discord_ai_translator = __commonJS({
             return String(value ?? "").trim() ? "[hidden]" : "";
           }
           if (name === "endpoint") return this.getSettingsSnapshotEndpoint(value);
+          if (name === "model") return this.getDiagnosticModelLabel(value);
+          if (name === "usagebyid") return `[hidden: ${Object.keys(value || {}).length}]`;
           if (name === "prompt") return value === defaults ? "default" : `custom (${String(value ?? "").length} chars)`;
           if (name === "prompttemplates") return `${Array.isArray(value) ? value.length : 0} templates`;
           if (name === "channelautotranslatepolicies") {
@@ -16258,7 +17603,7 @@ var require_discord_ai_translator = __commonJS({
       }
       copyTextToClipboardFallback(text) {
         if (typeof document === "undefined" || !document.body?.appendChild) {
-          throw new Error("clipboard unavailable");
+          throw Object.assign(new Error(this.t("clipboardUnavailable")), { code: "CLIPBOARD_UNAVAILABLE" });
         }
         const previousFocus = document.activeElement || null;
         const fallback = document.createElement("textarea");
@@ -16283,7 +17628,7 @@ var require_discord_ai_translator = __commonJS({
             }
           }
         }
-        if (!ok) throw new Error("document.execCommand copy failed");
+        if (!ok) throw Object.assign(new Error(this.t("clipboardUnavailable")), { code: "CLIPBOARD_UNAVAILABLE" });
       }
       getSettingsScrollSnapshot(anchor) {
         const scroller = this.getSettingsScrollContainer(anchor);
@@ -16891,6 +18236,7 @@ var require_discord_ai_translator = __commonJS({
         if (!this.isStarted) return;
         const type = String(event?.type || "");
         if (type === "scroll" && !this.isAutoTranslateEnabled()) return;
+        if (type === "focus" && event?.target && (typeof window === "undefined" || event.target !== window)) return;
         if (this.isDiscordMediaViewerQuiet()) return;
         if (this.isDiscordMediaViewerViewportEvent(event)) return;
         if (type === "scroll" && !this.isAutoTranslationScrollEventRelevant(event)) return;
@@ -17129,6 +18475,7 @@ var require_discord_ai_translator = __commonJS({
         }
         const routeChanged = this.trackAutoTranslationRouteChange();
         if (routeChanged) {
+          this.cachedDrawScroller = null;
           const delayMs = Math.max(
             AUTO_TRANSLATE_VIEWPORT_STABLE_RESCAN_MS,
             this.getAutoTranslationViewportSettleRemainingMs()
@@ -17186,7 +18533,7 @@ var require_discord_ai_translator = __commonJS({
           scanStages.autoMs = 0;
         } else {
           this.cancelIncrementalMessageScan();
-          if (this.settings.ui.injectMessageButtons) this.injectMessageButtons(context);
+          if (this.shouldInjectMessageButtons()) this.injectMessageButtons(context);
           finishStage("buttonMs");
           if (this.isAutoTranslateEnabled()) this.queueAutoTranslateVisibleMessages(context);
           finishStage("autoMs");
@@ -17202,7 +18549,7 @@ var require_discord_ai_translator = __commonJS({
       }
       shouldUseIncrementalMessageScan(context = null) {
         if (!context?.messageNodes?.length) return false;
-        if (!this.isAutoTranslateEnabled() && !this.settings.ui?.injectMessageButtons) return false;
+        if (!this.isAutoTranslateEnabled() && !this.shouldInjectMessageButtons()) return false;
         if (typeof window === "undefined" || typeof window.requestIdleCallback !== "function") return false;
         return true;
       }
@@ -17212,7 +18559,7 @@ var require_discord_ai_translator = __commonJS({
         const messageNodes = [...new Set(context?.messageNodes || [])];
         const tasks = [];
         messageNodes.forEach((messageNode) => {
-          if (this.settings.ui.injectMessageButtons) tasks.push({ kind: "button", messageNode });
+          if (this.shouldInjectMessageButtons()) tasks.push({ kind: "button", messageNode });
           if (this.isAutoTranslateEnabled()) tasks.push({ kind: "auto", messageNode });
         });
         let index = 0;
@@ -17261,7 +18608,7 @@ var require_discord_ai_translator = __commonJS({
             if (messageNode?.isConnected) {
               try {
                 if (task.kind === "button") {
-                  if (this.settings.ui?.injectMessageButtons) this.injectMessageButton(messageNode, context);
+                  if (this.shouldInjectMessageButtons()) this.injectMessageButton(messageNode, context);
                 } else if (work) {
                   let candidates = this.createDomAutoTranslationCandidatesForMessage(messageNode, context);
                   work.context.autoTranslateIntake.domCandidates += candidates.length;
@@ -17483,11 +18830,32 @@ var require_discord_ai_translator = __commonJS({
         const bdApi = globalThis.BdApi;
         if (!this.settings.ui.injectMessageContextMenu || !bdApi?.ContextMenu?.patch || !bdApi.ContextMenu?.buildMenuChildren) return;
         const patch = (tree, props) => {
+          if (!this.shouldInjectMessageContextMenu()) return;
           const items = [{
             id: "dait-translate-message",
             label: this.t("translateMenu", { targetLanguage: this.getDisplayLanguage(this.settings.translation.targetLanguage) }),
             action: () => this.translateMessageFromContextTarget(props?.target)
           }];
+          const translated = this.getTranslatedLineForContextTarget(props?.target);
+          if (translated) {
+            items.push(
+              {
+                id: "dait-retranslate-message",
+                label: this.t("translationActionRetranslate"),
+                action: () => this.retranslateMessage(translated.messageNode, translated.content)
+              },
+              {
+                id: "dait-copy-translation",
+                label: this.t("translationActionCopy"),
+                action: () => this.copyTranslationLineText(translated.line)
+              },
+              {
+                id: "dait-hide-translation",
+                label: this.t("translationActionHide"),
+                action: () => this.dismissTranslationLine(translated.line, translated.messageNode, translated.content)
+              }
+            );
+          }
           if (this.settings.ui?.historyBackfillEnabled === true) {
             items.push({
               id: "dait-history-backfill",
@@ -18443,6 +19811,7 @@ var require_discord_ai_translator = __commonJS({
         this.quickSettingsVerifyTimer = null;
       }
       closeQuickSettingsPanel(root = this.quickSettingsModalRoot, reason = "close") {
+        this.clearHotkeyRecordingWithin(root);
         if (!root && typeof document !== "undefined") {
           this.cancelQuickSettingsModalVerify();
           const roots = this.getQuickSettingsModalRoots();
@@ -18498,7 +19867,8 @@ var require_discord_ai_translator = __commonJS({
         if (!container) return;
         const group = this.getInputActionGroup(container);
         if (!group) return;
-        if ((options.forcePolish || this.settings.ui.injectInputButton) && !group.querySelector(".dait-polish-button")) {
+        this.removeDisabledInputActionButtons(group);
+        if (this.isPolishInputButtonEnabled(options) && !group.querySelector(".dait-polish-button")) {
           const button = this.createInputActionButton(
             "dait-polish-button",
             this.t("polishButton"),
@@ -18508,7 +19878,7 @@ var require_discord_ai_translator = __commonJS({
           );
           group.appendChild(button);
         }
-        if (!options.forcePolish && this.settings.ui.publicBilingualInputButton && !group.querySelector(".dait-public-bilingual-button")) {
+        if (!options.forcePolish && this.isPublicBilingualInputButtonEnabled() && !group.querySelector(".dait-public-bilingual-button")) {
           const button = this.createInputActionButton(
             "dait-public-bilingual-button",
             this.t("publicBilingualButton"),
@@ -18521,6 +19891,32 @@ var require_discord_ai_translator = __commonJS({
         this.syncInputRestoreButtonState(group, textbox, options);
         this.syncInputActionButtonThemes(group, textbox || container);
         this.syncInputActionGroupState(group, textbox, container);
+      }
+      // Polish needs polish.enabled and public bilingual needs translation.enabled; a feature that is
+      // switched off loses its composer button (it comes back on the next scan once re-enabled).
+      removeDisabledInputActionButtons(group) {
+        if (!group?.querySelectorAll) return false;
+        const selectors = [];
+        if (this.settings.polish?.enabled === false) selectors.push(".dait-polish-button");
+        if (!this.isPublicBilingualFeatureEnabled()) selectors.push(".dait-public-bilingual-button");
+        let removed = false;
+        selectors.forEach((selector) => {
+          [...group.querySelectorAll(selector) || []].forEach((button) => {
+            button.remove?.();
+            removed = true;
+          });
+        });
+        return removed;
+      }
+      syncInputActionButtonsForSettings() {
+        this.removeInputActionMenu();
+        if (typeof document === "undefined") return;
+        [...document.querySelectorAll?.(".dait-input-action-group") || []].forEach((group) => {
+          if (this.removeDisabledInputActionButtons(group)) this.syncInputActionGroupState(group);
+        });
+        if (!this.isStarted || !(this.settings.ui?.injectInputButton || this.settings.ui?.publicBilingualInputButton)) return;
+        if (this.isDiscordSettingsSurfaceOpen()) this.queueInputButtonScan({ delayMs: 120, trailing: true });
+        else this.injectInputButtons();
       }
       createInputActionButton(className, text, title, action, options = {}) {
         const button = document.createElement("button");
@@ -18692,12 +20088,17 @@ var require_discord_ai_translator = __commonJS({
       }
       syncInputActionButtonLabels(group, density = "roomy") {
         if (!group?.querySelectorAll) return;
-        const compact = density !== "roomy";
         group.querySelectorAll(".dait-polish-restore-button, .dait-polish-button, .dait-public-bilingual-button").forEach((button) => {
-          const full = button.dataset?.daitFullLabel || button.textContent || "";
-          const short = button.dataset?.daitShortLabel || full;
-          button.textContent = compact ? short : full;
+          this.renderInputActionButtonLabel(button, density);
         });
+      }
+      // The one place that writes a composer button's label, so busy/idle changes keep the group's density.
+      renderInputActionButtonLabel(button, density = null) {
+        if (!button) return;
+        const groupDensity = density || button.parentElement?.dataset?.daitDensity || button.closest?.(".dait-input-action-group")?.dataset?.daitDensity || "roomy";
+        const full = button.dataset?.daitFullLabel || button.textContent || "";
+        const short = button.dataset?.daitShortLabel || full;
+        button.textContent = groupDensity !== "roomy" ? short : full;
       }
       toggleInputActionMenu(group, textbox = null, container = null, button = null) {
         if (this.inputActionMenu?.isConnected) {
@@ -18736,10 +20137,10 @@ var require_discord_ai_translator = __commonJS({
         if (session && this.canRestorePolishOriginal(textbox, session)) {
           addItem(this.t("restoreOriginal"), this.t("restoreOriginal"), () => this.restorePolishOriginal(textbox, session, button));
         }
-        if (this.settings.ui?.injectInputButton || group?.querySelector?.(".dait-polish-button")) {
-          addItem(this.t("polishButton"), this.t("polishTitleAttr", { shortcut: this.getHotkeyLabel() }), () => this.polishCurrentDraft(group?.querySelector?.(".dait-polish-button") || button, { textbox, composerKey }));
+        if (this.settings.polish?.enabled !== false && (this.settings.ui?.injectInputButton || group?.querySelector?.(".dait-polish-button"))) {
+          addItem(this.t("polishButton"), this.t("polishTitleAttr", { shortcut: this.getHotkeyLabel() }), () => this.polishCurrentDraft(group?.querySelector?.(".dait-polish-button") || button, { textbox, composerKey, fromMenu: true }));
         }
-        if (this.settings.ui?.publicBilingualInputButton || group?.querySelector?.(".dait-public-bilingual-button")) {
+        if (this.isPublicBilingualFeatureEnabled() && (this.settings.ui?.publicBilingualInputButton || group?.querySelector?.(".dait-public-bilingual-button"))) {
           addItem(this.t("publicBilingualButton"), this.t("publicBilingualTitleAttr", { targetLanguage: this.getDisplayLanguage(this.getPublicBilingualTargetLanguage()) }), () => this.publicBilingualCurrentDraft(group?.querySelector?.(".dait-public-bilingual-button") || button, { textbox, composerKey }));
         }
         addItem(this.t("inputActionOpenSettings"), this.t("quickSettingsOpen"), () => this.openQuickSettingsPanel("input-menu", button || group));
@@ -18919,17 +20320,31 @@ var require_discord_ai_translator = __commonJS({
         if (typeof document === "undefined") return;
         document.querySelectorAll(".dait-message-button").forEach((button) => this.applyMessageButtonVisibilityToButton(button));
       }
+      // The per-message Translate button and context-menu item exist only while channel translation is on.
+      shouldInjectMessageButtons() {
+        return Boolean(this.settings.translation?.enabled && this.settings.ui?.injectMessageButtons);
+      }
+      shouldInjectMessageContextMenu() {
+        return Boolean(this.settings.translation?.enabled && this.settings.ui?.injectMessageContextMenu);
+      }
+      // Applies a change of channel translation: its buttons go now and come back with the next scan.
+      // The context-menu patch checks the switch each time a menu opens.
+      syncMessageTranslationEntryPoints() {
+        if (!this.shouldInjectMessageButtons() && typeof document !== "undefined") {
+          document.querySelectorAll?.(".dait-message-button")?.forEach((node) => node.remove());
+        }
+      }
       injectMessageButtons(context = this.createScanContext()) {
         const messageNodes = context.messageNodes;
         messageNodes.forEach((messageNode) => this.injectMessageButton(messageNode, context));
       }
       injectMessageButton(messageNode, context = null) {
-        if (!this.settings.ui?.injectMessageButtons) return false;
+        if (!this.shouldInjectMessageButtons()) return false;
         if (!messageNode || messageNode.isConnected === false) return false;
         const content = this.getMessageContentElement(messageNode, context);
         if (!content) return false;
         const text = this.getCachedElementText(content, context);
-        if (!text) return false;
+        if (!this.hasTranslatableMessageText(text)) return false;
         let button = content.querySelector(":scope > .dait-message-button");
         if (!button) {
           button = document.createElement("button");
@@ -19014,15 +20429,7 @@ var require_discord_ai_translator = __commonJS({
           "[id*='translator']",
           "[id^='translate']",
           "[id*='-translate']",
-          "[id*='_translate']",
-          "[aria-label*='Translate']",
-          "[aria-label*='translation']",
-          "[aria-label*='翻译']",
-          "[aria-label*='译文']",
-          "[title*='Translate']",
-          "[title*='translation']",
-          "[title*='翻译']",
-          "[title*='译文']"
+          "[id*='_translate']"
         ];
       }
       isInsideForeignTranslationElement(element) {
@@ -19039,33 +20446,28 @@ var require_discord_ai_translator = __commonJS({
       isForeignTranslationElement(element) {
         if (!element || element.nodeType !== 1) return false;
         if (element.classList?.contains?.("dait-translation-line") || element.classList?.contains?.("dait-translation-box")) return true;
+        const tag = String(element.tagName || "").toLowerCase();
+        if (tag === "a" || tag === "img") return false;
         const identityText = this.getElementForeignTranslationIdentityText(element);
         const normalized = identityText.replace(/notranslate/gi, "");
-        if (/(translation|translated|translator|deepl|google[-_\s]?translate|i18n|l10n|intl|译文|翻译|已翻译)/i.test(normalized)) return true;
+        if (/(translation|translated|translator|deepl|google[-_\s]?translate|译文|翻译|已翻译)/i.test(normalized)) return true;
         if (/(^|[^a-z])translate([^a-z]|$)/i.test(normalized)) return true;
-        const tag = String(element.tagName || "").toLowerCase();
-        const role = String(element.getAttribute?.("role") || "").toLowerCase();
-        if (tag === "button" || role === "button") {
+        if (tag === "button") {
           const label = this.getElementControlLabel(element);
           return /(translate|translation|show original|original text|翻译|译文|查看原文|显示原文)/i.test(label);
         }
         return false;
       }
+      // Translator plugins and browser translators mark their own nodes through class names, ids and
+      // data-* attribute names. Labels, titles and attribute values can carry message text, so they are
+      // not read.
       getElementForeignTranslationIdentityText(element) {
-        const parts = [
-          element.className?.baseVal || element.className || "",
-          element.id || "",
-          element.getAttribute?.("aria-label") || "",
-          element.getAttribute?.("title") || "",
-          element.getAttribute?.("data-tooltip-text") || "",
-          element.getAttribute?.("data-testid") || "",
-          element.getAttribute?.("data-translation") || "",
-          element.getAttribute?.("data-translated") || "",
-          element.getAttribute?.("data-translator") || "",
-          element.getAttribute?.("data-translate") || ""
-        ];
-        const dataset = element.dataset || {};
-        Object.keys(dataset).forEach((key) => parts.push(key, dataset[key]));
+        const className = typeof element.className === "string" ? element.className : element.className?.baseVal || "";
+        const parts = [className, element.id || ""];
+        Object.keys(element.dataset || {}).forEach((key) => {
+          if (/^dait[A-Z]/.test(key) && key !== "daitIgnoreTranslation") return;
+          parts.push(`data-${key.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)}`);
+        });
         return parts.filter(Boolean).join(" ");
       }
       getElementControlLabel(element) {
@@ -19283,7 +20685,7 @@ var require_discord_ai_translator = __commonJS({
           const meta = this.getBdfdbAutoTranslationCandidateMeta(candidate, context);
           if (!meta?.messageId) return candidate;
           const fullContent = this.normalizeExtractedText(meta.fullContent || "");
-          const useFullContent = fullContent && fullContent.length > String(candidate.text || "").length + 4 && this.isManualTranslationSourceCompatible(fullContent, candidate.text);
+          const useFullContent = this.isStoreFullRequestText(fullContent, candidate.text);
           const text = useFullContent ? fullContent : candidate.text;
           return this.createAutoTranslationCandidate({
             ...candidate,
@@ -19293,7 +20695,7 @@ var require_discord_ai_translator = __commonJS({
             fullContent,
             sourceTextKind: useFullContent ? "store-full" : "dom",
             source: "bdfdb",
-            messageIdentity: this.createStructuredAutoTranslationMessageIdentity({ ...candidate, ...meta, text }) || candidate.messageIdentity
+            messageIdentity: this.createStructuredAutoTranslationMessageIdentity({ ...candidate, ...meta, text: candidate.text }) || candidate.messageIdentity
           });
         });
       }
@@ -19427,13 +20829,22 @@ var require_discord_ai_translator = __commonJS({
           sourceTextHash
         ].join(":");
       }
-      completeAutoTranslationFromCache(messageNode, content, text, translated, cacheKey, canRender = true, requestOptions = null, textOptions = null) {
-        if (requestOptions && this.isInvalidAutoTranslationCacheValue(text, translated, requestOptions)) {
+      // What a target shows on screen. A store-full target requests fuller MessageStore text
+      // (target.text), but its message identity, its line's source signature and every stale-DOM
+      // guard use this text.
+      getAutoTranslationTargetDomText(target) {
+        return String(target?.domText || target?.text || "");
+      }
+      isAutoTranslationTargetDomTextCurrent(target) {
+        return this.getElementText(target?.content, target?.textOptions) === this.getAutoTranslationTargetDomText(target);
+      }
+      completeAutoTranslationFromCache(messageNode, content, text, translated, cacheKey, canRender = true, requestOptions = null, textOptions = null, renderMeta = null, domText = "") {
+        if (requestOptions && !renderMeta?.partial && this.isInvalidAutoTranslationCacheValue(text, translated, requestOptions)) {
           this.deleteTranslationCacheCandidates(cacheKey, ...this.getTranslationCacheAliases(text, requestOptions));
           return;
         }
         this.removeQueuedAutoTranslationItem(cacheKey);
-        const currentTarget = { messageNode, content, text, textOptions, cacheKey, requestOptions };
+        const currentTarget = { messageNode, content, text, domText, textOptions, cacheKey, requestOptions };
         const pendingTargets = this.getAutoTranslationPendingTargets(currentTarget);
         const ownerId = this.getTranslationOwnerId(content);
         const targets = pendingTargets.some((target) => this.getTranslationOwnerId(target?.content) === ownerId) ? pendingTargets : [currentTarget, ...pendingTargets];
@@ -19458,7 +20869,7 @@ var require_discord_ai_translator = __commonJS({
             );
             return;
           }
-          if (this.getElementText(target.content, target.textOptions) !== target.text) {
+          if (!this.isAutoTranslationTargetDomTextCurrent(target)) {
             this.removeAutoTranslationNode(target, cacheKey);
             this.logAutoTranslationMessageState(
               "auto.message.state",
@@ -19488,7 +20899,7 @@ var require_discord_ai_translator = __commonJS({
               cacheKey,
               requestOptions,
               priority: target.priority,
-              run: () => this.renderAutoTranslationCacheTarget(target, translated, cacheKey, requestOptions)
+              run: () => this.renderAutoTranslationCacheTarget(target, translated, cacheKey, requestOptions, renderMeta ? { renderMeta } : {})
             });
           } else {
             this.logAutoTranslationMessageState(
@@ -19639,7 +21050,10 @@ var require_discord_ai_translator = __commonJS({
       // top to bottom: a binary search finds the first one not above the chat, then the walk goes outward.
       getCachedDrawMessageNodes(context = null) {
         const firstMessage = document.querySelector?.(DISCORD_MESSAGE_NODE_SELECTOR);
-        if (!firstMessage) return { nodes: [], band: null };
+        if (!firstMessage) {
+          this.cachedDrawScroller = null;
+          return { nodes: [], band: null };
+        }
         let scroller = this.cachedDrawScroller;
         if (!scroller?.isConnected || !scroller.contains?.(firstMessage)) {
           scroller = this.getTranslationScrollContainer(firstMessage);
@@ -19710,6 +21124,7 @@ var require_discord_ai_translator = __commonJS({
           messageNode,
           content,
           text,
+          domText: candidate.domText || "",
           textOptions: candidate.textOptions || null,
           targetKind: candidate.targetKind || "message",
           cacheKey: entry.cacheKey,
@@ -19962,7 +21377,7 @@ var require_discord_ai_translator = __commonJS({
           );
           return false;
         }
-        if (this.getElementText(target.content, target.textOptions) !== target.text) {
+        if (!this.isAutoTranslationTargetDomTextCurrent(target)) {
           this.removeAutoTranslationNode(target, cacheKey);
           this.logAutoTranslationMessageState(
             "auto.message.state",
@@ -19997,9 +21412,19 @@ var require_discord_ai_translator = __commonJS({
           this.scheduleAutoTranslationRetryScan(AUTO_TRANSLATE_VIEWPORT_STABLE_RESCAN_MS, { minDelayMs: AUTO_TRANSLATE_VIEWPORT_STABLE_RESCAN_MS });
           return false;
         }
-        const renderedLine = this.renderTranslation(target.messageNode, target.content, translated, cacheKey, target.text, { allowScrollCorrectionWhilePaused: true });
+        const renderMeta = options.renderMeta || null;
+        const renderedLine = this.renderTranslation(target.messageNode, target.content, translated, cacheKey, this.getAutoTranslationTargetDomText(target), {
+          allowScrollCorrectionWhilePaused: true,
+          ...renderMeta?.partial ? {
+            partial: true,
+            validationQuality: renderMeta.validationQuality || TRANSLATION_VALIDATION_QUALITIES.PARTIAL,
+            validationReason: renderMeta.validationReason || "",
+            ...renderMeta.partialInfo ? { partialInfo: renderMeta.partialInfo } : {}
+          } : {}
+        });
         if (!renderedLine) {
           this.deleteTranslationCacheCandidates(cacheKey, ...options.deleteKeys || []);
+          this.markAutoTranslationUndrawableResult(cacheKey, "emoji-restore-failed");
           this.logAutoTranslationMessageState(
             "auto.message.state",
             "render-skip",
@@ -20011,7 +21436,8 @@ var require_discord_ai_translator = __commonJS({
           return false;
         }
         this.rememberRecentAutoTranslationRender(cacheKey, target.text, requestOptions, {
-          validationQuality: TRANSLATION_VALIDATION_QUALITIES.GOOD
+          validationQuality: renderMeta?.partial ? renderMeta.validationQuality || TRANSLATION_VALIDATION_QUALITIES.PARTIAL : TRANSLATION_VALIDATION_QUALITIES.GOOD,
+          validationReason: renderMeta?.partial ? renderMeta.validationReason || "" : ""
         });
         this.logAutoTranslationMessageState(
           "auto.message.state",
@@ -20076,6 +21502,7 @@ var require_discord_ai_translator = __commonJS({
           messageNode: target.messageNode,
           content: target.content,
           text: target.text,
+          domText: target.domText || "",
           textOptions: target.textOptions,
           targetKind: target.targetKind,
           priority: target.priority
@@ -20117,15 +21544,17 @@ var require_discord_ai_translator = __commonJS({
       normalizeMessageButtonVisibility(value) {
         return value === MESSAGE_BUTTON_VISIBILITY_HOVER ? MESSAGE_BUTTON_VISIBILITY_HOVER : MESSAGE_BUTTON_VISIBILITY_ALWAYS;
       }
-      renderAutoTranslationResult(item, translated) {
+      renderAutoTranslationResult(item, translated, resultMeta = {}) {
         if (!this.isAutoTranslationRenderRequestCurrent(item.requestOptions)) return;
-        translated = this.sanitizeAutoTranslationOutput(item.text, translated, this.getAutoTranslationTargetLanguage(item.requestOptions), this.getAutoTranslationOutputValidationOptions(item.text, translated, item.requestOptions));
+        const partialInfo = resultMeta?.partialInfo || null;
+        const validationRequestOptions = partialInfo ? { ...item.requestOptions, longTextPartial: true } : item.requestOptions;
+        translated = this.sanitizeAutoTranslationOutput(item.text, translated, this.getAutoTranslationTargetLanguage(item.requestOptions), this.getAutoTranslationOutputValidationOptions(item.text, translated, validationRequestOptions));
         const validation = this.getAutoTranslationOutputValidationResult(
           item.text,
           translated,
           this.getAutoTranslationTargetLanguage(item.requestOptions),
-          this.getAutoTranslationOutputValidationOptions(item.text, translated, item.requestOptions),
-          item.requestOptions
+          this.getAutoTranslationOutputValidationOptions(item.text, translated, validationRequestOptions),
+          validationRequestOptions
         );
         if (!validation.renderable) {
           const error = this.createFinalInvalidAutoTranslationError(validation.reasonCode || "invalid-output");
@@ -20190,10 +21619,9 @@ var require_discord_ai_translator = __commonJS({
                 this.logAutoTranslationRenderSkip(item, target, "disconnected");
                 return;
               }
-              if (this.getElementText(target.content, target.textOptions) !== target.text) {
+              if (!this.isAutoTranslationTargetDomTextCurrent(target)) {
                 this.removeAutoTranslationNode(target, item.cacheKey);
                 this.logAutoTranslationRenderSkip(item, target, "text-changed");
-                sawInvalidTarget = true;
                 return;
               }
               const identityUpgrade = this.getAutoTranslationTargetIdentityUpgrade(target, item);
@@ -20206,7 +21634,7 @@ var require_discord_ai_translator = __commonJS({
               const renderCacheKey = identityUpgrade?.cacheKey || item.cacheKey;
               if (identityUpgrade?.cacheKey) upgradedCacheTargets.set(identityUpgrade.cacheKey, identityUpgrade);
               cacheable = true;
-              if (this.hasManualTranslationLine(target.content, target.text)) {
+              if (this.hasManualTranslationLine(target.content, this.getAutoTranslationTargetDomText(target))) {
                 this.logAutoTranslationRenderSkip(item, target, "manual-line");
                 return;
               }
@@ -20218,7 +21646,7 @@ var require_discord_ai_translator = __commonJS({
                   cacheKey: renderCacheKey,
                   requestOptions: target?.requestOptions || item?.requestOptions,
                   priority: target.priority,
-                  run: () => this.renderAutoTranslationRequestTarget(item, target, translated, validation)
+                  run: () => this.renderAutoTranslationRequestTarget(item, target, translated, validation, partialInfo ? { partialInfo } : {})
                 });
               } else {
                 this.logAutoTranslationRenderSkip(item, target, "outside-viewport");
@@ -20237,12 +21665,20 @@ var require_discord_ai_translator = __commonJS({
         if (validation.cacheable && (cacheable || !sawInvalidTarget && this.shouldCacheAutoTranslationResultFromRequest(item))) {
           this.cacheAutoTranslationResult(item, translated);
           upgradedCacheTargets.forEach((upgrade) => this.cacheAutoTranslationResultWithOptions(upgrade.cacheKey, item.text, upgrade.requestOptions, translated));
+        } else if (!validation.cacheable && (cacheable || !sawInvalidTarget && this.shouldCacheAutoTranslationResultFromRequest(item))) {
+          const partialMeta = {
+            validationQuality: validation.quality,
+            validationReason: validation.reasonCode || "",
+            partialInfo
+          };
+          this.rememberAutoTranslationPartialResult(item.cacheKey, item.text, translated, partialMeta);
+          upgradedCacheTargets.forEach((upgrade) => this.rememberAutoTranslationPartialResult(upgrade.cacheKey, item.text, translated, partialMeta));
         }
         if (this.isAutoTranslateEnabled()) {
           this.queueScan({ delayMs: AUTO_TRANSLATE_VIEWPORT_STABLE_RESCAN_MS });
         }
       }
-      renderAutoTranslationRequestTarget(item, target, translated, validation = null) {
+      renderAutoTranslationRequestTarget(item, target, translated, validation = null, resultMeta = {}) {
         const requestOptions = target?.requestOptions || item?.requestOptions;
         const validationResult = validation || this.getAutoTranslationOutputValidationResult(
           target?.text || item?.text || "",
@@ -20267,7 +21703,7 @@ var require_discord_ai_translator = __commonJS({
           this.logAutoTranslationRenderSkip(item, target, "disconnected");
           return false;
         }
-        if (this.getElementText(target.content, target.textOptions) !== target.text) {
+        if (!this.isAutoTranslationTargetDomTextCurrent(target)) {
           this.removeAutoTranslationNode(target, item.cacheKey);
           this.logAutoTranslationRenderSkip(item, target, "text-changed");
           return false;
@@ -20280,7 +21716,8 @@ var require_discord_ai_translator = __commonJS({
         }
         const renderCacheKey = identityUpgrade?.cacheKey || item.cacheKey;
         if (identityUpgrade?.cacheKey && validationResult.cacheable) this.cacheAutoTranslationResultWithOptions(identityUpgrade.cacheKey, item.text, identityUpgrade.requestOptions, translated);
-        if (this.hasManualTranslationLine(target.content, target.text)) {
+        const domText = this.getAutoTranslationTargetDomText(target);
+        if (this.hasManualTranslationLine(target.content, domText)) {
           this.logAutoTranslationRenderSkip(item, target, "manual-line");
           return false;
         }
@@ -20288,14 +21725,17 @@ var require_discord_ai_translator = __commonJS({
           this.logAutoTranslationRenderSkip(item, target, "outside-viewport");
           return false;
         }
-        const renderedLine = this.renderTranslation(target.messageNode, target.content, translated, renderCacheKey, target.text, {
+        const renderedLine = this.renderTranslation(target.messageNode, target.content, translated, renderCacheKey, domText, {
           partial: validationResult.quality === TRANSLATION_VALIDATION_QUALITIES.PARTIAL,
           validationQuality: validationResult.quality,
-          validationReason: validationResult.reasonCode || ""
+          validationReason: validationResult.reasonCode || "",
+          ...resultMeta?.partialInfo ? { partialInfo: resultMeta.partialInfo } : {}
         });
         if (!renderedLine) {
           this.deleteTranslationCacheCandidates(renderCacheKey);
           if (item?.cacheKey && item.cacheKey !== renderCacheKey) this.deleteTranslationCacheCandidates(item.cacheKey);
+          this.markAutoTranslationUndrawableResult(renderCacheKey, "emoji-restore-failed");
+          if (item?.cacheKey && item.cacheKey !== renderCacheKey) this.markAutoTranslationUndrawableResult(item.cacheKey, "emoji-restore-failed");
           this.logAutoTranslationRenderSkip(item, target, "emoji-restore-failed");
           return false;
         }
@@ -20374,7 +21814,7 @@ var require_discord_ai_translator = __commonJS({
       }
       getCurrentFallbackTranslationIdentitySummary(target, ids = {}) {
         if (!target?.messageNode || !target?.content) return null;
-        const text = target.text || this.getElementText(target.content, target.textOptions);
+        const text = this.getAutoTranslationTargetDomText(target) || this.getElementText(target.content, target.textOptions);
         const identity = this.messageTracker.getFallbackIdentity(target.messageNode, target.content, text, ids);
         return this.getTranslationIdentitySummary(identity);
       }
@@ -20438,9 +21878,9 @@ var require_discord_ai_translator = __commonJS({
           reasonCode
         );
       }
-      renderAutoTranslationResultSafely(item, translated) {
+      renderAutoTranslationResultSafely(item, translated, resultMeta) {
         try {
-          this.renderAutoTranslationResult(item, translated);
+          this.renderAutoTranslationResult(item, translated, resultMeta);
           return true;
         } catch (error) {
           this.warnSanitized("Failed to render auto translation", error);
@@ -20565,7 +22005,7 @@ var require_discord_ai_translator = __commonJS({
           this.removeAutoTranslationNode(target, cacheKey);
           return;
         }
-        if (this.getElementText(target.content, target.textOptions) !== target.text) {
+        if (!this.isAutoTranslationTargetDomTextCurrent(target)) {
           this.logAutoTranslationMessageState(
             "auto.message.state",
             "render-skip",
@@ -20590,7 +22030,7 @@ var require_discord_ai_translator = __commonJS({
           this.removeAutoTranslationNode(target, cacheKey);
           return;
         }
-        this.renderTranslationError(target.messageNode, target.content, error, cacheKey, target.text);
+        this.renderTranslationError(target.messageNode, target.content, error, cacheKey, this.getAutoTranslationTargetDomText(target));
         this.logAutoTranslationMessageState(
           "auto.message.state",
           "failure-rendered",
@@ -20623,8 +22063,8 @@ var require_discord_ai_translator = __commonJS({
             );
             return;
           }
-          if (target.messageNode.isConnected && target.content.isConnected && this.isElementVisibleInViewport(target.messageNode) && this.isElementVisibleInViewport(target.content) && this.getElementText(target.content, target.textOptions) === target.text) {
-            this.renderTranslationLoading(target.messageNode, target.content, item.cacheKey, target.text);
+          if (target.messageNode.isConnected && target.content.isConnected && this.isElementVisibleInViewport(target.messageNode) && this.isElementVisibleInViewport(target.content) && this.isAutoTranslationTargetDomTextCurrent(target)) {
+            this.renderTranslationLoading(target.messageNode, target.content, item.cacheKey, this.getAutoTranslationTargetDomText(target));
             this.logAutoTranslationMessageState(
               "auto.message.state",
               "loading",
@@ -21001,7 +22441,8 @@ var require_discord_ai_translator = __commonJS({
           configOverrides: options.configOverrides,
           translateAsArray: true,
           timeoutMs: AUTO_TRANSLATE_REQUEST_TIMEOUT_MS,
-          mode: options.mode || "direct-translate-batch"
+          mode: options.mode || "direct-translate-batch",
+          ...taskOptions?.signal ? { signal: taskOptions.signal } : {}
         });
         const resultArray = Array.isArray(uniqueResults) ? uniqueResults : [uniqueResults];
         return uniqueIndexes.map((index) => String(resultArray[index] || "").trim());
@@ -21387,12 +22828,16 @@ var require_discord_ai_translator = __commonJS({
         return true;
       }
       showAutoTranslateError(error) {
+        if (this.isTranslationAttentionError(error)) {
+          this.notifyTranslationNeedsAttention(error);
+          return;
+        }
         if (this.settings.ui?.showAutoTranslateToasts === false) return;
         if (!this.shouldShowAutoTranslationWarning(error)) return;
         const now = Date.now();
         if (now - this.autoTranslationLastToastAt < 1e4) return;
         this.autoTranslationLastToastAt = now;
-        this.showToast(this.t("autoTranslateFailed", { error: this.formatError(error) }), "error");
+        this.showToast(this.t("autoTranslateFailed", { error: this.formatError(error, { includeRetry: true }) }), "error");
       }
       isElementVisibleInViewport(element, rect = null) {
         if (!element?.isConnected) return false;
@@ -21812,7 +23257,9 @@ var require_discord_ai_translator = __commonJS({
         const secondarySignals = ["必要", "確認", "最高", "場合", "了解"];
         return secondarySignals.filter((signal) => compact.includes(signal)).length >= 2;
       }
-      hasCurrentTranslationLine(content, cacheKey, sourceText = null, cacheAliases = [], requestOptions = null) {
+      // sourceText is the text on screen (the line's source signature); requestText, when it differs
+      // (store-full), is what was translated and what the drawn translation is validated against.
+      hasCurrentTranslationLine(content, cacheKey, sourceText = null, cacheAliases = [], requestOptions = null, requestText = null) {
         let line = this.getTranslationLine(content);
         if (!line) line = this.findTranslationLineByMetadata(content, cacheKey, sourceText, cacheAliases);
         if (!line) return false;
@@ -21833,7 +23280,7 @@ var require_discord_ai_translator = __commonJS({
         if (line.classList?.contains?.("dait-translation-loading")) return false;
         if (line.dataset.daitMode === "manual" && this.isAutoTranslationCacheMode(requestedMode)) return true;
         if (line.dataset.daitMode === "auto-text" && this.isAutoTranslationCacheMode(requestedMode)) {
-          if (this.removeInvalidCurrentAutoTranslationLine(line, content, sourceText, cacheKey, cacheAliases, requestOptions)) return false;
+          if (this.removeInvalidCurrentAutoTranslationLine(line, content, requestText ?? sourceText, cacheKey, cacheAliases, requestOptions)) return false;
           return true;
         }
         const identityFingerprint = this.getTranslationIdentityFingerprintFromCacheKey(cacheKey);
@@ -21847,11 +23294,11 @@ var require_discord_ai_translator = __commonJS({
           return false;
         }
         if (line.dataset.daitCacheSig && requestSignatures.has(line.dataset.daitCacheSig)) {
-          if (this.removeInvalidCurrentAutoTranslationLine(line, content, sourceText, cacheKey, cacheAliases, requestOptions)) return false;
+          if (this.removeInvalidCurrentAutoTranslationLine(line, content, requestText ?? sourceText, cacheKey, cacheAliases, requestOptions)) return false;
           return true;
         }
         if (line.dataset.daitCacheKey && requestFingerprints.has(line.dataset.daitCacheKey)) {
-          if (this.removeInvalidCurrentAutoTranslationLine(line, content, sourceText, cacheKey, cacheAliases, requestOptions)) return false;
+          if (this.removeInvalidCurrentAutoTranslationLine(line, content, requestText ?? sourceText, cacheKey, cacheAliases, requestOptions)) return false;
           return true;
         }
         if (this.isAutoTranslationRenderPaused() && this.isAutoTranslationCacheMode(line.dataset?.daitMode)) return false;
@@ -21900,6 +23347,7 @@ var require_discord_ai_translator = __commonJS({
         const renderedText = this.getTranslationLineRenderedText(line);
         if (!renderedText) return false;
         const text = sourceText ?? this.getElementText(content);
+        if (line.classList?.contains?.("dait-translation-partial") && this.getAutoTranslationPartialResult(cacheKey, text)) return false;
         const validation = this.getAutoTranslationOutputValidationResult(
           text,
           renderedText,
@@ -22344,7 +23792,7 @@ var require_discord_ai_translator = __commonJS({
         return this.normalizeExtractedText(left) === this.normalizeExtractedText(right);
       }
       normalizeDraftRawText(text) {
-        return String(text ?? "").replace(/\u200b/g, "").replace(/\r\n?/g, "\n");
+        return String(text ?? "").replace(/[\u200b\ufeff]/g, "").replace(/\r\n?/g, "\n");
       }
       areDraftTextsEqualStrict(left, right) {
         return this.normalizeDraftRawText(left) === this.normalizeDraftRawText(right);
@@ -22356,6 +23804,57 @@ var require_discord_ai_translator = __commonJS({
       }
       isCurrentDraftText(textbox, expectedText) {
         return this.areDraftTextsEqualStrict(this.getTextboxDraftText(textbox), expectedText);
+      }
+      isComposerWriteSuperseded(writeToken) {
+        return Boolean(writeToken?.cancelled && writeToken.reason === "superseded");
+      }
+      // Why a finished polish/bilingual result must not be written now ("" when it may be).
+      getComposerWriteStaleReason(textbox, writeToken, expectedText) {
+        if (!textbox || textbox.isConnected === false) return "remounted";
+        if (writeToken && !this.composerWriter.isWriteTokenCurrent(writeToken)) return writeToken.reason || "cancelled";
+        if (!this.isCurrentDraftText(textbox, expectedText)) return "draft-changed";
+        if (this.isComposerFocusElsewhere(textbox)) return "focus-moved";
+        return "";
+      }
+      // Writing focuses and selects the target composer, so a late result must not land while the
+      // user is typing in another field (thread panel, search box, another composer).
+      isComposerFocusElsewhere(textbox) {
+        if (typeof document === "undefined" || !textbox) return false;
+        const active = document.activeElement;
+        if (!active || active === document.body || active === document.documentElement) return false;
+        if (active === textbox || textbox.contains?.(active)) return false;
+        return this.isEditableFocusTarget(active);
+      }
+      isEditableFocusTarget(element) {
+        if (!element) return false;
+        const tagName = String(element.tagName || "").toUpperCase();
+        if (tagName === "TEXTAREA") return !element.readOnly && !element.disabled;
+        if (tagName === "INPUT") {
+          const type = String(element.type || element.getAttribute?.("type") || "text").toLowerCase();
+          const nonText = ["button", "checkbox", "color", "file", "hidden", "image", "radio", "range", "reset", "submit"];
+          return !element.readOnly && !element.disabled && !nonText.includes(type);
+        }
+        if (element.isContentEditable === true) return true;
+        const contentEditable = String(element.getAttribute?.("contenteditable") ?? "").toLowerCase();
+        return contentEditable === "true" || contentEditable === "plaintext-only" || element.getAttribute?.("role") === "textbox";
+      }
+      getComposerResultPanelAnchor(textbox) {
+        if (textbox && textbox.isConnected !== false) return textbox;
+        if (typeof document === "undefined") return textbox;
+        try {
+          return this.getActiveTextbox() || this.getTextbox() || textbox;
+        } catch {
+          return textbox;
+        }
+      }
+      isPolishInputButtonEnabled(options = {}) {
+        return this.settings.polish?.enabled !== false && Boolean(options.forcePolish || this.settings.ui?.injectInputButton);
+      }
+      isPublicBilingualFeatureEnabled() {
+        return this.settings.translation?.enabled !== false;
+      }
+      isPublicBilingualInputButtonEnabled() {
+        return this.isPublicBilingualFeatureEnabled() && Boolean(this.settings.ui?.publicBilingualInputButton);
       }
       getPublicBilingualTargetLanguage() {
         return this.normalizeLanguageName(this.settings.polish?.targetLanguage || this.settings.translation?.targetLanguage);
@@ -22397,6 +23896,7 @@ var require_discord_ai_translator = __commonJS({
           model: baseConfig.model,
           sourceLanguage: AUTO_LANGUAGE_VALUE,
           targetLanguage,
+          targetLanguageCode: this.getTargetLanguageCode(targetLanguageValue),
           temperature: 0,
           maxTokens,
           enableThinking: false,
@@ -22473,20 +23973,95 @@ var require_discord_ai_translator = __commonJS({
         if (!this.isInvalidAutoTranslationOutput(text, finalText, this.getAutoTranslationTargetLanguage(finalOptions))) return finalText;
         throw this.createFinalInvalidAutoTranslationError();
       }
-      async getPublicBilingualTranslation(text, options = this.getPublicBilingualTranslationOptions()) {
+      async getPublicBilingualTranslation(text, options = this.getPublicBilingualTranslationOptions(), behavior = {}) {
         const cacheKey = this.getTranslationCacheKey(text, options);
-        const cached = this.getTranslationCacheValue(cacheKey, this.getTranslationCacheAliases(text, options));
+        const cached = behavior.bypassCache ? null : this.getTranslationCacheValue(cacheKey, this.getTranslationCacheAliases(text, options));
         if (cached !== null) return { text: cached, cacheKey, cached: true };
         const translated = await this.runPublicBilingualTranslationTask(text, options);
         const usedFallback = Boolean(options.requestContext?.fallbackProvider);
         if (!usedFallback) this.setTranslationCache(cacheKey, translated);
         return { text: translated, cacheKey, cached: false, fallbackProvider: options.requestContext?.fallbackProvider || "" };
       }
+      // Text inside ||…||. Outside code every "|" is escaped and the user's own escapes are kept; a
+      // lone trailing "\" is doubled so it cannot escape the closing "||". Discord shows code literally,
+      // so a backslash there would be visible: "||" inside code is split with a zero-width space instead.
       escapeDiscordSpoilerText(text) {
-        return String(text || "").replace(/\|/g, "\\|");
+        return this.splitDiscordCodeSegments(text).map((segment) => segment.code ? segment.text.replace(/\|(?=\|)/g, "|​") : this.escapeDiscordPlainText(segment.text, { escapeEveryPipe: true })).join("");
       }
+      // Visible translation: only "||" outside code could open a spoiler.
       escapeDiscordVisibleText(text) {
-        return String(text || "").replace(/\|\|/g, "\\|\\|");
+        return this.splitDiscordCodeSegments(text).map((segment) => segment.code ? segment.text : this.escapeDiscordPlainText(segment.text, { escapeEveryPipe: false })).join("");
+      }
+      escapeDiscordPlainText(text, options = {}) {
+        const value = String(text || "");
+        let output = "";
+        for (let index = 0; index < value.length; index++) {
+          const char = value[index];
+          if (char === "\\") {
+            if (index + 1 < value.length) {
+              output += char + value[index + 1];
+              index++;
+            } else {
+              output += "\\\\";
+            }
+            continue;
+          }
+          if (char === "|" && (options.escapeEveryPipe || value[index + 1] === "|")) {
+            if (options.escapeEveryPipe) {
+              output += "\\|";
+            } else {
+              output += "\\|\\|";
+              index++;
+            }
+            continue;
+          }
+          output += char;
+        }
+        return output;
+      }
+      // Splits Discord markdown into code (`inline`, ``inline``, ```fenced```) and plain segments.
+      // A backslash escapes the next character outside code, so "\`" never opens a code span.
+      splitDiscordCodeSegments(text) {
+        const value = String(text || "");
+        const segments = [];
+        let plainStart = 0;
+        let index = 0;
+        while (index < value.length) {
+          const char = value[index];
+          if (char === "\\") {
+            index += 2;
+            continue;
+          }
+          if (char !== "`") {
+            index++;
+            continue;
+          }
+          let runEnd = index;
+          while (value[runEnd] === "`") runEnd++;
+          const close = this.findDiscordCodeClose(value, runEnd, runEnd - index);
+          if (close < 0) {
+            index = runEnd;
+            continue;
+          }
+          if (index > plainStart) segments.push({ code: false, text: value.slice(plainStart, index) });
+          const end = close + (runEnd - index);
+          segments.push({ code: true, text: value.slice(index, end) });
+          index = plainStart = end;
+        }
+        if (plainStart < value.length) segments.push({ code: false, text: value.slice(plainStart) });
+        return segments;
+      }
+      findDiscordCodeClose(value, from, length) {
+        let index = from;
+        while (index < value.length) {
+          const start = value.indexOf("`", index);
+          if (start < 0) return -1;
+          let end = start;
+          while (value[end] === "`") end++;
+          if (end - start === length && start > from) return start;
+          index = end;
+        }
+        return -1;
       }
       formatPublicBilingualMessage(translated, original) {
         const translation = this.escapeDiscordVisibleText(String(translated || "").trim());
@@ -22512,7 +24087,9 @@ var require_discord_ai_translator = __commonJS({
       }
       async preparePublicBilingualDraft(textbox, draft, options = {}) {
         const session = this.getPolishSession(textbox, draft);
-        let translationSource = draft;
+        const isBilingualOutput = Boolean(session.lastBilingualRawText && session.lastBilingualSourceRawText) && this.areDraftTextsEqualStrict(draft, session.lastBilingualRawText);
+        const baseDraft = isBilingualOutput ? this.normalizeDraftRawText(session.lastBilingualSourceRawText) : draft;
+        let translationSource = baseDraft;
         let usedPolish = false;
         let skippedPolish = false;
         const hasLifecycleToken = options.lifecycleToken !== void 0 && options.lifecycleToken !== null;
@@ -22520,7 +24097,7 @@ var require_discord_ai_translator = __commonJS({
         if (!options.skipAutoPolish && this.isPublicBilingualPolishBeforeTranslateEnabled()) {
           if (!this.settings.polish.enabled) {
             skippedPolish = true;
-          } else if (!this.isPolishSessionAlreadyPolished(session, draft)) {
+          } else if (!this.isPolishSessionAlreadyPolished(session, baseDraft)) {
             const sourceText = this.getPolishSourceText(session) || draft;
             const polished = await this.runModelTask("polish", sourceText);
             if (!String(polished || "").trim()) throw new Error(this.t("emptyResult"));
@@ -22539,13 +24116,19 @@ var require_discord_ai_translator = __commonJS({
           stale: false,
           session,
           translationSource,
-          spoilerOriginal: this.getPublicBilingualSpoilerOriginal(session, draft, translationSource),
+          spoilerOriginal: this.getPublicBilingualSpoilerOriginal(session, baseDraft, translationSource),
           expectedCurrentText: draft,
+          // A bilingual result already exists in this session, so this click asks for a fresh one.
+          rerun: Boolean(session.lastBilingualRawText),
           usedPolish,
           skippedPolish
         };
       }
       async publicBilingualCurrentDraft(button = null, behaviorOptions = {}) {
+        if (!this.isPublicBilingualFeatureEnabled()) {
+          if (!behaviorOptions.skipAutoPolish) this.showToast(this.t("translationDisabled"), "info");
+          return { ok: false, wrote: false, reason: "disabled" };
+        }
         const textbox = this.resolveInputActionTextbox(button, behaviorOptions);
         if (!textbox) {
           this.showToast(this.t("textboxMissing"), "error");
@@ -22580,10 +24163,11 @@ var require_discord_ai_translator = __commonJS({
         });
         try {
           const payload = await this.preparePublicBilingualDraft(textbox, draft, { ...behaviorOptions, lifecycleToken, writeToken });
-          if (!this.isLifecycleTokenCurrent(lifecycleToken) || !this.composerWriter.isWriteTokenCurrent(writeToken)) {
+          if (!this.isLifecycleTokenCurrent(lifecycleToken)) {
             return { ok: false, wrote: false, stale: true, phase: "lifecycle" };
           }
-          if (payload.stale) {
+          if (this.isComposerWriteSuperseded(writeToken)) return { ok: false, wrote: false, stale: true, phase: "superseded" };
+          if (payload.stale || !this.composerWriter.isWriteTokenCurrent(writeToken)) {
             this.logDiagnostic("public.bilingual", "stale-input", {
               ...this.getDiagnosticBaseMeta("public-bilingual", "public-bilingual", DIAGNOSTIC_REASON_CODES.STALE_DOM, {
                 messageState: DIAGNOSTIC_MESSAGE_STATES.STALE,
@@ -22603,16 +24187,18 @@ var require_discord_ai_translator = __commonJS({
           if (reservedLength >= DISCORD_MESSAGE_MAX_LENGTH) {
             throw new Error(this.t("publicBilingualTooLong", { length: reservedLength, limit: DISCORD_MESSAGE_MAX_LENGTH }));
           }
-          const result = await this.getPublicBilingualTranslation(payload.translationSource, requestOptions);
-          if (!this.isLifecycleTokenCurrent(lifecycleToken) || !this.composerWriter.isWriteTokenCurrent(writeToken)) {
+          const result = await this.getPublicBilingualTranslation(payload.translationSource, requestOptions, { bypassCache: payload.rerun });
+          if (!this.isLifecycleTokenCurrent(lifecycleToken)) {
             return { ok: false, wrote: false, stale: true, phase: "lifecycle" };
           }
+          if (this.isComposerWriteSuperseded(writeToken)) return { ok: false, wrote: false, stale: true, phase: "superseded" };
           if (!String(result.text || "").trim()) throw new Error(this.t("emptyResult"));
           const composed = this.formatPublicBilingualMessage(result.text, payload.spoilerOriginal);
           if (composed.length > DISCORD_MESSAGE_MAX_LENGTH) {
             throw new Error(this.t("publicBilingualTooLong", { length: composed.length, limit: DISCORD_MESSAGE_MAX_LENGTH }));
           }
-          if (textbox?.isConnected === false || !this.composerWriter.isWriteTokenCurrent(writeToken) || !this.isCurrentDraftText(textbox, payload.expectedCurrentText)) {
+          const staleReason = this.getComposerWriteStaleReason(textbox, writeToken, payload.expectedCurrentText);
+          if (staleReason) {
             this.logDiagnostic("public.bilingual", "stale-input", {
               ...this.getDiagnosticBaseMeta("public-bilingual", "public-bilingual", DIAGNOSTIC_REASON_CODES.STALE_DOM, {
                 messageState: DIAGNOSTIC_MESSAGE_STATES.STALE,
@@ -22623,13 +24209,17 @@ var require_discord_ai_translator = __commonJS({
               sourceHash: this.getStrongTextFingerprint(draft),
               cached: Boolean(result.cached),
               phase: "translation",
+              reason: staleReason,
               ms: Date.now() - startedAt
             });
-            this.showToast(this.t("publicBilingualInputChanged"), "info");
-            return { ok: false, wrote: false, stale: true, phase: "translation" };
-          }
-          if (!this.isLifecycleTokenCurrent(lifecycleToken) || !this.composerWriter.isWriteTokenCurrent(writeToken)) {
-            return { ok: false, wrote: false, stale: true, phase: "lifecycle" };
+            this.showPolishResultPanel(this.getComposerResultPanelAnchor(textbox), composed, {
+              sourceButton: button,
+              title: this.t("publicBilingualButton"),
+              ariaLabel: this.t("publicBilingualTitleAttr", { targetLanguage: this.getDisplayLanguage(this.getPublicBilingualTargetLanguage()) }),
+              adjustTextboxSelection: false
+            });
+            this.showToast(this.t("composerResultHeld"), "info");
+            return { ok: false, wrote: false, stale: true, phase: "translation", reason: staleReason, fallbackText: composed };
           }
           const writeResult = await this.composerWriter.replaceTextSafely(textbox, composed, {
             blurAfterReplace: false,
@@ -22659,7 +24249,11 @@ var require_discord_ai_translator = __commonJS({
               ariaLabel: this.t("publicBilingualTitleAttr", { targetLanguage: this.getDisplayLanguage(this.getPublicBilingualTargetLanguage()) }),
               adjustTextboxSelection: false
             });
-            this.showToast(this.t("publicBilingualFailed", { error: this.formatError(new Error(writeResult.reason || "verification-failed")) }), "error");
+            if (["write-cancelled", "stale-input", "superseded", "user-input"].includes(writeResult.reason)) {
+              this.showToast(this.t("composerResultHeld"), "info");
+            } else {
+              this.showToast(this.t("publicBilingualFailed", { error: this.t("errorComposerWriteFailed") }), "error");
+            }
             return { ok: false, wrote: false, reason: writeResult.reason || "verification-failed", fallbackText: composed };
           }
           this.updatePolishSessionAfterBilingual(payload.session, textbox, composed, payload.translationSource, true);
@@ -22715,7 +24309,7 @@ var require_discord_ai_translator = __commonJS({
         const expectedComposerKey = behaviorOptions.composerKey || button?.dataset?.daitComposerKey || "";
         if (!this.isInputActionTextboxCurrent(textbox, expectedComposerKey)) {
           this.queueInputButtonScan({ delayMs: 120, trailing: true });
-          this.showToast(this.t("publicBilingualInputChanged"), "info");
+          this.showToast(this.t("composerChanged"), "info");
           return;
         }
         const draft = this.getTextboxDraftText(textbox);
@@ -22725,6 +24319,9 @@ var require_discord_ai_translator = __commonJS({
         }
         const writeToken = this.composerWriter.beginWrite(textbox, draft);
         this.setButtonBusy(button, true, this.t("polishBusy"));
+        if ((behaviorOptions.fromHotkey || behaviorOptions.fromMenu) && !this.isInputActionButtonShown(button)) {
+          this.showToast(this.t("polishRunning"), "info");
+        }
         const lifecycleToken = this.getLifecycleToken();
         const startedAt = Date.now();
         this.logDiagnostic("polish", "start", {
@@ -22745,9 +24342,11 @@ var require_discord_ai_translator = __commonJS({
             return;
           }
           const polished = await this.runModelTask("polish", sourceText);
-          if (!this.isLifecycleTokenCurrent(lifecycleToken) || !this.composerWriter.isWriteTokenCurrent(writeToken)) return;
+          if (!this.isLifecycleTokenCurrent(lifecycleToken)) return;
+          if (this.isComposerWriteSuperseded(writeToken)) return;
           const action = this.getPolishAfterAction();
-          if (textbox?.isConnected === false || !this.composerWriter.isWriteTokenCurrent(writeToken) || !this.isCurrentDraftText(textbox, draft)) {
+          const staleReason = this.getComposerWriteStaleReason(textbox, writeToken, draft);
+          if (staleReason) {
             this.updatePolishSessionAfterResult(session, textbox, polished, false);
             this.logDiagnostic("polish", "stale-input", {
               ...this.getDiagnosticBaseMeta("polish", "polish", DIAGNOSTIC_REASON_CODES.STALE_DOM, {
@@ -22757,12 +24356,13 @@ var require_discord_ai_translator = __commonJS({
                 textLength: String(sourceText || "").length
               }),
               sourceHash: this.getStrongTextFingerprint(sourceText),
+              reason: staleReason,
               ms: Date.now() - startedAt
             });
-            if (textbox?.isConnected !== false) this.showPolishResultPanel(textbox, polished, { sourceButton: button });
+            this.showPolishResultPanel(this.getComposerResultPanelAnchor(textbox), polished, { sourceButton: button });
+            this.showToast(this.t("composerResultHeld"), "info");
             return;
           }
-          if (!this.isLifecycleTokenCurrent(lifecycleToken) || !this.composerWriter.isWriteTokenCurrent(writeToken)) return;
           const writeResult = await this.composerWriter.replaceTextSafely(textbox, polished, {
             blurAfterReplace: false,
             extraBlurTarget: button,
@@ -22871,6 +24471,24 @@ var require_discord_ai_translator = __commonJS({
         panel.appendChild(output);
         const actions = document.createElement("div");
         actions.className = "dait-polish-result-actions";
+        if (textbox && options.allowApply !== false) {
+          const apply = document.createElement("button");
+          apply.className = "dait-polish-result-action dait-polish-result-apply";
+          apply.type = "button";
+          apply.textContent = this.t("polishResultReplace");
+          apply.addEventListener("click", async (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            if (apply.disabled) return;
+            apply.disabled = true;
+            try {
+              await this.applyPolishResultPanelText(textbox, String(text || ""));
+            } finally {
+              apply.disabled = false;
+            }
+          });
+          actions.appendChild(apply);
+        }
         const copy = document.createElement("button");
         copy.className = "dait-polish-result-action primary";
         copy.type = "button";
@@ -22961,6 +24579,33 @@ var require_discord_ai_translator = __commonJS({
         this.polishResultPanel?.remove?.();
         this.polishResultPanel = null;
       }
+      // The panel's "Insert into input" action: an explicit user request, so it replaces whatever the
+      // composer holds now (Discord's undo brings the previous draft back).
+      async applyPolishResultPanelText(textbox, text) {
+        const target = textbox && textbox.isConnected !== false ? textbox : this.resolveInputActionTextbox(null, {});
+        if (!target) {
+          this.showToast(this.t("textboxMissing"), "error");
+          return false;
+        }
+        const currentText = this.getTextboxDraftText(target);
+        const writeToken = this.composerWriter.beginWrite(target, currentText);
+        let result = null;
+        try {
+          result = await this.composerWriter.replaceTextSafely(target, text, {
+            blurAfterReplace: false,
+            expectedPreviousText: currentText,
+            writeToken
+          });
+        } finally {
+          this.composerWriter.finishWriteToken(writeToken);
+        }
+        if (result?.ok) {
+          this.removePolishResultPanel();
+          return true;
+        }
+        if (result?.reason !== "write-cancelled") this.showToast(this.t("polishResultApplyFailed"), "error");
+        return false;
+      }
       showRestoreOriginalControl(textbox, session, sourceButton = null) {
         const originalText = session?.originalRawText ?? session?.originalText;
         if (typeof document === "undefined" || !originalText) return;
@@ -23030,8 +24675,8 @@ var require_discord_ai_translator = __commonJS({
             writeToken
           });
           if (result.ok && this.composerWriter.isWriteTokenCurrent(writeToken)) {
-            session.lastWrittenText = this.normalizeExtractedText(originalText);
-            session.lastWrittenRawText = this.normalizeDraftRawText(originalText);
+            session.lastWrittenText = "";
+            session.lastWrittenRawText = "";
             session.updatedAt = Date.now();
             this.polishSession = session;
             this.removePolishRestoreControl();
@@ -23049,6 +24694,7 @@ var require_discord_ai_translator = __commonJS({
         if (!textbox || textbox.isConnected === false || !session) return false;
         if (session.composerKey && this.getTextboxComposerKey(textbox) !== session.composerKey) return false;
         const current = this.getTextboxDraftText(textbox);
+        if (this.areDraftTextsEqualStrict(current, session.originalRawText ?? session.originalText)) return false;
         const candidates = [
           session.lastWrittenRawText,
           session.lastResultRawText,
@@ -23102,7 +24748,7 @@ var require_discord_ai_translator = __commonJS({
           } catch {
           }
           const storeCandidate = this.getManualTranslationStoreSourceCandidate(messageNode, content, domText);
-          if (storeCandidate?.text) pushCandidate(storeCandidate.source, storeCandidate.text, storeCandidate.confidence || "store");
+          if (this.isStoreFullRequestText(storeCandidate?.text, domText)) pushCandidate(storeCandidate.source, storeCandidate.text, storeCandidate.confidence || "store");
         }
         const selected = this.selectManualTranslationSourceCandidate(candidates, domText) || candidates[0] || { source: "dom-content", text: domText, length: domText.length };
         this.logDiagnostic("manual.source", selected.source === "dom-content" ? "dom" : "resolved", {
@@ -23207,8 +24853,7 @@ var require_discord_ai_translator = __commonJS({
         if (!plan?.messageNode?.isConnected || !plan?.content?.isConnected) return false;
         const currentText = this.normalizeExtractedText(this.getElementText(plan.content, plan.textOptions));
         if (!currentText) return false;
-        const expectedTexts = [plan.text, plan.domText].map((text) => this.normalizeExtractedText(text)).filter(Boolean);
-        return expectedTexts.includes(currentText);
+        return currentText === this.normalizeExtractedText(plan.domText ?? plan.text);
       }
       beginManualTranslationRequest(content) {
         const token = ++this.manualTranslationRequestCounter;
@@ -23229,9 +24874,12 @@ var require_discord_ai_translator = __commonJS({
         const providerKey = String(options.providerKey || "");
         return !providerKey || this.isAutoTranslationProviderSnapshotCurrent(providerKey, options);
       }
+      // text is the request text; domText is what the message shows, which keys the message identity
+      // and the line (as in auto translation, so both share cache entries).
       createManualTranslationPlan(messageNode, content, text, textOptions = null, sourceMeta = null) {
-        const requestOptions = this.withMessageIdentity(this.getManualTranslationRequestOptions(), messageNode, content, text);
-        const autoRequestOptions = this.withMessageIdentity(this.getAutoTranslationRequestOptionsForText(text, this.getAutoTranslationOptions()), messageNode, content, text);
+        const domText = sourceMeta?.domText ?? text;
+        const requestOptions = this.withMessageIdentity(this.getManualTranslationRequestOptions(), messageNode, content, domText);
+        const autoRequestOptions = this.withMessageIdentity(this.getAutoTranslationRequestOptionsForText(text, this.getAutoTranslationOptions()), messageNode, content, domText);
         const cacheKey = this.getTranslationCacheKey(text, requestOptions);
         const autoCacheKey = this.getTranslationCacheKey(text, autoRequestOptions);
         return {
@@ -23244,7 +24892,7 @@ var require_discord_ai_translator = __commonJS({
           autoRequestOptions,
           cacheKey,
           autoCacheKey,
-          domText: sourceMeta?.domText ?? text,
+          domText,
           sourceKind: sourceMeta?.source || "dom-content",
           sourceConfidence: sourceMeta?.confidence || "",
           sourceHash: this.getStrongTextFingerprint(text),
@@ -23262,6 +24910,7 @@ var require_discord_ai_translator = __commonJS({
         if (text) this.clearAutoTextTranslationFailure(text, options);
         this.clearAutoTranslationPendingTargets(cacheKey);
         this.removeQueuedAutoTranslationItem(cacheKey);
+        this.clearAutoTranslationPartialResult(cacheKey, plan?.cacheKey);
         if (plan?.cacheKey && plan.cacheKey !== cacheKey) {
           this.clearAutoTranslationFailure(plan.cacheKey, plan.requestOptions || options);
           this.clearAutoTranslationPendingTargets(plan.cacheKey);
@@ -23270,7 +24919,7 @@ var require_discord_ai_translator = __commonJS({
         return true;
       }
       renderManualLoading(plan) {
-        return this.renderTranslationLoading(plan.messageNode, plan.content, plan.cacheKey, plan.text);
+        return this.renderTranslationLoading(plan.messageNode, plan.content, plan.cacheKey, plan.domText ?? plan.text);
       }
       runManualTranslationPlan(plan) {
         return this.runManualRescueTranslationPlan(plan);
@@ -23284,11 +24933,14 @@ var require_discord_ai_translator = __commonJS({
         }
         return plan.requestOptions;
       }
-      async runManualRescueModelAttempt(plan, requestOptions) {
+      // requestOptions is this attempt's own copy: a partial long result is recorded on it for
+      // validation and for the partial note (longTextPartialInfo).
+      async runManualRescueModelAttempt(plan, requestOptions, requestBudget = null) {
         if (this.isLongAutoTranslationText(plan.text)) {
           const taskOptions = {
             retryInvalidOutput: false,
-            manualRescue: true
+            manualRescue: true,
+            ...requestBudget ? { requestBudget } : {}
           };
           const wholePass = await this.runManualLongTextWholePass(plan, requestOptions, taskOptions);
           if (wholePass !== null) return wholePass;
@@ -23297,9 +24949,11 @@ var require_discord_ai_translator = __commonJS({
             requestOptions.longTextPartial = true;
             requestOptions.longTextFailedChunks = Number(taskOptions.longTextFailedChunks || 0);
             requestOptions.longTextSuccessfulChunks = Number(taskOptions.longTextSuccessfulChunks || 0);
+            if (taskOptions.longTextPartialInfo) requestOptions.longTextPartialInfo = taskOptions.longTextPartialInfo;
           }
           return translated;
         }
+        this.consumeAutoTranslationRequestBudget({ requestBudget });
         return this.runAutoTranslationModelAttempt(plan.text, requestOptions);
       }
       getManualRescueValidation(plan, translated, requestOptions) {
@@ -23357,13 +25011,23 @@ var require_discord_ai_translator = __commonJS({
         let previousReason = "";
         let lastValidation = null;
         let lastError = null;
+        const requestBudget = this.createAutoTranslationRequestBudget();
         for (let index = 0; index < attemptNames.length; index++) {
           const attemptName = attemptNames[index];
-          const requestOptions = this.getManualRescueAttemptOptions(plan, attemptName, previousOutput, previousReason);
+          if (this.isAutoTranslationRequestBudgetExhausted(requestBudget)) {
+            this.logDiagnostic("manual.rescue", "budget-exhausted", {
+              key: this.getTextFingerprint(plan.cacheKey),
+              sourceHash: plan.sourceHash,
+              attemptName,
+              requestCount: requestBudget.used
+            });
+            break;
+          }
+          const requestOptions = { ...this.getManualRescueAttemptOptions(plan, attemptName, previousOutput, previousReason) };
           let translated = "";
           let validation = null;
           try {
-            translated = await this.runManualRescueModelAttempt(plan, requestOptions);
+            translated = await this.runManualRescueModelAttempt(plan, requestOptions, requestBudget);
             validation = this.getManualRescueValidation(plan, translated, requestOptions);
             this.logManualRescueAttempt(plan, attemptName, index, requestOptions, translated, validation, null);
             attempts.push({
@@ -23384,6 +25048,7 @@ var require_discord_ai_translator = __commonJS({
               validationQuality: validation.quality
             });
           } catch (error) {
+            if (this.isAutoTranslationRequestBudgetError(error)) break;
             lastError = error;
             previousReason = error?.autoTranslationInvalidReason || error?.autoTranslationCancelReason || this.getAutoTranslationFailureType(error) || "invalid-output";
             this.logManualRescueAttempt(plan, attemptName, index, requestOptions, previousOutput, null, error);
@@ -23403,18 +25068,19 @@ var require_discord_ai_translator = __commonJS({
         throw this.createManualRescueFailureError(finalReason, finalQuality, attempts);
       }
       renderManualFailure(plan, error) {
-        return this.renderTranslationError(plan.messageNode, plan.content, error, plan.cacheKey, plan.text);
+        return this.renderTranslationError(plan.messageNode, plan.content, error, plan.cacheKey, plan.domText ?? plan.text);
       }
-      async translateMessage(messageNode, content, button, textOptions = null) {
+      async translateMessage(messageNode, content, button, textOptions = null, translateOptions = {}) {
         if (!this.settings.translation.enabled) {
           this.showToast(this.t("translationDisabled"), "info");
           return;
         }
         const initialText = this.getElementText(content, textOptions);
-        if (!initialText) {
+        if (!this.hasTranslatableMessageText(initialText)) {
           this.showToast(this.t("noTranslatableText"), "info");
           return;
         }
+        this.clearTranslationLineDismissal(messageNode, content, textOptions);
         const source = this.resolveManualTranslationSource(messageNode, content, textOptions, initialText);
         const text = source.text || initialText;
         if (this.isLowInformationRepeatedText(text)) {
@@ -23443,7 +25109,7 @@ var require_discord_ai_translator = __commonJS({
           sourceKind: plan.sourceKind,
           sourceConfidence: plan.sourceConfidence
         });
-        const cachedTranslation = this.getTranslationCacheValue(cacheKey, this.getTranslationCacheAliases(text, requestOptions));
+        const cachedTranslation = translateOptions?.bypassCache ? null : this.getTranslationCacheValue(cacheKey, this.getTranslationCacheAliases(text, requestOptions));
         if (cachedTranslation !== null) {
           if (this.isInvalidAutoTranslationCacheValue(text, cachedTranslation, requestOptions)) {
             this.deleteTranslationCacheCandidates(cacheKey, ...this.getTranslationCacheAliases(text, requestOptions));
@@ -23460,8 +25126,8 @@ var require_discord_ai_translator = __commonJS({
               key: this.getTextFingerprint(cacheKey),
               ms: Date.now() - startedAt
             });
-            this.syncManualTranslationToAutoCache(messageNode, content, text, cachedTranslation, textOptions);
-            this.renderTranslation(messageNode, content, cachedTranslation, cacheKey, text);
+            this.syncManualTranslationToAutoCache(messageNode, content, text, cachedTranslation, textOptions, plan.domText);
+            this.renderTranslation(messageNode, content, cachedTranslation, cacheKey, plan.domText);
             return;
           }
         }
@@ -23509,12 +25175,13 @@ var require_discord_ai_translator = __commonJS({
           const usedProviderFallback = Boolean(resultRequestOptions.requestContext?.fallbackProvider);
           if (validation.cacheable && !usedProviderFallback) {
             this.setTranslationCache(cacheKey, translated);
-            this.syncManualTranslationToAutoCache(messageNode, content, text, translated, textOptions);
+            this.syncManualTranslationToAutoCache(messageNode, content, text, translated, textOptions, plan.domText);
           }
-          this.renderTranslation(messageNode, content, translated, cacheKey, text, {
+          this.renderTranslation(messageNode, content, translated, cacheKey, plan.domText, {
             partial: validation.quality === TRANSLATION_VALIDATION_QUALITIES.PARTIAL,
             validationQuality: validation.quality,
-            validationReason: validation.reasonCode || ""
+            validationReason: validation.reasonCode || "",
+            ...resultRequestOptions.longTextPartialInfo ? { partialInfo: resultRequestOptions.longTextPartialInfo } : {}
           });
           this.rememberRecentAutoTranslationRender(plan.autoCacheKey, text, plan.autoRequestOptions, {
             validationQuality: validation.quality,
@@ -23561,6 +25228,7 @@ var require_discord_ai_translator = __commonJS({
             ms: Date.now() - startedAt
           });
           const silentManualFailure = Boolean(error?.manualTranslationRescueFailed || error?.autoTranslationFinalInvalidOutput);
+          if (!silentManualFailure) this.rememberTranslationAttentionNotice(error, this.getTranslationAttentionProviderKey(error, requestOptions));
           if (!error?.autoTranslationFinalInvalidOutput) this.markAutoTranslationProviderFailure(requestOptions, error);
           if (this.isManualTranslationSourceStillCurrent(plan)) {
             if (silentManualFailure) this.removeTranslationNode(messageNode, content);
@@ -23575,13 +25243,13 @@ var require_discord_ai_translator = __commonJS({
           }
         }
       }
-      syncManualTranslationToAutoCache(messageNode, content, text, translated, textOptions = null) {
+      syncManualTranslationToAutoCache(messageNode, content, text, translated, textOptions = null, domText = text) {
         if (!messageNode || !content || !text || !translated) return false;
         const requestOptions = this.withMessageIdentity(
           this.getAutoTranslationRequestOptionsForText(text, this.getAutoTranslationOptions()),
           messageNode,
           content,
-          text
+          domText || text
         );
         if (this.isInvalidAutoTranslationCacheValue(text, translated, requestOptions)) return false;
         const cacheKey = this.getTranslationCacheKey(text, requestOptions);
@@ -23636,17 +25304,18 @@ var require_discord_ai_translator = __commonJS({
       annotateTranslateProviderApiError(error, raw = "", request = {}) {
         if (!error || !["microsoft", "deepl", "baidu"].includes(String(request?.provider || ""))) return error;
         error.providerKey = request.providerKey || "";
-        const signal = `${Number(error.status || 0)} ${String(raw || "").slice(0, 4e3)}`;
-        if (/quota|limit exceeded|daily limit|monthly limit|character limit|456|54003|54004|54005/i.test(signal)) {
+        const status = Number(error.status || 0);
+        const text = String(raw || "").slice(0, 4e3);
+        if (status === 456 || /\b(?:quota|limit exceeded|daily limit|monthly limit|character limit)\b/i.test(text)) {
           error.providerQuotaExceeded = true;
         }
-        if (/invalid key|unauthorized|forbidden|401|403|52003|54001/i.test(signal)) {
+        if (status === 401 || status === 403 || /\b(?:invalid (?:auth(?:entication)? )?key|unauthorized|forbidden)\b/i.test(text)) {
           error.providerAuthFailed = true;
         }
-        if (/too many|rate.?limit|429|54003/i.test(signal)) {
+        if (status === 429 || /\b(?:too many requests|rate.?limit(?:ed)?)\b/i.test(text)) {
           error.providerRateLimited = true;
         }
-        if (Number(error.status || 0) >= 500) {
+        if (status >= 500) {
           error.providerServerError = true;
         }
         return error;
@@ -23697,6 +25366,8 @@ var require_discord_ai_translator = __commonJS({
         if (line.classList?.contains?.("dait-translation-loading")) return false;
         if (line.classList?.contains?.("dait-translation-error")) return false;
         if (line.classList?.contains?.("dait-translation-masked")) return false;
+        if (line.classList?.contains?.("dait-translation-partial")) return false;
+        if (line.classList?.contains?.("dait-translation-dismissed")) return false;
         return line.classList?.contains?.("dait-translation-revealed") !== false;
       }
       syncTranslationSourceVisibility(line, content, sourceText = null) {
@@ -23755,6 +25426,8 @@ var require_discord_ai_translator = __commonJS({
           if (!isStateLine) {
             line.classList?.toggle?.("dait-translation-masked", Boolean(this.settings.ui?.maskTranslations));
             line.classList?.toggle?.("dait-translation-revealed", !this.settings.ui?.maskTranslations);
+            this.applyTranslationLineMaskState(line);
+            this.applyTranslationLineDisplayClasses(line);
           }
           this.positionExistingTranslationLine(line, content);
           this.syncTranslationSourceVisibility(line, content);
@@ -23781,9 +25454,16 @@ var require_discord_ai_translator = __commonJS({
       }
       getTranslationEmojiDescriptors(content) {
         const images = Array.from(content?.querySelectorAll?.("img[alt]") || []);
+        const skippedSelector = [
+          "[aria-hidden='true']",
+          "[hidden]",
+          ...this.getForeignTranslationExcludedSelectors()
+        ].filter(Boolean).join(", ");
         return images.map((image) => {
           try {
             if (image.closest?.(".dait-translation-line, .dait-translation-box")) return null;
+            const skipped = image.closest?.(skippedSelector);
+            if (skipped && (skipped === content || content?.contains?.(skipped))) return null;
           } catch {
           }
           const alt = String(image.getAttribute?.("alt") || "").trim();
@@ -23814,7 +25494,7 @@ var require_discord_ai_translator = __commonJS({
         descriptors.forEach((descriptor) => descriptorCounts.set(descriptor.name, Number(descriptorCounts.get(descriptor.name) || 0) + 1));
         const outputCounts = this.getDiscordEmojiTokenCounts(translatedText);
         for (const [name, count] of descriptorCounts) {
-          if (Number(outputCounts.get(name) || 0) !== count) return false;
+          if (Number(outputCounts.get(name) || 0) < count) return false;
         }
         const queues = /* @__PURE__ */ new Map();
         descriptors.forEach((descriptor) => {
@@ -23863,6 +25543,11 @@ var require_discord_ai_translator = __commonJS({
           else delete line.dataset.daitValidationQuality;
           if (renderOptions?.validationReason) line.dataset.daitValidationReason = String(renderOptions.validationReason);
           else delete line.dataset.daitValidationReason;
+          this.resetTranslationLineState(line);
+          this.applyTranslationLineLanguage(line);
+          this.applyTranslationLineDisplayClasses(line);
+          this.applyTranslationLineMaskState(line);
+          this.applyTranslationLineDismissal(line, messageNode, content);
           line.textContent = "";
           const text = document.createElement("span");
           text.className = "dait-translation-text";
@@ -23875,6 +25560,12 @@ var require_discord_ai_translator = __commonJS({
             text.textContent = translatedText;
           }
           line.appendChild(text);
+          this.translationLineTexts?.set?.(line, String(translatedText ?? ""));
+          if (!line.classList?.contains?.("dait-translation-preview")) {
+            line.appendChild(this.createTranslationLineActions(line, messageNode, content));
+            const note = this.createTranslationPartialNote(line, messageNode, content, renderOptions?.partialInfo);
+            if (note) line.appendChild(note);
+          }
           this.syncTranslationSourceVisibility(line, content, sourceText);
           return line;
         }, scrollOptions);
@@ -23890,7 +25581,11 @@ var require_discord_ai_translator = __commonJS({
           delete line.dataset.daitValidationQuality;
           delete line.dataset.daitValidationReason;
           line.dataset.daitLoadingAt = String(Date.now());
-          line.textContent = "";
+          this.resetTranslationLineState(line);
+          this.applyTranslationLineDismissal(line, messageNode, content);
+          line.setAttribute?.("role", "status");
+          line.setAttribute?.("aria-busy", "true");
+          line.textContent = this.t("translationLoading");
           return line;
         });
       }
@@ -23905,37 +25600,458 @@ var require_discord_ai_translator = __commonJS({
           delete line.dataset.daitLoadingAt;
           delete line.dataset.daitValidationQuality;
           delete line.dataset.daitValidationReason;
-          line.textContent = "";
-          const message = document.createElement("span");
-          message.className = "dait-translation-error-message";
-          message.textContent = this.t("translationFailedInline", { error: this.formatError(error) });
-          line.appendChild(message);
-          const retry = document.createElement("button");
-          retry.className = "dait-translation-retry";
-          retry.type = "button";
-          retry.textContent = this.t("translateRetry");
-          retry.title = this.t("translateRetryTitle");
-          retry.addEventListener("click", (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            const currentContent = this.getTranslationContentForLine(line) || content;
-            const textOptions = line.classList?.contains?.("dait-translation-preview") ? { includeReplyPreview: true } : null;
-            if (!messageNode?.isConnected || !currentContent?.isConnected) {
-              line.remove();
-              this.showToast(this.t("messageMissing"), "error");
-              return;
-            }
-            const currentText = this.getElementText(currentContent, textOptions);
-            if (!currentText || !this.isTranslationLineSourceMatch(line, currentText)) {
-              line.remove();
-              this.showToast(this.t("messageMissing"), "error");
-              return;
-            }
-            this.translateMessage(messageNode, currentContent, null, textOptions);
-          });
-          line.appendChild(retry);
+          this.resetTranslationLineState(line);
+          this.applyTranslationLineDismissal(line, messageNode, content);
+          this.fillTranslationErrorLine(line, messageNode, content, error);
           return line;
         });
+      }
+      // Error lines say what went wrong in plain words and offer the action that fixes it:
+      // settings for configuration problems, a connection test for a local service that is down,
+      // the wait time for rate limits, and Retry for everything else.
+      fillTranslationErrorLine(line, messageNode, content, error) {
+        const presentation = this.getTranslationErrorPresentation(error);
+        line.dataset.daitErrorAction = presentation.action;
+        if (presentation.action !== "retry") line.title = this.formatError(error);
+        line.textContent = "";
+        const message = document.createElement("span");
+        message.className = "dait-translation-error-message";
+        message.textContent = presentation.message;
+        line.appendChild(message);
+        if (presentation.action === "settings") {
+          line.appendChild(this.createTranslationErrorButton("translationOpenSettings", "translationOpenSettingsTitle", (button) => this.openTranslationSettingsFromChat(button)));
+        } else if (presentation.action === "test") {
+          line.appendChild(this.createTranslationErrorButton("translationTestConnection", "translationTestConnectionTitle", (button) => this.testTranslationConnectionFromChat(button)));
+          line.appendChild(this.createTranslationRetryButton(line, messageNode, content));
+        } else if (presentation.action === "wait") {
+          this.scheduleTranslationErrorWaitEnd(line, messageNode, content, presentation.waitMs);
+        } else {
+          line.appendChild(this.createTranslationRetryButton(line, messageNode, content));
+        }
+        return presentation;
+      }
+      getTranslationErrorPresentation(error) {
+        const attention = this.getTranslationAttentionType(error);
+        if (attention === "config-endpoint") return { action: "settings", reason: attention, message: this.t("translationErrorMissingEndpoint") };
+        if (attention === "config-model") return { action: "settings", reason: attention, message: this.t("translationErrorMissingModel") };
+        if (attention === "config-key") return { action: "settings", reason: attention, message: this.t("translationErrorMissingKey") };
+        if (attention === "endpoint") return { action: "settings", reason: attention, message: this.t(API_ENDPOINT_ERROR_MESSAGE_KEYS[error.code]) };
+        if (attention === "auth") {
+          return { action: "settings", reason: attention, message: `${this.t("translationErrorAuth")}${this.formatTranslationErrorStatus(error)}` };
+        }
+        if (attention === "quota") return { action: "settings", reason: attention, message: this.t("translationErrorQuota") };
+        if (attention === "local-unavailable") {
+          const host = this.getTranslationEndpointHost();
+          return {
+            action: "test",
+            reason: attention,
+            message: host ? this.t("translationErrorLocalAt", { host }) : this.t("translationErrorLocal")
+          };
+        }
+        const type = this.getAutoTranslationFailureType(error);
+        if (type === "rate-limit") {
+          const waitMs = this.getTranslationErrorWaitMs(error);
+          return {
+            action: "wait",
+            reason: type,
+            waitMs,
+            message: waitMs > 0 ? this.t("translationErrorRateLimitWait", { seconds: String(Math.ceil(waitMs / 1e3)) }) : this.t("translationErrorRateLimit")
+          };
+        }
+        return { action: "retry", reason: type, message: this.t("translationFailedInline", { error: this.formatError(error) }) };
+      }
+      formatTranslationErrorStatus(error) {
+        const status = Number(error?.status || 0);
+        if (!status) return "";
+        return this.getLocale() === "en" ? ` (${status})` : `（${status}）`;
+      }
+      getTranslationEndpointHost() {
+        try {
+          const endpoint = String(this.getEffectiveTaskConfig("translation")?.endpoint || this.settings.translation?.endpoint || "").trim();
+          return endpoint ? new URL(endpoint).host : "";
+        } catch {
+          return "";
+        }
+      }
+      getTranslationErrorWaitMs(error, now = Date.now()) {
+        const direct = Number(error?.retryAfterMs || 0);
+        if (direct > 0) return direct;
+        const failure = this.autoTranslationProviderFailures?.get?.(this.getTranslationAttentionProviderKey(error));
+        const remaining = Number(failure?.retryAt || 0) - now;
+        return remaining > 0 ? remaining : 0;
+      }
+      // Missing configuration shows up as plain errors thrown while building the request.
+      getTranslationConfigMissingKind(error) {
+        if (error?.googleTranslateNoKey) return "key";
+        const message = String(error?.message || "");
+        if (!message) return "";
+        const matches = (key) => Object.values(I18N).some((table) => table?.[key] === message);
+        if (matches("apiKeyMissingTranslation")) return "key";
+        if (matches("endpointMissing")) return "endpoint";
+        if (matches("modelMissing")) return "model";
+        return "";
+      }
+      // Errors only the user can fix; they get a settings or test action and one notice per episode.
+      getTranslationAttentionType(error) {
+        if (!error || this.isRequestCancelled(error)) return "";
+        const missing = this.getTranslationConfigMissingKind(error);
+        if (missing) return `config-${missing}`;
+        if (Object.hasOwn(API_ENDPOINT_ERROR_MESSAGE_KEYS, error?.code)) return "endpoint";
+        const type = this.getAutoTranslationFailureType(error);
+        return ["auth", "quota", "local-unavailable"].includes(type) ? type : "";
+      }
+      isTranslationAttentionError(error) {
+        return Boolean(this.getTranslationAttentionType(error));
+      }
+      getTranslationAttentionProviderKey(error, requestOptions = void 0) {
+        try {
+          return String(error?.providerKey || this.getAutoTranslationProviderKey(requestOptions) || "");
+        } catch {
+          return "";
+        }
+      }
+      // An episode lasts until a request to that provider succeeds, the connection test passes or
+      // its settings change; each error type is announced once per episode, whatever the toast switch says.
+      rememberTranslationAttentionNotice(error, providerKey = "", type = this.getTranslationAttentionType(error)) {
+        if (!type) return false;
+        const key = String(providerKey || this.getTranslationAttentionProviderKey(error));
+        const notices = this.autoTranslationProviderNoticeAt;
+        if (!notices?.set) return false;
+        const episode = notices.get(key);
+        if (episode?.types?.has?.(type)) return false;
+        const types = episode?.types instanceof Set ? episode.types : /* @__PURE__ */ new Set();
+        types.add(type);
+        notices.set(key, { at: Date.now(), types });
+        while (notices.size > 32) notices.delete(notices.keys().next().value);
+        return true;
+      }
+      notifyTranslationNeedsAttention(error, providerKey = "") {
+        const type = this.getTranslationAttentionType(error);
+        if (!type || !this.rememberTranslationAttentionNotice(error, providerKey, type)) return false;
+        this.showToast(this.t("autoTranslateNeedsAttention", { error: this.getTranslationErrorPresentation(error).message }), "error");
+        return true;
+      }
+      endTranslationAttentionEpisode(providerKey) {
+        if (!providerKey || !this.autoTranslationProviderNoticeAt?.size) return false;
+        return this.autoTranslationProviderNoticeAt.delete(providerKey);
+      }
+      createTranslationErrorButton(labelKey, titleKey, run) {
+        const button = document.createElement("button");
+        button.className = "dait-translation-error-button";
+        button.type = "button";
+        button.textContent = this.t(labelKey);
+        button.title = this.t(titleKey);
+        button.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          run(button);
+        });
+        return button;
+      }
+      createTranslationRetryButton(line, messageNode, content) {
+        const retry = document.createElement("button");
+        retry.className = "dait-translation-retry";
+        retry.type = "button";
+        retry.textContent = this.t("translateRetry");
+        retry.title = this.t("translateRetryTitle");
+        retry.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          const currentContent = this.getTranslationContentForLine(line) || content;
+          const textOptions = line.classList?.contains?.("dait-translation-preview") ? { includeReplyPreview: true } : null;
+          if (!messageNode?.isConnected || !currentContent?.isConnected) {
+            this.removeTranslationLineStably(line, currentContent);
+            this.showToast(this.t("messageMissing"), "error");
+            return;
+          }
+          const currentText = this.getElementText(currentContent, textOptions);
+          if (!currentText || !this.isTranslationLineSourceMatch(line, currentText)) {
+            this.removeTranslationLineStably(line, currentContent);
+            this.showToast(this.t("messageMissing"), "error");
+            return;
+          }
+          this.translateMessage(messageNode, currentContent, null, textOptions);
+        });
+        return retry;
+      }
+      removeTranslationLineStably(line, anchor = null) {
+        if (!line) return;
+        this.withTranslationScrollStability(anchor?.isConnected ? anchor : line, () => {
+          if (anchor) this.restoreTranslationSourceVisibility(anchor);
+          line.remove?.();
+        });
+      }
+      // A rate-limit line has no button while the wait lasts; afterwards it offers Retry.
+      scheduleTranslationErrorWaitEnd(line, messageNode, content, waitMs) {
+        const delay = Number(waitMs || 0);
+        if (!(delay > 0) || typeof setTimeout !== "function") return;
+        const token = `${Date.now()}:${Math.random().toString(36).slice(2)}`;
+        line.dataset.daitErrorToken = token;
+        const lifecycleToken = this.getLifecycleToken();
+        const timer = setTimeout(() => {
+          if (!this.isLifecycleTokenCurrent(lifecycleToken) || !line.isConnected) return;
+          if (line.dataset?.daitErrorToken !== token || line.dataset?.daitErrorAction !== "wait") return;
+          const currentContent = this.getTranslationContentForLine(line) || content;
+          this.withTranslationScrollStability(currentContent, () => {
+            line.dataset.daitErrorAction = "retry";
+            const message = line.querySelector?.(".dait-translation-error-message");
+            if (message) message.textContent = this.t("translationErrorRateLimit");
+            line.appendChild(this.createTranslationRetryButton(line, messageNode, currentContent));
+          });
+        }, Math.min(delay, AUTO_TRANSLATE_FAILURE_MAX_TTL) + 250);
+        timer?.unref?.();
+      }
+      openTranslationSettingsFromChat(source = null) {
+        if (this.settings?.ui) this.settings.ui.settingsActiveTab = SETTINGS_SECTION_TRANSLATION;
+        this.saveSettings({ debounce: true });
+        return this.openQuickSettingsPanel("chat-line", source);
+      }
+      async testTranslationConnectionFromChat(button = null) {
+        if (button?.disabled) return false;
+        const label = button?.textContent || this.t("translationTestConnection");
+        this.rememberTranslationAttentionNotice(null, this.getTranslationAttentionProviderKey(null), "local-unavailable");
+        this.setButtonBusy(button, true, this.t("apiTestBusy"));
+        try {
+          await this.testApiConnection("translation", null, null);
+        } finally {
+          this.setButtonBusy(button, false, label);
+        }
+        return true;
+      }
+      resetTranslationLineState(line) {
+        if (!line) return;
+        ["role", "aria-busy", "aria-label", "aria-expanded", "tabindex", "title", "lang", "dir"].forEach((name) => line.removeAttribute?.(name));
+        if (line.dataset) {
+          delete line.dataset.daitErrorAction;
+          delete line.dataset.daitErrorToken;
+          delete line.dataset.daitTag;
+        }
+        ["dait-translation-style-tint", "dait-translation-style-muted", "dait-translation-style-tag", "dait-translation-scale-90", "dait-translation-dismissed"].forEach((name) => line.classList?.remove?.(name));
+        this.translationLineTexts?.delete?.(line);
+      }
+      getTranslationLineLanguage(targetLanguage = this.settings.translation?.targetLanguage) {
+        const raw = String(targetLanguage || "").trim();
+        if (this.translationLineLanguageMemo?.key === raw) return this.translationLineLanguageMemo.value;
+        const normalized = this.normalizeLanguageName(raw);
+        let code = LANGUAGE_PRESETS.find((item) => item.value === normalized)?.code || "";
+        if (!code && /^[a-z]{2,3}(?:-[a-z0-9]{2,8})*$/i.test(raw)) code = raw;
+        if (!code) {
+          const named = [
+            [/arab|阿拉伯/i, "ar"],
+            [/hebrew|希伯来/i, "he"],
+            [/persian|farsi|波斯/i, "fa"],
+            [/urdu|乌尔都/i, "ur"],
+            [/pashto|普什图/i, "ps"],
+            [/yiddish|意第绪/i, "yi"]
+          ].find(([pattern]) => pattern.test(raw));
+          code = named?.[1] || "";
+        }
+        if (code === "zh") code = "zh-CN";
+        const primary = code.split("-")[0].toLowerCase();
+        const value = { lang: code, dir: RTL_LANGUAGE_CODES.includes(primary) ? "rtl" : "auto" };
+        this.translationLineLanguageMemo = { key: raw, value };
+        return value;
+      }
+      // The line is in the target language: give it that language and a direction of its own,
+      // so right-to-left targets read and align correctly.
+      applyTranslationLineLanguage(line) {
+        const { lang, dir } = this.getTranslationLineLanguage();
+        if (lang) line.setAttribute?.("lang", lang);
+        line.setAttribute?.("dir", dir);
+      }
+      applyTranslationLineDisplayClasses(line) {
+        if (!line) return;
+        const style = ["tint", "muted", "tag"].includes(this.settings.ui?.translationStyle) ? this.settings.ui.translationStyle : "tint";
+        ["tint", "muted", "tag"].forEach((name) => line.classList?.toggle?.(`dait-translation-style-${name}`, name === style));
+        line.classList?.toggle?.("dait-translation-scale-90", Number(this.settings.ui?.translationTextScale) === 90);
+        if (!line.dataset) return;
+        if (style === "tag") line.dataset.daitTag = this.t("translationTag");
+        else delete line.dataset.daitTag;
+      }
+      // A masked translation is a real button: focusable, and Enter or Space reveals it.
+      applyTranslationLineMaskState(line) {
+        if (!line) return;
+        if (line.classList?.contains?.("dait-translation-masked")) {
+          line.setAttribute?.("role", "button");
+          line.setAttribute?.("tabindex", "0");
+          line.setAttribute?.("aria-expanded", "false");
+          line.setAttribute?.("aria-label", this.t("translationRevealLabel"));
+          return;
+        }
+        if (line.getAttribute?.("role") !== "button") return;
+        ["role", "aria-expanded", "aria-label"].forEach((name) => line.removeAttribute?.(name));
+        if (typeof document !== "undefined" && document?.activeElement === line) line.setAttribute?.("tabindex", "-1");
+        else line.removeAttribute?.("tabindex");
+      }
+      revealMaskedTranslationLine(line, content = null) {
+        if (!line?.classList?.contains?.("dait-translation-masked")) return false;
+        line.classList.remove("dait-translation-masked");
+        line.classList.add("dait-translation-revealed");
+        this.applyTranslationLineMaskState(line);
+        this.syncTranslationSourceVisibility(line, content || this.getTranslationContentForLine(line));
+        return true;
+      }
+      createTranslationLineActions(line, messageNode, content) {
+        const toolbar = document.createElement("span");
+        toolbar.className = "dait-translation-actions";
+        toolbar.setAttribute?.("role", "toolbar");
+        toolbar.setAttribute?.("aria-label", this.t("translationActionsLabel"));
+        const currentContent = () => this.getTranslationContentForLine(line) || content;
+        [
+          ["copy", "translationActionCopy", () => this.copyTranslationLineText(line)],
+          ["retranslate", "translationActionRetranslate", () => this.retranslateMessage(messageNode, currentContent())],
+          ["hide", "translationActionHide", () => this.dismissTranslationLine(line, messageNode, currentContent())]
+        ].forEach(([name, labelKey, run], index) => {
+          const button = document.createElement("button");
+          const label = this.t(labelKey);
+          button.className = `dait-translation-action dait-translation-action-${name}`;
+          button.type = "button";
+          button.title = label;
+          button.setAttribute?.("aria-label", label);
+          button.setAttribute?.("tabindex", index === 0 ? "0" : "-1");
+          button.addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            run();
+          });
+          toolbar.appendChild(button);
+        });
+        toolbar.addEventListener("keydown", (event) => this.handleTranslationActionsKeydown(toolbar, event));
+        return toolbar;
+      }
+      handleTranslationActionsKeydown(toolbar, event) {
+        const keys = { ArrowRight: 1, ArrowLeft: -1, Home: "first", End: "last" };
+        const move = keys[event?.key];
+        if (move === void 0) return;
+        const buttons = [...toolbar?.querySelectorAll?.(".dait-translation-action") || []];
+        if (!buttons.length) return;
+        const current = Math.max(0, buttons.indexOf(event.target));
+        const next = move === "first" ? 0 : move === "last" ? buttons.length - 1 : (current + move + buttons.length) % buttons.length;
+        event.preventDefault?.();
+        event.stopPropagation?.();
+        buttons.forEach((button, index) => button.setAttribute?.("tabindex", index === next ? "0" : "-1"));
+        buttons[next].focus?.();
+      }
+      // The toolbar sits after the end of a short line; when the line fills the message width it moves
+      // inside the line's bottom-right corner so it is never cut off.
+      placeTranslationLineActions(line) {
+        const toolbar = line?.querySelector?.(":scope > .dait-translation-actions");
+        if (!toolbar?.dataset || !line.getBoundingClientRect) return;
+        const lineRect = line.getBoundingClientRect();
+        const bounds = (line.closest?.(DISCORD_MESSAGE_NODE_SELECTOR) || line.parentElement)?.getBoundingClientRect?.();
+        if (!lineRect || !bounds) return;
+        const width = Number(toolbar.offsetWidth || 0) || 96;
+        const room = line.getAttribute?.("dir") === "rtl" ? lineRect.left - bounds.left : bounds.right - lineRect.right;
+        const placement = room >= width + 8 ? "end" : "inside";
+        if (toolbar.dataset.daitPlacement !== placement) toolbar.dataset.daitPlacement = placement;
+      }
+      // Contract with the long-text pipeline: renderOptions.partialInfo = { missingSegments: [1-based], totalSegments }.
+      createTranslationPartialNote(line, messageNode, content, partialInfo) {
+        if (!partialInfo || typeof partialInfo !== "object") return null;
+        const total = Number(partialInfo.totalSegments);
+        const hasTotal = Number.isInteger(total) && total > 0;
+        const missing = Array.isArray(partialInfo.missingSegments) ? [...new Set(partialInfo.missingSegments.map(Number))].filter((index) => Number.isInteger(index) && index > 0 && (!hasTotal || index <= total)).sort((left, right) => left - right) : [];
+        const text = missing.length && hasTotal ? this.t(missing.length === 1 ? "translationPartialOne" : "translationPartialMany", {
+          parts: this.formatTranslationPartList(missing),
+          total: String(total)
+        }) : this.t("translationPartialUnknown");
+        const note = document.createElement("div");
+        note.className = "dait-translation-note";
+        note.setAttribute?.("role", "note");
+        const message = document.createElement("span");
+        message.className = "dait-translation-note-message";
+        message.textContent = text;
+        note.appendChild(message);
+        const button = document.createElement("button");
+        button.className = "dait-translation-note-button";
+        button.type = "button";
+        button.textContent = this.t("translationRetranslate");
+        button.title = this.t("translationRetranslateTitle");
+        button.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          this.retranslateMessage(messageNode, this.getTranslationContentForLine(line) || content);
+        });
+        note.appendChild(button);
+        return note;
+      }
+      formatTranslationPartList(parts) {
+        const values = parts.map(String);
+        if (this.getLocale() !== "en") return values.join("、");
+        if (values.length < 2) return values.join("");
+        return `${values.slice(0, -1).join(", ")} and ${values[values.length - 1]}`;
+      }
+      retranslateMessage(messageNode, content, textOptions = null) {
+        if (!messageNode || !content?.isConnected) {
+          this.showToast(this.t("messageMissing"), "error");
+          return null;
+        }
+        return this.translateMessage(messageNode, content, null, textOptions, { bypassCache: true });
+      }
+      async copyTranslationLineText(line) {
+        const text = this.translationLineTexts?.get?.(line) ?? this.getTranslationLineRenderedText(line);
+        if (!text) return false;
+        try {
+          await this.copyTextToClipboard(text);
+          this.showToast(this.t("translationCopied"), "success");
+          return true;
+        } catch (error) {
+          this.showToast(this.t("promptCopyFailed", { error: this.formatError(error) }), "error");
+          return false;
+        }
+      }
+      getTranslatedLineForContextTarget(target) {
+        const messageNode = target?.closest?.("[id^='chat-messages-'], [data-list-item-id*='chat-messages']");
+        const content = messageNode ? this.getMessageContentElement(messageNode) : null;
+        const line = content ? this.getTranslationLine(content) : null;
+        if (!line || ["dait-translation-loading", "dait-translation-error", "dait-translation-dismissed"].some((name) => line.classList?.contains?.(name))) return null;
+        return { messageNode, content, line };
+      }
+      // "Hide" keeps a hidden line for that message (so nothing redraws it) until the user translates it again.
+      getTranslationDismissKey(messageNode, content, textOptions = null) {
+        const kind = this.isReplyPreviewElement(content) ? "reply-preview" : "message";
+        const ids = this.messageTracker?.getNodeMessageIds?.(messageNode) || {};
+        if (ids.messageId) return `${ids.channelId || ""}:${ids.messageId}:${kind}`;
+        const text = content ? this.getElementText(content, textOptions || (kind === "reply-preview" ? { includeReplyPreview: true } : null)) : "";
+        return text ? `text:${kind}:${this.getStrongTextFingerprint(text)}` : "";
+      }
+      isTranslationLineDismissed(messageNode, content, textOptions = null) {
+        if (!this.dismissedTranslationMessages?.size) return false;
+        const key = this.getTranslationDismissKey(messageNode, content, textOptions);
+        return Boolean(key && this.dismissedTranslationMessages.has(key));
+      }
+      clearTranslationLineDismissal(messageNode, content, textOptions = null) {
+        if (!this.dismissedTranslationMessages?.size) return false;
+        const key = this.getTranslationDismissKey(messageNode, content, textOptions);
+        return Boolean(key && this.dismissedTranslationMessages.delete(key));
+      }
+      applyTranslationLineDismissal(line, messageNode, content) {
+        line?.classList?.toggle?.("dait-translation-dismissed", this.isTranslationLineDismissed(messageNode, content));
+      }
+      dismissTranslationLine(line, messageNode = null, content = null) {
+        if (!line) return false;
+        const target = content || this.getTranslationContentForLine(line);
+        const owner = messageNode || line.closest?.(DISCORD_MESSAGE_NODE_SELECTOR) || null;
+        const key = this.getTranslationDismissKey(owner, target);
+        if (key) {
+          this.dismissedTranslationMessages.delete(key);
+          this.dismissedTranslationMessages.set(key, Date.now());
+          while (this.dismissedTranslationMessages.size > 500) {
+            this.dismissedTranslationMessages.delete(this.dismissedTranslationMessages.keys().next().value);
+          }
+        }
+        const hadFocus = typeof document !== "undefined" && Boolean(document?.activeElement && line.contains?.(document.activeElement));
+        this.withTranslationScrollStability(target?.isConnected ? target : line, () => {
+          line.classList?.add?.("dait-translation-dismissed");
+          if (target) this.restoreTranslationSourceVisibility(target);
+        });
+        if (hadFocus) {
+          try {
+            owner?.focus?.({ preventScroll: true });
+          } catch {
+          }
+        }
+        return true;
       }
       withTranslationScrollStability(anchor, render, options = {}) {
         const snapshot = this.getTranslationScrollSnapshot(anchor, options);
@@ -24119,13 +26235,20 @@ var require_discord_ai_translator = __commonJS({
           line = document.createElement(this.isReplyPreviewElement(content) ? "span" : "div");
           line.className = "dait-translation-line";
           line.dataset.daitOwner = this.ensureTranslationOwnerId(content);
+          line.addEventListener("keydown", (event) => {
+            if (event.target !== line || !line.classList.contains("dait-translation-masked")) return;
+            if (event.key !== "Enter" && event.key !== " " && event.key !== "Spacebar") return;
+            event.preventDefault();
+            event.stopPropagation();
+            this.withTranslationScrollStability(content, () => this.revealMaskedTranslationLine(line, content));
+          });
+          line.addEventListener("pointerenter", () => this.placeTranslationLineActions(line));
+          line.addEventListener("focusin", () => this.placeTranslationLineActions(line));
           line.addEventListener("click", (event) => {
             if (!line.classList.contains("dait-translation-masked")) return;
             event.preventDefault();
             event.stopPropagation();
-            line.classList.remove("dait-translation-masked");
-            line.classList.add("dait-translation-revealed");
-            this.syncTranslationSourceVisibility(line, content);
+            this.withTranslationScrollStability(content, () => this.revealMaskedTranslationLine(line, content));
           });
         }
         const anchor = this.getTranslationAnchor(messageNode, content);
@@ -24238,12 +26361,27 @@ var require_discord_ai_translator = __commonJS({
         if (!this.isStarted) return;
         if (event.target?.closest?.(".dait-settings")) return;
         if (!this.settings.ui.enablePolishHotkey) return;
+        if (!this.settings.polish?.enabled) return;
+        if (!this.isAllowedPolishHotkey(this.settings.ui.polishHotkey || DEFAULT_SETTINGS.ui.polishHotkey)) return;
         if (!this.isHotkeyEvent(event, this.settings.ui.polishHotkey)) return;
         const textbox = this.getActiveTextbox();
         if (!textbox) return;
         event.preventDefault();
         event.stopPropagation();
-        this.polishCurrentDraft();
+        const button = this.getComposerPolishButton(textbox);
+        this.polishCurrentDraft(button, { textbox, composerKey: this.getTextboxComposerKey(textbox), fromHotkey: true });
+      }
+      // Minimal density hides the direct buttons behind the "AI" menu button.
+      isInputActionButtonShown(button) {
+        if (!button || button.isConnected === false) return false;
+        const group = button.parentElement?.dataset?.daitDensity ? button.parentElement : button.closest?.(".dait-input-action-group");
+        return !this.isInputActionDirectButton(button) || group?.dataset?.daitDensity !== "minimal";
+      }
+      getComposerPolishButton(textbox) {
+        const root = textbox?.closest?.("form, [class*='channelTextArea']");
+        const button = root?.querySelector?.(".dait-input-action-group .dait-polish-button") || null;
+        if (!button || button.isConnected === false) return null;
+        return !button.__daitTextbox || button.__daitTextbox === textbox ? button : null;
       }
       recordHotkey(button) {
         if (!button || button.dataset.recording === "true") return;
@@ -24251,15 +26389,29 @@ var require_discord_ai_translator = __commonJS({
         const original = this.getHotkeyLabel();
         button.dataset.recording = "true";
         button.textContent = this.t("hotkeyRecording");
+        let listening = false;
         const cleanup = (shortcut) => {
           if (this.hotkeyRecordTimer) clearTimeout(this.hotkeyRecordTimer);
           this.hotkeyRecordTimer = null;
-          this.hotkeyRecordCleanup = null;
-          document.removeEventListener("keydown", onKeydown, true);
+          if (this.hotkeyRecordTimeout) clearTimeout(this.hotkeyRecordTimeout);
+          this.hotkeyRecordTimeout = null;
+          if (this.hotkeyRecordCleanup === cleanup) {
+            this.hotkeyRecordCleanup = null;
+            this.hotkeyRecordButton = null;
+          }
+          if (listening && typeof document !== "undefined") {
+            document.removeEventListener("keydown", onKeydown, true);
+            document.removeEventListener("pointerdown", onPointerDown, true);
+          }
+          listening = false;
           delete button.dataset.recording;
           button.textContent = shortcut || original;
         };
         const onKeydown = (event) => {
+          if (!this.isStarted || button.isConnected === false) {
+            cleanup();
+            return;
+          }
           event.preventDefault();
           event.stopPropagation();
           if (event.key === "Escape") {
@@ -24268,7 +26420,7 @@ var require_discord_ai_translator = __commonJS({
           }
           if (this.isModifierOnlyKey(event.key)) return;
           const shortcut = this.shortcutFromEvent(event);
-          if (!shortcut) {
+          if (!shortcut || !this.isAllowedPolishHotkey(shortcut)) {
             cleanup();
             this.showToast(this.t("hotkeyInvalid"), "error");
             return;
@@ -24277,24 +26429,56 @@ var require_discord_ai_translator = __commonJS({
           cleanup(shortcut);
           this.showToast(this.t("hotkeySaved", { shortcut }), "success");
         };
+        const onPointerDown = (event) => {
+          if (event?.target === button || button.contains?.(event?.target)) return;
+          cleanup();
+        };
         this.hotkeyRecordCleanup = cleanup;
+        this.hotkeyRecordButton = button;
         this.hotkeyRecordTimer = setTimeout(() => {
           this.hotkeyRecordTimer = null;
           if (!this.isStarted || this.hotkeyRecordCleanup !== cleanup) return;
           document.addEventListener("keydown", onKeydown, true);
+          document.addEventListener("pointerdown", onPointerDown, true);
+          listening = true;
         }, 0);
+        const recordTimeoutMs = 1e4;
+        this.hotkeyRecordTimeout = setTimeout(() => {
+          this.hotkeyRecordTimeout = null;
+          if (this.hotkeyRecordCleanup === cleanup) cleanup();
+        }, recordTimeoutMs);
       }
       clearHotkeyRecording() {
         if (this.hotkeyRecordTimer) clearTimeout(this.hotkeyRecordTimer);
         this.hotkeyRecordTimer = null;
+        if (this.hotkeyRecordTimeout) clearTimeout(this.hotkeyRecordTimeout);
+        this.hotkeyRecordTimeout = null;
         const cleanup = this.hotkeyRecordCleanup;
         this.hotkeyRecordCleanup = null;
+        this.hotkeyRecordButton = null;
         if (typeof cleanup === "function") {
           try {
             cleanup();
           } catch {
           }
         }
+      }
+      // Ends a recording whose button lives inside `root` (a settings panel or modal being closed).
+      clearHotkeyRecordingWithin(root) {
+        const button = this.hotkeyRecordButton;
+        if (!this.hotkeyRecordCleanup) return;
+        if (!root || !button || button.isConnected === false || root === button || root.contains?.(button)) this.clearHotkeyRecording();
+      }
+      // Shift alone would turn ordinary typing (capital letters, symbols, selection keys) into the
+      // hotkey, and Ctrl+A/C/V/X/Y/Z would take over editing, so neither can be the polish shortcut.
+      isAllowedPolishHotkey(shortcut) {
+        const parts = String(shortcut || "").split("+").map((part) => part.trim()).filter(Boolean);
+        const key = parts.pop();
+        if (!key || !parts.length) return false;
+        const commandModifiers = parts.filter((part) => part === "Ctrl" || part === "Alt" || part === "Win");
+        if (!commandModifiers.length) return /^F\d{1,2}$/.test(key);
+        const editingShortcut = commandModifiers.length === 1 && commandModifiers[0] === "Ctrl" && /^[ACVXYZ]$/.test(key);
+        return !editingShortcut;
       }
       isModifierOnlyKey(key) {
         return ["Control", "Alt", "Shift", "Meta"].includes(String(key || ""));
@@ -24386,8 +26570,8 @@ var require_discord_ai_translator = __commonJS({
         clone.querySelectorAll?.(excludedSelectors.join(",")).forEach((node2) => node2.remove());
         if (typeof document !== "undefined") {
           clone.querySelectorAll?.("img[alt]").forEach((image) => {
-            const alt = String(image.getAttribute?.("alt") || "").trim();
-            if (!/^:.+:$/.test(alt)) return;
+            const alt = this.getExtractedImageAltText(image);
+            if (!alt) return;
             image.replaceWith(document.createTextNode(` ${alt} `));
           });
         }
@@ -24436,6 +26620,19 @@ var require_discord_ai_translator = __commonJS({
         if (!this.elementTextCache?.get || !element || element.nodeType !== 1 || element.isConnected === false) return false;
         return Boolean(this.isDiscordMessageElement(element) || element.closest?.(DISCORD_MESSAGE_NODE_SELECTOR));
       }
+      // A message of standard emoji alone reads as text now, but there is nothing to translate in it.
+      hasTranslatableMessageText(text) {
+        return /[\p{L}\p{N}]/u.test(String(text || ""));
+      }
+      // Discord draws emoji as images: custom emoji carry ":name:" as alt text, standard emoji the
+      // emoji itself. Both are part of what the message says; other images are not text.
+      getExtractedImageAltText(image) {
+        const alt = String(image?.getAttribute?.("alt") || "").trim();
+        if (!alt) return "";
+        if (/^:.+:$/.test(alt)) return alt;
+        if (/^[\p{Extended_Pictographic}\p{Emoji_Component}\p{Regional_Indicator}\u200d\ufe0e\ufe0f\u20e3]+$/u.test(alt) && /[\p{Extended_Pictographic}\p{Regional_Indicator}\u20e3]/u.test(alt)) return alt;
+        return "";
+      }
       extractElementTextWithoutClone(element, excludedSelectors = []) {
         if (!element?.childNodes || typeof element.childNodes[Symbol.iterator] !== "function") return null;
         const blockedSelector = excludedSelectors.filter(Boolean).join(",");
@@ -24465,8 +26662,8 @@ var require_discord_ai_translator = __commonJS({
           }
           const tagName = String(node.tagName || node.nodeName || "").toUpperCase();
           if (tagName === "IMG") {
-            const alt = String(node.getAttribute?.("alt") || "").trim();
-            if (/^:.+:$/.test(alt)) parts.push(` ${alt} `);
+            const alt = this.getExtractedImageAltText(node);
+            if (alt) parts.push(` ${alt} `);
             continue;
           }
           if (tagName === "BR") {
@@ -24508,17 +26705,174 @@ var require_discord_ai_translator = __commonJS({
           excludedSelectors.push("[class*='repliedMessage']", "[class*='repliedTextPreview']", "[class*='quotedChatMessage']");
         }
         if (this.isExcludedExtractedTextRoot(element, excludedSelectors)) return "";
-        const clone = element.cloneNode?.(true);
-        if (!clone) return this.normalizeDraftRawText(element.value ?? element.textContent ?? "");
-        clone.querySelectorAll?.(excludedSelectors.join(",")).forEach((node) => node.remove());
-        if (typeof document !== "undefined") {
-          clone.querySelectorAll?.("img[alt]").forEach((image) => {
-            const alt = String(image.getAttribute?.("alt") || "").trim();
-            if (!/^:.+:$/.test(alt)) return;
-            image.replaceWith(document.createTextNode(` ${alt} `));
-          });
+        if (!element.childNodes || typeof element.childNodes[Symbol.iterator] !== "function") {
+          return this.normalizeDraftRawText(element.value ?? element.textContent ?? "");
         }
-        return this.normalizeDraftRawText(clone.innerText ?? clone.textContent ?? "");
+        return this.normalizeDraftRawText(this.readComposerDomText(element, excludedSelectors.filter(Boolean).join(",")));
+      }
+      // One reader for the draft snapshot, the stale check and write verification. Slate renders each
+      // line as a block element; blocks are joined with "\n". Void inlines (mentions, emoji) become the
+      // Discord token they stand for when their Slate node is reachable, otherwise their visible text.
+      readComposerDomText(root, blockedSelector = "") {
+        const lines = [];
+        if (this.collectSlateComposerLines(root, blockedSelector, lines, false)) return lines.join("\n");
+        return this.readComposerInlineText(root, blockedSelector, { blockBreaks: true });
+      }
+      collectSlateComposerLines(container, blockedSelector, lines, quoted) {
+        let found = false;
+        for (const child of container?.childNodes || []) {
+          if (child?.nodeType !== 1 || this.isComposerReadExcluded(child, blockedSelector)) continue;
+          const slateNode = child.getAttribute?.("data-slate-node");
+          if (slateNode === "element" && child.getAttribute?.("data-slate-inline") !== "true") {
+            found = true;
+            const childQuoted = quoted || this.getSlateElementFromDom(child)?.type === "blockQuote";
+            if (!this.collectSlateComposerLines(child, blockedSelector, lines, childQuoted)) {
+              const text = this.readComposerInlineText(child, blockedSelector);
+              lines.push(childQuoted && !text.startsWith(">") ? `> ${text}` : text);
+            }
+            continue;
+          }
+          if (slateNode || child.getAttribute?.("data-slate-inline") === "true" || child.getAttribute?.("data-slate-leaf") === "true") continue;
+          if (this.collectSlateComposerLines(child, blockedSelector, lines, quoted)) found = true;
+        }
+        return found;
+      }
+      readComposerInlineText(root, blockedSelector = "", options = {}) {
+        const BREAK = null;
+        const parts = [];
+        let lastFromSlateString = false;
+        const blockTags = /* @__PURE__ */ new Set(["ADDRESS", "ARTICLE", "ASIDE", "BLOCKQUOTE", "DIV", "FIGCAPTION", "FIGURE", "FOOTER", "H1", "H2", "H3", "H4", "H5", "H6", "HEADER", "LI", "MAIN", "NAV", "OL", "P", "PRE", "SECTION", "TABLE", "TR", "UL"]);
+        const push = (text, fromSlateString = false) => {
+          parts.push(text);
+          lastFromSlateString = fromSlateString;
+        };
+        const visit = (node, isRoot, inSlateString) => {
+          if (!node) return;
+          if (node.nodeType === 3) {
+            push(String(node.nodeValue || "").replace(/\uFEFF/g, ""), inSlateString);
+            return;
+          }
+          if (node.nodeType !== 1) return;
+          if (!isRoot && this.isComposerReadExcluded(node, blockedSelector)) return;
+          const zeroWidth = node.getAttribute?.("data-slate-zero-width");
+          if (zeroWidth !== null && zeroWidth !== void 0 || node.getAttribute?.("data-slate-spacer") === "true") return;
+          if (!isRoot && node.getAttribute?.("data-slate-void") === "true") {
+            push(this.serializeSlateVoidElement(node, blockedSelector));
+            return;
+          }
+          const tagName = String(node.tagName || node.nodeName || "").toUpperCase();
+          if (tagName === "BR") {
+            push("\n");
+            return;
+          }
+          if (tagName === "IMG") {
+            push(this.getComposerImageText(node, false));
+            return;
+          }
+          const isBlock = Boolean(options.blockBreaks) && !isRoot && blockTags.has(tagName);
+          if (isBlock) push(BREAK);
+          const childInSlateString = inSlateString || node.getAttribute?.("data-slate-string") === "true";
+          for (const child of node.childNodes || []) visit(child, false, childInSlateString);
+          if (isBlock) push(BREAK);
+        };
+        visit(root, true, false);
+        if (!options.blockBreaks && lastFromSlateString && String(parts[parts.length - 1] || "").endsWith("\n")) {
+          parts[parts.length - 1] = parts[parts.length - 1].slice(0, -1);
+        }
+        let output = "";
+        let pendingBreak = false;
+        for (const part of parts) {
+          if (part === BREAK) {
+            pendingBreak = output.length > 0;
+            continue;
+          }
+          if (!part) continue;
+          if (pendingBreak && !output.endsWith("\n")) output += "\n";
+          pendingBreak = false;
+          output += part;
+        }
+        return output;
+      }
+      isComposerReadExcluded(node, blockedSelector = "") {
+        let excluded = false;
+        try {
+          excluded = Boolean(blockedSelector && node.matches?.(blockedSelector));
+        } catch {
+        }
+        return excluded || this.isForeignTranslationElement(node);
+      }
+      serializeSlateVoidElement(node, blockedSelector = "") {
+        const token = this.serializeSlateElementToken(this.getSlateElementFromDom(node));
+        if (token !== null) return token;
+        const image = this.findComposerVoidImage(node);
+        const imageText = image ? this.getComposerImageText(image, true) : "";
+        if (imageText) return imageText;
+        const label = [...node.childNodes || []].map((child) => this.readComposerInlineText(child, blockedSelector)).join("");
+        if (label) return label;
+        return String(node.textContent || "").replace(/[\uFEFF\u200b]/g, "");
+      }
+      findComposerVoidImage(node) {
+        for (const child of node?.childNodes || []) {
+          if (child?.nodeType !== 1 || child.getAttribute?.("data-slate-spacer") === "true") continue;
+          if (String(child.tagName || "").toUpperCase() === "IMG") return child;
+          const nested = this.findComposerVoidImage(child);
+          if (nested) return nested;
+        }
+        return null;
+      }
+      getComposerImageText(image, insideVoid = false) {
+        const alt = String(image?.getAttribute?.("alt") || "").trim();
+        if (/^:[^:\s]+:$/.test(alt)) {
+          const src = String(image.getAttribute?.("src") || "");
+          const emojiId = [image.getAttribute?.("data-id"), src.match(/\/emojis\/(\d{5,25})\./)?.[1]].map((value) => String(value || "").trim()).find((value) => /^\d{5,25}$/.test(value));
+          if (!emojiId) return alt;
+          const animated = image.getAttribute?.("data-animated") === "true" || /\.gif(?:[?#]|$)|[?&]animated=true/i.test(src);
+          return `<${animated ? "a" : ""}${alt}${emojiId}>`;
+        }
+        return insideVoid ? alt : "";
+      }
+      getSlateElementFromDom(node) {
+        if (!node || typeof node !== "object") return null;
+        try {
+          const key = Object.keys(node).find((name) => name.startsWith("__reactFiber$") || name.startsWith("__reactInternalInstance$"));
+          let fiber = key ? node[key] : null;
+          for (let depth = 0; fiber && depth < 6; depth++) {
+            const element = fiber.memoizedProps?.element;
+            if (element && typeof element === "object" && typeof element.type === "string" && Array.isArray(element.children)) return element;
+            fiber = fiber.return;
+          }
+        } catch {
+        }
+        return null;
+      }
+      // Discord's message tokens for Slate void inlines; null when the node is not one we know.
+      serializeSlateElementToken(element) {
+        if (!element || typeof element !== "object") return null;
+        const id = (value) => {
+          const text = String(value ?? "").trim();
+          return /^\d{5,25}$/.test(text) ? text : "";
+        };
+        const type = String(element.type || "");
+        const userId = id(element.userId);
+        if (userId) return `<@${userId}>`;
+        const roleId = id(element.roleId);
+        if (roleId) return `<@&${roleId}>`;
+        const channelId = id(element.channelId);
+        if (channelId && /channel/i.test(type)) return `<#${channelId}>`;
+        const emoji = element.emoji;
+        if (emoji && typeof emoji === "object") {
+          const name = String(emoji.name || "").replace(/^:+|:+$/g, "").trim();
+          const emojiId = id(emoji.id ?? emoji.emojiId);
+          if (emojiId && name) return `<${emoji.animated ? "a" : ""}:${name}:${emojiId}>`;
+          const surrogate = [emoji.surrogate, emoji.surrogates, emoji.optionallyDiverseSequence].find((value) => typeof value === "string" && value);
+          if (surrogate) return surrogate;
+          if (name) return `:${name}:`;
+        }
+        if (type === "textMention" && typeof element.name === "string" && element.name.trim()) {
+          const name = element.name.trim();
+          return name.startsWith("@") ? name : `@${name}`;
+        }
+        return null;
       }
       isExcludedExtractedTextRoot(element, excludedSelectors = []) {
         if (!element || element.nodeType !== 1) return false;
@@ -24583,11 +26937,72 @@ var require_discord_ai_translator = __commonJS({
         }
         return [];
       }
+      // The display text of a MessageStore message: its markup converted to what the chat shows, or ""
+      // when that cannot be rebuilt (see convertDiscordMarkupToDisplayText). Raw store markup never
+      // leaves this method.
       getDiscordStoreMessageText(message) {
-        if (typeof message?.content === "string") return this.normalizeExtractedText(message.content);
-        if (typeof message?.message === "string") return this.normalizeExtractedText(message.message);
-        if (typeof message?.text === "string") return this.normalizeExtractedText(message.text);
-        return "";
+        let raw = null;
+        if (typeof message?.content === "string") raw = message.content;
+        else if (typeof message?.message === "string") raw = message.message;
+        else if (typeof message?.text === "string") raw = message.text;
+        if (!raw) return "";
+        const guildId = raw.includes("<@") ? this.getDiscordStoreMessageGuildId(message) : "";
+        return this.normalizeExtractedText(this.getDiscordMarkupDisplayText(raw, guildId));
+      }
+      getDiscordStoreMessageGuildId(message) {
+        const channelId = this.messageTracker.getStoreMessageChannelId(message);
+        const guildId = this.messageTracker.getStoreMessageGuildId(message) || String(this.getDiscordNamedStore("ChannelStore")?.getChannel?.(channelId)?.guild_id || "") || this.messageTracker.getRouteIds?.().guildId || "";
+        return guildId === "@me" ? "" : guildId;
+      }
+      getDiscordMarkupDisplayText(raw, guildId = "") {
+        const memoKey = `${guildId}
+${raw}`;
+        if (!this.discordMarkupDisplayTextMemo) this.discordMarkupDisplayTextMemo = /* @__PURE__ */ new Map();
+        if (this.discordMarkupDisplayTextMemo.has(memoKey)) return this.discordMarkupDisplayTextMemo.get(memoKey);
+        const displayText = convertDiscordMarkupToDisplayText(raw, {
+          user: (userId) => this.getDiscordMentionUserName(userId, guildId),
+          role: (roleId) => this.getDiscordMentionRoleName(roleId, guildId),
+          channel: (channelId) => this.getDiscordNamedStore("ChannelStore")?.getChannel?.(channelId)?.name || ""
+        });
+        if (!displayText) return displayText;
+        this.discordMarkupDisplayTextMemo.set(memoKey, displayText);
+        while (this.discordMarkupDisplayTextMemo.size > DISCORD_MARKUP_DISPLAY_TEXT_MEMO_MAX) {
+          this.discordMarkupDisplayTextMemo.delete(this.discordMarkupDisplayTextMemo.keys().next().value);
+        }
+        return displayText;
+      }
+      // Discord shows a user mention as the member's server nickname, else the display name, else the username.
+      getDiscordMentionUserName(userId, guildId = "") {
+        const member = guildId ? this.getDiscordNamedStore("GuildMemberStore")?.getMember?.(guildId, userId) : null;
+        const user = this.getDiscordNamedStore("UserStore")?.getUser?.(userId);
+        return String(member?.nick || user?.globalName || user?.global_name || user?.username || "").trim();
+      }
+      getDiscordMentionRoleName(roleId, guildId = "") {
+        if (!guildId) return "";
+        const role = this.getDiscordNamedStore("GuildRoleStore")?.getRole?.(guildId, roleId) || this.getDiscordNamedStore("GuildStore")?.getRole?.(guildId, roleId) || this.getDiscordNamedStore("GuildStore")?.getRoles?.(guildId)?.[roleId] || this.getDiscordNamedStore("GuildStore")?.getGuild?.(guildId)?.roles?.[roleId];
+        return String(role?.name || "").trim();
+      }
+      getDiscordNamedStore(name) {
+        if (!this.discordNamedStores) this.discordNamedStores = /* @__PURE__ */ new Map();
+        const cached = this.discordNamedStores.get(name);
+        if (cached?.store) return cached.store;
+        const now = Date.now();
+        if (cached && now < cached.retryAt) return null;
+        let store = null;
+        try {
+          store = globalThis.BdApi?.Webpack?.getStore?.(name) || null;
+        } catch (error) {
+          this.warnSanitized(`Failed to locate Discord ${name}`, error);
+        }
+        this.discordNamedStores.set(name, store ? { store } : { store: null, retryAt: now + 6e4 });
+        return store;
+      }
+      // MessageStore text replaces the text on screen only as the request text, and only when it holds
+      // more than the target element shows (a message whose content element shows part of it).
+      isStoreFullRequestText(storeText, domText) {
+        const store = String(storeText || "");
+        const dom = String(domText || "");
+        return Boolean(store && dom && store.length > dom.length + 4 && this.isManualTranslationSourceCompatible(store, dom));
       }
       getCachedElementText(element, context = null, options = {}) {
         if (options?.includeReplyPreview) {
@@ -24635,6 +27050,14 @@ var require_discord_ai_translator = __commonJS({
           return { ok: false, reason: this.getTextboxReplacementBlockedReason(options), actual: this.getTextboxTextSafe(textbox) };
         }
         const previousRawText = this.getTextboxRawTextSafe(textbox);
+        const writeOptions = { ...options, rollback: { undoAttempted: false } };
+        const failAfterAttempt = async () => {
+          if (!this.isTextboxReplacementWriteAllowed(textbox, writeOptions)) {
+            return { ok: false, reason: "write-cancelled", actual: this.getTextboxTextSafe(textbox) };
+          }
+          await this.restoreTextboxSnapshotAfterFailedReplace(textbox, previousRawText, value, writeOptions);
+          return { ok: false, reason: "verification-failed", actual: this.getTextboxTextSafe(textbox) };
+        };
         if (this.isPlainTextTextbox(textbox)) {
           const result = this.replaceTextboxTextSafely(textbox, value, options);
           if (result.ok || result.reason === "missing-textbox") return result;
@@ -24651,23 +27074,20 @@ var require_discord_ai_translator = __commonJS({
             this.finishTextboxReplacement(textbox, options);
             return { ok: true, method: "async-retry", actual: value };
           }
-          await this.restoreTextboxSnapshotAfterFailedReplace(textbox, previousRawText, value);
-          return { ok: false, reason: "verification-failed", actual: this.getTextboxTextSafe(textbox) };
+          return failAfterAttempt();
         }
         if (this.isRichDiscordTextbox(textbox)) {
-          if (await this.replaceDiscordRichTextboxTextAtomically(textbox, value, options)) {
+          if (await this.replaceDiscordRichTextboxTextAtomically(textbox, value, writeOptions)) {
             this.finishTextboxReplacement(textbox, options);
             return { ok: true, method: "slate-atomic", actual: value };
           }
-          await this.restoreTextboxSnapshotAfterFailedReplace(textbox, previousRawText, value);
-          return { ok: false, reason: "verification-failed", actual: this.getTextboxTextSafe(textbox) };
+          return failAfterAttempt();
         }
-        if (await this.replaceRichTextboxTextAsync(textbox, value)) {
+        if (await this.replaceRichTextboxTextAsync(textbox, value, writeOptions)) {
           this.finishTextboxReplacement(textbox, options);
           return { ok: true, method: "async-rich", actual: value };
         }
-        await this.restoreTextboxSnapshotAfterFailedReplace(textbox, previousRawText, value);
-        return { ok: false, reason: "verification-failed", actual: this.getTextboxTextSafe(textbox) };
+        return failAfterAttempt();
       }
       replaceTextboxTextSafely(textbox, text, options = {}) {
         const value = String(text || "");
@@ -24779,16 +27199,16 @@ var require_discord_ai_translator = __commonJS({
           return false;
         }
       }
-      async replaceRichTextboxTextAsync(textbox, text) {
-        if (this.isRichDiscordTextbox(textbox)) return this.replaceDiscordRichTextboxTextAtomically(textbox, text);
-        if (!await this.clearRichTextboxTextAsync(textbox)) return false;
-        return this.insertRichTextboxTextAsync(textbox, text);
+      async replaceRichTextboxTextAsync(textbox, text, options = {}) {
+        if (this.isRichDiscordTextbox(textbox)) return this.replaceDiscordRichTextboxTextAtomically(textbox, text, options);
+        if (!await this.clearRichTextboxTextAsync(textbox, options)) return false;
+        return this.insertRichTextboxTextAsync(textbox, text, options);
       }
       async replaceDiscordRichTextboxTextAtomically(textbox, text, options = {}) {
         const value = String(text || "");
         const previousText = Object.prototype.hasOwnProperty.call(options, "expectedPreviousText") ? this.normalizeDraftRawText(options.expectedPreviousText) : this.getTextboxRawTextSafe(textbox);
         if (!this.isTextboxReplacementWriteAllowed(textbox, options, { checkExpected: true })) return false;
-        if (this.normalizeExtractedText(previousText) === this.normalizeExtractedText(value)) {
+        if (previousText === this.normalizeDraftRawText(value)) {
           return await this.waitForTextboxStableTextEqual(textbox, value) && this.isTextboxReplacementWriteAllowed(textbox, options);
         }
         const attempts = [
@@ -24804,15 +27224,15 @@ var require_discord_ai_translator = __commonJS({
           if (await this.waitForTextboxStableTextEqual(textbox, value)) {
             return this.isTextboxReplacementWriteAllowed(textbox, options);
           }
-          const actual = this.getTextboxTextSafe(textbox);
-          if (actual && actual !== previousText && actual !== value) {
-            await this.tryUndoTextboxEdit(textbox, previousText);
+          const actual = this.getTextboxRawTextSafe(textbox);
+          if (actual && actual !== previousText && actual !== this.normalizeDraftRawText(value)) {
+            if (this.isTextboxReplacementWriteAllowed(textbox, options)) await this.tryUndoTextboxEdit(textbox, previousText, options);
             return false;
           }
         }
         return false;
       }
-      async clearRichTextboxTextAsync(textbox) {
+      async clearRichTextboxTextAsync(textbox, options = {}) {
         if (this.isTextboxEmpty(textbox)) return true;
         const attempts = [
           () => {
@@ -24845,12 +27265,13 @@ var require_discord_ai_translator = __commonJS({
           }
         ];
         for (const attempt of attempts) {
+          if (!this.isTextboxReplacementWriteAllowed(textbox, options)) return false;
           attempt();
           if (await this.waitForTextboxStableEmpty(textbox)) return true;
         }
         return false;
       }
-      async insertRichTextboxTextAsync(textbox, text) {
+      async insertRichTextboxTextAsync(textbox, text, options = {}) {
         const attempts = [
           () => this.dispatchTextboxPaste(textbox, text),
           () => this.dispatchTextboxBeforeInput(textbox, text, "insertFromPaste"),
@@ -24864,36 +27285,42 @@ var require_discord_ai_translator = __commonJS({
           }
         ];
         for (const attempt of attempts) {
-          if (!this.isTextboxEmpty(textbox) && !await this.clearRichTextboxTextAsync(textbox)) return false;
+          if (!this.isTextboxEmpty(textbox) && !await this.clearRichTextboxTextAsync(textbox, options)) return false;
+          if (!this.isTextboxReplacementWriteAllowed(textbox, options)) return false;
           attempt();
           if (await this.waitForTextboxStableTextEqual(textbox, text)) return true;
           if (!this.isTextboxEmpty(textbox) && !this.isTextboxTextEqual(textbox, text)) {
-            if (!await this.clearRichTextboxTextAsync(textbox)) return false;
+            if (!await this.clearRichTextboxTextAsync(textbox, options)) return false;
           }
         }
         return false;
       }
-      async tryRestoreTextboxTextAfterFailedReplace(textbox, text) {
+      async tryRestoreTextboxTextAfterFailedReplace(textbox, text, options = {}) {
         if (!text) return;
-        if (!await this.clearRichTextboxTextAsync(textbox)) return;
-        await this.insertRichTextboxTextAsync(textbox, text);
+        if (!await this.clearRichTextboxTextAsync(textbox, options)) return;
+        if (!this.isTextboxReplacementWriteAllowed(textbox, options)) return;
+        await this.insertRichTextboxTextAsync(textbox, text, options);
       }
-      async restoreTextboxSnapshotAfterFailedReplace(textbox, previousText, attemptedText = "") {
+      // Stops as soon as options.writeToken is no longer current (user input, a newer write, remount).
+      async restoreTextboxSnapshotAfterFailedReplace(textbox, previousText, attemptedText = "", options = {}) {
         if (!textbox || textbox.isConnected === false) return false;
-        const previous = String(previousText || "");
+        const previous = this.normalizeDraftRawText(previousText);
         if (!previous) return false;
+        if (!this.isTextboxReplacementWriteAllowed(textbox, options)) return false;
         const current = this.getTextboxRawTextSafe(textbox);
-        if (current === previous || current === String(attemptedText || "")) return false;
+        if (current === previous || current === this.normalizeDraftRawText(attemptedText)) return false;
         if (this.isPlainTextTextbox(textbox)) {
           this.replacePlainTextTextboxValue(textbox, previous);
           return this.isTextboxTextEqual(textbox, previous);
         }
         if (this.isRichDiscordTextbox(textbox)) {
-          if (await this.tryUndoTextboxEdit(textbox, previous)) return true;
-          await this.tryRestoreTextboxTextAfterFailedReplace(textbox, previous);
+          if (!options.rollback?.undoAttempted && await this.tryUndoTextboxEdit(textbox, previous, options)) return true;
+          if (!this.isTextboxReplacementWriteAllowed(textbox, options)) return false;
+          if (this.isTextboxTextEqual(textbox, previous)) return true;
+          await this.tryRestoreTextboxTextAfterFailedReplace(textbox, previous, options);
           return this.isTextboxTextEqual(textbox, previous);
         }
-        await this.tryRestoreTextboxTextAfterFailedReplace(textbox, previous);
+        await this.tryRestoreTextboxTextAfterFailedReplace(textbox, previous, options);
         return this.isTextboxTextEqual(textbox, previous);
       }
       clearRichTextboxText(textbox) {
@@ -25029,9 +27456,10 @@ var require_discord_ai_translator = __commonJS({
         if (previousText && this.getTextboxRawTextSafe(textbox) !== this.normalizeDraftRawText(previousText)) return false;
         return true;
       }
-      async tryUndoTextboxEdit(textbox, expectedText = "") {
-        const expected = this.normalizeExtractedText(expectedText);
-        if (!expected) return false;
+      async tryUndoTextboxEdit(textbox, expectedText = "", options = {}) {
+        const expected = this.normalizeDraftRawText(expectedText);
+        if (!this.normalizeExtractedText(expected)) return false;
+        if (options.rollback) options.rollback.undoAttempted = true;
         const attempts = [
           () => this.dispatchTextboxBeforeInput(textbox, "", "historyUndo"),
           () => this.dispatchTextboxKeyboardShortcut(textbox, "z", "KeyZ", { ctrlKey: true }),
@@ -25044,8 +27472,11 @@ var require_discord_ai_translator = __commonJS({
           }
         ];
         for (const attempt of attempts) {
+          if (!this.isTextboxReplacementWriteAllowed(textbox, options)) return false;
+          const before = this.getTextboxRawTextSafe(textbox);
           attempt();
           if (await this.waitForTextboxStableTextEqual(textbox, expected)) return true;
+          if (this.getTextboxRawTextSafe(textbox) !== before) return false;
         }
         return false;
       }
@@ -25357,6 +27788,14 @@ var require_discord_ai_translator = __commonJS({
       }
       setButtonBusy(button, busy, text) {
         if (!button) return;
+        if (button.dataset?.daitFullLabel || button.classList?.contains?.("dait-input-action-menu-button")) {
+          button.disabled = Boolean(busy);
+          button.classList?.toggle?.("dait-busy", Boolean(busy));
+          if (busy) button.setAttribute?.("aria-busy", "true");
+          else button.removeAttribute?.("aria-busy");
+          this.renderInputActionButtonLabel(button);
+          return;
+        }
         button.disabled = busy;
         button.textContent = text;
       }
@@ -25388,27 +27827,53 @@ var require_discord_ai_translator = __commonJS({
       getMessageIdentity(messageNode, content, text) {
         return this.messageTracker.getIdentity(messageNode, content, text);
       }
-      formatError(error) {
-        const message = this.getFriendlyErrorMessage(error);
+      formatError(error, options = {}) {
+        const message = this.getFriendlyErrorMessage(error, options);
         return message.length > 480 ? `${message.slice(0, 480)}...` : message;
       }
-      getFriendlyErrorMessage(error) {
+      // options.includeRetry: add the automatic retry wait; only auto-translation notices
+      // want it (for polish or manual translation it is an internal scheduling detail).
+      getFriendlyErrorMessage(error, options = {}) {
         const status = Number(error?.status || 0);
+        const rawMessage = String(error?.message || "");
+        const providerCoded = rawMessage === "API_ERROR" || Boolean(error?.baiduApiError);
+        const internalMessageKeys = {
+          MODEL_OUTPUT_TRUNCATED: "errorOutputTruncated",
+          DATA_SAVE_FAILED: "errorSaveFailed",
+          DATA_SAVE_UNAVAILABLE: "errorSaveFailed"
+        };
         let message = "";
         if (this.isRequestCancelled(error)) message = this.t("errorCancelled");
         else if (Object.hasOwn(API_ENDPOINT_ERROR_MESSAGE_KEYS, error?.code)) message = this.t(API_ENDPOINT_ERROR_MESSAGE_KEYS[error.code]);
+        else if (error?.code === "CLIPBOARD_UNAVAILABLE") message = this.t("clipboardUnavailable");
         else if (error?.manualTranslationRescueFailed) message = this.t("manualTranslateRescueFailed");
+        else if (error?.modelOutputTruncated) message = this.t("errorOutputTruncated");
         else if (this.isTimeoutError(error)) message = this.t("errorTimeout");
         else if (error?.localProviderUnavailable) message = this.t("errorLocalProviderUnavailable");
+        else if (providerCoded && error?.providerLanguageUnsupported) message = this.t("errorLanguageUnsupported");
+        else if (providerCoded && error?.providerIpRejected) message = this.t("errorIpNotAllowed");
+        else if (providerCoded && error?.providerRequestRejected) message = this.t("errorProviderRequestRejected");
+        else if (providerCoded && (error?.providerRateLimited || status === 429)) message = this.t("errorRateLimited");
+        else if (providerCoded && (error?.providerQuotaExceeded || error?.googleTranslateQuotaExceeded || status === 402)) message = this.t("errorQuotaExceeded");
+        else if (providerCoded && (error?.providerAuthFailed || status === 401 || status === 403)) message = this.t("errorUnauthorized");
+        else if (providerCoded && (error?.providerServerError || status >= 500)) message = this.t("errorServer");
         else if (status === 401 || status === 403) message = this.t("errorUnauthorized");
         else if (status === 429) message = this.t("errorRateLimited");
         else if (status >= 500) message = this.t("errorServer");
         else if (this.isNetworkError(error)) message = this.t("errorNetwork");
-        else if (String(error?.message || "") === "API_ERROR") message = status ? `API ${status}` : this.t("unknownError");
+        else if (error?.baiduApiError) message = this.t("errorProviderRequestRejected");
+        else if (rawMessage === "API_ERROR") {
+          message = status >= 400 && status < 500 ? this.t("errorProviderRequestRejected") : status ? `API ${status}` : this.t("unknownError");
+        } else if (Object.hasOwn(internalMessageKeys, rawMessage)) message = this.t(internalMessageKeys[rawMessage]);
+        else if (/^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/.test(rawMessage)) message = this.t("unknownError");
         else message = String(error?.message || error || this.t("unknownError"));
         const details = [];
         if (status) details.push(String(status));
-        if (Number(error?.retryAfterMs) > 0) details.push(`${Math.ceil(Number(error.retryAfterMs) / 1e3)}s`);
+        if (error?.baiduErrorCode) details.push(String(error.baiduErrorCode));
+        const retryAfterMs = Number(error?.retryAfterMs) || 0;
+        if (options.includeRetry && retryAfterMs > 0 && retryAfterMs <= 60 * 60 * 1e3 && !error?.modelOutputTruncated) {
+          details.push(`${Math.ceil(retryAfterMs / 1e3)}s`);
+        }
         if (error?.requestId) details.push(`id:${error.requestId}`);
         else if (error?.bodyHash) details.push(`ref:${error.bodyHash}`);
         return details.length ? `${message} (${details.join(", ")})` : message;
@@ -25452,6 +27917,27 @@ var require_discord_ai_translator = __commonJS({
       }
       saveData(...args) {
         return this.settingsStore.saveData(...args);
+      }
+      getDataStoreName(...args) {
+        return this.settingsStore.getDataStoreName(...args);
+      }
+      migrateLegacyDataStores(...args) {
+        return this.settingsStore.migrateLegacyDataStores(...args);
+      }
+      migrateLegacyDataStoreKey(...args) {
+        return this.settingsStore.migrateLegacyDataStoreKey(...args);
+      }
+      mergeLegacyDataPayload(...args) {
+        return this.settingsStore.mergeLegacyDataPayload(...args);
+      }
+      resetSettingsToDefaults(...args) {
+        return this.settingsStore.resetSettingsToDefaults(...args);
+      }
+      applySettingsResetEffects(...args) {
+        return this.settingsStore.applySettingsResetEffects(...args);
+      }
+      syncAllSettingControls(...args) {
+        return this.settingsStore.syncAllSettingControls(...args);
       }
       recordDataIoFailure(...args) {
         return this.settingsStore.recordDataIoFailure(...args);
@@ -25562,6 +28048,12 @@ var require_discord_ai_translator = __commonJS({
       setCachedLocalProviderDetectedModel(...args) {
         return this.providerLayer.setCachedLocalProviderDetectedModel(...args);
       }
+      getPersistableLocalProviderDetectedModels(...args) {
+        return this.providerLayer.getPersistableLocalProviderDetectedModels(...args);
+      }
+      restoreLocalProviderDetectedModels(...args) {
+        return this.providerLayer.restoreLocalProviderDetectedModels(...args);
+      }
       getEffectiveChatCompletionModel(...args) {
         return this.providerLayer.getEffectiveChatCompletionModel(...args);
       }
@@ -25616,6 +28108,9 @@ var require_discord_ai_translator = __commonJS({
       getGoogleTranslateQuotaRetryAfterMs(...args) {
         return this.providerLayer.getGoogleTranslateQuotaRetryAfterMs(...args);
       }
+      getGoogleTranslateDailyQuotaRetryAfterMs(...args) {
+        return this.providerLayer.getGoogleTranslateDailyQuotaRetryAfterMs(...args);
+      }
       releaseGoogleTranslateRequestReservation(...args) {
         return this.providerLayer.releaseGoogleTranslateRequestReservation(...args);
       }
@@ -25645,6 +28140,9 @@ var require_discord_ai_translator = __commonJS({
       }
       getGoogleLanguageCode(...args) {
         return this.providerLayer.getGoogleLanguageCode(...args);
+      }
+      getTargetLanguageCode(...args) {
+        return this.providerLayer.getTargetLanguageCode(...args);
       }
       getEffectiveRequestApiKey(...args) {
         return this.providerLayer.getEffectiveRequestApiKey(...args);
@@ -25708,6 +28206,9 @@ var require_discord_ai_translator = __commonJS({
       }
       normalizeGoogleTranslateKeyPool(...args) {
         return this.providerLayer.normalizeGoogleTranslateKeyPool(...args);
+      }
+      getGoogleTranslateUsageLedger(...args) {
+        return this.providerLayer.getGoogleTranslateUsageLedger(...args);
       }
       getAutoTranslationProviderKey(...args) {
         return this.providerLayer.getAutoTranslationProviderKey(...args);
@@ -25977,6 +28478,12 @@ var require_discord_ai_translator = __commonJS({
       createPersistedTranslationCachePayload(...args) {
         return this.translationCacheStore.createPersistedTranslationCachePayload(...args);
       }
+      mergePersistedTranslationCachePayloads(...args) {
+        return this.translationCacheStore.mergePersistedTranslationCachePayloads(...args);
+      }
+      getTranslationCacheMessageCount(...args) {
+        return this.translationCacheStore.getTranslationCacheMessageCount(...args);
+      }
       scheduleTranslationCachePersist(...args) {
         return this.translationCacheStore.scheduleTranslationCachePersist(...args);
       }
@@ -26131,6 +28638,9 @@ var require_discord_ai_translator = __commonJS({
       }
       createPersistedDiagnosticLogsPayload(...args) {
         return this.diagnosticsRecorder.createPersistedDiagnosticLogsPayload(...args);
+      }
+      mergePersistedDiagnosticLogsPayloads(...args) {
+        return this.diagnosticsRecorder.mergePersistedDiagnosticLogsPayloads(...args);
       }
       scheduleDiagnosticLogsPersist(...args) {
         return this.diagnosticsRecorder.scheduleDiagnosticLogsPersist(...args);
@@ -26391,6 +28901,12 @@ var require_discord_ai_translator = __commonJS({
       autoTranslateQueuedBatch(...args) {
         return this.autoQueueCore.autoTranslateQueuedBatch(...args);
       }
+      settleFailedAutoTranslationBatchRequest(...args) {
+        return this.autoQueueCore.settleFailedAutoTranslationBatchRequest(...args);
+      }
+      isAutoTranslationBatchFormatError(...args) {
+        return this.autoQueueCore.isAutoTranslationBatchFormatError(...args);
+      }
       requeueAutoTranslationItem(...args) {
         return this.autoQueueCore.requeueAutoTranslationItem(...args);
       }
@@ -26417,6 +28933,24 @@ var require_discord_ai_translator = __commonJS({
       }
       pruneRecentAutoTranslationRenders(...args) {
         return this.autoQueueCore.pruneRecentAutoTranslationRenders(...args);
+      }
+      rememberAutoTranslationPartialResult(...args) {
+        return this.autoQueueCore.rememberAutoTranslationPartialResult(...args);
+      }
+      getAutoTranslationPartialResult(...args) {
+        return this.autoQueueCore.getAutoTranslationPartialResult(...args);
+      }
+      clearAutoTranslationPartialResult(...args) {
+        return this.autoQueueCore.clearAutoTranslationPartialResult(...args);
+      }
+      pruneAutoTranslationPartialResults(...args) {
+        return this.autoQueueCore.pruneAutoTranslationPartialResults(...args);
+      }
+      getAutoTranslationAbortSignal(...args) {
+        return this.autoQueueCore.getAutoTranslationAbortSignal(...args);
+      }
+      abortAutoTranslationRequests(...args) {
+        return this.autoQueueCore.abortAutoTranslationRequests(...args);
       }
       createAutoTranslationInFlightToken(...args) {
         return this.autoQueueCore.createAutoTranslationInFlightToken(...args);
@@ -26492,6 +29026,9 @@ var require_discord_ai_translator = __commonJS({
       }
       markAutoTranslationFailure(...args) {
         return this.autoQueueCore.markAutoTranslationFailure(...args);
+      }
+      markAutoTranslationUndrawableResult(...args) {
+        return this.autoQueueCore.markAutoTranslationUndrawableResult(...args);
       }
       getAutoTranslationStorageErrorForItem(...args) {
         return this.autoQueueCore.getAutoTranslationStorageErrorForItem(...args);
@@ -26674,6 +29211,9 @@ var require_discord_ai_translator = __commonJS({
       runLongAutoTranslationTask(...args) {
         return this.autoRequestPipeline.runLongAutoTranslationTask(...args);
       }
+      shouldStopLongAutoTranslationOnChunkError(...args) {
+        return this.autoRequestPipeline.shouldStopLongAutoTranslationOnChunkError(...args);
+      }
       runLongAutoTranslationChunkManualRescue(...args) {
         return this.autoRequestPipeline.runLongAutoTranslationChunkManualRescue(...args);
       }
@@ -26721,6 +29261,21 @@ var require_discord_ai_translator = __commonJS({
       }
       runAutoTranslationTaskWithOptions(...args) {
         return this.autoRequestPipeline.runAutoTranslationTaskWithOptions(...args);
+      }
+      runTruncatedAutoTranslationRetry(...args) {
+        return this.autoRequestPipeline.runTruncatedAutoTranslationRetry(...args);
+      }
+      createAutoTranslationRequestBudget(...args) {
+        return this.autoRequestPipeline.createAutoTranslationRequestBudget(...args);
+      }
+      consumeAutoTranslationRequestBudget(...args) {
+        return this.autoRequestPipeline.consumeAutoTranslationRequestBudget(...args);
+      }
+      isAutoTranslationRequestBudgetExhausted(...args) {
+        return this.autoRequestPipeline.isAutoTranslationRequestBudgetExhausted(...args);
+      }
+      isAutoTranslationRequestBudgetError(...args) {
+        return this.autoRequestPipeline.isAutoTranslationRequestBudgetError(...args);
       }
       shouldRunLocalAutoTranslationRepairRetry(...args) {
         return this.autoRequestPipeline.shouldRunLocalAutoTranslationRepairRetry(...args);
