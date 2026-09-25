@@ -1567,7 +1567,8 @@ assert.equal(polishPanelOutput.tabIndex, 0);
 assert.equal(polishPanelOutput.focused, undefined);
 assert.equal(polishPanelOutput.selected, undefined);
 const polishPanelActionButtons = polishPanelCreated.filter(element => String(element.className || "").split(/\s+/).includes("dait-polish-result-action"));
-assert.equal(polishPanelActionButtons.length, 1);
+// "Insert into input" (a held result can still be applied) and "Copy".
+assert.deepEqual(polishPanelActionButtons.map(element => element.textContent), [polishPanelPlugin.t("polishResultReplace"), polishPanelPlugin.t("polishResultCopy")]);
 assert.equal(typeof polishPanelDocumentListeners.get("pointerdown"), "function");
 polishPanelDocumentListeners.get("pointerdown")({ target: {} });
 assert.equal(polishPanel.removed, true);

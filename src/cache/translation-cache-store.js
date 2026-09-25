@@ -65,6 +65,8 @@ class TranslationCacheStore {
     }
 
     isVolatileTranslationCacheKey(cacheKey) {
+        // Public bilingual entries are translations of unsent drafts (DMs included): memory only.
+        if (String(this.getTranslationCacheMode(cacheKey)).startsWith("public-bilingual")) return true;
         return this.plugin.isVolatileTranslationIdentity(this.plugin.getTranslationIdentityFromCacheKey(cacheKey));
     }
 

@@ -76,7 +76,9 @@ class ComposerWriter {
             if (event?.isTrusted !== true) return;
             this.cancelWriteToken(token, "user-input");
         };
-        const events = ["beforeinput", "input", "paste", "drop", "compositionstart", "keydown"];
+        // Only events that change the draft cancel the write. Arrow keys, Shift or Ctrl+C must not
+        // throw a finished result away; other edits are caught by the stale-draft check before writing.
+        const events = ["beforeinput", "input", "paste", "cut", "drop", "compositionstart"];
         events.forEach(type => textbox.addEventListener(type, cancel, true));
         return () => events.forEach(type => textbox.removeEventListener?.(type, cancel, true));
     }

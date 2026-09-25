@@ -956,7 +956,9 @@ module.exports = class DiscordAITranslator {
         // Set by stop() so retry, rescue and fallback loops cannot send text after the plugin is disabled.
         this.apiRequestsClosed = false;
         this.hotkeyRecordTimer = null;
+        this.hotkeyRecordTimeout = null;
         this.hotkeyRecordCleanup = null;
+        this.hotkeyRecordButton = null;
         this.observer = null;
         this.observerRoot = null;
         this.observerLifecycle = null;
@@ -1630,6 +1632,7 @@ module.exports = class DiscordAITranslator {
     }
 
     destroySettingsModalSizing(panel) {
+        this.clearHotkeyRecordingWithin(panel);
         this.cleanupSettingsScrollTracking(panel);
         this.clearSettingsModalSizingSchedule(panel);
         if (panel?.__daitSettingsModalCleanupObserver) {
@@ -1643,6 +1646,7 @@ module.exports = class DiscordAITranslator {
         if (!panel?.isConnected || panel.__daitSettingsModalCleanupObserver || typeof MutationObserver !== "function" || typeof document === "undefined" || !document.body) return;
         const observer = new MutationObserver(() => {
             if (panel.isConnected) return;
+            this.clearHotkeyRecordingWithin(panel);
             this.cleanupSettingsScrollTracking(panel);
             this.clearSettingsModalSizingSchedule(panel);
             this.cleanupSettingsModalSizing(panel);
@@ -6235,6 +6239,8 @@ module.exports = class DiscordAITranslator {
     }
 
     closeQuickSettingsPanel(root = this.quickSettingsModalRoot, reason = "close") {
+        // A hotkey recording started in this window must not outlive it and swallow later typing.
+        this.clearHotkeyRecordingWithin(root);
         if (!root && typeof document !== "undefined") {
             this.cancelQuickSettingsModalVerify();
             const roots = this.getQuickSettingsModalRoots();
@@ -6291,8 +6297,9 @@ module.exports = class DiscordAITranslator {
         if (!container) return;
         const group = this.getInputActionGroup(container);
         if (!group) return;
+        this.removeDisabledInputActionButtons(group);
 
-        if ((options.forcePolish || this.settings.ui.injectInputButton) && !group.querySelector(".dait-polish-button")) {
+        if (this.isPolishInputButtonEnabled(options) && !group.querySelector(".dait-polish-button")) {
             const button = this.createInputActionButton(
                 "dait-polish-button",
                 this.t("polishButton"),
@@ -6303,7 +6310,7 @@ module.exports = class DiscordAITranslator {
             group.appendChild(button);
         }
 
-        if (!options.forcePolish && this.settings.ui.publicBilingualInputButton && !group.querySelector(".dait-public-bilingual-button")) {
+        if (!options.forcePolish && this.isPublicBilingualInputButtonEnabled() && !group.querySelector(".dait-public-bilingual-button")) {
             const button = this.createInputActionButton(
                 "dait-public-bilingual-button",
                 this.t("publicBilingualButton"),
@@ -6316,6 +6323,36 @@ module.exports = class DiscordAITranslator {
         this.syncInputRestoreButtonState(group, textbox, options);
         this.syncInputActionButtonThemes(group, textbox || container);
         this.syncInputActionGroupState(group, textbox, container);
+    }
+
+    // Polish needs polish.enabled and public bilingual needs translation.enabled; a feature that is
+    // switched off loses its composer button (it comes back on the next scan once re-enabled).
+    removeDisabledInputActionButtons(group) {
+        if (!group?.querySelectorAll) return false;
+        const selectors = [];
+        if (this.settings.polish?.enabled === false) selectors.push(".dait-polish-button");
+        if (!this.isPublicBilingualFeatureEnabled()) selectors.push(".dait-public-bilingual-button");
+        let removed = false;
+        selectors.forEach(selector => {
+            [...(group.querySelectorAll(selector) || [])].forEach(button => {
+                button.remove?.();
+                removed = true;
+            });
+        });
+        return removed;
+    }
+
+    syncInputActionButtonsForSettings() {
+        this.removeInputActionMenu();
+        if (typeof document === "undefined") return;
+        [...(document.querySelectorAll?.(".dait-input-action-group") || [])].forEach(group => {
+            if (this.removeDisabledInputActionButtons(group)) this.syncInputActionGroupState(group);
+        });
+        // Re-enabling shows the buttons right away unless Discord's settings cover the composer; the
+        // next input-button scan adds them then.
+        if (!this.isStarted || !(this.settings.ui?.injectInputButton || this.settings.ui?.publicBilingualInputButton)) return;
+        if (this.isDiscordSettingsSurfaceOpen()) this.queueInputButtonScan({ delayMs: 120, trailing: true });
+        else this.injectInputButtons();
     }
 
     createInputActionButton(className, text, title, action, options = {}) {
@@ -6502,12 +6539,18 @@ module.exports = class DiscordAITranslator {
 
     syncInputActionButtonLabels(group, density = "roomy") {
         if (!group?.querySelectorAll) return;
-        const compact = density !== "roomy";
         group.querySelectorAll(".dait-polish-restore-button, .dait-polish-button, .dait-public-bilingual-button").forEach(button => {
-            const full = button.dataset?.daitFullLabel || button.textContent || "";
-            const short = button.dataset?.daitShortLabel || full;
-            button.textContent = compact ? short : full;
+            this.renderInputActionButtonLabel(button, density);
         });
+    }
+
+    // The one place that writes a composer button's label, so busy/idle changes keep the group's density.
+    renderInputActionButtonLabel(button, density = null) {
+        if (!button) return;
+        const groupDensity = density || button.parentElement?.dataset?.daitDensity || button.closest?.(".dait-input-action-group")?.dataset?.daitDensity || "roomy";
+        const full = button.dataset?.daitFullLabel || button.textContent || "";
+        const short = button.dataset?.daitShortLabel || full;
+        button.textContent = groupDensity !== "roomy" ? short : full;
     }
 
     toggleInputActionMenu(group, textbox = null, container = null, button = null) {
@@ -6550,10 +6593,10 @@ module.exports = class DiscordAITranslator {
         if (session && this.canRestorePolishOriginal(textbox, session)) {
             addItem(this.t("restoreOriginal"), this.t("restoreOriginal"), () => this.restorePolishOriginal(textbox, session, button));
         }
-        if (this.settings.ui?.injectInputButton || group?.querySelector?.(".dait-polish-button")) {
-            addItem(this.t("polishButton"), this.t("polishTitleAttr", { shortcut: this.getHotkeyLabel() }), () => this.polishCurrentDraft(group?.querySelector?.(".dait-polish-button") || button, { textbox, composerKey }));
+        if (this.settings.polish?.enabled !== false && (this.settings.ui?.injectInputButton || group?.querySelector?.(".dait-polish-button"))) {
+            addItem(this.t("polishButton"), this.t("polishTitleAttr", { shortcut: this.getHotkeyLabel() }), () => this.polishCurrentDraft(group?.querySelector?.(".dait-polish-button") || button, { textbox, composerKey, fromMenu: true }));
         }
-        if (this.settings.ui?.publicBilingualInputButton || group?.querySelector?.(".dait-public-bilingual-button")) {
+        if (this.isPublicBilingualFeatureEnabled() && (this.settings.ui?.publicBilingualInputButton || group?.querySelector?.(".dait-public-bilingual-button"))) {
             addItem(this.t("publicBilingualButton"), this.t("publicBilingualTitleAttr", { targetLanguage: this.getDisplayLanguage(this.getPublicBilingualTargetLanguage()) }), () => this.publicBilingualCurrentDraft(group?.querySelector?.(".dait-public-bilingual-button") || button, { textbox, composerKey }));
         }
         addItem(this.t("inputActionOpenSettings"), this.t("quickSettingsOpen"), () => this.openQuickSettingsPanel("input-menu", button || group));
@@ -10345,7 +10388,7 @@ module.exports = class DiscordAITranslator {
     }
 
     normalizeDraftRawText(text) {
-        return String(text ?? "").replace(/\u200b/g, "").replace(/\r\n?/g, "\n");
+        return String(text ?? "").replace(/[\u200b\ufeff]/g, "").replace(/\r\n?/g, "\n");
     }
 
     areDraftTextsEqualStrict(left, right) {
@@ -10360,6 +10403,66 @@ module.exports = class DiscordAITranslator {
 
     isCurrentDraftText(textbox, expectedText) {
         return this.areDraftTextsEqualStrict(this.getTextboxDraftText(textbox), expectedText);
+    }
+
+    isComposerWriteSuperseded(writeToken) {
+        return Boolean(writeToken?.cancelled && writeToken.reason === "superseded");
+    }
+
+    // Why a finished polish/bilingual result must not be written now ("" when it may be).
+    getComposerWriteStaleReason(textbox, writeToken, expectedText) {
+        if (!textbox || textbox.isConnected === false) return "remounted";
+        if (writeToken && !this.composerWriter.isWriteTokenCurrent(writeToken)) return writeToken.reason || "cancelled";
+        if (!this.isCurrentDraftText(textbox, expectedText)) return "draft-changed";
+        if (this.isComposerFocusElsewhere(textbox)) return "focus-moved";
+        return "";
+    }
+
+    // Writing focuses and selects the target composer, so a late result must not land while the
+    // user is typing in another field (thread panel, search box, another composer).
+    isComposerFocusElsewhere(textbox) {
+        if (typeof document === "undefined" || !textbox) return false;
+        const active = document.activeElement;
+        if (!active || active === document.body || active === document.documentElement) return false;
+        if (active === textbox || textbox.contains?.(active)) return false;
+        return this.isEditableFocusTarget(active);
+    }
+
+    isEditableFocusTarget(element) {
+        if (!element) return false;
+        const tagName = String(element.tagName || "").toUpperCase();
+        if (tagName === "TEXTAREA") return !element.readOnly && !element.disabled;
+        if (tagName === "INPUT") {
+            const type = String(element.type || element.getAttribute?.("type") || "text").toLowerCase();
+            const nonText = ["button", "checkbox", "color", "file", "hidden", "image", "radio", "range", "reset", "submit"];
+            return !element.readOnly && !element.disabled && !nonText.includes(type);
+        }
+        if (element.isContentEditable === true) return true;
+        const contentEditable = String(element.getAttribute?.("contenteditable") ?? "").toLowerCase();
+        return contentEditable === "true" || contentEditable === "plaintext-only" || element.getAttribute?.("role") === "textbox";
+    }
+
+    getComposerResultPanelAnchor(textbox) {
+        if (textbox && textbox.isConnected !== false) return textbox;
+        if (typeof document === "undefined") return textbox;
+        try {
+            return this.getActiveTextbox() || this.getTextbox() || textbox;
+        }
+        catch {
+            return textbox;
+        }
+    }
+
+    isPolishInputButtonEnabled(options = {}) {
+        return this.settings.polish?.enabled !== false && Boolean(options.forcePolish || this.settings.ui?.injectInputButton);
+    }
+
+    isPublicBilingualFeatureEnabled() {
+        return this.settings.translation?.enabled !== false;
+    }
+
+    isPublicBilingualInputButtonEnabled() {
+        return this.isPublicBilingualFeatureEnabled() && Boolean(this.settings.ui?.publicBilingualInputButton);
     }
 
     getPublicBilingualTargetLanguage() {
@@ -10491,9 +10594,10 @@ module.exports = class DiscordAITranslator {
         throw this.createFinalInvalidAutoTranslationError();
     }
 
-    async getPublicBilingualTranslation(text, options = this.getPublicBilingualTranslationOptions()) {
+    async getPublicBilingualTranslation(text, options = this.getPublicBilingualTranslationOptions(), behavior = {}) {
         const cacheKey = this.getTranslationCacheKey(text, options);
-        const cached = this.getTranslationCacheValue(cacheKey, this.getTranslationCacheAliases(text, options));
+        // An explicit re-run asks for a new translation, so it skips the cached one.
+        const cached = behavior.bypassCache ? null : this.getTranslationCacheValue(cacheKey, this.getTranslationCacheAliases(text, options));
         if (cached !== null) return { text: cached, cacheKey, cached: true };
 
         const translated = await this.runPublicBilingualTranslationTask(text, options);
@@ -10502,12 +10606,96 @@ module.exports = class DiscordAITranslator {
         return { text: translated, cacheKey, cached: false, fallbackProvider: options.requestContext?.fallbackProvider || "" };
     }
 
+    // Text inside ||…||. Outside code every "|" is escaped and the user's own escapes are kept; a
+    // lone trailing "\" is doubled so it cannot escape the closing "||". Discord shows code literally,
+    // so a backslash there would be visible: "||" inside code is split with a zero-width space instead.
     escapeDiscordSpoilerText(text) {
-        return String(text || "").replace(/\|/g, "\\|");
+        return this.splitDiscordCodeSegments(text).map(segment => segment.code
+            ? segment.text.replace(/\|(?=\|)/g, "|\u200b")
+            : this.escapeDiscordPlainText(segment.text, { escapeEveryPipe: true })).join("");
     }
 
+    // Visible translation: only "||" outside code could open a spoiler.
     escapeDiscordVisibleText(text) {
-        return String(text || "").replace(/\|\|/g, "\\|\\|");
+        return this.splitDiscordCodeSegments(text).map(segment => segment.code
+            ? segment.text
+            : this.escapeDiscordPlainText(segment.text, { escapeEveryPipe: false })).join("");
+    }
+
+    escapeDiscordPlainText(text, options = {}) {
+        const value = String(text || "");
+        let output = "";
+        for (let index = 0; index < value.length; index++) {
+            const char = value[index];
+            if (char === "\\") {
+                if (index + 1 < value.length) {
+                    output += char + value[index + 1];
+                    index++;
+                }
+                else {
+                    output += "\\\\";
+                }
+                continue;
+            }
+            if (char === "|" && (options.escapeEveryPipe || value[index + 1] === "|")) {
+                if (options.escapeEveryPipe) {
+                    output += "\\|";
+                }
+                else {
+                    output += "\\|\\|";
+                    index++;
+                }
+                continue;
+            }
+            output += char;
+        }
+        return output;
+    }
+
+    // Splits Discord markdown into code (`inline`, ``inline``, ```fenced```) and plain segments.
+    // A backslash escapes the next character outside code, so "\`" never opens a code span.
+    splitDiscordCodeSegments(text) {
+        const value = String(text || "");
+        const segments = [];
+        let plainStart = 0;
+        let index = 0;
+        while (index < value.length) {
+            const char = value[index];
+            if (char === "\\") {
+                index += 2;
+                continue;
+            }
+            if (char !== "`") {
+                index++;
+                continue;
+            }
+            let runEnd = index;
+            while (value[runEnd] === "`") runEnd++;
+            const close = this.findDiscordCodeClose(value, runEnd, runEnd - index);
+            if (close < 0) {
+                index = runEnd;
+                continue;
+            }
+            if (index > plainStart) segments.push({ code: false, text: value.slice(plainStart, index) });
+            const end = close + (runEnd - index);
+            segments.push({ code: true, text: value.slice(index, end) });
+            index = plainStart = end;
+        }
+        if (plainStart < value.length) segments.push({ code: false, text: value.slice(plainStart) });
+        return segments;
+    }
+
+    findDiscordCodeClose(value, from, length) {
+        let index = from;
+        while (index < value.length) {
+            const start = value.indexOf("`", index);
+            if (start < 0) return -1;
+            let end = start;
+            while (value[end] === "`") end++;
+            if (end - start === length && start > from) return start;
+            index = end;
+        }
+        return -1;
     }
 
     formatPublicBilingualMessage(translated, original) {
@@ -10535,7 +10723,12 @@ module.exports = class DiscordAITranslator {
 
     async preparePublicBilingualDraft(textbox, draft, options = {}) {
         const session = this.getPolishSession(textbox, draft);
-        let translationSource = draft;
+        // Running bilingual again on its own output translates what the first run translated,
+        // instead of nesting the bilingual text (and its spoiler) inside a new one.
+        const isBilingualOutput = Boolean(session.lastBilingualRawText && session.lastBilingualSourceRawText)
+            && this.areDraftTextsEqualStrict(draft, session.lastBilingualRawText);
+        const baseDraft = isBilingualOutput ? this.normalizeDraftRawText(session.lastBilingualSourceRawText) : draft;
+        let translationSource = baseDraft;
         let usedPolish = false;
         let skippedPolish = false;
         const hasLifecycleToken = options.lifecycleToken !== undefined && options.lifecycleToken !== null;
@@ -10545,7 +10738,7 @@ module.exports = class DiscordAITranslator {
             if (!this.settings.polish.enabled) {
                 skippedPolish = true;
             }
-            else if (!this.isPolishSessionAlreadyPolished(session, draft)) {
+            else if (!this.isPolishSessionAlreadyPolished(session, baseDraft)) {
                 const sourceText = this.getPolishSourceText(session) || draft;
                 const polished = await this.runModelTask("polish", sourceText);
                 if (!String(polished || "").trim()) throw new Error(this.t("emptyResult"));
@@ -10565,14 +10758,21 @@ module.exports = class DiscordAITranslator {
             stale: false,
             session,
             translationSource,
-            spoilerOriginal: this.getPublicBilingualSpoilerOriginal(session, draft, translationSource),
+            spoilerOriginal: this.getPublicBilingualSpoilerOriginal(session, baseDraft, translationSource),
             expectedCurrentText: draft,
+            // A bilingual result already exists in this session, so this click asks for a fresh one.
+            rerun: Boolean(session.lastBilingualRawText),
             usedPolish,
             skippedPolish
         };
     }
 
     async publicBilingualCurrentDraft(button = null, behaviorOptions = {}) {
+        if (!this.isPublicBilingualFeatureEnabled()) {
+            // The bilingual-after-polish step stays quiet; a direct click explains why nothing happens.
+            if (!behaviorOptions.skipAutoPolish) this.showToast(this.t("translationDisabled"), "info");
+            return { ok: false, wrote: false, reason: "disabled" };
+        }
         const textbox = this.resolveInputActionTextbox(button, behaviorOptions);
         if (!textbox) {
             this.showToast(this.t("textboxMissing"), "error");
@@ -10609,10 +10809,11 @@ module.exports = class DiscordAITranslator {
         });
         try {
             const payload = await this.preparePublicBilingualDraft(textbox, draft, { ...behaviorOptions, lifecycleToken, writeToken });
-            if (!this.isLifecycleTokenCurrent(lifecycleToken) || !this.composerWriter.isWriteTokenCurrent(writeToken)) {
+            if (!this.isLifecycleTokenCurrent(lifecycleToken)) {
                 return { ok: false, wrote: false, stale: true, phase: "lifecycle" };
             }
-            if (payload.stale) {
+            if (this.isComposerWriteSuperseded(writeToken)) return { ok: false, wrote: false, stale: true, phase: "superseded" };
+            if (payload.stale || !this.composerWriter.isWriteTokenCurrent(writeToken)) {
                 this.logDiagnostic("public.bilingual", "stale-input", {
                     ...this.getDiagnosticBaseMeta("public-bilingual", "public-bilingual", DIAGNOSTIC_REASON_CODES.STALE_DOM, {
                         messageState: DIAGNOSTIC_MESSAGE_STATES.STALE,
@@ -10633,16 +10834,18 @@ module.exports = class DiscordAITranslator {
                 throw new Error(this.t("publicBilingualTooLong", { length: reservedLength, limit: DISCORD_MESSAGE_MAX_LENGTH }));
             }
 
-            const result = await this.getPublicBilingualTranslation(payload.translationSource, requestOptions);
-            if (!this.isLifecycleTokenCurrent(lifecycleToken) || !this.composerWriter.isWriteTokenCurrent(writeToken)) {
+            const result = await this.getPublicBilingualTranslation(payload.translationSource, requestOptions, { bypassCache: payload.rerun });
+            if (!this.isLifecycleTokenCurrent(lifecycleToken)) {
                 return { ok: false, wrote: false, stale: true, phase: "lifecycle" };
             }
+            if (this.isComposerWriteSuperseded(writeToken)) return { ok: false, wrote: false, stale: true, phase: "superseded" };
             if (!String(result.text || "").trim()) throw new Error(this.t("emptyResult"));
             const composed = this.formatPublicBilingualMessage(result.text, payload.spoilerOriginal);
             if (composed.length > DISCORD_MESSAGE_MAX_LENGTH) {
                 throw new Error(this.t("publicBilingualTooLong", { length: composed.length, limit: DISCORD_MESSAGE_MAX_LENGTH }));
             }
-            if (textbox?.isConnected === false || !this.composerWriter.isWriteTokenCurrent(writeToken) || !this.isCurrentDraftText(textbox, payload.expectedCurrentText)) {
+            const staleReason = this.getComposerWriteStaleReason(textbox, writeToken, payload.expectedCurrentText);
+            if (staleReason) {
                 this.logDiagnostic("public.bilingual", "stale-input", {
                     ...this.getDiagnosticBaseMeta("public-bilingual", "public-bilingual", DIAGNOSTIC_REASON_CODES.STALE_DOM, {
                         messageState: DIAGNOSTIC_MESSAGE_STATES.STALE,
@@ -10653,15 +10856,20 @@ module.exports = class DiscordAITranslator {
                     sourceHash: this.getStrongTextFingerprint(draft),
                     cached: Boolean(result.cached),
                     phase: "translation",
+                    reason: staleReason,
                     ms: Date.now() - startedAt
                 });
-                this.showToast(this.t("publicBilingualInputChanged"), "info");
-                return { ok: false, wrote: false, stale: true, phase: "translation" };
+                // A finished result is never dropped silently: offer it for Copy or Apply instead.
+                this.showPolishResultPanel(this.getComposerResultPanelAnchor(textbox), composed, {
+                    sourceButton: button,
+                    title: this.t("publicBilingualButton"),
+                    ariaLabel: this.t("publicBilingualTitleAttr", { targetLanguage: this.getDisplayLanguage(this.getPublicBilingualTargetLanguage()) }),
+                    adjustTextboxSelection: false
+                });
+                this.showToast(this.t("composerResultHeld"), "info");
+                return { ok: false, wrote: false, stale: true, phase: "translation", reason: staleReason, fallbackText: composed };
             }
 
-            if (!this.isLifecycleTokenCurrent(lifecycleToken) || !this.composerWriter.isWriteTokenCurrent(writeToken)) {
-                return { ok: false, wrote: false, stale: true, phase: "lifecycle" };
-            }
             const writeResult = await this.composerWriter.replaceTextSafely(textbox, composed, {
                 blurAfterReplace: false,
                 extraBlurTarget: button,
@@ -10690,7 +10898,8 @@ module.exports = class DiscordAITranslator {
                     ariaLabel: this.t("publicBilingualTitleAttr", { targetLanguage: this.getDisplayLanguage(this.getPublicBilingualTargetLanguage()) }),
                     adjustTextboxSelection: false
                 });
-                this.showToast(this.t("publicBilingualFailed", { error: this.formatError(new Error(writeResult.reason || "verification-failed")) }), "error");
+                if (writeResult.reason === "write-cancelled") this.showToast(this.t("composerResultHeld"), "info");
+                else this.showToast(this.t("publicBilingualFailed", { error: this.formatError(new Error(writeResult.reason || "verification-failed")) }), "error");
                 return { ok: false, wrote: false, reason: writeResult.reason || "verification-failed", fallbackText: composed };
             }
 
@@ -10751,7 +10960,7 @@ module.exports = class DiscordAITranslator {
         const expectedComposerKey = behaviorOptions.composerKey || button?.dataset?.daitComposerKey || "";
         if (!this.isInputActionTextboxCurrent(textbox, expectedComposerKey)) {
             this.queueInputButtonScan({ delayMs: 120, trailing: true });
-            this.showToast(this.t("publicBilingualInputChanged"), "info");
+            this.showToast(this.t("composerChanged"), "info");
             return;
         }
 
@@ -10763,6 +10972,10 @@ module.exports = class DiscordAITranslator {
 
         const writeToken = this.composerWriter.beginWrite(textbox, draft);
         this.setButtonBusy(button, true, this.t("polishBusy"));
+        // Hotkey and menu runs have no busy button in view when the toolbar is collapsed or absent.
+        if ((behaviorOptions.fromHotkey || behaviorOptions.fromMenu) && !this.isInputActionButtonShown(button)) {
+            this.showToast(this.t("polishRunning"), "info");
+        }
         const lifecycleToken = this.getLifecycleToken();
         const startedAt = Date.now();
         this.logDiagnostic("polish", "start", {
@@ -10783,9 +10996,12 @@ module.exports = class DiscordAITranslator {
                 return;
             }
             const polished = await this.runModelTask("polish", sourceText);
-            if (!this.isLifecycleTokenCurrent(lifecycleToken) || !this.composerWriter.isWriteTokenCurrent(writeToken)) return;
+            if (!this.isLifecycleTokenCurrent(lifecycleToken)) return;
+            // A newer run on the same composer owns the result slot.
+            if (this.isComposerWriteSuperseded(writeToken)) return;
             const action = this.getPolishAfterAction();
-            if (textbox?.isConnected === false || !this.composerWriter.isWriteTokenCurrent(writeToken) || !this.isCurrentDraftText(textbox, draft)) {
+            const staleReason = this.getComposerWriteStaleReason(textbox, writeToken, draft);
+            if (staleReason) {
                 this.updatePolishSessionAfterResult(session, textbox, polished, false);
                 this.logDiagnostic("polish", "stale-input", {
                     ...this.getDiagnosticBaseMeta("polish", "polish", DIAGNOSTIC_REASON_CODES.STALE_DOM, {
@@ -10795,12 +11011,13 @@ module.exports = class DiscordAITranslator {
                         textLength: String(sourceText || "").length
                     }),
                     sourceHash: this.getStrongTextFingerprint(sourceText),
+                    reason: staleReason,
                     ms: Date.now() - startedAt
                 });
-                if (textbox?.isConnected !== false) this.showPolishResultPanel(textbox, polished, { sourceButton: button });
+                this.showPolishResultPanel(this.getComposerResultPanelAnchor(textbox), polished, { sourceButton: button });
+                this.showToast(this.t("composerResultHeld"), "info");
                 return;
             }
-            if (!this.isLifecycleTokenCurrent(lifecycleToken) || !this.composerWriter.isWriteTokenCurrent(writeToken)) return;
             const writeResult = await this.composerWriter.replaceTextSafely(textbox, polished, {
                 blurAfterReplace: false,
                 extraBlurTarget: button,
@@ -10921,6 +11138,26 @@ module.exports = class DiscordAITranslator {
         const actions = document.createElement("div");
         actions.className = "dait-polish-result-actions";
 
+        if (textbox && options.allowApply !== false) {
+            const apply = document.createElement("button");
+            apply.className = "dait-polish-result-action dait-polish-result-apply";
+            apply.type = "button";
+            apply.textContent = this.t("polishResultReplace");
+            apply.addEventListener("click", async event => {
+                event.preventDefault();
+                event.stopPropagation();
+                if (apply.disabled) return;
+                apply.disabled = true;
+                try {
+                    await this.applyPolishResultPanelText(textbox, String(text || ""));
+                }
+                finally {
+                    apply.disabled = false;
+                }
+            });
+            actions.appendChild(apply);
+        }
+
         const copy = document.createElement("button");
         copy.className = "dait-polish-result-action primary";
         copy.type = "button";
@@ -11015,6 +11252,35 @@ module.exports = class DiscordAITranslator {
         this.polishResultPanel = null;
     }
 
+    // The panel's "Insert into input" action: an explicit user request, so it replaces whatever the
+    // composer holds now (Discord's undo brings the previous draft back).
+    async applyPolishResultPanelText(textbox, text) {
+        const target = textbox && textbox.isConnected !== false ? textbox : this.resolveInputActionTextbox(null, {});
+        if (!target) {
+            this.showToast(this.t("textboxMissing"), "error");
+            return false;
+        }
+        const currentText = this.getTextboxDraftText(target);
+        const writeToken = this.composerWriter.beginWrite(target, currentText);
+        let result = null;
+        try {
+            result = await this.composerWriter.replaceTextSafely(target, text, {
+                blurAfterReplace: false,
+                expectedPreviousText: currentText,
+                writeToken
+            });
+        }
+        finally {
+            this.composerWriter.finishWriteToken(writeToken);
+        }
+        if (result?.ok) {
+            this.removePolishResultPanel();
+            return true;
+        }
+        if (result?.reason !== "write-cancelled") this.showToast(this.t("polishResultApplyFailed"), "error");
+        return false;
+    }
+
     showRestoreOriginalControl(textbox, session, sourceButton = null) {
         const originalText = session?.originalRawText ?? session?.originalText;
         if (typeof document === "undefined" || !originalText) return;
@@ -11090,8 +11356,10 @@ module.exports = class DiscordAITranslator {
                 writeToken
             });
             if (result.ok && this.composerWriter.isWriteTokenCurrent(writeToken)) {
-                session.lastWrittenText = this.normalizeExtractedText(originalText);
-                session.lastWrittenRawText = this.normalizeDraftRawText(originalText);
+                // The draft is the original again: nothing is left to restore, and the original must not
+                // count as already polished for the next bilingual-with-polish run.
+                session.lastWrittenText = "";
+                session.lastWrittenRawText = "";
                 session.updatedAt = Date.now();
                 this.polishSession = session;
                 this.removePolishRestoreControl();
@@ -11111,6 +11379,8 @@ module.exports = class DiscordAITranslator {
         if (!textbox || textbox.isConnected === false || !session) return false;
         if (session.composerKey && this.getTextboxComposerKey(textbox) !== session.composerKey) return false;
         const current = this.getTextboxDraftText(textbox);
+        // Nothing to restore when the draft already is the original (for example right after a restore).
+        if (this.areDraftTextsEqualStrict(current, session.originalRawText ?? session.originalText)) return false;
         const candidates = [
             session.lastWrittenRawText,
             session.lastResultRawText,
@@ -12453,6 +12723,9 @@ module.exports = class DiscordAITranslator {
         if (!this.isStarted) return;
         if (event.target?.closest?.(".dait-settings")) return;
         if (!this.settings.ui.enablePolishHotkey) return;
+        // Polish switched off: the shortcut is not ours, so the key goes to Discord untouched.
+        if (!this.settings.polish?.enabled) return;
+        if (!this.isAllowedPolishHotkey(this.settings.ui.polishHotkey || DEFAULT_SETTINGS.ui.polishHotkey)) return;
         if (!this.isHotkeyEvent(event, this.settings.ui.polishHotkey)) return;
 
         const textbox = this.getActiveTextbox();
@@ -12460,7 +12733,22 @@ module.exports = class DiscordAITranslator {
 
         event.preventDefault();
         event.stopPropagation();
-        this.polishCurrentDraft();
+        const button = this.getComposerPolishButton(textbox);
+        this.polishCurrentDraft(button, { textbox, composerKey: this.getTextboxComposerKey(textbox), fromHotkey: true });
+    }
+
+    // Minimal density hides the direct buttons behind the "AI" menu button.
+    isInputActionButtonShown(button) {
+        if (!button || button.isConnected === false) return false;
+        const group = button.parentElement?.dataset?.daitDensity ? button.parentElement : button.closest?.(".dait-input-action-group");
+        return !this.isInputActionDirectButton(button) || group?.dataset?.daitDensity !== "minimal";
+    }
+
+    getComposerPolishButton(textbox) {
+        const root = textbox?.closest?.("form, [class*='channelTextArea']");
+        const button = root?.querySelector?.(".dait-input-action-group .dait-polish-button") || null;
+        if (!button || button.isConnected === false) return null;
+        return !button.__daitTextbox || button.__daitTextbox === textbox ? button : null;
     }
 
     recordHotkey(button) {
@@ -12470,17 +12758,32 @@ module.exports = class DiscordAITranslator {
         const original = this.getHotkeyLabel();
         button.dataset.recording = "true";
         button.textContent = this.t("hotkeyRecording");
+        let listening = false;
 
         const cleanup = shortcut => {
             if (this.hotkeyRecordTimer) clearTimeout(this.hotkeyRecordTimer);
             this.hotkeyRecordTimer = null;
-            this.hotkeyRecordCleanup = null;
-            document.removeEventListener("keydown", onKeydown, true);
+            if (this.hotkeyRecordTimeout) clearTimeout(this.hotkeyRecordTimeout);
+            this.hotkeyRecordTimeout = null;
+            if (this.hotkeyRecordCleanup === cleanup) {
+                this.hotkeyRecordCleanup = null;
+                this.hotkeyRecordButton = null;
+            }
+            if (listening && typeof document !== "undefined") {
+                document.removeEventListener("keydown", onKeydown, true);
+                document.removeEventListener("pointerdown", onPointerDown, true);
+            }
+            listening = false;
             delete button.dataset.recording;
             button.textContent = shortcut || original;
         };
 
         const onKeydown = event => {
+            // The settings panel or quick-settings window is gone: stop before touching the key.
+            if (!this.isStarted || button.isConnected === false) {
+                cleanup();
+                return;
+            }
             event.preventDefault();
             event.stopPropagation();
 
@@ -12492,7 +12795,7 @@ module.exports = class DiscordAITranslator {
             if (this.isModifierOnlyKey(event.key)) return;
 
             const shortcut = this.shortcutFromEvent(event);
-            if (!shortcut) {
+            if (!shortcut || !this.isAllowedPolishHotkey(shortcut)) {
                 cleanup();
                 this.showToast(this.t("hotkeyInvalid"), "error");
                 return;
@@ -12503,23 +12806,60 @@ module.exports = class DiscordAITranslator {
             this.showToast(this.t("hotkeySaved", { shortcut }), "success");
         };
 
+        // A click anywhere else (Done, X, the backdrop, another control) ends recording.
+        const onPointerDown = event => {
+            if (event?.target === button || button.contains?.(event?.target)) return;
+            cleanup();
+        };
+
         this.hotkeyRecordCleanup = cleanup;
+        this.hotkeyRecordButton = button;
         this.hotkeyRecordTimer = setTimeout(() => {
             this.hotkeyRecordTimer = null;
             if (!this.isStarted || this.hotkeyRecordCleanup !== cleanup) return;
             document.addEventListener("keydown", onKeydown, true);
+            document.addEventListener("pointerdown", onPointerDown, true);
+            listening = true;
         }, 0);
+        // An abandoned recording must not keep swallowing keys.
+        const recordTimeoutMs = 10000;
+        this.hotkeyRecordTimeout = setTimeout(() => {
+            this.hotkeyRecordTimeout = null;
+            if (this.hotkeyRecordCleanup === cleanup) cleanup();
+        }, recordTimeoutMs);
     }
 
     clearHotkeyRecording() {
         if (this.hotkeyRecordTimer) clearTimeout(this.hotkeyRecordTimer);
         this.hotkeyRecordTimer = null;
+        if (this.hotkeyRecordTimeout) clearTimeout(this.hotkeyRecordTimeout);
+        this.hotkeyRecordTimeout = null;
         const cleanup = this.hotkeyRecordCleanup;
         this.hotkeyRecordCleanup = null;
+        this.hotkeyRecordButton = null;
         if (typeof cleanup === "function") {
             try { cleanup(); }
             catch {}
         }
+    }
+
+    // Ends a recording whose button lives inside `root` (a settings panel or modal being closed).
+    clearHotkeyRecordingWithin(root) {
+        const button = this.hotkeyRecordButton;
+        if (!this.hotkeyRecordCleanup) return;
+        if (!root || !button || button.isConnected === false || root === button || root.contains?.(button)) this.clearHotkeyRecording();
+    }
+
+    // Shift alone would turn ordinary typing (capital letters, symbols, selection keys) into the
+    // hotkey, and Ctrl+A/C/V/X/Y/Z would take over editing, so neither can be the polish shortcut.
+    isAllowedPolishHotkey(shortcut) {
+        const parts = String(shortcut || "").split("+").map(part => part.trim()).filter(Boolean);
+        const key = parts.pop();
+        if (!key || !parts.length) return false;
+        const commandModifiers = parts.filter(part => part === "Ctrl" || part === "Alt" || part === "Win");
+        if (!commandModifiers.length) return /^F\d{1,2}$/.test(key);
+        const editingShortcut = commandModifiers.length === 1 && commandModifiers[0] === "Ctrl" && /^[ACVXYZ]$/.test(key);
+        return !editingShortcut;
     }
 
     isModifierOnlyKey(key) {
@@ -12762,19 +13102,189 @@ module.exports = class DiscordAITranslator {
         }
         if (this.isExcludedExtractedTextRoot(element, excludedSelectors)) return "";
 
-        const clone = element.cloneNode?.(true);
-        if (!clone) return this.normalizeDraftRawText(element.value ?? element.textContent ?? "");
-        clone.querySelectorAll?.(excludedSelectors.join(",")).forEach(node => node.remove());
+        // Read the live editor. A detached clone is not rendered, so its innerText falls back to
+        // textContent: Slate's per-line blocks lose their line breaks and U+FEFF placeholders stay.
+        if (!element.childNodes || typeof element.childNodes[Symbol.iterator] !== "function") {
+            return this.normalizeDraftRawText(element.value ?? element.textContent ?? "");
+        }
+        return this.normalizeDraftRawText(this.readComposerDomText(element, excludedSelectors.filter(Boolean).join(",")));
+    }
 
-        if (typeof document !== "undefined") {
-            clone.querySelectorAll?.("img[alt]").forEach(image => {
-                const alt = String(image.getAttribute?.("alt") || "").trim();
-                if (!/^:.+:$/.test(alt)) return;
-                image.replaceWith(document.createTextNode(` ${alt} `));
-            });
+    // One reader for the draft snapshot, the stale check and write verification. Slate renders each
+    // line as a block element; blocks are joined with "\n". Void inlines (mentions, emoji) become the
+    // Discord token they stand for when their Slate node is reachable, otherwise their visible text.
+    readComposerDomText(root, blockedSelector = "") {
+        const lines = [];
+        if (this.collectSlateComposerLines(root, blockedSelector, lines, false)) return lines.join("\n");
+        return this.readComposerInlineText(root, blockedSelector, { blockBreaks: true });
+    }
+
+    collectSlateComposerLines(container, blockedSelector, lines, quoted) {
+        let found = false;
+        for (const child of container?.childNodes || []) {
+            if (child?.nodeType !== 1 || this.isComposerReadExcluded(child, blockedSelector)) continue;
+            const slateNode = child.getAttribute?.("data-slate-node");
+            if (slateNode === "element" && child.getAttribute?.("data-slate-inline") !== "true") {
+                found = true;
+                const childQuoted = quoted || this.getSlateElementFromDom(child)?.type === "blockQuote";
+                if (!this.collectSlateComposerLines(child, blockedSelector, lines, childQuoted)) {
+                    const text = this.readComposerInlineText(child, blockedSelector);
+                    lines.push(childQuoted && !text.startsWith(">") ? `> ${text}` : text);
+                }
+                continue;
+            }
+            if (slateNode || child.getAttribute?.("data-slate-inline") === "true" || child.getAttribute?.("data-slate-leaf") === "true") continue;
+            if (this.collectSlateComposerLines(child, blockedSelector, lines, quoted)) found = true;
+        }
+        return found;
+    }
+
+    readComposerInlineText(root, blockedSelector = "", options = {}) {
+        const BREAK = null;
+        const parts = [];
+        let lastFromSlateString = false;
+        const blockTags = new Set(["ADDRESS", "ARTICLE", "ASIDE", "BLOCKQUOTE", "DIV", "FIGCAPTION", "FIGURE", "FOOTER", "H1", "H2", "H3", "H4", "H5", "H6", "HEADER", "LI", "MAIN", "NAV", "OL", "P", "PRE", "SECTION", "TABLE", "TR", "UL"]);
+        const push = (text, fromSlateString = false) => {
+            parts.push(text);
+            lastFromSlateString = fromSlateString;
+        };
+        const visit = (node, isRoot, inSlateString) => {
+            if (!node) return;
+            if (node.nodeType === 3) {
+                push(String(node.nodeValue || "").replace(/\uFEFF/g, ""), inSlateString);
+                return;
+            }
+            if (node.nodeType !== 1) return;
+            if (!isRoot && this.isComposerReadExcluded(node, blockedSelector)) return;
+            const zeroWidth = node.getAttribute?.("data-slate-zero-width");
+            if ((zeroWidth !== null && zeroWidth !== undefined) || node.getAttribute?.("data-slate-spacer") === "true") return;
+            if (!isRoot && node.getAttribute?.("data-slate-void") === "true") {
+                push(this.serializeSlateVoidElement(node, blockedSelector));
+                return;
+            }
+            const tagName = String(node.tagName || node.nodeName || "").toUpperCase();
+            if (tagName === "BR") {
+                push("\n");
+                return;
+            }
+            if (tagName === "IMG") {
+                push(this.getComposerImageText(node, false));
+                return;
+            }
+            const isBlock = Boolean(options.blockBreaks) && !isRoot && blockTags.has(tagName);
+            if (isBlock) push(BREAK);
+            const childInSlateString = inSlateString || node.getAttribute?.("data-slate-string") === "true";
+            for (const child of node.childNodes || []) visit(child, false, childInSlateString);
+            if (isBlock) push(BREAK);
+        };
+        visit(root, true, false);
+
+        // slate-react renders one extra "\n" after a block's last string when that string ends with "\n".
+        if (!options.blockBreaks && lastFromSlateString && String(parts[parts.length - 1] || "").endsWith("\n")) {
+            parts[parts.length - 1] = parts[parts.length - 1].slice(0, -1);
         }
 
-        return this.normalizeDraftRawText(clone.innerText ?? clone.textContent ?? "");
+        let output = "";
+        let pendingBreak = false;
+        for (const part of parts) {
+            if (part === BREAK) {
+                pendingBreak = output.length > 0;
+                continue;
+            }
+            if (!part) continue;
+            if (pendingBreak && !output.endsWith("\n")) output += "\n";
+            pendingBreak = false;
+            output += part;
+        }
+        return output;
+    }
+
+    isComposerReadExcluded(node, blockedSelector = "") {
+        let excluded = false;
+        try { excluded = Boolean(blockedSelector && node.matches?.(blockedSelector)); }
+        catch {}
+        return excluded || this.isForeignTranslationElement(node);
+    }
+
+    serializeSlateVoidElement(node, blockedSelector = "") {
+        const token = this.serializeSlateElementToken(this.getSlateElementFromDom(node));
+        if (token !== null) return token;
+        const image = this.findComposerVoidImage(node);
+        const imageText = image ? this.getComposerImageText(image, true) : "";
+        if (imageText) return imageText;
+        const label = [...(node.childNodes || [])].map(child => this.readComposerInlineText(child, blockedSelector)).join("");
+        if (label) return label;
+        return String(node.textContent || "").replace(/[\uFEFF\u200b]/g, "");
+    }
+
+    findComposerVoidImage(node) {
+        for (const child of node?.childNodes || []) {
+            if (child?.nodeType !== 1 || child.getAttribute?.("data-slate-spacer") === "true") continue;
+            if (String(child.tagName || "").toUpperCase() === "IMG") return child;
+            const nested = this.findComposerVoidImage(child);
+            if (nested) return nested;
+        }
+        return null;
+    }
+
+    getComposerImageText(image, insideVoid = false) {
+        const alt = String(image?.getAttribute?.("alt") || "").trim();
+        if (/^:[^:\s]+:$/.test(alt)) {
+            const src = String(image.getAttribute?.("src") || "");
+            const emojiId = [image.getAttribute?.("data-id"), src.match(/\/emojis\/(\d{5,25})\./)?.[1]]
+                .map(value => String(value || "").trim())
+                .find(value => /^\d{5,25}$/.test(value));
+            if (!emojiId) return alt;
+            const animated = image.getAttribute?.("data-animated") === "true" || /\.gif(?:[?#]|$)|[?&]animated=true/i.test(src);
+            return `<${animated ? "a" : ""}${alt}${emojiId}>`;
+        }
+        return insideVoid ? alt : "";
+    }
+
+    getSlateElementFromDom(node) {
+        if (!node || typeof node !== "object") return null;
+        try {
+            const key = Object.keys(node).find(name => name.startsWith("__reactFiber$") || name.startsWith("__reactInternalInstance$"));
+            let fiber = key ? node[key] : null;
+            for (let depth = 0; fiber && depth < 6; depth++) {
+                const element = fiber.memoizedProps?.element;
+                if (element && typeof element === "object" && typeof element.type === "string" && Array.isArray(element.children)) return element;
+                fiber = fiber.return;
+            }
+        }
+        catch {}
+        return null;
+    }
+
+    // Discord's message tokens for Slate void inlines; null when the node is not one we know.
+    serializeSlateElementToken(element) {
+        if (!element || typeof element !== "object") return null;
+        const id = value => {
+            const text = String(value ?? "").trim();
+            return /^\d{5,25}$/.test(text) ? text : "";
+        };
+        const type = String(element.type || "");
+        const userId = id(element.userId);
+        if (userId) return `<@${userId}>`;
+        const roleId = id(element.roleId);
+        if (roleId) return `<@&${roleId}>`;
+        const channelId = id(element.channelId);
+        if (channelId && /channel/i.test(type)) return `<#${channelId}>`;
+        const emoji = element.emoji;
+        if (emoji && typeof emoji === "object") {
+            const name = String(emoji.name || "").replace(/^:+|:+$/g, "").trim();
+            const emojiId = id(emoji.id ?? emoji.emojiId);
+            if (emojiId && name) return `<${emoji.animated ? "a" : ""}:${name}:${emojiId}>`;
+            const surrogate = [emoji.surrogate, emoji.surrogates, emoji.optionallyDiverseSequence]
+                .find(value => typeof value === "string" && value);
+            if (surrogate) return surrogate;
+            if (name) return `:${name}:`;
+        }
+        if (type === "textMention" && typeof element.name === "string" && element.name.trim()) {
+            const name = element.name.trim();
+            return name.startsWith("@") ? name : `@${name}`;
+        }
+        return null;
     }
 
     isExcludedExtractedTextRoot(element, excludedSelectors = []) {
@@ -12918,6 +13428,16 @@ module.exports = class DiscordAITranslator {
             return { ok: false, reason: this.getTextboxReplacementBlockedReason(options), actual: this.getTextboxTextSafe(textbox) };
         }
         const previousRawText = this.getTextboxRawTextSafe(textbox);
+        // Shared by the write attempt and the rollback so the draft is undone at most once.
+        const writeOptions = { ...options, rollback: { undoAttempted: false } };
+        const failAfterAttempt = async () => {
+            // Never roll back over the user's new input, a newer write, or a remounted composer.
+            if (!this.isTextboxReplacementWriteAllowed(textbox, writeOptions)) {
+                return { ok: false, reason: "write-cancelled", actual: this.getTextboxTextSafe(textbox) };
+            }
+            await this.restoreTextboxSnapshotAfterFailedReplace(textbox, previousRawText, value, writeOptions);
+            return { ok: false, reason: "verification-failed", actual: this.getTextboxTextSafe(textbox) };
+        };
 
         if (this.isPlainTextTextbox(textbox)) {
             const result = this.replaceTextboxTextSafely(textbox, value, options);
@@ -12938,26 +13458,23 @@ module.exports = class DiscordAITranslator {
                 return { ok: true, method: "async-retry", actual: value };
             }
 
-            await this.restoreTextboxSnapshotAfterFailedReplace(textbox, previousRawText, value);
-            return { ok: false, reason: "verification-failed", actual: this.getTextboxTextSafe(textbox) };
+            return failAfterAttempt();
         }
 
         if (this.isRichDiscordTextbox(textbox)) {
-            if (await this.replaceDiscordRichTextboxTextAtomically(textbox, value, options)) {
+            if (await this.replaceDiscordRichTextboxTextAtomically(textbox, value, writeOptions)) {
                 this.finishTextboxReplacement(textbox, options);
                 return { ok: true, method: "slate-atomic", actual: value };
             }
-            await this.restoreTextboxSnapshotAfterFailedReplace(textbox, previousRawText, value);
-            return { ok: false, reason: "verification-failed", actual: this.getTextboxTextSafe(textbox) };
+            return failAfterAttempt();
         }
 
-        if (await this.replaceRichTextboxTextAsync(textbox, value)) {
+        if (await this.replaceRichTextboxTextAsync(textbox, value, writeOptions)) {
             this.finishTextboxReplacement(textbox, options);
             return { ok: true, method: "async-rich", actual: value };
         }
 
-        await this.restoreTextboxSnapshotAfterFailedReplace(textbox, previousRawText, value);
-        return { ok: false, reason: "verification-failed", actual: this.getTextboxTextSafe(textbox) };
+        return failAfterAttempt();
     }
 
     replaceTextboxTextSafely(textbox, text, options = {}) {
@@ -13092,10 +13609,10 @@ module.exports = class DiscordAITranslator {
         }
     }
 
-    async replaceRichTextboxTextAsync(textbox, text) {
-        if (this.isRichDiscordTextbox(textbox)) return this.replaceDiscordRichTextboxTextAtomically(textbox, text);
-        if (!await this.clearRichTextboxTextAsync(textbox)) return false;
-        return this.insertRichTextboxTextAsync(textbox, text);
+    async replaceRichTextboxTextAsync(textbox, text, options = {}) {
+        if (this.isRichDiscordTextbox(textbox)) return this.replaceDiscordRichTextboxTextAtomically(textbox, text, options);
+        if (!await this.clearRichTextboxTextAsync(textbox, options)) return false;
+        return this.insertRichTextboxTextAsync(textbox, text, options);
     }
 
     async replaceDiscordRichTextboxTextAtomically(textbox, text, options = {}) {
@@ -13104,7 +13621,7 @@ module.exports = class DiscordAITranslator {
             ? this.normalizeDraftRawText(options.expectedPreviousText)
             : this.getTextboxRawTextSafe(textbox);
         if (!this.isTextboxReplacementWriteAllowed(textbox, options, { checkExpected: true })) return false;
-        if (this.normalizeExtractedText(previousText) === this.normalizeExtractedText(value)) {
+        if (previousText === this.normalizeDraftRawText(value)) {
             return await this.waitForTextboxStableTextEqual(textbox, value)
                 && this.isTextboxReplacementWriteAllowed(textbox, options);
         }
@@ -13124,9 +13641,10 @@ module.exports = class DiscordAITranslator {
                 return this.isTextboxReplacementWriteAllowed(textbox, options);
             }
 
-            const actual = this.getTextboxTextSafe(textbox);
-            if (actual && actual !== previousText && actual !== value) {
-                await this.tryUndoTextboxEdit(textbox, previousText);
+            // Raw against raw: a normalized read never equals a draft with double or trailing spaces.
+            const actual = this.getTextboxRawTextSafe(textbox);
+            if (actual && actual !== previousText && actual !== this.normalizeDraftRawText(value)) {
+                if (this.isTextboxReplacementWriteAllowed(textbox, options)) await this.tryUndoTextboxEdit(textbox, previousText, options);
                 return false;
             }
         }
@@ -13134,7 +13652,7 @@ module.exports = class DiscordAITranslator {
         return false;
     }
 
-    async clearRichTextboxTextAsync(textbox) {
+    async clearRichTextboxTextAsync(textbox, options = {}) {
         if (this.isTextboxEmpty(textbox)) return true;
 
         const attempts = [
@@ -13171,6 +13689,7 @@ module.exports = class DiscordAITranslator {
         ];
 
         for (const attempt of attempts) {
+            if (!this.isTextboxReplacementWriteAllowed(textbox, options)) return false;
             attempt();
             if (await this.waitForTextboxStableEmpty(textbox)) return true;
         }
@@ -13178,7 +13697,7 @@ module.exports = class DiscordAITranslator {
         return false;
     }
 
-    async insertRichTextboxTextAsync(textbox, text) {
+    async insertRichTextboxTextAsync(textbox, text, options = {}) {
         const attempts = [
             () => this.dispatchTextboxPaste(textbox, text),
             () => this.dispatchTextboxBeforeInput(textbox, text, "insertFromPaste"),
@@ -13194,29 +13713,33 @@ module.exports = class DiscordAITranslator {
         ];
 
         for (const attempt of attempts) {
-            if (!this.isTextboxEmpty(textbox) && !await this.clearRichTextboxTextAsync(textbox)) return false;
+            if (!this.isTextboxEmpty(textbox) && !await this.clearRichTextboxTextAsync(textbox, options)) return false;
+            if (!this.isTextboxReplacementWriteAllowed(textbox, options)) return false;
             attempt();
             if (await this.waitForTextboxStableTextEqual(textbox, text)) return true;
             if (!this.isTextboxEmpty(textbox) && !this.isTextboxTextEqual(textbox, text)) {
-                if (!await this.clearRichTextboxTextAsync(textbox)) return false;
+                if (!await this.clearRichTextboxTextAsync(textbox, options)) return false;
             }
         }
 
         return false;
     }
 
-    async tryRestoreTextboxTextAfterFailedReplace(textbox, text) {
+    async tryRestoreTextboxTextAfterFailedReplace(textbox, text, options = {}) {
         if (!text) return;
-        if (!await this.clearRichTextboxTextAsync(textbox)) return;
-        await this.insertRichTextboxTextAsync(textbox, text);
+        if (!await this.clearRichTextboxTextAsync(textbox, options)) return;
+        if (!this.isTextboxReplacementWriteAllowed(textbox, options)) return;
+        await this.insertRichTextboxTextAsync(textbox, text, options);
     }
 
-    async restoreTextboxSnapshotAfterFailedReplace(textbox, previousText, attemptedText = "") {
+    // Stops as soon as options.writeToken is no longer current (user input, a newer write, remount).
+    async restoreTextboxSnapshotAfterFailedReplace(textbox, previousText, attemptedText = "", options = {}) {
         if (!textbox || textbox.isConnected === false) return false;
-        const previous = String(previousText || "");
+        const previous = this.normalizeDraftRawText(previousText);
         if (!previous) return false;
+        if (!this.isTextboxReplacementWriteAllowed(textbox, options)) return false;
         const current = this.getTextboxRawTextSafe(textbox);
-        if (current === previous || current === String(attemptedText || "")) return false;
+        if (current === previous || current === this.normalizeDraftRawText(attemptedText)) return false;
 
         if (this.isPlainTextTextbox(textbox)) {
             this.replacePlainTextTextboxValue(textbox, previous);
@@ -13224,12 +13747,14 @@ module.exports = class DiscordAITranslator {
         }
 
         if (this.isRichDiscordTextbox(textbox)) {
-            if (await this.tryUndoTextboxEdit(textbox, previous)) return true;
-            await this.tryRestoreTextboxTextAfterFailedReplace(textbox, previous);
+            if (!options.rollback?.undoAttempted && await this.tryUndoTextboxEdit(textbox, previous, options)) return true;
+            if (!this.isTextboxReplacementWriteAllowed(textbox, options)) return false;
+            if (this.isTextboxTextEqual(textbox, previous)) return true;
+            await this.tryRestoreTextboxTextAfterFailedReplace(textbox, previous, options);
             return this.isTextboxTextEqual(textbox, previous);
         }
 
-        await this.tryRestoreTextboxTextAfterFailedReplace(textbox, previous);
+        await this.tryRestoreTextboxTextAfterFailedReplace(textbox, previous, options);
         return this.isTextboxTextEqual(textbox, previous);
     }
 
@@ -13386,9 +13911,10 @@ module.exports = class DiscordAITranslator {
         return true;
     }
 
-    async tryUndoTextboxEdit(textbox, expectedText = "") {
-        const expected = this.normalizeExtractedText(expectedText);
-        if (!expected) return false;
+    async tryUndoTextboxEdit(textbox, expectedText = "", options = {}) {
+        const expected = this.normalizeDraftRawText(expectedText);
+        if (!this.normalizeExtractedText(expected)) return false;
+        if (options.rollback) options.rollback.undoAttempted = true;
         const attempts = [
             () => this.dispatchTextboxBeforeInput(textbox, "", "historyUndo"),
             () => this.dispatchTextboxKeyboardShortcut(textbox, "z", "KeyZ", { ctrlKey: true }),
@@ -13403,8 +13929,12 @@ module.exports = class DiscordAITranslator {
         ];
 
         for (const attempt of attempts) {
+            if (!this.isTextboxReplacementWriteAllowed(textbox, options)) return false;
+            const before = this.getTextboxRawTextSafe(textbox);
             attempt();
             if (await this.waitForTextboxStableTextEqual(textbox, expected)) return true;
+            // One undo step at most: a second one would unwind the user's own earlier typing.
+            if (this.getTextboxRawTextSafe(textbox) !== before) return false;
         }
         return false;
     }
@@ -13757,6 +14287,15 @@ module.exports = class DiscordAITranslator {
 
     setButtonBusy(button, busy, text) {
         if (!button) return;
+        if (button.dataset?.daitFullLabel || button.classList?.contains?.("dait-input-action-menu-button")) {
+            // Composer buttons keep their (density-aware) label and show busy as a state instead.
+            button.disabled = Boolean(busy);
+            button.classList?.toggle?.("dait-busy", Boolean(busy));
+            if (busy) button.setAttribute?.("aria-busy", "true");
+            else button.removeAttribute?.("aria-busy");
+            this.renderInputActionButtonLabel(button);
+            return;
+        }
         button.disabled = busy;
         button.textContent = text;
     }
