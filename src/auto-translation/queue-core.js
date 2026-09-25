@@ -22,6 +22,8 @@ const {
     AUTO_TRANSLATE_MAX_CONCURRENCY,
     AUTO_TRANSLATE_MIN_BATCH_SIZE,
     AUTO_TRANSLATE_MIN_CONCURRENCY,
+    AUTO_TRANSLATE_PARTIAL_RESULT_MAX,
+    AUTO_TRANSLATE_PARTIAL_RESULT_TTL_MS,
     AUTO_TRANSLATE_PREFETCH_RANGES,
     AUTO_TRANSLATE_PROVIDER_FAILURE_TTL,
     AUTO_TRANSLATE_PROVIDER_REQUEST_BATCH_MAX,
@@ -34,6 +36,8 @@ const {
     AUTO_TRANSLATE_SCROLL_STILL_MS,
     AUTO_TRANSLATE_TERMINAL_FAILURE_TTL,
     AUTO_TRANSLATE_TRANSIENT_FAILURE_TTL,
+    AUTO_TRANSLATE_TRUNCATED_FAILURE_MAX_TTL,
+    AUTO_TRANSLATE_TRUNCATED_FAILURE_TTL,
     AUTO_TRANSLATE_VIEWPORT_JUMP_COOLDOWN_MS,
     AUTO_TRANSLATE_VIEWPORT_JUMP_SETTLE_MS,
     AUTO_TRANSLATE_VIEWPORT_SETTLE_MS,
@@ -83,6 +87,10 @@ class AutoTranslationQueueCore {
         this.plugin.autoTranslationQueue = [];
         this.plugin.autoTranslationQueuedKeys.clear();
         if (!options.preserveVersion) {
+            // The in-flight work below is orphaned: stop its HTTP requests too, so they do not
+            // keep a local server busy while the next scan starts new ones.
+            this.plugin.abortAutoTranslationRequests("invalidated");
+            this.plugin.autoTranslationPartialResults?.clear?.();
             this.plugin.autoTranslationInFlight = 0;
             this.plugin.autoTranslationInFlightKeys.clear();
             this.plugin.autoTranslationVisibleLongInFlightKeys.clear();
@@ -755,7 +763,9 @@ class AutoTranslationQueueCore {
     shouldRetainAutoTranslationFailureItem(item, error) {
         if (!item?.cacheKey || item?.daitPrefetchRequest) return false;
         const type = this.plugin.getAutoTranslationFailureType(error);
-        if (!["local-unavailable", "timeout", "network", "server", "rate-limit", "truncated"].includes(type)) return false;
+        // A truncated output is not retained: it already had a retry with a larger limit, and
+        // requeueing it every few seconds re-sent a full-length generation forever.
+        if (!["local-unavailable", "timeout", "network", "server", "rate-limit"].includes(type)) return false;
         return this.plugin.shouldRetainAutoTranslationProviderBlockedItem(item);
     }
 
@@ -1206,9 +1216,11 @@ class AutoTranslationQueueCore {
         const startedAt = Date.now();
         try {
             if (this.plugin.isAutoTranslationWorkCurrent(item)) this.plugin.renderPendingAutoTranslationLoadingSafely(item);
-            const translated = await this.plugin.runAutoTranslationTask(item.text, item.requestOptions, {
-                heartbeat: () => this.plugin.heartbeatAutoTranslationInFlightItem(item)
-            });
+            const taskOptions = {
+                heartbeat: () => this.plugin.heartbeatAutoTranslationInFlightItem(item),
+                signal: this.plugin.getAutoTranslationAbortSignal()
+            };
+            const translated = await this.plugin.runAutoTranslationTask(item.text, item.requestOptions, taskOptions);
             if (this.plugin.isAutoTranslationWorkCurrent(item)) {
                 this.plugin.logDiagnostic("auto.message", "success", {
                     ...this.plugin.getAutoTranslationDiagnosticMeta(item, DIAGNOSTIC_MESSAGE_STATES.VALIDATING, DIAGNOSTIC_REASON_CODES.OUTPUT_RECEIVED),
@@ -1225,7 +1237,9 @@ class AutoTranslationQueueCore {
                     DIAGNOSTIC_REASON_CODES.OUTPUT_RECEIVED,
                     { ms: Date.now() - startedAt }
                 );
-                this.plugin.renderAutoTranslationResultSafely(item, translated);
+                this.plugin.renderAutoTranslationResultSafely(item, translated, taskOptions.longTextPartialInfo
+                    ? { partialInfo: taskOptions.longTextPartialInfo }
+                    : undefined);
             }
         }
         catch (error) {
@@ -1272,14 +1286,17 @@ class AutoTranslationQueueCore {
             });
 
             let translations = [];
+            let requestError = null;
+            const taskOptions = { signal: this.plugin.getAutoTranslationAbortSignal() };
             try {
-                translations = await this.plugin.runAutoTranslationBatchTask(items.map(item => item.text), items[0]?.requestOptions);
+                translations = await this.plugin.runAutoTranslationBatchTask(items.map(item => item.text), items[0]?.requestOptions, taskOptions);
             }
             catch (error) {
                 if (!items.some(item => this.plugin.isAutoTranslationWorkCurrent(item))) {
                     pending.clear();
                 }
                 else if (this.plugin.shouldFallbackAutoTranslationBatchRequestError(error)) {
+                    requestError = error;
                     this.plugin.logDiagnostic("auto.batch", "fallback", {
                         type: this.plugin.getAutoTranslationFailureType(error),
                         batchSize: items.length,
@@ -1358,7 +1375,10 @@ class AutoTranslationQueueCore {
                 });
             }
 
-            if (pending.size && !this.plugin.isAutoTranslationStrictRetryEnabled()) {
+            if (pending.size && requestError && !translations.length && !this.plugin.isAutoTranslationStrictRetryEnabled()) {
+                this.plugin.settleFailedAutoTranslationBatchRequest(pending, requestError);
+            }
+            else if (pending.size && !this.plugin.isAutoTranslationStrictRetryEnabled()) {
                 pending.forEach(item => {
                     if (this.plugin.isAutoTranslationWorkCurrent(item)) {
                         this.plugin.logAutoTranslationMessageState(
@@ -1375,8 +1395,8 @@ class AutoTranslationQueueCore {
                 });
             }
             else {
-                await this.plugin.runAutoTranslationBatchRetryItems(pending);
-                await this.plugin.runAutoTranslationFallbackItems(pending);
+                await this.plugin.runAutoTranslationBatchRetryItems(pending, taskOptions);
+                await this.plugin.runAutoTranslationFallbackItems(pending, taskOptions);
             }
 
             pending.forEach(item => {
@@ -1412,6 +1432,45 @@ class AutoTranslationQueueCore {
                 this.plugin.queueScan();
             }
         }
+    }
+
+    // A batch request that failed as a whole says nothing about each message's output, so it must
+    // not end as a final invalid-output failure. An unusable batch reply (unreadable, empty or cut
+    // off) is sent again as single requests; a request error (timeout, network, client error) gets
+    // that error's own backoff, with the provider marked once for the whole batch.
+    settleFailedAutoTranslationBatchRequest(pending, error) {
+        const current = [...pending].filter(item => this.plugin.isAutoTranslationWorkCurrent(item));
+        const formatError = this.plugin.isAutoTranslationBatchFormatError(error);
+        this.plugin.logDiagnostic("auto.batch", formatError ? "single-fallback" : "request-failed", {
+            type: this.plugin.getAutoTranslationFailureType(error),
+            batchSize: pending.size,
+            current: current.length
+        });
+        if (!formatError && current.length && this.plugin.shouldMarkAutoTranslationProviderFailureForItem(current[0], error)) {
+            this.plugin.markAutoTranslationProviderFailure(current[0]?.requestOptions, error);
+        }
+        current.forEach(item => {
+            pending.delete(item);
+            if (formatError) {
+                item.daitSingleRequest = true;
+                this.plugin.requeueAutoTranslationItem(item, { allowActiveRequeue: true, preserveLoading: true });
+                return;
+            }
+            this.plugin.logAutoTranslationMessageState(
+                "auto.message.state",
+                "failed",
+                item,
+                DIAGNOSTIC_MESSAGE_STATES.FAILED,
+                DIAGNOSTIC_REASON_CODES.FAILURE,
+                { type: this.plugin.getAutoTranslationFailureType(error), batchRequestFailed: true }
+            );
+            this.plugin.markAutoTranslationFailureSafely(item, error, { markProvider: false });
+        });
+    }
+
+    isAutoTranslationBatchFormatError(error) {
+        if (this.plugin.isAutoBatchFallbackError(error) || error?.modelOutputTruncated) return true;
+        return this.plugin.getAutoTranslationFailureType(error) === "invalid-output";
     }
 
     requeueAutoTranslationItem(item, options = {}) {
@@ -1616,6 +1675,86 @@ class AutoTranslationQueueCore {
         }
     }
 
+    // Partial results (for example a long message with a failed chunk) must not enter the
+    // persistent cache, but are kept here briefly so a rebuilt or prefetched message is redrawn
+    // instead of requested again. A complete cached result replaces them.
+    rememberAutoTranslationPartialResult(cacheKey, text, translated, meta = {}) {
+        const key = String(cacheKey || "");
+        const value = String(translated || "").trim();
+        if (!key || !value) return;
+        if (!this.plugin.autoTranslationPartialResults?.set) this.plugin.autoTranslationPartialResults = new Map();
+        const now = Date.now();
+        const partialInfo = meta.partialInfo && typeof meta.partialInfo === "object"
+            ? {
+                missingSegments: Array.isArray(meta.partialInfo.missingSegments) ? [...meta.partialInfo.missingSegments] : [],
+                totalSegments: Number(meta.partialInfo.totalSegments || 0) || 0
+            }
+            : null;
+        this.plugin.autoTranslationPartialResults.delete(key);
+        this.plugin.autoTranslationPartialResults.set(key, {
+            sourceSig: this.plugin.getStrongTextFingerprint(text),
+            translated: value,
+            partialInfo,
+            validationQuality: String(meta.validationQuality || ""),
+            validationReason: String(meta.validationReason || ""),
+            at: now,
+            expiresAt: now + AUTO_TRANSLATE_PARTIAL_RESULT_TTL_MS
+        });
+        this.plugin.pruneAutoTranslationPartialResults(now);
+    }
+
+    getAutoTranslationPartialResult(cacheKey, text, now = Date.now()) {
+        const key = String(cacheKey || "");
+        const entry = key ? this.plugin.autoTranslationPartialResults?.get?.(key) : null;
+        if (!entry) return null;
+        if (Number(entry.expiresAt || 0) <= now || entry.sourceSig !== this.plugin.getStrongTextFingerprint(text)) {
+            this.plugin.autoTranslationPartialResults.delete(key);
+            return null;
+        }
+        return entry;
+    }
+
+    clearAutoTranslationPartialResult(...cacheKeys) {
+        if (!this.plugin.autoTranslationPartialResults?.size) return;
+        cacheKeys.forEach(cacheKey => {
+            if (cacheKey) this.plugin.autoTranslationPartialResults.delete(String(cacheKey));
+        });
+    }
+
+    pruneAutoTranslationPartialResults(now = Date.now()) {
+        const results = this.plugin.autoTranslationPartialResults;
+        if (!results?.size) return;
+        for (const [key, entry] of [...results.entries()]) {
+            if (Number(entry?.expiresAt || 0) <= now) results.delete(key);
+        }
+        while (results.size > AUTO_TRANSLATE_PARTIAL_RESULT_MAX) {
+            results.delete(results.keys().next().value);
+        }
+    }
+
+    // Every request made for queued auto-translation work carries this signal. A full invalidation
+    // orphans that work and aborts the signal; work started afterwards gets a fresh one.
+    getAutoTranslationAbortSignal() {
+        if (typeof AbortController === "undefined") return undefined;
+        if (!this.plugin.autoTranslationAbortController || this.plugin.autoTranslationAbortController.signal.aborted) {
+            this.plugin.autoTranslationAbortController = new AbortController();
+        }
+        return this.plugin.autoTranslationAbortController.signal;
+    }
+
+    abortAutoTranslationRequests(reason = "invalidated") {
+        const controller = this.plugin.autoTranslationAbortController;
+        this.plugin.autoTranslationAbortController = null;
+        if (!controller || controller.signal.aborted) return false;
+        const inFlight = Number(this.plugin.autoTranslationInFlight || 0);
+        try {
+            controller.abort();
+        }
+        catch {}
+        if (inFlight) this.plugin.logDiagnostic("auto.queue.abort", "ok", { reason, inFlight });
+        return true;
+    }
+
     createAutoTranslationInFlightToken(cacheKey = "") {
         this.plugin.autoTranslationInFlightTokenCounter++;
         return `${Date.now().toString(36)}:${this.plugin.autoTranslationInFlightTokenCounter.toString(36)}:${this.plugin.getTextFingerprint(cacheKey)}`;
@@ -1738,6 +1877,7 @@ class AutoTranslationQueueCore {
             return;
         }
         this.plugin.setTranslationCache(cacheKey, translated);
+        this.plugin.clearAutoTranslationPartialResult(cacheKey);
         if (this.plugin.shouldStoreAutoTextTranslationCache(text, requestOptions, translated)) {
             this.plugin.setAutoTextTranslationCache(text, requestOptions, translated);
         }
@@ -1839,6 +1979,9 @@ class AutoTranslationQueueCore {
                 this.plugin.pruneAutoTranslationFailureMapSize();
                 this.plugin.markAutoTextTranslationFailure(item, error, failure);
             }
+            else {
+                this.plugin.rememberAutoTranslationFailureHistory(item.cacheKey, failure);
+            }
             if (options.markProvider !== false) {
                 const retainedKeys = retained && item?.cacheKey ? new Set([item.cacheKey]) : new Set();
                 this.plugin.markAutoTranslationProviderFailure(item.requestOptions, error, failure, { skipCacheKeys: retainedKeys });
@@ -1936,12 +2079,27 @@ class AutoTranslationQueueCore {
             if (retained && item?.cacheKey) retainedKeys.add(item.cacheKey);
         }
         if (item?.cacheKey && retainedKeys.has(item.cacheKey)) {
+            // The retained item retries on its own delay, but its count must survive so the
+            // next failure backs off further.
+            this.plugin.rememberAutoTranslationFailureHistory(item.cacheKey, failure);
             this.plugin.autoTranslationFailures.delete(item.cacheKey);
             this.plugin.clearAutoTextTranslationFailure(item.text, item.requestOptions);
         }
         if (this.plugin.shouldMarkAutoTranslationProviderFailureForItem(item, error, options)) this.plugin.markAutoTranslationProviderFailure(item.requestOptions, error, failure, { skipCacheKeys: retainedKeys });
         if (!failure.terminal) this.plugin.scheduleAutoTranslationRetryScan(failure.retryAfterMs);
         if (!storageError?.autoTranslationWeakFailure) this.plugin.showAutoTranslateError(error);
+    }
+
+    // A result that cannot be drawn (its emoji images cannot be restored) is recorded as a final
+    // invalid output, so the scan does not request the same message again on every pass.
+    markAutoTranslationUndrawableResult(cacheKey, reason = "emoji-restore-failed") {
+        const key = String(cacheKey || "");
+        if (!key) return null;
+        const failure = this.plugin.createAutoTranslationFailure(key, this.plugin.createFinalInvalidAutoTranslationError(reason));
+        this.plugin.autoTranslationFailures.set(key, failure);
+        this.plugin.pruneAutoTranslationFailureMapSize();
+        this.plugin.clearAutoTranslationPartialResult(key);
+        return failure;
     }
 
     getAutoTranslationStorageErrorForItem(item, error) {
@@ -1951,6 +2109,8 @@ class AutoTranslationQueueCore {
         storageError.autoTranslationTerminalFailure = Boolean(error?.autoTranslationTerminalFailure);
         storageError.autoTranslationInvalidReason = error?.autoTranslationInvalidReason || this.plugin.getAutoTranslationFailureType(error) || "invalid-output";
         storageError.autoTranslationWeakFailure = true;
+        // Keep the truncated type so its growing backoff applies to prefetch too.
+        if (error?.modelOutputTruncated) storageError.modelOutputTruncated = true;
         storageError.retryAfterMs = Math.min(
             storageError.autoTranslationTerminalFailure ? AUTO_TRANSLATE_FINAL_INVALID_OUTPUT_FAILURE_TTL : AUTO_TRANSLATE_INVALID_OUTPUT_FAILURE_TTL,
             Math.max(1000, Number(error?.retryAfterMs || AUTO_TRANSLATE_INVALID_OUTPUT_FAILURE_TTL))
@@ -2095,8 +2255,13 @@ class AutoTranslationQueueCore {
     }
 
     getAutoTranslationRetryAfter(error, count = 1) {
-        if (Number(error?.retryAfterMs) > 0) return Math.min(AUTO_TRANSLATE_FAILURE_MAX_TTL, Number(error.retryAfterMs));
         const type = this.plugin.getAutoTranslationFailureType(error);
+        // A truncated output normally reaches this point after a retry with a larger max_tokens, so
+        // its fixed provider hint (a few seconds) is ignored and the wait doubles with each failure.
+        if (type === "truncated") {
+            return Math.min(AUTO_TRANSLATE_TRUNCATED_FAILURE_MAX_TTL, AUTO_TRANSLATE_TRUNCATED_FAILURE_TTL * Math.pow(2, Math.max(0, count - 1)));
+        }
+        if (Number(error?.retryAfterMs) > 0) return Math.min(AUTO_TRANSLATE_FAILURE_MAX_TTL, Number(error.retryAfterMs));
         if (type === "local-unavailable") return LOCAL_PROVIDER_UNAVAILABLE_RETRY_MS;
         if (["quota", "rate-limit", "server", "parse"].includes(type)) {
             return Math.min(AUTO_TRANSLATE_FAILURE_MAX_TTL, AUTO_TRANSLATE_PROVIDER_FAILURE_TTL * Math.pow(2, Math.max(0, count - 1)));

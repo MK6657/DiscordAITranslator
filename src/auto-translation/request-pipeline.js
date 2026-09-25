@@ -27,6 +27,7 @@ const {
     DIAGNOSTIC_REASON_CODES,
     LOCAL_PROVIDER_HEALTH_RETRY_MS,
     MANUAL_LONG_TEXT_WHOLE_PASS_MAX_LENGTH,
+    MANUAL_TRANSLATION_REQUEST_BUDGET,
     MODEL_REQUEST_TIMEOUT_MS,
     TRANSLATION_VALIDATION_QUALITIES
 } = require("../constants");
@@ -392,6 +393,31 @@ class AutoTranslationRequestPipeline {
             }
         }
 
+        // A partial result is never cached, but its text is kept briefly for redraw so a rebuilt or
+        // prefetched message is not requested again. While its own render is still pending, the
+        // active-work dedupe below applies instead.
+        const partialResult = this.plugin.getAutoTranslationPartialResult(cacheKey, text, now);
+        if (partialResult && !this.plugin.hasActiveAutoTranslationKey(cacheKey)) {
+            return {
+                action: "render-cache",
+                status: "cache-hit",
+                state: DIAGNOSTIC_MESSAGE_STATES.CACHE_HIT,
+                reasonCode: DIAGNOSTIC_REASON_CODES.CACHE_HIT,
+                cacheKey,
+                requestOptions: targetRequestOptions,
+                cachedTranslation: partialResult.translated,
+                renderMeta: {
+                    partial: true,
+                    validationQuality: partialResult.validationQuality,
+                    validationReason: partialResult.validationReason,
+                    partialInfo: partialResult.partialInfo
+                },
+                canRender: canRenderCacheHit,
+                counts: { eligible: 1, cacheHits: 1 },
+                extra: { partialResult: true, canRender: canRenderCacheHit, targetVisible }
+            };
+        }
+
         const recentRender = this.plugin.getRecentAutoTranslationRender(cacheKey, text, targetRequestOptions, now);
         if (recentRender) {
             return {
@@ -584,7 +610,8 @@ class AutoTranslationRequestPipeline {
                 decision.cacheKey,
                 decision.canRender,
                 decision.requestOptions,
-                candidate.textOptions
+                candidate.textOptions,
+                decision.renderMeta || null
             );
             return;
         }
@@ -699,7 +726,7 @@ class AutoTranslationRequestPipeline {
         return this.plugin.translationScheduler.isLongItem(item);
     }
 
-    async runAutoTranslationFallbackItems(pending) {
+    async runAutoTranslationFallbackItems(pending, taskOptions = {}) {
         const queue = this.plugin.takeAutoTranslationFallbackQueue(pending);
         if (queue.length) this.plugin.logDiagnostic("auto.fallback", "start", { count: queue.length, pending: pending.size });
         for (const item of queue) {
@@ -722,7 +749,7 @@ class AutoTranslationRequestPipeline {
                     DIAGNOSTIC_MESSAGE_STATES.RETRYING,
                     DIAGNOSTIC_REASON_CODES.RETRYING
                 );
-                translated = await this.plugin.runAutoTranslationStrictFallbackTask(item.text, item.requestOptions);
+                translated = await this.plugin.runAutoTranslationStrictFallbackTask(item.text, item.requestOptions, { signal: taskOptions?.signal });
             }
             catch (error) {
                 if (!this.plugin.isAutoTranslationWorkCurrent(item)) {
@@ -801,7 +828,7 @@ class AutoTranslationRequestPipeline {
         return queue;
     }
 
-    async runAutoTranslationBatchRetryItems(pending) {
+    async runAutoTranslationBatchRetryItems(pending, taskOptions = {}) {
         const items = [...pending].filter(item => this.plugin.isAutoTranslationWorkCurrent(item));
         if (!items.length) return;
         if (this.plugin.isAutoTranslationProviderCoolingDown(items[0]?.requestOptions)) return;
@@ -816,7 +843,7 @@ class AutoTranslationRequestPipeline {
                 DIAGNOSTIC_MESSAGE_STATES.RETRYING,
                 DIAGNOSTIC_REASON_CODES.RETRYING
             ));
-            const translations = await this.plugin.runAutoTranslationBatchTask(items.map(item => item.text), items[0]?.requestOptions, { retry: true });
+            const translations = await this.plugin.runAutoTranslationBatchTask(items.map(item => item.text), items[0]?.requestOptions, { retry: true, signal: taskOptions?.signal });
             if (!items.some(item => this.plugin.isAutoTranslationWorkCurrent(item))) {
                 items.forEach(item => pending.delete(item));
                 return;
@@ -1177,12 +1204,19 @@ class AutoTranslationRequestPipeline {
 
     async runLongAutoTranslationTask(text, options = this.plugin.getAutoTranslationOptions(), taskOptions = {}) {
         const longOptions = options?.mode === "long-text" ? options : this.plugin.getLongTextTranslationOptions(options, text);
+        // The partial result is reported on this call's taskOptions (longTextPartialInfo), never by
+        // writing to the request options, which are shared with the queued item and its retries.
+        delete taskOptions.longTextPartial;
+        delete taskOptions.longTextFailedChunks;
+        delete taskOptions.longTextSuccessfulChunks;
+        delete taskOptions.longTextPartialInfo;
         const chunks = this.plugin.splitLongAutoTranslationText(text, this.plugin.getLongAutoTranslationChunkLength(longOptions));
         if (chunks.length <= 1) return this.plugin.runAutoTranslationTaskWithOptions(text, longOptions, taskOptions);
 
         const translatedChunks = [];
         const chunkFailures = [];
         const sourceHash = this.plugin.getStrongTextFingerprint(text);
+        let budgetError = null;
         for (let index = 0; index < chunks.length; index++) {
             if (typeof taskOptions.heartbeat === "function" && taskOptions.heartbeat() === false) {
                 throw this.plugin.createAutoTranslationStaleError("long-text-stale-before-chunk");
@@ -1194,13 +1228,25 @@ class AutoTranslationRequestPipeline {
             }
             catch (error) {
                 if (this.plugin.isAbandonedTranslationError(error)) throw error;
-                const rescued = taskOptions?.manualRescue
-                    ? await this.plugin.runLongAutoTranslationChunkManualRescue(chunks[index], chunkOptions, error, taskOptions, {
-                        sourceHash,
-                        chunkIndex: index,
-                        chunkTotal: chunks.length
-                    })
-                    : null;
+                // The provider itself is failing (rate limit, auth, quota, server, timeout...): the
+                // remaining chunks would fail too, so the whole message fails now.
+                if (this.plugin.shouldStopLongAutoTranslationOnChunkError(error)) throw error;
+                if (this.plugin.isAutoTranslationRequestBudgetError(error)) budgetError = error;
+                let rescued = null;
+                if (taskOptions?.manualRescue && !budgetError) {
+                    try {
+                        rescued = await this.plugin.runLongAutoTranslationChunkManualRescue(chunks[index], chunkOptions, error, taskOptions, {
+                            sourceHash,
+                            chunkIndex: index,
+                            chunkTotal: chunks.length
+                        });
+                    }
+                    catch (rescueError) {
+                        if (this.plugin.isAbandonedTranslationError(rescueError) || this.plugin.shouldStopLongAutoTranslationOnChunkError(rescueError)) throw rescueError;
+                        if (this.plugin.isAutoTranslationRequestBudgetError(rescueError)) budgetError = rescueError;
+                        rescued = { translated: "", error };
+                    }
+                }
                 if (rescued?.translated) {
                     translated = rescued.translated;
                     if (rescued.validation?.quality === TRANSLATION_VALIDATION_QUALITIES.PARTIAL) {
@@ -1228,6 +1274,14 @@ class AutoTranslationRequestPipeline {
                 throw this.plugin.createAutoTranslationStaleError("long-text-stale-after-chunk");
             }
             translatedChunks.push(String(translated || "").trim());
+            if (budgetError) {
+                // No requests are left for this click: the remaining chunks stay untranslated.
+                for (let rest = index + 1; rest < chunks.length; rest++) {
+                    chunkFailures.push({ index: rest, error: budgetError });
+                    translatedChunks.push("");
+                }
+                break;
+            }
         }
         const successfulChunks = translatedChunks.filter(chunk => chunk && !this.plugin.hasLongAutoTranslationChunkFailurePlaceholder(chunk));
         if (!successfulChunks.length) {
@@ -1237,12 +1291,14 @@ class AutoTranslationRequestPipeline {
         if (chunkFailures.length) {
             const firstFailure = chunkFailures[0]?.error;
             const successRatio = successfulChunks.length / Math.max(1, chunks.length);
-            longOptions.longTextPartial = true;
-            longOptions.longTextFailedChunks = chunkFailures.length;
-            longOptions.longTextSuccessfulChunks = successfulChunks.length;
             taskOptions.longTextPartial = true;
             taskOptions.longTextFailedChunks = chunkFailures.length;
             taskOptions.longTextSuccessfulChunks = successfulChunks.length;
+            // 1-based numbers of the parts that are missing or incomplete, for the partial note.
+            taskOptions.longTextPartialInfo = {
+                missingSegments: [...new Set(chunkFailures.map(failure => failure.index + 1))].sort((left, right) => left - right),
+                totalSegments: chunks.length
+            };
             this.plugin.logDiagnostic("auto.long-text", successRatio >= 0.6 ? "partial" : "low-partial", {
                 sourceHash,
                 chunkTotal: chunks.length,
@@ -1330,6 +1386,8 @@ class AutoTranslationRequestPipeline {
                     invalidReason: error?.autoTranslationInvalidReason || "",
                     validationQuality: error?.autoTranslationValidationQuality || ""
                 });
+                // Provider errors and an exhausted request budget end the rescue at once.
+                if (!this.plugin.isManualRescueRetryableError(error)) throw error;
             }
         }
         const subchunkRescue = await this.plugin.runLongAutoTranslationSubchunkManualRescue(chunkText, chunkOptions, taskOptions, meta);
@@ -1394,6 +1452,7 @@ class AutoTranslationRequestPipeline {
                     invalidReason: error?.autoTranslationInvalidReason || "",
                     validationQuality: error?.autoTranslationValidationQuality || ""
                 });
+                if (!this.plugin.isManualRescueRetryableError(error)) throw error;
             }
         }
 
@@ -1459,7 +1518,7 @@ class AutoTranslationRequestPipeline {
         };
     }
 
-    async runAutoTranslationModelAttempt(text, options = this.plugin.getAutoTranslationOptions()) {
+    async runAutoTranslationModelAttempt(text, options = this.plugin.getAutoTranslationOptions(), taskOptions = {}) {
         const timeoutMs = this.plugin.getAutoTranslationRequestTimeoutMs(options, text);
         const translated = await this.plugin.runModelTask("translation", text, {
             configOverrides: options.configOverrides,
@@ -1467,7 +1526,8 @@ class AutoTranslationRequestPipeline {
             mode: options.mode || "auto",
             requestContext: options.requestContext,
             longTextChunk: Boolean(options.longTextChunk),
-            longTextSourceLength: Number(options.longTextSourceLength || String(text || "").length) || 0
+            longTextSourceLength: Number(options.longTextSourceLength || String(text || "").length) || 0,
+            ...(taskOptions?.signal ? { signal: taskOptions.signal } : {})
         });
         return this.plugin.sanitizeAutoTranslationOutput(text, translated, this.plugin.getAutoTranslationTargetLanguage(options), this.plugin.getAutoTranslationOutputValidationOptions(text, translated, options));
     }
@@ -1557,18 +1617,19 @@ class AutoTranslationRequestPipeline {
                 shouldRepair: true
             };
         }
+        const partialLongText = Boolean(options?.partialLongText || requestOptions?.longTextPartial);
         if (policy === "trust-provider") {
+            // A long message with a missing chunk is never cached as complete, whatever the provider.
             return {
                 ...base,
-                quality: TRANSLATION_VALIDATION_QUALITIES.GOOD,
-                reasonCode: invalidReason,
+                quality: partialLongText ? TRANSLATION_VALIDATION_QUALITIES.PARTIAL : TRANSLATION_VALIDATION_QUALITIES.GOOD,
+                reasonCode: partialLongText ? (invalidReason || "long-text-partial") : invalidReason,
                 renderable: true,
-                cacheable: true,
+                cacheable: !partialLongText,
                 shouldRepair: false
             };
         }
 
-        const partialLongText = Boolean(options?.partialLongText || requestOptions?.longTextPartial);
         if (partialLongText && !invalidReason) {
             return {
                 ...base,
@@ -1747,13 +1808,15 @@ class AutoTranslationRequestPipeline {
         let firstInvalidReason = "";
         let firstValidation = null;
         try {
-            translated = await this.plugin.runAutoTranslationModelAttempt(text, options);
+            this.plugin.consumeAutoTranslationRequestBudget(taskOptions);
+            translated = await this.plugin.runAutoTranslationModelAttempt(text, options, taskOptions);
             const firstValidationOptions = this.plugin.getAutoTranslationOutputValidationOptions(text, translated, options);
             firstValidation = this.plugin.getAutoTranslationOutputValidationResult(text, translated, this.plugin.getAutoTranslationTargetLanguage(options), firstValidationOptions, options);
             firstInvalidReason = firstValidation.reasonCode || "";
         }
         catch (error) {
-            if (!error?.modelOutputTruncated || taskOptions.retryInvalidOutput === false || !this.plugin.isAutoTranslationStrictRetryEnabled()) throw error;
+            if (!error?.modelOutputTruncated || taskOptions.retryInvalidOutput === false) throw error;
+            if (!this.plugin.isAutoTranslationStrictRetryEnabled()) return this.plugin.runTruncatedAutoTranslationRetry(text, options, taskOptions);
             firstInvalidReason = "truncated";
         }
         if (firstValidation?.renderable) {
@@ -1772,7 +1835,8 @@ class AutoTranslationRequestPipeline {
         if (this.plugin.shouldRunLocalAutoTranslationRepairRetry(firstInvalidReason, text, translated, options, taskOptions)) {
             let repairOptions = this.plugin.getAutoTranslationFinalFallbackOptions(text, options);
             if (firstInvalidReason === "truncated") repairOptions = this.plugin.withRaisedAutoTranslationMaxTokens(repairOptions, text, 1.8);
-            const repaired = await this.plugin.runAutoTranslationModelAttempt(text, repairOptions);
+            this.plugin.consumeAutoTranslationRequestBudget(taskOptions);
+            const repaired = await this.plugin.runAutoTranslationModelAttempt(text, repairOptions, taskOptions);
             const repairValidationOptions = this.plugin.getAutoTranslationOutputValidationOptions(text, repaired, repairOptions);
             const repairValidation = this.plugin.getAutoTranslationOutputValidationResult(text, repaired, this.plugin.getAutoTranslationTargetLanguage(repairOptions), repairValidationOptions, repairOptions);
             const repairInvalidReason = repairValidation.reasonCode || "";
@@ -1786,7 +1850,8 @@ class AutoTranslationRequestPipeline {
         let retried = "";
         let retryInvalidReason = "";
         try {
-            retried = await this.plugin.runAutoTranslationModelAttempt(text, retryOptions);
+            this.plugin.consumeAutoTranslationRequestBudget(taskOptions);
+            retried = await this.plugin.runAutoTranslationModelAttempt(text, retryOptions, taskOptions);
             const retryValidationOptions = this.plugin.getAutoTranslationOutputValidationOptions(text, retried, retryOptions);
             const retryValidation = this.plugin.getAutoTranslationOutputValidationResult(text, retried, this.plugin.getAutoTranslationTargetLanguage(retryOptions), retryValidationOptions, retryOptions);
             retryInvalidReason = retryValidation.reasonCode || "";
@@ -1799,13 +1864,69 @@ class AutoTranslationRequestPipeline {
 
         let lastChanceOptions = this.plugin.getAutoTranslationFinalFallbackOptions(text, options);
         if (retryInvalidReason === "truncated" || firstInvalidReason === "truncated") lastChanceOptions = this.plugin.withRaisedAutoTranslationMaxTokens(lastChanceOptions, text, 2.2);
-        const finalText = await this.plugin.runAutoTranslationModelAttempt(text, lastChanceOptions);
+        this.plugin.consumeAutoTranslationRequestBudget(taskOptions);
+        const finalText = await this.plugin.runAutoTranslationModelAttempt(text, lastChanceOptions, taskOptions);
         const finalValidationOptions = this.plugin.getAutoTranslationOutputValidationOptions(text, finalText, lastChanceOptions);
         const finalValidation = this.plugin.getAutoTranslationOutputValidationResult(text, finalText, this.plugin.getAutoTranslationTargetLanguage(lastChanceOptions), finalValidationOptions, lastChanceOptions);
         const finalInvalidReason = finalValidation.reasonCode || "";
         if (finalValidation.renderable) return finalText;
 
         throw this.plugin.createFinalInvalidAutoTranslationError(finalInvalidReason);
+    }
+
+    // With strict retry off, a cut-off output still gets one retry with a larger max_tokens. If
+    // that is cut off too, its truncation error ends the task and the failure layer backs off.
+    async runTruncatedAutoTranslationRetry(text, options = this.plugin.getAutoTranslationOptions(), taskOptions = {}) {
+        const raisedOptions = this.plugin.withRaisedAutoTranslationMaxTokens(options, text, 1.8);
+        this.plugin.logDiagnostic("auto.truncated", "retry", {
+            sourceHash: this.plugin.getStrongTextFingerprint(text),
+            mode: options?.mode || "auto",
+            maxTokens: Number(raisedOptions?.configOverrides?.maxTokens || 0)
+        });
+        this.plugin.consumeAutoTranslationRequestBudget(taskOptions);
+        const retried = await this.plugin.runAutoTranslationModelAttempt(text, raisedOptions, taskOptions);
+        const validation = this.plugin.getAutoTranslationOutputValidationResult(
+            text,
+            retried,
+            this.plugin.getAutoTranslationTargetLanguage(raisedOptions),
+            this.plugin.getAutoTranslationOutputValidationOptions(text, retried, raisedOptions),
+            raisedOptions
+        );
+        if (validation.renderable) return retried;
+        throw this.plugin.createFinalInvalidAutoTranslationError(validation.reasonCode || "invalid-output", { validationQuality: validation.quality });
+    }
+
+    // A per-click budget of model requests (manual translation). Every attempt, rescue and chunk
+    // request takes one; when none are left the attempt fails without sending anything.
+    createAutoTranslationRequestBudget(limit = MANUAL_TRANSLATION_REQUEST_BUDGET) {
+        return { limit: Math.max(1, Math.floor(Number(limit) || MANUAL_TRANSLATION_REQUEST_BUDGET)), used: 0 };
+    }
+
+    consumeAutoTranslationRequestBudget(taskOptions = {}) {
+        const budget = taskOptions?.requestBudget;
+        if (!budget) return;
+        if (this.plugin.isAutoTranslationRequestBudgetExhausted(budget)) {
+            const error = new Error("REQUEST_BUDGET_EXHAUSTED");
+            error.code = "REQUEST_BUDGET_EXHAUSTED";
+            error.autoTranslationRequestBudgetExhausted = true;
+            error.requestBudgetLimit = budget.limit;
+            throw error;
+        }
+        budget.used++;
+    }
+
+    isAutoTranslationRequestBudgetExhausted(budget) {
+        return Boolean(budget && Number(budget.used || 0) >= Number(budget.limit || 0));
+    }
+
+    isAutoTranslationRequestBudgetError(error) {
+        return Boolean(error?.autoTranslationRequestBudgetExhausted);
+    }
+
+    // Errors that say the provider (not this chunk) is failing: sending the remaining chunks of a
+    // long message would only fail too and make rate limits worse.
+    shouldStopLongAutoTranslationOnChunkError(error) {
+        return ["auth", "quota", "rate-limit", "server", "local-unavailable", "network", "timeout"].includes(this.plugin.getAutoTranslationFailureType(error));
     }
 
     shouldRunLocalAutoTranslationRepairRetry(reason, text, translated, options = this.plugin.getAutoTranslationOptions(), taskOptions = {}) {
@@ -1867,15 +1988,16 @@ class AutoTranslationRequestPipeline {
         return Boolean(error?.autoTranslationStale) || this.plugin.isRequestCancelled(error);
     }
 
-    async runAutoTranslationStrictFallbackTask(text, options = this.plugin.getAutoTranslationOptions()) {
+    async runAutoTranslationStrictFallbackTask(text, options = this.plugin.getAutoTranslationOptions(), taskOptions = {}) {
         const strictOptions = this.plugin.getAutoTranslationRetryOptions(text, "", options);
+        const signalOptions = taskOptions?.signal ? { signal: taskOptions.signal } : {};
         try {
-            return await this.plugin.runAutoTranslationTask(text, strictOptions, { retryInvalidOutput: false });
+            return await this.plugin.runAutoTranslationTask(text, strictOptions, { retryInvalidOutput: false, ...signalOptions });
         }
         catch (error) {
             if (!error?.autoTranslationFinalInvalidOutput) throw error;
             const lastChanceOptions = this.plugin.getAutoTranslationFinalFallbackOptions(text, options);
-            const translated = await this.plugin.runAutoTranslationModelAttempt(text, lastChanceOptions);
+            const translated = await this.plugin.runAutoTranslationModelAttempt(text, lastChanceOptions, signalOptions);
             const finalInvalidReason = this.plugin.getAutoTranslationInvalidOutputReason(
                 text,
                 translated,
@@ -1892,7 +2014,7 @@ class AutoTranslationRequestPipeline {
             throw this.plugin.createAutoBatchParseError("Long text is handled by LongTextStrategy");
         }
         if (this.plugin.isDirectTranslateProvider(this.plugin.getEffectiveTaskConfig("translation", options?.configOverrides))) {
-            return this.plugin.runDirectTranslationBatchTask(texts, options);
+            return this.plugin.runDirectTranslationBatchTask(texts, options, taskOptions);
         }
         const batch = texts.map((text, index) => ({
             id: String(index + 1).padStart(3, "0"),
@@ -1904,7 +2026,8 @@ class AutoTranslationRequestPipeline {
         const output = await this.plugin.runModelTask("translation", JSON.stringify(batch), {
             configOverrides: batchOptions.configOverrides,
             timeoutMs: this.plugin.getAutoTranslationRequestTimeoutMs(batchOptions),
-            mode: batchOptions.mode || "auto-batch"
+            mode: batchOptions.mode || "auto-batch",
+            ...(taskOptions?.signal ? { signal: taskOptions.signal } : {})
         });
         const rows = this.plugin.parseAutoTranslationBatchOutput(output);
         const byId = new Map();
@@ -2610,6 +2733,12 @@ class AutoTranslationRequestPipeline {
         }
         catch (error) {
             if (this.plugin.isAbandonedTranslationError(error)) throw error;
+            // A provider-wide failure (or no requests left) ends the click here. A timeout may be
+            // down to the size of the whole pass, so the smaller chunk requests still get a turn.
+            if (this.plugin.isAutoTranslationRequestBudgetError(error)
+                || (this.plugin.shouldStopLongAutoTranslationOnChunkError(error) && !this.plugin.isTimeoutError(error))) {
+                throw error;
+            }
             this.plugin.logDiagnostic("manual.long-text.whole-pass", "failed", {
                 ...this.plugin.getTranslationDiagnosticMeta("manual", {
                     requestOptions: wholeOptions,
