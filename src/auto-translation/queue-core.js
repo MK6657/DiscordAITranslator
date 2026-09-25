@@ -1019,18 +1019,17 @@ class AutoTranslationQueueCore {
     isAutoTranslationTargetReady(target, cacheKey = target?.cacheKey) {
         if (!target?.messageNode?.isConnected || !target?.content?.isConnected) return false;
         if (!this.plugin.isAutoTranslationTargetIdentityCurrent(target)) return false;
-        if (this.plugin.hasCurrentTranslationLine(target.content, cacheKey, target.text, this.plugin.getTranslationLineCacheAliases(target.text, target.requestOptions || {}))) return false;
+        const domText = this.plugin.getAutoTranslationTargetDomText(target);
+        if (this.plugin.hasCurrentTranslationLine(target.content, cacheKey, domText, this.plugin.getTranslationLineCacheAliases(target.text, target.requestOptions || {}), null, target.text)) return false;
         const messageInRange = this.plugin.isAutoTranslationTargetInScanRange(target.messageNode);
         const contentInRange = this.plugin.isAutoTranslationTargetInScanRange(target.content);
         if (!target.daitHistoryRequest) {
             if (!messageInRange && !contentInRange) return false;
             if (!contentInRange && !this.plugin.isAutoTranslationContentInsideMessage(target)) return false;
         }
-        const currentText = this.plugin.getElementText(target.content, target.textOptions);
-        if (currentText === target.text) return true;
-        if (target.sourceTextKind === "store-full" && this.plugin.isManualTranslationSourceCompatible(target.text, currentText)) return true;
-        if (target.domText && currentText === target.domText && this.plugin.isManualTranslationSourceCompatible(target.text, target.domText)) return true;
-        return false;
+        // The message must still show the text the target was built from; a store-full request text
+        // was checked against that text when the candidate was made.
+        return this.plugin.isAutoTranslationTargetDomTextCurrent(target);
     }
 
     getAutoTranslateConcurrency() {
@@ -1903,7 +1902,7 @@ class AutoTranslationQueueCore {
     hasCacheableAutoTranslationTarget(item) {
         return this.plugin.getAutoTranslationPendingTargets(item).some(target => {
             if (!target?.messageNode?.isConnected || !target?.content?.isConnected) return false;
-            if (this.plugin.getElementText(target.content, target.textOptions) !== target.text) return false;
+            if (!this.plugin.isAutoTranslationTargetDomTextCurrent(target)) return false;
             return this.plugin.isAutoTranslationTargetIdentityCurrent(target, item)
                 || Boolean(this.plugin.getAutoTranslationTargetIdentityUpgrade(target, item));
         });
@@ -1912,7 +1911,9 @@ class AutoTranslationQueueCore {
     hasInvalidAutoTranslationTarget(item) {
         return this.plugin.getAutoTranslationPendingTargets(item).some(target => {
             if (!target?.messageNode?.isConnected || !target?.content?.isConnected) return false;
-            if (this.plugin.getElementText(target.content, target.textOptions) !== target.text) return true;
+            // A message that changed meanwhile does not make the result wrong: it is still the
+            // translation of item.text (renderAutoTranslationResult caches it too).
+            if (!this.plugin.isAutoTranslationTargetDomTextCurrent(target)) return false;
             return !this.plugin.isAutoTranslationTargetIdentityCurrent(target, item)
                 && !this.plugin.getAutoTranslationTargetIdentityUpgrade(target, item);
         });
@@ -1938,7 +1939,9 @@ class AutoTranslationQueueCore {
         const requestOptions = target?.requestOptions || item?.requestOptions || {};
         const expected = this.plugin.normalizeTranslationMessageIdentity(requestOptions.messageIdentity);
         if (!expected || !text) return null;
-        const current = this.plugin.normalizeTranslationMessageIdentity(this.plugin.getMessageIdentity(target.messageNode, target.content, text));
+        // The identity describes the message on screen; the cache key keeps the request text.
+        const domText = this.plugin.getAutoTranslationTargetDomText(target.text ? target : item);
+        const current = this.plugin.normalizeTranslationMessageIdentity(this.plugin.getMessageIdentity(target.messageNode, target.content, domText));
         if (!current || current === expected || !this.plugin.isSafeTranslationIdentityUpgrade(expected, current, target)) return null;
         const upgradedOptions = { ...requestOptions, messageIdentity: current };
         return {
@@ -1952,7 +1955,7 @@ class AutoTranslationQueueCore {
         const requestOptions = target?.requestOptions || item?.requestOptions || {};
         const expected = this.plugin.normalizeTranslationMessageIdentity(requestOptions.messageIdentity);
         if (!expected) return true;
-        const current = this.plugin.normalizeTranslationMessageIdentity(this.plugin.getMessageIdentity(target.messageNode, target.content, target.text));
+        const current = this.plugin.normalizeTranslationMessageIdentity(this.plugin.getMessageIdentity(target.messageNode, target.content, this.plugin.getAutoTranslationTargetDomText(target)));
         return current === expected;
     }
 

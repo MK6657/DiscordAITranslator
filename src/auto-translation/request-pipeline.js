@@ -313,7 +313,7 @@ class AutoTranslationRequestPipeline {
         const cacheAliases = this.plugin.getTranslationCacheAliases(text, targetRequestOptions);
         const lineCacheAliases = this.plugin.getTranslationLineCacheAliases(text, targetRequestOptions);
         const canRenderCacheHit = targetVisible && !scanState.renderPaused && !scanState.layoutUnstable;
-        if (this.plugin.hasCurrentTranslationLine(target.content, cacheKey, text, lineCacheAliases, targetRequestOptions)) {
+        if (this.plugin.hasCurrentTranslationLine(target.content, cacheKey, this.plugin.getAutoTranslationTargetDomText(target), lineCacheAliases, targetRequestOptions, text)) {
             return {
                 action: "skip",
                 status: "skipped",
@@ -611,7 +611,8 @@ class AutoTranslationRequestPipeline {
                 decision.canRender,
                 decision.requestOptions,
                 candidate.textOptions,
-                decision.renderMeta || null
+                decision.renderMeta || null,
+                candidate.domText
             );
             return;
         }
@@ -2780,7 +2781,7 @@ class AutoTranslationRequestPipeline {
     withAutoTranslationCandidateIdentity(options, candidate = {}) {
         return {
             ...options,
-            messageIdentity: candidate.messageIdentity || this.plugin.getMessageIdentity(candidate.messageNode, candidate.content, candidate.text || "")
+            messageIdentity: candidate.messageIdentity || this.plugin.getMessageIdentity(candidate.messageNode, candidate.content, this.plugin.getAutoTranslationTargetDomText(candidate))
         };
     }
 }

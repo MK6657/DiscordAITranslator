@@ -676,6 +676,9 @@ class SettingsStore {
             this.plugin.unpatchContextMenus();
             this.plugin.patchMessageContextMenu();
         }
+        if (path === "translation.enabled") {
+            this.plugin.syncMessageTranslationEntryPoints();
+        }
         if (path === "ui.messageButtonVisibility") {
             this.plugin.applyMessageButtonVisibilityToButtons();
         }
