@@ -2156,6 +2156,10 @@ localUiSectionPlugin.createAutoTranslateSection();
     assert.equal(getUiRowDescription(localUiCreatedElements, path), localUiSectionPlugin.t(descriptionKey), path);
 });
 assert.match(getUiRowDescription(localUiCreatedElements, "ui.autoTranslateConcurrency"), /1-10 个并发请求/);
+const versionHero = uiSectionPlugin.createSettingsHero();
+const versionChip = [...uiCreatedElements, ...localUiCreatedElements].find(element => element.dataset?.daitVersion);
+assert.ok(versionHero && versionChip);
+assert.equal(versionChip.textContent, `v${require("../package.json").version}`);
 const settingsSnapshotButton = uiCreatedElements.find(element => element.dataset?.daitAction === "exportSettingsSnapshot");
 assert.ok(settingsSnapshotButton);
 const settingsSnapshotDownloads = [];
@@ -7137,6 +7141,8 @@ const pausedCachedPlugin = new Plugin();
 pausedCachedPlugin.settings.translation.enabled = true;
 pausedCachedPlugin.settings.ui.autoTranslateMessages = true;
 pausedCachedPlugin.autoTranslationRenderPausedUntil = Date.now() + 1000;
+// The chat is still scrolling: cached lines wait until it is still, not until the render pause ends.
+pausedCachedPlugin.autoTranslationLastExternalScrollAt = Date.now();
 pausedCachedPlugin.isAutoTranslationTargetInScanRange = () => true;
 pausedCachedPlugin.isElementVisibleInViewport = () => true;
 pausedCachedPlugin.getMessageContentElement = message => message.content;
@@ -7163,9 +7169,10 @@ assert.equal(pausedCacheRenderCalls.length, 0);
 assert.equal(pausedCachedPlugin.autoTranslationRenderQueue.length, 1);
 clearTimeout(pausedCachedPlugin.autoTranslationRenderTimer);
 pausedCachedPlugin.autoTranslationRenderTimer = null;
-pausedCachedPlugin.autoTranslationRenderPausedUntil = 0;
+pausedCachedPlugin.autoTranslationLastExternalScrollAt = 0;
 pausedCachedPlugin.processAutoTranslationRenderQueue();
 assert.equal(pausedCacheRenderCalls.length, 1);
+assert.equal(pausedCachedPlugin.isAutoTranslationRenderPaused(), true);
 
 const quickSettingsRenderPausePlugin = new Plugin();
 quickSettingsRenderPausePlugin.isStarted = true;
@@ -8161,6 +8168,8 @@ staleRouteCacheRenderPlugin.settings.ui.autoTranslateMessages = true;
 staleRouteCacheRenderPlugin.settings.translation.apiKey = "sk-test";
 staleRouteCacheRenderPlugin.settings.ui.diagnosticsEnabled = true;
 staleRouteCacheRenderPlugin.autoTranslationRenderPausedUntil = Date.now() + 1000;
+// Still scrolling, so the cached draw stays queued until after the route change below.
+staleRouteCacheRenderPlugin.autoTranslationLastExternalScrollAt = Date.now();
 let staleRouteCacheCurrentRoute = "guild-a:channel-old:";
 staleRouteCacheRenderPlugin.getCurrentRouteKey = () => staleRouteCacheCurrentRoute;
 staleRouteCacheRenderPlugin.isAutoTranslationTargetInScanRange = () => true;
@@ -8189,6 +8198,7 @@ clearTimeout(staleRouteCacheRenderPlugin.autoTranslationRenderTimer);
 staleRouteCacheRenderPlugin.autoTranslationRenderTimer = null;
 staleRouteCacheCurrentRoute = "guild-a:channel-new:";
 staleRouteCacheRenderPlugin.autoTranslationRenderPausedUntil = 0;
+staleRouteCacheRenderPlugin.autoTranslationLastExternalScrollAt = 0;
 staleRouteCacheRenderPlugin.processAutoTranslationRenderQueue();
 assert.ok(staleRouteCacheRenderPlugin.diagnosticLogs.some(entry => entry.meta?.reasonCode === "render-request-stale"));
 clearTimeout(staleRouteCacheRenderPlugin.translationCacheDirtyTimer);
@@ -8200,6 +8210,7 @@ staleProviderCacheRenderPlugin.settings.ui.autoTranslateMessages = true;
 staleProviderCacheRenderPlugin.settings.translation.apiKey = "sk-old";
 staleProviderCacheRenderPlugin.settings.ui.diagnosticsEnabled = true;
 staleProviderCacheRenderPlugin.autoTranslationRenderPausedUntil = Date.now() + 1000;
+staleProviderCacheRenderPlugin.autoTranslationLastExternalScrollAt = Date.now();
 staleProviderCacheRenderPlugin.getCurrentRouteKey = () => "guild-a:channel-a:";
 staleProviderCacheRenderPlugin.isAutoTranslationTargetInScanRange = () => true;
 staleProviderCacheRenderPlugin.isElementVisibleInViewport = () => true;
@@ -8227,6 +8238,7 @@ clearTimeout(staleProviderCacheRenderPlugin.autoTranslationRenderTimer);
 staleProviderCacheRenderPlugin.autoTranslationRenderTimer = null;
 staleProviderCacheRenderPlugin.settings.translation.apiKey = "sk-new";
 staleProviderCacheRenderPlugin.autoTranslationRenderPausedUntil = 0;
+staleProviderCacheRenderPlugin.autoTranslationLastExternalScrollAt = 0;
 staleProviderCacheRenderPlugin.processAutoTranslationRenderQueue();
 assert.ok(staleProviderCacheRenderPlugin.diagnosticLogs.some(entry => entry.meta?.reasonCode === "render-request-stale"));
 clearTimeout(staleProviderCacheRenderPlugin.translationCacheDirtyTimer);
@@ -8629,8 +8641,9 @@ settlingCachedPlugin.queueAutoTranslateVisibleMessages({
     contentByMessage: new Map(),
     textByElement: new Map()
 });
-assert.equal(settlingCachedRendered, false);
-assert.equal(settlingCachedPlugin.autoTranslationRenderQueue.length, 1);
+// Cached lines need no model request: drawn during the settle window once the chat is still.
+assert.equal(settlingCachedRendered, true);
+assert.equal(settlingCachedPlugin.autoTranslationRenderQueue.length, 0);
 clearTimeout(settlingCachedPlugin.autoTranslationRenderTimer);
 settlingCachedPlugin.autoTranslationRenderTimer = null;
 clearTimeout(settlingCachedPlugin.translationCacheDirtyTimer);
@@ -8663,9 +8676,9 @@ scrollPausedCachedPlugin.queueAutoTranslateVisibleMessages({
     contentByMessage: new Map(),
     textByElement: new Map()
 });
-assert.equal(scrollPausedCachedRendered, false);
+assert.equal(scrollPausedCachedRendered, true);
 assert.equal(scrollPausedCachedPlugin.autoTranslationQueue.length, 0);
-assert.equal(scrollPausedCachedPlugin.autoTranslationRenderQueue.length, 1);
+assert.equal(scrollPausedCachedPlugin.autoTranslationRenderQueue.length, 0);
 assert.ok(scrollPausedRetryDelay > 0);
 clearTimeout(scrollPausedCachedPlugin.autoTranslationRenderTimer);
 scrollPausedCachedPlugin.autoTranslationRenderTimer = null;
@@ -8704,9 +8717,10 @@ jumpCooldownCachedPlugin.queueAutoTranslateVisibleMessages({
     contentByMessage: new Map(),
     textByElement: new Map()
 });
-assert.equal(jumpCooldownCachedRendered, false);
+// The jump cooldown still blocks model requests for the uncached message, but not the cached line.
+assert.equal(jumpCooldownCachedRendered, true);
 assert.equal(jumpCooldownCachedPlugin.autoTranslationQueue.length, 0);
-assert.equal(jumpCooldownCachedPlugin.autoTranslationRenderQueue.length, 1);
+assert.equal(jumpCooldownCachedPlugin.autoTranslationRenderQueue.length, 0);
 assert.ok(jumpCooldownRetryDelay > 0);
 clearTimeout(jumpCooldownCachedPlugin.autoTranslationRenderTimer);
 jumpCooldownCachedPlugin.autoTranslationRenderTimer = null;

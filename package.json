@@ -1,6 +1,6 @@
 {
   "name": "discord-ai-translator-betterdiscord",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "license": "MIT",
   "description": "A Windows-first BetterDiscord translation and writing assistant plugin.",
@@ -21,7 +21,8 @@
     "ci": "npm run check && npm run build:check && npm test && npm run test:installer && npm run artifact:check",
     "release:check": "node scripts/release-check.js",
     "plugin:install": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/install-plugin.ps1",
-    "plugin:install:dry-run": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/install-plugin.ps1 -WhatIf"
+    "plugin:install:dry-run": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/install-plugin.ps1 -WhatIf",
+    "plugin:check": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/check-installed-plugin.ps1"
   },
   "keywords": [
     "betterdiscord",

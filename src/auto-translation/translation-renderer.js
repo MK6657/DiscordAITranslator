@@ -17,9 +17,17 @@ class TranslationRenderer {
         ].join(":");
     }
 
-    getQueueDelayMs(now = Date.now()) {
+    // Cached translations need no model request, so they skip the scroll pause, settle and jump
+    // windows and wait only for the scroller to be still.
+    getQueueDelayMs(now = Date.now(), options = {}) {
         const mediaDelayMs = this.plugin.getDiscordMediaViewerDeferredDelayMs(now);
         if (mediaDelayMs > 0) return mediaDelayMs;
+        if (options.cacheTasks) {
+            return Math.max(
+                this.plugin.getAutoTranslationScrollStillRemainingMs(now),
+                this.plugin.getInputComposerBusyRemainingMs(now)
+            );
+        }
         return Math.max(
             this.plugin.getAutoTranslationRenderPauseRemainingMs(now),
             this.plugin.getAutoTranslationViewportSettleRemainingMs(now),

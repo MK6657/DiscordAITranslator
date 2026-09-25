@@ -10,6 +10,7 @@ const { AutoTranslationQueueCore } = require("./auto-translation/queue-core");
 const { DiagnosticsRecorder } = require("./diagnostics/diagnostics-recorder");
 const { OutputGuard } = require("./validation/output-guard");
 const { TranslationCacheStore } = require("./cache/translation-cache-store");
+const { PLUGIN_VERSION } = require("./version");
 const { ProviderLayer } = require("./providers/provider-layer");
 const { SettingsStore } = require("./settings/settings-store");
 
@@ -110,6 +111,14 @@ const {
     AUTO_TRANSLATE_RENDER_FRAME_BUDGET_MS,
     AUTO_TRANSLATE_PREFETCH_PRIORITY_BASE,
     AUTO_TRANSLATE_EDGE_OVERSCAN_MESSAGES,
+    AUTO_TRANSLATE_SCROLL_STILL_MS,
+    AUTO_TRANSLATE_CACHE_DRAW_MIN_BUFFER_PX,
+    AUTO_TRANSLATE_CACHE_DRAW_BUFFER_FACTOR,
+    AUTO_TRANSLATE_CACHE_DRAW_BUDGET_MS,
+    AUTO_TRANSLATE_CACHE_DRAW_MAX_EVALUATIONS,
+    AUTO_TRANSLATE_CACHE_DRAW_MAX_MESSAGES,
+    AUTO_TRANSLATE_CACHE_DRAW_MEMO_MAX,
+    AUTO_TRANSLATE_FINISHED_LINE_SELECTOR,
     AUTO_TRANSLATE_DEFAULT_PREFETCH_RANGE,
     AUTO_TRANSLATE_PREFETCH_RANGES,
     MUTATION_DIRTY_SCAN_MAX_ROOTS,
@@ -873,6 +882,13 @@ module.exports = class DiscordAITranslator {
         this.autoTranslationProviderNoticeAt = new Map();
         this.autoTranslationPrecheckSkips = new Map();
         this.autoTranslationRecentRenders = new Map();
+        this.autoTranslationLastExternalScrollAt = 0;
+        this.autoTranslationOwnScrolls = new WeakMap();
+        this.cachedTranslationDrawTimer = null;
+        this.cachedTranslationDrawIdle = null;
+        this.cachedDrawMemo = new Map();
+        this.cachedDrawMessageMemo = new WeakMap();
+        this.cachedDrawScroller = null;
         this.lastAutoTranslationDecisions = new Map();
         this.localProviderHealthChecks = new Map();
         this.localProviderHealthProbeStartedAt = new Map();
@@ -1027,7 +1043,7 @@ module.exports = class DiscordAITranslator {
             window.addEventListener("focus", this.boundViewportScan, { capture: true, passive: true });
             document.addEventListener("visibilitychange", this.boundViewportScan, true);
             this.queueScan();
-            this.showToast(this.t("pluginStarted"), "success");
+            this.showToast(this.t("pluginStarted", { version: PLUGIN_VERSION }), "success");
             return true;
         }
         catch (error) {
@@ -1129,6 +1145,12 @@ module.exports = class DiscordAITranslator {
         this.autoTranslationProviderFailures.clear();
         this.autoTranslationProviderNoticeAt.clear();
         this.autoTranslationRecentRenders.clear();
+        this.cancelCachedTranslationDrawPass();
+        this.cachedDrawMemo.clear();
+        this.cachedDrawMessageMemo = new WeakMap();
+        this.cachedDrawScroller = null;
+        this.autoTranslationOwnScrolls = new WeakMap();
+        this.autoTranslationLastExternalScrollAt = 0;
         this.lastAutoTranslationDecisions.clear();
         this.autoTranslationInFlight = 0;
         this.autoTranslationInFlightKeys.clear();
@@ -1654,6 +1676,11 @@ module.exports = class DiscordAITranslator {
 
         const chips = document.createElement("div");
         chips.className = "dait-settings-chips";
+        const versionChip = document.createElement("span");
+        versionChip.className = "dait-settings-version";
+        versionChip.dataset.daitVersion = PLUGIN_VERSION;
+        versionChip.textContent = `v${PLUGIN_VERSION}`;
+        chips.appendChild(versionChip);
         [this.t("polishTitle"), this.t("translationTitle"), "DeepSeek V4"].forEach(text => {
             const chip = document.createElement("span");
             chip.textContent = text;
@@ -3667,7 +3694,7 @@ module.exports = class DiscordAITranslator {
         };
         return {
             plugin: PLUGIN_NAME,
-            version: globalThis.BdApi?.Plugins?.get?.(PLUGIN_NAME)?.version || "",
+            version: PLUGIN_VERSION,
             exportedAt: new Date().toISOString(),
             effective: {
                 autoTranslateActive: this.isAutoTranslateEnabled(),
@@ -4457,8 +4484,10 @@ module.exports = class DiscordAITranslator {
         if (type === "scroll" || type === "resize") {
             if (type === "resize") this.queueInputButtonScan({ delayMs: 120, trailing: true });
             if (!this.isAutoTranslateEnabled()) return;
+            if (type === "scroll" && this.consumeOwnScrollEvent(event)) return;
             this.cancelIncrementalMessageScan();
             this.markAutoTranslationViewportBusy(type, event);
+            this.scheduleCachedTranslationDrawPass();
             const delay = Math.max(
                 AUTO_TRANSLATE_VIEWPORT_STABLE_RESCAN_MS,
                 this.getAutoTranslationRenderPauseRemainingMs(),
@@ -4553,6 +4582,8 @@ module.exports = class DiscordAITranslator {
 
     queueMutationScan(scanMutations = []) {
         this.cancelIncrementalMessageScan();
+        // Discord mounts messages as the chat scrolls; draw their cached translations promptly.
+        if (this.isAutoTranslationRenderPaused() || this.hasAddedMessageNodes(scanMutations)) this.scheduleCachedTranslationDrawPass();
         const roots = this.getMutationScanRoots(scanMutations);
         const dirtyOnly = this.shouldUseDirtyMutationScan(scanMutations, roots);
         if (dirtyOnly) this.rememberPendingMutationScanRoots(roots);
@@ -4585,6 +4616,11 @@ module.exports = class DiscordAITranslator {
             }
         }
         return false;
+    }
+
+    hasAddedMessageNodes(mutations = []) {
+        return (mutations || []).some(mutation => mutation?.type === "childList"
+            && [...(mutation.addedNodes || [])].some(node => this.getMutationMessageElementCount(node) > 0));
     }
 
     getMutationMessageElementCount(node) {
@@ -4706,7 +4742,10 @@ module.exports = class DiscordAITranslator {
                 AUTO_TRANSLATE_VIEWPORT_STABLE_RESCAN_MS,
                 this.getAutoTranslationViewportSettleRemainingMs()
             ) + 120;
-            if (this.isAutoTranslateEnabled()) this.scheduleCacheOnlyAutoTranslationScan("route-change", 80);
+            if (this.isAutoTranslateEnabled()) {
+                this.scheduleCacheOnlyAutoTranslationScan("route-change", 80);
+                this.scheduleCachedTranslationDrawPass();
+            }
             this.queueScan({ delayMs, trailing: true, protectUntil: Date.now() + delayMs });
             this.logDiagnostic("scan.discord-ui", "deferred", { reason: "route-change", delayMs, cacheOnly: true, messages: 0 });
             this.logSlowOperation("scan.discord-ui", startedAt, { outcome: "deferred", reason: "route-change", cacheOnly: true, messages: 0 });
@@ -4727,6 +4766,7 @@ module.exports = class DiscordAITranslator {
         }
         const dirtyOnly = Boolean(this.scanDirtyOnly);
         this.scanDirtyOnly = false;
+        this.scheduleCachedTranslationDrawPass();
         const dirtyRoots = dirtyOnly ? this.consumePendingMutationScanRoots() : [];
         if (!dirtyOnly) this.pendingMutationScanRoots?.clear?.();
         let stageStartedAt = this.getDiagnosticTime();
@@ -4924,6 +4964,7 @@ module.exports = class DiscordAITranslator {
             targetsByMessage: new Map(),
             rectByElement: new Map(),
             visibleByElement: new Map(),
+            scrollClipByElement: new Map(),
             nearByElement: new Map(),
             priorityByElement: new Map(),
             scanRangeElements: new Set(),
@@ -5015,12 +5056,12 @@ module.exports = class DiscordAITranslator {
     isElementVisibleInViewportCached(element, context = null) {
         if (!context?.visibleByElement) return this.isElementVisibleInViewport(element);
         if (!context.visibleByElement.has(element)) {
-            context.visibleByElement.set(element, this.isElementVisibleForScan(element, this.getCachedElementRect(element, context)));
+            context.visibleByElement.set(element, this.isElementVisibleForScan(element, this.getCachedElementRect(element, context), context));
         }
         return context.visibleByElement.get(element);
     }
 
-    isElementVisibleForScan(element, rect = null) {
+    isElementVisibleForScan(element, rect = null, context = null) {
         if (!element?.isConnected) return false;
         const elementRect = rect || element.getBoundingClientRect?.();
         if (!elementRect || elementRect.width <= 0 || elementRect.height <= 0) return false;
@@ -5037,7 +5078,8 @@ module.exports = class DiscordAITranslator {
             current = current.parentElement;
             depth++;
         }
-        return true;
+        // Same clipping rule as the draw step, so a message behind the header or composer is not "visible".
+        return this.isRectInsideScrollClips(element, elementRect, context, { checkHidden: true });
     }
 
     isElementNearViewport(element, bufferPx = 0, context = null) {
@@ -7359,7 +7401,7 @@ module.exports = class DiscordAITranslator {
                 );
                 return;
             }
-            if (this.isElementVisibleInViewport(target.messageNode) && this.isElementVisibleInViewport(target.content)) {
+            if (this.isAutoTranslationCacheTargetDrawable(target)) {
                 this.queueAutoTranslationRenderTask({
                     kind: "cache",
                     target,
@@ -7382,6 +7424,313 @@ module.exports = class DiscordAITranslator {
             }
         });
         this.clearAutoTranslationPendingTargets(cacheKey);
+    }
+
+    // A cached translation may be drawn when its message is in the visible chat or within the draw
+    // buffer around it. Without layout (offline tests), fall back to the strict visibility check.
+    isAutoTranslationCacheTargetDrawable(target, context = null) {
+        if (!target?.messageNode?.isConnected || !target?.content?.isConnected) return false;
+        const near = this.isElementNearChatBand(target.content, context);
+        if (near !== null) return near;
+        return this.isElementVisibleInViewport(target.messageNode) && this.isElementVisibleInViewport(target.content);
+    }
+
+    isElementNearChatBand(element, context = null) {
+        const rect = this.getCachedElementRect(element, context);
+        if (!rect || !(Number(rect.width) > 0) || !(Number(rect.height) > 0)) return null;
+        const band = context?.cacheDrawBand || this.getScrollContainerBand(this.getTranslationScrollContainer(element));
+        if (!band) return null;
+        const buffer = this.getCachedDrawBufferPx(band);
+        return Number(rect.bottom) > band.top - buffer && Number(rect.top) < band.bottom + buffer;
+    }
+
+    getCachedDrawBufferPx(band) {
+        return Math.max(AUTO_TRANSLATE_CACHE_DRAW_MIN_BUFFER_PX, (band.bottom - band.top) * AUTO_TRANSLATE_CACHE_DRAW_BUFFER_FACTOR);
+    }
+
+    // Cached translations need no model request. Discord mounts messages just outside the visible chat
+    // as it scrolls; drawing their cached lines there once the chat is still means messages scrolled
+    // back into view already show them. Scheduled only where idle callbacks exist (Discord), so offline
+    // tests run the pass directly.
+    scheduleCachedTranslationDrawPass(delayMs = 0) {
+        if (!this.isStarted || this.cachedTranslationDrawTimer || this.cachedTranslationDrawIdle != null) return;
+        if (typeof window === "undefined" || typeof window?.requestIdleCallback !== "function") return;
+        if (!this.isAutoTranslateEnabled()) return;
+        const waitMs = Math.max(Number(delayMs) || 0, this.getAutoTranslationScrollStillRemainingMs());
+        this.cachedTranslationDrawTimer = this.unrefTimer(setTimeout(() => {
+            this.cachedTranslationDrawTimer = null;
+            if (!this.isStarted || typeof window?.requestIdleCallback !== "function") return;
+            this.cachedTranslationDrawIdle = window.requestIdleCallback(deadline => {
+                this.cachedTranslationDrawIdle = null;
+                this.runCachedTranslationDrawPass(deadline);
+            }, { timeout: AUTO_TRANSLATE_SCROLL_STILL_MS });
+        }, waitMs));
+    }
+
+    cancelCachedTranslationDrawPass() {
+        if (this.cachedTranslationDrawTimer) clearTimeout(this.cachedTranslationDrawTimer);
+        this.cachedTranslationDrawTimer = null;
+        if (this.cachedTranslationDrawIdle != null) {
+            try { window.cancelIdleCallback?.(this.cachedTranslationDrawIdle); }
+            catch {}
+        }
+        this.cachedTranslationDrawIdle = null;
+    }
+
+    runCachedTranslationDrawPass(deadline = null) {
+        const stats = { messages: 0, settledMessages: 0, candidates: 0, memoHits: 0, evaluations: 0, queued: 0, pending: false };
+        if (!this.isStarted || !this.isAutoTranslateEnabled()) return stats;
+        if (typeof document === "undefined" || typeof document.querySelectorAll !== "function") return stats;
+        if (this.isDiscordMediaViewerQuiet() || this.isDiscordMediaViewerOpen() || this.isQuickSettingsPanelOpen() || this.isDiscordSettingsSurfaceOpen()) return stats;
+        const stillRemainingMs = this.getAutoTranslationScrollStillRemainingMs();
+        if (stillRemainingMs > 0) {
+            this.scheduleCachedTranslationDrawPass(stillRemainingMs);
+            stats.pending = true;
+            return stats;
+        }
+        const passStartedAt = this.getDiagnosticTime();
+        try {
+            const context = this.createScanContext({ messageNodes: [] });
+            const selection = this.getCachedDrawMessageNodes(context);
+            if (!selection.nodes.length) return stats;
+            context.messageNodes = selection.nodes;
+            context.cacheDrawBand = selection.band;
+            this.rememberScanRangeElements(selection.nodes, context);
+            const requestOptions = this.getAutoTranslationOptions();
+            const intakeMode = this.normalizeAutoTranslateIntakeMode(this.settings.ui?.autoTranslateIntakeMode);
+            const enhance = intakeMode !== "dom" && this.isBdfdbMessageIntakeAvailable();
+            // The budget covers message work, not selection, and the nearest message is always handled.
+            const startedAt = this.getDiagnosticTime();
+            const idleMs = Number(deadline?.timeRemaining?.());
+            const budgetMs = Number.isFinite(idleMs) && idleMs > 1 ? Math.min(AUTO_TRANSLATE_CACHE_DRAW_BUDGET_MS, idleMs) : AUTO_TRANSLATE_CACHE_DRAW_BUDGET_MS;
+            for (const messageNode of selection.nodes) {
+                if (this.isCachedDrawMessageSettled(messageNode)) {
+                    stats.settledMessages++;
+                    continue;
+                }
+                if (stats.messages > 0 && this.getDiagnosticTime() - startedAt >= budgetMs) {
+                    stats.pending = true;
+                    break;
+                }
+                stats.messages++;
+                const domCandidates = this.createDomAutoTranslationCandidatesForMessage(messageNode, context);
+                const candidates = enhance ? this.createBdfdbAutoTranslationCandidates(context, domCandidates) : domCandidates;
+                const record = { configVersion: this.autoTranslationConfigVersion, drawnCount: 0, pendingKeys: [] };
+                let settled = true;
+                for (const candidate of candidates) {
+                    stats.candidates++;
+                    const outcome = this.queueCachedDrawForCandidate(candidate, requestOptions, context, stats.evaluations < AUTO_TRANSLATE_CACHE_DRAW_MAX_EVALUATIONS);
+                    if (outcome.evaluated) stats.evaluations++;
+                    if (outcome.status === "queued") {
+                        stats.queued++;
+                        if (!outcome.evaluated) stats.memoHits++;
+                    }
+                    if (outcome.status === "deferred") stats.pending = true;
+                    if (outcome.status === "drawn") record.drawnCount++;
+                    else if (outcome.status === "nothing") {
+                        if (outcome.memoKey) record.pendingKeys.push(outcome.memoKey);
+                    }
+                    else settled = false;
+                }
+                if (settled) this.cachedDrawMessageMemo.set(messageNode, record);
+                else this.cachedDrawMessageMemo.delete(messageNode);
+            }
+        }
+        catch (error) {
+            this.warnSanitized("Cached translation draw pass failed", error);
+            return stats;
+        }
+        if (stats.pending) this.scheduleCachedTranslationDrawPass(AUTO_TRANSLATE_SCROLL_STILL_MS);
+        if (stats.queued) {
+            this.logDiagnostic("auto.cache-draw", "queued", {
+                ...stats,
+                ms: Math.round((this.getDiagnosticTime() - passStartedAt) * 10) / 10
+            });
+        }
+        return stats;
+    }
+
+    // A message needs no work while its drawn lines are still there and its other targets are
+    // still known to have nothing cached (or nothing worth translating) under the current settings.
+    isCachedDrawMessageSettled(messageNode) {
+        const record = this.cachedDrawMessageMemo?.get?.(messageNode);
+        if (!record || record.configVersion !== this.autoTranslationConfigVersion) return false;
+        const finishedLines = messageNode.querySelectorAll?.(AUTO_TRANSLATE_FINISHED_LINE_SELECTOR)?.length || 0;
+        if (finishedLines < record.drawnCount) return false;
+        return record.pendingKeys.every(memoKey => {
+            const entry = this.getCachedDrawMemoEntry(memoKey);
+            return Boolean(entry) && entry.result !== "hit";
+        });
+    }
+
+    isDocumentScroller(scroller) {
+        return !scroller || (typeof document !== "undefined" && (scroller === document.scrollingElement || scroller === document.documentElement));
+    }
+
+    // Mounted messages in and around the visible chat, nearest first. Messages are in document order,
+    // top to bottom: a binary search finds the first one not above the chat, then the walk goes outward.
+    getCachedDrawMessageNodes(context = null) {
+        const firstMessage = document.querySelector?.(DISCORD_MESSAGE_NODE_SELECTOR);
+        if (!firstMessage) return { nodes: [], band: null };
+        let scroller = this.cachedDrawScroller;
+        if (!scroller?.isConnected || !scroller.contains?.(firstMessage)) {
+            scroller = this.getTranslationScrollContainer(firstMessage);
+            // The document fallback only means the chat does not overflow yet, so it is not kept.
+            this.cachedDrawScroller = this.isDocumentScroller(scroller) ? null : scroller;
+        }
+        const band = this.getScrollContainerBand(scroller);
+        if (!band) return { nodes: [], band: null };
+        const root = this.cachedDrawScroller || firstMessage.closest?.("[data-list-id*='chat-messages']") || firstMessage.parentElement || document;
+        const messages = [...(root.querySelectorAll?.(DISCORD_MESSAGE_NODE_SELECTOR) || [])]
+            .filter(node => node?.isConnected && !node.parentElement?.closest?.(DISCORD_MESSAGE_NODE_SELECTOR));
+        const buffer = this.getCachedDrawBufferPx(band);
+        const measure = index => {
+            const rect = this.getCachedElementRect(messages[index], context);
+            if (!rect || !(Number(rect.height) > 0)) return null;
+            const top = Number(rect.top);
+            const bottom = Number(rect.bottom);
+            const distance = bottom <= band.top ? band.top - bottom : top >= band.bottom ? top - band.bottom : 0;
+            return { node: messages[index], top, bottom, distance };
+        };
+        let low = 0;
+        let high = messages.length;
+        while (low < high) {
+            const middle = (low + high) >> 1;
+            const rect = this.getCachedElementRect(messages[middle], context);
+            if (rect && Number(rect.bottom) <= band.top) low = middle + 1;
+            else high = middle;
+        }
+        const nearby = [];
+        let below = 0;
+        for (let index = low; index < messages.length && below < AUTO_TRANSLATE_CACHE_DRAW_MAX_MESSAGES; index++) {
+            const entry = measure(index);
+            if (!entry) continue;
+            if (entry.top >= band.bottom + buffer) break;
+            nearby.push(entry);
+            below++;
+        }
+        let above = 0;
+        for (let index = low - 1; index >= 0 && above < AUTO_TRANSLATE_CACHE_DRAW_MAX_MESSAGES; index--) {
+            const entry = measure(index);
+            if (!entry) continue;
+            if (entry.bottom <= band.top - buffer) break;
+            nearby.push(entry);
+            above++;
+        }
+        nearby.sort((left, right) => left.distance - right.distance || left.top - right.top);
+        return { nodes: nearby.slice(0, AUTO_TRANSLATE_CACHE_DRAW_MAX_MESSAGES).map(entry => entry.node), band };
+    }
+
+    // Outcome statuses: drawn (already shows a finished line), nothing (memoised skip or miss),
+    // queued, deferred (evaluation cap reached) or pending (a hit that cannot be drawn yet).
+    queueCachedDrawForCandidate(candidate, baseOptions, context = null, allowEvaluation = true) {
+        const messageNode = candidate?.messageNode;
+        const content = candidate?.content;
+        const text = String(candidate?.text || "");
+        if (!text || !messageNode?.isConnected || !content?.isConnected) return { status: "nothing" };
+        if (this.hasFinishedTranslationLine(content)) return { status: "drawn" };
+        const memoKey = this.getCachedDrawMemoKey(candidate, text);
+        let entry = this.getCachedDrawMemoEntry(memoKey);
+        const evaluated = !entry;
+        if (!entry) {
+            if (!allowEvaluation) return { status: "deferred" };
+            entry = this.lookupCachedDrawTranslation(candidate, baseOptions, context);
+            this.rememberCachedDrawMemoEntry(memoKey, entry);
+        }
+        if (entry.result !== "hit") return { status: "nothing", memoKey, evaluated };
+        if (!this.isAutoTranslationCacheTargetDrawable({ messageNode, content }, context)) return { status: "pending", evaluated };
+        // Drawing from the memo counts as a cache hit: keep the entry fresh like a regular lookup would.
+        if (!evaluated && entry.valueKey) this.touchTranslationCache(entry.valueKey, { extendExpiry: true, persistDelayMs: TRANSLATION_CACHE_TOUCH_DEBOUNCE_MS });
+        this.removeQueuedAutoTranslationItem(entry.cacheKey);
+        const target = {
+            messageNode,
+            content,
+            text,
+            textOptions: candidate.textOptions || null,
+            targetKind: candidate.targetKind || "message",
+            cacheKey: entry.cacheKey,
+            requestOptions: entry.requestOptions,
+            priority: this.getCachedDrawPriority(content, context)
+        };
+        this.queueAutoTranslationRenderTask({
+            kind: "cache",
+            target,
+            translated: entry.translated,
+            cacheKey: entry.cacheKey,
+            requestOptions: entry.requestOptions,
+            priority: target.priority,
+            run: () => this.renderAutoTranslationCacheTarget(target, entry.translated, entry.cacheKey, entry.requestOptions, { drawPass: true, deleteKeys: entry.keys })
+        });
+        return { status: "queued", evaluated };
+    }
+
+    hasFinishedTranslationLine(content) {
+        return this.getTranslationLines(content).some(line => !line.classList?.contains?.("dait-translation-loading")
+            && !line.classList?.contains?.("dait-translation-error"));
+    }
+
+    // Same lookups as the regular scan (evaluateAutoTranslationCandidate), without its side effects.
+    lookupCachedDrawTranslation(candidate, baseOptions, context = null) {
+        const text = String(candidate?.text || "");
+        if (this.getAutoTranslationPrecheckSkipReason(text, baseOptions)) return { result: "skip" };
+        const requestOptions = this.withAutoTranslationCandidateIdentity(this.getAutoTranslationRequestOptionsForText(text, baseOptions), candidate);
+        const cacheKey = this.getTranslationCacheKey(text, requestOptions);
+        const cacheAliases = this.getTranslationCacheAliases(text, requestOptions);
+        const textCacheKey = this.getAutoTextTranslationCacheKey(text, requestOptions);
+        const textCacheAliases = this.getAutoTextTranslationCacheAliases(text, requestOptions);
+        const keys = [cacheKey, ...cacheAliases, textCacheKey, ...textCacheAliases].filter(Boolean);
+        let translated = this.hasTranslationCacheCandidate(cacheKey, cacheAliases)
+            ? this.getTranslationCacheValueCached(cacheKey, cacheAliases, context)
+            : null;
+        if (translated === null && this.hasTranslationCacheCandidate(textCacheKey, textCacheAliases)) {
+            translated = this.getTranslationCacheValueCached(textCacheKey, textCacheAliases, context);
+        }
+        // Invalid entries are left for the regular scan to discard.
+        if (translated === null || this.isInvalidAutoTranslationCacheValue(text, translated, requestOptions)) return { result: "miss", keys };
+        return { result: "hit", cacheKey, translated, requestOptions, keys };
+    }
+
+    getCachedDrawMemoKey(candidate, text) {
+        const messageNode = candidate?.messageNode;
+        const messageId = String(messageNode?.id || messageNode?.getAttribute?.("data-list-item-id") || "");
+        if (!messageId) return "";
+        return [this.getCurrentRouteKey(), messageId, candidate?.targetKind || "message", this.getStrongTextFingerprint(text)].join("|");
+    }
+
+    // Entries last until settings change. A hit also needs its cached value to be unchanged and
+    // unexpired; a miss ends as soon as one of the keys it looked up is cached.
+    getCachedDrawMemoEntry(memoKey) {
+        const entry = memoKey ? this.cachedDrawMemo?.get?.(memoKey) : null;
+        if (!entry) return null;
+        let stale = entry.configVersion !== this.autoTranslationConfigVersion;
+        if (!stale && entry.result === "miss") stale = entry.keys.some(key => this.translationCache.has(key));
+        if (!stale && entry.result === "hit") {
+            entry.valueKey = entry.keys.find(key => this.translationCache.get(key) === entry.translated) || "";
+            stale = !entry.valueKey || this.isTranslationCacheEntryExpired(this.translationCacheMeta.get(entry.valueKey) || {});
+        }
+        if (!stale) return entry;
+        this.cachedDrawMemo.delete(memoKey);
+        return null;
+    }
+
+    rememberCachedDrawMemoEntry(memoKey, entry) {
+        if (!memoKey || !entry) return;
+        if (!this.cachedDrawMemo?.set) this.cachedDrawMemo = new Map();
+        entry.configVersion = this.autoTranslationConfigVersion;
+        this.cachedDrawMemo.delete(memoKey);
+        this.cachedDrawMemo.set(memoKey, entry);
+        while (this.cachedDrawMemo.size > AUTO_TRANSLATE_CACHE_DRAW_MEMO_MAX) {
+            this.cachedDrawMemo.delete(this.cachedDrawMemo.keys().next().value);
+        }
+    }
+
+    getCachedDrawPriority(content, context = null) {
+        const rect = this.getCachedElementRect(content, context);
+        const band = context?.cacheDrawBand;
+        if (!rect || !band) return undefined;
+        if (Number(rect.bottom) <= band.top) return AUTO_TRANSLATE_PREFETCH_PRIORITY_BASE + band.top - Number(rect.bottom);
+        if (Number(rect.top) >= band.bottom) return AUTO_TRANSLATE_PREFETCH_PRIORITY_BASE + Number(rect.top) - band.bottom;
+        return Math.max(0, Number(rect.top));
     }
 
     queueAutoTranslationRenderTask(task) {
@@ -7470,8 +7819,8 @@ module.exports = class DiscordAITranslator {
         }
     }
 
-    getAutoTranslationRenderQueueDelayMs(now = Date.now()) {
-        return this.translationRenderer.getQueueDelayMs(now);
+    getAutoTranslationRenderQueueDelayMs(now = Date.now(), options = {}) {
+        return this.translationRenderer.getQueueDelayMs(now, options);
     }
 
     isAutoTranslationRenderTaskHeavy(task) {
@@ -7495,9 +7844,16 @@ module.exports = class DiscordAITranslator {
         }
         const now = Date.now();
         const delayMs = this.getAutoTranslationRenderQueueDelayMs(now);
+        // While scroll pauses block other renders, cached translations may still be drawn.
+        let cacheTasksOnly = false;
         if (delayMs > 0) {
-            this.scheduleAutoTranslationRenderQueue(delayMs);
-            return;
+            const hasCacheTasks = this.autoTranslationRenderQueue.some(task => task?.kind === "cache");
+            const cacheDelayMs = hasCacheTasks ? this.getAutoTranslationRenderQueueDelayMs(now, { cacheTasks: true }) : delayMs;
+            if (!hasCacheTasks || cacheDelayMs > 0) {
+                this.scheduleAutoTranslationRenderQueue(Math.min(delayMs, cacheDelayMs));
+                return;
+            }
+            cacheTasksOnly = true;
         }
 
         const startedAt = Date.now();
@@ -7508,9 +7864,11 @@ module.exports = class DiscordAITranslator {
         }
         while (this.autoTranslationRenderQueue.length && rendered < AUTO_TRANSLATE_RENDER_MAX_PER_FRAME) {
             if (rendered > 0 && Date.now() - startedAt >= AUTO_TRANSLATE_RENDER_FRAME_BUDGET_MS) break;
-            const task = this.autoTranslationRenderQueue[0];
+            const index = cacheTasksOnly ? this.autoTranslationRenderQueue.findIndex(task => task?.kind === "cache") : 0;
+            if (index < 0) break;
+            const task = this.autoTranslationRenderQueue[index];
             if (rendered > 0 && this.isAutoTranslationRenderTaskHeavy(task)) break;
-            this.autoTranslationRenderQueue.shift();
+            this.autoTranslationRenderQueue.splice(index, 1);
             if (task?.key) {
                 const queuedTask = this.autoTranslationRenderQueuedTasks?.get?.(task.key);
                 if (!queuedTask || queuedTask === task) {
@@ -7525,21 +7883,27 @@ module.exports = class DiscordAITranslator {
                 this.warnSanitized("Failed to run queued auto translation render", error);
             }
             finally {
-                if (task?.cacheKey) this.autoTranslationRenderPendingKeys?.delete?.(task.cacheKey);
+                // Another queued render for the same translation keeps it counted as active.
+                if (task?.cacheKey && !this.autoTranslationRenderQueue.some(queued => queued?.cacheKey === task.cacheKey)) {
+                    this.autoTranslationRenderPendingKeys?.delete?.(task.cacheKey);
+                }
             }
             rendered++;
             if (this.isAutoTranslationRenderTaskHeavy(task)) break;
             if (Date.now() - startedAt >= AUTO_TRANSLATE_RENDER_FRAME_BUDGET_MS) break;
         }
 
-        if (this.autoTranslationRenderQueue.length) this.scheduleAutoTranslationRenderQueue();
+        if (this.autoTranslationRenderQueue.length) {
+            const remainingCacheTasks = this.autoTranslationRenderQueue.some(task => task?.kind === "cache");
+            this.scheduleAutoTranslationRenderQueue(cacheTasksOnly && !remainingCacheTasks ? this.getAutoTranslationRenderQueueDelayMs(Date.now()) : 0);
+        }
         this.logSlowOperation("auto.render.queue", startedAt, {
             rendered,
             remaining: this.autoTranslationRenderQueue.length
         });
     }
 
-    renderAutoTranslationCacheTarget(target, translated, cacheKey, requestOptions = null) {
+    renderAutoTranslationCacheTarget(target, translated, cacheKey, requestOptions = null, options = {}) {
         if (!this.isAutoTranslationRenderRequestCurrent(requestOptions)) {
             this.removeAutoTranslationNode(target, cacheKey);
             this.logAutoTranslationMessageState(
@@ -7583,7 +7947,9 @@ module.exports = class DiscordAITranslator {
             );
             return false;
         }
-        if (!this.isElementVisibleInViewport(target.messageNode) || !this.isElementVisibleInViewport(target.content)) {
+        if (!this.isAutoTranslationCacheTargetDrawable(target)) {
+            // The draw pass re-checks on its next run, so it needs no rescan of its own.
+            if (options.drawPass) return false;
             this.logAutoTranslationMessageState(
                 "auto.message.state",
                 "render-skip",
@@ -7595,11 +7961,12 @@ module.exports = class DiscordAITranslator {
             this.scheduleAutoTranslationRetryScan(AUTO_TRANSLATE_VIEWPORT_STABLE_RESCAN_MS, { minDelayMs: AUTO_TRANSLATE_VIEWPORT_STABLE_RESCAN_MS });
             return false;
         }
-        const renderedLine = this.renderTranslation(target.messageNode, target.content, translated, cacheKey, target.text);
+        // Cache tasks only run once the scroller is still, so scroll correction is safe even during the pause.
+        const renderedLine = this.renderTranslation(target.messageNode, target.content, translated, cacheKey, target.text, { allowScrollCorrectionWhilePaused: true });
         if (!renderedLine) {
             // Emoji images could not be restored: per contract the translation must be
             // neither shown nor kept cached, and the message must stay eligible for rescan.
-            this.deleteTranslationCacheCandidates(cacheKey);
+            this.deleteTranslationCacheCandidates(cacheKey, ...(options.deleteKeys || []));
             this.logAutoTranslationMessageState(
                 "auto.message.state",
                 "render-skip",
@@ -9029,21 +9396,38 @@ module.exports = class DiscordAITranslator {
     }
 
     isVisibleInsideScrollContainers(element, rect = element?.getBoundingClientRect?.()) {
+        return this.isRectInsideScrollClips(element, rect);
+    }
+
+    // The rect must overlap every overflow-clipping ancestor (touching edges count as outside;
+    // zero-size ancestors are ignored). The scan also rejects ancestors hidden by style.
+    isRectInsideScrollClips(element, rect, context = null, options = {}) {
+        if (!rect) return true;
         let current = element?.parentElement;
         while (current && current.nodeType === 1) {
-            if (typeof getComputedStyle === "function") {
-                const style = getComputedStyle(current);
-                const overflow = `${style.overflow || ""} ${style.overflowX || ""} ${style.overflowY || ""}`;
-                if (/(auto|scroll|hidden|clip)/.test(overflow)) {
-                    const containerRect = current.getBoundingClientRect?.();
-                    if (containerRect && containerRect.width > 0 && containerRect.height > 0) {
-                        if (rect.bottom <= containerRect.top || rect.top >= containerRect.bottom || rect.right <= containerRect.left || rect.left >= containerRect.right) return false;
-                    }
-                }
-            }
+            const info = this.getScrollClipInfo(current, context);
+            if (options.checkHidden && info.hidden) return false;
+            const clip = info.rect;
+            if (clip && (rect.bottom <= clip.top || rect.top >= clip.bottom || rect.right <= clip.left || rect.left >= clip.right)) return false;
             current = current.parentElement;
         }
         return true;
+    }
+
+    getScrollClipInfo(element, context = null) {
+        const memo = context?.scrollClipByElement;
+        if (memo?.has(element)) return memo.get(element);
+        const info = { hidden: false, rect: null };
+        if (typeof getComputedStyle === "function") {
+            const style = getComputedStyle(element);
+            info.hidden = style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse" || style.opacity === "0";
+            if (/(auto|scroll|hidden|clip)/.test(`${style.overflow || ""} ${style.overflowX || ""} ${style.overflowY || ""}`)) {
+                const clipRect = this.getCachedElementRect(element, context);
+                if (clipRect && clipRect.width > 0 && clipRect.height > 0) info.rect = clipRect;
+            }
+        }
+        memo?.set(element, info);
+        return info;
     }
 
     hasDominantForeignLine(text, targetLanguage) {
@@ -11626,6 +12010,7 @@ module.exports = class DiscordAITranslator {
     }
 
     renderTranslation(messageNode, content, translatedText, cacheKey = "", sourceText = null, renderOptions = {}) {
+        const scrollOptions = { allowScrollCorrectionWhilePaused: Boolean(renderOptions?.allowScrollCorrectionWhilePaused) };
         return this.withTranslationScrollStability(content, () => {
             const line = this.ensureTranslationNode(messageNode, content);
             line.classList.remove("dait-translation-error", "dait-translation-loading", "dait-translation-masked", "dait-translation-revealed");
@@ -11653,7 +12038,7 @@ module.exports = class DiscordAITranslator {
             line.appendChild(text);
             this.syncTranslationSourceVisibility(line, content, sourceText);
             return line;
-        });
+        }, scrollOptions);
     }
 
     renderTranslationLoading(messageNode, content, cacheKey = "", sourceText = null) {
@@ -11722,39 +12107,122 @@ module.exports = class DiscordAITranslator {
         });
     }
 
-    withTranslationScrollStability(anchor, render) {
-        if (this.isAutoTranslationRenderPaused()) return render();
-        const snapshot = this.getTranslationScrollSnapshot(anchor);
+    withTranslationScrollStability(anchor, render, options = {}) {
+        const snapshot = this.getTranslationScrollSnapshot(anchor, options);
         const result = render();
         this.restoreTranslationScrollSnapshot(snapshot);
         return result;
     }
 
-    getTranslationScrollSnapshot(anchor) {
+    // Where the new line lands decides the correction: above the visible chat, keep what is
+    // visible in place; below it, change nothing; inside it, keep the translated text in place.
+    // A chat pinned to its newest message stays pinned.
+    getTranslationScrollSnapshot(anchor, options = {}) {
         if (!anchor?.isConnected || !anchor.getBoundingClientRect) return null;
+        // Never write scrollTop while the chat is moving: that cuts smooth scrolling and Discord's scroll animations short.
+        if (this.getAutoTranslationScrollStillRemainingMs() > 0) return null;
         const scroller = this.getTranslationScrollContainer(anchor);
         if (!scroller) return null;
         const rect = anchor.getBoundingClientRect();
         const scrollTop = this.getScrollContainerTop(scroller);
         if (!Number.isFinite(scrollTop) || !rect) return null;
-        return {
-            anchor,
-            scroller,
-            top: Number(rect.top || 0),
-            scrollTop
-        };
+        const atBottom = this.isScrollContainerAtBottom(scroller, scrollTop);
+        const band = this.getScrollContainerBand(scroller);
+        const insertY = Number(this.settings.ui?.translationPosition === "after" ? rect.bottom : rect.top);
+        const placement = !band ? "visible" : insertY <= band.top ? "above" : insertY >= band.bottom ? "below" : "visible";
+        if (placement === "below"
+            || (placement === "visible" && this.isAutoTranslationRenderPaused() && !options.allowScrollCorrectionWhilePaused)) {
+            return atBottom ? { scroller, scrollTop, atBottom, anchor: null } : null;
+        }
+        if (placement === "above") {
+            // Every line lands inside the message, so its bottom edge moves exactly as far as the visible chat would.
+            const message = anchor.closest?.(DISCORD_MESSAGE_NODE_SELECTOR) || anchor;
+            const messageRect = message === anchor ? rect : message.getBoundingClientRect?.();
+            if (!messageRect) return null;
+            return { anchor: message, edge: "bottom", top: Number(messageRect.bottom || 0), scroller, scrollTop, atBottom };
+        }
+        return { anchor, edge: "top", top: Number(rect.top || 0), scroller, scrollTop, atBottom };
     }
 
     restoreTranslationScrollSnapshot(snapshot) {
-        if (!snapshot?.anchor?.isConnected || !snapshot.scroller) return;
-        const nextRect = snapshot.anchor.getBoundingClientRect?.();
-        if (!nextRect) return;
-        const delta = Number(nextRect.top || 0) - Number(snapshot.top || 0);
-        if (!Number.isFinite(delta) || Math.abs(delta) < 0.5) return;
+        if (!snapshot?.scroller) return;
         const currentTop = this.getScrollContainerTop(snapshot.scroller);
         if (!Number.isFinite(currentTop)) return;
-        if (Math.abs(currentTop - Number(snapshot.scrollTop || 0)) > 1) return;
-        this.setScrollContainerTop(snapshot.scroller, currentTop + delta);
+        // Native scroll anchoring or clamping already moved the chat during the render.
+        if (Math.abs(currentTop - Number(snapshot.scrollTop || 0)) > 1) {
+            this.rememberOwnScrollAdjustment(snapshot.scroller, currentTop);
+            return;
+        }
+        let nextTop = currentTop;
+        if (snapshot.atBottom) {
+            nextTop = Math.max(0, Number(snapshot.scroller.scrollHeight || 0) - Number(snapshot.scroller.clientHeight || 0));
+        }
+        else {
+            if (!snapshot.anchor?.isConnected) return;
+            const nextRect = snapshot.anchor.getBoundingClientRect?.();
+            if (!nextRect) return;
+            const delta = Number(nextRect[snapshot.edge || "top"] || 0) - Number(snapshot.top || 0);
+            if (!Number.isFinite(delta)) return;
+            nextTop = currentTop + delta;
+        }
+        if (Math.abs(nextTop - currentTop) < 0.5) return;
+        this.setScrollContainerTop(snapshot.scroller, nextTop);
+        const writtenTop = this.getScrollContainerTop(snapshot.scroller);
+        if (Number.isFinite(writtenTop) && Math.abs(writtenTop - currentTop) >= 0.5) this.rememberOwnScrollAdjustment(snapshot.scroller, writtenTop);
+    }
+
+    // Whether Discord's chat scroller uses native scroll anchoring decides if the plugin's own
+    // scroll corrections ever run; recorded in diagnostics.
+    getChatScrollerOverflowAnchor() {
+        try {
+            if (typeof document === "undefined" || typeof getComputedStyle !== "function") return "";
+            const message = document.querySelector?.(DISCORD_MESSAGE_NODE_SELECTOR);
+            const scroller = message ? this.getTranslationScrollContainer(message) : null;
+            if (!message) return "";
+            return this.isDocumentScroller(scroller) ? "not-scrollable" : String(getComputedStyle(scroller).overflowAnchor || "");
+        }
+        catch {
+            return "";
+        }
+    }
+
+    isScrollContainerAtBottom(scroller, scrollTop = this.getScrollContainerTop(scroller)) {
+        const scrollHeight = Number(scroller?.scrollHeight || 0);
+        const clientHeight = Number(scroller?.clientHeight || 0);
+        if (!Number.isFinite(scrollTop) || scrollHeight <= clientHeight + 1) return false;
+        return scrollTop + clientHeight >= scrollHeight - 2;
+    }
+
+    // The visible part of a scroller: its box clipped to the window.
+    getScrollContainerBand(scroller) {
+        if (typeof window === "undefined" || !window) return null;
+        const height = Number(window.innerHeight || 0);
+        if (!(height > 0)) return null;
+        if (this.isDocumentScroller(scroller)) return { top: 0, bottom: height };
+        const rect = scroller.getBoundingClientRect?.();
+        if (!rect || !(rect.height > 0)) return null;
+        const top = Math.max(0, Number(rect.top || 0));
+        const bottom = Math.min(height, Number(rect.bottom || 0));
+        return bottom > top ? { top, bottom } : null;
+    }
+
+    // The plugin's own scrollTop writes fire scroll events; the next one from that scroller is not a user scroll.
+    rememberOwnScrollAdjustment(scroller, top) {
+        if (!scroller || !Number.isFinite(Number(top))) return;
+        if (!this.autoTranslationOwnScrolls?.set) this.autoTranslationOwnScrolls = new WeakMap();
+        this.autoTranslationOwnScrolls.set(scroller, { top: Number(top), at: Date.now() });
+    }
+
+    consumeOwnScrollEvent(event) {
+        const target = typeof document !== "undefined" && event?.target === document ? document.scrollingElement : event?.target;
+        const record = target ? this.autoTranslationOwnScrolls?.get?.(target) : null;
+        if (!record) return false;
+        this.autoTranslationOwnScrolls.delete(target);
+        const top = this.getScrollContainerTop(target);
+        if (Date.now() - record.at > AUTO_TRANSLATE_SCROLL_STILL_MS || !Number.isFinite(top) || Math.abs(top - record.top) > 1) return false;
+        this.setPreviousViewportScrollPosition(event, top);
+        this.autoTranslationLastScrollY = top;
+        return true;
     }
 
     getTranslationScrollContainer(anchor) {
@@ -13659,6 +14127,7 @@ module.exports = class DiscordAITranslator {
     markAutoTranslationViewportBusy(...args) { return this.autoQueueCore.markAutoTranslationViewportBusy(...args); }
     isAutoTranslationViewportSettling(...args) { return this.autoQueueCore.isAutoTranslationViewportSettling(...args); }
     isAutoTranslationRenderPaused(...args) { return this.autoQueueCore.isAutoTranslationRenderPaused(...args); }
+    getAutoTranslationScrollStillRemainingMs(...args) { return this.autoQueueCore.getAutoTranslationScrollStillRemainingMs(...args); }
     getAutoTranslationRenderPauseRemainingMs(...args) { return this.autoQueueCore.getAutoTranslationRenderPauseRemainingMs(...args); }
     enterAutoTranslationJumpCooldown(...args) { return this.autoQueueCore.enterAutoTranslationJumpCooldown(...args); }
     isAutoTranslationJumpCoolingDown(...args) { return this.autoQueueCore.isAutoTranslationJumpCoolingDown(...args); }

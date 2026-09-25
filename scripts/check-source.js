@@ -32,5 +32,9 @@ const version = metadata.match(/@version\s+([^\s]+)/)?.[1] || "";
 if (version !== packageJson.version) {
     throw new Error(`Version mismatch: package=${packageJson.version} metadata=${version || "missing"}`);
 }
+const packageLock = require(path.join(root, "package-lock.json"));
+if (packageLock.version !== packageJson.version || packageLock.packages?.[""]?.version !== packageJson.version) {
+    throw new Error(`Version mismatch: package=${packageJson.version} package-lock=${packageLock.version}/${packageLock.packages?.[""]?.version}`);
+}
 
 process.stdout.write(`Source checks passed (${files.length} JavaScript files).\n`);

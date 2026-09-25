@@ -31,6 +31,7 @@ const {
     AUTO_TRANSLATE_REQUEST_BATCH_SIZE,
     AUTO_TRANSLATE_REQUEST_TIMEOUT_MS,
     AUTO_TRANSLATE_SCROLL_RENDER_PAUSE_MS,
+    AUTO_TRANSLATE_SCROLL_STILL_MS,
     AUTO_TRANSLATE_TERMINAL_FAILURE_TTL,
     AUTO_TRANSLATE_TRANSIENT_FAILURE_TTL,
     AUTO_TRANSLATE_VIEWPORT_JUMP_COOLDOWN_MS,
@@ -360,6 +361,7 @@ class AutoTranslationQueueCore {
         const jumped = ["mutation", "resize", "route"].includes(type) || Math.abs(scrollY - previousScrollY) > Math.max(600, height * 0.8);
         this.plugin.setPreviousViewportScrollPosition(event, scrollY);
         this.plugin.autoTranslationLastScrollY = scrollY;
+        this.plugin.autoTranslationLastExternalScrollAt = now;
         if (type === "scroll" || type === "resize") {
             this.plugin.autoTranslationRenderPausedUntil = Math.max(
                 Number(this.plugin.autoTranslationRenderPausedUntil || 0),
@@ -383,6 +385,12 @@ class AutoTranslationQueueCore {
 
     isAutoTranslationRenderPaused(now = Date.now()) {
         return now < Number(this.plugin.autoTranslationRenderPausedUntil || 0);
+    }
+
+    // Scroll events arrive every frame while the user or a Discord animation moves the chat,
+    // so a short silence means nothing is animating and scroll corrections are safe.
+    getAutoTranslationScrollStillRemainingMs(now = Date.now()) {
+        return Math.max(0, Number(this.plugin.autoTranslationLastExternalScrollAt || 0) + AUTO_TRANSLATE_SCROLL_STILL_MS - now);
     }
 
     getAutoTranslationRenderPauseRemainingMs(now = Date.now()) {

@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## 0.3.0 - 2026-09-25
+
+Pre-release: offline, installer and artifact checks pass; live Discord acceptance of the scrolling changes is pending.
+
+- Draw cached translations as soon as the chat has been still for about 0.1 s, including messages Discord keeps mounted just above and below the visible chat, instead of waiting out the 0.55 s scroll pause, the 0.45–0.9 s settle window or the 2.2 s jump cooldown. A bounded idle-time pass (about 3 ms, memoised per Discord message ID) does this without model requests; new model requests keep the existing pauses.
+- The scan and the draw step now share one definition of "visible", so messages behind the channel header or message box are no longer marked for drawing and then rejected.
+- Scroll corrections depend on where the line lands: above the visible chat the visible part stays in place, below it nothing changes, and a chat pinned to its newest message stays pinned. The plugin's own corrections no longer count as user scrolls.
+- Show the version in the settings header, the start notification, settings snapshots and diagnostics exports. `npm run plugin:check` compares the installed plugin with the repository build and detects private BetterDiscord copies kept by packaged apps, redirected AppData writes and a Discord that will not load BetterDiscord; the installer prints the installed and replaced versions.
+- Diagnostics exports record whether Discord's chat scroller uses native scroll anchoring. The build embeds only the version from package.json, and source checks keep package-lock.json in step.
 - Allow 1–10 automatic translation requests for both local and cloud providers; preserve saved values and explain local server capacity in settings.
 
 - Explain and disable unavailable local-provider scheduling controls (fixed DOM discovery and cloud fallback), instead of accepting changes that silently revert or have no effect.

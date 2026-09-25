@@ -1,7 +1,7 @@
 /**
  * @name DiscordAITranslator
  * @author /insert 始皇
- * @version 0.2.0
+ * @version 0.3.0
  * @description Discord AI 翻译/润色插件，支持输入润色和频道消息翻译。
  * @license MIT
  */
