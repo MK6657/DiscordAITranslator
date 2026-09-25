@@ -118,6 +118,39 @@ test("this repository tracks no local tool state or browser profile files", t =>
     assert.deepEqual(findBrowserProfilePaths(tracked), []);
 });
 
+function readSourceTree(directory) {
+    return fs.readdirSync(directory, { withFileTypes: true }).map(entry => {
+        const fullPath = path.join(directory, entry.name);
+        if (entry.isDirectory()) return readSourceTree(fullPath);
+        return entry.name.endsWith(".js") ? fs.readFileSync(fullPath, "utf8") : "";
+    }).join("\n");
+}
+
+test("the critical-chain contract allows the v0.3.0 cached-draw pass and names live code", () => {
+    const contract = fs.readFileSync(path.join(root, "docs", "critical-chain-contracts.md"), "utf8");
+    // v0.3.0 draws cached lines just outside the viewport on purpose; the release gate must not forbid it.
+    assert.doesNotMatch(contract, /out-of-viewport targets do not receive/i);
+    assert.match(contract, /cached-draw pass/i);
+    assert.match(contract, /Stillness rule/);
+    assert.match(contract, /Do not reintroduce a strict viewport check for cache draws/);
+
+    const source = readSourceTree(path.join(root, "src"));
+    const installer = fs.readFileSync(path.join(root, "scripts", "install-plugin.ps1"), "utf8");
+    const named = [...contract.matchAll(/`([^`]+)`/g)].map(match => match[1]);
+    assert.ok(named.includes("tests/core/scroll-cache-draw.test.js"));
+    for (const token of named) {
+        if (/^[\w.-]+\/[\w./-]+\.\w+$/.test(token)) {
+            assert.ok(fs.existsSync(path.join(root, token)), `${token} is named in the contract but does not exist`);
+        }
+        else if (/^[A-Za-z_]\w{3,}$/.test(token) && /[A-Z]/.test(token)) {
+            assert.ok(source.includes(token), `${token} is named in the contract but no longer exists in src`);
+        }
+        else if (/^-[A-Z]\w+$/.test(token) && token !== "-WhatIf") {
+            assert.match(installer, new RegExp(`\\[switch\\]\\$${token.slice(1)}\\b`), `${token} is named in the contract but the installer has no such switch`);
+        }
+    }
+});
+
 test(".gitignore keeps local tool state and browser profiles out without ignoring tracked files", t => {
     if (!isGitWorkTree()) {
         t.skip("git repository not available");
