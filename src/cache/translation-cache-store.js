@@ -22,9 +22,75 @@ const {
     TRANSLATION_CACHE_WRITE_DEBOUNCE_MS
 } = require("../constants");
 
+// The size limit counts messages (distinct cached translations): one message is stored under 2-3 keys (identity,
+// auto-text, manual, promoted aliases) that share its text. Keys are still capped at this multiple of the limit,
+// so many messages with the same short translation cannot grow the key count without bound.
+const TRANSLATION_CACHE_MAX_KEYS_PER_MESSAGE = 4;
+
 class TranslationCacheStore {
     constructor(plugin) {
         this.plugin = plugin;
+        // value -> number of keys holding it; valid only for valueRefsCache at size valueRefsSize (rebuilt otherwise).
+        this.valueRefs = null;
+        this.valueRefsCache = null;
+        this.valueRefsSize = -1;
+    }
+
+    getTranslationCacheValueRefs() {
+        const cache = this.plugin.translationCache;
+        if (this.hasCurrentTranslationCacheValueRefs()) return this.valueRefs;
+        const refs = new Map();
+        for (const value of cache.values()) refs.set(value, (refs.get(value) || 0) + 1);
+        this.valueRefs = refs;
+        this.valueRefsCache = cache;
+        this.valueRefsSize = cache.size;
+        return refs;
+    }
+
+    hasCurrentTranslationCacheValueRefs() {
+        const cache = this.plugin.translationCache;
+        return Boolean(this.valueRefs) && this.valueRefsCache === cache && this.valueRefsSize === cache.size;
+    }
+
+    invalidateTranslationCacheValueRefs() {
+        this.valueRefs = null;
+        this.valueRefsCache = null;
+        this.valueRefsSize = -1;
+    }
+
+    releaseTranslationCacheValueRef(value) {
+        const count = (this.valueRefs.get(value) || 0) - 1;
+        if (count > 0) this.valueRefs.set(value, count);
+        else this.valueRefs.delete(value);
+    }
+
+    // Map writes that keep the value counts current (when they have been built).
+    setTranslationCacheEntry(key, value) {
+        const cache = this.plugin.translationCache;
+        const tracked = this.hasCurrentTranslationCacheValueRefs();
+        if (cache.has(key)) {
+            if (tracked) this.releaseTranslationCacheValueRef(cache.get(key));
+            cache.delete(key);
+        }
+        cache.set(key, value);
+        if (tracked) {
+            this.valueRefs.set(value, (this.valueRefs.get(value) || 0) + 1);
+            this.valueRefsSize = cache.size;
+        }
+    }
+
+    deleteTranslationCacheEntry(key) {
+        const cache = this.plugin.translationCache;
+        if (!cache.has(key)) return false;
+        const tracked = this.hasCurrentTranslationCacheValueRefs();
+        if (tracked) this.releaseTranslationCacheValueRef(cache.get(key));
+        cache.delete(key);
+        if (tracked) this.valueRefsSize = cache.size;
+        return true;
+    }
+
+    getTranslationCacheMessageCount() {
+        return this.getTranslationCacheValueRefs().size;
     }
 
     normalizeTranslationCacheTtlHours(value) {
@@ -291,7 +357,7 @@ class TranslationCacheStore {
 
             const meta = this.plugin.translationCacheMeta.get(hitKey) || {};
             if (this.plugin.isTranslationCacheEntryExpired(meta)) {
-                this.plugin.translationCache.delete(hitKey);
+                this.deleteTranslationCacheEntry(hitKey);
                 this.plugin.translationCacheMeta.delete(hitKey);
                 this.plugin.scheduleTranslationCachePersist();
                 this.plugin.logDiagnostic("cache.lookup", "expired", {
@@ -329,8 +395,7 @@ class TranslationCacheStore {
         const now = Date.now();
         const sourceMeta = this.plugin.translationCacheMeta.get(sourceKey) || {};
         const value = this.plugin.translationCache.get(sourceKey);
-        if (this.plugin.translationCache.has(targetKey)) this.plugin.translationCache.delete(targetKey);
-        this.plugin.translationCache.set(targetKey, value);
+        this.setTranslationCacheEntry(targetKey, value);
         this.plugin.translationCacheMeta.set(targetKey, {
             createdAt: Number(sourceMeta.createdAt || now),
             touchedAt: now,
@@ -346,8 +411,7 @@ class TranslationCacheStore {
         if (!key) return;
         const now = Date.now();
         const previous = this.plugin.translationCacheMeta.get(key);
-        if (this.plugin.translationCache.has(key)) this.plugin.translationCache.delete(key);
-        this.plugin.translationCache.set(key, String(value || ""));
+        this.setTranslationCacheEntry(key, String(value || ""));
         this.plugin.translationCacheMeta.set(key, {
             createdAt: Number(previous?.createdAt || now),
             touchedAt: now,
@@ -370,7 +434,7 @@ class TranslationCacheStore {
         const uniqueKeys = [...new Set(keys.filter(Boolean))];
         let removed = 0;
         uniqueKeys.forEach(key => {
-            if (this.plugin.translationCache.delete(key)) removed++;
+            if (this.deleteTranslationCacheEntry(key)) removed++;
             if (this.plugin.translationCacheMeta.delete(key) && !this.plugin.translationCache.has(key)) removed++;
         });
         if (!removed) return false;
@@ -391,8 +455,9 @@ class TranslationCacheStore {
         const meta = this.plugin.translationCacheMeta.get(key) || {};
         const now = Date.now();
         const currentExpiresAt = this.plugin.getTranslationCacheEntryExpiresAt(meta, now);
+        // A hit never extends an entry past the lifetime the user picked (3 h stays 3 h).
         const nextExpiresAt = options.extendExpiry
-            ? Math.max(currentExpiresAt, now + TRANSLATION_CACHE_HIT_EXTEND_MS)
+            ? Math.max(currentExpiresAt, now + Math.min(TRANSLATION_CACHE_HIT_EXTEND_MS, this.plugin.getTranslationCacheTtlMs()))
             : currentExpiresAt;
         this.plugin.translationCacheMeta.set(key, {
             createdAt: Number(meta.createdAt || now),
@@ -413,6 +478,7 @@ class TranslationCacheStore {
     loadTranslationCache() {
         this.plugin.translationCache.clear();
         this.plugin.translationCacheMeta.clear();
+        this.invalidateTranslationCacheValueRefs();
         this.plugin.clearTranslationCacheNegativeLookups();
         const payload = this.plugin.loadData(CACHE_DATA_KEY);
         const entries = Array.isArray(payload) ? payload : payload?.entries;
@@ -441,9 +507,72 @@ class TranslationCacheStore {
             this.plugin.translationCacheMeta.set(key, meta);
             restoredEntries++;
         }
+        // Stored expiry times may come from a longer lifetime (or an older, uncapped hit extension).
+        const clamped = this.plugin.clampTranslationCacheExpiryToCurrentTtl(now);
         this.plugin.pruneTranslationCache({ scanExpired: true });
-        this.plugin.persistentTranslationCacheCount = this.plugin.translationCache.size;
-        if (this.plugin.translationCache.size !== entries.length || restoredEntries !== entries.length || payload?.version !== 3) this.plugin.scheduleTranslationCachePersist();
+        this.plugin.persistentTranslationCacheCount = this.plugin.getTranslationCacheMessageCount();
+        if (clamped || this.plugin.translationCache.size !== entries.length || restoredEntries !== entries.length || payload?.version !== 3) this.plugin.scheduleTranslationCachePersist();
+    }
+
+    // Used once when the cache moves to its own data file (and after a downgrade left an old copy behind):
+    // keeps every key of both payloads, the more recently used copy of a key wins, oldest first (LRU order).
+    mergePersistedTranslationCachePayloads(current, legacy) {
+        const now = Date.now();
+        const decode = payload => {
+            const entries = Array.isArray(payload) ? payload : payload?.entries;
+            if (!Array.isArray(entries)) return null;
+            const strings = Array.isArray(payload?.strings) ? payload.strings.map(value => String(value || "")) : [];
+            const ttlMs = this.plugin.normalizeTranslationCacheTtlHours(payload?.ttlHours) * 60 * 60 * 1000;
+            return entries.map(entry => {
+                const key = this.plugin.decodePersistedTranslationCacheKey(entry, strings);
+                const value = this.plugin.decodePersistedTranslationCacheValue(entry, strings);
+                if (!key || !value) return null;
+                const createdAt = Number(entry?.createdAt ?? entry?.c ?? now);
+                return {
+                    key,
+                    value,
+                    createdAt,
+                    touchedAt: Number(entry?.touchedAt ?? entry?.lastUsedAt ?? entry?.t ?? createdAt),
+                    expiresAt: Number(entry?.expiresAt ?? entry?.e ?? (createdAt + ttlMs))
+                };
+            }).filter(Boolean);
+        };
+        const currentEntries = decode(current);
+        const legacyEntries = decode(legacy);
+        if (!legacyEntries) return current;
+        if (!currentEntries) return legacy;
+        const byKey = new Map();
+        [...legacyEntries, ...currentEntries].forEach(item => {
+            const existing = byKey.get(item.key);
+            if (!existing || item.touchedAt >= existing.touchedAt) byKey.set(item.key, item);
+        });
+        const strings = [];
+        const stringIndexes = new Map();
+        const encodeString = value => {
+            const text = String(value || "");
+            if (!stringIndexes.has(text)) {
+                stringIndexes.set(text, strings.length);
+                strings.push(text);
+            }
+            return stringIndexes.get(text);
+        };
+        const entries = [...byKey.values()]
+            .sort((left, right) => left.touchedAt - right.touchedAt)
+            .map(item => ({
+                k: item.key.split("\n---\n").map(encodeString),
+                v: encodeString(item.value),
+                c: item.createdAt,
+                t: item.touchedAt,
+                e: item.expiresAt
+            }));
+        return {
+            version: 3,
+            savedAt: now,
+            ttlHours: this.plugin.normalizeTranslationCacheTtlHours(current?.ttlHours ?? legacy?.ttlHours),
+            maxEntries: Number(current?.maxEntries || legacy?.maxEntries || 0) || this.plugin.getTranslationCacheMaxEntries(),
+            strings,
+            entries
+        };
     }
 
     decodePersistedTranslationCacheKey(entry, strings = []) {
@@ -536,7 +665,8 @@ class TranslationCacheStore {
         try {
             const payload = this.plugin.createPersistedTranslationCachePayload();
             if (this.plugin.saveData(CACHE_DATA_KEY, payload) !== true) throw new Error("DATA_SAVE_FAILED");
-            this.plugin.persistentTranslationCacheCount = payload.entries.length;
+            // Saved messages: entries of one message share its value index.
+            this.plugin.persistentTranslationCacheCount = new Set(payload.entries.map(entry => entry.v)).size;
             this.plugin.translationCacheDirty = false;
             this.plugin.translationCacheTouchDirtyCount = 0;
             this.plugin.translationCachePersistenceDeferredSince = 0;
@@ -575,6 +705,7 @@ class TranslationCacheStore {
         this.plugin.translationCacheDirty = false;
         this.plugin.translationCache.clear();
         this.plugin.translationCacheMeta.clear();
+        this.invalidateTranslationCacheValueRefs();
         this.plugin.clearTranslationCacheNegativeLookups();
         this.plugin.translationCacheStats = { hits: 0, misses: 0 };
         this.plugin.persistentTranslationCacheCount = 0;
@@ -627,6 +758,8 @@ class TranslationCacheStore {
         const scanExpired = options.scanExpired !== false;
         let removed = false;
         if (scanExpired) {
+            // Full passes also recount values, so direct Map writes elsewhere cannot skew the count for long.
+            this.invalidateTranslationCacheValueRefs();
             for (const [key, meta] of this.plugin.translationCacheMeta) {
                 if (this.plugin.isTranslationCacheEntryExpired(meta, now)) {
                     this.plugin.translationCache.delete(key);
@@ -636,9 +769,13 @@ class TranslationCacheStore {
             }
         }
 
-        while (this.plugin.translationCache.size > this.plugin.getTranslationCacheMaxEntries()) {
-            const oldestKey = this.plugin.translationCache.keys().next().value;
-            this.plugin.translationCache.delete(oldestKey);
+        const cache = this.plugin.translationCache;
+        const maxMessages = this.plugin.getTranslationCacheMaxEntries();
+        const maxKeys = maxMessages * TRANSLATION_CACHE_MAX_KEYS_PER_MESSAGE;
+        // Oldest keys go first; a message leaves the count once its last key is gone.
+        while (cache.size > maxKeys || (cache.size > maxMessages && this.getTranslationCacheValueRefs().size > maxMessages)) {
+            const oldestKey = cache.keys().next().value;
+            this.deleteTranslationCacheEntry(oldestKey);
             this.plugin.translationCacheMeta.delete(oldestKey);
             removed = true;
         }

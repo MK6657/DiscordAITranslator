@@ -217,7 +217,8 @@ assert.equal(startIdempotencePlugin.start(), false);
 assert.equal(startIdempotenceObserverStarts, 1);
 assert.equal(startIdempotencePatches, 1);
 assert.equal(startIdempotenceDocumentListeners, 2);
-assert.equal(startIdempotenceWindowListeners, 3);
+// scroll, resize, focus, plus pagehide and beforeunload (save pending data on reload or quit).
+assert.equal(startIdempotenceWindowListeners, 5);
 if (savedDocumentForStartIdempotence === undefined) delete global.document;
 else global.document = savedDocumentForStartIdempotence;
 if (savedWindowForStartIdempotence === undefined) delete global.window;
@@ -5461,6 +5462,9 @@ assert.deepEqual(providerFallbackFeaturePlugin.getProviderFallbackOrder("transla
 providerFallbackFeaturePlugin.settings.translation.provider = "deepseek";
 assert.deepEqual(providerFallbackFeaturePlugin.getProviderFallbackOrder("translation"), ["microsoft", "deepl"]);
 providerFallbackFeaturePlugin.getCurrentRouteKey = () => "guild-shell:channel-shell:";
+// 'inherit' follows the main auto-translate switch (off by default); 'enabled' works as an allow-list.
+assert.equal(providerFallbackFeaturePlugin.isCurrentChannelAutoTranslateAllowed(), false);
+providerFallbackFeaturePlugin.settings.ui.autoTranslateMessages = true;
 assert.equal(providerFallbackFeaturePlugin.isCurrentChannelAutoTranslateAllowed(), true);
 providerFallbackFeaturePlugin.settings.ui.channelAutoTranslatePolicies = {
     "guild-shell:channel-shell": { mode: "disabled" }
