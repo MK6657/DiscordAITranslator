@@ -9074,9 +9074,11 @@ assert.equal(emojiRenderPlugin.appendTranslationTextWithDiscordEmoji(markupEmoji
 assert.equal(markupEmojiContainer.children.length, 2);
 assert.equal(markupEmojiContainer.children[1].getAttribute("alt"), ":emoji_12:");
 
+// A second ":emoji_12:" (literal text in the message) stays text instead of vetoing the line.
 const duplicateEmojiContainer = createFakeElement("span");
-assert.equal(emojiRenderPlugin.appendTranslationTextWithDiscordEmoji(duplicateEmojiContainer, "A :emoji_12: :emoji_12:", emojiContent), false);
-assert.equal(duplicateEmojiContainer.children.length, 0);
+assert.equal(emojiRenderPlugin.appendTranslationTextWithDiscordEmoji(duplicateEmojiContainer, "A :emoji_12: :emoji_12:", emojiContent), true);
+assert.equal(duplicateEmojiContainer.children.filter(child => child.getAttribute?.("alt") === ":emoji_12:").length, 1);
+assert.equal(duplicateEmojiContainer.children[duplicateEmojiContainer.children.length - 1].textContent, " :emoji_12:");
 
 const uncloneableEmoji = { ...sourceEmoji, cloneNode: () => { throw new Error("clone failed"); } };
 const uncloneableContent = { querySelectorAll: () => [uncloneableEmoji] };

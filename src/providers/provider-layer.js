@@ -1077,7 +1077,8 @@ class ProviderLayer {
         promise = this.plugin.fetchModelResponse(endpoint, request, options.timeoutMs || MODEL_REQUEST_TIMEOUT_MS, {
             googleTranslateAsArray: Boolean(options.googleTranslateAsArray),
             translateAsArray: Boolean(options.translateAsArray || options.googleTranslateAsArray),
-            lifecycleToken
+            lifecycleToken,
+            signal: options.signal
         })
             .then(result => {
                 const requestStillCurrent = this.plugin.isLifecycleTokenCurrent(lifecycleToken)
@@ -1158,7 +1159,7 @@ class ProviderLayer {
 
     async fetchModelResponse(endpoint, request, timeoutMs = MODEL_REQUEST_TIMEOUT_MS, options = {}) {
         try {
-            const raw = await this.plugin.fetchApiResponseText(endpoint, request, timeoutMs);
+            const raw = await this.plugin.fetchApiResponseText(endpoint, request, timeoutMs, options.signal ? { signal: options.signal } : undefined);
             if (request?.responseParser === "googleTranslate") {
                 const result = this.plugin.parseGoogleTranslateResponse(raw, request?.googleTranslate?.expectedCount || 1, {
                     asArray: Boolean(options.googleTranslateAsArray || options.translateAsArray),
@@ -1276,14 +1277,23 @@ class ProviderLayer {
         return message === this.plugin.t("invalidJson") || /invalid json|unexpected token|not valid json/i.test(message);
     }
 
-    async fetchApiResponseText(endpoint, request, timeoutMs = MODEL_REQUEST_TIMEOUT_MS) {
+    async fetchApiResponseText(endpoint, request, timeoutMs = MODEL_REQUEST_TIMEOUT_MS, callerOptions = {}) {
         this.plugin.assertSafeRequestEndpoint(endpoint);
         const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
         if (controller) this.plugin.activeApiControllers.add(controller);
         // abort() keeps its first reason, so the signal records whether the timer or a cancel came first.
         const timeout = controller ? setTimeout(() => controller.abort(new DOMException("API request timed out", "TimeoutError")), timeoutMs) : null;
+        // The caller's signal (queued auto-translation work) cancels this request when that work is
+        // orphaned by a settings change, so it does not keep a local server busy.
+        const callerSignal = callerOptions?.signal || null;
+        const abortFromCaller = () => controller?.abort();
+        if (callerSignal && controller) {
+            if (callerSignal.aborted) controller.abort();
+            else callerSignal.addEventListener?.("abort", abortFromCaller, { once: true });
+        }
         try {
             if (this.plugin.apiRequestsClosed) throw new DOMException("API requests are closed until the plugin starts", "AbortError");
+            controller?.signal.throwIfAborted();
             const method = String(request?.method || "POST").trim().toUpperCase() || "POST";
             const fetchOptions = {
                 method,
@@ -1328,6 +1338,7 @@ class ProviderLayer {
         finally {
             if (timeout) clearTimeout(timeout);
             if (controller) this.plugin.activeApiControllers.delete(controller);
+            if (callerSignal) callerSignal.removeEventListener?.("abort", abortFromCaller);
         }
     }
 

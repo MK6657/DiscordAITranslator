@@ -655,6 +655,8 @@ class TranslationScheduler {
 
     shouldRunItemSingle(item) {
         if (!item) return false;
+        // Sent again alone after its batch reply could not be used.
+        if (item.daitSingleRequest) return true;
         const config = this.plugin.getEffectiveTaskConfig("translation", item?.requestOptions?.configOverrides);
         if (this.plugin.isLocalTranslationProvider(config)) return true;
         return this.isLongItem(item);
@@ -7353,8 +7355,9 @@ module.exports = class DiscordAITranslator {
         ].join(":");
     }
 
-    completeAutoTranslationFromCache(messageNode, content, text, translated, cacheKey, canRender = true, requestOptions = null, textOptions = null) {
-        if (requestOptions && this.isInvalidAutoTranslationCacheValue(text, translated, requestOptions)) {
+    completeAutoTranslationFromCache(messageNode, content, text, translated, cacheKey, canRender = true, requestOptions = null, textOptions = null, renderMeta = null) {
+        // A kept partial result was validated when it arrived; it is by definition not cacheable.
+        if (requestOptions && !renderMeta?.partial && this.isInvalidAutoTranslationCacheValue(text, translated, requestOptions)) {
             this.deleteTranslationCacheCandidates(cacheKey, ...this.getTranslationCacheAliases(text, requestOptions));
             return;
         }
@@ -7417,7 +7420,7 @@ module.exports = class DiscordAITranslator {
                     cacheKey,
                     requestOptions,
                     priority: target.priority,
-                    run: () => this.renderAutoTranslationCacheTarget(target, translated, cacheKey, requestOptions)
+                    run: () => this.renderAutoTranslationCacheTarget(target, translated, cacheKey, requestOptions, renderMeta ? { renderMeta } : {})
                 });
             }
             else {
@@ -7970,11 +7973,24 @@ module.exports = class DiscordAITranslator {
             return false;
         }
         // Cache tasks only run once the scroller is still, so scroll correction is safe even during the pause.
-        const renderedLine = this.renderTranslation(target.messageNode, target.content, translated, cacheKey, target.text, { allowScrollCorrectionWhilePaused: true });
+        const renderMeta = options.renderMeta || null;
+        const renderedLine = this.renderTranslation(target.messageNode, target.content, translated, cacheKey, target.text, {
+            allowScrollCorrectionWhilePaused: true,
+            ...(renderMeta?.partial
+                ? {
+                    partial: true,
+                    validationQuality: renderMeta.validationQuality || TRANSLATION_VALIDATION_QUALITIES.PARTIAL,
+                    validationReason: renderMeta.validationReason || "",
+                    ...(renderMeta.partialInfo ? { partialInfo: renderMeta.partialInfo } : {})
+                }
+                : {})
+        });
         if (!renderedLine) {
-            // Emoji images could not be restored: per contract the translation must be
-            // neither shown nor kept cached, and the message must stay eligible for rescan.
+            // Emoji images could not be restored: per contract the translation must be neither
+            // shown nor kept cached. The failure is recorded so the scan does not request the
+            // same message again on every pass.
             this.deleteTranslationCacheCandidates(cacheKey, ...(options.deleteKeys || []));
+            this.markAutoTranslationUndrawableResult(cacheKey, "emoji-restore-failed");
             this.logAutoTranslationMessageState(
                 "auto.message.state",
                 "render-skip",
@@ -7986,7 +8002,8 @@ module.exports = class DiscordAITranslator {
             return false;
         }
         this.rememberRecentAutoTranslationRender(cacheKey, target.text, requestOptions, {
-            validationQuality: TRANSLATION_VALIDATION_QUALITIES.GOOD
+            validationQuality: renderMeta?.partial ? (renderMeta.validationQuality || TRANSLATION_VALIDATION_QUALITIES.PARTIAL) : TRANSLATION_VALIDATION_QUALITIES.GOOD,
+            validationReason: renderMeta?.partial ? (renderMeta.validationReason || "") : ""
         });
         this.logAutoTranslationMessageState(
             "auto.message.state",
@@ -8115,15 +8132,19 @@ module.exports = class DiscordAITranslator {
             : MESSAGE_BUTTON_VISIBILITY_ALWAYS;
     }
 
-    renderAutoTranslationResult(item, translated) {
+    renderAutoTranslationResult(item, translated, resultMeta = {}) {
         if (!this.isAutoTranslationRenderRequestCurrent(item.requestOptions)) return;
-        translated = this.sanitizeAutoTranslationOutput(item.text, translated, this.getAutoTranslationTargetLanguage(item.requestOptions), this.getAutoTranslationOutputValidationOptions(item.text, translated, item.requestOptions));
+        // A long message with failed chunks arrives with partialInfo: it is validated as partial,
+        // never cached as complete, and drawn with its missing parts noted.
+        const partialInfo = resultMeta?.partialInfo || null;
+        const validationRequestOptions = partialInfo ? { ...item.requestOptions, longTextPartial: true } : item.requestOptions;
+        translated = this.sanitizeAutoTranslationOutput(item.text, translated, this.getAutoTranslationTargetLanguage(item.requestOptions), this.getAutoTranslationOutputValidationOptions(item.text, translated, validationRequestOptions));
         const validation = this.getAutoTranslationOutputValidationResult(
             item.text,
             translated,
             this.getAutoTranslationTargetLanguage(item.requestOptions),
-            this.getAutoTranslationOutputValidationOptions(item.text, translated, item.requestOptions),
-            item.requestOptions
+            this.getAutoTranslationOutputValidationOptions(item.text, translated, validationRequestOptions),
+            validationRequestOptions
         );
         if (!validation.renderable) {
             const error = this.createFinalInvalidAutoTranslationError(validation.reasonCode || "invalid-output");
@@ -8217,7 +8238,7 @@ module.exports = class DiscordAITranslator {
                             cacheKey: renderCacheKey,
                             requestOptions: target?.requestOptions || item?.requestOptions,
                             priority: target.priority,
-                            run: () => this.renderAutoTranslationRequestTarget(item, target, translated, validation)
+                            run: () => this.renderAutoTranslationRequestTarget(item, target, translated, validation, partialInfo ? { partialInfo } : {})
                         });
                     }
                     else {
@@ -8238,12 +8259,23 @@ module.exports = class DiscordAITranslator {
             this.cacheAutoTranslationResult(item, translated);
             upgradedCacheTargets.forEach(upgrade => this.cacheAutoTranslationResultWithOptions(upgrade.cacheKey, item.text, upgrade.requestOptions, translated));
         }
+        else if (!validation.cacheable && (cacheable || (!sawInvalidTarget && this.shouldCacheAutoTranslationResultFromRequest(item)))) {
+            // Not cacheable, but kept in memory so a prefetched or rebuilt message is redrawn
+            // instead of requested (and paid for) again.
+            const partialMeta = {
+                validationQuality: validation.quality,
+                validationReason: validation.reasonCode || "",
+                partialInfo
+            };
+            this.rememberAutoTranslationPartialResult(item.cacheKey, item.text, translated, partialMeta);
+            upgradedCacheTargets.forEach(upgrade => this.rememberAutoTranslationPartialResult(upgrade.cacheKey, item.text, translated, partialMeta));
+        }
         if (this.isAutoTranslateEnabled()) {
             this.queueScan({ delayMs: AUTO_TRANSLATE_VIEWPORT_STABLE_RESCAN_MS });
         }
     }
 
-    renderAutoTranslationRequestTarget(item, target, translated, validation = null) {
+    renderAutoTranslationRequestTarget(item, target, translated, validation = null, resultMeta = {}) {
         const requestOptions = target?.requestOptions || item?.requestOptions;
         const validationResult = validation || this.getAutoTranslationOutputValidationResult(
             target?.text || item?.text || "",
@@ -8292,13 +8324,17 @@ module.exports = class DiscordAITranslator {
         const renderedLine = this.renderTranslation(target.messageNode, target.content, translated, renderCacheKey, target.text, {
             partial: validationResult.quality === TRANSLATION_VALIDATION_QUALITIES.PARTIAL,
             validationQuality: validationResult.quality,
-            validationReason: validationResult.reasonCode || ""
+            validationReason: validationResult.reasonCode || "",
+            ...(resultMeta?.partialInfo ? { partialInfo: resultMeta.partialInfo } : {})
         });
         if (!renderedLine) {
-            // Emoji images could not be restored: drop the cached result and report a skip
-            // instead of marking the message as rendered.
+            // Emoji images could not be restored: drop the cached result, report a skip instead of
+            // marking the message as rendered, and remember the failure so the next scan does not
+            // request the same message again.
             this.deleteTranslationCacheCandidates(renderCacheKey);
             if (item?.cacheKey && item.cacheKey !== renderCacheKey) this.deleteTranslationCacheCandidates(item.cacheKey);
+            this.markAutoTranslationUndrawableResult(renderCacheKey, "emoji-restore-failed");
+            if (item?.cacheKey && item.cacheKey !== renderCacheKey) this.markAutoTranslationUndrawableResult(item.cacheKey, "emoji-restore-failed");
             this.logAutoTranslationRenderSkip(item, target, "emoji-restore-failed");
             return false;
         }
@@ -8461,9 +8497,9 @@ module.exports = class DiscordAITranslator {
         );
     }
 
-    renderAutoTranslationResultSafely(item, translated) {
+    renderAutoTranslationResultSafely(item, translated, resultMeta) {
         try {
-            this.renderAutoTranslationResult(item, translated);
+            this.renderAutoTranslationResult(item, translated, resultMeta);
             return true;
         }
         catch (error) {
@@ -9054,7 +9090,8 @@ module.exports = class DiscordAITranslator {
             configOverrides: options.configOverrides,
             translateAsArray: true,
             timeoutMs: AUTO_TRANSLATE_REQUEST_TIMEOUT_MS,
-            mode: options.mode || "direct-translate-batch"
+            mode: options.mode || "direct-translate-batch",
+            ...(taskOptions?.signal ? { signal: taskOptions.signal } : {})
         });
         const resultArray = Array.isArray(uniqueResults) ? uniqueResults : [uniqueResults];
         return uniqueIndexes.map(index => String(resultArray[index] || "").trim());
@@ -9835,6 +9872,10 @@ module.exports = class DiscordAITranslator {
         const renderedText = this.getTranslationLineRenderedText(line);
         if (!renderedText) return false;
         const text = sourceText ?? this.getElementText(content);
+        // A partial line drawn from a kept partial result (a long message with a missing part)
+        // would fail validation as a complete translation; removing it would only make the scan
+        // draw it again.
+        if (line.classList?.contains?.("dait-translation-partial") && this.getAutoTranslationPartialResult(cacheKey, text)) return false;
         const validation = this.getAutoTranslationOutputValidationResult(
             text,
             renderedText,
@@ -11367,6 +11408,8 @@ module.exports = class DiscordAITranslator {
         if (text) this.clearAutoTextTranslationFailure(text, options);
         this.clearAutoTranslationPendingTargets(cacheKey);
         this.removeQueuedAutoTranslationItem(cacheKey);
+        // A kept partial result must not be drawn back over a manual retranslation.
+        this.clearAutoTranslationPartialResult(cacheKey, plan?.cacheKey);
         if (plan?.cacheKey && plan.cacheKey !== cacheKey) {
             this.clearAutoTranslationFailure(plan.cacheKey, plan.requestOptions || options);
             this.clearAutoTranslationPendingTargets(plan.cacheKey);
@@ -11393,11 +11436,14 @@ module.exports = class DiscordAITranslator {
         return plan.requestOptions;
     }
 
-    async runManualRescueModelAttempt(plan, requestOptions) {
+    // requestOptions is this attempt's own copy: a partial long result is recorded on it for
+    // validation and for the partial note (longTextPartialInfo).
+    async runManualRescueModelAttempt(plan, requestOptions, requestBudget = null) {
         if (this.isLongAutoTranslationText(plan.text)) {
             const taskOptions = {
                 retryInvalidOutput: false,
-                manualRescue: true
+                manualRescue: true,
+                ...(requestBudget ? { requestBudget } : {})
             };
             const wholePass = await this.runManualLongTextWholePass(plan, requestOptions, taskOptions);
             if (wholePass !== null) return wholePass;
@@ -11406,9 +11452,11 @@ module.exports = class DiscordAITranslator {
                 requestOptions.longTextPartial = true;
                 requestOptions.longTextFailedChunks = Number(taskOptions.longTextFailedChunks || 0);
                 requestOptions.longTextSuccessfulChunks = Number(taskOptions.longTextSuccessfulChunks || 0);
+                if (taskOptions.longTextPartialInfo) requestOptions.longTextPartialInfo = taskOptions.longTextPartialInfo;
             }
             return translated;
         }
+        this.consumeAutoTranslationRequestBudget({ requestBudget });
         return this.runAutoTranslationModelAttempt(plan.text, requestOptions);
     }
 
@@ -11471,14 +11519,25 @@ module.exports = class DiscordAITranslator {
         let previousReason = "";
         let lastValidation = null;
         let lastError = null;
+        // One click may cause at most this many model requests across all attempts and chunks.
+        const requestBudget = this.createAutoTranslationRequestBudget();
 
         for (let index = 0; index < attemptNames.length; index++) {
             const attemptName = attemptNames[index];
-            const requestOptions = this.getManualRescueAttemptOptions(plan, attemptName, previousOutput, previousReason);
+            if (this.isAutoTranslationRequestBudgetExhausted(requestBudget)) {
+                this.logDiagnostic("manual.rescue", "budget-exhausted", {
+                    key: this.getTextFingerprint(plan.cacheKey),
+                    sourceHash: plan.sourceHash,
+                    attemptName,
+                    requestCount: requestBudget.used
+                });
+                break;
+            }
+            const requestOptions = { ...this.getManualRescueAttemptOptions(plan, attemptName, previousOutput, previousReason) };
             let translated = "";
             let validation = null;
             try {
-                translated = await this.runManualRescueModelAttempt(plan, requestOptions);
+                translated = await this.runManualRescueModelAttempt(plan, requestOptions, requestBudget);
                 validation = this.getManualRescueValidation(plan, translated, requestOptions);
                 this.logManualRescueAttempt(plan, attemptName, index, requestOptions, translated, validation, null);
                 attempts.push({
@@ -11500,6 +11559,7 @@ module.exports = class DiscordAITranslator {
                 });
             }
             catch (error) {
+                if (this.isAutoTranslationRequestBudgetError(error)) break;
                 lastError = error;
                 previousReason = error?.autoTranslationInvalidReason || error?.autoTranslationCancelReason || this.getAutoTranslationFailureType(error) || "invalid-output";
                 this.logManualRescueAttempt(plan, attemptName, index, requestOptions, previousOutput, null, error);
@@ -11639,7 +11699,8 @@ module.exports = class DiscordAITranslator {
             this.renderTranslation(messageNode, content, translated, cacheKey, text, {
                 partial: validation.quality === TRANSLATION_VALIDATION_QUALITIES.PARTIAL,
                 validationQuality: validation.quality,
-                validationReason: validation.reasonCode || ""
+                validationReason: validation.reasonCode || "",
+                ...(resultRequestOptions.longTextPartialInfo ? { partialInfo: resultRequestOptions.longTextPartialInfo } : {})
             });
             this.rememberRecentAutoTranslationRender(plan.autoCacheKey, text, plan.autoRequestOptions, {
                 validationQuality: validation.quality,
@@ -11849,6 +11910,8 @@ module.exports = class DiscordAITranslator {
         if (line.classList?.contains?.("dait-translation-loading")) return false;
         if (line.classList?.contains?.("dait-translation-error")) return false;
         if (line.classList?.contains?.("dait-translation-masked")) return false;
+        // A partial translation may miss whole parts; the original must stay readable.
+        if (line.classList?.contains?.("dait-translation-partial")) return false;
         return line.classList?.contains?.("dait-translation-revealed") !== false;
     }
 
@@ -11950,9 +12013,18 @@ module.exports = class DiscordAITranslator {
 
     getTranslationEmojiDescriptors(content) {
         const images = Array.from(content?.querySelectorAll?.("img[alt]") || []);
+        // Skip the same subtrees text extraction skips (hidden parts, other translators' markup),
+        // otherwise an emoji the model never saw would have to be restored and the line would fail.
+        const skippedSelector = [
+            "[aria-hidden='true']",
+            "[hidden]",
+            ...this.getForeignTranslationExcludedSelectors()
+        ].filter(Boolean).join(", ");
         return images.map(image => {
             try {
                 if (image.closest?.(".dait-translation-line, .dait-translation-box")) return null;
+                const skipped = image.closest?.(skippedSelector);
+                if (skipped && (skipped === content || content?.contains?.(skipped))) return null;
             }
             catch {}
             const alt = String(image.getAttribute?.("alt") || "").trim();
@@ -11986,10 +12058,11 @@ module.exports = class DiscordAITranslator {
         const descriptorCounts = new Map();
         descriptors.forEach(descriptor => descriptorCounts.set(descriptor.name, Number(descriptorCounts.get(descriptor.name) || 0) + 1));
         const outputCounts = this.getDiscordEmojiTokenCounts(translatedText);
-        // Only real emoji (backed by a DOM image descriptor) must match exactly; other
-        // ":token:"-shaped text such as "12:30:45" stays plain text and must not veto the render.
+        // Every real emoji (backed by a DOM image descriptor) needs a token in the output. Extra
+        // tokens of the same name (a literal ":name:" typed in the message) stay plain text, as does
+        // other ":token:"-shaped text such as "12:30:45"; neither may veto the render.
         for (const [name, count] of descriptorCounts) {
-            if (Number(outputCounts.get(name) || 0) !== count) return false;
+            if (Number(outputCounts.get(name) || 0) < count) return false;
         }
 
         const queues = new Map();
@@ -14239,6 +14312,8 @@ module.exports = class DiscordAITranslator {
     isSameAutoTranslationRouteScope(...args) { return this.autoQueueCore.isSameAutoTranslationRouteScope(...args); }
     autoTranslateQueuedMessage(...args) { return this.autoQueueCore.autoTranslateQueuedMessage(...args); }
     autoTranslateQueuedBatch(...args) { return this.autoQueueCore.autoTranslateQueuedBatch(...args); }
+    settleFailedAutoTranslationBatchRequest(...args) { return this.autoQueueCore.settleFailedAutoTranslationBatchRequest(...args); }
+    isAutoTranslationBatchFormatError(...args) { return this.autoQueueCore.isAutoTranslationBatchFormatError(...args); }
     requeueAutoTranslationItem(...args) { return this.autoQueueCore.requeueAutoTranslationItem(...args); }
     enqueueAutoTranslationItem(...args) { return this.autoQueueCore.enqueueAutoTranslationItem(...args); }
     hasActiveAutoTranslationKey(...args) { return this.autoQueueCore.hasActiveAutoTranslationKey(...args); }
@@ -14248,6 +14323,12 @@ module.exports = class DiscordAITranslator {
     rememberRecentAutoTranslationRender(...args) { return this.autoQueueCore.rememberRecentAutoTranslationRender(...args); }
     getRecentAutoTranslationRender(...args) { return this.autoQueueCore.getRecentAutoTranslationRender(...args); }
     pruneRecentAutoTranslationRenders(...args) { return this.autoQueueCore.pruneRecentAutoTranslationRenders(...args); }
+    rememberAutoTranslationPartialResult(...args) { return this.autoQueueCore.rememberAutoTranslationPartialResult(...args); }
+    getAutoTranslationPartialResult(...args) { return this.autoQueueCore.getAutoTranslationPartialResult(...args); }
+    clearAutoTranslationPartialResult(...args) { return this.autoQueueCore.clearAutoTranslationPartialResult(...args); }
+    pruneAutoTranslationPartialResults(...args) { return this.autoQueueCore.pruneAutoTranslationPartialResults(...args); }
+    getAutoTranslationAbortSignal(...args) { return this.autoQueueCore.getAutoTranslationAbortSignal(...args); }
+    abortAutoTranslationRequests(...args) { return this.autoQueueCore.abortAutoTranslationRequests(...args); }
     createAutoTranslationInFlightToken(...args) { return this.autoQueueCore.createAutoTranslationInFlightToken(...args); }
     markAutoTranslationInFlightItem(...args) { return this.autoQueueCore.markAutoTranslationInFlightItem(...args); }
     heartbeatAutoTranslationInFlightItem(...args) { return this.autoQueueCore.heartbeatAutoTranslationInFlightItem(...args); }
@@ -14273,6 +14354,7 @@ module.exports = class DiscordAITranslator {
     clearPendingAutoTranslationItem(...args) { return this.autoQueueCore.clearPendingAutoTranslationItem(...args); }
     clearAutoTranslationFailure(...args) { return this.autoQueueCore.clearAutoTranslationFailure(...args); }
     markAutoTranslationFailure(...args) { return this.autoQueueCore.markAutoTranslationFailure(...args); }
+    markAutoTranslationUndrawableResult(...args) { return this.autoQueueCore.markAutoTranslationUndrawableResult(...args); }
     getAutoTranslationStorageErrorForItem(...args) { return this.autoQueueCore.getAutoTranslationStorageErrorForItem(...args); }
     isWeakAutoTranslationPrefetchFailure(...args) { return this.autoQueueCore.isWeakAutoTranslationPrefetchFailure(...args); }
     pruneAutoTranslationFailureMapSize(...args) { return this.autoQueueCore.pruneAutoTranslationFailureMapSize(...args); }
@@ -14335,6 +14417,7 @@ module.exports = class DiscordAITranslator {
     getLongAutoTranslationChunkUnits(...args) { return this.autoRequestPipeline.getLongAutoTranslationChunkUnits(...args); }
     splitOversizedLongAutoTranslationUnit(...args) { return this.autoRequestPipeline.splitOversizedLongAutoTranslationUnit(...args); }
     runLongAutoTranslationTask(...args) { return this.autoRequestPipeline.runLongAutoTranslationTask(...args); }
+    shouldStopLongAutoTranslationOnChunkError(...args) { return this.autoRequestPipeline.shouldStopLongAutoTranslationOnChunkError(...args); }
     runLongAutoTranslationChunkManualRescue(...args) { return this.autoRequestPipeline.runLongAutoTranslationChunkManualRescue(...args); }
     runLongAutoTranslationSubchunkManualRescue(...args) { return this.autoRequestPipeline.runLongAutoTranslationSubchunkManualRescue(...args); }
     getLongTextChunkTranslationOptions(...args) { return this.autoRequestPipeline.getLongTextChunkTranslationOptions(...args); }
@@ -14351,6 +14434,11 @@ module.exports = class DiscordAITranslator {
     withRaisedAutoTranslationMaxTokens(...args) { return this.autoRequestPipeline.withRaisedAutoTranslationMaxTokens(...args); }
     runAutoTranslationTask(...args) { return this.autoRequestPipeline.runAutoTranslationTask(...args); }
     runAutoTranslationTaskWithOptions(...args) { return this.autoRequestPipeline.runAutoTranslationTaskWithOptions(...args); }
+    runTruncatedAutoTranslationRetry(...args) { return this.autoRequestPipeline.runTruncatedAutoTranslationRetry(...args); }
+    createAutoTranslationRequestBudget(...args) { return this.autoRequestPipeline.createAutoTranslationRequestBudget(...args); }
+    consumeAutoTranslationRequestBudget(...args) { return this.autoRequestPipeline.consumeAutoTranslationRequestBudget(...args); }
+    isAutoTranslationRequestBudgetExhausted(...args) { return this.autoRequestPipeline.isAutoTranslationRequestBudgetExhausted(...args); }
+    isAutoTranslationRequestBudgetError(...args) { return this.autoRequestPipeline.isAutoTranslationRequestBudgetError(...args); }
     shouldRunLocalAutoTranslationRepairRetry(...args) { return this.autoRequestPipeline.shouldRunLocalAutoTranslationRepairRetry(...args); }
     getAutoTranslationRequestTimeoutMs(...args) { return this.autoRequestPipeline.getAutoTranslationRequestTimeoutMs(...args); }
     createFinalInvalidAutoTranslationError(...args) { return this.autoRequestPipeline.createFinalInvalidAutoTranslationError(...args); }
