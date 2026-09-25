@@ -4,9 +4,11 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
+const { findBrowserProfilePaths, findLocalOnlyPaths } = require("./release-guards");
 
 const root = path.resolve(__dirname, "..");
-const excludedDirectories = new Set([".git", ".agents", "node_modules", "external", "work", "dist", "coverage"]);
+// Local-only folders the text scan skips; the Git index guard below still rejects them if tracked.
+const excludedDirectories = new Set([".git", ".agents", ".claude", "node_modules", "external", "work", "dist", "coverage"]);
 const textExtensions = new Set(["", ".js", ".json", ".md", ".ps1", ".txt", ".yml", ".yaml"]);
 const secretPatterns = [
     /-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/,
@@ -89,9 +91,15 @@ if (gitRoot.status !== 0 || path.resolve(gitRoot.stdout.trim()) !== root) {
 const trackedResult = spawnSync("git", ["ls-files", "-z"], { cwd: root, encoding: "utf8" });
 if (trackedResult.status !== 0) throw new Error("Unable to inspect Git tracked files.");
 const trackedFiles = trackedResult.stdout.split("\0").filter(Boolean).map(file => file.replace(/\\/g, "/"));
-const forbiddenTracked = trackedFiles.filter(file => /^(?:external|node_modules|work|\.agents)\//.test(file));
+// `git ls-files` lists the index, so staged files are checked as well as committed ones.
+const forbiddenTracked = findLocalOnlyPaths(trackedFiles);
 if (forbiddenTracked.length) {
     throw new Error(`Local-only files are tracked by Git: ${forbiddenTracked.join(", ")}`);
+}
+// Browser profile stores are binary databases, so the text scan above cannot see the logins, cookies or history in them.
+const browserProfileFiles = findBrowserProfilePaths(trackedFiles);
+if (browserProfileFiles.length) {
+    throw new Error(`Browser profile data (logins, cookies or history) is staged or tracked by Git: ${browserProfileFiles.join(", ")}. Remove it from Git with 'git rm --cached' and keep browser profiles outside the repository.`);
 }
 const requiredTracked = [
     ...requiredFiles,
