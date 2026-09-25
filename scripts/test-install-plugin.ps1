@@ -53,6 +53,7 @@ if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
 }
 
 $originalAppData = $env:APPDATA
+$originalLocalAppData = $env:LOCALAPPDATA
 try {
     $unicodeDirectoryName = ([string][char]0x6D4B) + ([string][char]0x8BD5) + " path"
     $successAppData = Join-Path $testRoot ("success-appdata " + $unicodeDirectoryName)
@@ -106,6 +107,41 @@ try {
     if (-not $secondPreserved -or $secondPreserved.Value -ne $false -or $secondEnableState.DiscordAITranslator -ne $true) {
         throw "Repeated installation changed existing profile state."
     }
+
+    # The checker confirms the installed build and flags private copies kept by packaged apps.
+    $checker = Join-Path $PSScriptRoot "check-installed-plugin.ps1"
+    $checkLocalAppData = Join-Path $testRoot "check-localappdata"
+    New-Item -ItemType Directory -Force -Path $checkLocalAppData | Out-Null
+    $env:LOCALAPPDATA = $checkLocalAppData
+    $noDiscordOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $checker -PluginPath $source -PluginsDir $successPlugins | Out-String
+    if ($LASTEXITCODE -ne 0 -or $noDiscordOutput -notmatch "same as repository build" -or $noDiscordOutput -match "OK: BetterDiscord will load" -or $noDiscordOutput -notmatch "cannot confirm") {
+        throw "Checker must not report OK without Discord: $noDiscordOutput"
+    }
+    $discordCore = Join-Path $checkLocalAppData "Discord\app-1.0.9999\modules\discord_desktop_core-1\discord_desktop_core"
+    New-Item -ItemType Directory -Force -Path $discordCore, (Join-Path $successAppData "BetterDiscord\data") | Out-Null
+    Set-Utf8NoBomContent -Path (Join-Path $successAppData "BetterDiscord\data\betterdiscord.asar") -Value "asar"
+    Set-Utf8NoBomContent -Path (Join-Path $discordCore "index.js") -Value "module.exports = require('./core.asar');"
+    $unhookedOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $checker -PluginPath $source -PluginsDir $successPlugins | Out-String
+    if ($unhookedOutput -notmatch "does NOT load BetterDiscord" -or $unhookedOutput -match "OK: BetterDiscord will load") {
+        throw "Checker did not report the missing BetterDiscord hook: $unhookedOutput"
+    }
+    Set-Utf8NoBomContent -Path (Join-Path $discordCore "index.js") -Value "require('BetterDiscord/data/betterdiscord.asar');`nmodule.exports = require('./core.asar');"
+    $checkOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $checker -PluginPath $source -PluginsDir $successPlugins | Out-String
+    if ($LASTEXITCODE -ne 0 -or $checkOutput -notmatch "same as repository build" -or $checkOutput -notmatch "loads BetterDiscord; BetterDiscord core present" -or $checkOutput -notmatch "OK: BetterDiscord will load") {
+        throw "Checker did not confirm the installed build: $checkOutput"
+    }
+    $shadowPlugins = Join-Path $checkLocalAppData "Packages\Example.App_test\LocalCache\Roaming\BetterDiscord\plugins"
+    New-Item -ItemType Directory -Force -Path $shadowPlugins | Out-Null
+    Set-Utf8NoBomContent -Path (Join-Path $shadowPlugins "DiscordAITranslator.plugin.js") -Value "/**`n * @version 0.0.1`n */"
+    $shadowOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $checker -PluginPath $source -PluginsDir $successPlugins | Out-String
+    if ($LASTEXITCODE -ne 0 -or $shadowOutput -notmatch "Private copy:\s+v0\.0\.1" -or $shadowOutput -notmatch "Example\.App_test") {
+        throw "Checker did not report the private app copy: $shadowOutput"
+    }
+    $missingOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $checker -PluginPath $source -PluginsDir $checkLocalAppData | Out-String
+    if ($LASTEXITCODE -ne 1 -or $missingOutput -notmatch "Installed plugin:\s+not found") {
+        throw "Checker did not fail for a missing plugin: $missingOutput"
+    }
+    $env:LOCALAPPDATA = $originalLocalAppData
 
     $failureAppData = Join-Path $testRoot "failure-appdata"
     $failurePlugins = Join-Path $failureAppData "BetterDiscord\plugins"
@@ -181,6 +217,7 @@ try {
 }
 finally {
     $env:APPDATA = $originalAppData
+    $env:LOCALAPPDATA = $originalLocalAppData
     if (Test-Path -LiteralPath $testRoot) {
         Remove-Item -LiteralPath $testRoot -Recurse -Force
     }

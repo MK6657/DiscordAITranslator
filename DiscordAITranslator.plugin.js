@@ -1,7 +1,7 @@
 /**
  * @name DiscordAITranslator
  * @author /insert 始皇
- * @version 0.2.0
+ * @version 0.3.0
  * @description Discord AI 翻译/润色插件，支持输入润色和频道消息翻译。
  * @license MIT
  */
@@ -59,9 +59,17 @@ var require_translation_renderer = __commonJS({
           this.plugin.getStrongTextFingerprint(text || target?.text || "")
         ].join(":");
       }
-      getQueueDelayMs(now = Date.now()) {
+      // Cached translations need no model request, so they skip the scroll pause, settle and jump
+      // windows and wait only for the scroller to be still.
+      getQueueDelayMs(now = Date.now(), options = {}) {
         const mediaDelayMs = this.plugin.getDiscordMediaViewerDeferredDelayMs(now);
         if (mediaDelayMs > 0) return mediaDelayMs;
+        if (options.cacheTasks) {
+          return Math.max(
+            this.plugin.getAutoTranslationScrollStillRemainingMs(now),
+            this.plugin.getInputComposerBusyRemainingMs(now)
+          );
+        }
         return Math.max(
           this.plugin.getAutoTranslationRenderPauseRemainingMs(now),
           this.plugin.getAutoTranslationViewportSettleRemainingMs(now),
@@ -1128,6 +1136,12 @@ var require_styles = __commonJS({
     font-weight: 650;
     line-height: 1;
     padding: 6px 8px;
+}
+
+.dait-settings-chips span.dait-settings-version {
+    border-color: var(--dait-accent, #5865f2);
+    color: var(--dait-accent, #5865f2);
+    font-variant-numeric: tabular-nums;
 }
 
 .dait-settings-layout {
@@ -2976,8 +2990,6 @@ var require_constants = __commonJS({
         endpoint: "http://127.0.0.1:8080/v1/chat/completions",
         model: "local-model",
         apiKeyOptional: true,
-        autoTranslateConcurrencyMax: 1,
-        autoTranslatePrefetchAllowed: false,
         autoTranslateIntakeMode: "dom",
         autoTranslateRequestBatchSize: 1,
         autoTranslateLongTextChunkLength: 420
@@ -3194,7 +3206,7 @@ var require_constants = __commonJS({
     var AUTO_LANGUAGE_VALUE = "auto";
     var AUTO_TRANSLATE_DEFAULT_CONCURRENCY = 4;
     var AUTO_TRANSLATE_MIN_CONCURRENCY = 1;
-    var AUTO_TRANSLATE_MAX_CONCURRENCY = 8;
+    var AUTO_TRANSLATE_MAX_CONCURRENCY = 10;
     var AUTO_TRANSLATE_MIN_BATCH_SIZE = 8;
     var AUTO_TRANSLATE_BATCH_MULTIPLIER = 4;
     var AUTO_TRANSLATE_QUEUE_MULTIPLIER = 5;
@@ -3234,6 +3246,10 @@ var require_constants = __commonJS({
     var MANUAL_LONG_TEXT_WHOLE_PASS_MAX_LENGTH = 1800;
     var MODEL_REQUEST_TIMEOUT_MS = 45e3;
     var API_TEST_REQUEST_TIMEOUT_MS = 15e3;
+    var API_ENDPOINT_ERROR_MESSAGE_KEYS = Object.freeze({
+      INVALID_API_ENDPOINT: "errorInvalidEndpoint",
+      UNSAFE_API_ENDPOINT: "errorUnsafeEndpoint"
+    });
     var SCAN_VIEWPORT_BUFFER_PX = 480;
     var AUTO_TRANSLATE_VIEWPORT_SETTLE_MS = 450;
     var AUTO_TRANSLATE_VIEWPORT_JUMP_SETTLE_MS = 900;
@@ -3248,6 +3264,14 @@ var require_constants = __commonJS({
     var AUTO_TRANSLATE_RENDER_FRAME_BUDGET_MS = 6;
     var AUTO_TRANSLATE_PREFETCH_PRIORITY_BASE = 1e5;
     var AUTO_TRANSLATE_EDGE_OVERSCAN_MESSAGES = 1;
+    var AUTO_TRANSLATE_SCROLL_STILL_MS = 100;
+    var AUTO_TRANSLATE_CACHE_DRAW_MIN_BUFFER_PX = 600;
+    var AUTO_TRANSLATE_CACHE_DRAW_BUFFER_FACTOR = 1.25;
+    var AUTO_TRANSLATE_CACHE_DRAW_BUDGET_MS = 3;
+    var AUTO_TRANSLATE_CACHE_DRAW_MAX_EVALUATIONS = 8;
+    var AUTO_TRANSLATE_CACHE_DRAW_MAX_MESSAGES = 60;
+    var AUTO_TRANSLATE_CACHE_DRAW_MEMO_MAX = 800;
+    var AUTO_TRANSLATE_FINISHED_LINE_SELECTOR = ".dait-translation-line:not(.dait-translation-loading):not(.dait-translation-error)";
     var AUTO_TRANSLATE_DEFAULT_PREFETCH_RANGE = 5;
     var AUTO_TRANSLATE_PREFETCH_RANGES = [3, 5, 8];
     var MUTATION_DIRTY_SCAN_MAX_ROOTS = 12;
@@ -3669,6 +3693,7 @@ var require_constants = __commonJS({
       MANUAL_LONG_TEXT_WHOLE_PASS_MAX_LENGTH,
       MODEL_REQUEST_TIMEOUT_MS,
       API_TEST_REQUEST_TIMEOUT_MS,
+      API_ENDPOINT_ERROR_MESSAGE_KEYS,
       SCAN_VIEWPORT_BUFFER_PX,
       AUTO_TRANSLATE_VIEWPORT_SETTLE_MS,
       AUTO_TRANSLATE_VIEWPORT_JUMP_SETTLE_MS,
@@ -3683,6 +3708,14 @@ var require_constants = __commonJS({
       AUTO_TRANSLATE_RENDER_FRAME_BUDGET_MS,
       AUTO_TRANSLATE_PREFETCH_PRIORITY_BASE,
       AUTO_TRANSLATE_EDGE_OVERSCAN_MESSAGES,
+      AUTO_TRANSLATE_SCROLL_STILL_MS,
+      AUTO_TRANSLATE_CACHE_DRAW_MIN_BUFFER_PX,
+      AUTO_TRANSLATE_CACHE_DRAW_BUFFER_FACTOR,
+      AUTO_TRANSLATE_CACHE_DRAW_BUDGET_MS,
+      AUTO_TRANSLATE_CACHE_DRAW_MAX_EVALUATIONS,
+      AUTO_TRANSLATE_CACHE_DRAW_MAX_MESSAGES,
+      AUTO_TRANSLATE_CACHE_DRAW_MEMO_MAX,
+      AUTO_TRANSLATE_FINISHED_LINE_SELECTOR,
       AUTO_TRANSLATE_DEFAULT_PREFETCH_RANGE,
       AUTO_TRANSLATE_PREFETCH_RANGES,
       MUTATION_DIRTY_SCAN_MAX_ROOTS,
@@ -3978,7 +4011,7 @@ var require_request_pipeline = __commonJS({
         }
         const targetVisible = this.plugin.isAutoTranslationTargetVisibleCached(target, scanState.context);
         const explicitHistoryRequest = Boolean(target.daitHistoryRequest);
-        if (!this.plugin.isAutoTranslationPrefetchConfigured(requestOptions) && !targetVisible && !explicitHistoryRequest) {
+        if (!this.plugin.isAutoTranslationPrefetchConfigured() && !targetVisible && !explicitHistoryRequest) {
           return {
             action: "block",
             status: "blocked",
@@ -4033,23 +4066,6 @@ var require_request_pipeline = __commonJS({
             cacheKey,
             requestOptions: targetRequestOptions,
             counts: { eligible: 1, skippedCurrent: 1 }
-          };
-        }
-        const recentRender = this.plugin.getRecentAutoTranslationRender(cacheKey, text, targetRequestOptions, now);
-        if (recentRender) {
-          return {
-            action: "skip",
-            status: "skipped",
-            state: DIAGNOSTIC_MESSAGE_STATES.RENDERED,
-            reasonCode: DIAGNOSTIC_REASON_CODES.RECENT_RENDER_PRESENT,
-            cacheKey,
-            requestOptions: targetRequestOptions,
-            counts: { eligible: 1, skippedCurrent: 1 },
-            extra: {
-              validationQuality: recentRender.validationQuality || "",
-              validationReason: recentRender.validationReason || "",
-              ageMs: Math.max(0, now - Number(recentRender.at || 0))
-            }
           };
         }
         if (this.plugin.hasTranslationCacheCandidate(cacheKey, cacheAliases)) {
@@ -4115,6 +4131,23 @@ var require_request_pipeline = __commonJS({
               extra: { textCacheKey: this.plugin.getTextFingerprint(textCacheKey), canRender: canRenderCacheHit, targetVisible }
             };
           }
+        }
+        const recentRender = this.plugin.getRecentAutoTranslationRender(cacheKey, text, targetRequestOptions, now);
+        if (recentRender) {
+          return {
+            action: "skip",
+            status: "skipped",
+            state: DIAGNOSTIC_MESSAGE_STATES.RENDERED,
+            reasonCode: DIAGNOSTIC_REASON_CODES.RECENT_RENDER_PRESENT,
+            cacheKey,
+            requestOptions: targetRequestOptions,
+            counts: { eligible: 1, skippedCurrent: 1 },
+            extra: {
+              validationQuality: recentRender.validationQuality || "",
+              validationReason: recentRender.validationReason || "",
+              ageMs: Math.max(0, now - Number(recentRender.at || 0))
+            }
+          };
         }
         const hasPendingTargets = this.plugin.autoTranslationPendingTargets.has(cacheKey);
         const hasActiveKey = this.plugin.hasActiveAutoTranslationKey(cacheKey);
@@ -4579,7 +4612,7 @@ var require_request_pipeline = __commonJS({
       }
       shouldFallbackAutoTranslationBatchRequestError(error) {
         const type = this.plugin.getAutoTranslationFailureType(error);
-        return !["auth", "quota", "rate-limit", "server", "local-unavailable"].includes(type);
+        return !["cancelled", "auth", "quota", "rate-limit", "server", "local-unavailable"].includes(type);
       }
       buildPromptPolicyAutoTranslationPrompt(options = this.plugin.getAutoTranslationOptions()) {
         return this.plugin.buildPromptPolicyPrompt("auto", {
@@ -4836,7 +4869,7 @@ var require_request_pipeline = __commonJS({
           try {
             translated = await this.plugin.runAutoTranslationTaskWithOptions(chunks[index], chunkOptions, taskOptions);
           } catch (error) {
-            if (error?.autoTranslationStale) throw error;
+            if (this.plugin.isAbandonedTranslationError(error)) throw error;
             const rescued = taskOptions?.manualRescue ? await this.plugin.runLongAutoTranslationChunkManualRescue(chunks[index], chunkOptions, error, taskOptions, {
               sourceHash,
               chunkIndex: index,
@@ -4950,6 +4983,7 @@ var require_request_pipeline = __commonJS({
               validationQuality: validation.quality
             });
           } catch (error) {
+            if (this.plugin.isAbandonedTranslationError(error)) throw error;
             lastError = error;
             this.plugin.logDiagnostic("auto.long-text.chunk-rescue", "failed", {
               sourceHash: meta.sourceHash || this.plugin.getStrongTextFingerprint(chunkText),
@@ -5008,6 +5042,7 @@ var require_request_pipeline = __commonJS({
             if (validation.renderable) translatedParts.push(String(translated || "").trim());
             else failures.push({ index, reason: validation.reasonCode || "invalid-output" });
           } catch (error) {
+            if (this.plugin.isAbandonedTranslationError(error)) throw error;
             failures.push({ index, reason: error?.autoTranslationInvalidReason || this.plugin.getAutoTranslationFailureType(error) });
             this.plugin.logDiagnostic("auto.long-text.subchunk-rescue", "failed", {
               sourceHash: meta.sourceHash || this.plugin.getStrongTextFingerprint(text),
@@ -5438,6 +5473,10 @@ var require_request_pipeline = __commonJS({
         error.autoTranslationStale = true;
         error.autoTranslationCancelReason = String(reason || "stale");
         return error;
+      }
+      // Superseded or cancelled work must not be retried, rescued or continued with the next chunk.
+      isAbandonedTranslationError(error) {
+        return Boolean(error?.autoTranslationStale) || this.plugin.isRequestCancelled(error);
       }
       async runAutoTranslationStrictFallbackTask(text, options = this.plugin.getAutoTranslationOptions()) {
         const strictOptions = this.plugin.getAutoTranslationRetryOptions(text, "", options);
@@ -6082,7 +6121,7 @@ var require_request_pipeline = __commonJS({
           });
           return translated;
         } catch (error) {
-          if (error?.autoTranslationStale) throw error;
+          if (this.plugin.isAbandonedTranslationError(error)) throw error;
           this.plugin.logDiagnostic("manual.long-text.whole-pass", "failed", {
             ...this.plugin.getTranslationDiagnosticMeta("manual", {
               requestOptions: wholeOptions,
@@ -6127,6 +6166,7 @@ var require_queue_core = __commonJS({
   "src/auto-translation/queue-core.js"(exports2, module2) {
     "use strict";
     var {
+      API_ENDPOINT_ERROR_MESSAGE_KEYS,
       AUTO_TRANSLATE_BATCH_MULTIPLIER,
       AUTO_TRANSLATE_DEFAULT_CONCURRENCY,
       AUTO_TRANSLATE_DEFAULT_PREFETCH_RANGE,
@@ -6153,6 +6193,7 @@ var require_queue_core = __commonJS({
       AUTO_TRANSLATE_REQUEST_BATCH_SIZE,
       AUTO_TRANSLATE_REQUEST_TIMEOUT_MS,
       AUTO_TRANSLATE_SCROLL_RENDER_PAUSE_MS,
+      AUTO_TRANSLATE_SCROLL_STILL_MS,
       AUTO_TRANSLATE_TERMINAL_FAILURE_TTL,
       AUTO_TRANSLATE_TRANSIENT_FAILURE_TTL,
       AUTO_TRANSLATE_VIEWPORT_JUMP_COOLDOWN_MS,
@@ -6454,6 +6495,7 @@ var require_queue_core = __commonJS({
         const jumped = ["mutation", "resize", "route"].includes(type) || Math.abs(scrollY - previousScrollY) > Math.max(600, height * 0.8);
         this.plugin.setPreviousViewportScrollPosition(event, scrollY);
         this.plugin.autoTranslationLastScrollY = scrollY;
+        this.plugin.autoTranslationLastExternalScrollAt = now;
         if (type === "scroll" || type === "resize") {
           this.plugin.autoTranslationRenderPausedUntil = Math.max(
             Number(this.plugin.autoTranslationRenderPausedUntil || 0),
@@ -6475,6 +6517,11 @@ var require_queue_core = __commonJS({
       }
       isAutoTranslationRenderPaused(now = Date.now()) {
         return now < Number(this.plugin.autoTranslationRenderPausedUntil || 0);
+      }
+      // Scroll events arrive every frame while the user or a Discord animation moves the chat,
+      // so a short silence means nothing is animating and scroll corrections are safe.
+      getAutoTranslationScrollStillRemainingMs(now = Date.now()) {
+        return Math.max(0, Number(this.plugin.autoTranslationLastExternalScrollAt || 0) + AUTO_TRANSLATE_SCROLL_STILL_MS - now);
       }
       getAutoTranslationRenderPauseRemainingMs(now = Date.now()) {
         return Math.max(0, Number(this.plugin.autoTranslationRenderPausedUntil || 0) - now);
@@ -7010,7 +7057,7 @@ var require_queue_core = __commonJS({
       isAutoTranslationPrefetchAllowed(item) {
         if (item?.daitHistoryRequest) return true;
         if (!this.plugin.isAutoTranslationPrefetchItem(item)) return true;
-        if (!this.plugin.isAutoTranslationPrefetchConfigured(item?.requestOptions)) return false;
+        if (!this.plugin.isAutoTranslationPrefetchConfigured()) return false;
         const now = Date.now();
         if (this.plugin.isAutoTranslationRenderPaused(now) || this.plugin.isAutoTranslationViewportSettling(now) || this.plugin.isAutoTranslationJumpCoolingDown(now) || this.plugin.getInputComposerBusyRemainingMs(now) > 0) return false;
         const config = this.plugin.getEffectiveTaskConfig("translation", item?.requestOptions?.configOverrides);
@@ -7038,18 +7085,14 @@ var require_queue_core = __commonJS({
       }
       getAutoTranslateConcurrency() {
         if (!this.plugin.isAutoTranslateEnabled()) return 0;
-        const configured = this.plugin.normalizeAutoTranslateConcurrency(this.plugin.settings.ui?.autoTranslateConcurrency);
-        const providerLimit = this.plugin.getProviderAutoTranslateConcurrencyMax(this.plugin.settings.translation?.provider);
-        return providerLimit ? Math.min(configured, providerLimit) : configured;
+        return this.plugin.normalizeAutoTranslateConcurrency(this.plugin.settings.ui?.autoTranslateConcurrency);
       }
       getAutoTranslatePrefetchRange() {
         if (!this.plugin.isAutoTranslateEnabled() || !this.plugin.isAutoTranslationPrefetchConfigured()) return 0;
         return this.plugin.normalizeAutoTranslatePrefetchRange(this.plugin.settings.ui?.autoTranslatePrefetchRange);
       }
-      isAutoTranslationPrefetchConfigured(requestOptions = null) {
-        if (!this.plugin.settings.ui?.autoTranslatePrefetch) return false;
-        const config = this.plugin.getEffectiveTaskConfig("translation", requestOptions?.configOverrides);
-        return this.plugin.getProviderDefaults(config.provider)?.autoTranslatePrefetchAllowed !== false;
+      isAutoTranslationPrefetchConfigured() {
+        return Boolean(this.plugin.settings.ui?.autoTranslatePrefetch);
       }
       isAutoTranslateEnabled() {
         return Boolean(this.plugin.isStarted && this.plugin.settings?.translation?.enabled && this.plugin.settings?.ui?.autoTranslateMessages && this.plugin.isCurrentChannelAutoTranslateAllowed());
@@ -7077,10 +7120,6 @@ var require_queue_core = __commonJS({
         if (this.plugin.isLocalTranslationProvider(this.plugin.settings.translation)) return batchSize;
         const requestWindow = this.plugin.getAutoTranslateConcurrency() * this.plugin.getAutoTranslationRequestBatchSize() * 2;
         return Math.max(batchSize, requestWindow, batchSize * AUTO_TRANSLATE_QUEUE_MULTIPLIER);
-      }
-      getProviderAutoTranslateConcurrencyMax(provider) {
-        const limit = Number(this.plugin.getProviderDefaults(provider)?.autoTranslateConcurrencyMax || 0);
-        return Number.isFinite(limit) && limit > 0 ? Math.round(limit) : 0;
       }
       getAutoTranslationRequestBatchSize(options = null) {
         const config = this.plugin.getEffectiveTaskConfig("translation", options?.configOverrides);
@@ -7802,6 +7841,10 @@ var require_queue_core = __commonJS({
         }
       }
       markAutoTranslationFailure(item, error, options = {}) {
+        if (this.plugin.isRequestCancelled(error)) {
+          this.plugin.clearPendingAutoTranslationItemSafely(item);
+          return;
+        }
         const storageError = this.plugin.getAutoTranslationStorageErrorForItem(item, error);
         const failure = this.plugin.createAutoTranslationFailure(item.cacheKey, storageError);
         storageError.autoTranslationFailureCount = failure.count;
@@ -8006,6 +8049,8 @@ var require_queue_core = __commonJS({
         return Math.min(AUTO_TRANSLATE_FAILURE_MAX_TTL, AUTO_TRANSLATE_FAILURE_TTL * Math.pow(2, Math.max(0, count - 1)));
       }
       getAutoTranslationFailureType(error) {
+        if (this.plugin.isRequestCancelled(error)) return "cancelled";
+        if (Object.hasOwn(API_ENDPOINT_ERROR_MESSAGE_KEYS, error?.code)) return "client";
         const status = Number(error?.status || 0);
         if (error?.modelOutputTruncated) return "truncated";
         if (error?.localProviderUnavailable) return "local-unavailable";
@@ -8098,6 +8143,22 @@ var require_queue_core = __commonJS({
   }
 });
 
+// package.json
+var require_package = __commonJS({
+  "package.json"(exports2, module2) {
+    module2.exports = { version: "0.3.0" };
+  }
+});
+
+// src/version.js
+var require_version = __commonJS({
+  "src/version.js"(exports2, module2) {
+    "use strict";
+    var { version: PLUGIN_VERSION } = require_package();
+    module2.exports = { PLUGIN_VERSION };
+  }
+});
+
 // src/diagnostics/diagnostics-recorder.js
 var require_diagnostics_recorder = __commonJS({
   "src/diagnostics/diagnostics-recorder.js"(exports2, module2) {
@@ -8116,6 +8177,7 @@ var require_diagnostics_recorder = __commonJS({
       HEAVY_PERSISTENCE_DEFER_MS,
       PLUGIN_NAME
     } = require_constants();
+    var { PLUGIN_VERSION } = require_version();
     var DiagnosticsRecorder = class {
       constructor(plugin) {
         this.plugin = plugin;
@@ -8407,8 +8469,12 @@ var require_diagnostics_recorder = __commonJS({
         const summary = this.plugin.createDiagnosticSummary(this.plugin.diagnosticLogs);
         return {
           plugin: PLUGIN_NAME,
+          version: PLUGIN_VERSION,
           exportedAt: (/* @__PURE__ */ new Date()).toISOString(),
           route: this.plugin.getSanitizedDiagnosticRouteIds(this.plugin.messageTracker.getRouteIds()),
+          layout: {
+            chatScrollerOverflowAnchor: this.plugin.getChatScrollerOverflowAnchor()
+          },
           settings: {
             provider: this.plugin.settings.translation?.provider,
             model: this.plugin.settings.translation?.model,
@@ -8524,9 +8590,10 @@ var require_diagnostics_recorder = __commonJS({
         const snapshot = this.plugin.getDiagnosticLogsSnapshot();
         if (format === "txt") {
           const lines = [
-            `${snapshot.plugin} diagnostics exported at ${snapshot.exportedAt}`,
+            `${snapshot.plugin} v${snapshot.version} diagnostics exported at ${snapshot.exportedAt}`,
             `route=${snapshot.route.guildId || ""}/${snapshot.route.channelId || ""}/${snapshot.route.messageId || ""}`,
             `entries=${snapshot.stats.entries} compressed=${snapshot.stats.compressed} queue=${snapshot.stats.queueLength} inFlight=${snapshot.stats.inFlight}`,
+            `chatScrollerOverflowAnchor=${snapshot.layout?.chatScrollerOverflowAnchor || "unknown"}`,
             ""
           ];
           if (snapshot.summary?.humanSummary?.length) {
@@ -9740,6 +9807,7 @@ var require_provider_layer = __commonJS({
             });
             return model;
           } catch (error) {
+            if (this.plugin.isRequestCancelled(error)) throw error;
             const previous = this.plugin.localProviderDetectedModels.get(key) || {};
             this.plugin.localProviderDetectedModels.set(key, {
               ...previous,
@@ -10317,6 +10385,7 @@ var require_provider_layer = __commonJS({
             }
             return { used: true, result, provider };
           } catch (error) {
+            if (this.plugin.isRequestCancelled(error)) throw error;
             this.plugin.logDiagnostic("model.provider-fallback", "failed", {
               ...this.plugin.getDiagnosticBaseMeta("model", `${diagnosticMode}-fallback`, "request-error", { failureType: this.plugin.getAutoTranslationFailureType(error) }),
               fromProvider: currentConfig?.provider || "",
@@ -10638,9 +10707,14 @@ var require_provider_layer = __commonJS({
         throw error;
       }
       isTimeoutError(error) {
-        return error?.name === "AbortError" || /timed out|timeout|ETIMEDOUT/i.test(this.plugin.getErrorSignalText(error));
+        if (this.plugin.isRequestCancelled(error)) return false;
+        return error?.code === "REQUEST_TIMEOUT" || error?.name === "TimeoutError" || /timed out|timeout|ETIMEDOUT/i.test(this.plugin.getErrorSignalText(error));
+      }
+      isRequestCancelled(error) {
+        return error?.code === "REQUEST_CANCELLED" || error?.name === "AbortError";
       }
       isNetworkError(error) {
+        if (this.plugin.isRequestCancelled(error)) return false;
         return /Failed to fetch|NetworkError|Load failed|fetch failed|Network request failed|ERR_[A-Z_]+|ECONNREFUSED|ECONNRESET|ECONNABORTED|ENOTFOUND|EHOSTUNREACH|ENETUNREACH|connection refused|connection reset|socket hang up|NS_ERROR_CONNECTION_REFUSED/i.test(this.plugin.getErrorSignalText(error));
       }
       isLocalProviderEmptyResponseError(error) {
@@ -10655,8 +10729,9 @@ var require_provider_layer = __commonJS({
         this.plugin.assertSafeRequestEndpoint(endpoint);
         const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
         if (controller) this.plugin.activeApiControllers.add(controller);
-        const timeout = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+        const timeout = controller ? setTimeout(() => controller.abort(new DOMException("API request timed out", "TimeoutError")), timeoutMs) : null;
         try {
+          if (this.plugin.apiRequestsClosed) throw new DOMException("API requests are closed until the plugin starts", "AbortError");
           const method = String(request?.method || "POST").trim().toUpperCase() || "POST";
           const fetchOptions = {
             method,
@@ -10672,6 +10747,7 @@ var require_provider_layer = __commonJS({
           }
           const response = await fetch(endpoint, fetchOptions);
           const raw = await response.text();
+          controller?.signal.throwIfAborted();
           if (!response.ok) {
             const apiError = this.plugin.createApiError(response, raw);
             if (request?.provider === "googleCloud") {
@@ -10682,8 +10758,12 @@ var require_provider_layer = __commonJS({
           }
           return raw;
         } catch (error) {
-          if (error?.name === "AbortError") throw new Error(`API request timed out after ${Math.round(timeoutMs / 1e3)}s`);
-          throw error;
+          if (!controller?.signal.aborted && error?.name !== "AbortError") throw error;
+          const timedOut = controller?.signal.reason?.name === "TimeoutError";
+          throw Object.assign(new Error(timedOut ? `API request timed out after ${Math.round(timeoutMs / 1e3)}s` : "Request cancelled", { cause: error }), {
+            name: timedOut ? "TimeoutError" : "AbortError",
+            code: timedOut ? "REQUEST_TIMEOUT" : "REQUEST_CANCELLED"
+          });
         } finally {
           if (timeout) clearTimeout(timeout);
           if (controller) this.plugin.activeApiControllers.delete(controller);
@@ -11659,11 +11739,8 @@ var require_settings_store = __commonJS({
           this.plugin.settings.ui.publicBilingualPolishBeforeTranslate = DEFAULT_SETTINGS.ui.publicBilingualPolishBeforeTranslate;
           changed = true;
         }
-        const autoTranslatePrefetch = typeof this.plugin.settings.ui.autoTranslatePrefetch === "boolean" ? this.plugin.settings.ui.autoTranslatePrefetch : DEFAULT_SETTINGS.ui.autoTranslatePrefetch;
-        const providerPrefetchAllowed = this.plugin.getProviderDefaults(this.plugin.settings.translation?.provider)?.autoTranslatePrefetchAllowed !== false;
-        const effectiveAutoTranslatePrefetch = providerPrefetchAllowed ? autoTranslatePrefetch : false;
-        if (effectiveAutoTranslatePrefetch !== this.plugin.settings.ui.autoTranslatePrefetch) {
-          this.plugin.settings.ui.autoTranslatePrefetch = effectiveAutoTranslatePrefetch;
+        if (typeof this.plugin.settings.ui.autoTranslatePrefetch !== "boolean") {
+          this.plugin.settings.ui.autoTranslatePrefetch = DEFAULT_SETTINGS.ui.autoTranslatePrefetch;
           changed = true;
         }
         const intakeMode = this.plugin.normalizeAutoTranslateIntakeMode(this.plugin.settings.ui.autoTranslateIntakeMode);
@@ -11679,10 +11756,8 @@ var require_settings_store = __commonJS({
           changed = true;
         }
         const autoTranslateConcurrency = this.plugin.normalizeAutoTranslateConcurrency(this.plugin.settings.ui.autoTranslateConcurrency);
-        const providerConcurrencyMax = this.plugin.getProviderAutoTranslateConcurrencyMax(this.plugin.settings.translation?.provider);
-        const effectiveAutoTranslateConcurrency = providerConcurrencyMax ? Math.min(autoTranslateConcurrency, providerConcurrencyMax) : autoTranslateConcurrency;
-        if (effectiveAutoTranslateConcurrency !== this.plugin.settings.ui.autoTranslateConcurrency) {
-          this.plugin.settings.ui.autoTranslateConcurrency = effectiveAutoTranslateConcurrency;
+        if (autoTranslateConcurrency !== this.plugin.settings.ui.autoTranslateConcurrency) {
+          this.plugin.settings.ui.autoTranslateConcurrency = autoTranslateConcurrency;
           changed = true;
         }
         if (typeof this.plugin.settings.ui.autoTranslateStrictRetry !== "boolean") {
@@ -11871,15 +11946,10 @@ var require_settings_store = __commonJS({
           value = String(value || "");
         }
         if (path === "ui.autoTranslateConcurrency") {
-          const normalized = this.plugin.normalizeAutoTranslateConcurrency(value);
-          const providerMax = this.plugin.getProviderAutoTranslateConcurrencyMax(this.plugin.settings.translation?.provider);
-          value = providerMax ? Math.min(normalized, providerMax) : normalized;
+          value = this.plugin.normalizeAutoTranslateConcurrency(value);
         }
         if (path === "ui.autoTranslatePrefetchRange") {
           value = this.plugin.normalizeAutoTranslatePrefetchRange(value);
-        }
-        if (path === "ui.autoTranslatePrefetch" && this.plugin.getProviderDefaults(this.plugin.settings.translation?.provider)?.autoTranslatePrefetchAllowed === false) {
-          value = false;
         }
         if (path === "ui.translationCacheTtlHours") {
           value = this.plugin.normalizeTranslationCacheTtlHours(value);
@@ -11925,22 +11995,7 @@ var require_settings_store = __commonJS({
             this.plugin.settings.googleTranslate.keyPoolText = normalized.keyPoolText;
           }
         }
-        if (path === "translation.provider" && this.plugin.isLocalTranslationProvider(value)) {
-          const providerMax = this.plugin.getProviderAutoTranslateConcurrencyMax(value);
-          if (providerMax && this.plugin.normalizeAutoTranslateConcurrency(this.plugin.settings.ui.autoTranslateConcurrency) > providerMax) {
-            this.plugin.settings.ui.autoTranslateConcurrency = providerMax;
-            this.plugin.syncSettingControls("ui.autoTranslateConcurrency", providerMax, { includeActive: true });
-          }
-          if (this.plugin.getProviderDefaults(value)?.autoTranslatePrefetchAllowed === false && this.plugin.settings.ui.autoTranslatePrefetch) {
-            this.plugin.settings.ui.autoTranslatePrefetch = false;
-            this.plugin.syncSettingControls("ui.autoTranslatePrefetch", false, { includeActive: true });
-          }
-          const providerIntakeMode = this.plugin.getProviderDefaults(value)?.autoTranslateIntakeMode;
-          if (providerIntakeMode && this.plugin.settings.ui.autoTranslateIntakeMode !== providerIntakeMode) {
-            this.plugin.settings.ui.autoTranslateIntakeMode = providerIntakeMode;
-            this.plugin.syncSettingControls("ui.autoTranslateIntakeMode", providerIntakeMode, { includeActive: true });
-          }
-        }
+        if (path === "translation.provider") this.plugin.applyProviderIntakeMode(value);
         if (options.save === false) {
         } else if (options.save === "immediate") this.plugin.saveSettings({ retryOnError: options.retryOnError });
         else this.plugin.saveSettings({ debounce: true, delayMs: options.delayMs });
@@ -12019,11 +12074,21 @@ var require_settings_store = __commonJS({
         }
         this.plugin.settings[kind].provider = nextProvider;
         this.plugin.applyProviderPreset(kind, nextProvider, { restoreProfile: true, save: false, syncControls: false, invalidate: false });
+        if (kind === "translation") this.plugin.applyProviderIntakeMode(nextProvider);
         this.plugin.resetApiStatus(kind, { save: false });
         this.plugin.saveSettings({ debounce: true });
         this.plugin.syncSettingControls(`${kind}.provider`, nextProvider);
         if (kind === "translation") this.plugin.invalidateAutoTranslationQueue();
         this.plugin.queueScan();
+      }
+      // Both provider-switch paths apply the provider's fixed intake mode. The settings
+      // panel locks that control, so a stale value could not be corrected there.
+      applyProviderIntakeMode(provider) {
+        const intakeMode = this.plugin.getProviderDefaults(provider)?.autoTranslateIntakeMode;
+        if (intakeMode && this.plugin.settings.ui.autoTranslateIntakeMode !== intakeMode) {
+          this.plugin.settings.ui.autoTranslateIntakeMode = intakeMode;
+          this.plugin.syncSettingControls("ui.autoTranslateIntakeMode", intakeMode, { includeActive: true });
+        }
       }
       getTaskProviderProfile(kind, provider) {
         const profiles = this.plugin.settings[kind]?.providerProfiles;
@@ -12191,11 +12256,11 @@ var require_i18n = __commonJS({
         autoTranslateMessages: "自动翻译可见外语消息",
         autoTranslateMessagesDesc: "开启后会自动翻译当前屏幕内看起来不是目标语言的消息。默认关闭，并限制并发，避免一次性请求过多 API。",
         autoTranslatePrefetch: "预翻译附近消息",
-        autoTranslatePrefetchDesc: "自动翻译开启时，低优先级预翻译屏幕上下附近几条消息；只占用 1 个并发槽。",
+        autoTranslatePrefetchDesc: "自动翻译开启时，低优先级预翻译屏幕上下附近几条消息。只在没有可见消息等待翻译时占用 1 个空闲并发槽，因此并发数至少需要 2。",
         autoTranslatePrefetchRange: "预翻译范围",
         autoTranslatePrefetchRangeDesc: "控制可见区域前后各预取多少条消息。快速滚动时远离视口的预翻译会被丢弃。",
         autoTranslateConcurrency: "自动翻译并发数",
-        autoTranslateConcurrencyDesc: "同时请求多少条可见消息。默认 4，范围 1-8；数值越高越快，但 API 消耗峰值也更高。",
+        autoTranslateConcurrencyDesc: "同时发起的翻译请求数。默认 {default}，范围 {min}-{max}；提高并发会增加资源消耗，实际速度取决于服务性能。",
         autoTranslateStrictRetry: "失败后自动严格重试",
         autoTranslateStrictRetryDesc: "模型输出不是目标语言时，先重试失败条目，再严格单条翻译；仍失败才显示重试按钮。",
         showAutoTranslateWarnings: "开启后显示普通自动翻译失败提示",
@@ -12262,7 +12327,7 @@ var require_i18n = __commonJS({
         testModeConfig: "当前配置：{provider} / {model} / 输出 {targetLanguage}",
         reset: "恢复默认设置",
         resetConfirm: "确定要重置 Discord AI 翻译助手设置？",
-        pluginStarted: "Discord AI 翻译助手已启动。",
+        pluginStarted: "Discord AI 翻译助手 v{version} 已启动。",
         polishButton: "润色",
         polishBusy: "润色中",
         polishTitleAttr: "用 AI 润色当前草稿。快捷键：{shortcut}。",
@@ -12297,6 +12362,12 @@ var require_i18n = __commonJS({
         errorUnauthorized: "API Key 无效或没有权限。",
         errorRateLimited: "API 请求过快，已进入冷却。",
         errorServer: "API 服务暂时不可用。",
+        errorCancelled: "请求已取消。",
+        errorInvalidEndpoint: "接口地址无效，请填写完整的 API 地址。",
+        errorUnsafeEndpoint: "接口地址不安全：远程服务须使用 HTTPS，本机服务可用 HTTP，地址中不能包含用户名或密码。",
+        localIntakeFixed: "当前本地服务固定使用 DOM 发现消息，此项无需修改。",
+        localConcurrencyDesc: "本地模型也可设置 {min}-{max} 个并发请求，每个请求翻译一条消息。请配合本地服务的并发槽位和可用显存调整。",
+        localFallbackUnavailable: "本地服务不会自动转发到云端，因此云端回退及顺序在当前模式下不可用。",
         errorTimeout: "API 请求超时。",
         errorNetwork: "网络连接失败。",
         unknownError: "未知错误"
@@ -12427,11 +12498,11 @@ var require_i18n = __commonJS({
         autoTranslateMessages: "Auto-translate visible foreign messages",
         autoTranslateMessagesDesc: "Automatically translates visible messages that do not look like the target language. Off by default, with request limits to avoid API bursts.",
         autoTranslatePrefetch: "Prefetch nearby messages",
-        autoTranslatePrefetchDesc: "When auto-translation is enabled, pre-translates nearby messages at low priority and uses only 1 concurrency slot.",
+        autoTranslatePrefetchDesc: "When auto-translation is enabled, pre-translates nearby messages at low priority. It uses one spare slot only while no visible message is waiting, so it needs a concurrency of 2 or more.",
         autoTranslatePrefetchRange: "Prefetch range",
         autoTranslatePrefetchRangeDesc: "How many messages above and below the visible area should be prefetched. Far prefetch work is dropped during fast scrolling.",
         autoTranslateConcurrency: "Auto-translation concurrency",
-        autoTranslateConcurrencyDesc: "How many visible messages to translate at once. Default 4, range 1-8. Higher is faster but increases API burst usage.",
+        autoTranslateConcurrencyDesc: "Simultaneous translation requests. Default {default}, range {min}-{max}. Higher concurrency uses more resources; actual speed depends on the service.",
         autoTranslateStrictRetry: "Strict retry after invalid output",
         autoTranslateStrictRetryDesc: "When model output is not in the target language, retry failed items, then use strict single-message translation before showing a retry button.",
         showAutoTranslateWarnings: "Show normal auto-translation failures when enabled",
@@ -12459,6 +12530,11 @@ var require_i18n = __commonJS({
         diagnosticLogsCopied: "Diagnostic logs copied.",
         diagnosticLogsEmpty: "No diagnostic logs yet.",
         diagnosticLogsExported: "Diagnostic logs exported.",
+        settingsSnapshot: "Settings snapshot",
+        settingsSnapshotDesc: "Downloads your current settings as JSON for troubleshooting. API keys and other secrets are hidden, cloud endpoints lose their query strings, prompts are summarized and channel IDs are hashed. Switches and numbers are kept as-is.",
+        exportSettingsSnapshot: "Download settings",
+        settingsSnapshotExported: "Settings snapshot downloaded; secrets are hidden.",
+        settingsSnapshotCopied: "Settings snapshot copied; secrets are hidden.",
         translationCacheTtl: "Cache lifetime",
         translationCacheTtlDesc: "Translations are persisted locally and reused after Discord restarts. Expired entries are translated again.",
         translationCacheMaxEntries: "Max cache entries",
@@ -12521,7 +12597,7 @@ var require_i18n = __commonJS({
         testModeConfig: "Current config: {provider} / {model} / output {targetLanguage}",
         reset: "Reset to defaults",
         resetConfirm: "Reset Discord AI Translator settings?",
-        pluginStarted: "Discord AI Translator started.",
+        pluginStarted: "Discord AI Translator v{version} started.",
         polishButton: "Polish",
         polishBusy: "Polishing",
         polishTitleAttr: "Polish current draft with AI. Shortcut: {shortcut}.",
@@ -12564,6 +12640,12 @@ var require_i18n = __commonJS({
         errorUnauthorized: "API key is invalid or does not have permission.",
         errorRateLimited: "API rate limit reached; automatic retries are cooling down.",
         errorServer: "API service is temporarily unavailable.",
+        errorCancelled: "Request cancelled.",
+        errorInvalidEndpoint: "Invalid endpoint. Enter a complete API URL.",
+        errorUnsafeEndpoint: "Unsafe endpoint: remote services require HTTPS; loopback services may use HTTP. Do not embed a username or password in the URL.",
+        localIntakeFixed: "This local provider uses DOM message discovery. No change is required.",
+        localConcurrencyDesc: "Local models support {min}-{max} concurrent requests, with one message per request. Adjust to match your local server's parallel slots and available VRAM.",
+        localFallbackUnavailable: "Local providers never forward requests to the cloud. Cloud fallback and its order are unavailable in this mode.",
         errorTimeout: "API request timed out.",
         errorNetwork: "Network request failed.",
         errorLocalProviderUnavailable: "Sakura local service is not reachable. Auto-translation is paused; start Sakura or test the connection to resume.",
@@ -12591,7 +12673,12 @@ var require_i18n = __commonJS({
       diagnosticLogsCleared: "诊断日志已清空。",
       diagnosticLogsCopied: "诊断日志已复制。",
       diagnosticLogsEmpty: "暂无诊断日志。",
-      diagnosticLogsExported: "诊断日志已导出。"
+      diagnosticLogsExported: "诊断日志已导出。",
+      settingsSnapshot: "设置快照",
+      settingsSnapshotDesc: "把当前设置下载为 JSON，方便排查问题。API Key 等密钥会被隐藏，云端接口地址去掉查询参数，提示词只显示是否自定义，频道 ID 会做哈希；开关和数值保持原样。",
+      exportSettingsSnapshot: "下载设置",
+      settingsSnapshotExported: "设置快照已下载，密钥已隐藏。",
+      settingsSnapshotCopied: "设置快照已复制，密钥已隐藏。"
     });
     Object.assign(I18N["zh-CN"], {
       providerMicrosoft: "Microsoft 翻译",
@@ -12776,6 +12863,7 @@ var require_discord_ai_translator = __commonJS({
     var { DiagnosticsRecorder } = require_diagnostics_recorder();
     var { OutputGuard } = require_output_guard();
     var { TranslationCacheStore } = require_translation_cache_store();
+    var { PLUGIN_VERSION } = require_version();
     var { ProviderLayer } = require_provider_layer();
     var { SettingsStore } = require_settings_store();
     var {
@@ -12860,6 +12948,7 @@ var require_discord_ai_translator = __commonJS({
       MANUAL_LONG_TEXT_WHOLE_PASS_MAX_LENGTH,
       MODEL_REQUEST_TIMEOUT_MS,
       API_TEST_REQUEST_TIMEOUT_MS,
+      API_ENDPOINT_ERROR_MESSAGE_KEYS,
       SCAN_VIEWPORT_BUFFER_PX,
       AUTO_TRANSLATE_VIEWPORT_SETTLE_MS,
       AUTO_TRANSLATE_VIEWPORT_JUMP_SETTLE_MS,
@@ -12874,6 +12963,14 @@ var require_discord_ai_translator = __commonJS({
       AUTO_TRANSLATE_RENDER_FRAME_BUDGET_MS,
       AUTO_TRANSLATE_PREFETCH_PRIORITY_BASE,
       AUTO_TRANSLATE_EDGE_OVERSCAN_MESSAGES,
+      AUTO_TRANSLATE_SCROLL_STILL_MS,
+      AUTO_TRANSLATE_CACHE_DRAW_MIN_BUFFER_PX,
+      AUTO_TRANSLATE_CACHE_DRAW_BUFFER_FACTOR,
+      AUTO_TRANSLATE_CACHE_DRAW_BUDGET_MS,
+      AUTO_TRANSLATE_CACHE_DRAW_MAX_EVALUATIONS,
+      AUTO_TRANSLATE_CACHE_DRAW_MAX_MESSAGES,
+      AUTO_TRANSLATE_CACHE_DRAW_MEMO_MAX,
+      AUTO_TRANSLATE_FINISHED_LINE_SELECTOR,
       AUTO_TRANSLATE_DEFAULT_PREFETCH_RANGE,
       AUTO_TRANSLATE_PREFETCH_RANGES,
       MUTATION_DIRTY_SCAN_MAX_ROOTS,
@@ -13554,6 +13651,13 @@ var require_discord_ai_translator = __commonJS({
         this.autoTranslationProviderNoticeAt = /* @__PURE__ */ new Map();
         this.autoTranslationPrecheckSkips = /* @__PURE__ */ new Map();
         this.autoTranslationRecentRenders = /* @__PURE__ */ new Map();
+        this.autoTranslationLastExternalScrollAt = 0;
+        this.autoTranslationOwnScrolls = /* @__PURE__ */ new WeakMap();
+        this.cachedTranslationDrawTimer = null;
+        this.cachedTranslationDrawIdle = null;
+        this.cachedDrawMemo = /* @__PURE__ */ new Map();
+        this.cachedDrawMessageMemo = /* @__PURE__ */ new WeakMap();
+        this.cachedDrawScroller = null;
         this.lastAutoTranslationDecisions = /* @__PURE__ */ new Map();
         this.localProviderHealthChecks = /* @__PURE__ */ new Map();
         this.localProviderHealthProbeStartedAt = /* @__PURE__ */ new Map();
@@ -13618,6 +13722,7 @@ var require_discord_ai_translator = __commonJS({
         this.discordThemeGlobalCandidatesCache = null;
         this.discordThemeVariableValuesCache = null;
         this.activeApiControllers = /* @__PURE__ */ new Set();
+        this.apiRequestsClosed = false;
         this.hotkeyRecordTimer = null;
         this.hotkeyRecordCleanup = null;
         this.observer = null;
@@ -13670,6 +13775,7 @@ var require_discord_ai_translator = __commonJS({
         this.lifecycleStarted = true;
         this.lifecycleToken++;
         this.isStarted = true;
+        this.apiRequestsClosed = false;
         try {
           if (this.settingsLoadBlocked) {
             this.loadSettings();
@@ -13701,7 +13807,7 @@ var require_discord_ai_translator = __commonJS({
           window.addEventListener("focus", this.boundViewportScan, { capture: true, passive: true });
           document.addEventListener("visibilitychange", this.boundViewportScan, true);
           this.queueScan();
-          this.showToast(this.t("pluginStarted"), "success");
+          this.showToast(this.t("pluginStarted", { version: PLUGIN_VERSION }), "success");
           return true;
         } catch (error) {
           this.warnSanitized("Plugin start failed; rolling back partial initialization", error);
@@ -13712,6 +13818,7 @@ var require_discord_ai_translator = __commonJS({
             this.isStarted = false;
             this.lifecycleStarted = false;
             this.lifecycleToken++;
+            this.apiRequestsClosed = true;
           }
           throw error;
         }
@@ -13739,6 +13846,7 @@ var require_discord_ai_translator = __commonJS({
         if (this.translationCacheDirtyTimer) clearTimeout(this.translationCacheDirtyTimer);
         if (this.googleTranslateRuntimeDirtyTimer) clearTimeout(this.googleTranslateRuntimeDirtyTimer);
         if (this.diagnosticLogsDirtyTimer) clearTimeout(this.diagnosticLogsDirtyTimer);
+        this.apiRequestsClosed = true;
         this.abortActiveApiRequests();
         this.composerWriter.cancelAll("stop");
         this.clearHotkeyRecording();
@@ -13800,6 +13908,12 @@ var require_discord_ai_translator = __commonJS({
         this.autoTranslationProviderFailures.clear();
         this.autoTranslationProviderNoticeAt.clear();
         this.autoTranslationRecentRenders.clear();
+        this.cancelCachedTranslationDrawPass();
+        this.cachedDrawMemo.clear();
+        this.cachedDrawMessageMemo = /* @__PURE__ */ new WeakMap();
+        this.cachedDrawScroller = null;
+        this.autoTranslationOwnScrolls = /* @__PURE__ */ new WeakMap();
+        this.autoTranslationLastExternalScrollAt = 0;
         this.lastAutoTranslationDecisions.clear();
         this.autoTranslationInFlight = 0;
         this.autoTranslationInFlightKeys.clear();
@@ -14269,6 +14383,11 @@ var require_discord_ai_translator = __commonJS({
         copy.appendChild(note);
         const chips = document.createElement("div");
         chips.className = "dait-settings-chips";
+        const versionChip = document.createElement("span");
+        versionChip.className = "dait-settings-version";
+        versionChip.dataset.daitVersion = PLUGIN_VERSION;
+        versionChip.textContent = `v${PLUGIN_VERSION}`;
+        chips.appendChild(versionChip);
         [this.t("polishTitle"), this.t("translationTitle"), "DeepSeek V4"].forEach((text) => {
           const chip = document.createElement("span");
           chip.textContent = text;
@@ -14392,6 +14511,9 @@ var require_discord_ai_translator = __commonJS({
       createAutoTranslateSection() {
         const section = document.createElement("section");
         section.className = "dait-settings-section dait-section-auto-translate";
+        const provider = this.getProviderDefaults(this.settings.translation.provider);
+        const local = this.isLocalTranslationProvider(this.settings.translation);
+        const concurrencyRange = { min: AUTO_TRANSLATE_MIN_CONCURRENCY, max: AUTO_TRANSLATE_MAX_CONCURRENCY, default: AUTO_TRANSLATE_DEFAULT_CONCURRENCY };
         const title = document.createElement("h3");
         title.textContent = this.t("autoTranslateSettingsTitle");
         section.appendChild(title);
@@ -14402,15 +14524,15 @@ var require_discord_ai_translator = __commonJS({
           ["auto", this.t("autoTranslateIntakeAuto")],
           ["dom", this.t("autoTranslateIntakeDom")],
           ["bdfdb", this.t("autoTranslateIntakeBdfdb")]
-        ], { description: this.t("autoTranslateIntakeModeDesc") }));
-        section.appendChild(this.createInputRow("ui.autoTranslateConcurrency", this.t("autoTranslateConcurrency"), "number", String(AUTO_TRANSLATE_DEFAULT_CONCURRENCY), { min: String(AUTO_TRANSLATE_MIN_CONCURRENCY), max: String(AUTO_TRANSLATE_MAX_CONCURRENCY), step: "1" }, { description: this.t("autoTranslateConcurrencyDesc") }));
+        ], { description: this.t("autoTranslateIntakeModeDesc"), disabledReason: provider?.autoTranslateIntakeMode && this.t("localIntakeFixed") }));
+        section.appendChild(this.createInputRow("ui.autoTranslateConcurrency", this.t("autoTranslateConcurrency"), "number", String(AUTO_TRANSLATE_DEFAULT_CONCURRENCY), { min: String(AUTO_TRANSLATE_MIN_CONCURRENCY), max: String(AUTO_TRANSLATE_MAX_CONCURRENCY), step: "1" }, { description: this.t(local ? "localConcurrencyDesc" : "autoTranslateConcurrencyDesc", concurrencyRange) }));
         section.appendChild(this.createCheckboxRow("ui.autoTranslateStrictRetry", this.t("autoTranslateStrictRetry"), { description: this.t("autoTranslateStrictRetryDesc") }));
         section.appendChild(this.createCurrentChannelPolicyRow());
         section.appendChild(this.createCheckboxRow("ui.historyBackfillEnabled", this.t("historyBackfillEnabled"), { description: this.t("historyBackfillEnabledDesc") }));
         section.appendChild(this.createInputRow("ui.historyBackfillLimit", this.t("historyBackfillLimit"), "number", String(DEFAULT_SETTINGS.ui.historyBackfillLimit), { min: "1", max: "100", step: "1" }, { description: this.t("historyBackfillLimitDesc") }));
         section.appendChild(this.createHistoryBackfillActionRow());
-        section.appendChild(this.createCheckboxRow("ui.providerFallbackEnabled", this.t("providerFallbackEnabled"), { description: this.t("providerFallbackEnabledDesc") }));
-        section.appendChild(this.createProviderFallbackOrderRow());
+        section.appendChild(this.createCheckboxRow("ui.providerFallbackEnabled", this.t("providerFallbackEnabled"), { description: this.t("providerFallbackEnabledDesc"), disabledReason: local && this.t("localFallbackUnavailable") }));
+        section.appendChild(this.createProviderFallbackOrderRow(local));
         return section;
       }
       createCurrentChannelPolicyRow() {
@@ -14433,7 +14555,7 @@ var require_discord_ai_translator = __commonJS({
         controls.appendChild(button);
         return this.createRow(this.t("historyBackfillRun"), controls, { description: this.t("historyBackfillRunDesc") });
       }
-      createProviderFallbackOrderRow() {
+      createProviderFallbackOrderRow(local) {
         const textarea = document.createElement("textarea");
         textarea.dataset.daitPath = "ui.providerFallbackOrder";
         textarea.rows = 3;
@@ -14444,6 +14566,7 @@ var require_discord_ai_translator = __commonJS({
         });
         return this.createRow(this.t("providerFallbackOrder"), textarea, {
           description: this.t("providerFallbackOrderDesc", { providers: PROVIDER_ORDER.join(", ") }),
+          disabledReason: local && this.t("localFallbackUnavailable"),
           wide: true
         });
       }
@@ -14513,6 +14636,7 @@ var require_discord_ai_translator = __commonJS({
         section.appendChild(title);
         section.appendChild(this.createCheckboxRow("ui.diagnosticsEnabled", this.t("diagnosticLogs"), { description: this.t("diagnosticLogsDesc") }));
         section.appendChild(this.createDiagnosticLogsRow());
+        section.appendChild(this.createSettingsSnapshotRow());
         section.appendChild(this.createDiagnosticSummaryRow());
         section.appendChild(this.createCheckboxRow("ui.testModeEnabled", this.t("testMode"), { description: this.t("testModeDesc"), refreshPanel: true }));
         return section;
@@ -14709,6 +14833,15 @@ var require_discord_ai_translator = __commonJS({
         return this.createRow(this.t("diagnosticLogs"), controls, {
           description: this.getDiagnosticLogsStatsText()
         });
+      }
+      createSettingsSnapshotRow() {
+        const controls = document.createElement("div");
+        controls.className = "dait-diagnostic-actions";
+        const button = this.createSmallButton(this.t("exportSettingsSnapshot"));
+        button.dataset.daitAction = "exportSettingsSnapshot";
+        button.addEventListener("click", () => this.exportSettingsSnapshot());
+        controls.appendChild(button);
+        return this.createRow(this.t("settingsSnapshot"), controls, { description: this.t("settingsSnapshotDesc") });
       }
       createDiagnosticSummaryRow() {
         const summary = this.createDiagnosticSummary(this.diagnosticLogs);
@@ -15309,6 +15442,8 @@ var require_discord_ai_translator = __commonJS({
         return this.createRow(this.t("localModelPreset"), select, { description: this.t("localModelPresetDesc") });
       }
       createRow(labelText, control, options = {}) {
+        if (options.disabledReason) control.disabled = true;
+        const descriptionText = options.disabledReason || options.description;
         const row = document.createElement("label");
         row.className = "dait-settings-row";
         if (options.checkbox) row.classList.add("dait-settings-row-checkbox");
@@ -15316,10 +15451,10 @@ var require_discord_ai_translator = __commonJS({
         const label = document.createElement("span");
         label.textContent = labelText;
         row.appendChild(label);
-        if (options.description) {
+        if (descriptionText) {
           const description = document.createElement("p");
           description.className = "dait-row-description";
-          description.textContent = options.description;
+          description.textContent = descriptionText;
           row.appendChild(description);
         }
         row.appendChild(control);
@@ -15960,18 +16095,79 @@ var require_discord_ai_translator = __commonJS({
         const text = this.serializeDiagnosticLogs(normalized);
         const filename = `${PLUGIN_NAME}-diagnostics-${(/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-")}.${normalized}`;
         const mime = normalized === "json" ? "application/json" : "text/plain";
+        return this.saveTextOrCopy(filename, text, mime, { saved: "diagnosticLogsExported", copied: "diagnosticLogsCopied" });
+      }
+      async exportSettingsSnapshot() {
+        const text = JSON.stringify(this.createSettingsSnapshot(), null, 2);
+        const filename = `${PLUGIN_NAME}-settings-${(/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-")}.json`;
+        return this.saveTextOrCopy(filename, text, "application/json", { saved: "settingsSnapshotExported", copied: "settingsSnapshotCopied" });
+      }
+      // Downloads the text, falling back to the clipboard where downloads are unavailable.
+      async saveTextOrCopy(filename, text, mime, messageKeys) {
         try {
           if (this.downloadTextFile(filename, text, mime)) {
-            this.showToast(this.t("diagnosticLogsExported"), "success");
+            this.showToast(this.t(messageKeys.saved), "success");
             return true;
           }
           await this.copyTextToClipboard(text);
-          this.showToast(this.t("diagnosticLogsCopied"), "success");
+          this.showToast(this.t(messageKeys.copied), "success");
           return true;
         } catch (error) {
           this.showToast(this.t("promptCopyFailed", { error: this.formatError(error) }), "error");
           return false;
         }
+      }
+      // Troubleshooting copy of the settings: switches and numbers as-is, secrets and private text reduced to markers.
+      createSettingsSnapshot() {
+        const secretKeys = /* @__PURE__ */ new Set(["apikey", "secretkey", "appid", "keypooltext", "keys", "token", "password", "authorization"]);
+        const sanitize = (value, key = "", defaults = void 0) => {
+          const name = String(key).toLowerCase();
+          if (secretKeys.has(name)) {
+            if (Array.isArray(value)) return value.length ? `[hidden: ${value.length}]` : [];
+            return String(value ?? "").trim() ? "[hidden]" : "";
+          }
+          if (name === "endpoint") return this.getSettingsSnapshotEndpoint(value);
+          if (name === "prompt") return value === defaults ? "default" : `custom (${String(value ?? "").length} chars)`;
+          if (name === "prompttemplates") return `${Array.isArray(value) ? value.length : 0} templates`;
+          if (name === "channelautotranslatepolicies") {
+            return Object.fromEntries(Object.entries(value || {}).map(([id, policy]) => [`channel-${this.getTextFingerprint(id)}`, sanitize(policy)]));
+          }
+          if (Array.isArray(value)) return value.map((item) => sanitize(item));
+          if (value && typeof value === "object") {
+            return Object.fromEntries(Object.entries(value).map(([childKey, child]) => [childKey, sanitize(child, childKey, defaults?.[childKey])]));
+          }
+          return typeof value === "string" ? this.sanitizeDiagnosticValue(value) : value;
+        };
+        return {
+          plugin: PLUGIN_NAME,
+          version: PLUGIN_VERSION,
+          exportedAt: (/* @__PURE__ */ new Date()).toISOString(),
+          effective: {
+            autoTranslateActive: this.isAutoTranslateEnabled(),
+            localProvider: this.isLocalTranslationProvider(this.settings.translation),
+            concurrency: this.getAutoTranslateConcurrency(),
+            prefetchRange: this.getAutoTranslatePrefetchRange(),
+            intakeMode: this.normalizeAutoTranslateIntakeMode(this.settings.ui?.autoTranslateIntakeMode)
+          },
+          settings: sanitize(this.settings, "", DEFAULT_SETTINGS)
+        };
+      }
+      // Local endpoints stay whole; remote ones drop query strings, which can carry keys.
+      // Embedded credentials are always removed.
+      getSettingsSnapshotEndpoint(value) {
+        const text = String(value ?? "").trim();
+        if (!text) return "";
+        let url = null;
+        try {
+          url = new URL(text);
+        } catch {
+          return `[invalid] ${this.sanitizeDiagnosticValue(text)}`;
+        }
+        const hadCredentials = Boolean(url.username || url.password);
+        url.username = "";
+        url.password = "";
+        const shown = this.isLoopbackEndpoint(url.href) ? url.href : `${url.origin}${url.pathname}`;
+        return hadCredentials ? `${shown} [credentials removed]` : shown;
       }
       downloadTextFile(filename, text, mime = "text/plain") {
         if (typeof Blob === "undefined" || typeof URL === "undefined" || !URL.createObjectURL || typeof document === "undefined") return false;
@@ -16646,8 +16842,10 @@ var require_discord_ai_translator = __commonJS({
         if (type === "scroll" || type === "resize") {
           if (type === "resize") this.queueInputButtonScan({ delayMs: 120, trailing: true });
           if (!this.isAutoTranslateEnabled()) return;
+          if (type === "scroll" && this.consumeOwnScrollEvent(event)) return;
           this.cancelIncrementalMessageScan();
           this.markAutoTranslationViewportBusy(type, event);
+          this.scheduleCachedTranslationDrawPass();
           const delay = Math.max(
             AUTO_TRANSLATE_VIEWPORT_STABLE_RESCAN_MS,
             this.getAutoTranslationRenderPauseRemainingMs(),
@@ -16734,6 +16932,7 @@ var require_discord_ai_translator = __commonJS({
       }
       queueMutationScan(scanMutations = []) {
         this.cancelIncrementalMessageScan();
+        if (this.isAutoTranslationRenderPaused() || this.hasAddedMessageNodes(scanMutations)) this.scheduleCachedTranslationDrawPass();
         const roots = this.getMutationScanRoots(scanMutations);
         const dirtyOnly = this.shouldUseDirtyMutationScan(scanMutations, roots);
         if (dirtyOnly) this.rememberPendingMutationScanRoots(roots);
@@ -16764,6 +16963,9 @@ var require_discord_ai_translator = __commonJS({
           }
         }
         return false;
+      }
+      hasAddedMessageNodes(mutations = []) {
+        return (mutations || []).some((mutation) => mutation?.type === "childList" && [...mutation.addedNodes || []].some((node) => this.getMutationMessageElementCount(node) > 0));
       }
       getMutationMessageElementCount(node) {
         const element = node?.nodeType === 3 ? node.parentElement : node;
@@ -16876,7 +17078,10 @@ var require_discord_ai_translator = __commonJS({
             AUTO_TRANSLATE_VIEWPORT_STABLE_RESCAN_MS,
             this.getAutoTranslationViewportSettleRemainingMs()
           ) + 120;
-          if (this.isAutoTranslateEnabled()) this.scheduleCacheOnlyAutoTranslationScan("route-change", 80);
+          if (this.isAutoTranslateEnabled()) {
+            this.scheduleCacheOnlyAutoTranslationScan("route-change", 80);
+            this.scheduleCachedTranslationDrawPass();
+          }
           this.queueScan({ delayMs, trailing: true, protectUntil: Date.now() + delayMs });
           this.logDiagnostic("scan.discord-ui", "deferred", { reason: "route-change", delayMs, cacheOnly: true, messages: 0 });
           this.logSlowOperation("scan.discord-ui", startedAt, { outcome: "deferred", reason: "route-change", cacheOnly: true, messages: 0 });
@@ -16897,6 +17102,7 @@ var require_discord_ai_translator = __commonJS({
         }
         const dirtyOnly = Boolean(this.scanDirtyOnly);
         this.scanDirtyOnly = false;
+        this.scheduleCachedTranslationDrawPass();
         const dirtyRoots = dirtyOnly ? this.consumePendingMutationScanRoots() : [];
         if (!dirtyOnly) this.pendingMutationScanRoots?.clear?.();
         let stageStartedAt = this.getDiagnosticTime();
@@ -17076,6 +17282,7 @@ var require_discord_ai_translator = __commonJS({
           targetsByMessage: /* @__PURE__ */ new Map(),
           rectByElement: /* @__PURE__ */ new Map(),
           visibleByElement: /* @__PURE__ */ new Map(),
+          scrollClipByElement: /* @__PURE__ */ new Map(),
           nearByElement: /* @__PURE__ */ new Map(),
           priorityByElement: /* @__PURE__ */ new Map(),
           scanRangeElements: /* @__PURE__ */ new Set(),
@@ -17148,11 +17355,11 @@ var require_discord_ai_translator = __commonJS({
       isElementVisibleInViewportCached(element, context = null) {
         if (!context?.visibleByElement) return this.isElementVisibleInViewport(element);
         if (!context.visibleByElement.has(element)) {
-          context.visibleByElement.set(element, this.isElementVisibleForScan(element, this.getCachedElementRect(element, context)));
+          context.visibleByElement.set(element, this.isElementVisibleForScan(element, this.getCachedElementRect(element, context), context));
         }
         return context.visibleByElement.get(element);
       }
-      isElementVisibleForScan(element, rect = null) {
+      isElementVisibleForScan(element, rect = null, context = null) {
         if (!element?.isConnected) return false;
         const elementRect = rect || element.getBoundingClientRect?.();
         if (!elementRect || elementRect.width <= 0 || elementRect.height <= 0) return false;
@@ -17168,7 +17375,7 @@ var require_discord_ai_translator = __commonJS({
           current = current.parentElement;
           depth++;
         }
-        return true;
+        return this.isRectInsideScrollClips(element, elementRect, context, { checkHidden: true });
       }
       isElementNearViewport(element, bufferPx = 0, context = null) {
         if (!element?.isConnected) return false;
@@ -19218,7 +19425,7 @@ var require_discord_ai_translator = __commonJS({
             );
             return;
           }
-          if (this.isElementVisibleInViewport(target.messageNode) && this.isElementVisibleInViewport(target.content)) {
+          if (this.isAutoTranslationCacheTargetDrawable(target)) {
             this.queueAutoTranslationRenderTask({
               kind: "cache",
               target,
@@ -19240,6 +19447,289 @@ var require_discord_ai_translator = __commonJS({
           }
         });
         this.clearAutoTranslationPendingTargets(cacheKey);
+      }
+      // A cached translation may be drawn when its message is in the visible chat or within the draw
+      // buffer around it. Without layout (offline tests), fall back to the strict visibility check.
+      isAutoTranslationCacheTargetDrawable(target, context = null) {
+        if (!target?.messageNode?.isConnected || !target?.content?.isConnected) return false;
+        const near = this.isElementNearChatBand(target.content, context);
+        if (near !== null) return near;
+        return this.isElementVisibleInViewport(target.messageNode) && this.isElementVisibleInViewport(target.content);
+      }
+      isElementNearChatBand(element, context = null) {
+        const rect = this.getCachedElementRect(element, context);
+        if (!rect || !(Number(rect.width) > 0) || !(Number(rect.height) > 0)) return null;
+        const band = context?.cacheDrawBand || this.getScrollContainerBand(this.getTranslationScrollContainer(element));
+        if (!band) return null;
+        const buffer = this.getCachedDrawBufferPx(band);
+        return Number(rect.bottom) > band.top - buffer && Number(rect.top) < band.bottom + buffer;
+      }
+      getCachedDrawBufferPx(band) {
+        return Math.max(AUTO_TRANSLATE_CACHE_DRAW_MIN_BUFFER_PX, (band.bottom - band.top) * AUTO_TRANSLATE_CACHE_DRAW_BUFFER_FACTOR);
+      }
+      // Cached translations need no model request. Discord mounts messages just outside the visible chat
+      // as it scrolls; drawing their cached lines there once the chat is still means messages scrolled
+      // back into view already show them. Scheduled only where idle callbacks exist (Discord), so offline
+      // tests run the pass directly.
+      scheduleCachedTranslationDrawPass(delayMs = 0) {
+        if (!this.isStarted || this.cachedTranslationDrawTimer || this.cachedTranslationDrawIdle != null) return;
+        if (typeof window === "undefined" || typeof window?.requestIdleCallback !== "function") return;
+        if (!this.isAutoTranslateEnabled()) return;
+        const waitMs = Math.max(Number(delayMs) || 0, this.getAutoTranslationScrollStillRemainingMs());
+        this.cachedTranslationDrawTimer = this.unrefTimer(setTimeout(() => {
+          this.cachedTranslationDrawTimer = null;
+          if (!this.isStarted || typeof window?.requestIdleCallback !== "function") return;
+          this.cachedTranslationDrawIdle = window.requestIdleCallback((deadline) => {
+            this.cachedTranslationDrawIdle = null;
+            this.runCachedTranslationDrawPass(deadline);
+          }, { timeout: AUTO_TRANSLATE_SCROLL_STILL_MS });
+        }, waitMs));
+      }
+      cancelCachedTranslationDrawPass() {
+        if (this.cachedTranslationDrawTimer) clearTimeout(this.cachedTranslationDrawTimer);
+        this.cachedTranslationDrawTimer = null;
+        if (this.cachedTranslationDrawIdle != null) {
+          try {
+            window.cancelIdleCallback?.(this.cachedTranslationDrawIdle);
+          } catch {
+          }
+        }
+        this.cachedTranslationDrawIdle = null;
+      }
+      runCachedTranslationDrawPass(deadline = null) {
+        const stats = { messages: 0, settledMessages: 0, candidates: 0, memoHits: 0, evaluations: 0, queued: 0, pending: false };
+        if (!this.isStarted || !this.isAutoTranslateEnabled()) return stats;
+        if (typeof document === "undefined" || typeof document.querySelectorAll !== "function") return stats;
+        if (this.isDiscordMediaViewerQuiet() || this.isDiscordMediaViewerOpen() || this.isQuickSettingsPanelOpen() || this.isDiscordSettingsSurfaceOpen()) return stats;
+        const stillRemainingMs = this.getAutoTranslationScrollStillRemainingMs();
+        if (stillRemainingMs > 0) {
+          this.scheduleCachedTranslationDrawPass(stillRemainingMs);
+          stats.pending = true;
+          return stats;
+        }
+        const passStartedAt = this.getDiagnosticTime();
+        try {
+          const context = this.createScanContext({ messageNodes: [] });
+          const selection = this.getCachedDrawMessageNodes(context);
+          if (!selection.nodes.length) return stats;
+          context.messageNodes = selection.nodes;
+          context.cacheDrawBand = selection.band;
+          this.rememberScanRangeElements(selection.nodes, context);
+          const requestOptions = this.getAutoTranslationOptions();
+          const intakeMode = this.normalizeAutoTranslateIntakeMode(this.settings.ui?.autoTranslateIntakeMode);
+          const enhance = intakeMode !== "dom" && this.isBdfdbMessageIntakeAvailable();
+          const startedAt = this.getDiagnosticTime();
+          const idleMs = Number(deadline?.timeRemaining?.());
+          const budgetMs = Number.isFinite(idleMs) && idleMs > 1 ? Math.min(AUTO_TRANSLATE_CACHE_DRAW_BUDGET_MS, idleMs) : AUTO_TRANSLATE_CACHE_DRAW_BUDGET_MS;
+          for (const messageNode of selection.nodes) {
+            if (this.isCachedDrawMessageSettled(messageNode)) {
+              stats.settledMessages++;
+              continue;
+            }
+            if (stats.messages > 0 && this.getDiagnosticTime() - startedAt >= budgetMs) {
+              stats.pending = true;
+              break;
+            }
+            stats.messages++;
+            const domCandidates = this.createDomAutoTranslationCandidatesForMessage(messageNode, context);
+            const candidates = enhance ? this.createBdfdbAutoTranslationCandidates(context, domCandidates) : domCandidates;
+            const record = { configVersion: this.autoTranslationConfigVersion, drawnCount: 0, pendingKeys: [] };
+            let settled = true;
+            for (const candidate of candidates) {
+              stats.candidates++;
+              const outcome = this.queueCachedDrawForCandidate(candidate, requestOptions, context, stats.evaluations < AUTO_TRANSLATE_CACHE_DRAW_MAX_EVALUATIONS);
+              if (outcome.evaluated) stats.evaluations++;
+              if (outcome.status === "queued") {
+                stats.queued++;
+                if (!outcome.evaluated) stats.memoHits++;
+              }
+              if (outcome.status === "deferred") stats.pending = true;
+              if (outcome.status === "drawn") record.drawnCount++;
+              else if (outcome.status === "nothing") {
+                if (outcome.memoKey) record.pendingKeys.push(outcome.memoKey);
+              } else settled = false;
+            }
+            if (settled) this.cachedDrawMessageMemo.set(messageNode, record);
+            else this.cachedDrawMessageMemo.delete(messageNode);
+          }
+        } catch (error) {
+          this.warnSanitized("Cached translation draw pass failed", error);
+          return stats;
+        }
+        if (stats.pending) this.scheduleCachedTranslationDrawPass(AUTO_TRANSLATE_SCROLL_STILL_MS);
+        if (stats.queued) {
+          this.logDiagnostic("auto.cache-draw", "queued", {
+            ...stats,
+            ms: Math.round((this.getDiagnosticTime() - passStartedAt) * 10) / 10
+          });
+        }
+        return stats;
+      }
+      // A message needs no work while its drawn lines are still there and its other targets are
+      // still known to have nothing cached (or nothing worth translating) under the current settings.
+      isCachedDrawMessageSettled(messageNode) {
+        const record = this.cachedDrawMessageMemo?.get?.(messageNode);
+        if (!record || record.configVersion !== this.autoTranslationConfigVersion) return false;
+        const finishedLines = messageNode.querySelectorAll?.(AUTO_TRANSLATE_FINISHED_LINE_SELECTOR)?.length || 0;
+        if (finishedLines < record.drawnCount) return false;
+        return record.pendingKeys.every((memoKey) => {
+          const entry = this.getCachedDrawMemoEntry(memoKey);
+          return Boolean(entry) && entry.result !== "hit";
+        });
+      }
+      isDocumentScroller(scroller) {
+        return !scroller || typeof document !== "undefined" && (scroller === document.scrollingElement || scroller === document.documentElement);
+      }
+      // Mounted messages in and around the visible chat, nearest first. Messages are in document order,
+      // top to bottom: a binary search finds the first one not above the chat, then the walk goes outward.
+      getCachedDrawMessageNodes(context = null) {
+        const firstMessage = document.querySelector?.(DISCORD_MESSAGE_NODE_SELECTOR);
+        if (!firstMessage) return { nodes: [], band: null };
+        let scroller = this.cachedDrawScroller;
+        if (!scroller?.isConnected || !scroller.contains?.(firstMessage)) {
+          scroller = this.getTranslationScrollContainer(firstMessage);
+          this.cachedDrawScroller = this.isDocumentScroller(scroller) ? null : scroller;
+        }
+        const band = this.getScrollContainerBand(scroller);
+        if (!band) return { nodes: [], band: null };
+        const root = this.cachedDrawScroller || firstMessage.closest?.("[data-list-id*='chat-messages']") || firstMessage.parentElement || document;
+        const messages = [...root.querySelectorAll?.(DISCORD_MESSAGE_NODE_SELECTOR) || []].filter((node) => node?.isConnected && !node.parentElement?.closest?.(DISCORD_MESSAGE_NODE_SELECTOR));
+        const buffer = this.getCachedDrawBufferPx(band);
+        const measure = (index) => {
+          const rect = this.getCachedElementRect(messages[index], context);
+          if (!rect || !(Number(rect.height) > 0)) return null;
+          const top = Number(rect.top);
+          const bottom = Number(rect.bottom);
+          const distance = bottom <= band.top ? band.top - bottom : top >= band.bottom ? top - band.bottom : 0;
+          return { node: messages[index], top, bottom, distance };
+        };
+        let low = 0;
+        let high = messages.length;
+        while (low < high) {
+          const middle = low + high >> 1;
+          const rect = this.getCachedElementRect(messages[middle], context);
+          if (rect && Number(rect.bottom) <= band.top) low = middle + 1;
+          else high = middle;
+        }
+        const nearby = [];
+        let below = 0;
+        for (let index = low; index < messages.length && below < AUTO_TRANSLATE_CACHE_DRAW_MAX_MESSAGES; index++) {
+          const entry = measure(index);
+          if (!entry) continue;
+          if (entry.top >= band.bottom + buffer) break;
+          nearby.push(entry);
+          below++;
+        }
+        let above = 0;
+        for (let index = low - 1; index >= 0 && above < AUTO_TRANSLATE_CACHE_DRAW_MAX_MESSAGES; index--) {
+          const entry = measure(index);
+          if (!entry) continue;
+          if (entry.bottom <= band.top - buffer) break;
+          nearby.push(entry);
+          above++;
+        }
+        nearby.sort((left, right) => left.distance - right.distance || left.top - right.top);
+        return { nodes: nearby.slice(0, AUTO_TRANSLATE_CACHE_DRAW_MAX_MESSAGES).map((entry) => entry.node), band };
+      }
+      // Outcome statuses: drawn (already shows a finished line), nothing (memoised skip or miss),
+      // queued, deferred (evaluation cap reached) or pending (a hit that cannot be drawn yet).
+      queueCachedDrawForCandidate(candidate, baseOptions, context = null, allowEvaluation = true) {
+        const messageNode = candidate?.messageNode;
+        const content = candidate?.content;
+        const text = String(candidate?.text || "");
+        if (!text || !messageNode?.isConnected || !content?.isConnected) return { status: "nothing" };
+        if (this.hasFinishedTranslationLine(content)) return { status: "drawn" };
+        const memoKey = this.getCachedDrawMemoKey(candidate, text);
+        let entry = this.getCachedDrawMemoEntry(memoKey);
+        const evaluated = !entry;
+        if (!entry) {
+          if (!allowEvaluation) return { status: "deferred" };
+          entry = this.lookupCachedDrawTranslation(candidate, baseOptions, context);
+          this.rememberCachedDrawMemoEntry(memoKey, entry);
+        }
+        if (entry.result !== "hit") return { status: "nothing", memoKey, evaluated };
+        if (!this.isAutoTranslationCacheTargetDrawable({ messageNode, content }, context)) return { status: "pending", evaluated };
+        if (!evaluated && entry.valueKey) this.touchTranslationCache(entry.valueKey, { extendExpiry: true, persistDelayMs: TRANSLATION_CACHE_TOUCH_DEBOUNCE_MS });
+        this.removeQueuedAutoTranslationItem(entry.cacheKey);
+        const target = {
+          messageNode,
+          content,
+          text,
+          textOptions: candidate.textOptions || null,
+          targetKind: candidate.targetKind || "message",
+          cacheKey: entry.cacheKey,
+          requestOptions: entry.requestOptions,
+          priority: this.getCachedDrawPriority(content, context)
+        };
+        this.queueAutoTranslationRenderTask({
+          kind: "cache",
+          target,
+          translated: entry.translated,
+          cacheKey: entry.cacheKey,
+          requestOptions: entry.requestOptions,
+          priority: target.priority,
+          run: () => this.renderAutoTranslationCacheTarget(target, entry.translated, entry.cacheKey, entry.requestOptions, { drawPass: true, deleteKeys: entry.keys })
+        });
+        return { status: "queued", evaluated };
+      }
+      hasFinishedTranslationLine(content) {
+        return this.getTranslationLines(content).some((line) => !line.classList?.contains?.("dait-translation-loading") && !line.classList?.contains?.("dait-translation-error"));
+      }
+      // Same lookups as the regular scan (evaluateAutoTranslationCandidate), without its side effects.
+      lookupCachedDrawTranslation(candidate, baseOptions, context = null) {
+        const text = String(candidate?.text || "");
+        if (this.getAutoTranslationPrecheckSkipReason(text, baseOptions)) return { result: "skip" };
+        const requestOptions = this.withAutoTranslationCandidateIdentity(this.getAutoTranslationRequestOptionsForText(text, baseOptions), candidate);
+        const cacheKey = this.getTranslationCacheKey(text, requestOptions);
+        const cacheAliases = this.getTranslationCacheAliases(text, requestOptions);
+        const textCacheKey = this.getAutoTextTranslationCacheKey(text, requestOptions);
+        const textCacheAliases = this.getAutoTextTranslationCacheAliases(text, requestOptions);
+        const keys = [cacheKey, ...cacheAliases, textCacheKey, ...textCacheAliases].filter(Boolean);
+        let translated = this.hasTranslationCacheCandidate(cacheKey, cacheAliases) ? this.getTranslationCacheValueCached(cacheKey, cacheAliases, context) : null;
+        if (translated === null && this.hasTranslationCacheCandidate(textCacheKey, textCacheAliases)) {
+          translated = this.getTranslationCacheValueCached(textCacheKey, textCacheAliases, context);
+        }
+        if (translated === null || this.isInvalidAutoTranslationCacheValue(text, translated, requestOptions)) return { result: "miss", keys };
+        return { result: "hit", cacheKey, translated, requestOptions, keys };
+      }
+      getCachedDrawMemoKey(candidate, text) {
+        const messageNode = candidate?.messageNode;
+        const messageId = String(messageNode?.id || messageNode?.getAttribute?.("data-list-item-id") || "");
+        if (!messageId) return "";
+        return [this.getCurrentRouteKey(), messageId, candidate?.targetKind || "message", this.getStrongTextFingerprint(text)].join("|");
+      }
+      // Entries last until settings change. A hit also needs its cached value to be unchanged and
+      // unexpired; a miss ends as soon as one of the keys it looked up is cached.
+      getCachedDrawMemoEntry(memoKey) {
+        const entry = memoKey ? this.cachedDrawMemo?.get?.(memoKey) : null;
+        if (!entry) return null;
+        let stale = entry.configVersion !== this.autoTranslationConfigVersion;
+        if (!stale && entry.result === "miss") stale = entry.keys.some((key) => this.translationCache.has(key));
+        if (!stale && entry.result === "hit") {
+          entry.valueKey = entry.keys.find((key) => this.translationCache.get(key) === entry.translated) || "";
+          stale = !entry.valueKey || this.isTranslationCacheEntryExpired(this.translationCacheMeta.get(entry.valueKey) || {});
+        }
+        if (!stale) return entry;
+        this.cachedDrawMemo.delete(memoKey);
+        return null;
+      }
+      rememberCachedDrawMemoEntry(memoKey, entry) {
+        if (!memoKey || !entry) return;
+        if (!this.cachedDrawMemo?.set) this.cachedDrawMemo = /* @__PURE__ */ new Map();
+        entry.configVersion = this.autoTranslationConfigVersion;
+        this.cachedDrawMemo.delete(memoKey);
+        this.cachedDrawMemo.set(memoKey, entry);
+        while (this.cachedDrawMemo.size > AUTO_TRANSLATE_CACHE_DRAW_MEMO_MAX) {
+          this.cachedDrawMemo.delete(this.cachedDrawMemo.keys().next().value);
+        }
+      }
+      getCachedDrawPriority(content, context = null) {
+        const rect = this.getCachedElementRect(content, context);
+        const band = context?.cacheDrawBand;
+        if (!rect || !band) return void 0;
+        if (Number(rect.bottom) <= band.top) return AUTO_TRANSLATE_PREFETCH_PRIORITY_BASE + band.top - Number(rect.bottom);
+        if (Number(rect.top) >= band.bottom) return AUTO_TRANSLATE_PREFETCH_PRIORITY_BASE + Number(rect.top) - band.bottom;
+        return Math.max(0, Number(rect.top));
       }
       queueAutoTranslationRenderTask(task) {
         if (!task?.target || typeof task.run !== "function") return false;
@@ -19320,8 +19810,8 @@ var require_discord_ai_translator = __commonJS({
           });
         }
       }
-      getAutoTranslationRenderQueueDelayMs(now = Date.now()) {
-        return this.translationRenderer.getQueueDelayMs(now);
+      getAutoTranslationRenderQueueDelayMs(now = Date.now(), options = {}) {
+        return this.translationRenderer.getQueueDelayMs(now, options);
       }
       isAutoTranslationRenderTaskHeavy(task) {
         return this.translationRenderer.isTaskHeavy(task);
@@ -19343,9 +19833,15 @@ var require_discord_ai_translator = __commonJS({
         }
         const now = Date.now();
         const delayMs = this.getAutoTranslationRenderQueueDelayMs(now);
+        let cacheTasksOnly = false;
         if (delayMs > 0) {
-          this.scheduleAutoTranslationRenderQueue(delayMs);
-          return;
+          const hasCacheTasks = this.autoTranslationRenderQueue.some((task) => task?.kind === "cache");
+          const cacheDelayMs = hasCacheTasks ? this.getAutoTranslationRenderQueueDelayMs(now, { cacheTasks: true }) : delayMs;
+          if (!hasCacheTasks || cacheDelayMs > 0) {
+            this.scheduleAutoTranslationRenderQueue(Math.min(delayMs, cacheDelayMs));
+            return;
+          }
+          cacheTasksOnly = true;
         }
         const startedAt = Date.now();
         let rendered = 0;
@@ -19355,9 +19851,11 @@ var require_discord_ai_translator = __commonJS({
         }
         while (this.autoTranslationRenderQueue.length && rendered < AUTO_TRANSLATE_RENDER_MAX_PER_FRAME) {
           if (rendered > 0 && Date.now() - startedAt >= AUTO_TRANSLATE_RENDER_FRAME_BUDGET_MS) break;
-          const task = this.autoTranslationRenderQueue[0];
+          const index = cacheTasksOnly ? this.autoTranslationRenderQueue.findIndex((task2) => task2?.kind === "cache") : 0;
+          if (index < 0) break;
+          const task = this.autoTranslationRenderQueue[index];
           if (rendered > 0 && this.isAutoTranslationRenderTaskHeavy(task)) break;
-          this.autoTranslationRenderQueue.shift();
+          this.autoTranslationRenderQueue.splice(index, 1);
           if (task?.key) {
             const queuedTask = this.autoTranslationRenderQueuedTasks?.get?.(task.key);
             if (!queuedTask || queuedTask === task) {
@@ -19370,19 +19868,24 @@ var require_discord_ai_translator = __commonJS({
           } catch (error) {
             this.warnSanitized("Failed to run queued auto translation render", error);
           } finally {
-            if (task?.cacheKey) this.autoTranslationRenderPendingKeys?.delete?.(task.cacheKey);
+            if (task?.cacheKey && !this.autoTranslationRenderQueue.some((queued) => queued?.cacheKey === task.cacheKey)) {
+              this.autoTranslationRenderPendingKeys?.delete?.(task.cacheKey);
+            }
           }
           rendered++;
           if (this.isAutoTranslationRenderTaskHeavy(task)) break;
           if (Date.now() - startedAt >= AUTO_TRANSLATE_RENDER_FRAME_BUDGET_MS) break;
         }
-        if (this.autoTranslationRenderQueue.length) this.scheduleAutoTranslationRenderQueue();
+        if (this.autoTranslationRenderQueue.length) {
+          const remainingCacheTasks = this.autoTranslationRenderQueue.some((task) => task?.kind === "cache");
+          this.scheduleAutoTranslationRenderQueue(cacheTasksOnly && !remainingCacheTasks ? this.getAutoTranslationRenderQueueDelayMs(Date.now()) : 0);
+        }
         this.logSlowOperation("auto.render.queue", startedAt, {
           rendered,
           remaining: this.autoTranslationRenderQueue.length
         });
       }
-      renderAutoTranslationCacheTarget(target, translated, cacheKey, requestOptions = null) {
+      renderAutoTranslationCacheTarget(target, translated, cacheKey, requestOptions = null, options = {}) {
         if (!this.isAutoTranslationRenderRequestCurrent(requestOptions)) {
           this.removeAutoTranslationNode(target, cacheKey);
           this.logAutoTranslationMessageState(
@@ -19426,7 +19929,8 @@ var require_discord_ai_translator = __commonJS({
           );
           return false;
         }
-        if (!this.isElementVisibleInViewport(target.messageNode) || !this.isElementVisibleInViewport(target.content)) {
+        if (!this.isAutoTranslationCacheTargetDrawable(target)) {
+          if (options.drawPass) return false;
           this.logAutoTranslationMessageState(
             "auto.message.state",
             "render-skip",
@@ -19438,9 +19942,9 @@ var require_discord_ai_translator = __commonJS({
           this.scheduleAutoTranslationRetryScan(AUTO_TRANSLATE_VIEWPORT_STABLE_RESCAN_MS, { minDelayMs: AUTO_TRANSLATE_VIEWPORT_STABLE_RESCAN_MS });
           return false;
         }
-        const renderedLine = this.renderTranslation(target.messageNode, target.content, translated, cacheKey, target.text);
+        const renderedLine = this.renderTranslation(target.messageNode, target.content, translated, cacheKey, target.text, { allowScrollCorrectionWhilePaused: true });
         if (!renderedLine) {
-          this.deleteTranslationCacheCandidates(cacheKey);
+          this.deleteTranslationCacheCandidates(cacheKey, ...options.deleteKeys || []);
           this.logAutoTranslationMessageState(
             "auto.message.state",
             "render-skip",
@@ -20858,21 +21362,36 @@ var require_discord_ai_translator = __commonJS({
         return false;
       }
       isVisibleInsideScrollContainers(element, rect = element?.getBoundingClientRect?.()) {
+        return this.isRectInsideScrollClips(element, rect);
+      }
+      // The rect must overlap every overflow-clipping ancestor (touching edges count as outside;
+      // zero-size ancestors are ignored). The scan also rejects ancestors hidden by style.
+      isRectInsideScrollClips(element, rect, context = null, options = {}) {
+        if (!rect) return true;
         let current = element?.parentElement;
         while (current && current.nodeType === 1) {
-          if (typeof getComputedStyle === "function") {
-            const style = getComputedStyle(current);
-            const overflow = `${style.overflow || ""} ${style.overflowX || ""} ${style.overflowY || ""}`;
-            if (/(auto|scroll|hidden|clip)/.test(overflow)) {
-              const containerRect = current.getBoundingClientRect?.();
-              if (containerRect && containerRect.width > 0 && containerRect.height > 0) {
-                if (rect.bottom <= containerRect.top || rect.top >= containerRect.bottom || rect.right <= containerRect.left || rect.left >= containerRect.right) return false;
-              }
-            }
-          }
+          const info = this.getScrollClipInfo(current, context);
+          if (options.checkHidden && info.hidden) return false;
+          const clip = info.rect;
+          if (clip && (rect.bottom <= clip.top || rect.top >= clip.bottom || rect.right <= clip.left || rect.left >= clip.right)) return false;
           current = current.parentElement;
         }
         return true;
+      }
+      getScrollClipInfo(element, context = null) {
+        const memo = context?.scrollClipByElement;
+        if (memo?.has(element)) return memo.get(element);
+        const info = { hidden: false, rect: null };
+        if (typeof getComputedStyle === "function") {
+          const style = getComputedStyle(element);
+          info.hidden = style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse" || style.opacity === "0";
+          if (/(auto|scroll|hidden|clip)/.test(`${style.overflow || ""} ${style.overflowX || ""} ${style.overflowY || ""}`)) {
+            const clipRect = this.getCachedElementRect(element, context);
+            if (clipRect && clipRect.width > 0 && clipRect.height > 0) info.rect = clipRect;
+          }
+        }
+        memo?.set(element, info);
+        return info;
       }
       hasDominantForeignLine(text, targetLanguage) {
         const targetScript = this.getTargetLanguageScript(targetLanguage);
@@ -23275,6 +23794,7 @@ var require_discord_ai_translator = __commonJS({
         return true;
       }
       renderTranslation(messageNode, content, translatedText, cacheKey = "", sourceText = null, renderOptions = {}) {
+        const scrollOptions = { allowScrollCorrectionWhilePaused: Boolean(renderOptions?.allowScrollCorrectionWhilePaused) };
         return this.withTranslationScrollStability(content, () => {
           const line = this.ensureTranslationNode(messageNode, content);
           line.classList.remove("dait-translation-error", "dait-translation-loading", "dait-translation-masked", "dait-translation-revealed");
@@ -23302,7 +23822,7 @@ var require_discord_ai_translator = __commonJS({
           line.appendChild(text);
           this.syncTranslationSourceVisibility(line, content, sourceText);
           return line;
-        });
+        }, scrollOptions);
       }
       renderTranslationLoading(messageNode, content, cacheKey = "", sourceText = null) {
         return this.withTranslationScrollStability(content, () => {
@@ -23362,37 +23882,109 @@ var require_discord_ai_translator = __commonJS({
           return line;
         });
       }
-      withTranslationScrollStability(anchor, render) {
-        if (this.isAutoTranslationRenderPaused()) return render();
-        const snapshot = this.getTranslationScrollSnapshot(anchor);
+      withTranslationScrollStability(anchor, render, options = {}) {
+        const snapshot = this.getTranslationScrollSnapshot(anchor, options);
         const result = render();
         this.restoreTranslationScrollSnapshot(snapshot);
         return result;
       }
-      getTranslationScrollSnapshot(anchor) {
+      // Where the new line lands decides the correction: above the visible chat, keep what is
+      // visible in place; below it, change nothing; inside it, keep the translated text in place.
+      // A chat pinned to its newest message stays pinned.
+      getTranslationScrollSnapshot(anchor, options = {}) {
         if (!anchor?.isConnected || !anchor.getBoundingClientRect) return null;
+        if (this.getAutoTranslationScrollStillRemainingMs() > 0) return null;
         const scroller = this.getTranslationScrollContainer(anchor);
         if (!scroller) return null;
         const rect = anchor.getBoundingClientRect();
         const scrollTop = this.getScrollContainerTop(scroller);
         if (!Number.isFinite(scrollTop) || !rect) return null;
-        return {
-          anchor,
-          scroller,
-          top: Number(rect.top || 0),
-          scrollTop
-        };
+        const atBottom = this.isScrollContainerAtBottom(scroller, scrollTop);
+        const band = this.getScrollContainerBand(scroller);
+        const insertY = Number(this.settings.ui?.translationPosition === "after" ? rect.bottom : rect.top);
+        const placement = !band ? "visible" : insertY <= band.top ? "above" : insertY >= band.bottom ? "below" : "visible";
+        if (placement === "below" || placement === "visible" && this.isAutoTranslationRenderPaused() && !options.allowScrollCorrectionWhilePaused) {
+          return atBottom ? { scroller, scrollTop, atBottom, anchor: null } : null;
+        }
+        if (placement === "above") {
+          const message = anchor.closest?.(DISCORD_MESSAGE_NODE_SELECTOR) || anchor;
+          const messageRect = message === anchor ? rect : message.getBoundingClientRect?.();
+          if (!messageRect) return null;
+          return { anchor: message, edge: "bottom", top: Number(messageRect.bottom || 0), scroller, scrollTop, atBottom };
+        }
+        return { anchor, edge: "top", top: Number(rect.top || 0), scroller, scrollTop, atBottom };
       }
       restoreTranslationScrollSnapshot(snapshot) {
-        if (!snapshot?.anchor?.isConnected || !snapshot.scroller) return;
-        const nextRect = snapshot.anchor.getBoundingClientRect?.();
-        if (!nextRect) return;
-        const delta = Number(nextRect.top || 0) - Number(snapshot.top || 0);
-        if (!Number.isFinite(delta) || Math.abs(delta) < 0.5) return;
+        if (!snapshot?.scroller) return;
         const currentTop = this.getScrollContainerTop(snapshot.scroller);
         if (!Number.isFinite(currentTop)) return;
-        if (Math.abs(currentTop - Number(snapshot.scrollTop || 0)) > 1) return;
-        this.setScrollContainerTop(snapshot.scroller, currentTop + delta);
+        if (Math.abs(currentTop - Number(snapshot.scrollTop || 0)) > 1) {
+          this.rememberOwnScrollAdjustment(snapshot.scroller, currentTop);
+          return;
+        }
+        let nextTop = currentTop;
+        if (snapshot.atBottom) {
+          nextTop = Math.max(0, Number(snapshot.scroller.scrollHeight || 0) - Number(snapshot.scroller.clientHeight || 0));
+        } else {
+          if (!snapshot.anchor?.isConnected) return;
+          const nextRect = snapshot.anchor.getBoundingClientRect?.();
+          if (!nextRect) return;
+          const delta = Number(nextRect[snapshot.edge || "top"] || 0) - Number(snapshot.top || 0);
+          if (!Number.isFinite(delta)) return;
+          nextTop = currentTop + delta;
+        }
+        if (Math.abs(nextTop - currentTop) < 0.5) return;
+        this.setScrollContainerTop(snapshot.scroller, nextTop);
+        const writtenTop = this.getScrollContainerTop(snapshot.scroller);
+        if (Number.isFinite(writtenTop) && Math.abs(writtenTop - currentTop) >= 0.5) this.rememberOwnScrollAdjustment(snapshot.scroller, writtenTop);
+      }
+      // Whether Discord's chat scroller uses native scroll anchoring decides if the plugin's own
+      // scroll corrections ever run; recorded in diagnostics.
+      getChatScrollerOverflowAnchor() {
+        try {
+          if (typeof document === "undefined" || typeof getComputedStyle !== "function") return "";
+          const message = document.querySelector?.(DISCORD_MESSAGE_NODE_SELECTOR);
+          const scroller = message ? this.getTranslationScrollContainer(message) : null;
+          if (!message) return "";
+          return this.isDocumentScroller(scroller) ? "not-scrollable" : String(getComputedStyle(scroller).overflowAnchor || "");
+        } catch {
+          return "";
+        }
+      }
+      isScrollContainerAtBottom(scroller, scrollTop = this.getScrollContainerTop(scroller)) {
+        const scrollHeight = Number(scroller?.scrollHeight || 0);
+        const clientHeight = Number(scroller?.clientHeight || 0);
+        if (!Number.isFinite(scrollTop) || scrollHeight <= clientHeight + 1) return false;
+        return scrollTop + clientHeight >= scrollHeight - 2;
+      }
+      // The visible part of a scroller: its box clipped to the window.
+      getScrollContainerBand(scroller) {
+        if (typeof window === "undefined" || !window) return null;
+        const height = Number(window.innerHeight || 0);
+        if (!(height > 0)) return null;
+        if (this.isDocumentScroller(scroller)) return { top: 0, bottom: height };
+        const rect = scroller.getBoundingClientRect?.();
+        if (!rect || !(rect.height > 0)) return null;
+        const top = Math.max(0, Number(rect.top || 0));
+        const bottom = Math.min(height, Number(rect.bottom || 0));
+        return bottom > top ? { top, bottom } : null;
+      }
+      // The plugin's own scrollTop writes fire scroll events; the next one from that scroller is not a user scroll.
+      rememberOwnScrollAdjustment(scroller, top) {
+        if (!scroller || !Number.isFinite(Number(top))) return;
+        if (!this.autoTranslationOwnScrolls?.set) this.autoTranslationOwnScrolls = /* @__PURE__ */ new WeakMap();
+        this.autoTranslationOwnScrolls.set(scroller, { top: Number(top), at: Date.now() });
+      }
+      consumeOwnScrollEvent(event) {
+        const target = typeof document !== "undefined" && event?.target === document ? document.scrollingElement : event?.target;
+        const record = target ? this.autoTranslationOwnScrolls?.get?.(target) : null;
+        if (!record) return false;
+        this.autoTranslationOwnScrolls.delete(target);
+        const top = this.getScrollContainerTop(target);
+        if (Date.now() - record.at > AUTO_TRANSLATE_SCROLL_STILL_MS || !Number.isFinite(top) || Math.abs(top - record.top) > 1) return false;
+        this.setPreviousViewportScrollPosition(event, top);
+        this.autoTranslationLastScrollY = top;
+        return true;
       }
       getTranslationScrollContainer(anchor) {
         if (typeof document === "undefined") return null;
@@ -24748,12 +25340,14 @@ var require_discord_ai_translator = __commonJS({
       getFriendlyErrorMessage(error) {
         const status = Number(error?.status || 0);
         let message = "";
-        if (error?.manualTranslationRescueFailed) message = this.t("manualTranslateRescueFailed");
+        if (this.isRequestCancelled(error)) message = this.t("errorCancelled");
+        else if (Object.hasOwn(API_ENDPOINT_ERROR_MESSAGE_KEYS, error?.code)) message = this.t(API_ENDPOINT_ERROR_MESSAGE_KEYS[error.code]);
+        else if (error?.manualTranslationRescueFailed) message = this.t("manualTranslateRescueFailed");
+        else if (this.isTimeoutError(error)) message = this.t("errorTimeout");
         else if (error?.localProviderUnavailable) message = this.t("errorLocalProviderUnavailable");
         else if (status === 401 || status === 403) message = this.t("errorUnauthorized");
         else if (status === 429) message = this.t("errorRateLimited");
         else if (status >= 500) message = this.t("errorServer");
-        else if (this.isTimeoutError(error)) message = this.t("errorTimeout");
         else if (this.isNetworkError(error)) message = this.t("errorNetwork");
         else if (String(error?.message || "") === "API_ERROR") message = status ? `API ${status}` : this.t("unknownError");
         else message = String(error?.message || error || this.t("unknownError"));
@@ -24848,6 +25442,9 @@ var require_discord_ai_translator = __commonJS({
       }
       setTaskProvider(...args) {
         return this.settingsStore.setTaskProvider(...args);
+      }
+      applyProviderIntakeMode(...args) {
+        return this.settingsStore.applyProviderIntakeMode(...args);
       }
       getPromptTemplates(...args) {
         return this.settingsStore.getPromptTemplates(...args);
@@ -25089,6 +25686,9 @@ var require_discord_ai_translator = __commonJS({
       }
       isTimeoutError(...args) {
         return this.providerLayer.isTimeoutError(...args);
+      }
+      isRequestCancelled(...args) {
+        return this.providerLayer.isRequestCancelled(...args);
       }
       isNetworkError(...args) {
         return this.providerLayer.isNetworkError(...args);
@@ -25556,6 +26156,9 @@ var require_discord_ai_translator = __commonJS({
       isAutoTranslationRenderPaused(...args) {
         return this.autoQueueCore.isAutoTranslationRenderPaused(...args);
       }
+      getAutoTranslationScrollStillRemainingMs(...args) {
+        return this.autoQueueCore.getAutoTranslationScrollStillRemainingMs(...args);
+      }
       getAutoTranslationRenderPauseRemainingMs(...args) {
         return this.autoQueueCore.getAutoTranslationRenderPauseRemainingMs(...args);
       }
@@ -25687,9 +26290,6 @@ var require_discord_ai_translator = __commonJS({
       }
       getAutoTranslateQueueLimit(...args) {
         return this.autoQueueCore.getAutoTranslateQueueLimit(...args);
-      }
-      getProviderAutoTranslateConcurrencyMax(...args) {
-        return this.autoQueueCore.getProviderAutoTranslateConcurrencyMax(...args);
       }
       getAutoTranslationRequestBatchSize(...args) {
         return this.autoQueueCore.getAutoTranslationRequestBatchSize(...args);
@@ -26078,6 +26678,9 @@ var require_discord_ai_translator = __commonJS({
       }
       createAutoTranslationStaleError(...args) {
         return this.autoRequestPipeline.createAutoTranslationStaleError(...args);
+      }
+      isAbandonedTranslationError(...args) {
+        return this.autoRequestPipeline.isAbandonedTranslationError(...args);
       }
       runAutoTranslationStrictFallbackTask(...args) {
         return this.autoRequestPipeline.runAutoTranslationStrictFallbackTask(...args);

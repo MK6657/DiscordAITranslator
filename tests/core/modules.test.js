@@ -34,12 +34,15 @@ test("TranslationRenderer keeps cache tasks light and orders priority", () => {
         getAutoTranslationViewportSettleRemainingMs: () => 20,
         getAutoTranslationJumpCooldownRemainingMs: () => 5,
         getInputComposerBusyRemainingMs: () => 1,
+        getAutoTranslationScrollStillRemainingMs: () => 7,
         isAutoTranslationRenderPaused: () => false,
         isAutoTranslationViewportSettling: () => false,
         isAutoTranslationJumpCoolingDown: () => false
     };
     const renderer = new TranslationRenderer(plugin, { heavyTextLength: 10 });
     assert.equal(renderer.getQueueDelayMs(), 20);
+    // Cached lines ignore the scroll pause, settle and jump windows and wait only for a still scroller.
+    assert.equal(renderer.getQueueDelayMs(Date.now(), { cacheTasks: true }), 7);
     assert.equal(renderer.isTaskHeavy({ kind: "cache", text: "x".repeat(20) }), false);
     assert.equal(renderer.isTaskHeavy({ kind: "request", text: "x".repeat(10) }), true);
     const queue = [{ priority: 4 }, { priority: 1 }, {}];

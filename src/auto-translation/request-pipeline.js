@@ -262,7 +262,7 @@ class AutoTranslationRequestPipeline {
 
         const targetVisible = this.plugin.isAutoTranslationTargetVisibleCached(target, scanState.context);
         const explicitHistoryRequest = Boolean(target.daitHistoryRequest);
-        if (!this.plugin.isAutoTranslationPrefetchConfigured(requestOptions) && !targetVisible && !explicitHistoryRequest) {
+        if (!this.plugin.isAutoTranslationPrefetchConfigured() && !targetVisible && !explicitHistoryRequest) {
             return {
                 action: "block",
                 status: "blocked",
@@ -323,24 +323,9 @@ class AutoTranslationRequestPipeline {
                 counts: { eligible: 1, skippedCurrent: 1 }
             };
         }
-        const recentRender = this.plugin.getRecentAutoTranslationRender(cacheKey, text, targetRequestOptions, now);
-        if (recentRender) {
-            return {
-                action: "skip",
-                status: "skipped",
-                state: DIAGNOSTIC_MESSAGE_STATES.RENDERED,
-                reasonCode: DIAGNOSTIC_REASON_CODES.RECENT_RENDER_PRESENT,
-                cacheKey,
-                requestOptions: targetRequestOptions,
-                counts: { eligible: 1, skippedCurrent: 1 },
-                extra: {
-                    validationQuality: recentRender.validationQuality || "",
-                    validationReason: recentRender.validationReason || "",
-                    ageMs: Math.max(0, now - Number(recentRender.at || 0))
-                }
-            };
-        }
 
+        // Discord rebuilds message elements while scrolling, dropping their translation line.
+        // A cached translation is always drawn again; a recent render only blocks new requests below.
         if (this.plugin.hasTranslationCacheCandidate(cacheKey, cacheAliases)) {
             const cachedTranslation = this.plugin.getTranslationCacheValueCached(cacheKey, cacheAliases, scanState.context);
             if (cachedTranslation !== null) {
@@ -405,6 +390,24 @@ class AutoTranslationRequestPipeline {
                     extra: { textCacheKey: this.plugin.getTextFingerprint(textCacheKey), canRender: canRenderCacheHit, targetVisible }
                 };
             }
+        }
+
+        const recentRender = this.plugin.getRecentAutoTranslationRender(cacheKey, text, targetRequestOptions, now);
+        if (recentRender) {
+            return {
+                action: "skip",
+                status: "skipped",
+                state: DIAGNOSTIC_MESSAGE_STATES.RENDERED,
+                reasonCode: DIAGNOSTIC_REASON_CODES.RECENT_RENDER_PRESENT,
+                cacheKey,
+                requestOptions: targetRequestOptions,
+                counts: { eligible: 1, skippedCurrent: 1 },
+                extra: {
+                    validationQuality: recentRender.validationQuality || "",
+                    validationReason: recentRender.validationReason || "",
+                    ageMs: Math.max(0, now - Number(recentRender.at || 0))
+                }
+            };
         }
 
         const hasPendingTargets = this.plugin.autoTranslationPendingTargets.has(cacheKey);
@@ -906,7 +909,7 @@ class AutoTranslationRequestPipeline {
 
     shouldFallbackAutoTranslationBatchRequestError(error) {
         const type = this.plugin.getAutoTranslationFailureType(error);
-        return !["auth", "quota", "rate-limit", "server", "local-unavailable"].includes(type);
+        return !["cancelled", "auth", "quota", "rate-limit", "server", "local-unavailable"].includes(type);
     }
 
     buildPromptPolicyAutoTranslationPrompt(options = this.plugin.getAutoTranslationOptions()) {
@@ -1190,7 +1193,7 @@ class AutoTranslationRequestPipeline {
                 translated = await this.plugin.runAutoTranslationTaskWithOptions(chunks[index], chunkOptions, taskOptions);
             }
             catch (error) {
-                if (error?.autoTranslationStale) throw error;
+                if (this.plugin.isAbandonedTranslationError(error)) throw error;
                 const rescued = taskOptions?.manualRescue
                     ? await this.plugin.runLongAutoTranslationChunkManualRescue(chunks[index], chunkOptions, error, taskOptions, {
                         sourceHash,
@@ -1315,6 +1318,7 @@ class AutoTranslationRequestPipeline {
                 });
             }
             catch (error) {
+                if (this.plugin.isAbandonedTranslationError(error)) throw error;
                 lastError = error;
                 this.plugin.logDiagnostic("auto.long-text.chunk-rescue", "failed", {
                     sourceHash: meta.sourceHash || this.plugin.getStrongTextFingerprint(chunkText),
@@ -1378,6 +1382,7 @@ class AutoTranslationRequestPipeline {
                 else failures.push({ index, reason: validation.reasonCode || "invalid-output" });
             }
             catch (error) {
+                if (this.plugin.isAbandonedTranslationError(error)) throw error;
                 failures.push({ index, reason: error?.autoTranslationInvalidReason || this.plugin.getAutoTranslationFailureType(error) });
                 this.plugin.logDiagnostic("auto.long-text.subchunk-rescue", "failed", {
                     sourceHash: meta.sourceHash || this.plugin.getStrongTextFingerprint(text),
@@ -1855,6 +1860,11 @@ class AutoTranslationRequestPipeline {
         error.autoTranslationStale = true;
         error.autoTranslationCancelReason = String(reason || "stale");
         return error;
+    }
+
+    // Superseded or cancelled work must not be retried, rescued or continued with the next chunk.
+    isAbandonedTranslationError(error) {
+        return Boolean(error?.autoTranslationStale) || this.plugin.isRequestCancelled(error);
     }
 
     async runAutoTranslationStrictFallbackTask(text, options = this.plugin.getAutoTranslationOptions()) {
@@ -2599,7 +2609,7 @@ class AutoTranslationRequestPipeline {
             return translated;
         }
         catch (error) {
-            if (error?.autoTranslationStale) throw error;
+            if (this.plugin.isAbandonedTranslationError(error)) throw error;
             this.plugin.logDiagnostic("manual.long-text.whole-pass", "failed", {
                 ...this.plugin.getTranslationDiagnosticMeta("manual", {
                     requestOptions: wholeOptions,

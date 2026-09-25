@@ -115,8 +115,6 @@ const PROVIDER_DEFAULTS = {
         endpoint: "http://127.0.0.1:8080/v1/chat/completions",
         model: "local-model",
         apiKeyOptional: true,
-        autoTranslateConcurrencyMax: 1,
-        autoTranslatePrefetchAllowed: false,
         autoTranslateIntakeMode: "dom",
         autoTranslateRequestBatchSize: 1,
         autoTranslateLongTextChunkLength: 420
@@ -338,7 +336,7 @@ const CUSTOM_LANGUAGE_VALUE = "__custom";
 const AUTO_LANGUAGE_VALUE = "auto";
 const AUTO_TRANSLATE_DEFAULT_CONCURRENCY = 4;
 const AUTO_TRANSLATE_MIN_CONCURRENCY = 1;
-const AUTO_TRANSLATE_MAX_CONCURRENCY = 8;
+const AUTO_TRANSLATE_MAX_CONCURRENCY = 10;
 const AUTO_TRANSLATE_MIN_BATCH_SIZE = 8;
 const AUTO_TRANSLATE_BATCH_MULTIPLIER = 4;
 const AUTO_TRANSLATE_QUEUE_MULTIPLIER = 5;
@@ -378,6 +376,11 @@ const AUTO_TRANSLATE_CLOUD_LONG_TEXT_TIMEOUT_MAX_MS = 45000;
 const MANUAL_LONG_TEXT_WHOLE_PASS_MAX_LENGTH = 1800;
 const MODEL_REQUEST_TIMEOUT_MS = 45000;
 const API_TEST_REQUEST_TIMEOUT_MS = 15000;
+// Error codes thrown by assertSafeRequestEndpoint, mapped to their localized messages.
+const API_ENDPOINT_ERROR_MESSAGE_KEYS = Object.freeze({
+    INVALID_API_ENDPOINT: "errorInvalidEndpoint",
+    UNSAFE_API_ENDPOINT: "errorUnsafeEndpoint"
+});
 const SCAN_VIEWPORT_BUFFER_PX = 480;
 const AUTO_TRANSLATE_VIEWPORT_SETTLE_MS = 450;
 const AUTO_TRANSLATE_VIEWPORT_JUMP_SETTLE_MS = 900;
@@ -392,6 +395,18 @@ const AUTO_TRANSLATE_RENDER_MAX_PER_FRAME = 3;
 const AUTO_TRANSLATE_RENDER_FRAME_BUDGET_MS = 6;
 const AUTO_TRANSLATE_PREFETCH_PRIORITY_BASE = 100000;
 const AUTO_TRANSLATE_EDGE_OVERSCAN_MESSAGES = 1;
+// Cached translations are drawn once the chat scroller has been still this long; a scrollTop write
+// during a running smooth scroll or Discord scroll animation would cut it short.
+const AUTO_TRANSLATE_SCROLL_STILL_MS = 100;
+// The draw pass covers the visible chat plus this far above and below it (at least the minimum,
+// otherwise the given multiple of the visible height), within a small main-thread budget per pass.
+const AUTO_TRANSLATE_CACHE_DRAW_MIN_BUFFER_PX = 600;
+const AUTO_TRANSLATE_CACHE_DRAW_BUFFER_FACTOR = 1.25;
+const AUTO_TRANSLATE_CACHE_DRAW_BUDGET_MS = 3;
+const AUTO_TRANSLATE_CACHE_DRAW_MAX_EVALUATIONS = 8;
+const AUTO_TRANSLATE_CACHE_DRAW_MAX_MESSAGES = 60;
+const AUTO_TRANSLATE_CACHE_DRAW_MEMO_MAX = 800;
+const AUTO_TRANSLATE_FINISHED_LINE_SELECTOR = ".dait-translation-line:not(.dait-translation-loading):not(.dait-translation-error)";
 const AUTO_TRANSLATE_DEFAULT_PREFETCH_RANGE = 5;
 const AUTO_TRANSLATE_PREFETCH_RANGES = [3, 5, 8];
 const MUTATION_DIRTY_SCAN_MAX_ROOTS = 12;
@@ -817,6 +832,7 @@ module.exports = {
     MANUAL_LONG_TEXT_WHOLE_PASS_MAX_LENGTH,
     MODEL_REQUEST_TIMEOUT_MS,
     API_TEST_REQUEST_TIMEOUT_MS,
+    API_ENDPOINT_ERROR_MESSAGE_KEYS,
     SCAN_VIEWPORT_BUFFER_PX,
     AUTO_TRANSLATE_VIEWPORT_SETTLE_MS,
     AUTO_TRANSLATE_VIEWPORT_JUMP_SETTLE_MS,
@@ -831,6 +847,14 @@ module.exports = {
     AUTO_TRANSLATE_RENDER_FRAME_BUDGET_MS,
     AUTO_TRANSLATE_PREFETCH_PRIORITY_BASE,
     AUTO_TRANSLATE_EDGE_OVERSCAN_MESSAGES,
+    AUTO_TRANSLATE_SCROLL_STILL_MS,
+    AUTO_TRANSLATE_CACHE_DRAW_MIN_BUFFER_PX,
+    AUTO_TRANSLATE_CACHE_DRAW_BUFFER_FACTOR,
+    AUTO_TRANSLATE_CACHE_DRAW_BUDGET_MS,
+    AUTO_TRANSLATE_CACHE_DRAW_MAX_EVALUATIONS,
+    AUTO_TRANSLATE_CACHE_DRAW_MAX_MESSAGES,
+    AUTO_TRANSLATE_CACHE_DRAW_MEMO_MAX,
+    AUTO_TRANSLATE_FINISHED_LINE_SELECTOR,
     AUTO_TRANSLATE_DEFAULT_PREFETCH_RANGE,
     AUTO_TRANSLATE_PREFETCH_RANGES,
     MUTATION_DIRTY_SCAN_MAX_ROOTS,

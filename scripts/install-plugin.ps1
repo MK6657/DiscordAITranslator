@@ -133,6 +133,15 @@ function Enable-BetterDiscordPlugin {
     return @($updated)
 }
 
+function Get-PluginVersion {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    # The BetterDiscord metadata banner is at the top of the file.
+    $header = Get-Content -LiteralPath $Path -TotalCount 12 -Encoding UTF8 -ErrorAction SilentlyContinue
+    $match = [regex]::Match(($header -join "`n"), '@version\s+(\S+)')
+    if ($match.Success) { return $match.Groups[1].Value }
+    return "unknown"
+}
+
 if (-not $env:APPDATA) {
     throw "APPDATA is not set. Cannot locate the BetterDiscord plugins folder."
 }
@@ -180,11 +189,14 @@ if (-not $SkipSyntaxCheck) {
 $target = "BetterDiscord plugin file '$destination'"
 if ($PSCmdlet.ShouldProcess($target, "Install DiscordAITranslator plugin")) {
     $sourceHash = Get-Sha256 -Path $pluginFile
+    $sourceVersion = Get-PluginVersion -Path $pluginFile
+    $previousVersion = ""
     $backupCreated = $false
     $destinationReplaced = $false
 
     try {
         if (Test-Path -LiteralPath $destination) {
+            $previousVersion = Get-PluginVersion -Path $destination
             if (Test-Path -LiteralPath $backup) {
                 throw "Backup path already exists: $backup"
             }
@@ -230,6 +242,12 @@ if ($PSCmdlet.ShouldProcess($target, "Install DiscordAITranslator plugin")) {
 
     Write-Host "Installed DiscordAITranslator.plugin.js to:"
     Write-Host $destination
+    if ($previousVersion) {
+        Write-Host "Version: $sourceVersion (replaced $previousVersion)"
+    }
+    else {
+        Write-Host "Version: $sourceVersion"
+    }
     if ($backupCreated) {
         Write-Host "Backup:"
         Write-Host $backup

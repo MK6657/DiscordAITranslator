@@ -381,13 +381,8 @@ class SettingsStore {
             this.plugin.settings.ui.publicBilingualPolishBeforeTranslate = DEFAULT_SETTINGS.ui.publicBilingualPolishBeforeTranslate;
             changed = true;
         }
-        const autoTranslatePrefetch = typeof this.plugin.settings.ui.autoTranslatePrefetch === "boolean"
-            ? this.plugin.settings.ui.autoTranslatePrefetch
-            : DEFAULT_SETTINGS.ui.autoTranslatePrefetch;
-        const providerPrefetchAllowed = this.plugin.getProviderDefaults(this.plugin.settings.translation?.provider)?.autoTranslatePrefetchAllowed !== false;
-        const effectiveAutoTranslatePrefetch = providerPrefetchAllowed ? autoTranslatePrefetch : false;
-        if (effectiveAutoTranslatePrefetch !== this.plugin.settings.ui.autoTranslatePrefetch) {
-            this.plugin.settings.ui.autoTranslatePrefetch = effectiveAutoTranslatePrefetch;
+        if (typeof this.plugin.settings.ui.autoTranslatePrefetch !== "boolean") {
+            this.plugin.settings.ui.autoTranslatePrefetch = DEFAULT_SETTINGS.ui.autoTranslatePrefetch;
             changed = true;
         }
         const intakeMode = this.plugin.normalizeAutoTranslateIntakeMode(this.plugin.settings.ui.autoTranslateIntakeMode);
@@ -403,10 +398,8 @@ class SettingsStore {
             changed = true;
         }
         const autoTranslateConcurrency = this.plugin.normalizeAutoTranslateConcurrency(this.plugin.settings.ui.autoTranslateConcurrency);
-        const providerConcurrencyMax = this.plugin.getProviderAutoTranslateConcurrencyMax(this.plugin.settings.translation?.provider);
-        const effectiveAutoTranslateConcurrency = providerConcurrencyMax ? Math.min(autoTranslateConcurrency, providerConcurrencyMax) : autoTranslateConcurrency;
-        if (effectiveAutoTranslateConcurrency !== this.plugin.settings.ui.autoTranslateConcurrency) {
-            this.plugin.settings.ui.autoTranslateConcurrency = effectiveAutoTranslateConcurrency;
+        if (autoTranslateConcurrency !== this.plugin.settings.ui.autoTranslateConcurrency) {
+            this.plugin.settings.ui.autoTranslateConcurrency = autoTranslateConcurrency;
             changed = true;
         }
         if (typeof this.plugin.settings.ui.autoTranslateStrictRetry !== "boolean") {
@@ -604,16 +597,10 @@ class SettingsStore {
             value = String(value || "");
         }
         if (path === "ui.autoTranslateConcurrency") {
-            const normalized = this.plugin.normalizeAutoTranslateConcurrency(value);
-            const providerMax = this.plugin.getProviderAutoTranslateConcurrencyMax(this.plugin.settings.translation?.provider);
-            value = providerMax ? Math.min(normalized, providerMax) : normalized;
+            value = this.plugin.normalizeAutoTranslateConcurrency(value);
         }
         if (path === "ui.autoTranslatePrefetchRange") {
             value = this.plugin.normalizeAutoTranslatePrefetchRange(value);
-        }
-        if (path === "ui.autoTranslatePrefetch"
-            && this.plugin.getProviderDefaults(this.plugin.settings.translation?.provider)?.autoTranslatePrefetchAllowed === false) {
-            value = false;
         }
         if (path === "ui.translationCacheTtlHours") {
             value = this.plugin.normalizeTranslationCacheTtlHours(value);
@@ -661,22 +648,7 @@ class SettingsStore {
                 this.plugin.settings.googleTranslate.keyPoolText = normalized.keyPoolText;
             }
         }
-        if (path === "translation.provider" && this.plugin.isLocalTranslationProvider(value)) {
-            const providerMax = this.plugin.getProviderAutoTranslateConcurrencyMax(value);
-            if (providerMax && this.plugin.normalizeAutoTranslateConcurrency(this.plugin.settings.ui.autoTranslateConcurrency) > providerMax) {
-                this.plugin.settings.ui.autoTranslateConcurrency = providerMax;
-                this.plugin.syncSettingControls("ui.autoTranslateConcurrency", providerMax, { includeActive: true });
-            }
-            if (this.plugin.getProviderDefaults(value)?.autoTranslatePrefetchAllowed === false && this.plugin.settings.ui.autoTranslatePrefetch) {
-                this.plugin.settings.ui.autoTranslatePrefetch = false;
-                this.plugin.syncSettingControls("ui.autoTranslatePrefetch", false, { includeActive: true });
-            }
-            const providerIntakeMode = this.plugin.getProviderDefaults(value)?.autoTranslateIntakeMode;
-            if (providerIntakeMode && this.plugin.settings.ui.autoTranslateIntakeMode !== providerIntakeMode) {
-                this.plugin.settings.ui.autoTranslateIntakeMode = providerIntakeMode;
-                this.plugin.syncSettingControls("ui.autoTranslateIntakeMode", providerIntakeMode, { includeActive: true });
-            }
-        }
+        if (path === "translation.provider") this.plugin.applyProviderIntakeMode(value);
         if (options.save === false) {}
         else if (options.save === "immediate") this.plugin.saveSettings({ retryOnError: options.retryOnError });
         else this.plugin.saveSettings({ debounce: true, delayMs: options.delayMs });
@@ -756,11 +728,22 @@ class SettingsStore {
         }
         this.plugin.settings[kind].provider = nextProvider;
         this.plugin.applyProviderPreset(kind, nextProvider, { restoreProfile: true, save: false, syncControls: false, invalidate: false });
+        if (kind === "translation") this.plugin.applyProviderIntakeMode(nextProvider);
         this.plugin.resetApiStatus(kind, { save: false });
         this.plugin.saveSettings({ debounce: true });
         this.plugin.syncSettingControls(`${kind}.provider`, nextProvider);
         if (kind === "translation") this.plugin.invalidateAutoTranslationQueue();
         this.plugin.queueScan();
+    }
+
+    // Both provider-switch paths apply the provider's fixed intake mode. The settings
+    // panel locks that control, so a stale value could not be corrected there.
+    applyProviderIntakeMode(provider) {
+        const intakeMode = this.plugin.getProviderDefaults(provider)?.autoTranslateIntakeMode;
+        if (intakeMode && this.plugin.settings.ui.autoTranslateIntakeMode !== intakeMode) {
+            this.plugin.settings.ui.autoTranslateIntakeMode = intakeMode;
+            this.plugin.syncSettingControls("ui.autoTranslateIntakeMode", intakeMode, { includeActive: true });
+        }
     }
 
     getTaskProviderProfile(kind, provider) {

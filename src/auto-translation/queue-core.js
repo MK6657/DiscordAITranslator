@@ -4,6 +4,7 @@
 // Extracted from discord-ai-translator.js behind a facade: every cross-subsystem call
 // goes through this.plugin so the main class keeps its full (test-visible) surface.
 const {
+    API_ENDPOINT_ERROR_MESSAGE_KEYS,
     AUTO_TRANSLATE_BATCH_MULTIPLIER,
     AUTO_TRANSLATE_DEFAULT_CONCURRENCY,
     AUTO_TRANSLATE_DEFAULT_PREFETCH_RANGE,
@@ -30,6 +31,7 @@ const {
     AUTO_TRANSLATE_REQUEST_BATCH_SIZE,
     AUTO_TRANSLATE_REQUEST_TIMEOUT_MS,
     AUTO_TRANSLATE_SCROLL_RENDER_PAUSE_MS,
+    AUTO_TRANSLATE_SCROLL_STILL_MS,
     AUTO_TRANSLATE_TERMINAL_FAILURE_TTL,
     AUTO_TRANSLATE_TRANSIENT_FAILURE_TTL,
     AUTO_TRANSLATE_VIEWPORT_JUMP_COOLDOWN_MS,
@@ -359,6 +361,7 @@ class AutoTranslationQueueCore {
         const jumped = ["mutation", "resize", "route"].includes(type) || Math.abs(scrollY - previousScrollY) > Math.max(600, height * 0.8);
         this.plugin.setPreviousViewportScrollPosition(event, scrollY);
         this.plugin.autoTranslationLastScrollY = scrollY;
+        this.plugin.autoTranslationLastExternalScrollAt = now;
         if (type === "scroll" || type === "resize") {
             this.plugin.autoTranslationRenderPausedUntil = Math.max(
                 Number(this.plugin.autoTranslationRenderPausedUntil || 0),
@@ -382,6 +385,12 @@ class AutoTranslationQueueCore {
 
     isAutoTranslationRenderPaused(now = Date.now()) {
         return now < Number(this.plugin.autoTranslationRenderPausedUntil || 0);
+    }
+
+    // Scroll events arrive every frame while the user or a Discord animation moves the chat,
+    // so a short silence means nothing is animating and scroll corrections are safe.
+    getAutoTranslationScrollStillRemainingMs(now = Date.now()) {
+        return Math.max(0, Number(this.plugin.autoTranslationLastExternalScrollAt || 0) + AUTO_TRANSLATE_SCROLL_STILL_MS - now);
     }
 
     getAutoTranslationRenderPauseRemainingMs(now = Date.now()) {
@@ -982,7 +991,7 @@ class AutoTranslationQueueCore {
     isAutoTranslationPrefetchAllowed(item) {
         if (item?.daitHistoryRequest) return true;
         if (!this.plugin.isAutoTranslationPrefetchItem(item)) return true;
-        if (!this.plugin.isAutoTranslationPrefetchConfigured(item?.requestOptions)) return false;
+        if (!this.plugin.isAutoTranslationPrefetchConfigured()) return false;
         const now = Date.now();
         if (this.plugin.isAutoTranslationRenderPaused(now)
             || this.plugin.isAutoTranslationViewportSettling(now)
@@ -1016,9 +1025,7 @@ class AutoTranslationQueueCore {
 
     getAutoTranslateConcurrency() {
         if (!this.plugin.isAutoTranslateEnabled()) return 0;
-        const configured = this.plugin.normalizeAutoTranslateConcurrency(this.plugin.settings.ui?.autoTranslateConcurrency);
-        const providerLimit = this.plugin.getProviderAutoTranslateConcurrencyMax(this.plugin.settings.translation?.provider);
-        return providerLimit ? Math.min(configured, providerLimit) : configured;
+        return this.plugin.normalizeAutoTranslateConcurrency(this.plugin.settings.ui?.autoTranslateConcurrency);
     }
 
     getAutoTranslatePrefetchRange() {
@@ -1026,10 +1033,8 @@ class AutoTranslationQueueCore {
         return this.plugin.normalizeAutoTranslatePrefetchRange(this.plugin.settings.ui?.autoTranslatePrefetchRange);
     }
 
-    isAutoTranslationPrefetchConfigured(requestOptions = null) {
-        if (!this.plugin.settings.ui?.autoTranslatePrefetch) return false;
-        const config = this.plugin.getEffectiveTaskConfig("translation", requestOptions?.configOverrides);
-        return this.plugin.getProviderDefaults(config.provider)?.autoTranslatePrefetchAllowed !== false;
+    isAutoTranslationPrefetchConfigured() {
+        return Boolean(this.plugin.settings.ui?.autoTranslatePrefetch);
     }
 
     isAutoTranslateEnabled() {
@@ -1069,11 +1074,6 @@ class AutoTranslationQueueCore {
         if (this.plugin.isLocalTranslationProvider(this.plugin.settings.translation)) return batchSize;
         const requestWindow = this.plugin.getAutoTranslateConcurrency() * this.plugin.getAutoTranslationRequestBatchSize() * 2;
         return Math.max(batchSize, requestWindow, batchSize * AUTO_TRANSLATE_QUEUE_MULTIPLIER);
-    }
-
-    getProviderAutoTranslateConcurrencyMax(provider) {
-        const limit = Number(this.plugin.getProviderDefaults(provider)?.autoTranslateConcurrencyMax || 0);
-        return Number.isFinite(limit) && limit > 0 ? Math.round(limit) : 0;
     }
 
     getAutoTranslationRequestBatchSize(options = null) {
@@ -1880,6 +1880,10 @@ class AutoTranslationQueueCore {
     }
 
     markAutoTranslationFailure(item, error, options = {}) {
+        if (this.plugin.isRequestCancelled(error)) {
+            this.plugin.clearPendingAutoTranslationItemSafely(item);
+            return;
+        }
         const storageError = this.plugin.getAutoTranslationStorageErrorForItem(item, error);
         const failure = this.plugin.createAutoTranslationFailure(item.cacheKey, storageError);
         storageError.autoTranslationFailureCount = failure.count;
@@ -2108,6 +2112,8 @@ class AutoTranslationQueueCore {
     }
 
     getAutoTranslationFailureType(error) {
+        if (this.plugin.isRequestCancelled(error)) return "cancelled";
+        if (Object.hasOwn(API_ENDPOINT_ERROR_MESSAGE_KEYS, error?.code)) return "client";
         const status = Number(error?.status || 0);
         if (error?.modelOutputTruncated) return "truncated";
         if (error?.localProviderUnavailable) return "local-unavailable";

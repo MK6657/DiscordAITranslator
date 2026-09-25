@@ -932,6 +932,12 @@ const PLUGIN_CSS = `
     padding: 6px 8px;
 }
 
+.dait-settings-chips span.dait-settings-version {
+    border-color: var(--dait-accent, #5865f2);
+    color: var(--dait-accent, #5865f2);
+    font-variant-numeric: tabular-nums;
+}
+
 .dait-settings-layout {
     align-items: start;
     display: grid;

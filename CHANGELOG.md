@@ -4,6 +4,26 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## 0.3.0 - 2026-09-25
+
+Pre-release: offline, installer and artifact checks pass; live Discord acceptance of the scrolling changes is pending.
+
+- Draw cached translations as soon as the chat has been still for about 0.1 s, including messages Discord keeps mounted just above and below the visible chat, instead of waiting out the 0.55 s scroll pause, the 0.45–0.9 s settle window or the 2.2 s jump cooldown. A bounded idle-time pass (about 3 ms, memoised per Discord message ID) does this without model requests; new model requests keep the existing pauses.
+- The scan and the draw step now share one definition of "visible", so messages behind the channel header or message box are no longer marked for drawing and then rejected.
+- Scroll corrections depend on where the line lands: above the visible chat the visible part stays in place, below it nothing changes, and a chat pinned to its newest message stays pinned. The plugin's own corrections no longer count as user scrolls.
+- Show the version in the settings header, the start notification, settings snapshots and diagnostics exports. `npm run plugin:check` compares the installed plugin with the repository build and detects private BetterDiscord copies kept by packaged apps, redirected AppData writes and a Discord that will not load BetterDiscord; the installer prints the installed and replaced versions.
+- Diagnostics exports record whether Discord's chat scroller uses native scroll anchoring. The build embeds only the version from package.json, and source checks keep package-lock.json in step.
+- Allow 1–10 automatic translation requests for both local and cloud providers; preserve saved values and explain local server capacity in settings.
+
+- Explain and disable unavailable local-provider scheduling controls (fixed DOM discovery and cloud fallback), instead of accepting changes that silently revert or have no effect.
+- Distinguish request cancellation from timer expiry using explicit error codes and localized messages. Cancelled model discovery and long-text rescue no longer continue with new requests; cancelled work does not penalize provider health or populate failure records. Reject late responses from transports that ignore abort.
+- Localize invalid/unsafe endpoint errors and classify them as configuration/client failures; retain the actual timeout message for local-provider timeouts.
+- Refuse new API requests after the plugin stops until it starts again, so retry, rescue and provider-fallback loops cannot send message text once disabled. A cancelled fallback attempt now ends the fallback chain instead of trying the next provider.
+- Apply the local provider's fixed message-intake mode when switching providers from the settings panel, so the locked control always shows the value actually in effect.
+- Draw cached translations again when Discord rebuilds messages during scrolling. A recent render now only blocks a duplicate model request; it no longer hides a cached translation for up to 60 seconds, which also affected other messages with the same text.
+- Allow nearby-message prefetch for local providers. As with cloud providers, prefetch uses one spare request slot only while no visible message is waiting, so it needs a concurrency of 2 or more.
+- Add a settings snapshot download under Diagnostics for troubleshooting: switches and numbers as-is; API keys and other secrets hidden; remote endpoint query strings and embedded credentials removed; prompts summarized; channel IDs hashed.
+
 - Reject all API redirects so only explicitly configured endpoints receive translation text and provider headers; cover HTTP 301/302/303/307/308 with real loopback HTTP fixtures against both source and generated artifact. Configure canonical endpoint URLs directly.
 - Fix installer error cleanup deleting the original plugin when a backup collision occurs before replacement. Roll back only after this installation has replaced the destination; add collision-preservation and failed-first-install cleanup regressions.
 - Refresh GitHub CI actions to verified, full-SHA-pinned checkout v7.0.1 and setup-node v7.0.0, disable persisted checkout credentials, and bound job runtime. Core test discovery now includes all *.test.js files.

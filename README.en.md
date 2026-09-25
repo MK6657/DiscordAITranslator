@@ -8,11 +8,11 @@ A Windows-first BetterDiscord desktop plugin for message translation, writing as
 
 ## Status
 
-**Preview snapshot: v0.2.0 + Unreleased, based on the July 26, 2026 c baseline.**
+**v0.3.0 · September 25, 2026 · pre-release.**
 
-The repository was prepared on September 8, 2026. The original plugin version is retained; subsequent changes are listed in [CHANGELOG.md](CHANGELOG.md). This upload is not a stable release.
+The version appears at the top of the settings page, in the start notification and in BetterDiscord's plugin list. Changes are listed in [CHANGELOG.md](CHANGELOG.md).
 
-Local validation covers source syntax, reproducible builds, offline regressions, installer installation/rollback, and artifact structure. The recorded Discord loading/settings/lifecycle smoke test applies to an **older July 13 artifact**, not this c snapshot. Current live message/composer integration, scrolling, and real provider requests still require dedicated host acceptance testing. See the [repository intake record](docs/repository-intake-2026-09-08.md) and [host smoke record](docs/host-smoke-test.md).
+Local validation covers source syntax, reproducible builds, offline regressions, installer installation/rollback, and artifact structure. The v0.3.0 changes to drawing cached translations while scrolling and to local-model prefetch still need live Discord acceptance, so this is published as a pre-release, not a stable release. Earlier host records are in the [host smoke record](docs/host-smoke-test.md).
 
 ## Features
 
@@ -35,7 +35,11 @@ Plugin users do **not** need Node.js, npm, or esbuild.
 4. Copy the file into the plugins folder and enable it.
 5. Configure your chosen provider in plugin settings. Start with manual translation in a dedicated test channel before enabling automatic translation.
 
-There is no stable Release attached to this initial repository upload. A typical Windows plugin directory is `%APPDATA%\BetterDiscord\plugins`.
+Only pre-release builds are published so far. A typical Windows plugin directory is `%APPDATA%\BetterDiscord\plugins`.
+
+### Check which version is installed
+
+From a clone of this repository, run `npm run plugin:check`. It lists the version and SHA256 of the repository build and of the installed plugin, and checks three reasons an install may not take effect: a private BetterDiscord copy kept by another app (such as an AI desktop app), this window's writes being redirected into an app's private storage, and Discord's startup file not loading BetterDiscord. Run installs and checks from a normal PowerShell window opened from the Start menu, not from an AI app's built-in terminal.
 
 ## Providers
 

@@ -8,11 +8,11 @@ Discord AI Translator 是一个 BetterDiscord 桌面插件，用于输入润色�
 
 ## 当前版本
 
-`v0.2.0 + Unreleased` · 2026-07-26 c 版基线 · 预览快照
+`v0.3.0` · 2026-09-25 · 预览版（Pre-release）
 
-本仓库整理于 2026-09-08。保留原插件版本号，后续未发布修改见 [CHANGELOG.md](CHANGELOG.md)；本次上传不创建稳定版 Release。
+版本号显示在设置页顶部、插件启动提示和 BetterDiscord 插件列表中；改动见 [CHANGELOG.md](CHANGELOG.md)。
 
-源码检查、构建一致性、离线回归、安装器安装/回滚和产物结构已有本地验证。真实 Discord 加载、设置页和启停记录仅对应 **2026-07-13 的旧产物**，不能视为当前 c 版的真机验证。当前版本的消息/输入框注入、滚动及真实 provider 请求仍需专用测试环境验收。详见 [整理记录](docs/repository-intake-2026-09-08.md) 与 [宿主记录](docs/host-smoke-test.md)。
+源码检查、构建一致性、离线回归、安装器安装/回滚和产物结构已有本地验证。v0.3.0 的滚动时绘制缓存译文、本地模型预翻译等改动仍需真实 Discord 验收，因此以预览版发布，不是稳定版。历史宿主记录见 [宿主记录](docs/host-smoke-test.md)。
 
 本项目是第三方插件，并非 Discord 官方产品。使用前请自行了解客户端修改的相关规则和风险；不要用重要账号或敏感频道做首次测试。
 
@@ -45,7 +45,7 @@ Discord AI Translator 是一个 BetterDiscord 桌面插件，用于输入润色�
 3. 点击 `Open Plugins Folder`。
 4. 打开仓库根目录的 [DiscordAITranslator.plugin.js](DiscordAITranslator.plugin.js)，下载原始文件（不要保存 GitHub 网页），放入插件目录并启用。私有仓库需要先登录有访问权限的账号。
 
-插件用户只需要这个 `.plugin.js` 文件，不需要安装 Node.js、npm 或 esbuild。当前没有稳定版 Release；自动翻译会将消息发给所选服务，建议先保持关闭，在专用频道手动测试。
+插件用户只需要这个 `.plugin.js` 文件，不需要安装 Node.js、npm 或 esbuild。当前只有预览版 Release，尚无稳定版；自动翻译会将消息发给所选服务，建议先保持关闭，在专用频道手动测试。
 
 常见 Windows 插件目录：
 
@@ -70,6 +70,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-plugin.ps1
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-plugin.ps1 -NoEnable
 ```
+
+### 确认装的是哪个版本
+
+```powershell
+npm run plugin:check
+```
+
+该命令需要本仓库的克隆以及 Node.js/npm；没有 npm 时也可在仓库目录运行 `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\check-installed-plugin.ps1`。只下载了插件文件的用户，可直接看设置页顶部显示的版本号。它会列出仓库构建与已安装插件的版本和 SHA256，并检查三种“装了却没生效”的情况：某个应用（例如 AI 桌面应用）保存的私有 BetterDiscord 副本、当前窗口的写入被重定向到应用私有目录、Discord 启动文件没有加载 BetterDiscord。安装和检查都请在开始菜单打开的普通 PowerShell 窗口中运行，不要在 AI 应用的内置终端里运行。
 
 ## Windows 11 从源码运行
 

@@ -17,6 +17,7 @@ const {
     HEAVY_PERSISTENCE_DEFER_MS,
     PLUGIN_NAME
 } = require("../constants");
+const { PLUGIN_VERSION } = require("../version");
 
 class DiagnosticsRecorder {
     constructor(plugin) {
@@ -345,8 +346,12 @@ class DiagnosticsRecorder {
         const summary = this.plugin.createDiagnosticSummary(this.plugin.diagnosticLogs);
         return {
             plugin: PLUGIN_NAME,
+            version: PLUGIN_VERSION,
             exportedAt: new Date().toISOString(),
             route: this.plugin.getSanitizedDiagnosticRouteIds(this.plugin.messageTracker.getRouteIds()),
+            layout: {
+                chatScrollerOverflowAnchor: this.plugin.getChatScrollerOverflowAnchor()
+            },
             settings: {
                 provider: this.plugin.settings.translation?.provider,
                 model: this.plugin.settings.translation?.model,
@@ -472,9 +477,10 @@ class DiagnosticsRecorder {
         const snapshot = this.plugin.getDiagnosticLogsSnapshot();
         if (format === "txt") {
             const lines = [
-                `${snapshot.plugin} diagnostics exported at ${snapshot.exportedAt}`,
+                `${snapshot.plugin} v${snapshot.version} diagnostics exported at ${snapshot.exportedAt}`,
                 `route=${snapshot.route.guildId || ""}/${snapshot.route.channelId || ""}/${snapshot.route.messageId || ""}`,
                 `entries=${snapshot.stats.entries} compressed=${snapshot.stats.compressed} queue=${snapshot.stats.queueLength} inFlight=${snapshot.stats.inFlight}`,
+                `chatScrollerOverflowAnchor=${snapshot.layout?.chatScrollerOverflowAnchor || "unknown"}`,
                 ""
             ];
             if (snapshot.summary?.humanSummary?.length) {

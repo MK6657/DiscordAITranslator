@@ -2128,6 +2128,51 @@ assert.ok(autoTranslateSection.children.length > 0);
 assert.ok(displaySection.children.length > 0);
 assert.ok(cacheSection.children.length > 0);
 assert.ok(diagnosticsSection.children.length > 0);
+const getUiRowDescription = (elements, path) => elements.find(element => element.dataset?.daitPath === path)
+    ?.parentElement?.children.find(child => child.className === "dait-row-description")?.textContent;
+assert.match(getUiRowDescription(uiCreatedElements, "ui.autoTranslateConcurrency"), /默认 4，范围 1-10/);
+["ui.autoTranslatePrefetch", "ui.autoTranslateIntakeMode", "ui.providerFallbackEnabled", "ui.providerFallbackOrder"]
+    .forEach(path => assert.notEqual(uiCreatedElements.find(element => element.dataset?.daitPath === path).disabled, true, path));
+const localUiCreatedElements = [];
+global.document = { createElement: tag => createFakeElement(tag, localUiCreatedElements) };
+const localUiSectionPlugin = new Plugin();
+localUiSectionPlugin.settings.translation.provider = "sakuraLocal";
+localUiSectionPlugin.createAutoTranslateSection();
+// Locked local-provider controls are disabled and explain why instead of their normal description.
+[
+    ["ui.autoTranslateIntakeMode", "localIntakeFixed"],
+    ["ui.providerFallbackEnabled", "localFallbackUnavailable"],
+    ["ui.providerFallbackOrder", "localFallbackUnavailable"]
+].forEach(([path, reasonKey]) => {
+    assert.equal(localUiCreatedElements.find(element => element.dataset?.daitPath === path).disabled, true, path);
+    assert.equal(getUiRowDescription(localUiCreatedElements, path), localUiSectionPlugin.t(reasonKey), path);
+});
+// Local providers can prefetch nearby messages like cloud providers.
+[
+    ["ui.autoTranslatePrefetch", "autoTranslatePrefetchDesc"],
+    ["ui.autoTranslatePrefetchRange", "autoTranslatePrefetchRangeDesc"]
+].forEach(([path, descriptionKey]) => {
+    assert.notEqual(localUiCreatedElements.find(element => element.dataset?.daitPath === path).disabled, true, path);
+    assert.equal(getUiRowDescription(localUiCreatedElements, path), localUiSectionPlugin.t(descriptionKey), path);
+});
+assert.match(getUiRowDescription(localUiCreatedElements, "ui.autoTranslateConcurrency"), /1-10 个并发请求/);
+const versionHero = uiSectionPlugin.createSettingsHero();
+const versionChip = [...uiCreatedElements, ...localUiCreatedElements].find(element => element.dataset?.daitVersion);
+assert.ok(versionHero && versionChip);
+assert.equal(versionChip.textContent, `v${require("../package.json").version}`);
+const settingsSnapshotButton = uiCreatedElements.find(element => element.dataset?.daitAction === "exportSettingsSnapshot");
+assert.ok(settingsSnapshotButton);
+const settingsSnapshotDownloads = [];
+uiSectionPlugin.downloadTextFile = (filename, text) => {
+    settingsSnapshotDownloads.push({ filename, text });
+    return true;
+};
+uiSectionPlugin.settings.polish.apiKey = "sk-fake-verify-1";
+settingsSnapshotButton.listeners.click();
+assert.equal(settingsSnapshotDownloads.length, 1);
+assert.match(settingsSnapshotDownloads[0].filename, /^DiscordAITranslator-settings-.+\.json$/);
+assert.equal(settingsSnapshotDownloads[0].text.includes("sk-fake-verify-1"), false);
+assert.equal(JSON.parse(settingsSnapshotDownloads[0].text).settings.polish.apiKey, "[hidden]");
 global.document = savedDocumentForUiSections;
 const diagnosticPlugin = new Plugin();
 diagnosticPlugin.showToast = () => {};
@@ -2568,15 +2613,17 @@ const sakuraQueueLimitPlugin = new Plugin();
 sakuraQueueLimitPlugin.settings.translation.provider = "sakuraLocal";
 sakuraQueueLimitPlugin.settings.ui.autoTranslateMessages = true;
 sakuraQueueLimitPlugin.settings.ui.autoTranslatePrefetch = true;
-assert.equal(sakuraQueueLimitPlugin.getAutoTranslateConcurrency(), 1);
-assert.equal(sakuraQueueLimitPlugin.getAutoTranslateBatchSize(), 1);
-assert.equal(sakuraQueueLimitPlugin.getAutoTranslateQueueLimit(), 1);
-assert.equal(sakuraQueueLimitPlugin.isAutoTranslationPrefetchConfigured(), false);
-assert.equal(sakuraQueueLimitPlugin.getAutoTranslatePrefetchRange(), 0);
+assert.equal(sakuraQueueLimitPlugin.getAutoTranslateConcurrency(), 4);
+assert.equal(sakuraQueueLimitPlugin.getAutoTranslateBatchSize(), 4);
+assert.equal(sakuraQueueLimitPlugin.getAutoTranslateQueueLimit(), 4);
+// Local providers prefetch too; the scheduler only ever gives prefetch one spare slot.
+assert.equal(sakuraQueueLimitPlugin.isAutoTranslationPrefetchConfigured(), true);
+assert.equal(sakuraQueueLimitPlugin.getAutoTranslatePrefetchRange(), 5);
 plugin.autoTranslationPrefetchInFlight = 1;
 assert.equal(plugin.canStartAutoTranslationPrefetchRequest(4), false);
 plugin.autoTranslationPrefetchInFlight = 0;
 assert.equal(plugin.canStartAutoTranslationPrefetchRequest(4), true);
+assert.equal(plugin.canStartAutoTranslationPrefetchRequest(1), false);
 const polishContainerPlugin = new Plugin();
 const unsafeTextbox = {
     parentElement: {},
@@ -3161,6 +3208,16 @@ const recentRenderDecision = recentRenderDecisionPlugin.evaluateAutoTranslationC
 });
 assert.equal(recentRenderDecision.action, "skip");
 assert.equal(recentRenderDecision.reasonCode, "recent-render-present");
+assert.equal(recentRenderDecisionPlugin.autoTranslationQueue.length, 0);
+// Discord rebuilt the message and dropped its line: a cached translation is drawn again
+// despite the recent render, still without a new request.
+recentRenderDecisionPlugin.setTranslationCache(recentRenderCacheKey, "最近渲染的译文");
+const recentRenderCachedDecision = recentRenderDecisionPlugin.evaluateAutoTranslationCandidate(recentRenderCandidate, {
+    requestOptions: recentRenderDecisionPlugin.getAutoTranslationOptions(),
+    now: Date.now()
+});
+assert.equal(recentRenderCachedDecision.action, "render-cache");
+assert.equal(recentRenderCachedDecision.cachedTranslation, "最近渲染的译文");
 assert.equal(recentRenderDecisionPlugin.autoTranslationQueue.length, 0);
 
 const renderQueueBudgetPlugin = new Plugin();
@@ -3823,12 +3880,12 @@ global.document = savedDocumentForViewport;
 plugin.settings.translation.provider = "deepseek";
 plugin.settings.ui.autoTranslateMessages = true;
 plugin.settings.ui.autoTranslateConcurrency = 99;
-assert.equal(plugin.getAutoTranslateConcurrency(), 8);
+assert.equal(plugin.getAutoTranslateConcurrency(), 10);
 plugin.settings.ui.autoTranslateConcurrency = 0;
 assert.equal(plugin.getAutoTranslateConcurrency(), 1);
 plugin.settings.ui.autoTranslateConcurrency = 4;
 plugin.settings.translation.provider = "sakuraLocal";
-assert.equal(plugin.getAutoTranslateConcurrency(), 1);
+assert.equal(plugin.getAutoTranslateConcurrency(), 4);
 plugin.settings.translation.provider = "deepseek";
 const numericInputCreated = [];
 global.document = {
@@ -3842,7 +3899,7 @@ numericInputPlugin.saveData = key => {
     if (key === "settings") numericInputSaves++;
     return true;
 };
-numericInputPlugin.createInputRow("ui.autoTranslateConcurrency", "Concurrency", "number", "4", { min: "1", max: "8", step: "1" });
+numericInputPlugin.createInputRow("ui.autoTranslateConcurrency", "Concurrency", "number", "4", { min: "1", max: "10", step: "1" });
 const numericInput = numericInputCreated.find(element => element.dataset?.daitPath === "ui.autoTranslateConcurrency");
 numericInput.value = "7";
 numericInput.listeners.input();
@@ -3878,9 +3935,9 @@ global.document = {
     activeElement: localConcurrencyInput,
     querySelectorAll: selector => selector === "[data-dait-path='ui.autoTranslateConcurrency']" ? [localConcurrencyInput] : []
 };
-localClampPlugin.setSetting("ui.autoTranslateConcurrency", 8);
-assert.equal(localClampPlugin.settings.ui.autoTranslateConcurrency, 1);
-assert.equal(localConcurrencyInput.value, 1);
+localClampPlugin.setSetting("ui.autoTranslateConcurrency", 11);
+assert.equal(localClampPlugin.settings.ui.autoTranslateConcurrency, 10);
+assert.equal(localConcurrencyInput.value, 10);
 const localPrefetchCheckbox = { type: "checkbox", checked: true, dataset: { daitPath: "ui.autoTranslatePrefetch" } };
 global.document = {
     activeElement: localPrefetchCheckbox,
@@ -3888,8 +3945,8 @@ global.document = {
 };
 localClampPlugin.settings.ui.autoTranslatePrefetch = false;
 localClampPlugin.setSetting("ui.autoTranslatePrefetch", true);
-assert.equal(localClampPlugin.settings.ui.autoTranslatePrefetch, false);
-assert.equal(localPrefetchCheckbox.checked, false);
+assert.equal(localClampPlugin.settings.ui.autoTranslatePrefetch, true);
+assert.equal(localPrefetchCheckbox.checked, true);
 const localStrictRetryCheckbox = { type: "checkbox", checked: true, dataset: { daitPath: "ui.autoTranslateStrictRetry" } };
 global.document = {
     activeElement: localStrictRetryCheckbox,
@@ -4232,7 +4289,7 @@ assert.equal(sakuraPlugin.settings.translation.endpoint, "http://127.0.0.1:8080/
 assert.equal(sakuraPlugin.settings.translation.model, "local-model");
 sakuraPlugin.settings.ui.autoTranslateMessages = true;
 sakuraPlugin.settings.ui.autoTranslateConcurrency = 8;
-assert.equal(sakuraPlugin.getAutoTranslateConcurrency(), 1);
+assert.equal(sakuraPlugin.getAutoTranslateConcurrency(), 8);
 assert.equal(sakuraPlugin.getAutoTranslationRequestBatchSize(), 1);
 
 const googlePlugin = new Plugin();
@@ -6344,6 +6401,42 @@ assert.deepEqual(fullConcurrencyBatches, [6, 6, 6, 6]);
 assert.equal(fullConcurrencyPlugin.autoTranslationInFlight, 4);
 assert.equal(fullConcurrencyPlugin.autoTranslationQueue.length, 0);
 
+const localTenPlugin = new Plugin();
+localTenPlugin.settings.translation.provider = "sakuraLocal";
+localTenPlugin.settings.ui.autoTranslateMessages = true;
+localTenPlugin.settings.ui.autoTranslateConcurrency = 10;
+localTenPlugin.shouldBlockAutoTranslationForLocalProviderHealth = () => false;
+localTenPlugin.isElementVisibleInViewport = item => item?.visible === true;
+localTenPlugin.isAutoTranslationTargetInScanRange = () => true;
+localTenPlugin.hasCurrentTranslationLine = () => false;
+localTenPlugin.getElementText = content => content.text;
+const localStarted = [];
+localTenPlugin.autoTranslateQueuedMessage = item => localStarted.push(item);
+for (let index = 0; index < 11; index++) {
+    const item = {
+        messageNode: { isConnected: true, visible: true },
+        content: { dataset: {}, isConnected: true, visible: true, text: `local-${index}` },
+        text: `local-${index}`,
+        cacheKey: `local-ten-${index}`,
+        requestOptions: localTenPlugin.getAutoTranslationOptions()
+    };
+    localTenPlugin.enqueueAutoTranslationItem(item);
+    localTenPlugin.addAutoTranslationPendingTarget(item.cacheKey, item);
+}
+localTenPlugin.drainAutoTranslationQueue();
+assert.equal(localStarted.length, 10);
+assert.equal(localTenPlugin.autoTranslationInFlight, 10);
+assert.equal(localTenPlugin.autoTranslationQueue.length, 1);
+localTenPlugin.drainAutoTranslationQueue();
+assert.equal(localStarted.length, 10);
+// Releasing one active request allows exactly one waiting message to start.
+localTenPlugin.autoTranslationInFlight--;
+localTenPlugin.autoTranslationInFlightItems--;
+localTenPlugin.drainAutoTranslationQueue();
+assert.equal(localStarted.length, 11);
+assert.equal(localTenPlugin.autoTranslationInFlight, 10);
+assert.equal(localTenPlugin.autoTranslationQueue.length, 0);
+
 const googleBatchPlugin = new Plugin();
 googleBatchPlugin.settings.ui.autoTranslateMessages = true;
 googleBatchPlugin.settings.translation.provider = "googleCloud";
@@ -7048,6 +7141,8 @@ const pausedCachedPlugin = new Plugin();
 pausedCachedPlugin.settings.translation.enabled = true;
 pausedCachedPlugin.settings.ui.autoTranslateMessages = true;
 pausedCachedPlugin.autoTranslationRenderPausedUntil = Date.now() + 1000;
+// The chat is still scrolling: cached lines wait until it is still, not until the render pause ends.
+pausedCachedPlugin.autoTranslationLastExternalScrollAt = Date.now();
 pausedCachedPlugin.isAutoTranslationTargetInScanRange = () => true;
 pausedCachedPlugin.isElementVisibleInViewport = () => true;
 pausedCachedPlugin.getMessageContentElement = message => message.content;
@@ -7074,9 +7169,10 @@ assert.equal(pausedCacheRenderCalls.length, 0);
 assert.equal(pausedCachedPlugin.autoTranslationRenderQueue.length, 1);
 clearTimeout(pausedCachedPlugin.autoTranslationRenderTimer);
 pausedCachedPlugin.autoTranslationRenderTimer = null;
-pausedCachedPlugin.autoTranslationRenderPausedUntil = 0;
+pausedCachedPlugin.autoTranslationLastExternalScrollAt = 0;
 pausedCachedPlugin.processAutoTranslationRenderQueue();
 assert.equal(pausedCacheRenderCalls.length, 1);
+assert.equal(pausedCachedPlugin.isAutoTranslationRenderPaused(), true);
 
 const quickSettingsRenderPausePlugin = new Plugin();
 quickSettingsRenderPausePlugin.isStarted = true;
@@ -8072,6 +8168,8 @@ staleRouteCacheRenderPlugin.settings.ui.autoTranslateMessages = true;
 staleRouteCacheRenderPlugin.settings.translation.apiKey = "sk-test";
 staleRouteCacheRenderPlugin.settings.ui.diagnosticsEnabled = true;
 staleRouteCacheRenderPlugin.autoTranslationRenderPausedUntil = Date.now() + 1000;
+// Still scrolling, so the cached draw stays queued until after the route change below.
+staleRouteCacheRenderPlugin.autoTranslationLastExternalScrollAt = Date.now();
 let staleRouteCacheCurrentRoute = "guild-a:channel-old:";
 staleRouteCacheRenderPlugin.getCurrentRouteKey = () => staleRouteCacheCurrentRoute;
 staleRouteCacheRenderPlugin.isAutoTranslationTargetInScanRange = () => true;
@@ -8100,6 +8198,7 @@ clearTimeout(staleRouteCacheRenderPlugin.autoTranslationRenderTimer);
 staleRouteCacheRenderPlugin.autoTranslationRenderTimer = null;
 staleRouteCacheCurrentRoute = "guild-a:channel-new:";
 staleRouteCacheRenderPlugin.autoTranslationRenderPausedUntil = 0;
+staleRouteCacheRenderPlugin.autoTranslationLastExternalScrollAt = 0;
 staleRouteCacheRenderPlugin.processAutoTranslationRenderQueue();
 assert.ok(staleRouteCacheRenderPlugin.diagnosticLogs.some(entry => entry.meta?.reasonCode === "render-request-stale"));
 clearTimeout(staleRouteCacheRenderPlugin.translationCacheDirtyTimer);
@@ -8111,6 +8210,7 @@ staleProviderCacheRenderPlugin.settings.ui.autoTranslateMessages = true;
 staleProviderCacheRenderPlugin.settings.translation.apiKey = "sk-old";
 staleProviderCacheRenderPlugin.settings.ui.diagnosticsEnabled = true;
 staleProviderCacheRenderPlugin.autoTranslationRenderPausedUntil = Date.now() + 1000;
+staleProviderCacheRenderPlugin.autoTranslationLastExternalScrollAt = Date.now();
 staleProviderCacheRenderPlugin.getCurrentRouteKey = () => "guild-a:channel-a:";
 staleProviderCacheRenderPlugin.isAutoTranslationTargetInScanRange = () => true;
 staleProviderCacheRenderPlugin.isElementVisibleInViewport = () => true;
@@ -8138,6 +8238,7 @@ clearTimeout(staleProviderCacheRenderPlugin.autoTranslationRenderTimer);
 staleProviderCacheRenderPlugin.autoTranslationRenderTimer = null;
 staleProviderCacheRenderPlugin.settings.translation.apiKey = "sk-new";
 staleProviderCacheRenderPlugin.autoTranslationRenderPausedUntil = 0;
+staleProviderCacheRenderPlugin.autoTranslationLastExternalScrollAt = 0;
 staleProviderCacheRenderPlugin.processAutoTranslationRenderQueue();
 assert.ok(staleProviderCacheRenderPlugin.diagnosticLogs.some(entry => entry.meta?.reasonCode === "render-request-stale"));
 clearTimeout(staleProviderCacheRenderPlugin.translationCacheDirtyTimer);
@@ -8540,8 +8641,9 @@ settlingCachedPlugin.queueAutoTranslateVisibleMessages({
     contentByMessage: new Map(),
     textByElement: new Map()
 });
-assert.equal(settlingCachedRendered, false);
-assert.equal(settlingCachedPlugin.autoTranslationRenderQueue.length, 1);
+// Cached lines need no model request: drawn during the settle window once the chat is still.
+assert.equal(settlingCachedRendered, true);
+assert.equal(settlingCachedPlugin.autoTranslationRenderQueue.length, 0);
 clearTimeout(settlingCachedPlugin.autoTranslationRenderTimer);
 settlingCachedPlugin.autoTranslationRenderTimer = null;
 clearTimeout(settlingCachedPlugin.translationCacheDirtyTimer);
@@ -8574,9 +8676,9 @@ scrollPausedCachedPlugin.queueAutoTranslateVisibleMessages({
     contentByMessage: new Map(),
     textByElement: new Map()
 });
-assert.equal(scrollPausedCachedRendered, false);
+assert.equal(scrollPausedCachedRendered, true);
 assert.equal(scrollPausedCachedPlugin.autoTranslationQueue.length, 0);
-assert.equal(scrollPausedCachedPlugin.autoTranslationRenderQueue.length, 1);
+assert.equal(scrollPausedCachedPlugin.autoTranslationRenderQueue.length, 0);
 assert.ok(scrollPausedRetryDelay > 0);
 clearTimeout(scrollPausedCachedPlugin.autoTranslationRenderTimer);
 scrollPausedCachedPlugin.autoTranslationRenderTimer = null;
@@ -8615,9 +8717,10 @@ jumpCooldownCachedPlugin.queueAutoTranslateVisibleMessages({
     contentByMessage: new Map(),
     textByElement: new Map()
 });
-assert.equal(jumpCooldownCachedRendered, false);
+// The jump cooldown still blocks model requests for the uncached message, but not the cached line.
+assert.equal(jumpCooldownCachedRendered, true);
 assert.equal(jumpCooldownCachedPlugin.autoTranslationQueue.length, 0);
-assert.equal(jumpCooldownCachedPlugin.autoTranslationRenderQueue.length, 1);
+assert.equal(jumpCooldownCachedPlugin.autoTranslationRenderQueue.length, 0);
 assert.ok(jumpCooldownRetryDelay > 0);
 clearTimeout(jumpCooldownCachedPlugin.autoTranslationRenderTimer);
 jumpCooldownCachedPlugin.autoTranslationRenderTimer = null;
@@ -10521,7 +10624,7 @@ assert.equal(menuTree.props.children[0], menuItem);
     assert.equal(apiAbortSignal.aborted, false);
     apiAbortPlugin.abortActiveApiRequests();
     assert.equal(apiAbortSignal.aborted, true);
-    await assert.rejects(apiAbortPromise, /timed out/);
+    await assert.rejects(apiAbortPromise, { code: "REQUEST_CANCELLED" });
     assert.equal(apiAbortPlugin.activeApiControllers.size, 0);
     global.fetch = savedFetchForAbort;
 
