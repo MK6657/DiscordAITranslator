@@ -262,7 +262,7 @@ class AutoTranslationRequestPipeline {
 
         const targetVisible = this.plugin.isAutoTranslationTargetVisibleCached(target, scanState.context);
         const explicitHistoryRequest = Boolean(target.daitHistoryRequest);
-        if (!this.plugin.isAutoTranslationPrefetchConfigured(requestOptions) && !targetVisible && !explicitHistoryRequest) {
+        if (!this.plugin.isAutoTranslationPrefetchConfigured() && !targetVisible && !explicitHistoryRequest) {
             return {
                 action: "block",
                 status: "blocked",
@@ -323,24 +323,9 @@ class AutoTranslationRequestPipeline {
                 counts: { eligible: 1, skippedCurrent: 1 }
             };
         }
-        const recentRender = this.plugin.getRecentAutoTranslationRender(cacheKey, text, targetRequestOptions, now);
-        if (recentRender) {
-            return {
-                action: "skip",
-                status: "skipped",
-                state: DIAGNOSTIC_MESSAGE_STATES.RENDERED,
-                reasonCode: DIAGNOSTIC_REASON_CODES.RECENT_RENDER_PRESENT,
-                cacheKey,
-                requestOptions: targetRequestOptions,
-                counts: { eligible: 1, skippedCurrent: 1 },
-                extra: {
-                    validationQuality: recentRender.validationQuality || "",
-                    validationReason: recentRender.validationReason || "",
-                    ageMs: Math.max(0, now - Number(recentRender.at || 0))
-                }
-            };
-        }
 
+        // Discord rebuilds message elements while scrolling, dropping their translation line.
+        // A cached translation is always drawn again; a recent render only blocks new requests below.
         if (this.plugin.hasTranslationCacheCandidate(cacheKey, cacheAliases)) {
             const cachedTranslation = this.plugin.getTranslationCacheValueCached(cacheKey, cacheAliases, scanState.context);
             if (cachedTranslation !== null) {
@@ -405,6 +390,24 @@ class AutoTranslationRequestPipeline {
                     extra: { textCacheKey: this.plugin.getTextFingerprint(textCacheKey), canRender: canRenderCacheHit, targetVisible }
                 };
             }
+        }
+
+        const recentRender = this.plugin.getRecentAutoTranslationRender(cacheKey, text, targetRequestOptions, now);
+        if (recentRender) {
+            return {
+                action: "skip",
+                status: "skipped",
+                state: DIAGNOSTIC_MESSAGE_STATES.RENDERED,
+                reasonCode: DIAGNOSTIC_REASON_CODES.RECENT_RENDER_PRESENT,
+                cacheKey,
+                requestOptions: targetRequestOptions,
+                counts: { eligible: 1, skippedCurrent: 1 },
+                extra: {
+                    validationQuality: recentRender.validationQuality || "",
+                    validationReason: recentRender.validationReason || "",
+                    ageMs: Math.max(0, now - Number(recentRender.at || 0))
+                }
+            };
         }
 
         const hasPendingTargets = this.plugin.autoTranslationPendingTargets.has(cacheKey);

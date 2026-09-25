@@ -154,14 +154,14 @@ test("provider fallback ends at a cancelled attempt instead of trying the next p
     assert.equal(attempts, 1);
 });
 
-test("switching to a local provider in the settings panel applies its locked scheduling values", () => {
+test("switching to a local provider in the settings panel applies its fixed intake mode", () => {
     const plugin = new Plugin();
     plugin.settings.ui.autoTranslatePrefetch = true;
     plugin.settings.ui.autoTranslateIntakeMode = "auto";
     plugin.setTaskProvider("translation", "sakuraLocal");
     clearTimeout(plugin.settingsDirtyTimer);
     assert.equal(plugin.settings.translation.provider, "sakuraLocal");
-    assert.equal(plugin.settings.ui.autoTranslatePrefetch, false);
+    assert.equal(plugin.settings.ui.autoTranslatePrefetch, true);
     assert.equal(plugin.settings.ui.autoTranslateIntakeMode, "dom");
 });
 

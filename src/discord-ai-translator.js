@@ -1804,7 +1804,6 @@ module.exports = class DiscordAITranslator {
         section.className = "dait-settings-section dait-section-auto-translate";
         const provider = this.getProviderDefaults(this.settings.translation.provider);
         const local = this.isLocalTranslationProvider(this.settings.translation);
-        const prefetchReason = provider?.autoTranslatePrefetchAllowed === false && this.t("localPrefetchUnavailable");
         const concurrencyRange = { min: AUTO_TRANSLATE_MIN_CONCURRENCY, max: AUTO_TRANSLATE_MAX_CONCURRENCY, default: AUTO_TRANSLATE_DEFAULT_CONCURRENCY };
 
         const title = document.createElement("h3");
@@ -1812,8 +1811,8 @@ module.exports = class DiscordAITranslator {
         section.appendChild(title);
 
         section.appendChild(this.createCheckboxRow("ui.autoTranslateMessages", this.t("autoTranslateMessages"), { description: this.t("autoTranslateMessagesDesc") }));
-        section.appendChild(this.createCheckboxRow("ui.autoTranslatePrefetch", this.t("autoTranslatePrefetch"), { description: this.t("autoTranslatePrefetchDesc"), disabledReason: prefetchReason }));
-        section.appendChild(this.createSelectRow("ui.autoTranslatePrefetchRange", this.t("autoTranslatePrefetchRange"), AUTO_TRANSLATE_PREFETCH_RANGES.map(value => [String(value), String(value)]), { description: this.t("autoTranslatePrefetchRangeDesc"), disabledReason: prefetchReason }));
+        section.appendChild(this.createCheckboxRow("ui.autoTranslatePrefetch", this.t("autoTranslatePrefetch"), { description: this.t("autoTranslatePrefetchDesc") }));
+        section.appendChild(this.createSelectRow("ui.autoTranslatePrefetchRange", this.t("autoTranslatePrefetchRange"), AUTO_TRANSLATE_PREFETCH_RANGES.map(value => [String(value), String(value)]), { description: this.t("autoTranslatePrefetchRangeDesc") }));
         section.appendChild(this.createSelectRow("ui.autoTranslateIntakeMode", this.t("autoTranslateIntakeMode"), [
             ["auto", this.t("autoTranslateIntakeAuto")],
             ["dom", this.t("autoTranslateIntakeDom")],
@@ -1951,6 +1950,7 @@ module.exports = class DiscordAITranslator {
 
         section.appendChild(this.createCheckboxRow("ui.diagnosticsEnabled", this.t("diagnosticLogs"), { description: this.t("diagnosticLogsDesc") }));
         section.appendChild(this.createDiagnosticLogsRow());
+        section.appendChild(this.createSettingsSnapshotRow());
         section.appendChild(this.createDiagnosticSummaryRow());
         section.appendChild(this.createCheckboxRow("ui.testModeEnabled", this.t("testMode"), { description: this.t("testModeDesc"), refreshPanel: true }));
 
@@ -2174,6 +2174,16 @@ module.exports = class DiscordAITranslator {
         return this.createRow(this.t("diagnosticLogs"), controls, {
             description: this.getDiagnosticLogsStatsText()
         });
+    }
+
+    createSettingsSnapshotRow() {
+        const controls = document.createElement("div");
+        controls.className = "dait-diagnostic-actions";
+        const button = this.createSmallButton(this.t("exportSettingsSnapshot"));
+        button.dataset.daitAction = "exportSettingsSnapshot";
+        button.addEventListener("click", () => this.exportSettingsSnapshot());
+        controls.appendChild(button);
+        return this.createRow(this.t("settingsSnapshot"), controls, { description: this.t("settingsSnapshotDesc") });
     }
 
     createDiagnosticSummaryRow() {
@@ -3608,19 +3618,81 @@ module.exports = class DiscordAITranslator {
         const text = this.serializeDiagnosticLogs(normalized);
         const filename = `${PLUGIN_NAME}-diagnostics-${new Date().toISOString().replace(/[:.]/g, "-")}.${normalized}`;
         const mime = normalized === "json" ? "application/json" : "text/plain";
+        return this.saveTextOrCopy(filename, text, mime, { saved: "diagnosticLogsExported", copied: "diagnosticLogsCopied" });
+    }
+
+    async exportSettingsSnapshot() {
+        const text = JSON.stringify(this.createSettingsSnapshot(), null, 2);
+        const filename = `${PLUGIN_NAME}-settings-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+        return this.saveTextOrCopy(filename, text, "application/json", { saved: "settingsSnapshotExported", copied: "settingsSnapshotCopied" });
+    }
+
+    // Downloads the text, falling back to the clipboard where downloads are unavailable.
+    async saveTextOrCopy(filename, text, mime, messageKeys) {
         try {
             if (this.downloadTextFile(filename, text, mime)) {
-                this.showToast(this.t("diagnosticLogsExported"), "success");
+                this.showToast(this.t(messageKeys.saved), "success");
                 return true;
             }
             await this.copyTextToClipboard(text);
-            this.showToast(this.t("diagnosticLogsCopied"), "success");
+            this.showToast(this.t(messageKeys.copied), "success");
             return true;
         }
         catch (error) {
             this.showToast(this.t("promptCopyFailed", { error: this.formatError(error) }), "error");
             return false;
         }
+    }
+
+    // Troubleshooting copy of the settings: switches and numbers as-is, secrets and private text reduced to markers.
+    createSettingsSnapshot() {
+        const secretKeys = new Set(["apikey", "secretkey", "appid", "keypooltext", "keys", "token", "password", "authorization"]);
+        const sanitize = (value, key = "", defaults = undefined) => {
+            const name = String(key).toLowerCase();
+            if (secretKeys.has(name)) {
+                if (Array.isArray(value)) return value.length ? `[hidden: ${value.length}]` : [];
+                return String(value ?? "").trim() ? "[hidden]" : "";
+            }
+            if (name === "endpoint") return this.getSettingsSnapshotEndpoint(value);
+            if (name === "prompt") return value === defaults ? "default" : `custom (${String(value ?? "").length} chars)`;
+            if (name === "prompttemplates") return `${Array.isArray(value) ? value.length : 0} templates`;
+            if (name === "channelautotranslatepolicies") {
+                return Object.fromEntries(Object.entries(value || {}).map(([id, policy]) => [`channel-${this.getTextFingerprint(id)}`, sanitize(policy)]));
+            }
+            if (Array.isArray(value)) return value.map(item => sanitize(item));
+            if (value && typeof value === "object") {
+                return Object.fromEntries(Object.entries(value).map(([childKey, child]) => [childKey, sanitize(child, childKey, defaults?.[childKey])]));
+            }
+            return typeof value === "string" ? this.sanitizeDiagnosticValue(value) : value;
+        };
+        return {
+            plugin: PLUGIN_NAME,
+            version: globalThis.BdApi?.Plugins?.get?.(PLUGIN_NAME)?.version || "",
+            exportedAt: new Date().toISOString(),
+            effective: {
+                autoTranslateActive: this.isAutoTranslateEnabled(),
+                localProvider: this.isLocalTranslationProvider(this.settings.translation),
+                concurrency: this.getAutoTranslateConcurrency(),
+                prefetchRange: this.getAutoTranslatePrefetchRange(),
+                intakeMode: this.normalizeAutoTranslateIntakeMode(this.settings.ui?.autoTranslateIntakeMode)
+            },
+            settings: sanitize(this.settings, "", DEFAULT_SETTINGS)
+        };
+    }
+
+    // Local endpoints stay whole; remote ones drop query strings, which can carry keys.
+    // Embedded credentials are always removed.
+    getSettingsSnapshotEndpoint(value) {
+        const text = String(value ?? "").trim();
+        if (!text) return "";
+        let url = null;
+        try { url = new URL(text); }
+        catch { return `[invalid] ${this.sanitizeDiagnosticValue(text)}`; }
+        const hadCredentials = Boolean(url.username || url.password);
+        url.username = "";
+        url.password = "";
+        const shown = this.isLoopbackEndpoint(url.href) ? url.href : `${url.origin}${url.pathname}`;
+        return hadCredentials ? `${shown} [credentials removed]` : shown;
     }
 
     downloadTextFile(filename, text, mime = "text/plain") {
@@ -13341,7 +13413,7 @@ module.exports = class DiscordAITranslator {
     getEffectiveTaskConfig(...args) { return this.settingsStore.getEffectiveTaskConfig(...args); }
     getTaskProviderProfile(...args) { return this.settingsStore.getTaskProviderProfile(...args); }
     setTaskProvider(...args) { return this.settingsStore.setTaskProvider(...args); }
-    applyProviderAutoTranslateLimits(...args) { return this.settingsStore.applyProviderAutoTranslateLimits(...args); }
+    applyProviderIntakeMode(...args) { return this.settingsStore.applyProviderIntakeMode(...args); }
     getPromptTemplates(...args) { return this.settingsStore.getPromptTemplates(...args); }
     ensurePromptTemplateSerials(...args) { return this.settingsStore.ensurePromptTemplateSerials(...args); }
     getNextPromptTemplateSerial(...args) { return this.settingsStore.getNextPromptTemplateSerial(...args); }

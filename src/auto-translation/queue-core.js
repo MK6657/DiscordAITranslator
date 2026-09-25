@@ -983,7 +983,7 @@ class AutoTranslationQueueCore {
     isAutoTranslationPrefetchAllowed(item) {
         if (item?.daitHistoryRequest) return true;
         if (!this.plugin.isAutoTranslationPrefetchItem(item)) return true;
-        if (!this.plugin.isAutoTranslationPrefetchConfigured(item?.requestOptions)) return false;
+        if (!this.plugin.isAutoTranslationPrefetchConfigured()) return false;
         const now = Date.now();
         if (this.plugin.isAutoTranslationRenderPaused(now)
             || this.plugin.isAutoTranslationViewportSettling(now)
@@ -1025,10 +1025,8 @@ class AutoTranslationQueueCore {
         return this.plugin.normalizeAutoTranslatePrefetchRange(this.plugin.settings.ui?.autoTranslatePrefetchRange);
     }
 
-    isAutoTranslationPrefetchConfigured(requestOptions = null) {
-        if (!this.plugin.settings.ui?.autoTranslatePrefetch) return false;
-        const config = this.plugin.getEffectiveTaskConfig("translation", requestOptions?.configOverrides);
-        return this.plugin.getProviderDefaults(config.provider)?.autoTranslatePrefetchAllowed !== false;
+    isAutoTranslationPrefetchConfigured() {
+        return Boolean(this.plugin.settings.ui?.autoTranslatePrefetch);
     }
 
     isAutoTranslateEnabled() {

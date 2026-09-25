@@ -2140,8 +2140,6 @@ localUiSectionPlugin.settings.translation.provider = "sakuraLocal";
 localUiSectionPlugin.createAutoTranslateSection();
 // Locked local-provider controls are disabled and explain why instead of their normal description.
 [
-    ["ui.autoTranslatePrefetch", "localPrefetchUnavailable"],
-    ["ui.autoTranslatePrefetchRange", "localPrefetchUnavailable"],
     ["ui.autoTranslateIntakeMode", "localIntakeFixed"],
     ["ui.providerFallbackEnabled", "localFallbackUnavailable"],
     ["ui.providerFallbackOrder", "localFallbackUnavailable"]
@@ -2149,7 +2147,28 @@ localUiSectionPlugin.createAutoTranslateSection();
     assert.equal(localUiCreatedElements.find(element => element.dataset?.daitPath === path).disabled, true, path);
     assert.equal(getUiRowDescription(localUiCreatedElements, path), localUiSectionPlugin.t(reasonKey), path);
 });
+// Local providers can prefetch nearby messages like cloud providers.
+[
+    ["ui.autoTranslatePrefetch", "autoTranslatePrefetchDesc"],
+    ["ui.autoTranslatePrefetchRange", "autoTranslatePrefetchRangeDesc"]
+].forEach(([path, descriptionKey]) => {
+    assert.notEqual(localUiCreatedElements.find(element => element.dataset?.daitPath === path).disabled, true, path);
+    assert.equal(getUiRowDescription(localUiCreatedElements, path), localUiSectionPlugin.t(descriptionKey), path);
+});
 assert.match(getUiRowDescription(localUiCreatedElements, "ui.autoTranslateConcurrency"), /1-10 个并发请求/);
+const settingsSnapshotButton = uiCreatedElements.find(element => element.dataset?.daitAction === "exportSettingsSnapshot");
+assert.ok(settingsSnapshotButton);
+const settingsSnapshotDownloads = [];
+uiSectionPlugin.downloadTextFile = (filename, text) => {
+    settingsSnapshotDownloads.push({ filename, text });
+    return true;
+};
+uiSectionPlugin.settings.polish.apiKey = "sk-fake-verify-1";
+settingsSnapshotButton.listeners.click();
+assert.equal(settingsSnapshotDownloads.length, 1);
+assert.match(settingsSnapshotDownloads[0].filename, /^DiscordAITranslator-settings-.+\.json$/);
+assert.equal(settingsSnapshotDownloads[0].text.includes("sk-fake-verify-1"), false);
+assert.equal(JSON.parse(settingsSnapshotDownloads[0].text).settings.polish.apiKey, "[hidden]");
 global.document = savedDocumentForUiSections;
 const diagnosticPlugin = new Plugin();
 diagnosticPlugin.showToast = () => {};
@@ -2593,12 +2612,14 @@ sakuraQueueLimitPlugin.settings.ui.autoTranslatePrefetch = true;
 assert.equal(sakuraQueueLimitPlugin.getAutoTranslateConcurrency(), 4);
 assert.equal(sakuraQueueLimitPlugin.getAutoTranslateBatchSize(), 4);
 assert.equal(sakuraQueueLimitPlugin.getAutoTranslateQueueLimit(), 4);
-assert.equal(sakuraQueueLimitPlugin.isAutoTranslationPrefetchConfigured(), false);
-assert.equal(sakuraQueueLimitPlugin.getAutoTranslatePrefetchRange(), 0);
+// Local providers prefetch too; the scheduler only ever gives prefetch one spare slot.
+assert.equal(sakuraQueueLimitPlugin.isAutoTranslationPrefetchConfigured(), true);
+assert.equal(sakuraQueueLimitPlugin.getAutoTranslatePrefetchRange(), 5);
 plugin.autoTranslationPrefetchInFlight = 1;
 assert.equal(plugin.canStartAutoTranslationPrefetchRequest(4), false);
 plugin.autoTranslationPrefetchInFlight = 0;
 assert.equal(plugin.canStartAutoTranslationPrefetchRequest(4), true);
+assert.equal(plugin.canStartAutoTranslationPrefetchRequest(1), false);
 const polishContainerPlugin = new Plugin();
 const unsafeTextbox = {
     parentElement: {},
@@ -3183,6 +3204,16 @@ const recentRenderDecision = recentRenderDecisionPlugin.evaluateAutoTranslationC
 });
 assert.equal(recentRenderDecision.action, "skip");
 assert.equal(recentRenderDecision.reasonCode, "recent-render-present");
+assert.equal(recentRenderDecisionPlugin.autoTranslationQueue.length, 0);
+// Discord rebuilt the message and dropped its line: a cached translation is drawn again
+// despite the recent render, still without a new request.
+recentRenderDecisionPlugin.setTranslationCache(recentRenderCacheKey, "最近渲染的译文");
+const recentRenderCachedDecision = recentRenderDecisionPlugin.evaluateAutoTranslationCandidate(recentRenderCandidate, {
+    requestOptions: recentRenderDecisionPlugin.getAutoTranslationOptions(),
+    now: Date.now()
+});
+assert.equal(recentRenderCachedDecision.action, "render-cache");
+assert.equal(recentRenderCachedDecision.cachedTranslation, "最近渲染的译文");
 assert.equal(recentRenderDecisionPlugin.autoTranslationQueue.length, 0);
 
 const renderQueueBudgetPlugin = new Plugin();
@@ -3910,8 +3941,8 @@ global.document = {
 };
 localClampPlugin.settings.ui.autoTranslatePrefetch = false;
 localClampPlugin.setSetting("ui.autoTranslatePrefetch", true);
-assert.equal(localClampPlugin.settings.ui.autoTranslatePrefetch, false);
-assert.equal(localPrefetchCheckbox.checked, false);
+assert.equal(localClampPlugin.settings.ui.autoTranslatePrefetch, true);
+assert.equal(localPrefetchCheckbox.checked, true);
 const localStrictRetryCheckbox = { type: "checkbox", checked: true, dataset: { daitPath: "ui.autoTranslateStrictRetry" } };
 global.document = {
     activeElement: localStrictRetryCheckbox,

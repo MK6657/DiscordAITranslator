@@ -2976,7 +2976,6 @@ var require_constants = __commonJS({
         endpoint: "http://127.0.0.1:8080/v1/chat/completions",
         model: "local-model",
         apiKeyOptional: true,
-        autoTranslatePrefetchAllowed: false,
         autoTranslateIntakeMode: "dom",
         autoTranslateRequestBatchSize: 1,
         autoTranslateLongTextChunkLength: 420
@@ -3982,7 +3981,7 @@ var require_request_pipeline = __commonJS({
         }
         const targetVisible = this.plugin.isAutoTranslationTargetVisibleCached(target, scanState.context);
         const explicitHistoryRequest = Boolean(target.daitHistoryRequest);
-        if (!this.plugin.isAutoTranslationPrefetchConfigured(requestOptions) && !targetVisible && !explicitHistoryRequest) {
+        if (!this.plugin.isAutoTranslationPrefetchConfigured() && !targetVisible && !explicitHistoryRequest) {
           return {
             action: "block",
             status: "blocked",
@@ -4037,23 +4036,6 @@ var require_request_pipeline = __commonJS({
             cacheKey,
             requestOptions: targetRequestOptions,
             counts: { eligible: 1, skippedCurrent: 1 }
-          };
-        }
-        const recentRender = this.plugin.getRecentAutoTranslationRender(cacheKey, text, targetRequestOptions, now);
-        if (recentRender) {
-          return {
-            action: "skip",
-            status: "skipped",
-            state: DIAGNOSTIC_MESSAGE_STATES.RENDERED,
-            reasonCode: DIAGNOSTIC_REASON_CODES.RECENT_RENDER_PRESENT,
-            cacheKey,
-            requestOptions: targetRequestOptions,
-            counts: { eligible: 1, skippedCurrent: 1 },
-            extra: {
-              validationQuality: recentRender.validationQuality || "",
-              validationReason: recentRender.validationReason || "",
-              ageMs: Math.max(0, now - Number(recentRender.at || 0))
-            }
           };
         }
         if (this.plugin.hasTranslationCacheCandidate(cacheKey, cacheAliases)) {
@@ -4119,6 +4101,23 @@ var require_request_pipeline = __commonJS({
               extra: { textCacheKey: this.plugin.getTextFingerprint(textCacheKey), canRender: canRenderCacheHit, targetVisible }
             };
           }
+        }
+        const recentRender = this.plugin.getRecentAutoTranslationRender(cacheKey, text, targetRequestOptions, now);
+        if (recentRender) {
+          return {
+            action: "skip",
+            status: "skipped",
+            state: DIAGNOSTIC_MESSAGE_STATES.RENDERED,
+            reasonCode: DIAGNOSTIC_REASON_CODES.RECENT_RENDER_PRESENT,
+            cacheKey,
+            requestOptions: targetRequestOptions,
+            counts: { eligible: 1, skippedCurrent: 1 },
+            extra: {
+              validationQuality: recentRender.validationQuality || "",
+              validationReason: recentRender.validationReason || "",
+              ageMs: Math.max(0, now - Number(recentRender.at || 0))
+            }
+          };
         }
         const hasPendingTargets = this.plugin.autoTranslationPendingTargets.has(cacheKey);
         const hasActiveKey = this.plugin.hasActiveAutoTranslationKey(cacheKey);
@@ -7021,7 +7020,7 @@ var require_queue_core = __commonJS({
       isAutoTranslationPrefetchAllowed(item) {
         if (item?.daitHistoryRequest) return true;
         if (!this.plugin.isAutoTranslationPrefetchItem(item)) return true;
-        if (!this.plugin.isAutoTranslationPrefetchConfigured(item?.requestOptions)) return false;
+        if (!this.plugin.isAutoTranslationPrefetchConfigured()) return false;
         const now = Date.now();
         if (this.plugin.isAutoTranslationRenderPaused(now) || this.plugin.isAutoTranslationViewportSettling(now) || this.plugin.isAutoTranslationJumpCoolingDown(now) || this.plugin.getInputComposerBusyRemainingMs(now) > 0) return false;
         const config = this.plugin.getEffectiveTaskConfig("translation", item?.requestOptions?.configOverrides);
@@ -7055,10 +7054,8 @@ var require_queue_core = __commonJS({
         if (!this.plugin.isAutoTranslateEnabled() || !this.plugin.isAutoTranslationPrefetchConfigured()) return 0;
         return this.plugin.normalizeAutoTranslatePrefetchRange(this.plugin.settings.ui?.autoTranslatePrefetchRange);
       }
-      isAutoTranslationPrefetchConfigured(requestOptions = null) {
-        if (!this.plugin.settings.ui?.autoTranslatePrefetch) return false;
-        const config = this.plugin.getEffectiveTaskConfig("translation", requestOptions?.configOverrides);
-        return this.plugin.getProviderDefaults(config.provider)?.autoTranslatePrefetchAllowed !== false;
+      isAutoTranslationPrefetchConfigured() {
+        return Boolean(this.plugin.settings.ui?.autoTranslatePrefetch);
       }
       isAutoTranslateEnabled() {
         return Boolean(this.plugin.isStarted && this.plugin.settings?.translation?.enabled && this.plugin.settings?.ui?.autoTranslateMessages && this.plugin.isCurrentChannelAutoTranslateAllowed());
@@ -11683,11 +11680,8 @@ var require_settings_store = __commonJS({
           this.plugin.settings.ui.publicBilingualPolishBeforeTranslate = DEFAULT_SETTINGS.ui.publicBilingualPolishBeforeTranslate;
           changed = true;
         }
-        const autoTranslatePrefetch = typeof this.plugin.settings.ui.autoTranslatePrefetch === "boolean" ? this.plugin.settings.ui.autoTranslatePrefetch : DEFAULT_SETTINGS.ui.autoTranslatePrefetch;
-        const providerPrefetchAllowed = this.plugin.getProviderDefaults(this.plugin.settings.translation?.provider)?.autoTranslatePrefetchAllowed !== false;
-        const effectiveAutoTranslatePrefetch = providerPrefetchAllowed ? autoTranslatePrefetch : false;
-        if (effectiveAutoTranslatePrefetch !== this.plugin.settings.ui.autoTranslatePrefetch) {
-          this.plugin.settings.ui.autoTranslatePrefetch = effectiveAutoTranslatePrefetch;
+        if (typeof this.plugin.settings.ui.autoTranslatePrefetch !== "boolean") {
+          this.plugin.settings.ui.autoTranslatePrefetch = DEFAULT_SETTINGS.ui.autoTranslatePrefetch;
           changed = true;
         }
         const intakeMode = this.plugin.normalizeAutoTranslateIntakeMode(this.plugin.settings.ui.autoTranslateIntakeMode);
@@ -11898,9 +11892,6 @@ var require_settings_store = __commonJS({
         if (path === "ui.autoTranslatePrefetchRange") {
           value = this.plugin.normalizeAutoTranslatePrefetchRange(value);
         }
-        if (path === "ui.autoTranslatePrefetch" && this.plugin.getProviderDefaults(this.plugin.settings.translation?.provider)?.autoTranslatePrefetchAllowed === false) {
-          value = false;
-        }
         if (path === "ui.translationCacheTtlHours") {
           value = this.plugin.normalizeTranslationCacheTtlHours(value);
         }
@@ -11945,7 +11936,7 @@ var require_settings_store = __commonJS({
             this.plugin.settings.googleTranslate.keyPoolText = normalized.keyPoolText;
           }
         }
-        if (path === "translation.provider") this.plugin.applyProviderAutoTranslateLimits(value);
+        if (path === "translation.provider") this.plugin.applyProviderIntakeMode(value);
         if (options.save === false) {
         } else if (options.save === "immediate") this.plugin.saveSettings({ retryOnError: options.retryOnError });
         else this.plugin.saveSettings({ debounce: true, delayMs: options.delayMs });
@@ -12024,22 +12015,17 @@ var require_settings_store = __commonJS({
         }
         this.plugin.settings[kind].provider = nextProvider;
         this.plugin.applyProviderPreset(kind, nextProvider, { restoreProfile: true, save: false, syncControls: false, invalidate: false });
-        if (kind === "translation") this.plugin.applyProviderAutoTranslateLimits(nextProvider);
+        if (kind === "translation") this.plugin.applyProviderIntakeMode(nextProvider);
         this.plugin.resetApiStatus(kind, { save: false });
         this.plugin.saveSettings({ debounce: true });
         this.plugin.syncSettingControls(`${kind}.provider`, nextProvider);
         if (kind === "translation") this.plugin.invalidateAutoTranslationQueue();
         this.plugin.queueScan();
       }
-      // Both provider-switch paths apply the provider's fixed scheduling rules. The
-      // settings panel locks these controls, so a stale value could not be corrected there.
-      applyProviderAutoTranslateLimits(provider) {
-        const defaults = this.plugin.getProviderDefaults(provider);
-        if (defaults?.autoTranslatePrefetchAllowed === false && this.plugin.settings.ui.autoTranslatePrefetch) {
-          this.plugin.settings.ui.autoTranslatePrefetch = false;
-          this.plugin.syncSettingControls("ui.autoTranslatePrefetch", false, { includeActive: true });
-        }
-        const intakeMode = defaults?.autoTranslateIntakeMode;
+      // Both provider-switch paths apply the provider's fixed intake mode. The settings
+      // panel locks that control, so a stale value could not be corrected there.
+      applyProviderIntakeMode(provider) {
+        const intakeMode = this.plugin.getProviderDefaults(provider)?.autoTranslateIntakeMode;
         if (intakeMode && this.plugin.settings.ui.autoTranslateIntakeMode !== intakeMode) {
           this.plugin.settings.ui.autoTranslateIntakeMode = intakeMode;
           this.plugin.syncSettingControls("ui.autoTranslateIntakeMode", intakeMode, { includeActive: true });
@@ -12211,7 +12197,7 @@ var require_i18n = __commonJS({
         autoTranslateMessages: "自动翻译可见外语消息",
         autoTranslateMessagesDesc: "开启后会自动翻译当前屏幕内看起来不是目标语言的消息。默认关闭，并限制并发，避免一次性请求过多 API。",
         autoTranslatePrefetch: "预翻译附近消息",
-        autoTranslatePrefetchDesc: "自动翻译开启时，低优先级预翻译屏幕上下附近几条消息；只占用 1 个并发槽。",
+        autoTranslatePrefetchDesc: "自动翻译开启时，低优先级预翻译屏幕上下附近几条消息。只在没有可见消息等待翻译时占用 1 个空闲并发槽，因此并发数至少需要 2。",
         autoTranslatePrefetchRange: "预翻译范围",
         autoTranslatePrefetchRangeDesc: "控制可见区域前后各预取多少条消息。快速滚动时远离视口的预翻译会被丢弃。",
         autoTranslateConcurrency: "自动翻译并发数",
@@ -12320,7 +12306,6 @@ var require_i18n = __commonJS({
         errorCancelled: "请求已取消。",
         errorInvalidEndpoint: "接口地址无效，请填写完整的 API 地址。",
         errorUnsafeEndpoint: "接口地址不安全：远程服务须使用 HTTPS，本机服务可用 HTTP，地址中不能包含用户名或密码。",
-        localPrefetchUnavailable: "当前本地服务不启用预翻译，因此范围设置不生效。可见消息翻译仍可使用。",
         localIntakeFixed: "当前本地服务固定使用 DOM 发现消息，此项无需修改。",
         localConcurrencyDesc: "本地模型也可设置 {min}-{max} 个并发请求，每个请求翻译一条消息。请配合本地服务的并发槽位和可用显存调整。",
         localFallbackUnavailable: "本地服务不会自动转发到云端，因此云端回退及顺序在当前模式下不可用。",
@@ -12454,7 +12439,7 @@ var require_i18n = __commonJS({
         autoTranslateMessages: "Auto-translate visible foreign messages",
         autoTranslateMessagesDesc: "Automatically translates visible messages that do not look like the target language. Off by default, with request limits to avoid API bursts.",
         autoTranslatePrefetch: "Prefetch nearby messages",
-        autoTranslatePrefetchDesc: "When auto-translation is enabled, pre-translates nearby messages at low priority and uses only 1 concurrency slot.",
+        autoTranslatePrefetchDesc: "When auto-translation is enabled, pre-translates nearby messages at low priority. It uses one spare slot only while no visible message is waiting, so it needs a concurrency of 2 or more.",
         autoTranslatePrefetchRange: "Prefetch range",
         autoTranslatePrefetchRangeDesc: "How many messages above and below the visible area should be prefetched. Far prefetch work is dropped during fast scrolling.",
         autoTranslateConcurrency: "Auto-translation concurrency",
@@ -12486,6 +12471,11 @@ var require_i18n = __commonJS({
         diagnosticLogsCopied: "Diagnostic logs copied.",
         diagnosticLogsEmpty: "No diagnostic logs yet.",
         diagnosticLogsExported: "Diagnostic logs exported.",
+        settingsSnapshot: "Settings snapshot",
+        settingsSnapshotDesc: "Downloads your current settings as JSON for troubleshooting. API keys and other secrets are hidden, cloud endpoints lose their query strings, prompts are summarized and channel IDs are hashed. Switches and numbers are kept as-is.",
+        exportSettingsSnapshot: "Download settings",
+        settingsSnapshotExported: "Settings snapshot downloaded; secrets are hidden.",
+        settingsSnapshotCopied: "Settings snapshot copied; secrets are hidden.",
         translationCacheTtl: "Cache lifetime",
         translationCacheTtlDesc: "Translations are persisted locally and reused after Discord restarts. Expired entries are translated again.",
         translationCacheMaxEntries: "Max cache entries",
@@ -12594,7 +12584,6 @@ var require_i18n = __commonJS({
         errorCancelled: "Request cancelled.",
         errorInvalidEndpoint: "Invalid endpoint. Enter a complete API URL.",
         errorUnsafeEndpoint: "Unsafe endpoint: remote services require HTTPS; loopback services may use HTTP. Do not embed a username or password in the URL.",
-        localPrefetchUnavailable: "Prefetch is unavailable for this local provider, so the range does not apply. Visible-message translation remains available.",
         localIntakeFixed: "This local provider uses DOM message discovery. No change is required.",
         localConcurrencyDesc: "Local models support {min}-{max} concurrent requests, with one message per request. Adjust to match your local server's parallel slots and available VRAM.",
         localFallbackUnavailable: "Local providers never forward requests to the cloud. Cloud fallback and its order are unavailable in this mode.",
@@ -12625,7 +12614,12 @@ var require_i18n = __commonJS({
       diagnosticLogsCleared: "诊断日志已清空。",
       diagnosticLogsCopied: "诊断日志已复制。",
       diagnosticLogsEmpty: "暂无诊断日志。",
-      diagnosticLogsExported: "诊断日志已导出。"
+      diagnosticLogsExported: "诊断日志已导出。",
+      settingsSnapshot: "设置快照",
+      settingsSnapshotDesc: "把当前设置下载为 JSON，方便排查问题。API Key 等密钥会被隐藏，云端接口地址去掉查询参数，提示词只显示是否自定义，频道 ID 会做哈希；开关和数值保持原样。",
+      exportSettingsSnapshot: "下载设置",
+      settingsSnapshotExported: "设置快照已下载，密钥已隐藏。",
+      settingsSnapshotCopied: "设置快照已复制，密钥已隐藏。"
     });
     Object.assign(I18N["zh-CN"], {
       providerMicrosoft: "Microsoft 翻译",
@@ -14433,14 +14427,13 @@ var require_discord_ai_translator = __commonJS({
         section.className = "dait-settings-section dait-section-auto-translate";
         const provider = this.getProviderDefaults(this.settings.translation.provider);
         const local = this.isLocalTranslationProvider(this.settings.translation);
-        const prefetchReason = provider?.autoTranslatePrefetchAllowed === false && this.t("localPrefetchUnavailable");
         const concurrencyRange = { min: AUTO_TRANSLATE_MIN_CONCURRENCY, max: AUTO_TRANSLATE_MAX_CONCURRENCY, default: AUTO_TRANSLATE_DEFAULT_CONCURRENCY };
         const title = document.createElement("h3");
         title.textContent = this.t("autoTranslateSettingsTitle");
         section.appendChild(title);
         section.appendChild(this.createCheckboxRow("ui.autoTranslateMessages", this.t("autoTranslateMessages"), { description: this.t("autoTranslateMessagesDesc") }));
-        section.appendChild(this.createCheckboxRow("ui.autoTranslatePrefetch", this.t("autoTranslatePrefetch"), { description: this.t("autoTranslatePrefetchDesc"), disabledReason: prefetchReason }));
-        section.appendChild(this.createSelectRow("ui.autoTranslatePrefetchRange", this.t("autoTranslatePrefetchRange"), AUTO_TRANSLATE_PREFETCH_RANGES.map((value) => [String(value), String(value)]), { description: this.t("autoTranslatePrefetchRangeDesc"), disabledReason: prefetchReason }));
+        section.appendChild(this.createCheckboxRow("ui.autoTranslatePrefetch", this.t("autoTranslatePrefetch"), { description: this.t("autoTranslatePrefetchDesc") }));
+        section.appendChild(this.createSelectRow("ui.autoTranslatePrefetchRange", this.t("autoTranslatePrefetchRange"), AUTO_TRANSLATE_PREFETCH_RANGES.map((value) => [String(value), String(value)]), { description: this.t("autoTranslatePrefetchRangeDesc") }));
         section.appendChild(this.createSelectRow("ui.autoTranslateIntakeMode", this.t("autoTranslateIntakeMode"), [
           ["auto", this.t("autoTranslateIntakeAuto")],
           ["dom", this.t("autoTranslateIntakeDom")],
@@ -14557,6 +14550,7 @@ var require_discord_ai_translator = __commonJS({
         section.appendChild(title);
         section.appendChild(this.createCheckboxRow("ui.diagnosticsEnabled", this.t("diagnosticLogs"), { description: this.t("diagnosticLogsDesc") }));
         section.appendChild(this.createDiagnosticLogsRow());
+        section.appendChild(this.createSettingsSnapshotRow());
         section.appendChild(this.createDiagnosticSummaryRow());
         section.appendChild(this.createCheckboxRow("ui.testModeEnabled", this.t("testMode"), { description: this.t("testModeDesc"), refreshPanel: true }));
         return section;
@@ -14753,6 +14747,15 @@ var require_discord_ai_translator = __commonJS({
         return this.createRow(this.t("diagnosticLogs"), controls, {
           description: this.getDiagnosticLogsStatsText()
         });
+      }
+      createSettingsSnapshotRow() {
+        const controls = document.createElement("div");
+        controls.className = "dait-diagnostic-actions";
+        const button = this.createSmallButton(this.t("exportSettingsSnapshot"));
+        button.dataset.daitAction = "exportSettingsSnapshot";
+        button.addEventListener("click", () => this.exportSettingsSnapshot());
+        controls.appendChild(button);
+        return this.createRow(this.t("settingsSnapshot"), controls, { description: this.t("settingsSnapshotDesc") });
       }
       createDiagnosticSummaryRow() {
         const summary = this.createDiagnosticSummary(this.diagnosticLogs);
@@ -16006,18 +16009,79 @@ var require_discord_ai_translator = __commonJS({
         const text = this.serializeDiagnosticLogs(normalized);
         const filename = `${PLUGIN_NAME}-diagnostics-${(/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-")}.${normalized}`;
         const mime = normalized === "json" ? "application/json" : "text/plain";
+        return this.saveTextOrCopy(filename, text, mime, { saved: "diagnosticLogsExported", copied: "diagnosticLogsCopied" });
+      }
+      async exportSettingsSnapshot() {
+        const text = JSON.stringify(this.createSettingsSnapshot(), null, 2);
+        const filename = `${PLUGIN_NAME}-settings-${(/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-")}.json`;
+        return this.saveTextOrCopy(filename, text, "application/json", { saved: "settingsSnapshotExported", copied: "settingsSnapshotCopied" });
+      }
+      // Downloads the text, falling back to the clipboard where downloads are unavailable.
+      async saveTextOrCopy(filename, text, mime, messageKeys) {
         try {
           if (this.downloadTextFile(filename, text, mime)) {
-            this.showToast(this.t("diagnosticLogsExported"), "success");
+            this.showToast(this.t(messageKeys.saved), "success");
             return true;
           }
           await this.copyTextToClipboard(text);
-          this.showToast(this.t("diagnosticLogsCopied"), "success");
+          this.showToast(this.t(messageKeys.copied), "success");
           return true;
         } catch (error) {
           this.showToast(this.t("promptCopyFailed", { error: this.formatError(error) }), "error");
           return false;
         }
+      }
+      // Troubleshooting copy of the settings: switches and numbers as-is, secrets and private text reduced to markers.
+      createSettingsSnapshot() {
+        const secretKeys = /* @__PURE__ */ new Set(["apikey", "secretkey", "appid", "keypooltext", "keys", "token", "password", "authorization"]);
+        const sanitize = (value, key = "", defaults = void 0) => {
+          const name = String(key).toLowerCase();
+          if (secretKeys.has(name)) {
+            if (Array.isArray(value)) return value.length ? `[hidden: ${value.length}]` : [];
+            return String(value ?? "").trim() ? "[hidden]" : "";
+          }
+          if (name === "endpoint") return this.getSettingsSnapshotEndpoint(value);
+          if (name === "prompt") return value === defaults ? "default" : `custom (${String(value ?? "").length} chars)`;
+          if (name === "prompttemplates") return `${Array.isArray(value) ? value.length : 0} templates`;
+          if (name === "channelautotranslatepolicies") {
+            return Object.fromEntries(Object.entries(value || {}).map(([id, policy]) => [`channel-${this.getTextFingerprint(id)}`, sanitize(policy)]));
+          }
+          if (Array.isArray(value)) return value.map((item) => sanitize(item));
+          if (value && typeof value === "object") {
+            return Object.fromEntries(Object.entries(value).map(([childKey, child]) => [childKey, sanitize(child, childKey, defaults?.[childKey])]));
+          }
+          return typeof value === "string" ? this.sanitizeDiagnosticValue(value) : value;
+        };
+        return {
+          plugin: PLUGIN_NAME,
+          version: globalThis.BdApi?.Plugins?.get?.(PLUGIN_NAME)?.version || "",
+          exportedAt: (/* @__PURE__ */ new Date()).toISOString(),
+          effective: {
+            autoTranslateActive: this.isAutoTranslateEnabled(),
+            localProvider: this.isLocalTranslationProvider(this.settings.translation),
+            concurrency: this.getAutoTranslateConcurrency(),
+            prefetchRange: this.getAutoTranslatePrefetchRange(),
+            intakeMode: this.normalizeAutoTranslateIntakeMode(this.settings.ui?.autoTranslateIntakeMode)
+          },
+          settings: sanitize(this.settings, "", DEFAULT_SETTINGS)
+        };
+      }
+      // Local endpoints stay whole; remote ones drop query strings, which can carry keys.
+      // Embedded credentials are always removed.
+      getSettingsSnapshotEndpoint(value) {
+        const text = String(value ?? "").trim();
+        if (!text) return "";
+        let url = null;
+        try {
+          url = new URL(text);
+        } catch {
+          return `[invalid] ${this.sanitizeDiagnosticValue(text)}`;
+        }
+        const hadCredentials = Boolean(url.username || url.password);
+        url.username = "";
+        url.password = "";
+        const shown = this.isLoopbackEndpoint(url.href) ? url.href : `${url.origin}${url.pathname}`;
+        return hadCredentials ? `${shown} [credentials removed]` : shown;
       }
       downloadTextFile(filename, text, mime = "text/plain") {
         if (typeof Blob === "undefined" || typeof URL === "undefined" || !URL.createObjectURL || typeof document === "undefined") return false;
@@ -24897,8 +24961,8 @@ var require_discord_ai_translator = __commonJS({
       setTaskProvider(...args) {
         return this.settingsStore.setTaskProvider(...args);
       }
-      applyProviderAutoTranslateLimits(...args) {
-        return this.settingsStore.applyProviderAutoTranslateLimits(...args);
+      applyProviderIntakeMode(...args) {
+        return this.settingsStore.applyProviderIntakeMode(...args);
       }
       getPromptTemplates(...args) {
         return this.settingsStore.getPromptTemplates(...args);

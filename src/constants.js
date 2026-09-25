@@ -115,7 +115,6 @@ const PROVIDER_DEFAULTS = {
         endpoint: "http://127.0.0.1:8080/v1/chat/completions",
         model: "local-model",
         apiKeyOptional: true,
-        autoTranslatePrefetchAllowed: false,
         autoTranslateIntakeMode: "dom",
         autoTranslateRequestBatchSize: 1,
         autoTranslateLongTextChunkLength: 420
