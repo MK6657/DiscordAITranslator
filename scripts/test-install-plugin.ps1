@@ -55,6 +55,12 @@ if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
 $originalAppData = $env:APPDATA
 $originalLocalAppData = $env:LOCALAPPDATA
 try {
+    # The installer probes %LOCALAPPDATA%\Packages for redirected AppData writes. Point it at an empty
+    # fixture so no result depends on the machine, for example a terminal running inside a packaged app.
+    $fixtureLocalAppData = Join-Path $testRoot "fixture-localappdata"
+    New-Item -ItemType Directory -Force -Path $fixtureLocalAppData | Out-Null
+    $env:LOCALAPPDATA = $fixtureLocalAppData
+
     $unicodeDirectoryName = ([string][char]0x6D4B) + ([string][char]0x8BD5) + " path"
     $successAppData = Join-Path $testRoot ("success-appdata " + $unicodeDirectoryName)
     $successPlugins = Join-Path $successAppData "BetterDiscord\plugins"
@@ -141,7 +147,7 @@ try {
     if ($LASTEXITCODE -ne 1 -or $missingOutput -notmatch "Installed plugin:\s+not found") {
         throw "Checker did not fail for a missing plugin: $missingOutput"
     }
-    $env:LOCALAPPDATA = $originalLocalAppData
+    $env:LOCALAPPDATA = $fixtureLocalAppData
 
     $failureAppData = Join-Path $testRoot "failure-appdata"
     $failurePlugins = Join-Path $failureAppData "BetterDiscord\plugins"
@@ -212,6 +218,71 @@ try {
     if (Test-Path -LiteralPath (Join-Path $firstInstallPlugins "DiscordAITranslator.plugin.js")) {
         throw "Failed first install left its new plugin behind."
     }
+
+    # A window inside a packaged app (for example an AI desktop app) has its new AppData files
+    # redirected to %LOCALAPPDATA%\Packages\<app>\LocalCache\Roaming. The fixture reproduces what the
+    # installer then observes: a file written under APPDATA shows up in that package's private copy.
+    # Short names keep the installer's temp file under MAX_PATH, which Windows PowerShell 5.1 enforces.
+    $redirectLocalAppData = Join-Path $testRoot "rl"
+    $redirectPackage = "Ex.Pkg_test"
+    $redirectAppData = Join-Path $redirectLocalAppData "Packages\$redirectPackage\LocalCache\Roaming"
+    $redirectPlugins = Join-Path $redirectAppData "BetterDiscord\plugins"
+    $redirectProfileJson = Join-Path $redirectAppData "BetterDiscord\data\stable\plugins.json"
+    $redirectInstalled = Join-Path $redirectPlugins "DiscordAITranslator.plugin.js"
+    New-Item -ItemType Directory -Force -Path $redirectPlugins, (Split-Path -Parent $redirectProfileJson), (Join-Path $redirectLocalAppData "Packages\Other.App_test\LocalCache\Roaming") | Out-Null
+    Set-Utf8NoBomContent -Path $redirectProfileJson -Value "{}"
+    $env:APPDATA = $redirectAppData
+    $env:LOCALAPPDATA = $redirectLocalAppData
+
+    foreach ($mode in @("install", "dry-run")) {
+        # Assigned directly: an if-expression would unwrap a one-item array into a string, which cannot be splatted.
+        $extraArguments = @()
+        if ($mode -eq "dry-run") { $extraArguments = @("-WhatIf") }
+        # Console hosts wrap long warning lines; compare with whitespace collapsed.
+        $blockedOutput = (& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer -PluginPath $source -SkipSyntaxCheck @extraArguments | Out-String) -replace '\s+', ' '
+        $blockedExitCode = $LASTEXITCODE
+        if ($blockedExitCode -eq 0 -or $blockedOutput -notmatch [regex]::Escape($redirectPackage) -or $blockedOutput -notmatch "normally started Discord will not see") {
+            throw "Installer did not refuse a redirected AppData window ($mode), exit $($blockedExitCode): $blockedOutput"
+        }
+        if ($blockedOutput -notmatch "-AllowRedirectedAppData" -or $blockedOutput -match "Installed DiscordAITranslator") {
+            throw "Refusal must name -AllowRedirectedAppData and must not report an install: $blockedOutput"
+        }
+        if (Test-Path -LiteralPath $redirectInstalled) {
+            throw "Installer wrote the plugin into a redirected AppData window without -AllowRedirectedAppData."
+        }
+        if ((Get-Content -LiteralPath $redirectProfileJson -Raw) -ne "{}") {
+            throw "Installer changed BetterDiscord profile state in a redirected AppData window."
+        }
+        if (@(Get-ChildItem -LiteralPath $redirectAppData -Filter "dait-redirect-probe-*" -Force).Count) {
+            throw "Installer left its AppData redirect probe behind ($mode)."
+        }
+    }
+
+    $allowedOutput = (& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer -PluginPath $source -SkipSyntaxCheck -AllowRedirectedAppData | Out-String) -replace '\s+', ' '
+    if ($LASTEXITCODE -ne 0 -or $allowedOutput -notmatch [regex]::Escape($redirectPackage) -or $allowedOutput -notmatch "normally started Discord will not load it" -or $allowedOutput -notmatch "Installed DiscordAITranslator") {
+        throw "-AllowRedirectedAppData did not install into the redirected copy with a warning: $allowedOutput"
+    }
+    if ((Get-TestSha256 -Path $redirectInstalled) -ne (Get-TestSha256 -Path $source)) {
+        throw "-AllowRedirectedAppData installed a plugin with the wrong hash."
+    }
+    if ((Get-Content -LiteralPath $redirectProfileJson -Raw -Encoding UTF8 | ConvertFrom-Json).DiscordAITranslator -ne $true) {
+        throw "-AllowRedirectedAppData did not enable the plugin in the redirected profile."
+    }
+
+    # A normal window next to packaged apps: nothing it writes under APPDATA appears in a package.
+    $normalAppData = Join-Path $testRoot "normal-appdata"
+    $normalPlugins = Join-Path $normalAppData "BetterDiscord\plugins"
+    New-Item -ItemType Directory -Force -Path $normalPlugins | Out-Null
+    $env:APPDATA = $normalAppData
+    $normalOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer -PluginPath $source -SkipSyntaxCheck -NoEnable | Out-String
+    if ($LASTEXITCODE -ne 0 -or $normalOutput -match "redirected" -or $normalOutput -notmatch "Installed DiscordAITranslator") {
+        throw "Installer flagged a normal AppData window as redirected: $normalOutput"
+    }
+    if ((Get-TestSha256 -Path (Join-Path $normalPlugins "DiscordAITranslator.plugin.js")) -ne (Get-TestSha256 -Path $source)) {
+        throw "Installer did not install into a normal AppData window."
+    }
+    $env:APPDATA = $originalAppData
+    $env:LOCALAPPDATA = $fixtureLocalAppData
 
     Write-Host "Installer verification passed."
 }
