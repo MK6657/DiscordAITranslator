@@ -1,7 +1,7 @@
 /**
  * @name DiscordAITranslator
  * @author /insert 始皇
- * @version 0.3.0
+ * @version 0.4.0
  * @description Discord AI 翻译/润色插件，支持输入润色和频道消息翻译。
  * @license MIT
  */
@@ -204,11 +204,11 @@ var require_settings_schema = __commonJS({
   }
 });
 
-// src/styles.js
-var require_styles = __commonJS({
-  "src/styles.js"(exports2, module2) {
+// src/css/01-theme-tokens.js
+var require_theme_tokens = __commonJS({
+  "src/css/01-theme-tokens.js"(exports2, module2) {
     "use strict";
-    var PLUGIN_CSS = `
+    module2.exports = `
 [data-dait-settings-modal="true"] {
     box-sizing: border-box !important;
     margin-left: auto !important;
@@ -655,7 +655,15 @@ var require_styles = __commonJS({
     background: transparent;
 }
 
-.dait-quick-settings-modal-root {
+`;
+  }
+});
+
+// src/css/02-quick-settings.js
+var require_quick_settings = __commonJS({
+  "src/css/02-quick-settings.js"(exports2, module2) {
+    "use strict";
+    module2.exports = `.dait-quick-settings-modal-root {
     --dait-quick-backdrop: rgba(0, 0, 0, 0.42);
     --dait-quick-dialog-bg: var(--modal-background, var(--dait-card, var(--background-surface-high, var(--background-secondary, #313338))));
     --dait-quick-footer-bg: var(--modal-footer-background, var(--dait-card-soft, var(--background-surface-higher, var(--background-secondary-alt, #2b2d31))));
@@ -1010,7 +1018,15 @@ var require_styles = __commonJS({
     position: static;
 }
 
-.dait-translation-line {
+`;
+  }
+});
+
+// src/css/03-chat-line-base.js
+var require_chat_line_base = __commonJS({
+  "src/css/03-chat-line-base.js"(exports2, module2) {
+    "use strict";
+    module2.exports = `.dait-translation-line {
     --dait-danger: #d83c3e;
     --dait-chat-mask: rgba(106, 111, 123, 0.72);
     --dait-chat-mask-border: rgba(255, 255, 255, 0.1);
@@ -1057,7 +1073,15 @@ var require_styles = __commonJS({
     line-height: 1;
 }
 
-.dait-settings h2,
+`;
+  }
+});
+
+// src/css/04-settings.js
+var require_settings = __commonJS({
+  "src/css/04-settings.js"(exports2, module2) {
+    "use strict";
+    module2.exports = `.dait-settings h2,
 .dait-settings h3,
 .dait-settings p {
     margin: 0;
@@ -1824,7 +1848,15 @@ var require_styles = __commonJS({
     color: var(--dait-danger);
 }
 
-.dait-polish-button,
+`;
+  }
+});
+
+// src/css/05-composer.js
+var require_composer = __commonJS({
+  "src/css/05-composer.js"(exports2, module2) {
+    "use strict";
+    module2.exports = `.dait-polish-button,
 .dait-public-bilingual-button,
 .dait-polish-restore-button,
 .dait-input-action-menu-button,
@@ -2354,7 +2386,15 @@ var require_styles = __commonJS({
     border-color: color-mix(in srgb, var(--brand-500, #5865f2) 52%, var(--background-modifier-accent, #4e5058));
 }
 
-.dait-message-button {
+`;
+  }
+});
+
+// src/css/06-messages-and-lines.js
+var require_messages_and_lines = __commonJS({
+  "src/css/06-messages-and-lines.js"(exports2, module2) {
+    "use strict";
+    module2.exports = `.dait-message-button {
     display: inline-flex;
     align-items: center;
     background: color-mix(in srgb, var(--background-modifier-hover, #747f8d) 32%, transparent);
@@ -2780,6 +2820,21 @@ var require_styles = __commonJS({
     }
 }
 `;
+  }
+});
+
+// src/styles.js
+var require_styles = __commonJS({
+  "src/styles.js"(exports2, module2) {
+    "use strict";
+    var PLUGIN_CSS = [
+      require_theme_tokens(),
+      require_quick_settings(),
+      require_chat_line_base(),
+      require_settings(),
+      require_composer(),
+      require_messages_and_lines()
+    ].join("");
     module2.exports = { PLUGIN_CSS };
   }
 });
@@ -8146,7 +8201,7 @@ var require_queue_core = __commonJS({
 // package.json
 var require_package = __commonJS({
   "package.json"(exports2, module2) {
-    module2.exports = { version: "0.3.0" };
+    module2.exports = { version: "0.4.0" };
   }
 });
 
