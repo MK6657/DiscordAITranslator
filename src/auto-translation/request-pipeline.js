@@ -906,7 +906,7 @@ class AutoTranslationRequestPipeline {
 
     shouldFallbackAutoTranslationBatchRequestError(error) {
         const type = this.plugin.getAutoTranslationFailureType(error);
-        return !["auth", "quota", "rate-limit", "server", "local-unavailable"].includes(type);
+        return !["cancelled", "auth", "quota", "rate-limit", "server", "local-unavailable"].includes(type);
     }
 
     buildPromptPolicyAutoTranslationPrompt(options = this.plugin.getAutoTranslationOptions()) {
@@ -1190,7 +1190,7 @@ class AutoTranslationRequestPipeline {
                 translated = await this.plugin.runAutoTranslationTaskWithOptions(chunks[index], chunkOptions, taskOptions);
             }
             catch (error) {
-                if (error?.autoTranslationStale || this.plugin.isRequestCancelled(error)) throw error;
+                if (this.plugin.isAbandonedTranslationError(error)) throw error;
                 const rescued = taskOptions?.manualRescue
                     ? await this.plugin.runLongAutoTranslationChunkManualRescue(chunks[index], chunkOptions, error, taskOptions, {
                         sourceHash,
@@ -1315,8 +1315,8 @@ class AutoTranslationRequestPipeline {
                 });
             }
             catch (error) {
+                if (this.plugin.isAbandonedTranslationError(error)) throw error;
                 lastError = error;
-                if (this.plugin.isRequestCancelled(error)) throw error;
                 this.plugin.logDiagnostic("auto.long-text.chunk-rescue", "failed", {
                     sourceHash: meta.sourceHash || this.plugin.getStrongTextFingerprint(chunkText),
                     chunkIndex: Number(meta.chunkIndex || 0),
@@ -1379,7 +1379,7 @@ class AutoTranslationRequestPipeline {
                 else failures.push({ index, reason: validation.reasonCode || "invalid-output" });
             }
             catch (error) {
-                if (this.plugin.isRequestCancelled(error)) throw error;
+                if (this.plugin.isAbandonedTranslationError(error)) throw error;
                 failures.push({ index, reason: error?.autoTranslationInvalidReason || this.plugin.getAutoTranslationFailureType(error) });
                 this.plugin.logDiagnostic("auto.long-text.subchunk-rescue", "failed", {
                     sourceHash: meta.sourceHash || this.plugin.getStrongTextFingerprint(text),
@@ -1857,6 +1857,11 @@ class AutoTranslationRequestPipeline {
         error.autoTranslationStale = true;
         error.autoTranslationCancelReason = String(reason || "stale");
         return error;
+    }
+
+    // Superseded or cancelled work must not be retried, rescued or continued with the next chunk.
+    isAbandonedTranslationError(error) {
+        return Boolean(error?.autoTranslationStale) || this.plugin.isRequestCancelled(error);
     }
 
     async runAutoTranslationStrictFallbackTask(text, options = this.plugin.getAutoTranslationOptions()) {
@@ -2601,7 +2606,7 @@ class AutoTranslationRequestPipeline {
             return translated;
         }
         catch (error) {
-            if (error?.autoTranslationStale || this.plugin.isRequestCancelled(error)) throw error;
+            if (this.plugin.isAbandonedTranslationError(error)) throw error;
             this.plugin.logDiagnostic("manual.long-text.whole-pass", "failed", {
                 ...this.plugin.getTranslationDiagnosticMeta("manual", {
                     requestOptions: wholeOptions,

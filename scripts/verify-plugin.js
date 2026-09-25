@@ -2128,6 +2128,28 @@ assert.ok(autoTranslateSection.children.length > 0);
 assert.ok(displaySection.children.length > 0);
 assert.ok(cacheSection.children.length > 0);
 assert.ok(diagnosticsSection.children.length > 0);
+const getUiRowDescription = (elements, path) => elements.find(element => element.dataset?.daitPath === path)
+    ?.parentElement?.children.find(child => child.className === "dait-row-description")?.textContent;
+assert.match(getUiRowDescription(uiCreatedElements, "ui.autoTranslateConcurrency"), /默认 4，范围 1-10/);
+["ui.autoTranslatePrefetch", "ui.autoTranslateIntakeMode", "ui.providerFallbackEnabled", "ui.providerFallbackOrder"]
+    .forEach(path => assert.notEqual(uiCreatedElements.find(element => element.dataset?.daitPath === path).disabled, true, path));
+const localUiCreatedElements = [];
+global.document = { createElement: tag => createFakeElement(tag, localUiCreatedElements) };
+const localUiSectionPlugin = new Plugin();
+localUiSectionPlugin.settings.translation.provider = "sakuraLocal";
+localUiSectionPlugin.createAutoTranslateSection();
+// Locked local-provider controls are disabled and explain why instead of their normal description.
+[
+    ["ui.autoTranslatePrefetch", "localPrefetchUnavailable"],
+    ["ui.autoTranslatePrefetchRange", "localPrefetchUnavailable"],
+    ["ui.autoTranslateIntakeMode", "localIntakeFixed"],
+    ["ui.providerFallbackEnabled", "localFallbackUnavailable"],
+    ["ui.providerFallbackOrder", "localFallbackUnavailable"]
+].forEach(([path, reasonKey]) => {
+    assert.equal(localUiCreatedElements.find(element => element.dataset?.daitPath === path).disabled, true, path);
+    assert.equal(getUiRowDescription(localUiCreatedElements, path), localUiSectionPlugin.t(reasonKey), path);
+});
+assert.match(getUiRowDescription(localUiCreatedElements, "ui.autoTranslateConcurrency"), /1-10 个并发请求/);
 global.document = savedDocumentForUiSections;
 const diagnosticPlugin = new Plugin();
 diagnosticPlugin.showToast = () => {};

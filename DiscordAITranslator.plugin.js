@@ -2976,7 +2976,6 @@ var require_constants = __commonJS({
         endpoint: "http://127.0.0.1:8080/v1/chat/completions",
         model: "local-model",
         apiKeyOptional: true,
-        autoTranslateConcurrencyMax: 10,
         autoTranslatePrefetchAllowed: false,
         autoTranslateIntakeMode: "dom",
         autoTranslateRequestBatchSize: 1,
@@ -3234,6 +3233,10 @@ var require_constants = __commonJS({
     var MANUAL_LONG_TEXT_WHOLE_PASS_MAX_LENGTH = 1800;
     var MODEL_REQUEST_TIMEOUT_MS = 45e3;
     var API_TEST_REQUEST_TIMEOUT_MS = 15e3;
+    var API_ENDPOINT_ERROR_MESSAGE_KEYS = Object.freeze({
+      INVALID_API_ENDPOINT: "errorInvalidEndpoint",
+      UNSAFE_API_ENDPOINT: "errorUnsafeEndpoint"
+    });
     var SCAN_VIEWPORT_BUFFER_PX = 480;
     var AUTO_TRANSLATE_VIEWPORT_SETTLE_MS = 450;
     var AUTO_TRANSLATE_VIEWPORT_JUMP_SETTLE_MS = 900;
@@ -3669,6 +3672,7 @@ var require_constants = __commonJS({
       MANUAL_LONG_TEXT_WHOLE_PASS_MAX_LENGTH,
       MODEL_REQUEST_TIMEOUT_MS,
       API_TEST_REQUEST_TIMEOUT_MS,
+      API_ENDPOINT_ERROR_MESSAGE_KEYS,
       SCAN_VIEWPORT_BUFFER_PX,
       AUTO_TRANSLATE_VIEWPORT_SETTLE_MS,
       AUTO_TRANSLATE_VIEWPORT_JUMP_SETTLE_MS,
@@ -4579,7 +4583,7 @@ var require_request_pipeline = __commonJS({
       }
       shouldFallbackAutoTranslationBatchRequestError(error) {
         const type = this.plugin.getAutoTranslationFailureType(error);
-        return !["auth", "quota", "rate-limit", "server", "local-unavailable"].includes(type);
+        return !["cancelled", "auth", "quota", "rate-limit", "server", "local-unavailable"].includes(type);
       }
       buildPromptPolicyAutoTranslationPrompt(options = this.plugin.getAutoTranslationOptions()) {
         return this.plugin.buildPromptPolicyPrompt("auto", {
@@ -4836,7 +4840,7 @@ var require_request_pipeline = __commonJS({
           try {
             translated = await this.plugin.runAutoTranslationTaskWithOptions(chunks[index], chunkOptions, taskOptions);
           } catch (error) {
-            if (error?.autoTranslationStale || this.plugin.isRequestCancelled(error)) throw error;
+            if (this.plugin.isAbandonedTranslationError(error)) throw error;
             const rescued = taskOptions?.manualRescue ? await this.plugin.runLongAutoTranslationChunkManualRescue(chunks[index], chunkOptions, error, taskOptions, {
               sourceHash,
               chunkIndex: index,
@@ -4950,8 +4954,8 @@ var require_request_pipeline = __commonJS({
               validationQuality: validation.quality
             });
           } catch (error) {
+            if (this.plugin.isAbandonedTranslationError(error)) throw error;
             lastError = error;
-            if (this.plugin.isRequestCancelled(error)) throw error;
             this.plugin.logDiagnostic("auto.long-text.chunk-rescue", "failed", {
               sourceHash: meta.sourceHash || this.plugin.getStrongTextFingerprint(chunkText),
               chunkIndex: Number(meta.chunkIndex || 0),
@@ -5009,7 +5013,7 @@ var require_request_pipeline = __commonJS({
             if (validation.renderable) translatedParts.push(String(translated || "").trim());
             else failures.push({ index, reason: validation.reasonCode || "invalid-output" });
           } catch (error) {
-            if (this.plugin.isRequestCancelled(error)) throw error;
+            if (this.plugin.isAbandonedTranslationError(error)) throw error;
             failures.push({ index, reason: error?.autoTranslationInvalidReason || this.plugin.getAutoTranslationFailureType(error) });
             this.plugin.logDiagnostic("auto.long-text.subchunk-rescue", "failed", {
               sourceHash: meta.sourceHash || this.plugin.getStrongTextFingerprint(text),
@@ -5440,6 +5444,10 @@ var require_request_pipeline = __commonJS({
         error.autoTranslationStale = true;
         error.autoTranslationCancelReason = String(reason || "stale");
         return error;
+      }
+      // Superseded or cancelled work must not be retried, rescued or continued with the next chunk.
+      isAbandonedTranslationError(error) {
+        return Boolean(error?.autoTranslationStale) || this.plugin.isRequestCancelled(error);
       }
       async runAutoTranslationStrictFallbackTask(text, options = this.plugin.getAutoTranslationOptions()) {
         const strictOptions = this.plugin.getAutoTranslationRetryOptions(text, "", options);
@@ -6084,7 +6092,7 @@ var require_request_pipeline = __commonJS({
           });
           return translated;
         } catch (error) {
-          if (error?.autoTranslationStale || this.plugin.isRequestCancelled(error)) throw error;
+          if (this.plugin.isAbandonedTranslationError(error)) throw error;
           this.plugin.logDiagnostic("manual.long-text.whole-pass", "failed", {
             ...this.plugin.getTranslationDiagnosticMeta("manual", {
               requestOptions: wholeOptions,
@@ -6129,6 +6137,7 @@ var require_queue_core = __commonJS({
   "src/auto-translation/queue-core.js"(exports2, module2) {
     "use strict";
     var {
+      API_ENDPOINT_ERROR_MESSAGE_KEYS,
       AUTO_TRANSLATE_BATCH_MULTIPLIER,
       AUTO_TRANSLATE_DEFAULT_CONCURRENCY,
       AUTO_TRANSLATE_DEFAULT_PREFETCH_RANGE,
@@ -7040,9 +7049,7 @@ var require_queue_core = __commonJS({
       }
       getAutoTranslateConcurrency() {
         if (!this.plugin.isAutoTranslateEnabled()) return 0;
-        const configured = this.plugin.normalizeAutoTranslateConcurrency(this.plugin.settings.ui?.autoTranslateConcurrency);
-        const providerLimit = this.plugin.getProviderAutoTranslateConcurrencyMax(this.plugin.settings.translation?.provider);
-        return providerLimit ? Math.min(configured, providerLimit) : configured;
+        return this.plugin.normalizeAutoTranslateConcurrency(this.plugin.settings.ui?.autoTranslateConcurrency);
       }
       getAutoTranslatePrefetchRange() {
         if (!this.plugin.isAutoTranslateEnabled() || !this.plugin.isAutoTranslationPrefetchConfigured()) return 0;
@@ -7079,10 +7086,6 @@ var require_queue_core = __commonJS({
         if (this.plugin.isLocalTranslationProvider(this.plugin.settings.translation)) return batchSize;
         const requestWindow = this.plugin.getAutoTranslateConcurrency() * this.plugin.getAutoTranslationRequestBatchSize() * 2;
         return Math.max(batchSize, requestWindow, batchSize * AUTO_TRANSLATE_QUEUE_MULTIPLIER);
-      }
-      getProviderAutoTranslateConcurrencyMax(provider) {
-        const limit = Number(this.plugin.getProviderDefaults(provider)?.autoTranslateConcurrencyMax || 0);
-        return Number.isFinite(limit) && limit > 0 ? Math.round(limit) : 0;
       }
       getAutoTranslationRequestBatchSize(options = null) {
         const config = this.plugin.getEffectiveTaskConfig("translation", options?.configOverrides);
@@ -8013,7 +8016,7 @@ var require_queue_core = __commonJS({
       }
       getAutoTranslationFailureType(error) {
         if (this.plugin.isRequestCancelled(error)) return "cancelled";
-        if (["INVALID_API_ENDPOINT", "UNSAFE_API_ENDPOINT"].includes(error?.code)) return "client";
+        if (Object.hasOwn(API_ENDPOINT_ERROR_MESSAGE_KEYS, error?.code)) return "client";
         const status = Number(error?.status || 0);
         if (error?.modelOutputTruncated) return "truncated";
         if (error?.localProviderUnavailable) return "local-unavailable";
@@ -9748,8 +9751,8 @@ var require_provider_layer = __commonJS({
             });
             return model;
           } catch (error) {
-            const previous = this.plugin.localProviderDetectedModels.get(key) || {};
             if (this.plugin.isRequestCancelled(error)) throw error;
+            const previous = this.plugin.localProviderDetectedModels.get(key) || {};
             this.plugin.localProviderDetectedModels.set(key, {
               ...previous,
               retryAt: Date.now() + Math.max(1e3, Number(options.retryMs || LOCAL_PROVIDER_MODEL_DETECTION_RETRY_MS) || LOCAL_PROVIDER_MODEL_DETECTION_RETRY_MS)
@@ -10326,6 +10329,7 @@ var require_provider_layer = __commonJS({
             }
             return { used: true, result, provider };
           } catch (error) {
+            if (this.plugin.isRequestCancelled(error)) throw error;
             this.plugin.logDiagnostic("model.provider-fallback", "failed", {
               ...this.plugin.getDiagnosticBaseMeta("model", `${diagnosticMode}-fallback`, "request-error", { failureType: this.plugin.getAutoTranslationFailureType(error) }),
               fromProvider: currentConfig?.provider || "",
@@ -10514,7 +10518,6 @@ var require_provider_layer = __commonJS({
           }
           return { text: result, fallbackProvider: "" };
         }).catch(async (error) => {
-          if (this.plugin.isRequestCancelled(error)) throw error;
           this.plugin.annotateModelRequestError(error, kind, endpoint, taskConfig, options);
           const requestStillCurrent = this.plugin.isLifecycleTokenCurrent(lifecycleToken) && (!providerSnapshotKey || this.plugin.isAutoTranslationProviderSnapshotCurrent(providerSnapshotKey, { configOverrides: taskConfig }));
           if (error?.googleTranslateApiKey) {
@@ -10608,7 +10611,6 @@ var require_provider_layer = __commonJS({
         return error;
       }
       isLocalProviderUnavailableError(error, endpoint, config, options = {}) {
-        if (this.plugin.isRequestCancelled(error)) return false;
         if (error?.localProviderUnavailable) return true;
         if (!this.plugin.isLocalTranslationProvider(config) || !this.plugin.isLoopbackEndpoint(endpoint || config?.endpoint)) return false;
         const status = Number(error?.status || 0);
@@ -10653,7 +10655,7 @@ var require_provider_layer = __commonJS({
         return error?.code === "REQUEST_TIMEOUT" || error?.name === "TimeoutError" || /timed out|timeout|ETIMEDOUT/i.test(this.plugin.getErrorSignalText(error));
       }
       isRequestCancelled(error) {
-        return error?.code === "REQUEST_CANCELLED" || error?.name === "AbortError" && error?.code !== "REQUEST_TIMEOUT";
+        return error?.code === "REQUEST_CANCELLED" || error?.name === "AbortError";
       }
       isNetworkError(error) {
         if (this.plugin.isRequestCancelled(error)) return false;
@@ -10671,13 +10673,9 @@ var require_provider_layer = __commonJS({
         this.plugin.assertSafeRequestEndpoint(endpoint);
         const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
         if (controller) this.plugin.activeApiControllers.add(controller);
-        let timedOut = false;
-        const timeout = controller ? setTimeout(() => {
-          if (controller.signal.aborted) return;
-          timedOut = true;
-          controller.abort();
-        }, timeoutMs) : null;
+        const timeout = controller ? setTimeout(() => controller.abort(new DOMException("API request timed out", "TimeoutError")), timeoutMs) : null;
         try {
+          if (this.plugin.apiRequestsClosed) throw new DOMException("API requests are closed until the plugin starts", "AbortError");
           const method = String(request?.method || "POST").trim().toUpperCase() || "POST";
           const fetchOptions = {
             method,
@@ -10693,7 +10691,7 @@ var require_provider_layer = __commonJS({
           }
           const response = await fetch(endpoint, fetchOptions);
           const raw = await response.text();
-          if (controller?.signal.aborted) throw Object.assign(new Error("Request aborted"), { name: "AbortError" });
+          controller?.signal.throwIfAborted();
           if (!response.ok) {
             const apiError = this.plugin.createApiError(response, raw);
             if (request?.provider === "googleCloud") {
@@ -10704,13 +10702,12 @@ var require_provider_layer = __commonJS({
           }
           return raw;
         } catch (error) {
-          if (controller?.signal.aborted || error?.name === "AbortError") {
-            throw Object.assign(new Error(timedOut ? `API request timed out after ${Math.round(timeoutMs / 1e3)}s` : "Request cancelled", { cause: error }), {
-              name: timedOut ? "TimeoutError" : "AbortError",
-              code: timedOut ? "REQUEST_TIMEOUT" : "REQUEST_CANCELLED"
-            });
-          }
-          throw error;
+          if (!controller?.signal.aborted && error?.name !== "AbortError") throw error;
+          const timedOut = controller?.signal.reason?.name === "TimeoutError";
+          throw Object.assign(new Error(timedOut ? `API request timed out after ${Math.round(timeoutMs / 1e3)}s` : "Request cancelled", { cause: error }), {
+            name: timedOut ? "TimeoutError" : "AbortError",
+            code: timedOut ? "REQUEST_TIMEOUT" : "REQUEST_CANCELLED"
+          });
         } finally {
           if (timeout) clearTimeout(timeout);
           if (controller) this.plugin.activeApiControllers.delete(controller);
@@ -11706,10 +11703,8 @@ var require_settings_store = __commonJS({
           changed = true;
         }
         const autoTranslateConcurrency = this.plugin.normalizeAutoTranslateConcurrency(this.plugin.settings.ui.autoTranslateConcurrency);
-        const providerConcurrencyMax = this.plugin.getProviderAutoTranslateConcurrencyMax(this.plugin.settings.translation?.provider);
-        const effectiveAutoTranslateConcurrency = providerConcurrencyMax ? Math.min(autoTranslateConcurrency, providerConcurrencyMax) : autoTranslateConcurrency;
-        if (effectiveAutoTranslateConcurrency !== this.plugin.settings.ui.autoTranslateConcurrency) {
-          this.plugin.settings.ui.autoTranslateConcurrency = effectiveAutoTranslateConcurrency;
+        if (autoTranslateConcurrency !== this.plugin.settings.ui.autoTranslateConcurrency) {
+          this.plugin.settings.ui.autoTranslateConcurrency = autoTranslateConcurrency;
           changed = true;
         }
         if (typeof this.plugin.settings.ui.autoTranslateStrictRetry !== "boolean") {
@@ -11898,9 +11893,7 @@ var require_settings_store = __commonJS({
           value = String(value || "");
         }
         if (path === "ui.autoTranslateConcurrency") {
-          const normalized = this.plugin.normalizeAutoTranslateConcurrency(value);
-          const providerMax = this.plugin.getProviderAutoTranslateConcurrencyMax(this.plugin.settings.translation?.provider);
-          value = providerMax ? Math.min(normalized, providerMax) : normalized;
+          value = this.plugin.normalizeAutoTranslateConcurrency(value);
         }
         if (path === "ui.autoTranslatePrefetchRange") {
           value = this.plugin.normalizeAutoTranslatePrefetchRange(value);
@@ -11952,22 +11945,7 @@ var require_settings_store = __commonJS({
             this.plugin.settings.googleTranslate.keyPoolText = normalized.keyPoolText;
           }
         }
-        if (path === "translation.provider" && this.plugin.isLocalTranslationProvider(value)) {
-          const providerMax = this.plugin.getProviderAutoTranslateConcurrencyMax(value);
-          if (providerMax && this.plugin.normalizeAutoTranslateConcurrency(this.plugin.settings.ui.autoTranslateConcurrency) > providerMax) {
-            this.plugin.settings.ui.autoTranslateConcurrency = providerMax;
-            this.plugin.syncSettingControls("ui.autoTranslateConcurrency", providerMax, { includeActive: true });
-          }
-          if (this.plugin.getProviderDefaults(value)?.autoTranslatePrefetchAllowed === false && this.plugin.settings.ui.autoTranslatePrefetch) {
-            this.plugin.settings.ui.autoTranslatePrefetch = false;
-            this.plugin.syncSettingControls("ui.autoTranslatePrefetch", false, { includeActive: true });
-          }
-          const providerIntakeMode = this.plugin.getProviderDefaults(value)?.autoTranslateIntakeMode;
-          if (providerIntakeMode && this.plugin.settings.ui.autoTranslateIntakeMode !== providerIntakeMode) {
-            this.plugin.settings.ui.autoTranslateIntakeMode = providerIntakeMode;
-            this.plugin.syncSettingControls("ui.autoTranslateIntakeMode", providerIntakeMode, { includeActive: true });
-          }
-        }
+        if (path === "translation.provider") this.plugin.applyProviderAutoTranslateLimits(value);
         if (options.save === false) {
         } else if (options.save === "immediate") this.plugin.saveSettings({ retryOnError: options.retryOnError });
         else this.plugin.saveSettings({ debounce: true, delayMs: options.delayMs });
@@ -12046,11 +12024,26 @@ var require_settings_store = __commonJS({
         }
         this.plugin.settings[kind].provider = nextProvider;
         this.plugin.applyProviderPreset(kind, nextProvider, { restoreProfile: true, save: false, syncControls: false, invalidate: false });
+        if (kind === "translation") this.plugin.applyProviderAutoTranslateLimits(nextProvider);
         this.plugin.resetApiStatus(kind, { save: false });
         this.plugin.saveSettings({ debounce: true });
         this.plugin.syncSettingControls(`${kind}.provider`, nextProvider);
         if (kind === "translation") this.plugin.invalidateAutoTranslationQueue();
         this.plugin.queueScan();
+      }
+      // Both provider-switch paths apply the provider's fixed scheduling rules. The
+      // settings panel locks these controls, so a stale value could not be corrected there.
+      applyProviderAutoTranslateLimits(provider) {
+        const defaults = this.plugin.getProviderDefaults(provider);
+        if (defaults?.autoTranslatePrefetchAllowed === false && this.plugin.settings.ui.autoTranslatePrefetch) {
+          this.plugin.settings.ui.autoTranslatePrefetch = false;
+          this.plugin.syncSettingControls("ui.autoTranslatePrefetch", false, { includeActive: true });
+        }
+        const intakeMode = defaults?.autoTranslateIntakeMode;
+        if (intakeMode && this.plugin.settings.ui.autoTranslateIntakeMode !== intakeMode) {
+          this.plugin.settings.ui.autoTranslateIntakeMode = intakeMode;
+          this.plugin.syncSettingControls("ui.autoTranslateIntakeMode", intakeMode, { includeActive: true });
+        }
       }
       getTaskProviderProfile(kind, provider) {
         const profiles = this.plugin.settings[kind]?.providerProfiles;
@@ -12222,7 +12215,7 @@ var require_i18n = __commonJS({
         autoTranslatePrefetchRange: "预翻译范围",
         autoTranslatePrefetchRangeDesc: "控制可见区域前后各预取多少条消息。快速滚动时远离视口的预翻译会被丢弃。",
         autoTranslateConcurrency: "自动翻译并发数",
-        autoTranslateConcurrencyDesc: "同时发起的翻译请求数。默认 4，范围 1-10；提高并发会增加资源消耗，实际速度取决于服务性能。",
+        autoTranslateConcurrencyDesc: "同时发起的翻译请求数。默认 {default}，范围 {min}-{max}；提高并发会增加资源消耗，实际速度取决于服务性能。",
         autoTranslateStrictRetry: "失败后自动严格重试",
         autoTranslateStrictRetryDesc: "模型输出不是目标语言时，先重试失败条目，再严格单条翻译；仍失败才显示重试按钮。",
         showAutoTranslateWarnings: "开启后显示普通自动翻译失败提示",
@@ -12329,7 +12322,7 @@ var require_i18n = __commonJS({
         errorUnsafeEndpoint: "接口地址不安全：远程服务须使用 HTTPS，本机服务可用 HTTP，地址中不能包含用户名或密码。",
         localPrefetchUnavailable: "当前本地服务不启用预翻译，因此范围设置不生效。可见消息翻译仍可使用。",
         localIntakeFixed: "当前本地服务固定使用 DOM 发现消息，此项无需修改。",
-        localConcurrencyDesc: "本地模型也可设置 1-10 个并发请求，每个请求翻译一条消息。请配合本地服务的并发槽位和可用显存调整。",
+        localConcurrencyDesc: "本地模型也可设置 {min}-{max} 个并发请求，每个请求翻译一条消息。请配合本地服务的并发槽位和可用显存调整。",
         localFallbackUnavailable: "本地服务不会自动转发到云端，因此云端回退及顺序在当前模式下不可用。",
         errorTimeout: "API 请求超时。",
         errorNetwork: "网络连接失败。",
@@ -12465,7 +12458,7 @@ var require_i18n = __commonJS({
         autoTranslatePrefetchRange: "Prefetch range",
         autoTranslatePrefetchRangeDesc: "How many messages above and below the visible area should be prefetched. Far prefetch work is dropped during fast scrolling.",
         autoTranslateConcurrency: "Auto-translation concurrency",
-        autoTranslateConcurrencyDesc: "Simultaneous translation requests. Default 4, range 1-10. Higher concurrency uses more resources; actual speed depends on the service.",
+        autoTranslateConcurrencyDesc: "Simultaneous translation requests. Default {default}, range {min}-{max}. Higher concurrency uses more resources; actual speed depends on the service.",
         autoTranslateStrictRetry: "Strict retry after invalid output",
         autoTranslateStrictRetryDesc: "When model output is not in the target language, retry failed items, then use strict single-message translation before showing a retry button.",
         showAutoTranslateWarnings: "Show normal auto-translation failures when enabled",
@@ -12603,7 +12596,7 @@ var require_i18n = __commonJS({
         errorUnsafeEndpoint: "Unsafe endpoint: remote services require HTTPS; loopback services may use HTTP. Do not embed a username or password in the URL.",
         localPrefetchUnavailable: "Prefetch is unavailable for this local provider, so the range does not apply. Visible-message translation remains available.",
         localIntakeFixed: "This local provider uses DOM message discovery. No change is required.",
-        localConcurrencyDesc: "Local models support 1-10 concurrent requests, with one message per request. Adjust to match your local server's parallel slots and available VRAM.",
+        localConcurrencyDesc: "Local models support {min}-{max} concurrent requests, with one message per request. Adjust to match your local server's parallel slots and available VRAM.",
         localFallbackUnavailable: "Local providers never forward requests to the cloud. Cloud fallback and its order are unavailable in this mode.",
         errorTimeout: "API request timed out.",
         errorNetwork: "Network request failed.",
@@ -12901,6 +12894,7 @@ var require_discord_ai_translator = __commonJS({
       MANUAL_LONG_TEXT_WHOLE_PASS_MAX_LENGTH,
       MODEL_REQUEST_TIMEOUT_MS,
       API_TEST_REQUEST_TIMEOUT_MS,
+      API_ENDPOINT_ERROR_MESSAGE_KEYS,
       SCAN_VIEWPORT_BUFFER_PX,
       AUTO_TRANSLATE_VIEWPORT_SETTLE_MS,
       AUTO_TRANSLATE_VIEWPORT_JUMP_SETTLE_MS,
@@ -13659,6 +13653,7 @@ var require_discord_ai_translator = __commonJS({
         this.discordThemeGlobalCandidatesCache = null;
         this.discordThemeVariableValuesCache = null;
         this.activeApiControllers = /* @__PURE__ */ new Set();
+        this.apiRequestsClosed = false;
         this.hotkeyRecordTimer = null;
         this.hotkeyRecordCleanup = null;
         this.observer = null;
@@ -13711,6 +13706,7 @@ var require_discord_ai_translator = __commonJS({
         this.lifecycleStarted = true;
         this.lifecycleToken++;
         this.isStarted = true;
+        this.apiRequestsClosed = false;
         try {
           if (this.settingsLoadBlocked) {
             this.loadSettings();
@@ -13753,6 +13749,7 @@ var require_discord_ai_translator = __commonJS({
             this.isStarted = false;
             this.lifecycleStarted = false;
             this.lifecycleToken++;
+            this.apiRequestsClosed = true;
           }
           throw error;
         }
@@ -13780,6 +13777,7 @@ var require_discord_ai_translator = __commonJS({
         if (this.translationCacheDirtyTimer) clearTimeout(this.translationCacheDirtyTimer);
         if (this.googleTranslateRuntimeDirtyTimer) clearTimeout(this.googleTranslateRuntimeDirtyTimer);
         if (this.diagnosticLogsDirtyTimer) clearTimeout(this.diagnosticLogsDirtyTimer);
+        this.apiRequestsClosed = true;
         this.abortActiveApiRequests();
         this.composerWriter.cancelAll("stop");
         this.clearHotkeyRecording();
@@ -14435,28 +14433,27 @@ var require_discord_ai_translator = __commonJS({
         section.className = "dait-settings-section dait-section-auto-translate";
         const provider = this.getProviderDefaults(this.settings.translation.provider);
         const local = this.isLocalTranslationProvider(this.settings.translation);
-        const noPrefetch = provider?.autoTranslatePrefetchAllowed === false;
-        const fixedIntake = Boolean(provider?.autoTranslateIntakeMode);
-        const maxConcurrency = this.getProviderAutoTranslateConcurrencyMax(this.settings.translation.provider) || AUTO_TRANSLATE_MAX_CONCURRENCY;
+        const prefetchReason = provider?.autoTranslatePrefetchAllowed === false && this.t("localPrefetchUnavailable");
+        const concurrencyRange = { min: AUTO_TRANSLATE_MIN_CONCURRENCY, max: AUTO_TRANSLATE_MAX_CONCURRENCY, default: AUTO_TRANSLATE_DEFAULT_CONCURRENCY };
         const title = document.createElement("h3");
         title.textContent = this.t("autoTranslateSettingsTitle");
         section.appendChild(title);
         section.appendChild(this.createCheckboxRow("ui.autoTranslateMessages", this.t("autoTranslateMessages"), { description: this.t("autoTranslateMessagesDesc") }));
-        section.appendChild(this.createCheckboxRow("ui.autoTranslatePrefetch", this.t("autoTranslatePrefetch"), { disabled: noPrefetch, description: this.t(noPrefetch ? "localPrefetchUnavailable" : "autoTranslatePrefetchDesc") }));
-        section.appendChild(this.createSelectRow("ui.autoTranslatePrefetchRange", this.t("autoTranslatePrefetchRange"), AUTO_TRANSLATE_PREFETCH_RANGES.map((value) => [String(value), String(value)]), { disabled: noPrefetch, description: this.t(noPrefetch ? "localPrefetchUnavailable" : "autoTranslatePrefetchRangeDesc") }));
+        section.appendChild(this.createCheckboxRow("ui.autoTranslatePrefetch", this.t("autoTranslatePrefetch"), { description: this.t("autoTranslatePrefetchDesc"), disabledReason: prefetchReason }));
+        section.appendChild(this.createSelectRow("ui.autoTranslatePrefetchRange", this.t("autoTranslatePrefetchRange"), AUTO_TRANSLATE_PREFETCH_RANGES.map((value) => [String(value), String(value)]), { description: this.t("autoTranslatePrefetchRangeDesc"), disabledReason: prefetchReason }));
         section.appendChild(this.createSelectRow("ui.autoTranslateIntakeMode", this.t("autoTranslateIntakeMode"), [
           ["auto", this.t("autoTranslateIntakeAuto")],
           ["dom", this.t("autoTranslateIntakeDom")],
           ["bdfdb", this.t("autoTranslateIntakeBdfdb")]
-        ], { disabled: fixedIntake, description: this.t(fixedIntake ? "localIntakeFixed" : "autoTranslateIntakeModeDesc") }));
-        section.appendChild(this.createInputRow("ui.autoTranslateConcurrency", this.t("autoTranslateConcurrency"), "number", String(AUTO_TRANSLATE_DEFAULT_CONCURRENCY), { min: String(AUTO_TRANSLATE_MIN_CONCURRENCY), max: String(maxConcurrency), step: "1" }, { description: this.t(local ? "localConcurrencyDesc" : "autoTranslateConcurrencyDesc") }));
+        ], { description: this.t("autoTranslateIntakeModeDesc"), disabledReason: provider?.autoTranslateIntakeMode && this.t("localIntakeFixed") }));
+        section.appendChild(this.createInputRow("ui.autoTranslateConcurrency", this.t("autoTranslateConcurrency"), "number", String(AUTO_TRANSLATE_DEFAULT_CONCURRENCY), { min: String(AUTO_TRANSLATE_MIN_CONCURRENCY), max: String(AUTO_TRANSLATE_MAX_CONCURRENCY), step: "1" }, { description: this.t(local ? "localConcurrencyDesc" : "autoTranslateConcurrencyDesc", concurrencyRange) }));
         section.appendChild(this.createCheckboxRow("ui.autoTranslateStrictRetry", this.t("autoTranslateStrictRetry"), { description: this.t("autoTranslateStrictRetryDesc") }));
         section.appendChild(this.createCurrentChannelPolicyRow());
         section.appendChild(this.createCheckboxRow("ui.historyBackfillEnabled", this.t("historyBackfillEnabled"), { description: this.t("historyBackfillEnabledDesc") }));
         section.appendChild(this.createInputRow("ui.historyBackfillLimit", this.t("historyBackfillLimit"), "number", String(DEFAULT_SETTINGS.ui.historyBackfillLimit), { min: "1", max: "100", step: "1" }, { description: this.t("historyBackfillLimitDesc") }));
         section.appendChild(this.createHistoryBackfillActionRow());
-        section.appendChild(this.createCheckboxRow("ui.providerFallbackEnabled", this.t("providerFallbackEnabled"), { disabled: local, description: this.t(local ? "localFallbackUnavailable" : "providerFallbackEnabledDesc") }));
-        section.appendChild(this.createProviderFallbackOrderRow());
+        section.appendChild(this.createCheckboxRow("ui.providerFallbackEnabled", this.t("providerFallbackEnabled"), { description: this.t("providerFallbackEnabledDesc"), disabledReason: local && this.t("localFallbackUnavailable") }));
+        section.appendChild(this.createProviderFallbackOrderRow(local));
         return section;
       }
       createCurrentChannelPolicyRow() {
@@ -14479,7 +14476,7 @@ var require_discord_ai_translator = __commonJS({
         controls.appendChild(button);
         return this.createRow(this.t("historyBackfillRun"), controls, { description: this.t("historyBackfillRunDesc") });
       }
-      createProviderFallbackOrderRow() {
+      createProviderFallbackOrderRow(local) {
         const textarea = document.createElement("textarea");
         textarea.dataset.daitPath = "ui.providerFallbackOrder";
         textarea.rows = 3;
@@ -14489,8 +14486,8 @@ var require_discord_ai_translator = __commonJS({
           this.preserveSettingsScroll(textarea, () => this.setSetting("ui.providerFallbackOrder", textarea.value));
         });
         return this.createRow(this.t("providerFallbackOrder"), textarea, {
-          disabled: this.isLocalTranslationProvider(this.settings.translation),
-          description: this.isLocalTranslationProvider(this.settings.translation) ? this.t("localFallbackUnavailable") : this.t("providerFallbackOrderDesc", { providers: PROVIDER_ORDER.join(", ") }),
+          description: this.t("providerFallbackOrderDesc", { providers: PROVIDER_ORDER.join(", ") }),
+          disabledReason: local && this.t("localFallbackUnavailable"),
           wide: true
         });
       }
@@ -15356,7 +15353,8 @@ var require_discord_ai_translator = __commonJS({
         return this.createRow(this.t("localModelPreset"), select, { description: this.t("localModelPresetDesc") });
       }
       createRow(labelText, control, options = {}) {
-        if (options.disabled) control.disabled = true;
+        if (options.disabledReason) control.disabled = true;
+        const descriptionText = options.disabledReason || options.description;
         const row = document.createElement("label");
         row.className = "dait-settings-row";
         if (options.checkbox) row.classList.add("dait-settings-row-checkbox");
@@ -15364,10 +15362,10 @@ var require_discord_ai_translator = __commonJS({
         const label = document.createElement("span");
         label.textContent = labelText;
         row.appendChild(label);
-        if (options.description) {
+        if (descriptionText) {
           const description = document.createElement("p");
           description.className = "dait-row-description";
-          description.textContent = options.description;
+          description.textContent = descriptionText;
           row.appendChild(description);
         }
         row.appendChild(control);
@@ -22859,7 +22857,6 @@ var require_discord_ai_translator = __commonJS({
             });
           } catch (error) {
             lastError = error;
-            if (this.isRequestCancelled(error)) throw error;
             previousReason = error?.autoTranslationInvalidReason || error?.autoTranslationCancelReason || this.getAutoTranslationFailureType(error) || "invalid-output";
             this.logManualRescueAttempt(plan, attemptName, index, requestOptions, previousOutput, null, error);
             attempts.push({
@@ -24798,8 +24795,7 @@ var require_discord_ai_translator = __commonJS({
         const status = Number(error?.status || 0);
         let message = "";
         if (this.isRequestCancelled(error)) message = this.t("errorCancelled");
-        else if (error?.code === "INVALID_API_ENDPOINT") message = this.t("errorInvalidEndpoint");
-        else if (error?.code === "UNSAFE_API_ENDPOINT") message = this.t("errorUnsafeEndpoint");
+        else if (Object.hasOwn(API_ENDPOINT_ERROR_MESSAGE_KEYS, error?.code)) message = this.t(API_ENDPOINT_ERROR_MESSAGE_KEYS[error.code]);
         else if (error?.manualTranslationRescueFailed) message = this.t("manualTranslateRescueFailed");
         else if (this.isTimeoutError(error)) message = this.t("errorTimeout");
         else if (error?.localProviderUnavailable) message = this.t("errorLocalProviderUnavailable");
@@ -24900,6 +24896,9 @@ var require_discord_ai_translator = __commonJS({
       }
       setTaskProvider(...args) {
         return this.settingsStore.setTaskProvider(...args);
+      }
+      applyProviderAutoTranslateLimits(...args) {
+        return this.settingsStore.applyProviderAutoTranslateLimits(...args);
       }
       getPromptTemplates(...args) {
         return this.settingsStore.getPromptTemplates(...args);
@@ -25743,9 +25742,6 @@ var require_discord_ai_translator = __commonJS({
       getAutoTranslateQueueLimit(...args) {
         return this.autoQueueCore.getAutoTranslateQueueLimit(...args);
       }
-      getProviderAutoTranslateConcurrencyMax(...args) {
-        return this.autoQueueCore.getProviderAutoTranslateConcurrencyMax(...args);
-      }
       getAutoTranslationRequestBatchSize(...args) {
         return this.autoQueueCore.getAutoTranslationRequestBatchSize(...args);
       }
@@ -26133,6 +26129,9 @@ var require_discord_ai_translator = __commonJS({
       }
       createAutoTranslationStaleError(...args) {
         return this.autoRequestPipeline.createAutoTranslationStaleError(...args);
+      }
+      isAbandonedTranslationError(...args) {
+        return this.autoRequestPipeline.isAbandonedTranslationError(...args);
       }
       runAutoTranslationStrictFallbackTask(...args) {
         return this.autoRequestPipeline.runAutoTranslationStrictFallbackTask(...args);

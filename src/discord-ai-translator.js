@@ -95,6 +95,7 @@ const {
     MANUAL_LONG_TEXT_WHOLE_PASS_MAX_LENGTH,
     MODEL_REQUEST_TIMEOUT_MS,
     API_TEST_REQUEST_TIMEOUT_MS,
+    API_ENDPOINT_ERROR_MESSAGE_KEYS,
     SCAN_VIEWPORT_BUFFER_PX,
     AUTO_TRANSLATE_VIEWPORT_SETTLE_MS,
     AUTO_TRANSLATE_VIEWPORT_JUMP_SETTLE_MS,
@@ -936,6 +937,8 @@ module.exports = class DiscordAITranslator {
         this.discordThemeGlobalCandidatesCache = null;
         this.discordThemeVariableValuesCache = null;
         this.activeApiControllers = new Set();
+        // Set by stop() so retry, rescue and fallback loops cannot send text after the plugin is disabled.
+        this.apiRequestsClosed = false;
         this.hotkeyRecordTimer = null;
         this.hotkeyRecordCleanup = null;
         this.observer = null;
@@ -989,6 +992,7 @@ module.exports = class DiscordAITranslator {
         this.lifecycleStarted = true;
         this.lifecycleToken++;
         this.isStarted = true;
+        this.apiRequestsClosed = false;
         try {
             if (this.settingsLoadBlocked) {
                 this.loadSettings();
@@ -1034,6 +1038,7 @@ module.exports = class DiscordAITranslator {
                 this.isStarted = false;
                 this.lifecycleStarted = false;
                 this.lifecycleToken++;
+                this.apiRequestsClosed = true;
             }
             throw error;
         }
@@ -1062,6 +1067,7 @@ module.exports = class DiscordAITranslator {
         if (this.translationCacheDirtyTimer) clearTimeout(this.translationCacheDirtyTimer);
         if (this.googleTranslateRuntimeDirtyTimer) clearTimeout(this.googleTranslateRuntimeDirtyTimer);
         if (this.diagnosticLogsDirtyTimer) clearTimeout(this.diagnosticLogsDirtyTimer);
+        this.apiRequestsClosed = true;
         this.abortActiveApiRequests();
         this.composerWriter.cancelAll("stop");
         this.clearHotkeyRecording();
@@ -1798,30 +1804,29 @@ module.exports = class DiscordAITranslator {
         section.className = "dait-settings-section dait-section-auto-translate";
         const provider = this.getProviderDefaults(this.settings.translation.provider);
         const local = this.isLocalTranslationProvider(this.settings.translation);
-        const noPrefetch = provider?.autoTranslatePrefetchAllowed === false;
-        const fixedIntake = Boolean(provider?.autoTranslateIntakeMode);
-        const maxConcurrency = this.getProviderAutoTranslateConcurrencyMax(this.settings.translation.provider) || AUTO_TRANSLATE_MAX_CONCURRENCY;
+        const prefetchReason = provider?.autoTranslatePrefetchAllowed === false && this.t("localPrefetchUnavailable");
+        const concurrencyRange = { min: AUTO_TRANSLATE_MIN_CONCURRENCY, max: AUTO_TRANSLATE_MAX_CONCURRENCY, default: AUTO_TRANSLATE_DEFAULT_CONCURRENCY };
 
         const title = document.createElement("h3");
         title.textContent = this.t("autoTranslateSettingsTitle");
         section.appendChild(title);
 
         section.appendChild(this.createCheckboxRow("ui.autoTranslateMessages", this.t("autoTranslateMessages"), { description: this.t("autoTranslateMessagesDesc") }));
-        section.appendChild(this.createCheckboxRow("ui.autoTranslatePrefetch", this.t("autoTranslatePrefetch"), { disabled: noPrefetch, description: this.t(noPrefetch ? "localPrefetchUnavailable" : "autoTranslatePrefetchDesc") }));
-        section.appendChild(this.createSelectRow("ui.autoTranslatePrefetchRange", this.t("autoTranslatePrefetchRange"), AUTO_TRANSLATE_PREFETCH_RANGES.map(value => [String(value), String(value)]), { disabled: noPrefetch, description: this.t(noPrefetch ? "localPrefetchUnavailable" : "autoTranslatePrefetchRangeDesc") }));
+        section.appendChild(this.createCheckboxRow("ui.autoTranslatePrefetch", this.t("autoTranslatePrefetch"), { description: this.t("autoTranslatePrefetchDesc"), disabledReason: prefetchReason }));
+        section.appendChild(this.createSelectRow("ui.autoTranslatePrefetchRange", this.t("autoTranslatePrefetchRange"), AUTO_TRANSLATE_PREFETCH_RANGES.map(value => [String(value), String(value)]), { description: this.t("autoTranslatePrefetchRangeDesc"), disabledReason: prefetchReason }));
         section.appendChild(this.createSelectRow("ui.autoTranslateIntakeMode", this.t("autoTranslateIntakeMode"), [
             ["auto", this.t("autoTranslateIntakeAuto")],
             ["dom", this.t("autoTranslateIntakeDom")],
             ["bdfdb", this.t("autoTranslateIntakeBdfdb")]
-        ], { disabled: fixedIntake, description: this.t(fixedIntake ? "localIntakeFixed" : "autoTranslateIntakeModeDesc") }));
-        section.appendChild(this.createInputRow("ui.autoTranslateConcurrency", this.t("autoTranslateConcurrency"), "number", String(AUTO_TRANSLATE_DEFAULT_CONCURRENCY), { min: String(AUTO_TRANSLATE_MIN_CONCURRENCY), max: String(maxConcurrency), step: "1" }, { description: this.t(local ? "localConcurrencyDesc" : "autoTranslateConcurrencyDesc") }));
+        ], { description: this.t("autoTranslateIntakeModeDesc"), disabledReason: provider?.autoTranslateIntakeMode && this.t("localIntakeFixed") }));
+        section.appendChild(this.createInputRow("ui.autoTranslateConcurrency", this.t("autoTranslateConcurrency"), "number", String(AUTO_TRANSLATE_DEFAULT_CONCURRENCY), { min: String(AUTO_TRANSLATE_MIN_CONCURRENCY), max: String(AUTO_TRANSLATE_MAX_CONCURRENCY), step: "1" }, { description: this.t(local ? "localConcurrencyDesc" : "autoTranslateConcurrencyDesc", concurrencyRange) }));
         section.appendChild(this.createCheckboxRow("ui.autoTranslateStrictRetry", this.t("autoTranslateStrictRetry"), { description: this.t("autoTranslateStrictRetryDesc") }));
         section.appendChild(this.createCurrentChannelPolicyRow());
         section.appendChild(this.createCheckboxRow("ui.historyBackfillEnabled", this.t("historyBackfillEnabled"), { description: this.t("historyBackfillEnabledDesc") }));
         section.appendChild(this.createInputRow("ui.historyBackfillLimit", this.t("historyBackfillLimit"), "number", String(DEFAULT_SETTINGS.ui.historyBackfillLimit), { min: "1", max: "100", step: "1" }, { description: this.t("historyBackfillLimitDesc") }));
         section.appendChild(this.createHistoryBackfillActionRow());
-        section.appendChild(this.createCheckboxRow("ui.providerFallbackEnabled", this.t("providerFallbackEnabled"), { disabled: local, description: this.t(local ? "localFallbackUnavailable" : "providerFallbackEnabledDesc") }));
-        section.appendChild(this.createProviderFallbackOrderRow());
+        section.appendChild(this.createCheckboxRow("ui.providerFallbackEnabled", this.t("providerFallbackEnabled"), { description: this.t("providerFallbackEnabledDesc"), disabledReason: local && this.t("localFallbackUnavailable") }));
+        section.appendChild(this.createProviderFallbackOrderRow(local));
 
         return section;
     }
@@ -1848,7 +1853,7 @@ module.exports = class DiscordAITranslator {
         return this.createRow(this.t("historyBackfillRun"), controls, { description: this.t("historyBackfillRunDesc") });
     }
 
-    createProviderFallbackOrderRow() {
+    createProviderFallbackOrderRow(local) {
         const textarea = document.createElement("textarea");
         textarea.dataset.daitPath = "ui.providerFallbackOrder";
         textarea.rows = 3;
@@ -1858,8 +1863,8 @@ module.exports = class DiscordAITranslator {
             this.preserveSettingsScroll(textarea, () => this.setSetting("ui.providerFallbackOrder", textarea.value));
         });
         return this.createRow(this.t("providerFallbackOrder"), textarea, {
-            disabled: this.isLocalTranslationProvider(this.settings.translation),
-            description: this.isLocalTranslationProvider(this.settings.translation) ? this.t("localFallbackUnavailable") : this.t("providerFallbackOrderDesc", { providers: PROVIDER_ORDER.join(", ") }),
+            description: this.t("providerFallbackOrderDesc", { providers: PROVIDER_ORDER.join(", ") }),
+            disabledReason: local && this.t("localFallbackUnavailable"),
             wide: true
         });
     }
@@ -2870,7 +2875,9 @@ module.exports = class DiscordAITranslator {
     }
 
     createRow(labelText, control, options = {}) {
-        if (options.disabled) control.disabled = true;
+        // A locked control always shows why it is locked in place of its usual description.
+        if (options.disabledReason) control.disabled = true;
+        const descriptionText = options.disabledReason || options.description;
         const row = document.createElement("label");
         row.className = "dait-settings-row";
         if (options.checkbox) row.classList.add("dait-settings-row-checkbox");
@@ -2880,10 +2887,10 @@ module.exports = class DiscordAITranslator {
         label.textContent = labelText;
 
         row.appendChild(label);
-        if (options.description) {
+        if (descriptionText) {
             const description = document.createElement("p");
             description.className = "dait-row-description";
-            description.textContent = options.description;
+            description.textContent = descriptionText;
             row.appendChild(description);
         }
         row.appendChild(control);
@@ -11023,7 +11030,6 @@ module.exports = class DiscordAITranslator {
             }
             catch (error) {
                 lastError = error;
-                if (this.isRequestCancelled(error)) throw error;
                 previousReason = error?.autoTranslationInvalidReason || error?.autoTranslationCancelReason || this.getAutoTranslationFailureType(error) || "invalid-output";
                 this.logManualRescueAttempt(plan, attemptName, index, requestOptions, previousOutput, null, error);
                 attempts.push({
@@ -13258,8 +13264,7 @@ module.exports = class DiscordAITranslator {
         const status = Number(error?.status || 0);
         let message = "";
         if (this.isRequestCancelled(error)) message = this.t("errorCancelled");
-        else if (error?.code === "INVALID_API_ENDPOINT") message = this.t("errorInvalidEndpoint");
-        else if (error?.code === "UNSAFE_API_ENDPOINT") message = this.t("errorUnsafeEndpoint");
+        else if (Object.hasOwn(API_ENDPOINT_ERROR_MESSAGE_KEYS, error?.code)) message = this.t(API_ENDPOINT_ERROR_MESSAGE_KEYS[error.code]);
         else if (error?.manualTranslationRescueFailed) message = this.t("manualTranslateRescueFailed");
         else if (this.isTimeoutError(error)) message = this.t("errorTimeout");
         else if (error?.localProviderUnavailable) message = this.t("errorLocalProviderUnavailable");
@@ -13336,6 +13341,7 @@ module.exports = class DiscordAITranslator {
     getEffectiveTaskConfig(...args) { return this.settingsStore.getEffectiveTaskConfig(...args); }
     getTaskProviderProfile(...args) { return this.settingsStore.getTaskProviderProfile(...args); }
     setTaskProvider(...args) { return this.settingsStore.setTaskProvider(...args); }
+    applyProviderAutoTranslateLimits(...args) { return this.settingsStore.applyProviderAutoTranslateLimits(...args); }
     getPromptTemplates(...args) { return this.settingsStore.getPromptTemplates(...args); }
     ensurePromptTemplateSerials(...args) { return this.settingsStore.ensurePromptTemplateSerials(...args); }
     getNextPromptTemplateSerial(...args) { return this.settingsStore.getNextPromptTemplateSerial(...args); }
@@ -13625,7 +13631,6 @@ module.exports = class DiscordAITranslator {
     cancelAutoTranslationRuntimeWork(...args) { return this.autoQueueCore.cancelAutoTranslationRuntimeWork(...args); }
     getAutoTranslateBatchSize(...args) { return this.autoQueueCore.getAutoTranslateBatchSize(...args); }
     getAutoTranslateQueueLimit(...args) { return this.autoQueueCore.getAutoTranslateQueueLimit(...args); }
-    getProviderAutoTranslateConcurrencyMax(...args) { return this.autoQueueCore.getProviderAutoTranslateConcurrencyMax(...args); }
     getAutoTranslationRequestBatchSize(...args) { return this.autoQueueCore.getAutoTranslationRequestBatchSize(...args); }
     normalizeAutoTranslateConcurrency(...args) { return this.autoQueueCore.normalizeAutoTranslateConcurrency(...args); }
     normalizeAutoTranslateIntakeMode(...args) { return this.autoQueueCore.normalizeAutoTranslateIntakeMode(...args); }
@@ -13757,6 +13762,7 @@ module.exports = class DiscordAITranslator {
     getAutoTranslationRequestTimeoutMs(...args) { return this.autoRequestPipeline.getAutoTranslationRequestTimeoutMs(...args); }
     createFinalInvalidAutoTranslationError(...args) { return this.autoRequestPipeline.createFinalInvalidAutoTranslationError(...args); }
     createAutoTranslationStaleError(...args) { return this.autoRequestPipeline.createAutoTranslationStaleError(...args); }
+    isAbandonedTranslationError(...args) { return this.autoRequestPipeline.isAbandonedTranslationError(...args); }
     runAutoTranslationStrictFallbackTask(...args) { return this.autoRequestPipeline.runAutoTranslationStrictFallbackTask(...args); }
     runAutoTranslationBatchTask(...args) { return this.autoRequestPipeline.runAutoTranslationBatchTask(...args); }
     getAutoTranslationOptions(...args) { return this.autoRequestPipeline.getAutoTranslationOptions(...args); }

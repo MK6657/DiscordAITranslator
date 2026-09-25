@@ -4,6 +4,7 @@
 // Extracted from discord-ai-translator.js behind a facade: every cross-subsystem call
 // goes through this.plugin so the main class keeps its full (test-visible) surface.
 const {
+    API_ENDPOINT_ERROR_MESSAGE_KEYS,
     AUTO_TRANSLATE_BATCH_MULTIPLIER,
     AUTO_TRANSLATE_DEFAULT_CONCURRENCY,
     AUTO_TRANSLATE_DEFAULT_PREFETCH_RANGE,
@@ -1016,9 +1017,7 @@ class AutoTranslationQueueCore {
 
     getAutoTranslateConcurrency() {
         if (!this.plugin.isAutoTranslateEnabled()) return 0;
-        const configured = this.plugin.normalizeAutoTranslateConcurrency(this.plugin.settings.ui?.autoTranslateConcurrency);
-        const providerLimit = this.plugin.getProviderAutoTranslateConcurrencyMax(this.plugin.settings.translation?.provider);
-        return providerLimit ? Math.min(configured, providerLimit) : configured;
+        return this.plugin.normalizeAutoTranslateConcurrency(this.plugin.settings.ui?.autoTranslateConcurrency);
     }
 
     getAutoTranslatePrefetchRange() {
@@ -1069,11 +1068,6 @@ class AutoTranslationQueueCore {
         if (this.plugin.isLocalTranslationProvider(this.plugin.settings.translation)) return batchSize;
         const requestWindow = this.plugin.getAutoTranslateConcurrency() * this.plugin.getAutoTranslationRequestBatchSize() * 2;
         return Math.max(batchSize, requestWindow, batchSize * AUTO_TRANSLATE_QUEUE_MULTIPLIER);
-    }
-
-    getProviderAutoTranslateConcurrencyMax(provider) {
-        const limit = Number(this.plugin.getProviderDefaults(provider)?.autoTranslateConcurrencyMax || 0);
-        return Number.isFinite(limit) && limit > 0 ? Math.round(limit) : 0;
     }
 
     getAutoTranslationRequestBatchSize(options = null) {
@@ -2113,7 +2107,7 @@ class AutoTranslationQueueCore {
 
     getAutoTranslationFailureType(error) {
         if (this.plugin.isRequestCancelled(error)) return "cancelled";
-        if (["INVALID_API_ENDPOINT", "UNSAFE_API_ENDPOINT"].includes(error?.code)) return "client";
+        if (Object.hasOwn(API_ENDPOINT_ERROR_MESSAGE_KEYS, error?.code)) return "client";
         const status = Number(error?.status || 0);
         if (error?.modelOutputTruncated) return "truncated";
         if (error?.localProviderUnavailable) return "local-unavailable";

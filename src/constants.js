@@ -115,7 +115,6 @@ const PROVIDER_DEFAULTS = {
         endpoint: "http://127.0.0.1:8080/v1/chat/completions",
         model: "local-model",
         apiKeyOptional: true,
-        autoTranslateConcurrencyMax: 10,
         autoTranslatePrefetchAllowed: false,
         autoTranslateIntakeMode: "dom",
         autoTranslateRequestBatchSize: 1,
@@ -378,6 +377,11 @@ const AUTO_TRANSLATE_CLOUD_LONG_TEXT_TIMEOUT_MAX_MS = 45000;
 const MANUAL_LONG_TEXT_WHOLE_PASS_MAX_LENGTH = 1800;
 const MODEL_REQUEST_TIMEOUT_MS = 45000;
 const API_TEST_REQUEST_TIMEOUT_MS = 15000;
+// Error codes thrown by assertSafeRequestEndpoint, mapped to their localized messages.
+const API_ENDPOINT_ERROR_MESSAGE_KEYS = Object.freeze({
+    INVALID_API_ENDPOINT: "errorInvalidEndpoint",
+    UNSAFE_API_ENDPOINT: "errorUnsafeEndpoint"
+});
 const SCAN_VIEWPORT_BUFFER_PX = 480;
 const AUTO_TRANSLATE_VIEWPORT_SETTLE_MS = 450;
 const AUTO_TRANSLATE_VIEWPORT_JUMP_SETTLE_MS = 900;
@@ -817,6 +821,7 @@ module.exports = {
     MANUAL_LONG_TEXT_WHOLE_PASS_MAX_LENGTH,
     MODEL_REQUEST_TIMEOUT_MS,
     API_TEST_REQUEST_TIMEOUT_MS,
+    API_ENDPOINT_ERROR_MESSAGE_KEYS,
     SCAN_VIEWPORT_BUFFER_PX,
     AUTO_TRANSLATE_VIEWPORT_SETTLE_MS,
     AUTO_TRANSLATE_VIEWPORT_JUMP_SETTLE_MS,

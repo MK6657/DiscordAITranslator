@@ -110,6 +110,61 @@ test("cancelled long-text chunk does not run rescue or subsequent chunks", async
     assert.equal(rescues,0);
 });
 
+test("stop() refuses new provider requests until the plugin starts again", async t => {
+    const fetch = t.mock.method(globalThis, "fetch", async () => ({ok:true,text:async () => "ok"}));
+    const saved = {document: globalThis.document, window: globalThis.window};
+    globalThis.document = {addEventListener() {}, removeEventListener() {}, querySelectorAll: () => [], getElementById: () => null};
+    globalThis.window = {addEventListener() {}, removeEventListener() {}};
+    t.after(() => Object.assign(globalThis, saved));
+    const plugin = new Plugin();
+    Object.assign(plugin, {
+        loadSettings: () => true,
+        loadDiagnosticLogs() {},
+        loadTranslationCache() {},
+        injectStyles() {},
+        patchMessageContextMenu() {},
+        startObserver() {},
+        queueScan() {},
+        showToast() {}
+    });
+    plugin.start();
+    plugin.stop();
+    // A retry or fallback loop that outlives stop() must not reach the network.
+    await assert.rejects(plugin.fetchApiResponseText(endpoint, request, 1000), {code:"REQUEST_CANCELLED"});
+    assert.equal(fetch.mock.callCount(), 0);
+    assert.equal(plugin.activeApiControllers.size, 0);
+    plugin.start();
+    assert.equal(await plugin.fetchApiResponseText(endpoint, request, 1000), "ok");
+    assert.equal(fetch.mock.callCount(), 1);
+    plugin.stop();
+});
+
+test("provider fallback ends at a cancelled attempt instead of trying the next provider", async () => {
+    const plugin = new Plugin();
+    plugin.settings.ui.providerFallbackEnabled = true;
+    plugin.settings.ui.providerFallbackOrder = ["openaiCompatible", "googleCloud"];
+    plugin.hasUsableApiConfig = () => true;
+    let attempts = 0;
+    plugin.runModelTask = async () => {
+        attempts++;
+        throw Object.assign(new Error("cancelled"), {code:"REQUEST_CANCELLED"});
+    };
+    const serverError = Object.assign(new Error("API_ERROR"), {status:500});
+    await assert.rejects(plugin.tryProviderFallbackModelTask("translation", "synthetic text", {mode:"manual"}, serverError, {provider:"deepseek"}), {code:"REQUEST_CANCELLED"});
+    assert.equal(attempts, 1);
+});
+
+test("switching to a local provider in the settings panel applies its locked scheduling values", () => {
+    const plugin = new Plugin();
+    plugin.settings.ui.autoTranslatePrefetch = true;
+    plugin.settings.ui.autoTranslateIntakeMode = "auto";
+    plugin.setTaskProvider("translation", "sakuraLocal");
+    clearTimeout(plugin.settingsDirtyTimer);
+    assert.equal(plugin.settings.translation.provider, "sakuraLocal");
+    assert.equal(plugin.settings.ui.autoTranslatePrefetch, false);
+    assert.equal(plugin.settings.ui.autoTranslateIntakeMode, "dom");
+});
+
 test("standard service errors retain their categories", () => {
     const plugin = new Plugin();
     for (const [status,type] of [[401,"auth"],[403,"auth"],[429,"rate-limit"],[500,"server"],[400,"client"]]) {

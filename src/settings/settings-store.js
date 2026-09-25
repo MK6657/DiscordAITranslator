@@ -403,10 +403,8 @@ class SettingsStore {
             changed = true;
         }
         const autoTranslateConcurrency = this.plugin.normalizeAutoTranslateConcurrency(this.plugin.settings.ui.autoTranslateConcurrency);
-        const providerConcurrencyMax = this.plugin.getProviderAutoTranslateConcurrencyMax(this.plugin.settings.translation?.provider);
-        const effectiveAutoTranslateConcurrency = providerConcurrencyMax ? Math.min(autoTranslateConcurrency, providerConcurrencyMax) : autoTranslateConcurrency;
-        if (effectiveAutoTranslateConcurrency !== this.plugin.settings.ui.autoTranslateConcurrency) {
-            this.plugin.settings.ui.autoTranslateConcurrency = effectiveAutoTranslateConcurrency;
+        if (autoTranslateConcurrency !== this.plugin.settings.ui.autoTranslateConcurrency) {
+            this.plugin.settings.ui.autoTranslateConcurrency = autoTranslateConcurrency;
             changed = true;
         }
         if (typeof this.plugin.settings.ui.autoTranslateStrictRetry !== "boolean") {
@@ -604,9 +602,7 @@ class SettingsStore {
             value = String(value || "");
         }
         if (path === "ui.autoTranslateConcurrency") {
-            const normalized = this.plugin.normalizeAutoTranslateConcurrency(value);
-            const providerMax = this.plugin.getProviderAutoTranslateConcurrencyMax(this.plugin.settings.translation?.provider);
-            value = providerMax ? Math.min(normalized, providerMax) : normalized;
+            value = this.plugin.normalizeAutoTranslateConcurrency(value);
         }
         if (path === "ui.autoTranslatePrefetchRange") {
             value = this.plugin.normalizeAutoTranslatePrefetchRange(value);
@@ -661,22 +657,7 @@ class SettingsStore {
                 this.plugin.settings.googleTranslate.keyPoolText = normalized.keyPoolText;
             }
         }
-        if (path === "translation.provider" && this.plugin.isLocalTranslationProvider(value)) {
-            const providerMax = this.plugin.getProviderAutoTranslateConcurrencyMax(value);
-            if (providerMax && this.plugin.normalizeAutoTranslateConcurrency(this.plugin.settings.ui.autoTranslateConcurrency) > providerMax) {
-                this.plugin.settings.ui.autoTranslateConcurrency = providerMax;
-                this.plugin.syncSettingControls("ui.autoTranslateConcurrency", providerMax, { includeActive: true });
-            }
-            if (this.plugin.getProviderDefaults(value)?.autoTranslatePrefetchAllowed === false && this.plugin.settings.ui.autoTranslatePrefetch) {
-                this.plugin.settings.ui.autoTranslatePrefetch = false;
-                this.plugin.syncSettingControls("ui.autoTranslatePrefetch", false, { includeActive: true });
-            }
-            const providerIntakeMode = this.plugin.getProviderDefaults(value)?.autoTranslateIntakeMode;
-            if (providerIntakeMode && this.plugin.settings.ui.autoTranslateIntakeMode !== providerIntakeMode) {
-                this.plugin.settings.ui.autoTranslateIntakeMode = providerIntakeMode;
-                this.plugin.syncSettingControls("ui.autoTranslateIntakeMode", providerIntakeMode, { includeActive: true });
-            }
-        }
+        if (path === "translation.provider") this.plugin.applyProviderAutoTranslateLimits(value);
         if (options.save === false) {}
         else if (options.save === "immediate") this.plugin.saveSettings({ retryOnError: options.retryOnError });
         else this.plugin.saveSettings({ debounce: true, delayMs: options.delayMs });
@@ -756,11 +737,27 @@ class SettingsStore {
         }
         this.plugin.settings[kind].provider = nextProvider;
         this.plugin.applyProviderPreset(kind, nextProvider, { restoreProfile: true, save: false, syncControls: false, invalidate: false });
+        if (kind === "translation") this.plugin.applyProviderAutoTranslateLimits(nextProvider);
         this.plugin.resetApiStatus(kind, { save: false });
         this.plugin.saveSettings({ debounce: true });
         this.plugin.syncSettingControls(`${kind}.provider`, nextProvider);
         if (kind === "translation") this.plugin.invalidateAutoTranslationQueue();
         this.plugin.queueScan();
+    }
+
+    // Both provider-switch paths apply the provider's fixed scheduling rules. The
+    // settings panel locks these controls, so a stale value could not be corrected there.
+    applyProviderAutoTranslateLimits(provider) {
+        const defaults = this.plugin.getProviderDefaults(provider);
+        if (defaults?.autoTranslatePrefetchAllowed === false && this.plugin.settings.ui.autoTranslatePrefetch) {
+            this.plugin.settings.ui.autoTranslatePrefetch = false;
+            this.plugin.syncSettingControls("ui.autoTranslatePrefetch", false, { includeActive: true });
+        }
+        const intakeMode = defaults?.autoTranslateIntakeMode;
+        if (intakeMode && this.plugin.settings.ui.autoTranslateIntakeMode !== intakeMode) {
+            this.plugin.settings.ui.autoTranslateIntakeMode = intakeMode;
+            this.plugin.syncSettingControls("ui.autoTranslateIntakeMode", intakeMode, { includeActive: true });
+        }
     }
 
     getTaskProviderProfile(kind, provider) {
