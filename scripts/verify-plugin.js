@@ -13220,7 +13220,8 @@ global.document = {
     const manualSourceContent = { dataset: {}, isConnected: true, text: manualSourceShort };
     await manualSourcePlugin.translateMessage(manualSourceMessage, manualSourceContent, null);
     assert.equal(manualSourceRequestedText, manualSourceFull);
-    assert.equal(manualSourceRendered.sourceText, manualSourceFull);
+    // The store text is only the request text: the line is keyed on the text on screen.
+    assert.equal(manualSourceRendered.sourceText, manualSourceShort);
 
     const manualPartialPlugin = new Plugin();
     manualPartialPlugin.settings.translation.enabled = true;

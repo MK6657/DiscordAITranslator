@@ -13,6 +13,7 @@ const { TranslationCacheStore } = require("./cache/translation-cache-store");
 const { PLUGIN_VERSION } = require("./version");
 const { ProviderLayer } = require("./providers/provider-layer");
 const { SettingsStore } = require("./settings/settings-store");
+const { convertDiscordMarkupToDisplayText, DISCORD_MARKUP_DISPLAY_TEXT_MEMO_MAX } = require("./intake/discord-markup");
 
 const {
     PLUGIN_NAME,
@@ -1149,6 +1150,11 @@ module.exports = class DiscordAITranslator {
         this.cachedDrawMemo.clear();
         this.cachedDrawMessageMemo = new WeakMap();
         this.cachedDrawScroller = null;
+        // The observer that invalidates these is disconnected: a message edited while the plugin is
+        // off must be read again, and style changes marked above are never observed.
+        this.elementTextCache = typeof WeakMap === "function" ? new WeakMap() : null;
+        this.translationSourceStyleMutationCounts = typeof WeakMap === "function" ? new WeakMap() : null;
+        this.pendingMutationScanRoots?.clear?.();
         this.autoTranslationOwnScrolls = new WeakMap();
         this.autoTranslationLastExternalScrollAt = 0;
         this.lastAutoTranslationDecisions.clear();
@@ -4478,6 +4484,9 @@ module.exports = class DiscordAITranslator {
         if (!this.isStarted) return;
         const type = String(event?.type || "");
         if (type === "scroll" && !this.isAutoTranslateEnabled()) return;
+        // The capturing listener also hears focus moving between Discord's own elements; only the
+        // window regaining focus asks for a scan.
+        if (type === "focus" && event?.target && (typeof window === "undefined" || event.target !== window)) return;
         if (this.isDiscordMediaViewerQuiet()) return;
         if (this.isDiscordMediaViewerViewportEvent(event)) return;
         if (type === "scroll" && !this.isAutoTranslationScrollEventRelevant(event)) return;
@@ -4738,6 +4747,8 @@ module.exports = class DiscordAITranslator {
         }
         const routeChanged = this.trackAutoTranslationRouteChange();
         if (routeChanged) {
+            // The previous chat's scroller is unmounted; the draw pass finds the new one.
+            this.cachedDrawScroller = null;
             const delayMs = Math.max(
                 AUTO_TRANSLATE_VIEWPORT_STABLE_RESCAN_MS,
                 this.getAutoTranslationViewportSettleRemainingMs()
@@ -4796,7 +4807,7 @@ module.exports = class DiscordAITranslator {
         }
         else {
             this.cancelIncrementalMessageScan();
-            if (this.settings.ui.injectMessageButtons) this.injectMessageButtons(context);
+            if (this.shouldInjectMessageButtons()) this.injectMessageButtons(context);
             finishStage("buttonMs");
             if (this.isAutoTranslateEnabled()) this.queueAutoTranslateVisibleMessages(context);
             finishStage("autoMs");
@@ -4813,7 +4824,7 @@ module.exports = class DiscordAITranslator {
 
     shouldUseIncrementalMessageScan(context = null) {
         if (!context?.messageNodes?.length) return false;
-        if (!this.isAutoTranslateEnabled() && !this.settings.ui?.injectMessageButtons) return false;
+        if (!this.isAutoTranslateEnabled() && !this.shouldInjectMessageButtons()) return false;
         if (typeof window === "undefined" || typeof window.requestIdleCallback !== "function") return false;
         return true;
     }
@@ -4824,7 +4835,7 @@ module.exports = class DiscordAITranslator {
         const messageNodes = [...new Set(context?.messageNodes || [])];
         const tasks = [];
         messageNodes.forEach(messageNode => {
-            if (this.settings.ui.injectMessageButtons) tasks.push({ kind: "button", messageNode });
+            if (this.shouldInjectMessageButtons()) tasks.push({ kind: "button", messageNode });
             if (this.isAutoTranslateEnabled()) tasks.push({ kind: "auto", messageNode });
         });
         let index = 0;
@@ -4880,7 +4891,7 @@ module.exports = class DiscordAITranslator {
                 if (messageNode?.isConnected) {
                     try {
                         if (task.kind === "button") {
-                            if (this.settings.ui?.injectMessageButtons) this.injectMessageButton(messageNode, context);
+                            if (this.shouldInjectMessageButtons()) this.injectMessageButton(messageNode, context);
                         }
                         else if (work) {
                             let candidates = this.createDomAutoTranslationCandidatesForMessage(messageNode, context);
@@ -5156,6 +5167,9 @@ module.exports = class DiscordAITranslator {
         if (!this.settings.ui.injectMessageContextMenu || !bdApi?.ContextMenu?.patch || !bdApi.ContextMenu?.buildMenuChildren) return;
 
         const patch = (tree, props) => {
+            // Menus are built when they open, so channel translation being off (however it was
+            // switched) simply adds nothing; switching it back on needs no new patch.
+            if (!this.shouldInjectMessageContextMenu()) return;
             const items = [{
                 id: "dait-translate-message",
                 label: this.t("translateMenu", { targetLanguage: this.getDisplayLanguage(this.settings.translation.targetLanguage) }),
@@ -6765,19 +6779,36 @@ module.exports = class DiscordAITranslator {
         document.querySelectorAll(".dait-message-button").forEach(button => this.applyMessageButtonVisibilityToButton(button));
     }
 
+    // The per-message Translate button and context-menu item exist only while channel translation is on.
+    shouldInjectMessageButtons() {
+        return Boolean(this.settings.translation?.enabled && this.settings.ui?.injectMessageButtons);
+    }
+
+    shouldInjectMessageContextMenu() {
+        return Boolean(this.settings.translation?.enabled && this.settings.ui?.injectMessageContextMenu);
+    }
+
+    // Applies a change of channel translation: its buttons go now and come back with the next scan.
+    // The context-menu patch checks the switch each time a menu opens.
+    syncMessageTranslationEntryPoints() {
+        if (!this.shouldInjectMessageButtons() && typeof document !== "undefined") {
+            document.querySelectorAll?.(".dait-message-button")?.forEach(node => node.remove());
+        }
+    }
+
     injectMessageButtons(context = this.createScanContext()) {
         const messageNodes = context.messageNodes;
         messageNodes.forEach(messageNode => this.injectMessageButton(messageNode, context));
     }
 
     injectMessageButton(messageNode, context = null) {
-        if (!this.settings.ui?.injectMessageButtons) return false;
+        if (!this.shouldInjectMessageButtons()) return false;
         if (!messageNode || messageNode.isConnected === false) return false;
         const content = this.getMessageContentElement(messageNode, context);
         if (!content) return false;
 
         const text = this.getCachedElementText(content, context);
-        if (!text) return false;
+        if (!this.hasTranslatableMessageText(text)) return false;
 
         let button = content.querySelector(":scope > .dait-message-button");
         if (!button) {
@@ -6885,15 +6916,7 @@ module.exports = class DiscordAITranslator {
             "[id*='translator']",
             "[id^='translate']",
             "[id*='-translate']",
-            "[id*='_translate']",
-            "[aria-label*='Translate']",
-            "[aria-label*='translation']",
-            "[aria-label*='翻译']",
-            "[aria-label*='译文']",
-            "[title*='Translate']",
-            "[title*='translation']",
-            "[title*='翻译']",
-            "[title*='译文']"
+            "[id*='_translate']"
         ];
     }
 
@@ -6912,36 +6935,34 @@ module.exports = class DiscordAITranslator {
     isForeignTranslationElement(element) {
         if (!element || element.nodeType !== 1) return false;
         if (element.classList?.contains?.("dait-translation-line") || element.classList?.contains?.("dait-translation-box")) return true;
+        // Links, mentions, emoji and spoilers are message content: a URL, title or emoji name is what
+        // the author wrote, whatever words it contains.
+        const tag = String(element.tagName || "").toLowerCase();
+        if (tag === "a" || tag === "img") return false;
 
         const identityText = this.getElementForeignTranslationIdentityText(element);
         const normalized = identityText.replace(/notranslate/gi, "");
-        if (/(translation|translated|translator|deepl|google[-_\s]?translate|i18n|l10n|intl|译文|翻译|已翻译)/i.test(normalized)) return true;
+        if (/(translation|translated|translator|deepl|google[-_\s]?translate|译文|翻译|已翻译)/i.test(normalized)) return true;
         if (/(^|[^a-z])translate([^a-z]|$)/i.test(normalized)) return true;
 
-        const tag = String(element.tagName || "").toLowerCase();
-        const role = String(element.getAttribute?.("role") || "").toLowerCase();
-        if (tag === "button" || role === "button") {
+        if (tag === "button") {
             const label = this.getElementControlLabel(element);
             return /(translate|translation|show original|original text|翻译|译文|查看原文|显示原文)/i.test(label);
         }
         return false;
     }
 
+    // Translator plugins and browser translators mark their own nodes through class names, ids and
+    // data-* attribute names. Labels, titles and attribute values can carry message text, so they are
+    // not read.
     getElementForeignTranslationIdentityText(element) {
-        const parts = [
-            element.className?.baseVal || element.className || "",
-            element.id || "",
-            element.getAttribute?.("aria-label") || "",
-            element.getAttribute?.("title") || "",
-            element.getAttribute?.("data-tooltip-text") || "",
-            element.getAttribute?.("data-testid") || "",
-            element.getAttribute?.("data-translation") || "",
-            element.getAttribute?.("data-translated") || "",
-            element.getAttribute?.("data-translator") || "",
-            element.getAttribute?.("data-translate") || ""
-        ];
-        const dataset = element.dataset || {};
-        Object.keys(dataset).forEach(key => parts.push(key, dataset[key]));
+        const className = typeof element.className === "string" ? element.className : element.className?.baseVal || "";
+        const parts = [className, element.id || ""];
+        Object.keys(element.dataset || {}).forEach(key => {
+            // Our own data-dait-* state on message elements is not a translator marker.
+            if (/^dait[A-Z]/.test(key) && key !== "daitIgnoreTranslation") return;
+            parts.push(`data-${key.replace(/[A-Z]/g, letter => `-${letter.toLowerCase()}`)}`);
+        });
         return parts.filter(Boolean).join(" ");
     }
 
@@ -7180,10 +7201,10 @@ module.exports = class DiscordAITranslator {
         return domCandidates.map(candidate => {
             const meta = this.getBdfdbAutoTranslationCandidateMeta(candidate, context);
             if (!meta?.messageId) return candidate;
+            // fullContent is display text (getDiscordStoreMessageText). It becomes the request text
+            // only; the identity, the line and every stale-DOM guard use the text on screen (domText).
             const fullContent = this.normalizeExtractedText(meta.fullContent || "");
-            const useFullContent = fullContent
-                && fullContent.length > String(candidate.text || "").length + 4
-                && this.isManualTranslationSourceCompatible(fullContent, candidate.text);
+            const useFullContent = this.isStoreFullRequestText(fullContent, candidate.text);
             const text = useFullContent ? fullContent : candidate.text;
             return this.createAutoTranslationCandidate({
                 ...candidate,
@@ -7193,7 +7214,7 @@ module.exports = class DiscordAITranslator {
                 fullContent,
                 sourceTextKind: useFullContent ? "store-full" : "dom",
                 source: "bdfdb",
-                messageIdentity: this.createStructuredAutoTranslationMessageIdentity({ ...candidate, ...meta, text })
+                messageIdentity: this.createStructuredAutoTranslationMessageIdentity({ ...candidate, ...meta, text: candidate.text })
                     || candidate.messageIdentity
             });
         });
@@ -7345,13 +7366,24 @@ module.exports = class DiscordAITranslator {
         ].join(":");
     }
 
-    completeAutoTranslationFromCache(messageNode, content, text, translated, cacheKey, canRender = true, requestOptions = null, textOptions = null) {
+    // What a target shows on screen. A store-full target requests fuller MessageStore text
+    // (target.text), but its message identity, its line's source signature and every stale-DOM
+    // guard use this text.
+    getAutoTranslationTargetDomText(target) {
+        return String(target?.domText || target?.text || "");
+    }
+
+    isAutoTranslationTargetDomTextCurrent(target) {
+        return this.getElementText(target?.content, target?.textOptions) === this.getAutoTranslationTargetDomText(target);
+    }
+
+    completeAutoTranslationFromCache(messageNode, content, text, translated, cacheKey, canRender = true, requestOptions = null, textOptions = null, domText = "") {
         if (requestOptions && this.isInvalidAutoTranslationCacheValue(text, translated, requestOptions)) {
             this.deleteTranslationCacheCandidates(cacheKey, ...this.getTranslationCacheAliases(text, requestOptions));
             return;
         }
         this.removeQueuedAutoTranslationItem(cacheKey);
-        const currentTarget = { messageNode, content, text, textOptions, cacheKey, requestOptions };
+        const currentTarget = { messageNode, content, text, domText, textOptions, cacheKey, requestOptions };
         const pendingTargets = this.getAutoTranslationPendingTargets(currentTarget);
         const ownerId = this.getTranslationOwnerId(content);
         const targets = pendingTargets.some(target => this.getTranslationOwnerId(target?.content) === ownerId)
@@ -7379,7 +7411,7 @@ module.exports = class DiscordAITranslator {
                 );
                 return;
             }
-            if (this.getElementText(target.content, target.textOptions) !== target.text) {
+            if (!this.isAutoTranslationTargetDomTextCurrent(target)) {
                 this.removeAutoTranslationNode(target, cacheKey);
                 this.logAutoTranslationMessageState(
                     "auto.message.state",
@@ -7571,7 +7603,11 @@ module.exports = class DiscordAITranslator {
     // top to bottom: a binary search finds the first one not above the chat, then the walk goes outward.
     getCachedDrawMessageNodes(context = null) {
         const firstMessage = document.querySelector?.(DISCORD_MESSAGE_NODE_SELECTOR);
-        if (!firstMessage) return { nodes: [], band: null };
+        if (!firstMessage) {
+            // No chat is mounted: do not keep the last channel's detached message list alive.
+            this.cachedDrawScroller = null;
+            return { nodes: [], band: null };
+        }
         let scroller = this.cachedDrawScroller;
         if (!scroller?.isConnected || !scroller.contains?.(firstMessage)) {
             scroller = this.getTranslationScrollContainer(firstMessage);
@@ -7646,6 +7682,7 @@ module.exports = class DiscordAITranslator {
             messageNode,
             content,
             text,
+            domText: candidate.domText || "",
             textOptions: candidate.textOptions || null,
             targetKind: candidate.targetKind || "message",
             cacheKey: entry.cacheKey,
@@ -7925,7 +7962,7 @@ module.exports = class DiscordAITranslator {
             );
             return false;
         }
-        if (this.getElementText(target.content, target.textOptions) !== target.text) {
+        if (!this.isAutoTranslationTargetDomTextCurrent(target)) {
             this.removeAutoTranslationNode(target, cacheKey);
             this.logAutoTranslationMessageState(
                 "auto.message.state",
@@ -7962,7 +7999,7 @@ module.exports = class DiscordAITranslator {
             return false;
         }
         // Cache tasks only run once the scroller is still, so scroll correction is safe even during the pause.
-        const renderedLine = this.renderTranslation(target.messageNode, target.content, translated, cacheKey, target.text, { allowScrollCorrectionWhilePaused: true });
+        const renderedLine = this.renderTranslation(target.messageNode, target.content, translated, cacheKey, this.getAutoTranslationTargetDomText(target), { allowScrollCorrectionWhilePaused: true });
         if (!renderedLine) {
             // Emoji images could not be restored: per contract the translation must be
             // neither shown nor kept cached, and the message must stay eligible for rescan.
@@ -8054,6 +8091,7 @@ module.exports = class DiscordAITranslator {
             messageNode: target.messageNode,
             content: target.content,
             text: target.text,
+            domText: target.domText || "",
             textOptions: target.textOptions,
             targetKind: target.targetKind,
             priority: target.priority
@@ -8181,10 +8219,11 @@ module.exports = class DiscordAITranslator {
                         this.logAutoTranslationRenderSkip(item, target, "disconnected");
                         return;
                     }
-                    if (this.getElementText(target.content, target.textOptions) !== target.text) {
+                    if (!this.isAutoTranslationTargetDomTextCurrent(target)) {
+                        // The message changed while it was translated. The result is still the
+                        // translation of item.text, so it is cached below and not requested again.
                         this.removeAutoTranslationNode(target, item.cacheKey);
                         this.logAutoTranslationRenderSkip(item, target, "text-changed");
-                        sawInvalidTarget = true;
                         return;
                     }
                     const identityUpgrade = this.getAutoTranslationTargetIdentityUpgrade(target, item);
@@ -8197,7 +8236,7 @@ module.exports = class DiscordAITranslator {
                     const renderCacheKey = identityUpgrade?.cacheKey || item.cacheKey;
                     if (identityUpgrade?.cacheKey) upgradedCacheTargets.set(identityUpgrade.cacheKey, identityUpgrade);
                     cacheable = true;
-                    if (this.hasManualTranslationLine(target.content, target.text)) {
+                    if (this.hasManualTranslationLine(target.content, this.getAutoTranslationTargetDomText(target))) {
                         this.logAutoTranslationRenderSkip(item, target, "manual-line");
                         return;
                     }
@@ -8260,7 +8299,7 @@ module.exports = class DiscordAITranslator {
             this.logAutoTranslationRenderSkip(item, target, "disconnected");
             return false;
         }
-        if (this.getElementText(target.content, target.textOptions) !== target.text) {
+        if (!this.isAutoTranslationTargetDomTextCurrent(target)) {
             this.removeAutoTranslationNode(target, item.cacheKey);
             this.logAutoTranslationRenderSkip(item, target, "text-changed");
             return false;
@@ -8273,7 +8312,8 @@ module.exports = class DiscordAITranslator {
         }
         const renderCacheKey = identityUpgrade?.cacheKey || item.cacheKey;
         if (identityUpgrade?.cacheKey && validationResult.cacheable) this.cacheAutoTranslationResultWithOptions(identityUpgrade.cacheKey, item.text, identityUpgrade.requestOptions, translated);
-        if (this.hasManualTranslationLine(target.content, target.text)) {
+        const domText = this.getAutoTranslationTargetDomText(target);
+        if (this.hasManualTranslationLine(target.content, domText)) {
             this.logAutoTranslationRenderSkip(item, target, "manual-line");
             return false;
         }
@@ -8281,7 +8321,7 @@ module.exports = class DiscordAITranslator {
             this.logAutoTranslationRenderSkip(item, target, "outside-viewport");
             return false;
         }
-        const renderedLine = this.renderTranslation(target.messageNode, target.content, translated, renderCacheKey, target.text, {
+        const renderedLine = this.renderTranslation(target.messageNode, target.content, translated, renderCacheKey, domText, {
             partial: validationResult.quality === TRANSLATION_VALIDATION_QUALITIES.PARTIAL,
             validationQuality: validationResult.quality,
             validationReason: validationResult.reasonCode || ""
@@ -8378,7 +8418,7 @@ module.exports = class DiscordAITranslator {
 
     getCurrentFallbackTranslationIdentitySummary(target, ids = {}) {
         if (!target?.messageNode || !target?.content) return null;
-        const text = target.text || this.getElementText(target.content, target.textOptions);
+        const text = this.getAutoTranslationTargetDomText(target) || this.getElementText(target.content, target.textOptions);
         const identity = this.messageTracker.getFallbackIdentity(target.messageNode, target.content, text, ids);
         return this.getTranslationIdentitySummary(identity);
     }
@@ -8594,7 +8634,7 @@ module.exports = class DiscordAITranslator {
             this.removeAutoTranslationNode(target, cacheKey);
             return;
         }
-        if (this.getElementText(target.content, target.textOptions) !== target.text) {
+        if (!this.isAutoTranslationTargetDomTextCurrent(target)) {
             this.logAutoTranslationMessageState(
                 "auto.message.state",
                 "render-skip",
@@ -8619,7 +8659,7 @@ module.exports = class DiscordAITranslator {
             this.removeAutoTranslationNode(target, cacheKey);
             return;
         }
-        this.renderTranslationError(target.messageNode, target.content, error, cacheKey, target.text);
+        this.renderTranslationError(target.messageNode, target.content, error, cacheKey, this.getAutoTranslationTargetDomText(target));
         this.logAutoTranslationMessageState(
             "auto.message.state",
             "failure-rendered",
@@ -8653,8 +8693,8 @@ module.exports = class DiscordAITranslator {
                 );
                 return;
             }
-            if (target.messageNode.isConnected && target.content.isConnected && this.isElementVisibleInViewport(target.messageNode) && this.isElementVisibleInViewport(target.content) && this.getElementText(target.content, target.textOptions) === target.text) {
-                this.renderTranslationLoading(target.messageNode, target.content, item.cacheKey, target.text);
+            if (target.messageNode.isConnected && target.content.isConnected && this.isElementVisibleInViewport(target.messageNode) && this.isElementVisibleInViewport(target.content) && this.isAutoTranslationTargetDomTextCurrent(target)) {
+                this.renderTranslationLoading(target.messageNode, target.content, item.cacheKey, this.getAutoTranslationTargetDomText(target));
                 this.logAutoTranslationMessageState(
                     "auto.message.state",
                     "loading",
@@ -9728,7 +9768,9 @@ module.exports = class DiscordAITranslator {
         return secondarySignals.filter(signal => compact.includes(signal)).length >= 2;
     }
 
-    hasCurrentTranslationLine(content, cacheKey, sourceText = null, cacheAliases = [], requestOptions = null) {
+    // sourceText is the text on screen (the line's source signature); requestText, when it differs
+    // (store-full), is what was translated and what the drawn translation is validated against.
+    hasCurrentTranslationLine(content, cacheKey, sourceText = null, cacheAliases = [], requestOptions = null, requestText = null) {
         let line = this.getTranslationLine(content);
         if (!line) line = this.findTranslationLineByMetadata(content, cacheKey, sourceText, cacheAliases);
         if (!line) return false;
@@ -9750,7 +9792,7 @@ module.exports = class DiscordAITranslator {
         if (line.classList?.contains?.("dait-translation-loading")) return false;
         if (line.dataset.daitMode === "manual" && this.isAutoTranslationCacheMode(requestedMode)) return true;
         if (line.dataset.daitMode === "auto-text" && this.isAutoTranslationCacheMode(requestedMode)) {
-            if (this.removeInvalidCurrentAutoTranslationLine(line, content, sourceText, cacheKey, cacheAliases, requestOptions)) return false;
+            if (this.removeInvalidCurrentAutoTranslationLine(line, content, requestText ?? sourceText, cacheKey, cacheAliases, requestOptions)) return false;
             return true;
         }
 
@@ -9766,11 +9808,11 @@ module.exports = class DiscordAITranslator {
         }
 
         if (line.dataset.daitCacheSig && requestSignatures.has(line.dataset.daitCacheSig)) {
-            if (this.removeInvalidCurrentAutoTranslationLine(line, content, sourceText, cacheKey, cacheAliases, requestOptions)) return false;
+            if (this.removeInvalidCurrentAutoTranslationLine(line, content, requestText ?? sourceText, cacheKey, cacheAliases, requestOptions)) return false;
             return true;
         }
         if (line.dataset.daitCacheKey && requestFingerprints.has(line.dataset.daitCacheKey)) {
-            if (this.removeInvalidCurrentAutoTranslationLine(line, content, sourceText, cacheKey, cacheAliases, requestOptions)) return false;
+            if (this.removeInvalidCurrentAutoTranslationLine(line, content, requestText ?? sourceText, cacheKey, cacheAliases, requestOptions)) return false;
             return true;
         }
 
@@ -11170,8 +11212,10 @@ module.exports = class DiscordAITranslator {
             }
             catch {}
 
+            // Store text is display text and, as in auto translation, only a request text for a
+            // content element that shows part of its message.
             const storeCandidate = this.getManualTranslationStoreSourceCandidate(messageNode, content, domText);
-            if (storeCandidate?.text) pushCandidate(storeCandidate.source, storeCandidate.text, storeCandidate.confidence || "store");
+            if (this.isStoreFullRequestText(storeCandidate?.text, domText)) pushCandidate(storeCandidate.source, storeCandidate.text, storeCandidate.confidence || "store");
         }
 
         const selected = this.selectManualTranslationSourceCandidate(candidates, domText) || candidates[0] || { source: "dom-content", text: domText, length: domText.length };
@@ -11290,10 +11334,7 @@ module.exports = class DiscordAITranslator {
         if (!plan?.messageNode?.isConnected || !plan?.content?.isConnected) return false;
         const currentText = this.normalizeExtractedText(this.getElementText(plan.content, plan.textOptions));
         if (!currentText) return false;
-        const expectedTexts = [plan.text, plan.domText]
-            .map(text => this.normalizeExtractedText(text))
-            .filter(Boolean);
-        return expectedTexts.includes(currentText);
+        return currentText === this.normalizeExtractedText(plan.domText ?? plan.text);
     }
 
     beginManualTranslationRequest(content) {
@@ -11318,9 +11359,12 @@ module.exports = class DiscordAITranslator {
         return !providerKey || this.isAutoTranslationProviderSnapshotCurrent(providerKey, options);
     }
 
+    // text is the request text; domText is what the message shows, which keys the message identity
+    // and the line (as in auto translation, so both share cache entries).
     createManualTranslationPlan(messageNode, content, text, textOptions = null, sourceMeta = null) {
-        const requestOptions = this.withMessageIdentity(this.getManualTranslationRequestOptions(), messageNode, content, text);
-        const autoRequestOptions = this.withMessageIdentity(this.getAutoTranslationRequestOptionsForText(text, this.getAutoTranslationOptions()), messageNode, content, text);
+        const domText = sourceMeta?.domText ?? text;
+        const requestOptions = this.withMessageIdentity(this.getManualTranslationRequestOptions(), messageNode, content, domText);
+        const autoRequestOptions = this.withMessageIdentity(this.getAutoTranslationRequestOptionsForText(text, this.getAutoTranslationOptions()), messageNode, content, domText);
         const cacheKey = this.getTranslationCacheKey(text, requestOptions);
         const autoCacheKey = this.getTranslationCacheKey(text, autoRequestOptions);
         return {
@@ -11333,7 +11377,7 @@ module.exports = class DiscordAITranslator {
             autoRequestOptions,
             cacheKey,
             autoCacheKey,
-            domText: sourceMeta?.domText ?? text,
+            domText,
             sourceKind: sourceMeta?.source || "dom-content",
             sourceConfidence: sourceMeta?.confidence || "",
             sourceHash: this.getStrongTextFingerprint(text),
@@ -11361,7 +11405,7 @@ module.exports = class DiscordAITranslator {
     }
 
     renderManualLoading(plan) {
-        return this.renderTranslationLoading(plan.messageNode, plan.content, plan.cacheKey, plan.text);
+        return this.renderTranslationLoading(plan.messageNode, plan.content, plan.cacheKey, plan.domText ?? plan.text);
     }
 
     runManualTranslationPlan(plan) {
@@ -11506,7 +11550,7 @@ module.exports = class DiscordAITranslator {
     }
 
     renderManualFailure(plan, error) {
-        return this.renderTranslationError(plan.messageNode, plan.content, error, plan.cacheKey, plan.text);
+        return this.renderTranslationError(plan.messageNode, plan.content, error, plan.cacheKey, plan.domText ?? plan.text);
     }
 
     async translateMessage(messageNode, content, button, textOptions = null) {
@@ -11516,7 +11560,7 @@ module.exports = class DiscordAITranslator {
         }
 
         const initialText = this.getElementText(content, textOptions);
-        if (!initialText) {
+        if (!this.hasTranslatableMessageText(initialText)) {
             this.showToast(this.t("noTranslatableText"), "info");
             return;
         }
@@ -11567,8 +11611,8 @@ module.exports = class DiscordAITranslator {
                     key: this.getTextFingerprint(cacheKey),
                     ms: Date.now() - startedAt
                 });
-                this.syncManualTranslationToAutoCache(messageNode, content, text, cachedTranslation, textOptions);
-                this.renderTranslation(messageNode, content, cachedTranslation, cacheKey, text);
+                this.syncManualTranslationToAutoCache(messageNode, content, text, cachedTranslation, textOptions, plan.domText);
+                this.renderTranslation(messageNode, content, cachedTranslation, cacheKey, plan.domText);
                 return;
             }
         }
@@ -11619,9 +11663,9 @@ module.exports = class DiscordAITranslator {
             const usedProviderFallback = Boolean(resultRequestOptions.requestContext?.fallbackProvider);
             if (validation.cacheable && !usedProviderFallback) {
                 this.setTranslationCache(cacheKey, translated);
-                this.syncManualTranslationToAutoCache(messageNode, content, text, translated, textOptions);
+                this.syncManualTranslationToAutoCache(messageNode, content, text, translated, textOptions, plan.domText);
             }
-            this.renderTranslation(messageNode, content, translated, cacheKey, text, {
+            this.renderTranslation(messageNode, content, translated, cacheKey, plan.domText, {
                 partial: validation.quality === TRANSLATION_VALIDATION_QUALITIES.PARTIAL,
                 validationQuality: validation.quality,
                 validationReason: validation.reasonCode || ""
@@ -11689,13 +11733,13 @@ module.exports = class DiscordAITranslator {
         }
     }
 
-    syncManualTranslationToAutoCache(messageNode, content, text, translated, textOptions = null) {
+    syncManualTranslationToAutoCache(messageNode, content, text, translated, textOptions = null, domText = text) {
         if (!messageNode || !content || !text || !translated) return false;
         const requestOptions = this.withMessageIdentity(
             this.getAutoTranslationRequestOptionsForText(text, this.getAutoTranslationOptions()),
             messageNode,
             content,
-            text
+            domText || text
         );
         if (this.isInvalidAutoTranslationCacheValue(text, translated, requestOptions)) return false;
         const cacheKey = this.getTranslationCacheKey(text, requestOptions);
@@ -12627,8 +12671,8 @@ module.exports = class DiscordAITranslator {
 
         if (typeof document !== "undefined") {
             clone.querySelectorAll?.("img[alt]").forEach(image => {
-                const alt = String(image.getAttribute?.("alt") || "").trim();
-                if (!/^:.+:$/.test(alt)) return;
+                const alt = this.getExtractedImageAltText(image);
+                if (!alt) return;
                 image.replaceWith(document.createTextNode(` ${alt} `));
             });
         }
@@ -12685,6 +12729,22 @@ module.exports = class DiscordAITranslator {
         return Boolean(this.isDiscordMessageElement(element) || element.closest?.(DISCORD_MESSAGE_NODE_SELECTOR));
     }
 
+    // A message of standard emoji alone reads as text now, but there is nothing to translate in it.
+    hasTranslatableMessageText(text) {
+        return /[\p{L}\p{N}]/u.test(String(text || ""));
+    }
+
+    // Discord draws emoji as images: custom emoji carry ":name:" as alt text, standard emoji the
+    // emoji itself. Both are part of what the message says; other images are not text.
+    getExtractedImageAltText(image) {
+        const alt = String(image?.getAttribute?.("alt") || "").trim();
+        if (!alt) return "";
+        if (/^:.+:$/.test(alt)) return alt;
+        if (/^[\p{Extended_Pictographic}\p{Emoji_Component}\p{Regional_Indicator}\u200d\ufe0e\ufe0f\u20e3]+$/u.test(alt)
+            && /[\p{Extended_Pictographic}\p{Regional_Indicator}\u20e3]/u.test(alt)) return alt;
+        return "";
+    }
+
     extractElementTextWithoutClone(element, excludedSelectors = []) {
         if (!element?.childNodes || typeof element.childNodes[Symbol.iterator] !== "function") return null;
         const blockedSelector = excludedSelectors.filter(Boolean).join(",");
@@ -12715,8 +12775,8 @@ module.exports = class DiscordAITranslator {
 
             const tagName = String(node.tagName || node.nodeName || "").toUpperCase();
             if (tagName === "IMG") {
-                const alt = String(node.getAttribute?.("alt") || "").trim();
-                if (/^:.+:$/.test(alt)) parts.push(` ${alt} `);
+                const alt = this.getExtractedImageAltText(node);
+                if (alt) parts.push(` ${alt} `);
                 continue;
             }
             if (tagName === "BR") {
@@ -12860,11 +12920,89 @@ module.exports = class DiscordAITranslator {
         return [];
     }
 
+    // The display text of a MessageStore message: its markup converted to what the chat shows, or ""
+    // when that cannot be rebuilt (see convertDiscordMarkupToDisplayText). Raw store markup never
+    // leaves this method.
     getDiscordStoreMessageText(message) {
-        if (typeof message?.content === "string") return this.normalizeExtractedText(message.content);
-        if (typeof message?.message === "string") return this.normalizeExtractedText(message.message);
-        if (typeof message?.text === "string") return this.normalizeExtractedText(message.text);
-        return "";
+        let raw = null;
+        if (typeof message?.content === "string") raw = message.content;
+        else if (typeof message?.message === "string") raw = message.message;
+        else if (typeof message?.text === "string") raw = message.text;
+        if (!raw) return "";
+        // Only user and role mentions depend on the server (nicknames, role names).
+        const guildId = raw.includes("<@") ? this.getDiscordStoreMessageGuildId(message) : "";
+        return this.normalizeExtractedText(this.getDiscordMarkupDisplayText(raw, guildId));
+    }
+
+    getDiscordStoreMessageGuildId(message) {
+        const channelId = this.messageTracker.getStoreMessageChannelId(message);
+        const guildId = this.messageTracker.getStoreMessageGuildId(message)
+            || String(this.getDiscordNamedStore("ChannelStore")?.getChannel?.(channelId)?.guild_id || "")
+            || this.messageTracker.getRouteIds?.().guildId
+            || "";
+        return guildId === "@me" ? "" : guildId;
+    }
+
+    getDiscordMarkupDisplayText(raw, guildId = "") {
+        const memoKey = `${guildId}\n${raw}`;
+        if (!this.discordMarkupDisplayTextMemo) this.discordMarkupDisplayTextMemo = new Map();
+        if (this.discordMarkupDisplayTextMemo.has(memoKey)) return this.discordMarkupDisplayTextMemo.get(memoKey);
+        const displayText = convertDiscordMarkupToDisplayText(raw, {
+            user: userId => this.getDiscordMentionUserName(userId, guildId),
+            role: roleId => this.getDiscordMentionRoleName(roleId, guildId),
+            channel: channelId => this.getDiscordNamedStore("ChannelStore")?.getChannel?.(channelId)?.name || ""
+        });
+        // A name that cannot be resolved yet (stores still loading) is looked up again next time.
+        if (!displayText) return displayText;
+        this.discordMarkupDisplayTextMemo.set(memoKey, displayText);
+        while (this.discordMarkupDisplayTextMemo.size > DISCORD_MARKUP_DISPLAY_TEXT_MEMO_MAX) {
+            this.discordMarkupDisplayTextMemo.delete(this.discordMarkupDisplayTextMemo.keys().next().value);
+        }
+        return displayText;
+    }
+
+    // Discord shows a user mention as the member's server nickname, else the display name, else the username.
+    getDiscordMentionUserName(userId, guildId = "") {
+        const member = guildId ? this.getDiscordNamedStore("GuildMemberStore")?.getMember?.(guildId, userId) : null;
+        const user = this.getDiscordNamedStore("UserStore")?.getUser?.(userId);
+        return String(member?.nick || user?.globalName || user?.global_name || user?.username || "").trim();
+    }
+
+    getDiscordMentionRoleName(roleId, guildId = "") {
+        if (!guildId) return "";
+        const role = this.getDiscordNamedStore("GuildRoleStore")?.getRole?.(guildId, roleId)
+            || this.getDiscordNamedStore("GuildStore")?.getRole?.(guildId, roleId)
+            || this.getDiscordNamedStore("GuildStore")?.getRoles?.(guildId)?.[roleId]
+            || this.getDiscordNamedStore("GuildStore")?.getGuild?.(guildId)?.roles?.[roleId];
+        return String(role?.name || "").trim();
+    }
+
+    getDiscordNamedStore(name) {
+        if (!this.discordNamedStores) this.discordNamedStores = new Map();
+        const cached = this.discordNamedStores.get(name);
+        if (cached?.store) return cached.store;
+        const now = Date.now();
+        if (cached && now < cached.retryAt) return null;
+        let store = null;
+        try {
+            store = globalThis.BdApi?.Webpack?.getStore?.(name) || null;
+        }
+        catch (error) {
+            this.warnSanitized(`Failed to locate Discord ${name}`, error);
+        }
+        // A store this Discord build lacks is not searched for again soon: a lookup scans modules.
+        this.discordNamedStores.set(name, store ? { store } : { store: null, retryAt: now + 60000 });
+        return store;
+    }
+
+    // MessageStore text replaces the text on screen only as the request text, and only when it holds
+    // more than the target element shows (a message whose content element shows part of it).
+    isStoreFullRequestText(storeText, domText) {
+        const store = String(storeText || "");
+        const dom = String(domText || "");
+        return Boolean(store && dom
+            && store.length > dom.length + 4
+            && this.isManualTranslationSourceCompatible(store, dom));
     }
 
     getCachedElementText(element, context = null, options = {}) {
