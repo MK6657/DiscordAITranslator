@@ -432,6 +432,35 @@ class DiagnosticsRecorder {
         };
     }
 
+    // Used once when the log moves to its own data file: keeps the entries of both copies (the old copy may
+    // hold entries written by an older plugin version after a downgrade), oldest first, without duplicates.
+    mergePersistedDiagnosticLogsPayloads(current, legacy) {
+        const logsOf = payload => Array.isArray(payload) ? payload : Array.isArray(payload?.logs) ? payload.logs : null;
+        const currentLogs = logsOf(current);
+        const legacyLogs = logsOf(legacy);
+        if (!legacyLogs) return current;
+        if (!currentLogs) return legacy;
+        const seen = new Set();
+        const logs = [...legacyLogs, ...currentLogs]
+            .filter(entry => entry && typeof entry === "object")
+            .filter(entry => {
+                const id = JSON.stringify([entry.ts, entry.lastTs, entry.action, entry.status, entry.key, entry.count]);
+                if (seen.has(id)) return false;
+                seen.add(id);
+                return true;
+            })
+            .sort((left, right) => (Number(left.ts) || 0) - (Number(right.ts) || 0))
+            .slice(-DIAGNOSTICS_MAX_ENTRIES);
+        const compressed = count => Math.max(0, Number(count || 0) || 0);
+        return {
+            version: 1,
+            savedAt: Date.now(),
+            maxEntries: DIAGNOSTICS_MAX_ENTRIES,
+            compressed: compressed(current?.compressed) + compressed(legacy?.compressed),
+            logs
+        };
+    }
+
     scheduleDiagnosticLogsPersist(delayMs = DIAGNOSTICS_WRITE_DEBOUNCE_MS, options = {}) {
         const delay = Math.max(0, Number(delayMs) || 0);
         const persistAt = Date.now() + delay;

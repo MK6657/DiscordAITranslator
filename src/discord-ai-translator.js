@@ -1023,6 +1023,8 @@ module.exports = class DiscordAITranslator {
             else {
                 this.loadSettings();
             }
+            try { this.migrateLegacyDataStores(); }
+            catch (error) { this.warnSanitized("Data store migration failed; old data kept", error); }
             if (this.settings.ui?.diagnosticsEnabled) {
                 if (this.diagnosticLogsDirty) this.flushDiagnosticLogs({ retryOnError: false });
                 if (!this.diagnosticLogsDirty) this.loadDiagnosticLogs();
@@ -1045,6 +1047,8 @@ module.exports = class DiscordAITranslator {
             window.addEventListener("resize", this.boundViewportScan, { capture: true, passive: true });
             window.addEventListener("focus", this.boundViewportScan, { capture: true, passive: true });
             document.addEventListener("visibilitychange", this.boundViewportScan, true);
+            window.addEventListener("pagehide", this.getPageHideHandler(), true);
+            window.addEventListener("beforeunload", this.getPageHideHandler(), true);
             this.queueScan();
             this.showToast(this.t("pluginStarted", { version: PLUGIN_VERSION }), "success");
             return true;
@@ -1107,6 +1111,8 @@ module.exports = class DiscordAITranslator {
         window.removeEventListener("resize", this.boundViewportScan, { capture: true });
         window.removeEventListener("focus", this.boundViewportScan, { capture: true });
         document.removeEventListener("visibilitychange", this.boundViewportScan, true);
+        window.removeEventListener("pagehide", this.getPageHideHandler(), true);
+        window.removeEventListener("beforeunload", this.getPageHideHandler(), true);
         this.removePolishResultPanel();
         this.removePolishRestoreControl();
         this.removeInputActionMenu();
@@ -1200,6 +1206,30 @@ module.exports = class DiscordAITranslator {
         this.discordThemeVariableValuesCache = null;
     }
 
+    getPageHideHandler() {
+        if (!this.boundPageHide) this.boundPageHide = () => this.flushPendingPersistence("pagehide");
+        return this.boundPageHide;
+    }
+
+    // A reload or quit may not call stop(), so save what the debounce and busy-deferral timers still hold.
+    // Each flush is a no-op when nothing is dirty; none of them schedules a retry.
+    flushPendingPersistence(reason = "pagehide") {
+        const results = {};
+        [
+            ["cache", () => this.flushTranslationCache({ retryOnError: false })],
+            ["google", () => this.flushGoogleTranslateRuntimeState({ retryOnError: false })],
+            ["settings", () => this.flushSettings({ retryOnError: false })],
+            ["diagnostics", () => this.flushDiagnosticLogs({ retryOnError: false })]
+        ].forEach(([name, flush]) => {
+            try { results[name] = flush() !== false; }
+            catch (error) {
+                results[name] = false;
+                this.warnSanitized(`Persist on ${reason} failed for ${name}`, error);
+            }
+        });
+        return results;
+    }
+
     getLifecycleToken() {
         return this.lifecycleToken;
     }
@@ -1278,12 +1308,9 @@ module.exports = class DiscordAITranslator {
         reset.textContent = this.t("reset");
         reset.addEventListener("click", () => {
             if (!window.confirm(this.t("resetConfirm"))) return;
-            this.settings = this.clone(DEFAULT_SETTINGS);
-            this.invalidateAutoTranslationQueue();
-            this.saveSettings();
+            this.resetSettingsToDefaults({ keepCredentials: true });
             const currentPanel = panel || reset.closest?.(".dait-settings");
             this.replaceSettingsPanelElement(currentPanel);
-            this.queueScan();
         });
         tabs.appendChild(reset);
 
@@ -1870,7 +1897,7 @@ module.exports = class DiscordAITranslator {
             ["inherit", this.t("channelPolicyInherit")],
             ["enabled", this.t("channelPolicyEnabled")],
             ["disabled", this.t("channelPolicyDisabled")]
-        ], { description: this.t("currentChannelAutoTranslatePolicyDesc") });
+        ], { description: this.t("currentChannelAutoTranslatePolicyDesc"), routeKey: this.getCurrentRouteKey() });
     }
 
     createHistoryBackfillActionRow() {
@@ -2395,7 +2422,7 @@ module.exports = class DiscordAITranslator {
         return this.t("translationCacheStatsDesc", {
             hits: this.translationCacheStats.hits,
             misses: this.translationCacheStats.misses,
-            memory: this.translationCache.size,
+            memory: this.getTranslationCacheMessageCount(),
             persistent: this.persistentTranslationCacheCount
         });
     }
@@ -2625,7 +2652,12 @@ module.exports = class DiscordAITranslator {
     createSelectRow(path, labelText, options, rowOptions = {}) {
         const select = document.createElement("select");
         select.dataset.daitPath = path;
-        const current = this.getSetting(path);
+        // A route-scoped control (the channel rule) stays bound to the channel it was built for.
+        const routeKey = typeof rowOptions.routeKey === "string" ? rowOptions.routeKey : null;
+        if (routeKey !== null) select.dataset.daitRouteKey = routeKey;
+        const current = routeKey !== null && path === "ui.currentChannelAutoTranslatePolicy"
+            ? this.getCurrentChannelAutoTranslatePolicyMode(routeKey)
+            : this.getSetting(path);
 
         options.forEach(([value, text]) => {
             const option = document.createElement("option");
@@ -2641,7 +2673,7 @@ module.exports = class DiscordAITranslator {
                 this.replaceSettingsPanelFrom(select);
                 return;
             }
-            this.setSetting(path, select.value);
+            this.setSetting(path, select.value, routeKey !== null ? { routeKey } : undefined);
             if (path === "ui.language") {
                 const panel = select.closest(".dait-settings");
                 if (panel) this.replaceSettingsPanelElement(panel);
@@ -3174,9 +3206,14 @@ module.exports = class DiscordAITranslator {
     syncSettingControls(path, value, options = {}) {
         if (typeof document === "undefined") return;
         if (path === "ui.providerFallbackOrder") value = this.formatProviderFallbackOrder(value);
-        if (path === "ui.currentChannelAutoTranslatePolicy") value = this.normalizeChannelAutoTranslatePolicyMode(value);
+        const channelRule = path === "ui.currentChannelAutoTranslatePolicy";
+        if (channelRule) value = this.normalizeChannelAutoTranslatePolicyMode(value);
+        const syncedChannel = channelRule && typeof options.routeKey === "string" ? this.getChannelAutoTranslatePolicyStorageKey(options.routeKey) : null;
         document.querySelectorAll(`[data-dait-path='${path}']`).forEach(control => {
             if (control === document.activeElement && options.includeActive !== true) return;
+            // A channel-rule control built for another channel keeps showing that channel's rule.
+            if (syncedChannel !== null && typeof control.dataset?.daitRouteKey === "string"
+                && this.getChannelAutoTranslatePolicyStorageKey(control.dataset.daitRouteKey) !== syncedChannel) return;
             if (control.type === "checkbox") {
                 control.checked = Boolean(value);
                 return;
@@ -3192,6 +3229,9 @@ module.exports = class DiscordAITranslator {
         scope.querySelectorAll("[data-dait-path]").forEach(control => {
             const path = String(control?.dataset?.daitPath || "");
             if (!path) return;
+            // The channel rule saves on change and is scoped to the channel it was built for; re-committing it on
+            // close would copy that value onto whichever channel is current now.
+            if (path === "ui.currentChannelAutoTranslatePolicy") return;
             if (control.tagName === "TEXTAREA") {
                 this.setSetting(path, control.value);
                 return;
@@ -14124,6 +14164,13 @@ module.exports = class DiscordAITranslator {
     // --- Delegators to SettingsStore (Phase 2 of the modularization plan: settings persistence, migration, task config and prompt-template CRUD.) ---
     loadData(...args) { return this.settingsStore.loadData(...args); }
     saveData(...args) { return this.settingsStore.saveData(...args); }
+    getDataStoreName(...args) { return this.settingsStore.getDataStoreName(...args); }
+    migrateLegacyDataStores(...args) { return this.settingsStore.migrateLegacyDataStores(...args); }
+    migrateLegacyDataStoreKey(...args) { return this.settingsStore.migrateLegacyDataStoreKey(...args); }
+    mergeLegacyDataPayload(...args) { return this.settingsStore.mergeLegacyDataPayload(...args); }
+    resetSettingsToDefaults(...args) { return this.settingsStore.resetSettingsToDefaults(...args); }
+    applySettingsResetEffects(...args) { return this.settingsStore.applySettingsResetEffects(...args); }
+    syncAllSettingControls(...args) { return this.settingsStore.syncAllSettingControls(...args); }
     recordDataIoFailure(...args) { return this.settingsStore.recordDataIoFailure(...args); }
     loadSettings(...args) { return this.settingsStore.loadSettings(...args); }
     saveSettings(...args) { return this.settingsStore.saveSettings(...args); }
@@ -14307,6 +14354,8 @@ module.exports = class DiscordAITranslator {
     decodePersistedTranslationCacheKey(...args) { return this.translationCacheStore.decodePersistedTranslationCacheKey(...args); }
     decodePersistedTranslationCacheValue(...args) { return this.translationCacheStore.decodePersistedTranslationCacheValue(...args); }
     createPersistedTranslationCachePayload(...args) { return this.translationCacheStore.createPersistedTranslationCachePayload(...args); }
+    mergePersistedTranslationCachePayloads(...args) { return this.translationCacheStore.mergePersistedTranslationCachePayloads(...args); }
+    getTranslationCacheMessageCount(...args) { return this.translationCacheStore.getTranslationCacheMessageCount(...args); }
     scheduleTranslationCachePersist(...args) { return this.translationCacheStore.scheduleTranslationCachePersist(...args); }
     flushTranslationCache(...args) { return this.translationCacheStore.flushTranslationCache(...args); }
     clearTranslationCache(...args) { return this.translationCacheStore.clearTranslationCache(...args); }
@@ -14362,6 +14411,7 @@ module.exports = class DiscordAITranslator {
     getDiagnosticLogsSnapshot(...args) { return this.diagnosticsRecorder.getDiagnosticLogsSnapshot(...args); }
     loadDiagnosticLogs(...args) { return this.diagnosticsRecorder.loadDiagnosticLogs(...args); }
     createPersistedDiagnosticLogsPayload(...args) { return this.diagnosticsRecorder.createPersistedDiagnosticLogsPayload(...args); }
+    mergePersistedDiagnosticLogsPayloads(...args) { return this.diagnosticsRecorder.mergePersistedDiagnosticLogsPayloads(...args); }
     scheduleDiagnosticLogsPersist(...args) { return this.diagnosticsRecorder.scheduleDiagnosticLogsPersist(...args); }
     flushDiagnosticLogs(...args) { return this.diagnosticsRecorder.flushDiagnosticLogs(...args); }
     serializeDiagnosticLogs(...args) { return this.diagnosticsRecorder.serializeDiagnosticLogs(...args); }

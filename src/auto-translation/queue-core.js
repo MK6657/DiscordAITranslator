@@ -1046,10 +1046,11 @@ class AutoTranslationQueueCore {
         return Boolean(this.plugin.settings.ui?.autoTranslatePrefetch);
     }
 
+    // Channel rule (v0.4.0): 'enabled' is an allow-list that works even while the main
+    // auto-translate switch is off, 'disabled' always wins, 'inherit' follows the main switch.
     isAutoTranslateEnabled() {
         return Boolean(this.plugin.isStarted
             && this.plugin.settings?.translation?.enabled
-            && this.plugin.settings?.ui?.autoTranslateMessages
             && this.plugin.isCurrentChannelAutoTranslateAllowed());
     }
 
@@ -1129,8 +1130,10 @@ class AutoTranslationQueueCore {
     setCurrentChannelAutoTranslatePolicyMode(mode, routeKey = this.plugin.getCurrentRouteKey(), options = {}) {
         const normalized = this.plugin.normalizeChannelAutoTranslatePolicyMode(mode);
         const key = this.plugin.getChannelAutoTranslatePolicyStorageKey(routeKey);
+        // Controls bound to the rule carry the route they were built for; only those showing this channel are synced.
+        const syncOptions = { includeActive: true, routeKey };
         if (!key) {
-            this.plugin.syncSettingControls("ui.currentChannelAutoTranslatePolicy", "inherit", { includeActive: true });
+            this.plugin.syncSettingControls("ui.currentChannelAutoTranslatePolicy", "inherit", syncOptions);
             return false;
         }
         if (!this.plugin.settings.ui.channelAutoTranslatePolicies || typeof this.plugin.settings.ui.channelAutoTranslatePolicies !== "object" || Array.isArray(this.plugin.settings.ui.channelAutoTranslatePolicies)) {
@@ -1143,7 +1146,7 @@ class AutoTranslationQueueCore {
         if (normalized === "inherit") delete policies[key];
         else policies[key] = { mode: normalized };
         if (previous === normalized) {
-            this.plugin.syncSettingControls("ui.currentChannelAutoTranslatePolicy", normalized, { includeActive: true });
+            this.plugin.syncSettingControls("ui.currentChannelAutoTranslatePolicy", normalized, syncOptions);
             if (options.save === "immediate" || options.forceSave === true) this.plugin.saveSettings({ retryOnError: options.retryOnError });
             else if (options.save === "debounce") this.plugin.saveSettings({ debounce: true, delayMs: options.delayMs });
             return false;
@@ -1151,9 +1154,10 @@ class AutoTranslationQueueCore {
         if (options.save === false) {}
         else if (options.save === "immediate") this.plugin.saveSettings({ retryOnError: options.retryOnError });
         else this.plugin.saveSettings({ debounce: true, delayMs: options.delayMs });
-        this.plugin.syncSettingControls("ui.currentChannelAutoTranslatePolicy", normalized, { includeActive: true });
+        this.plugin.syncSettingControls("ui.currentChannelAutoTranslatePolicy", normalized, syncOptions);
         this.plugin.invalidateAutoTranslationQueue();
-        if (normalized === "disabled") this.plugin.cancelAutoTranslationRuntimeWork("channel-policy-disabled");
+        // 'inherit' with the main switch off stops auto-translation here as well as 'disabled' does.
+        if (!this.plugin.isAutoTranslateEnabled()) this.plugin.cancelAutoTranslationRuntimeWork("channel-policy-disabled");
         this.plugin.logDiagnostic("auto.channel-policy", "updated", {
             ...this.plugin.getDiagnosticBaseMeta("auto", "settings", normalized === "disabled" ? "channel-disabled" : "channel-policy"),
             routeKeyHash: this.plugin.getDiagnosticRouteKeyHash(routeKey),
@@ -1180,7 +1184,9 @@ class AutoTranslationQueueCore {
 
     isCurrentChannelAutoTranslateAllowed(routeKey = this.plugin.getCurrentRouteKey()) {
         const policy = this.plugin.getCurrentChannelAutoTranslatePolicy(routeKey);
-        return policy.enabled !== false;
+        if (policy.mode === "enabled") return true;
+        if (policy.mode === "disabled") return false;
+        return Boolean(this.plugin.settings?.ui?.autoTranslateMessages);
     }
 
     isAutoTranslationRequestCurrent(requestOptions) {

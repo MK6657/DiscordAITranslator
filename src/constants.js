@@ -6,6 +6,10 @@ const PLUGIN_NAME = "DiscordAITranslator";
 const DATA_KEY = "settings";
 const CACHE_DATA_KEY = "translationCache";
 const DIAGNOSTIC_DATA_KEY = "diagnosticLogs";
+// Since v0.4.0 the translation cache and the diagnostics log live in their own BetterDiscord data files
+// (DiscordAITranslator.cache.config.json / .diagnostics.config.json), so a settings save no longer rewrites them.
+const CACHE_DATA_STORE = `${PLUGIN_NAME}.cache`;
+const DIAGNOSTIC_DATA_STORE = `${PLUGIN_NAME}.diagnostics`;
 const STYLE_ID = "discord-ai-translator-style";
 const DISCORD_THEME_CLASSES = ["theme-light", "theme-midnight", "theme-darker", "theme-dark"];
 const DISCORD_DEFAULT_THEME_CLASS = "theme-dark";
@@ -765,6 +769,8 @@ module.exports = {
     DATA_KEY,
     CACHE_DATA_KEY,
     DIAGNOSTIC_DATA_KEY,
+    CACHE_DATA_STORE,
+    DIAGNOSTIC_DATA_STORE,
     STYLE_ID,
     DISCORD_THEME_CLASSES,
     DISCORD_DEFAULT_THEME_CLASS,
