@@ -1087,6 +1087,10 @@ class ProviderLayer {
                     this.plugin.markLocalProviderHealthy(providerSnapshotKey);
                     this.plugin.setApiRuntimeStatus("translation", "success", this.plugin.t("apiStatusSuccess"));
                 }
+                // A working request ends the provider's "needs your attention" episode.
+                if (requestStillCurrent && kind === "translation" && this.plugin.autoTranslationProviderNoticeAt?.size) {
+                    this.plugin.endTranslationAttentionEpisode?.(providerSnapshotKey || this.plugin.getAutoTranslationProviderKey({ configOverrides: taskConfig }));
+                }
                 if (requestStillCurrent) {
                     this.plugin.logDiagnostic("model.request", "success", {
                         ...this.plugin.getDiagnosticBaseMeta("model", diagnosticMode, "request-success"),

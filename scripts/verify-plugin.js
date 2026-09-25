@@ -2771,7 +2771,9 @@ global.document = savedDocumentForStyleFallback;
 if (savedBdApiForStyles === undefined) delete global.BdApi;
 else global.BdApi = savedBdApiForStyles;
 assert.match(injectedCss, /--dait-danger: #d83c3e/);
-assert.match(injectedCss, /var\(--dait-danger, #d83c3e\)/);
+// Chat error lines use Discord's readable danger text colour instead of the fixed brand red.
+assert.match(injectedCss, /--dait-line-danger: var\(--text-danger, #fa777c\)/);
+assert.match(injectedCss, /\.dait-translation-line\.dait-translation-error \{[\s\S]*?color: var\(--dait-line-danger\);/);
 assert.equal(injectedCss.includes("opacity: 0.28"), false);
 assert.equal(injectedCss.includes("background: transparent;\n    border: 1px solid transparent"), false);
 assert.match(injectedCss, /\.dait-settings \{[\s\S]*?--dait-card: var\(--bg-base-primary, var\(--background-base-low, var\(--background-primary, #252832\)\)\);[\s\S]*?--dait-control: var\(--input-background, var\(--background-base-lowest, var\(--background-secondary, #171a22\)\)\);/);
@@ -5330,8 +5332,13 @@ warningToastPlugin.settings.ui.showAutoTranslateToasts = true;
 warningToastPlugin.showAutoTranslateError(new Error("invalid output"));
 assert.equal(warningToasts, 1);
 warningToastPlugin.settings.ui.showAutoTranslateToasts = false;
-warningToastPlugin.showAutoTranslateError(Object.assign(new Error("API_ERROR"), { status: 401 }));
+warningToastPlugin.showAutoTranslateError(Object.assign(new Error("API_ERROR"), { status: 500 }));
 assert.equal(warningToasts, 1);
+// An error only the user can fix (auth) is announced once per episode even with failure toasts off.
+warningToastPlugin.showAutoTranslateError(Object.assign(new Error("API_ERROR"), { status: 401 }));
+assert.equal(warningToasts, 2);
+warningToastPlugin.showAutoTranslateError(Object.assign(new Error("API_ERROR"), { status: 401 }));
+assert.equal(warningToasts, 2);
 
 const networkFailurePlugin = new Plugin();
 let networkFailureRemoved = false;
@@ -9045,9 +9052,12 @@ const savedDocumentForRenderWrapper = global.document;
 global.document = { createElement: tag => createFakeElement(tag) };
 renderTextWrapperPlugin.renderTranslation({}, {}, "wrapped translation", "cache-key", "source");
 global.document = savedDocumentForRenderWrapper;
-assert.equal(renderChildren.length, 1);
+// The text span first, then the hover toolbar (copy / retranslate / hide), which adds no text.
+assert.equal(renderChildren.length, 2);
 assert.equal(renderChildren[0].className, "dait-translation-text");
 assert.equal(renderChildren[0].textContent, "wrapped translation");
+assert.equal(renderChildren[1].className, "dait-translation-actions");
+assert.equal(renderChildren[1].children.length, 3);
 
 const emojiRenderPlugin = new Plugin();
 const sourceEmoji = createFakeElement("img");
@@ -9159,7 +9169,15 @@ const maskedHideLine = {
 };
 const maskedHideContent = { dataset: {}, style: { setProperty() {}, removeProperty() {} }, parentElement: { insertBefore(node) { node.parentElement = this; } } };
 const savedDocumentForMaskedHide = global.document;
-global.document = { createElement: () => maskedHideLine };
+let maskedHideLineCreated = false;
+// The first element created is the line; the text span and toolbar get their own elements.
+global.document = {
+    createElement: tag => {
+        if (maskedHideLineCreated) return createFakeElement(tag);
+        maskedHideLineCreated = true;
+        return maskedHideLine;
+    }
+};
 maskedHideOriginalPlugin.getTranslationLine = () => null;
 maskedHideOriginalPlugin.getTranslationLines = () => [];
 maskedHideOriginalPlugin.isReplyPreviewElement = () => false;
@@ -9865,7 +9883,8 @@ const errorRenderLine = {
 errorRenderPlugin.ensureTranslationNode = () => errorRenderLine;
 errorRenderPlugin.setTranslationLineMetadata = () => {};
 const inlineError = new Error("API_ERROR");
-inlineError.status = 401;
+// A server error: Retry can fix it. (Auth errors offer "Open settings" instead; see tests/core/chat-lines.test.js.)
+inlineError.status = 500;
 errorRenderPlugin.renderTranslationError({ isConnected: true }, { isConnected: true }, inlineError, "manual\n---\ncache", "source");
 assert.equal(errorRenderLine.children.length, 2);
 assert.equal(errorRenderLine.children[0].className, "dait-translation-error-message");

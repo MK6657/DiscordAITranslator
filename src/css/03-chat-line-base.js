@@ -1,25 +1,45 @@
 "use strict";
 
+// A message's original text while "hide original" masks it. Hovering the mask or focusing the message
+// shows the original again; while masked it keeps the compact gray bar.
+const SOURCE_MASKED = '[data-dait-source-hidden="true"]:not(:hover):not(:focus-within):not(:is([id^="chat-messages-"], [data-list-item-id*="chat-messages"]):focus-within *)';
+
 module.exports = `.dait-translation-line {
-    --dait-danger: #d83c3e;
+    --dait-line-text: var(--text-strong, var(--header-primary, #f2f3f5));
+    --dait-line-muted: var(--text-muted, #b5bac1);
+    --dait-line-danger: var(--text-danger, #fa777c);
+    --dait-line-danger-accent: var(--status-danger, #f23f43);
+    --dait-line-warning: var(--text-warning, #f0b232);
+    --dait-line-warning-accent: var(--status-warning, #f0b232);
+    --dait-line-tint: color-mix(in srgb, var(--dait-line-text) 8%, transparent);
+    --dait-line-chip: color-mix(in srgb, var(--dait-line-text) 10%, transparent);
+    --dait-line-hover: color-mix(in srgb, var(--dait-line-text) 12%, transparent);
+    --dait-line-border: color-mix(in srgb, var(--dait-line-text) 18%, transparent);
+    --dait-line-surface: var(--background-floating, var(--background-secondary, #2b2d31));
+    --dait-line-button: var(--button-secondary-background, #4e5058);
+    --dait-line-button-text: var(--white-500, #ffffff);
+    --dait-line-focus: var(--focus-primary, #00a8fc);
     --dait-chat-mask: rgba(106, 111, 123, 0.72);
     --dait-chat-mask-border: rgba(255, 255, 255, 0.1);
-    --dait-chat-revealed-bg: rgba(255, 255, 255, 0.08);
-    --dait-chat-revealed-text: #f2f3f5;
 }
 
 .theme-light .dait-translation-line {
+    --dait-line-text: var(--text-strong, var(--header-primary, #060607));
+    --dait-line-muted: var(--text-muted, #5c5e66);
+    --dait-line-danger: var(--text-danger, #c9252d);
+    --dait-line-warning: var(--text-warning, #8a5a00);
+    --dait-line-surface: var(--background-floating, #ffffff);
+    --dait-line-button: var(--button-secondary-background, #6d6f78);
     --dait-chat-mask: rgba(123, 130, 145, 0.48);
     --dait-chat-mask-border: rgba(48, 56, 70, 0.12);
-    --dait-chat-revealed-bg: rgba(30, 36, 50, 0.08);
-    --dait-chat-revealed-text: #1f232b;
 }
 
-[data-dait-source-hidden="true"] {
+${SOURCE_MASKED} {
     color: transparent !important;
     display: inline-block;
     font-size: 0 !important;
     line-height: 0 !important;
+    max-width: 100%;
     min-height: 0 !important;
     position: relative;
     text-shadow: none !important;
@@ -27,22 +47,26 @@ module.exports = `.dait-translation-line {
     vertical-align: baseline;
 }
 
-[data-dait-source-hidden="true"]::before {
+/* The bar is the masked element's only content, so its width must not depend on the element's
+   (shrink-to-fit) width, and its ch units need a real font size: the masked text has font-size 0. */
+${SOURCE_MASKED}::before {
     background: var(--dait-chat-mask, rgba(106, 111, 123, 0.72));
     border: 1px solid var(--dait-chat-mask-border, rgba(255, 255, 255, 0.1));
     border-radius: 3px;
+    box-sizing: border-box;
     content: "";
     display: block;
+    font-size: 1rem;
     height: calc(max(1, var(--dait-source-mask-lines, 1)) * 1.15rem);
-    max-width: min(100%, 42ch);
-    width: min(var(--dait-source-mask-width, 18ch), 100%);
+    max-width: 100%;
+    width: var(--dait-source-mask-width, 18ch);
 }
 
-[data-dait-source-hidden="true"] > :not(.dait-message-button):not(.dait-translation-line) {
+${SOURCE_MASKED} > :not(.dait-message-button):not(.dait-translation-line) {
     display: none !important;
 }
 
-[data-dait-source-hidden="true"] > .dait-message-button {
+${SOURCE_MASKED} > .dait-message-button {
     font-size: 12px;
     line-height: 1;
 }
