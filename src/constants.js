@@ -706,6 +706,8 @@ const DEFAULT_SETTINGS = {
     googleTranslate: {
         keyPoolText: "",
         keys: [],
+        // This month's usage per key fingerprint, kept after a key's line is removed.
+        usageById: {},
         defaultMonthlyLimit: GOOGLE_TRANSLATE_DEFAULT_MONTHLY_LIMIT,
         allowPrefetch: true
     },

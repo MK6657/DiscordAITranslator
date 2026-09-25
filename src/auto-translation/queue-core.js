@@ -2125,6 +2125,8 @@ class AutoTranslationQueueCore {
         if (error?.googleTranslateQuotaExceeded) return "quota";
         if (error?.googleTranslateNoKey) return "auth";
         if (status === 401 || status === 403) return "auth";
+        // 402 Payment Required: e.g. DeepSeek "Insufficient Balance".
+        if (status === 402) return "quota";
         if (status === 429) return "rate-limit";
         if (status >= 500) return "server";
         if (this.plugin.isTimeoutError(error)) return "timeout";
