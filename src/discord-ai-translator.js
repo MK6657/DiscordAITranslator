@@ -1100,6 +1100,7 @@ module.exports = class DiscordAITranslator {
         this.cancelQuickSettingsModalVerify();
         if (this.autoTranslationRetryTimer) clearTimeout(this.autoTranslationRetryTimer);
         this.cancelAutoTranslationRenderQueue();
+        this.clearTranslationErrorWaitTimers();
         if (this.settingsDirtyTimer) clearTimeout(this.settingsDirtyTimer);
         if (this.translationCacheDirtyTimer) clearTimeout(this.translationCacheDirtyTimer);
         if (this.googleTranslateRuntimeDirtyTimer) clearTimeout(this.googleTranslateRuntimeDirtyTimer);
@@ -14451,14 +14452,18 @@ module.exports = class DiscordAITranslator {
         });
     }
 
-    // A rate-limit line has no button while the wait lasts; afterwards it offers Retry.
+    // A rate-limit line has no button while the wait lasts; afterwards it offers Retry. One timer per line: a new
+    // wait, a re-render, removing the line and stop() clear it, so it never holds a gone line for up to two minutes.
     scheduleTranslationErrorWaitEnd(line, messageNode, content, waitMs) {
+        this.clearTranslationErrorWaitTimer(line);
         const delay = Number(waitMs || 0);
         if (!(delay > 0) || typeof setTimeout !== "function") return;
         const token = `${Date.now()}:${Math.random().toString(36).slice(2)}`;
         line.dataset.daitErrorToken = token;
         const lifecycleToken = this.getLifecycleToken();
         const timer = setTimeout(() => {
+            this.translationErrorWaitTimers?.delete?.(timer);
+            if (line.__daitWaitTimer === timer) line.__daitWaitTimer = null;
             if (!this.isLifecycleTokenCurrent(lifecycleToken) || !line.isConnected) return;
             if (line.dataset?.daitErrorToken !== token || line.dataset?.daitErrorAction !== "wait") return;
             const currentContent = this.getTranslationContentForLine(line) || content;
@@ -14470,6 +14475,22 @@ module.exports = class DiscordAITranslator {
             });
         }, Math.min(delay, AUTO_TRANSLATE_FAILURE_MAX_TTL) + 250);
         timer?.unref?.();
+        line.__daitWaitTimer = timer;
+        if (!this.translationErrorWaitTimers) this.translationErrorWaitTimers = new Set();
+        this.translationErrorWaitTimers.add(timer);
+    }
+
+    clearTranslationErrorWaitTimer(line) {
+        const timer = line?.__daitWaitTimer;
+        if (!timer) return;
+        clearTimeout(timer);
+        this.translationErrorWaitTimers?.delete?.(timer);
+        line.__daitWaitTimer = null;
+    }
+
+    clearTranslationErrorWaitTimers() {
+        (this.translationErrorWaitTimers || []).forEach(timer => clearTimeout(timer));
+        this.translationErrorWaitTimers?.clear?.();
     }
 
     openTranslationSettingsFromChat(source = null) {
@@ -14495,6 +14516,7 @@ module.exports = class DiscordAITranslator {
 
     resetTranslationLineState(line) {
         if (!line) return;
+        this.clearTranslationErrorWaitTimer(line);
         ["role", "aria-busy", "aria-label", "aria-expanded", "tabindex", "title", "lang", "dir"].forEach(name => line.removeAttribute?.(name));
         if (line.dataset) {
             delete line.dataset.daitErrorAction;
@@ -15130,11 +15152,13 @@ module.exports = class DiscordAITranslator {
         if (content) {
             this.getTranslationLines(content).forEach(line => {
                 this.restoreTranslationSourceVisibility(content);
+                this.clearTranslationErrorWaitTimer(line);
                 line.remove();
             });
             const childLine = content.querySelector(":scope > .dait-translation-line");
             if (childLine) {
                 this.restoreTranslationSourceVisibility(content);
+                this.clearTranslationErrorWaitTimer(childLine);
                 childLine.remove();
             }
             return;
@@ -15143,6 +15167,7 @@ module.exports = class DiscordAITranslator {
         const line = messageNode.querySelector(".dait-translation-line");
         if (line) {
             this.restoreTranslationSourceVisibility(this.getTranslationContentForLine(line));
+            this.clearTranslationErrorWaitTimer(line);
             line.remove();
         }
     }

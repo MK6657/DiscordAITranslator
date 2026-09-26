@@ -946,6 +946,70 @@ test("settings search: a panel left open after stop() adds no window listener, a
     assert.equal(state.searchEscapeListener, null);
 });
 
+// --- LP-3: the timers that end a rate-limit wait are tracked and cleared ---
+
+function fakeTimers(t) {
+    const pending = new Map();
+    let next = 1;
+    useGlobals(t, {
+        setTimeout: (handler, ms) => {
+            const handle = { id: next++, unref() { return this; } };
+            pending.set(handle, { handler, ms: Number(ms) || 0 });
+            return handle;
+        },
+        clearTimeout: handle => { pending.delete(handle); }
+    });
+    return {
+        waitTimers: () => [...pending.values()].filter(timer => timer.ms === 60250).length,
+        runWaitTimers: () => [...pending.entries()].filter(([, timer]) => timer.ms === 60250).forEach(([handle, timer]) => {
+            pending.delete(handle);
+            timer.handler();
+        })
+    };
+}
+
+test("rate-limit lines: one wait timer per line, cleared on re-render, removal and stop()", t => {
+    const { plugin, doc, message } = chatPlugin(t);
+    const timers = fakeTimers(t);
+    const rateLimited = () => Object.assign(new Error("API_ERROR"), { status: 429, retryAfterMs: 60000 });
+    const messages = Array.from({ length: 20 }, (_, index) => message(`message ${index}`, `chat-messages-111111111111111111-${String(300000000000000000 + index)}`));
+    const lines = messages.map(({ messageNode, content }, index) => plugin.renderTranslationError(messageNode, content, rateLimited(), `key-${index}`, content.text));
+    assert.equal(lines[0].dataset.daitErrorAction, "wait");
+    assert.equal(timers.waitTimers(), 20);
+
+    // The same lines fail again: each keeps one timer.
+    messages.slice(0, 5).forEach(({ messageNode, content }, index) => plugin.renderTranslationError(messageNode, content, rateLimited(), `key-${index}`, content.text));
+    assert.equal(timers.waitTimers(), 20);
+
+    // A line that is translated after all, or removed, has no timer left.
+    messages.slice(5, 8).forEach(({ messageNode, content }) => plugin.renderTranslation(messageNode, content, "译文", "key", content.text));
+    assert.equal(timers.waitTimers(), 17);
+    messages.slice(8, 10).forEach(({ messageNode, content }) => plugin.removeTranslationNode(messageNode, content));
+    assert.equal(timers.waitTimers(), 15);
+
+    // A timer that fires still turns its line into a Retry line.
+    const [last] = messages.slice(-1);
+    const lastLine = lines[lines.length - 1];
+    plugin.clearTranslationErrorWaitTimers();
+    assert.equal(timers.waitTimers(), 0, "stop() clears the rest");
+    plugin.renderTranslationError(last.messageNode, last.content, rateLimited(), "key-last", last.content.text);
+    assert.equal(timers.waitTimers(), 1);
+    timers.runWaitTimers();
+    assert.equal(lastLine.dataset.daitErrorAction, "retry");
+    assert.ok(lastLine.querySelector(".dait-translation-retry"));
+    assert.ok(doc.body.contains(lastLine));
+
+    // stop() clears them.
+    plugin.renderTranslationError(last.messageNode, last.content, rateLimited(), "key-last", last.content.text);
+    assert.equal(timers.waitTimers(), 1);
+    plugin.flushTranslationCache = () => true;
+    plugin.flushGoogleTranslateRuntimeState = () => true;
+    plugin.flushDiagnosticLogs = () => true;
+    plugin.removeStyles = () => {};
+    plugin.stop();
+    assert.equal(timers.waitTimers(), 0);
+});
+
 test("settings window: a key that ends an IME composition does not close the window", t => {
     const { doc, isOpen } = openHotkeyRecorder(t);
     doc.dispatchEvent("keydown", { key: "Escape", isComposing: true });
