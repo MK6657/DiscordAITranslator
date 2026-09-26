@@ -120,8 +120,12 @@ class ProviderLayer {
             expiresAt: now + Math.max(1000, Number(options.ttlMs || LOCAL_PROVIDER_MODEL_DETECTION_TTL_MS) || LOCAL_PROVIDER_MODEL_DETECTION_TTL_MS),
             retryAt: 0
         });
-        // The served model is part of the cache key, so it is saved with the cache.
-        if (previousModel !== normalized) this.plugin.scheduleTranslationCachePersist();
+        // The served model is part of the cache key, so it is saved with the cache, and hits the
+        // cached-draw memo remembered under the old model's keys must not be drawn again.
+        if (previousModel !== normalized) {
+            this.plugin.scheduleTranslationCachePersist();
+            this.plugin.cachedDrawMemo?.clear?.();
+        }
         return normalized;
     }
 

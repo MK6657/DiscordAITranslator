@@ -566,6 +566,26 @@ test("the cache key follows the model the local server actually serves", () => {
     assert.equal(JSON.stringify(stored).includes("Qwen3-8B.gguf"), true);
 });
 
+// prov-4: the cached-draw memo remembers hits by cache key; a new served model retires them.
+test("a newly detected local model stops the cached-draw memo from drawing the old model's text", () => {
+    const plugin = new Plugin();
+    plugin.scheduleTranslationCachePersist = () => {};
+    Object.assign(plugin.settings.translation, { provider: "sakuraLocal", endpoint: LOCAL_ENDPOINT, apiKey: "", model: "local-model" });
+    const config = plugin.settings.translation;
+    plugin.setCachedLocalProviderDetectedModel(config, "HY-MT1.5-1.8B.gguf");
+    const key = plugin.getTranslationCacheKey("bonjour", plugin.getAutoTranslationOptions());
+    plugin.setTranslationCache(key, "old model text");
+    const memoKey = "route|message-1|message|fake-hash";
+    plugin.rememberCachedDrawMemoEntry(memoKey, { result: "hit", cacheKey: key, translated: "old model text", keys: [key] });
+    assert.ok(plugin.getCachedDrawMemoEntry(memoKey), "the memo serves the hit while the model is the same");
+
+    plugin.setCachedLocalProviderDetectedModel(config, "HY-MT1.5-1.8B.gguf");
+    assert.ok(plugin.getCachedDrawMemoEntry(memoKey), "re-detecting the same model keeps the memo");
+
+    plugin.setCachedLocalProviderDetectedModel(config, "Qwen3-8B.gguf");
+    assert.equal(plugin.getCachedDrawMemoEntry(memoKey), null);
+});
+
 test("exports show only the model file name, not a local path", () => {
     const plugin = new Plugin();
     plugin.settings.translation.model = "C:\\Users\\fake-user\\models\\fake-model.gguf";
