@@ -1172,3 +1172,38 @@ test("a Shift+letter hotkey saved by an older version no longer hijacks typing",
     plugin.handleKeydown(event);
     assert.equal(event.prevented, false);
 });
+
+// CMP-R7: a saved shortcut the hotkey no longer accepts would show in settings but never fire.
+test("a saved hotkey that can no longer fire is reset to the default when settings load", () => {
+    const cases = [
+        ["Shift+H", "Ctrl+Alt+P"],
+        ["Ctrl+V", "Ctrl+Alt+P"],
+        ["", "Ctrl+Alt+P"],
+        ["Ctrl+Shift+K", "Ctrl+Shift+K"],
+        ["Alt+Q", "Alt+Q"],
+        ["Shift+F5", "Shift+F5"]
+    ];
+    for (const [savedHotkey, expected] of cases) {
+        const plugin = new Plugin();
+        plugin.warnSanitized = () => {};
+        plugin.scheduleTranslationCachePersist = () => {};
+        plugin.loadData = key => key === "settings" ? { ui: { settingsVersion: 2, polishHotkey: savedHotkey } } : null;
+        let saved = null;
+        plugin.saveData = (key, value) => {
+            if (key === "settings") saved = JSON.parse(JSON.stringify(value));
+            return true;
+        };
+        assert.equal(plugin.loadSettings(), true);
+        assert.equal(plugin.settings.ui.polishHotkey, expected, JSON.stringify(savedHotkey));
+        assert.equal(plugin.getHotkeyLabel(), expected, "settings show the shortcut that actually works");
+        if (savedHotkey !== expected) assert.equal(saved?.ui?.polishHotkey, expected, "the repaired value is saved");
+    }
+});
+
+test("the hotkey help text asks for Ctrl, Alt or Win instead of recommending Shift", () => {
+    const { I18N } = require("../../src/i18n");
+    assert.doesNotMatch(I18N.en.polishHotkeyDesc, /Ctrl, Alt, or Shift/);
+    assert.match(I18N.en.polishHotkeyDesc, /Ctrl, Alt, or Win/);
+    assert.doesNotMatch(I18N["zh-CN"].polishHotkeyDesc, /Ctrl、Alt 或 Shift/);
+    assert.match(I18N["zh-CN"].polishHotkeyDesc, /Ctrl、Alt 或 Win/);
+});

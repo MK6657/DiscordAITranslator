@@ -384,6 +384,12 @@ class SettingsStore {
             this.plugin.settings.ui.enablePolishHotkey = DEFAULT_SETTINGS.ui.enablePolishHotkey;
             changed = true;
         }
+        // A shortcut the hotkey no longer accepts (Shift+letter saved by an older version, or an editing
+        // shortcut) would show in settings but never fire: use the default instead.
+        if (!this.plugin.isAllowedPolishHotkey(this.plugin.settings.ui.polishHotkey)) {
+            this.plugin.settings.ui.polishHotkey = DEFAULT_SETTINGS.ui.polishHotkey;
+            changed = true;
+        }
         if (!["polish", "translation"].includes(this.plugin.settings.ui.testModeKind)) {
             this.plugin.settings.ui.testModeKind = DEFAULT_SETTINGS.ui.testModeKind;
             changed = true;
