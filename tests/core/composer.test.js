@@ -669,6 +669,83 @@ test("running public bilingual again re-translates the source instead of nesting
     assert.equal(persisted.entries.length, 0, "unsent draft translations stay in memory only");
 });
 
+// CMP-R1: the result panel's "Insert into input" counts as a write for the polish session.
+function useRealResultPanel(plugin) {
+    delete plugin.showPolishResultPanel;
+    const applyPanelText = plugin.applyPolishResultPanelText.bind(plugin);
+    let pending = null;
+    plugin.applyPolishResultPanelText = (...args) => (pending = applyPanelText(...args));
+    return async () => {
+        const apply = globalThis.document.body.querySelector(".dait-polish-result-apply");
+        assert.ok(apply, "the result panel offers Insert into input");
+        apply.dispatchEvent({ type: "click", preventDefault() {}, stopPropagation() {} });
+        return pending;
+    };
+}
+
+function createBilingualPanelFlow(t, options = {}) {
+    const browser = useComposerBrowser(t);
+    const flow = createPolishFlow(t, { textbox: createFlowTextbox("你好") });
+    const clickInsert = useRealResultPanel(flow.plugin);
+    flow.plugin.isInvalidAutoTranslationOutput = () => false;
+    const requests = [];
+    let answer = 0;
+    flow.plugin.runModelTask = async (kind, input) => {
+        requests.push(input);
+        answer++;
+        return `hello ${answer}`;
+    };
+    if (options.failFirstWrite) {
+        const write = flow.plugin.replaceTextboxTextSafelyAsync;
+        let writes = 0;
+        flow.plugin.replaceTextboxTextSafelyAsync = async (box, text, writeOptions) => {
+            if (++writes === 1) return { ok: false, reason: "verification-failed" };
+            return write(box, text, writeOptions);
+        };
+    }
+    return { ...flow, browser, clickInsert, requests };
+}
+
+for (const variant of ["held because focus moved", "after a failed write"]) {
+    test(`Insert into input on a bilingual result ${variant}: running bilingual again does not nest, and Restore is offered`, async t => {
+        const { plugin, textbox, browser, clickInsert, requests } = createBilingualPanelFlow(t, { failFirstWrite: variant !== "held because focus moved" });
+        if (variant === "held because focus moved") browser.document.activeElement = h("input", { type: "text" });
+        const first = await plugin.publicBilingualCurrentDraft();
+        assert.equal(first.ok, false);
+        assert.equal(textbox.text, "你好", "nothing was written by the run itself");
+
+        browser.document.activeElement = null;
+        assert.equal(await clickInsert(), true);
+        assert.equal(textbox.text, "hello 1\n\n||你好||");
+        assert.equal(plugin.canRestorePolishOriginal(textbox, plugin.polishSession), true, "Restore original is offered after Insert");
+
+        const second = await plugin.publicBilingualCurrentDraft();
+        assert.equal(second.ok, true);
+        assert.deepEqual(requests, ["你好", "你好"], "the second run translates the original draft, not the bilingual text");
+        assert.equal(textbox.text, "hello 2\n\n||你好||", "no nested bilingual text");
+    });
+}
+
+test("Insert into input on a held polish result records the write and offers Restore original", async t => {
+    const browser = useComposerBrowser(t);
+    const { plugin, textbox } = createPolishFlow(t, { textbox: createFlowTextbox("original draft") });
+    const clickInsert = useRealResultPanel(plugin);
+    const restoreControls = [];
+    plugin.showRestoreOriginalControl = (box, session) => restoreControls.push({ box, session });
+    browser.document.activeElement = h("input", { type: "text" });
+    await plugin.polishCurrentDraft();
+    assert.equal(textbox.text, "original draft");
+    assert.deepEqual(restoreControls, []);
+
+    browser.document.activeElement = null;
+    assert.equal(await clickInsert(), true);
+    assert.equal(textbox.text, "polished draft");
+    const session = plugin.polishSession;
+    assert.equal(session.lastWrittenRawText, "polished draft");
+    assert.deepEqual(restoreControls, [{ box: textbox, session }]);
+    assert.equal(plugin.canRestorePolishOriginal(textbox, session), true);
+});
+
 // ---------------------------------------------------------------------------------------------
 // composer-8: Restore original disappears after restoring
 // ---------------------------------------------------------------------------------------------

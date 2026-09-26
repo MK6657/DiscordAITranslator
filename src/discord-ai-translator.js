@@ -11016,6 +11016,12 @@ module.exports = class DiscordAITranslator {
             if (composed.length > DISCORD_MESSAGE_MAX_LENGTH) {
                 throw new Error(this.t("publicBilingualTooLong", { length: composed.length, limit: DISCORD_MESSAGE_MAX_LENGTH }));
             }
+            // The panel's "Insert into input" writes the result: record it like this run's own write,
+            // so running bilingual again translates the source instead of nesting, and Restore works.
+            const recordPanelInsert = target => {
+                payload.session.composerKey = this.getTextboxComposerKey(target);
+                this.updatePolishSessionAfterBilingual(payload.session, target, composed, payload.translationSource, true);
+            };
             const staleReason = this.getComposerWriteStaleReason(textbox, writeToken, payload.expectedCurrentText);
             if (staleReason) {
                 this.logDiagnostic("public.bilingual", "stale-input", {
@@ -11036,7 +11042,8 @@ module.exports = class DiscordAITranslator {
                     sourceButton: button,
                     title: this.t("publicBilingualButton"),
                     ariaLabel: this.t("publicBilingualTitleAttr", { targetLanguage: this.getDisplayLanguage(this.getPublicBilingualTargetLanguage()) }),
-                    adjustTextboxSelection: false
+                    adjustTextboxSelection: false,
+                    onApplied: recordPanelInsert
                 });
                 this.showToast(this.t("composerResultHeld"), "info");
                 return { ok: false, wrote: false, stale: true, phase: "translation", reason: staleReason, fallbackText: composed };
@@ -11068,7 +11075,8 @@ module.exports = class DiscordAITranslator {
                     sourceButton: button,
                     title: this.t("publicBilingualButton"),
                     ariaLabel: this.t("publicBilingualTitleAttr", { targetLanguage: this.getDisplayLanguage(this.getPublicBilingualTargetLanguage()) }),
-                    adjustTextboxSelection: false
+                    adjustTextboxSelection: false,
+                    onApplied: recordPanelInsert
                 });
                 // The draft changed under us (typing, a newer write): the result stays in the panel.
                 if (["write-cancelled", "stale-input", "superseded", "user-input"].includes(writeResult.reason)) {
@@ -11177,6 +11185,12 @@ module.exports = class DiscordAITranslator {
             // A newer run on the same composer owns the result slot.
             if (this.isComposerWriteSuperseded(writeToken)) return;
             const action = this.getPolishAfterAction();
+            // The panel's "Insert into input" writes the result: record it like this run's own write.
+            const recordPanelInsert = target => {
+                session.composerKey = this.getTextboxComposerKey(target);
+                this.updatePolishSessionAfterResult(session, target, polished, true);
+                this.showRestoreOriginalControl(target, session, button);
+            };
             const staleReason = this.getComposerWriteStaleReason(textbox, writeToken, draft);
             if (staleReason) {
                 this.updatePolishSessionAfterResult(session, textbox, polished, false);
@@ -11191,7 +11205,7 @@ module.exports = class DiscordAITranslator {
                     reason: staleReason,
                     ms: Date.now() - startedAt
                 });
-                this.showPolishResultPanel(this.getComposerResultPanelAnchor(textbox), polished, { sourceButton: button });
+                this.showPolishResultPanel(this.getComposerResultPanelAnchor(textbox), polished, { sourceButton: button, onApplied: recordPanelInsert });
                 this.showToast(this.t("composerResultHeld"), "info");
                 return;
             }
@@ -11214,7 +11228,7 @@ module.exports = class DiscordAITranslator {
                     sourceHash: this.getStrongTextFingerprint(sourceText),
                     ms: Date.now() - startedAt
                 });
-                this.showPolishResultPanel(textbox, polished, { sourceButton: button });
+                this.showPolishResultPanel(textbox, polished, { sourceButton: button, onApplied: recordPanelInsert });
                 return;
             }
             this.logDiagnostic("polish", "success", {
@@ -11326,7 +11340,7 @@ module.exports = class DiscordAITranslator {
                 if (apply.disabled) return;
                 apply.disabled = true;
                 try {
-                    await this.applyPolishResultPanelText(textbox, String(text || ""));
+                    await this.applyPolishResultPanelText(textbox, String(text || ""), { onApplied: options.onApplied });
                 }
                 finally {
                     apply.disabled = false;
@@ -11430,8 +11444,9 @@ module.exports = class DiscordAITranslator {
     }
 
     // The panel's "Insert into input" action: an explicit user request, so it replaces whatever the
-    // composer holds now (Discord's undo brings the previous draft back).
-    async applyPolishResultPanelText(textbox, text) {
+    // composer holds now (Discord's undo brings the previous draft back). `options.onApplied(target)`
+    // runs after a verified write so the run that produced the text can record it.
+    async applyPolishResultPanelText(textbox, text, options = {}) {
         const target = textbox && textbox.isConnected !== false ? textbox : this.resolveInputActionTextbox(null, {});
         if (!target) {
             this.showToast(this.t("textboxMissing"), "error");
@@ -11452,6 +11467,7 @@ module.exports = class DiscordAITranslator {
         }
         if (result?.ok) {
             this.removePolishResultPanel();
+            options.onApplied?.(target);
             return true;
         }
         if (result?.reason !== "write-cancelled") this.showToast(this.t("polishResultApplyFailed"), "error");
