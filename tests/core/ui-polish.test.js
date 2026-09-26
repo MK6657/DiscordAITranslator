@@ -446,3 +446,56 @@ test("settings window: Tab and Shift+Tab wrap between the first and the last con
     assert.equal(displayControls[displayControls.length - 1].dataset.daitPath, "ui.showQuickSettingsPanelButton");
     plugin.closeQuickSettingsPanel(root, "test");
 });
+
+// --- UI-3: Escape while recording the polishing hotkey cancels the recording, not the window ---
+
+function openHotkeyRecorder(t) {
+    const context = createPlugin(t, { tab: "compose" });
+    context.plugin.settings.ui.enablePolishHotkey = true;
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    context.root = context.plugin.openQuickSettingsPanel("test");
+    context.recorder = context.root.querySelector(".dait-hotkey-recorder");
+    context.label = context.recorder.textContent;
+    context.isOpen = () => Boolean(context.doc.querySelector(".dait-quick-settings-modal-root"));
+    return context;
+}
+
+test("settings window: Escape while recording the hotkey only cancels the recording", t => {
+    const { plugin, doc, recorder, label, isOpen } = openHotkeyRecorder(t);
+    recorder.click();
+    t.mock.timers.tick(1);
+    assert.equal(recorder.dataset.recording, "true");
+    assert.equal(doc.count("keydown", true), 2, "the window's and the recorder's listeners");
+
+    const event = doc.dispatchEvent("keydown", { key: "Escape" });
+    assert.equal(event.defaultPrevented, true);
+    assert.equal(isOpen(), true, "the window stays open");
+    assert.equal(recorder.dataset.recording, undefined, "recording ended");
+    assert.equal(recorder.textContent, label, "the saved shortcut shows again");
+    assert.equal(plugin.hotkeyRecordCleanup, null);
+    assert.equal(doc.count("keydown", true), 1, "the recorder's listener is gone");
+
+    // The next Escape closes the window as usual.
+    doc.dispatchEvent("keydown", { key: "Escape" });
+    assert.equal(isOpen(), false);
+});
+
+test("settings window: Escape right after the recorder is clicked (before it listens) cancels the recording too", t => {
+    const { recorder, label, doc, isOpen } = openHotkeyRecorder(t);
+    recorder.click();
+    assert.equal(recorder.dataset.recording, "true");
+    doc.dispatchEvent("keydown", { key: "Escape" });
+    assert.equal(isOpen(), true);
+    assert.equal(recorder.dataset.recording, undefined);
+    assert.equal(recorder.textContent, label);
+    t.mock.timers.tick(1);
+    assert.equal(doc.count("keydown", true), 1, "the cancelled recording never starts listening");
+});
+
+test("settings window: a key that ends an IME composition does not close the window", t => {
+    const { doc, isOpen } = openHotkeyRecorder(t);
+    doc.dispatchEvent("keydown", { key: "Escape", isComposing: true });
+    assert.equal(isOpen(), true);
+    doc.dispatchEvent("keydown", { key: "Escape" });
+    assert.equal(isOpen(), false);
+});

@@ -7106,8 +7106,20 @@ module.exports = class DiscordAITranslator {
             document.removeEventListener?.("keydown", this.quickSettingsModalKeydown, true);
         }
         this.quickSettingsModalKeydown = event => {
+            // A key that ends an IME composition belongs to the input method.
+            if (event?.isComposing) return;
             // A BetterDiscord dialog opened from these settings handles its own Escape and Tab.
             if (this.isConfirmDialogOpen()) return;
+            // While the polishing hotkey is being recorded the recorder owns the keyboard; Escape only cancels it.
+            const recorder = this.hotkeyRecordCleanup ? this.hotkeyRecordButton : null;
+            if (recorder && dialog?.contains?.(recorder)) {
+                if (event.key === "Escape") {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    this.clearHotkeyRecording();
+                }
+                return;
+            }
             if (event.key === "Escape") {
                 event.preventDefault();
                 event.stopPropagation();
