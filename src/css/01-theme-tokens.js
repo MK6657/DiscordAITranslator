@@ -11,6 +11,16 @@ module.exports = `
     width: min(920px, calc(100vw - 48px)) !important;
 }
 
+/* Only the outermost marked node (the modal frame) gets that width. The marked nodes inside it (the padded content
+   scroller, BetterDiscord's .bd-addon-settings-wrap) fill their parent, so the panel stays clear of the scroller's
+   padding and scrollbar. */
+[data-dait-settings-modal="true"] [data-dait-settings-modal="true"] {
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+    max-width: 100% !important;
+    width: auto !important;
+}
+
 [data-dait-settings-modal-root="true"] {
     margin-bottom: clamp(16px, 4vh, 32px) !important;
     margin-top: clamp(16px, 4vh, 32px) !important;

@@ -447,3 +447,40 @@ test("a reset rebuilds every open panel on its own tab; the stored tab is the on
     assert.equal(plugin.settings.ui.settingsActiveTab, "data");
     [rebuiltQuick, rebuiltBd].forEach(item => plugin.destroySettingsModalSizing(item));
 });
+
+// --- SS-2: BetterDiscord's modal with its .bd-addon-settings-wrap -----------------------------------
+
+test("BetterDiscord's modal: only the frame is widened; the scroller and BetterDiscord's settings wrap fill their parent", t => {
+    const doc = createDocument();
+    useGlobals(t, { document: doc, window: { innerWidth: 1600, innerHeight: 1000 } });
+    const plugin = new Plugin();
+    plugin.isStarted = true;
+    const layer = doc.body.appendChild(doc.createElement("div"));
+    const root = layer.appendChild(doc.createElement("div"));
+    root.setAttribute("role", "dialog");
+    const content = root.appendChild(doc.createElement("div"));
+    const wrap = content.appendChild(doc.createElement("div"));
+    wrap.className = "bd-addon-settings-wrap";
+    const panel = wrap.appendChild(doc.createElement("div"));
+    layer.getBoundingClientRect = () => ({ width: 1600 });
+    root.getBoundingClientRect = () => ({ width: 600 });
+    content.getBoundingClientRect = () => ({ width: 600 });
+    wrap.getBoundingClientRect = () => ({ width: 576 });
+    plugin.applySettingsModalSizing(panel);
+
+    assert.deepEqual([root, content, wrap].map(node => node.dataset.daitSettingsModal), ["true", "true", "true"]);
+    assert.equal(root.dataset.daitSettingsModalRoot, "true");
+    assert.equal(layer.dataset.daitSettingsModal, undefined);
+    // The frame gets the window width ...
+    assert.equal(winningDeclaration(root, "width"), "min(920px, calc(100vw - 48px)) !important");
+    assert.equal(winningDeclaration(root, "margin-left"), "auto !important");
+    // ... and everything inside it fills its parent, so the panel never runs under the scroller's padding and scrollbar.
+    for (const node of [content, wrap]) {
+        assert.equal(winningDeclaration(node, "width"), "auto !important");
+        assert.equal(winningDeclaration(node, "max-width"), "100% !important");
+        assert.equal(winningDeclaration(node, "margin-left"), "0 !important");
+        assert.equal(winningDeclaration(node, "margin-right"), "0 !important");
+    }
+    plugin.cleanupSettingsModalSizing(panel);
+    assert.equal(wrap.dataset.daitSettingsModal, undefined);
+});

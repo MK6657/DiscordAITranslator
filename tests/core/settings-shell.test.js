@@ -883,13 +883,19 @@ test("BetterDiscord's modal is widened to a moderate window, never 1280 px", t =
     const layer = doc.body.appendChild(doc.createElement("div"));
     const root = layer.appendChild(doc.createElement("div"));
     const content = root.appendChild(doc.createElement("div"));
-    const panel = content.appendChild(doc.createElement("div"));
+    // BetterDiscord's showAddonSettingsModal puts an element panel in a .bd-addon-settings-wrap.
+    const wrap = content.appendChild(doc.createElement("div"));
+    wrap.className = "bd-addon-settings-wrap";
+    const panel = wrap.appendChild(doc.createElement("div"));
     layer.getBoundingClientRect = () => ({ width: 1600 });
     root.getBoundingClientRect = () => ({ width: 600 });
     content.getBoundingClientRect = () => ({ width: 576 });
+    wrap.getBoundingClientRect = () => ({ width: 552 });
     plugin.applySettingsModalSizing(panel);
+    assert.equal(wrap.dataset.daitSettingsModal, "true");
     assert.equal(content.dataset.daitSettingsModal, "true");
     assert.equal(root.dataset.daitSettingsModalRoot, "true");
+    assert.equal(wrap.dataset.daitSettingsModalRoot, undefined, "the frame, not the wrap, is the root");
     assert.equal(layer.dataset.daitSettingsModal, undefined, "the full-width layer is left alone");
     plugin.cleanupSettingsModalSizing(panel);
     assert.equal(root.dataset.daitSettingsModalRoot, undefined);
