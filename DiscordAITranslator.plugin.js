@@ -292,6 +292,16 @@ var require_theme_tokens = __commonJS({
     width: min(920px, calc(100vw - 48px)) !important;
 }
 
+/* Only the outermost marked node (the modal frame) gets that width. The marked nodes inside it (the padded content
+   scroller, BetterDiscord's .bd-addon-settings-wrap) fill their parent, so the panel stays clear of the scroller's
+   padding and scrollbar. */
+[data-dait-settings-modal="true"] [data-dait-settings-modal="true"] {
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+    max-width: 100% !important;
+    width: auto !important;
+}
+
 [data-dait-settings-modal-root="true"] {
     margin-bottom: clamp(16px, 4vh, 32px) !important;
     margin-top: clamp(16px, 4vh, 32px) !important;
@@ -411,8 +421,6 @@ var require_theme_tokens = __commonJS({
 .dait-settings-content,
 .dait-settings-row textarea,
 .dait-prompt-editor textarea,
-.dait-test-panel textarea,
-.dait-test-output,
 .dait-polish-result-output {
     scrollbar-color: var(--dait-scrollbar-thumb) var(--dait-scrollbar-track);
     scrollbar-width: thin;
@@ -424,8 +432,6 @@ var require_theme_tokens = __commonJS({
 .dait-settings-content::-webkit-scrollbar,
 .dait-settings-row textarea::-webkit-scrollbar,
 .dait-prompt-editor textarea::-webkit-scrollbar,
-.dait-test-panel textarea::-webkit-scrollbar,
-.dait-test-output::-webkit-scrollbar,
 .dait-polish-result-output::-webkit-scrollbar {
     height: 8px;
     width: 8px;
@@ -437,8 +443,6 @@ var require_theme_tokens = __commonJS({
 .dait-settings-content::-webkit-scrollbar-track,
 .dait-settings-row textarea::-webkit-scrollbar-track,
 .dait-prompt-editor textarea::-webkit-scrollbar-track,
-.dait-test-panel textarea::-webkit-scrollbar-track,
-.dait-test-output::-webkit-scrollbar-track,
 .dait-polish-result-output::-webkit-scrollbar-track {
     background: var(--dait-scrollbar-track);
     border-radius: 999px;
@@ -450,8 +454,6 @@ var require_theme_tokens = __commonJS({
 .dait-settings-content::-webkit-scrollbar-thumb,
 .dait-settings-row textarea::-webkit-scrollbar-thumb,
 .dait-prompt-editor textarea::-webkit-scrollbar-thumb,
-.dait-test-panel textarea::-webkit-scrollbar-thumb,
-.dait-test-output::-webkit-scrollbar-thumb,
 .dait-polish-result-output::-webkit-scrollbar-thumb {
     background: var(--dait-scrollbar-thumb);
     border: 2px solid transparent;
@@ -465,8 +467,6 @@ var require_theme_tokens = __commonJS({
 .dait-settings-content::-webkit-scrollbar-thumb:hover,
 .dait-settings-row textarea::-webkit-scrollbar-thumb:hover,
 .dait-prompt-editor textarea::-webkit-scrollbar-thumb:hover,
-.dait-test-panel textarea::-webkit-scrollbar-thumb:hover,
-.dait-test-output::-webkit-scrollbar-thumb:hover,
 .dait-polish-result-output::-webkit-scrollbar-thumb:hover {
     background: var(--dait-scrollbar-thumb-hover);
     background-clip: padding-box;
@@ -478,8 +478,6 @@ var require_theme_tokens = __commonJS({
 .dait-settings-content::-webkit-scrollbar-corner,
 .dait-settings-row textarea::-webkit-scrollbar-corner,
 .dait-prompt-editor textarea::-webkit-scrollbar-corner,
-.dait-test-panel textarea::-webkit-scrollbar-corner,
-.dait-test-output::-webkit-scrollbar-corner,
 .dait-polish-result-output::-webkit-scrollbar-corner {
     background: transparent;
 }
@@ -841,7 +839,8 @@ var require_settings = __commonJS({
     line-height: 1.4;
     margin-left: auto;
     margin-right: auto;
-    min-height: min(360px, calc(100vh - 96px));
+    /* At least 360 px, but never more than the host leaves: a taller panel would make the host scroll too. */
+    min-height: min(360px, calc(min(100vh - 64px, var(--dait-host-max, 100vh)) - var(--dait-host-chrome, 140px)));
     min-width: 0;
     overflow: hidden;
     text-align: left;
@@ -876,11 +875,6 @@ var require_settings = __commonJS({
     min-height: 60px;
     min-width: 0;
     padding: 12px 12px 12px 20px;
-}
-
-.dait-settings-header-embedded {
-    min-height: 44px;
-    padding: 8px 16px;
 }
 
 .dait-settings-logo {
@@ -3961,8 +3955,9 @@ var require_dialogs = __commonJS({
   "src/css/08-dialogs.js"(exports2, module2) {
     "use strict";
     module2.exports = `
+/* Below Discord's layers and BetterDiscord's fallback modal (.bd-modal-wrapper, z-index 1000, earlier in the document). */
 .dait-quick-settings-modal-root[data-dait-confirm-open="true"] {
-    z-index: 1000;
+    z-index: 999;
 }
 
 .dait-dialog {
@@ -4099,8 +4094,8 @@ var require_dialogs = __commonJS({
     padding: 5px 10px;
 }
 
+/* The chevron (two gradient layers) keeps the positions from the settings stylesheet. */
 .dait-prompt-manager .dait-prompt-tools select {
-    background-position: right 8px center;
     padding-right: 34px;
 }
 
@@ -7801,6 +7796,41 @@ var require_request_pipeline = __commonJS({
   }
 });
 
+// src/auto-translation/channel-rule.js
+var require_channel_rule = __commonJS({
+  "src/auto-translation/channel-rule.js"(exports2, module2) {
+    "use strict";
+    var DISCORD_GUILD_PAGE_SEGMENTS = /* @__PURE__ */ new Set([
+      "channel-browser",
+      "customize-community",
+      "onboarding",
+      "member-safety",
+      "role-subscriptions",
+      "shop"
+    ]);
+    function getChannelRouteParts(routeKey) {
+      const [guildId = "", channelId = ""] = String(routeKey || "").split(":");
+      return { guildId, channelId };
+    }
+    function isChannelRouteSegment(segment) {
+      const value = String(segment || "");
+      if (!value) return false;
+      if (/^\d+$/.test(value)) return true;
+      return !value.startsWith("@") && !DISCORD_GUILD_PAGE_SEGMENTS.has(value.toLowerCase());
+    }
+    function getChannelRuleKey(routeKey) {
+      const { guildId, channelId } = getChannelRouteParts(routeKey);
+      return isChannelRouteSegment(channelId) ? `${guildId}:${channelId}` : "";
+    }
+    module2.exports = {
+      DISCORD_GUILD_PAGE_SEGMENTS,
+      getChannelRouteParts,
+      getChannelRuleKey,
+      isChannelRouteSegment
+    };
+  }
+});
+
 // src/auto-translation/queue-core.js
 var require_queue_core = __commonJS({
   "src/auto-translation/queue-core.js"(exports2, module2) {
@@ -7853,6 +7883,7 @@ var require_queue_core = __commonJS({
       LOCAL_PROVIDER_HEALTH_RETRY_MS,
       LOCAL_PROVIDER_UNAVAILABLE_RETRY_MS
     } = require_constants();
+    var { getChannelRuleKey } = require_channel_rule();
     var AutoTranslationQueueCore = class {
       constructor(plugin) {
         this.plugin = plugin;
@@ -8795,12 +8826,9 @@ var require_queue_core = __commonJS({
       getCurrentChannelAutoTranslatePolicyMode(routeKey = this.plugin.getCurrentRouteKey()) {
         return this.plugin.normalizeChannelAutoTranslatePolicyMode(this.plugin.getCurrentChannelAutoTranslatePolicy(routeKey)?.mode);
       }
+      // "" on a screen that is not a channel (channel-rule.js decides): such a screen gets no rule.
       getChannelAutoTranslatePolicyStorageKey(routeKey = this.plugin.getCurrentRouteKey()) {
-        const parts = String(routeKey || "").split(":");
-        const guildId = parts[0] || "";
-        const channelId = parts[1] || "";
-        if (!channelId) return "";
-        return `${guildId}:${channelId}`;
+        return getChannelRuleKey(routeKey);
       }
       setCurrentChannelAutoTranslatePolicyMode(mode, routeKey = this.plugin.getCurrentRouteKey(), options = {}) {
         const normalized = this.plugin.normalizeChannelAutoTranslatePolicyMode(mode);
@@ -8879,7 +8907,8 @@ var require_queue_core = __commonJS({
           for (let node = fresh; node && node !== row; node = node.parentNode) depth++;
           let oldRow = control;
           for (let step = 0; step < depth && oldRow; step++) oldRow = oldRow.parentNode;
-          if (oldRow && oldRow.tagName === row.tagName && String(oldRow.className || "") === String(row.className || "") && typeof oldRow.replaceWith === "function") {
+          const rowClass = (node) => String(node?.className || "").trim().split(/\s+/)[0];
+          if (oldRow && oldRow.tagName === row.tagName && rowClass(oldRow) === rowClass(row) && typeof oldRow.replaceWith === "function") {
             oldRow.replaceWith(row);
           } else if (typeof control.replaceWith === "function") control.replaceWith(fresh);
           else return;
@@ -11990,6 +12019,7 @@ var require_provider_layer = __commonJS({
       constructor(plugin) {
         this.plugin = plugin;
         this.lastApiTestResults = /* @__PURE__ */ new Map();
+        this.runningApiTests = /* @__PURE__ */ new Map();
       }
       getProviderDefaults(provider) {
         return PROVIDER_DEFAULTS[String(provider || "").trim()] || null;
@@ -12675,8 +12705,12 @@ var require_provider_layer = __commonJS({
               error.localProviderUnavailable = true;
               error.retryAfterMs = Math.max(Number(error.retryAfterMs || 0), LOCAL_PROVIDER_UNAVAILABLE_RETRY_MS);
               error.providerKey = providerKey;
+              error.localProviderEndpoint = error.localProviderEndpoint || String(endpoint || config.endpoint || "");
             }
             this.plugin.markAutoTranslationProviderFailure(requestOptions, error);
+            if (this.plugin.getApiStatus("translation").state === "testing" && !this.plugin.isRequestCancelled(error)) {
+              this.plugin.setApiRuntimeStatus("translation", "failed", this.plugin.t("apiStatusFailed"), this.plugin.formatError(error));
+            }
             this.plugin.logDiagnostic("auto.provider.health", "failed", {
               key: this.plugin.getTextFingerprint(providerKey),
               reason: options.reason || "",
@@ -12713,6 +12747,9 @@ var require_provider_layer = __commonJS({
       }
       clearLastApiTestResult(kind) {
         return this.lastApiTestResults.delete(kind);
+      }
+      isApiTestRunning(kind) {
+        return Number(this.runningApiTests.get(kind) || 0) > 0;
       }
       // The model named in a chat-completions reply ("model": "..."), shortened to its file name.
       getReportedResponseModel(raw) {
@@ -13049,7 +13086,7 @@ var require_provider_layer = __commonJS({
           if (requestStillCurrent && providerSnapshotKey && kind === "translation" && this.plugin.isLocalTranslationProvider(taskConfig)) {
             this.plugin.markLocalProviderHealthy(providerSnapshotKey);
             this.plugin.setApiRuntimeStatus("translation", "success", this.plugin.t("apiStatusSuccess"));
-          } else if (requestStillCurrent && kind === "translation" && taskConfig?.provider === this.plugin.settings.translation?.provider && this.plugin.getApiStatus("translation").state === "failed") {
+          } else if (requestStillCurrent && providerSnapshotKey && kind === "translation" && taskConfig?.provider === this.plugin.settings.translation?.provider && this.plugin.getApiStatus("translation").state === "failed") {
             this.plugin.setApiRuntimeStatus("translation", "success", this.plugin.t("apiStatusSuccess"));
           }
           if (requestStillCurrent && kind === "translation" && this.plugin.autoTranslationProviderNoticeAt?.size) {
@@ -13169,6 +13206,7 @@ var require_provider_layer = __commonJS({
           error.localProviderUnavailable = true;
           error.retryAfterMs = Math.max(Number(error.retryAfterMs || 0), LOCAL_PROVIDER_UNAVAILABLE_RETRY_MS);
           error.providerKey = error.providerKey || this.plugin.getAutoTranslationProviderKey({ configOverrides: options.configOverrides });
+          error.localProviderEndpoint = error.localProviderEndpoint || String(endpoint || config?.endpoint || "");
         }
         return error;
       }
@@ -13393,6 +13431,7 @@ var require_provider_layer = __commonJS({
           latencyMs: requestStartedAt ? Date.now() - requestStartedAt : null,
           message
         });
+        this.runningApiTests.set(kind, Number(this.runningApiTests.get(kind) || 0) + 1);
         try {
           testConfig = this.plugin.clone(this.plugin.getTaskConfig(kind));
           providerSnapshotKey = kind === "translation" ? this.plugin.getAutoTranslationProviderKey({ configOverrides: testConfig }) : "";
@@ -13447,7 +13486,13 @@ var require_provider_layer = __commonJS({
           this.plugin.setApiStatus(status, "failed", this.plugin.t("apiStatusFailed"), message);
           this.plugin.showToast(this.plugin.t("apiTestFailed", { name: this.plugin.getTaskDisplayName(kind), error: message }), "error");
         } finally {
-          if (this.plugin.isLifecycleTokenCurrent(lifecycleToken)) this.plugin.setButtonBusy(button, false, this.plugin.t("apiTest"));
+          const running = Number(this.runningApiTests.get(kind) || 0) - 1;
+          if (running > 0) this.runningApiTests.set(kind, running);
+          else this.runningApiTests.delete(kind);
+          if (this.plugin.isLifecycleTokenCurrent(lifecycleToken)) {
+            this.plugin.setButtonBusy(button, false, this.plugin.t("apiTest"));
+            this.plugin.requestLauncherStatusUpdate?.();
+          }
         }
       }
       buildConnectionTestRequest(kind) {
@@ -15057,6 +15102,7 @@ var require_quick_panel = __commonJS({
     "use strict";
     var { LANGUAGE_PRESETS, API_ENDPOINT_ERROR_MESSAGE_KEYS } = require_constants();
     var { PLUGIN_VERSION } = require_version();
+    var { getChannelRouteParts, getChannelRuleKey } = require_channel_rule();
     var POPOVER_ID = "dait-quick-popover";
     var POPOVER_WIDTH_PX = 340;
     var ANCHOR_GAP_PX = 8;
@@ -15552,8 +15598,8 @@ var require_quick_panel = __commonJS({
         if (select.value !== current) select.value = current;
       }
       getChannelLabel(routeKey) {
-        const [guildId = "", channelId = ""] = String(routeKey || "").split(":");
-        if (!channelId) return this.plugin.t("quickPanelChannelNone");
+        if (!getChannelRuleKey(routeKey)) return this.plugin.t("quickPanelChannelNone");
+        const { guildId, channelId } = getChannelRouteParts(routeKey);
         let name = "";
         try {
           name = String(this.plugin.getDiscordNamedStore("ChannelStore")?.getChannel?.(channelId)?.name || "").trim();
@@ -15565,10 +15611,10 @@ var require_quick_panel = __commonJS({
       }
       getChannelRuleCaption(mode, hasChannel) {
         if (!hasChannel) return this.plugin.t("quickPanelRuleCaptionNoChannel");
+        if (this.plugin.settings?.translation?.enabled === false) return this.plugin.t("quickPanelRuleCaptionTranslationOff");
         if (mode === "enabled") return this.plugin.t("quickPanelRuleCaptionEnabled");
         if (mode === "disabled") return this.plugin.t("quickPanelRuleCaptionDisabled");
-        const on = this.plugin.settings?.translation?.enabled !== false && Boolean(this.plugin.settings?.ui?.autoTranslateMessages);
-        return this.plugin.t(on ? "quickPanelRuleCaptionInheritOn" : "quickPanelRuleCaptionInheritOff");
+        return this.plugin.t(this.plugin.settings?.ui?.autoTranslateMessages ? "quickPanelRuleCaptionInheritOn" : "quickPanelRuleCaptionInheritOff");
       }
       // Bound to the channel the panel was rendered for, even if Discord has navigated since.
       setChannelRule(mode) {
@@ -15601,7 +15647,8 @@ var require_quick_panel = __commonJS({
           controls.statusNote.hidden = !status.note;
           resized = true;
         }
-        if (!this.testRunning) controls.test.disabled = status.testing;
+        controls.test.disabled = Boolean(status.testing || this.testRunning);
+        this.setText(controls.test, this.plugin.t(this.testRunning ? "apiTestBusy" : "apiTest"));
         this.syncCountdown(status);
         if (resized) this.position();
       }
@@ -15652,11 +15699,12 @@ var require_quick_panel = __commonJS({
         return true;
       }
       // --- Position, keyboard and pointer ---
-      // While the launcher is briefly gone (a language switch re-creates it), the panel stays where it was anchored.
+      // While the launcher is briefly gone or not laid out (a language switch or Discord re-creates the user panel), the
+      // panel stays where it was anchored.
       getAnchorRect() {
         const launcher = this.plugin.isNodeConnected(this.launcher) ? this.launcher : null;
         const rect = launcher?.getBoundingClientRect?.();
-        if (!rect || !rect.width && !rect.height) return launcher ? null : this.lastAnchorRect;
+        if (!rect || !rect.width && !rect.height) return this.lastAnchorRect;
         this.lastAnchorRect = {
           left: Number(rect.left || 0),
           top: Number(rect.top || 0),
@@ -15722,8 +15770,8 @@ var require_quick_panel = __commonJS({
         this.root.classList?.remove?.(POINTER_OPENED_CLASS);
         const active = typeof document !== "undefined" ? document.activeElement : null;
         const focusInside = Boolean(active && this.root.contains?.(active));
+        const focusElsewhere = Boolean(active && active !== document.body && !focusInside && !this.isLauncherElement(active));
         if (event.key === "Escape") {
-          const focusElsewhere = active && active !== document.body && !focusInside && !this.isLauncherElement(active);
           if (focusElsewhere) return;
           event.preventDefault?.();
           event.stopPropagation?.();
@@ -15731,7 +15779,7 @@ var require_quick_panel = __commonJS({
           this.close("escape", { restoreFocus: true });
           return;
         }
-        if (event.key === "Tab") this.trapTab(event, focusInside ? active : null);
+        if (event.key === "Tab" && !focusElsewhere) this.trapTab(event, focusInside ? active : null);
       }
       trapTab(event, active) {
         const focusable = this.getFocusableElements();
@@ -15786,8 +15834,29 @@ var require_quick_panel = __commonJS({
       }
       startRouteWatch() {
         if (this.routeTimer) clearInterval(this.routeTimer);
-        this.routeTimer = setInterval(() => this.handleRouteChange(), ROUTE_CHECK_INTERVAL_MS);
+        this.routeTimer = setInterval(() => {
+          this.handleRouteChange();
+          this.followAnchor();
+        }, ROUTE_CHECK_INTERVAL_MS);
         this.routeTimer?.unref?.();
+      }
+      // Discord can move the user panel, and the launcher in it, without a window resize: the open panel follows on
+      // the route watch's tick. Nothing is written while the launcher stays put.
+      followAnchor() {
+        if (!this.isOpen()) return false;
+        if (!this.plugin.isNodeConnected(this.launcher)) {
+          const found = this.findLauncher();
+          if (!found) return false;
+          this.launcher = found;
+          this.setLauncherExpanded(found, true);
+        }
+        const rect = this.launcher.getBoundingClientRect?.();
+        if (!rect || !rect.width && !rect.height) return false;
+        const previous = this.lastAnchorRect;
+        const same = previous && ["left", "top", "width", "height"].every((side) => Math.round(Number(rect[side] || 0)) === Math.round(previous[side]));
+        if (same) return false;
+        this.position();
+        return true;
       }
       stopTimers() {
         if (this.updateTimer) clearTimeout(this.updateTimer);
@@ -15927,12 +15996,19 @@ var require_quick_panel = __commonJS({
         const failureActive = Boolean(failure && (failureType === "local-unavailable" || Number(failure.retryAt || 0) > now));
         const configError = this.getConfigError(providerKey);
         const probing = Boolean(providerKey && plugin.localProviderHealthChecks?.has?.(providerKey));
-        const testing = api.state === "testing" || probing || this.testRunning;
+        let settingsTest = false;
+        try {
+          settingsTest = Boolean(plugin.isApiTestRunning?.("translation"));
+        } catch {
+          settingsTest = false;
+        }
+        const testing = probing || this.testRunning || settingsTest;
+        const apiState = api.state === "testing" && !testing ? "untested" : api.state;
         const queue = plugin.getAutoTranslationQueueSnapshot?.() || {};
         const inFlight = Math.max(0, Number(queue.inFlightItems || queue.inFlight || 0) || 0);
         const queued = Math.max(0, Number(queue.queueLength || 0) || 0);
         const autoActive = Boolean(plugin.isAutoTranslateEnabled());
-        let connection = plugin.getApiStatusText(api.state);
+        let connection = plugin.getApiStatusText(apiState);
         if (!configured) connection = t("quickStatusNotConfigured");
         else if (testing) connection = plugin.getApiStatusText("testing");
         else if (failureActive && ATTENTION_FAILURE_TYPES.has(failureType)) connection = plugin.getApiStatusText("failed");
@@ -16422,7 +16498,7 @@ var require_i18n = __commonJS({
         enableHotkey: "启用输入润色快捷键",
         enableHotkeyDesc: "输入框聚焦时，按已设置的快捷键直接润色当前草稿。",
         polishHotkey: "润色快捷键",
-        polishHotkeyDesc: "点“录制快捷键”后按下组合键，需包含 Ctrl、Alt 或 Win。",
+        polishHotkeyDesc: "点快捷键按钮，再按下新的组合键；需包含 Ctrl、Alt 或 Win。",
         hotkeyRecord: "录制快捷键",
         hotkeyRecording: "请按组合键...",
         hotkeyReset: "恢复默认",
@@ -16530,7 +16606,7 @@ var require_i18n = __commonJS({
         errorEndpointNotFound: "找不到接口地址或模型，请检查接口地址和模型名称。",
         errorUnsafeEndpoint: "接口地址不安全：远程服务须使用 HTTPS，本机服务可用 HTTP，地址中不能包含用户名或密码。",
         localIntakeFixed: "本地服务固定扫描页面发现消息，无需修改。",
-        localConcurrencyDesc: "本地服务可同时处理 {min}-{max} 个并发请求，按显存和并行槽位调整。",
+        localConcurrencyDesc: "可设为 {min}-{max}；按本地服务的并行槽位和显存设置。",
         localFallbackUnavailable: "本地服务不会转到云端服务，此项不可用。",
         errorTimeout: "API 请求超时。",
         errorNetwork: "网络连接失败。",
@@ -16729,9 +16805,8 @@ var require_i18n = __commonJS({
         diagnosticLogsDesc: "Records requests, cache use and failure reasons (up to 500 entries) for export.",
         diagnosticLogsStats: "Logs: {entries}; compressed repeated events: {compressed}.",
         diagnosticSummary: "Diagnostic summary",
-        diagnosticSummaryDesc: "Recent logs grouped by state, reason and service.",
-        diagnosticSummaryEmpty: "No diagnostic summary yet. Enable diagnostics and reproduce the issue first.",
-        diagnosticSummaryEvents: "Events {events}; latest {latest}.",
+        diagnosticSummaryEmpty: "Turn on diagnostics and reproduce the issue to see a summary here.",
+        diagnosticSummaryEvents: "Events: {events}, grouped by state, reason and service; latest {latest}.",
         diagnosticSummaryStates: "States",
         diagnosticSummaryReasons: "Reasons",
         diagnosticSummaryFlows: "Flows",
@@ -16794,7 +16869,7 @@ var require_i18n = __commonJS({
         enableHotkey: "Enable input polishing hotkey",
         enableHotkeyDesc: "When the input box is focused, the configured shortcut polishes the current draft.",
         polishHotkey: "Polishing hotkey",
-        polishHotkeyDesc: "Click Record, then press a combination with Ctrl, Alt or Win.",
+        polishHotkeyDesc: "Click the shortcut button, then press a new combination with Ctrl, Alt or Win.",
         hotkeyRecord: "Record shortcut",
         hotkeyRecording: "Press shortcut...",
         hotkeyReset: "Reset default",
@@ -16911,7 +16986,7 @@ var require_i18n = __commonJS({
         errorEndpointNotFound: "Endpoint or model not found. Check the API URL and the model name.",
         errorUnsafeEndpoint: "Unsafe endpoint: remote services require HTTPS; loopback services may use HTTP. Do not embed a username or password in the URL.",
         localIntakeFixed: "Local services always scan the page for messages; nothing to change.",
-        localConcurrencyDesc: "The local server can handle {min}-{max} requests at once; match its parallel slots.",
+        localConcurrencyDesc: "Can be set from {min} to {max}; match your local server's parallel slots and VRAM.",
         localFallbackUnavailable: "Local services never fall back to the cloud, so this is unavailable.",
         errorTimeout: "API request timed out.",
         errorNetwork: "Network request failed.",
@@ -16924,9 +16999,8 @@ var require_i18n = __commonJS({
       diagnosticLogsDesc: "记录自动翻译的请求、缓存和失败原因，最多 500 条，可导出排查。",
       diagnosticLogsStats: "日志 {entries} 条，已压缩 {compressed} 条重复事件。",
       diagnosticSummary: "诊断摘要",
-      diagnosticSummaryDesc: "按状态、原因和服务商汇总最近的日志。",
-      diagnosticSummaryEmpty: "暂无诊断摘要。开启诊断并复现问题后会显示。",
-      diagnosticSummaryEvents: "事件 {events} 次，最近 {latest}。",
+      diagnosticSummaryEmpty: "开启诊断并复现问题后，这里会显示诊断摘要。",
+      diagnosticSummaryEvents: "共 {events} 个事件，按状态、原因和服务商汇总，最近一次 {latest}。",
       diagnosticSummaryStates: "状态",
       diagnosticSummaryReasons: "原因",
       diagnosticSummaryFlows: "流程",
@@ -17019,7 +17093,7 @@ var require_i18n = __commonJS({
       settingsApiKeyOptional: "API Key（可选）",
       settingsRequiresParent: "先开启“{parent}”",
       settingsDangerZone: "危险操作",
-      settingsResetDesc: "把所有选项恢复为默认值，操作前会先确认。",
+      settingsResetDesc: "恢复默认设置，可选择保留 API Key 和提示词模板，操作前会先确认。",
       providerSettingsTitle: "服务商配置",
       providerSettingsDesc: "只显示当前服务商用到的选项，切换回来时其他配置仍在。",
       polishControlsTitle: "输入体验",
@@ -17037,7 +17111,6 @@ var require_i18n = __commonJS({
       providerStatus: "服务状态",
       providerStatusDesc: "用当前设置测试一次连接。",
       quickSettingsOpen: "打开 Discord AI Translator 设置",
-      quickSettingsClose: "关闭快捷设置",
       quickSettingsDone: "完成",
       quickSettingsOpenFailed: "快捷设置打开失败：{error}",
       quickSettingsFallbackTitle: "快捷设置未能完整渲染",
@@ -17063,6 +17136,7 @@ var require_i18n = __commonJS({
       quickPanelRuleCaptionEnabled: "总开关关闭时，这个频道也会自动翻译",
       quickPanelRuleCaptionDisabled: "这个频道不自动翻译；手动翻译不受影响",
       quickPanelRuleCaptionNoChannel: "打开一个频道后可以单独设置",
+      quickPanelRuleCaptionTranslationOff: "频道翻译已关闭，这里的规则暂不生效",
       quickPanelTargetLanguage: "翻译成",
       quickPanelDisplay: "显示",
       quickPanelMask: "遮蔽译文",
@@ -17171,7 +17245,7 @@ var require_i18n = __commonJS({
       settingsApiKeyOptional: "API key (optional)",
       settingsRequiresParent: 'Turn on "{parent}" first',
       settingsDangerZone: "Danger zone",
-      settingsResetDesc: "Restores every option to its default after you confirm.",
+      settingsResetDesc: "Restores the defaults after you confirm; you can keep API keys and prompt templates.",
       providerSettingsTitle: "Service settings",
       providerSettingsDesc: "Shows only this service's options; the others are kept for when you switch back.",
       polishControlsTitle: "Input experience",
@@ -17189,7 +17263,6 @@ var require_i18n = __commonJS({
       providerStatus: "Service status",
       providerStatusDesc: "Runs a quick connection test with the current settings.",
       quickSettingsOpen: "Open Discord AI Translator settings",
-      quickSettingsClose: "Close quick settings",
       quickSettingsDone: "Done",
       quickSettingsOpenFailed: "Quick settings failed to open: {error}",
       quickSettingsFallbackTitle: "Quick settings did not render completely",
@@ -17215,6 +17288,7 @@ var require_i18n = __commonJS({
       quickPanelRuleCaptionEnabled: "Auto-translates here even when the main switch is off",
       quickPanelRuleCaptionDisabled: "No auto-translation here; manual translation still works",
       quickPanelRuleCaptionNoChannel: "Open a channel to set a rule for it",
+      quickPanelRuleCaptionTranslationOff: "Channel translation is off; this rule applies once it is on",
       quickPanelTargetLanguage: "Translate to",
       quickPanelDisplay: "Display",
       quickPanelMask: "Mask translations",
@@ -18189,7 +18263,7 @@ var require_discord_ai_translator = __commonJS({
         this.quickSettingsModalRoot = null;
         this.quickSettingsModalKeydown = null;
         this.quickSettingsPreviousFocus = null;
-        this.quickSettingsLastOpenAt = 0;
+        this.quickSettingsPress = null;
         this.quickSettingsRetryTimer = null;
         this.quickSettingsOpenTimer = null;
         this.quickSettingsVerifyRaf = null;
@@ -18355,6 +18429,7 @@ var require_discord_ai_translator = __commonJS({
         this.composerWriter.cancelAll("stop");
         this.clearHotkeyRecording();
         this.clearPolishSubmitTimer();
+        this.cancelPendingConfirmDialogs();
         this.cancelTextboxReplacementCleanup();
         this.localProviderHealthChecks.clear();
         this.localProviderHealthProbeStartedAt.clear();
@@ -18396,6 +18471,7 @@ var require_discord_ai_translator = __commonJS({
         this.inputButtonScanDueAt = 0;
         this.quickSettingsRetryTimer = null;
         this.quickSettingsOpenTimer = null;
+        this.quickSettingsPress = null;
         if (diagnosticLogsPersisted) this.quickSettingsDiagnosticLogs = [];
         if (translationCachePersisted) this.persistentTranslationCacheCount = 0;
         if (diagnosticLogsPersisted) {
@@ -18622,7 +18698,7 @@ var require_discord_ai_translator = __commonJS({
         state.activeTab = target.id;
         state.tabs.forEach((tab) => {
           const active = tab === target;
-          tab.button?.setAttribute?.("aria-selected", active ? "true" : "false");
+          tab.button?.setAttribute?.("aria-selected", active && !state.searchQuery ? "true" : "false");
           tab.button?.setAttribute?.("tabindex", active ? "0" : "-1");
           if (tab.tabpanel) tab.tabpanel.hidden = !active || Boolean(state.searchQuery);
         });
@@ -18750,6 +18826,7 @@ var require_discord_ai_translator = __commonJS({
         state.searchEntries = entries;
         state.tabs.forEach((tab) => {
           if (tab.tabpanel) tab.tabpanel.hidden = true;
+          tab.button?.setAttribute?.("aria-selected", "false");
         });
         if (state.results) state.results.hidden = false;
         if (state.resultsSummary) {
@@ -18798,6 +18875,7 @@ var require_discord_ai_translator = __commonJS({
         if (options.showTab !== false) {
           state.tabs.forEach((tab) => {
             if (tab.tabpanel) tab.tabpanel.hidden = tab.id !== state.activeTab;
+            tab.button?.setAttribute?.("aria-selected", tab.id === state.activeTab ? "true" : "false");
           });
         }
         if (options.focus) this.focusSettingsElement(state.searchInput);
@@ -19050,6 +19128,7 @@ var require_discord_ai_translator = __commonJS({
       // scrolls inside, so the header and the tab rail stay put.
       syncSettingsPanelHeight(panel, scroller = null) {
         if (!panel?.isConnected || !panel.style?.setProperty || typeof getComputedStyle !== "function") return false;
+        this.bindSettingsTabOrientation(panel);
         const host = scroller || this.getSettingsHostScroller(panel);
         const frame = panel.closest?.(".dait-quick-settings-dialog") || panel.closest?.("[data-dait-settings-modal-root='true']") || host;
         if (!host || !frame?.getBoundingClientRect) return false;
@@ -19069,6 +19148,26 @@ var require_discord_ai_translator = __commonJS({
         } catch {
           return false;
         }
+      }
+      // The tab rail is a vertical list, or a row once the panel is 760 px wide or less (the @container rule in
+      // css/04-settings.js); aria-orientation follows the panel's width as it changes.
+      bindSettingsTabOrientation(panel) {
+        this.syncSettingsTabOrientation(panel);
+        if (!panel || panel.__daitSettingsOrientationObserver || typeof ResizeObserver !== "function") return;
+        try {
+          const observer = new ResizeObserver(() => this.syncSettingsTabOrientation(panel));
+          observer.observe(panel);
+          panel.__daitSettingsOrientationObserver = observer;
+        } catch {
+        }
+      }
+      syncSettingsTabOrientation(panel) {
+        const tablist = panel?.__daitSettingsUi?.tablist;
+        const width = Number(panel?.clientWidth || panel?.getBoundingClientRect?.()?.width || 0);
+        if (!tablist?.setAttribute || !width) return "";
+        const orientation = width <= 760 ? "horizontal" : "vertical";
+        if (tablist.getAttribute?.("aria-orientation") !== orientation) tablist.setAttribute("aria-orientation", orientation);
+        return orientation;
       }
       getSettingsHostScroller(panel) {
         for (let node = panel?.parentElement; node && node !== document.body; node = node.parentElement) {
@@ -19101,6 +19200,10 @@ var require_discord_ai_translator = __commonJS({
           if (resize.raf !== null && typeof cancelAnimationFrame === "function") cancelAnimationFrame(resize.raf);
           if (typeof window !== "undefined") window.removeEventListener?.("resize", resize.listener, { passive: true });
           panel.__daitSettingsResize = null;
+        }
+        if (panel?.__daitSettingsOrientationObserver) {
+          panel.__daitSettingsOrientationObserver.disconnect?.();
+          panel.__daitSettingsOrientationObserver = null;
         }
         const state = panel?.__daitSettingsUi;
         if (state?.searchEscapeListener) {
@@ -19407,8 +19510,8 @@ var require_discord_ai_translator = __commonJS({
       }
       // "#general" for the current channel when Discord's store knows it.
       getSettingsChannelLabel(routeKey = this.getCurrentRouteKey()) {
+        if (!this.getChannelAutoTranslatePolicyStorageKey(routeKey)) return "";
         const channelId = String(routeKey || "").split(":")[1] || "";
-        if (!channelId) return "";
         try {
           const name = String(this.getDiscordNamedStore?.("ChannelStore")?.getChannel?.(channelId)?.name || "").trim();
           return name ? `#${name}` : "";
@@ -20017,12 +20120,17 @@ var require_discord_ai_translator = __commonJS({
       }
       createCurrentChannelPolicyRow() {
         const routeKey = this.getCurrentRouteKey();
+        const noChannel = !this.getChannelAutoTranslatePolicyStorageKey(routeKey);
         const row = this.createSegmentedRow("ui.currentChannelAutoTranslatePolicy", this.t("currentChannelAutoTranslatePolicy"), [
           ["inherit", this.t("channelRuleFollow")],
           ["enabled", this.t("channelRuleAlways")],
           ["disabled", this.t("channelRuleNever")]
-        ], { description: this.t("currentChannelAutoTranslatePolicyDesc"), routeKey });
-        if (!this.getChannelAutoTranslatePolicyStorageKey(routeKey)) {
+        ], {
+          description: this.t("currentChannelAutoTranslatePolicyDesc"),
+          disabledReason: noChannel && this.t("quickPanelRuleCaptionNoChannel"),
+          routeKey
+        });
+        if (noChannel) {
           const control = row?.querySelectorAll?.("[data-dait-path='ui.currentChannelAutoTranslatePolicy']")?.[0];
           if (control) this.setChannelRuleControlDisabled(control, true);
         }
@@ -20286,6 +20394,7 @@ var require_discord_ai_translator = __commonJS({
         controls.className = "dait-hotkey-controls";
         const record = this.createSmallButton(this.getHotkeyLabel());
         record.classList.add("dait-hotkey-recorder");
+        record.title = this.t("hotkeyRecord");
         const reset = this.createSmallButton(this.t("hotkeyReset"), "link");
         reset.addEventListener("click", () => {
           this.setSetting("ui.polishHotkey", DEFAULT_SETTINGS.ui.polishHotkey);
@@ -20342,7 +20451,7 @@ var require_discord_ai_translator = __commonJS({
         };
         const refreshDiagnostics = (button) => {
           refreshDescription(button);
-          this.refreshDiagnosticSummary(button.closest(".dait-settings-section"));
+          this.refreshDiagnosticSummary(button.closest(".dait-settings-group") || button.closest(".dait-settings"));
         };
         clear.addEventListener("click", async () => {
           const confirmed = await this.confirmAction({
@@ -20514,11 +20623,12 @@ var require_discord_ai_translator = __commonJS({
           compressed: this.diagnosticCompressedCount
         });
       }
+      // One sentence (UI-SPEC descriptions): the count, what the chips group by, and the latest event.
       getDiagnosticSummaryStatsText(summary = this.createDiagnosticSummary(this.diagnosticLogs)) {
         const events = Number(summary?.totalEvents || 0) || 0;
         if (!events) return this.t("diagnosticSummaryEmpty");
         const latest = this.formatDiagnosticSummaryTime(summary?.latestIso);
-        return `${this.t("diagnosticSummaryEvents", { events, latest })} ${this.t("diagnosticSummaryDesc")}`;
+        return this.t("diagnosticSummaryEvents", { events, latest });
       }
       formatDiagnosticSummaryTime(iso) {
         if (!iso) return "-";
@@ -20867,6 +20977,10 @@ var require_discord_ai_translator = __commonJS({
         };
         textarea.addEventListener("change", () => this.preserveSettingsScroll(textarea, () => this.setSetting(`${kind}.prompt`, textarea.value)));
         textarea.addEventListener("input", syncStatus);
+        textarea.__daitAfterSync = () => {
+          syncStatus();
+          syncPreview();
+        };
         search.addEventListener("input", () => renderOptions());
         select.addEventListener("change", syncPreview);
         apply.addEventListener("click", async () => {
@@ -21363,6 +21477,7 @@ var require_discord_ai_translator = __commonJS({
             return;
           }
           control.value = value ?? "";
+          if (typeof control.__daitAfterSync === "function") control.__daitAfterSync();
         });
         const modelKind = /^(polish|translation)\.model$/.exec(path)?.[1];
         if (modelKind) {
@@ -23327,40 +23442,39 @@ var require_discord_ai_translator = __commonJS({
             event.stopImmediatePropagation?.();
           });
         });
-        button.addEventListener("pointerdown", (event) => this.handleQuickSettingsButtonEvent(event, variant), true);
-        button.addEventListener("pointerup", (event) => this.handleQuickSettingsButtonEvent(event, variant), true);
-        button.addEventListener("click", (event) => {
-          this.handleQuickSettingsButtonEvent(event, variant);
-        }, true);
+        ["pointerdown", "pointerup", "click"].forEach((type) => {
+          button.addEventListener(type, (event) => this.handleQuickSettingsButtonEvent(event, variant, type), true);
+        });
         this.quickPanel.decorateLauncher(button);
         return button;
       }
-      handleQuickSettingsButtonEvent(event, variant = "panel") {
+      // One toggle per press, however long the button is held. A mouse or touch press sends pointerdown, pointerup
+      // and click; the first of them that reaches the launcher toggles the quick panel and the rest of that press are
+      // swallowed (each one is a fallback in case Discord swallowed the ones before it). Only the primary button
+      // counts. A click from Enter or Space (detail 0) is a press of its own.
+      handleQuickSettingsButtonEvent(event, variant = "panel", listenerType = "") {
         event?.preventDefault?.();
         event?.stopPropagation?.();
         event?.stopImmediatePropagation?.();
-        const now = Date.now();
-        const elapsedMs = now - Number(this.quickSettingsLastOpenAt || 0);
-        this.logQuickSettingsDiagnostic("button.event", "received", {
-          eventType: event?.type || "",
-          variant,
-          elapsedMs: Number.isFinite(elapsedMs) ? elapsedMs : 0
-        });
-        if (elapsedMs < 300) {
-          this.logQuickSettingsDiagnostic("button.event", "deduped", {
-            eventType: event?.type || "",
-            variant,
-            elapsedMs
-          });
+        const eventType = String(listenerType || event?.type || "");
+        this.logQuickSettingsDiagnostic("button.event", "received", { eventType, variant });
+        if (eventType.startsWith("pointer") && (Number(event?.button || 0) !== 0 || event?.isPrimary === false)) {
+          this.logQuickSettingsDiagnostic("button.event", "ignored", { eventType, variant, reason: "not-primary" });
           return;
         }
-        this.quickSettingsLastOpenAt = now;
-        this.logQuickSettingsDiagnostic("button.event", "scheduled", {
-          eventType: event?.type || "",
-          variant
-        });
+        const keyboard = eventType === "click" && Number(event?.detail) === 0;
+        const pointerId = event?.pointerId ?? null;
+        const press = this.quickSettingsPress;
+        const samePress = Boolean(press) && !keyboard && eventType !== "pointerdown" && (pointerId === null || press.pointerId === null || pointerId === press.pointerId || eventType === "click" && Boolean(event?.pointerType));
+        if (eventType === "click") this.quickSettingsPress = null;
+        else if (!samePress) this.quickSettingsPress = { pointerId };
+        if (samePress) {
+          this.logQuickSettingsDiagnostic("button.event", "deduped", { eventType, variant });
+          return;
+        }
+        this.logQuickSettingsDiagnostic("button.event", "scheduled", { eventType, variant });
         const launcher = event?.currentTarget?.closest?.(".dait-quick-settings-button") || event?.target?.closest?.(".dait-quick-settings-button") || event?.currentTarget || event?.target || null;
-        const viaPointer = String(event?.type || "").startsWith("pointer") || event?.type === "click" && Number(event?.detail) > 0;
+        const viaPointer = eventType.startsWith("pointer") || eventType === "click" && Number(event?.detail) > 0;
         if (this.quickSettingsOpenTimer) clearTimeout(this.quickSettingsOpenTimer);
         this.quickSettingsOpenTimer = setTimeout(() => {
           this.quickSettingsOpenTimer = null;
@@ -30125,7 +30239,7 @@ var require_discord_ai_translator = __commonJS({
           return { action: "settings", reason: attention, message: `${this.t("translationErrorQuota")}${this.formatTranslationErrorStatus(error)}` };
         }
         if (attention === "local-unavailable") {
-          const host = this.getTranslationEndpointHost();
+          const host = this.getTranslationEndpointHost(error);
           return {
             action: "test",
             reason: attention,
@@ -30163,9 +30277,10 @@ var require_discord_ai_translator = __commonJS({
         if (error?.providerRequestRejected) return "errorProviderRequestRejected";
         return "";
       }
-      getTranslationEndpointHost() {
+      // The local service that did not answer when the error says which; else the translation service set up now.
+      getTranslationEndpointHost(error = null) {
         try {
-          const endpoint = String(this.getEffectiveTaskConfig("translation")?.endpoint || this.settings.translation?.endpoint || "").trim();
+          const endpoint = String(error?.localProviderEndpoint || this.getEffectiveTaskConfig("translation")?.endpoint || this.settings.translation?.endpoint || "").trim();
           return endpoint ? new URL(endpoint).host : "";
         } catch {
           return "";
@@ -32317,13 +32432,12 @@ ${raw}`;
           }
         }
       }
+      // Sends the way the user does: Enter on the focused composer, which Discord's editor turns into a send.
+      // Never clicks a button: Discord shows no send button by default, and the toolbar in the same form holds
+      // controls such as "Send a gift", GIF, stickers and emoji that must never be pressed for the user.
       submitTextbox(textbox) {
-        const form = textbox.closest("form");
-        const sendButton = form?.querySelector("button[aria-label*='Send'], button[type='submit']");
-        if (sendButton && !sendButton.disabled) {
-          sendButton.click();
-          return;
-        }
+        if (!textbox || textbox.isConnected === false || typeof textbox.dispatchEvent !== "function") return false;
+        if (typeof KeyboardEvent !== "function") return false;
         textbox.focus?.();
         ["keydown", "keypress", "keyup"].forEach((type) => {
           textbox.dispatchEvent(new KeyboardEvent(type, {
@@ -32335,6 +32449,7 @@ ${raw}`;
             which: 13
           }));
         });
+        return true;
       }
       setButtonBusy(button, busy, text) {
         if (!button) return;
@@ -32460,13 +32575,16 @@ ${raw}`;
           let settled = false;
           let stopWatching = null;
           const release = this.holdConfirmDialogLayer();
+          const pending = this.pendingConfirmDialogs || (this.pendingConfirmDialogs = /* @__PURE__ */ new Set());
           const settle = (confirmed) => {
             if (settled) return;
             settled = true;
+            pending.delete(settle);
             stopWatching?.();
             release();
             resolve(Boolean(confirmed) && this.isLifecycleTokenCurrent(lifecycleToken));
           };
+          pending.add(settle);
           const dialogsBefore = this.getOpenDialogElements();
           try {
             ui.showConfirmationModal(title, content ?? this.createConfirmDialogContent(paragraphs, previewText), {
@@ -32476,16 +32594,27 @@ ${raw}`;
               onConfirm: () => settle(true),
               onCancel: () => settle(false),
               // Reported by newer BetterDiscord builds on Escape or a backdrop click. Deferred so a close
-              // that follows the confirm callback in the same click cannot turn it into a cancel.
-              onClose: () => setTimeout(() => settle(false), 0)
+              // that follows the confirm callback in the same click cannot turn it into a cancel. When the
+              // content failed to render, BetterDiscord closes this dialog and shows its fallback modal
+              // with the same callbacks instead; that close is not a cancel while the fallback is open.
+              onClose: () => setTimeout(() => {
+                if (!this.getNewConfirmDialogElements(dialogsBefore, ".bd-modal-wrapper").length) settle(false);
+              }, 0)
             });
           } catch (error) {
             this.logDiagnostic("dialog.confirm", "error", { error: this.formatError(error) });
             settle(confirmNatively());
             return;
           }
-          if (!settled) stopWatching = this.watchConfirmDialogDismiss(dialogsBefore, () => settle(false));
+          if (!settled) stopWatching = this.watchConfirmDialogDismiss(dialogsBefore, () => settle(false), release);
         });
+      }
+      // Plugin stop: every open confirmation resolves false and the settings window leaves its paused state.
+      cancelPendingConfirmDialogs() {
+        [...this.pendingConfirmDialogs || []].forEach((settle) => settle(false));
+        this.pendingConfirmDialogs?.clear();
+        this.openConfirmDialogCount = 0;
+        this.syncConfirmDialogLayer();
       }
       // Paragraphs plus an optional quoted preview. React elements when BetterDiscord exposes React (the preview
       // then stays plain text instead of going through Discord's Markdown), otherwise one string.
@@ -32502,20 +32631,32 @@ ${raw}`;
           preview ? h("div", { className: "dait-dialog-preview", key: "preview", tabIndex: 0 }, preview) : null
         );
       }
-      getOpenDialogElements() {
+      // Where a confirmation can show up: Discord's modal layer (role=dialog), BetterDiscord's modal root, and
+      // BetterDiscord's fallback modal (.bd-modal-wrapper, no role), used when Discord's modal API is missing or
+      // the dialog content failed to render.
+      getOpenDialogElements(selectors = ["[role='dialog']", ".bd-modal-root", ".bd-modal-wrapper"]) {
         if (typeof document === "undefined" || !document.querySelectorAll) return /* @__PURE__ */ new Set();
-        try {
-          return new Set(document.querySelectorAll("[role='dialog']"));
-        } catch {
-          return /* @__PURE__ */ new Set();
+        const found = /* @__PURE__ */ new Set();
+        for (const selector of [].concat(selectors)) {
+          try {
+            document.querySelectorAll(selector).forEach((node) => found.add(node));
+          } catch {
+          }
         }
+        return found;
       }
-      // Older BetterDiscord builds report neither Escape nor a backdrop click. Find the dialog that opened and
-      // treat its removal as a cancel, so a dismissed dialog never leaves the settings window lowered.
-      watchConfirmDialogDismiss(dialogsBefore, onDismiss) {
+      // Dialog elements that opened after dialogsBefore was taken and are still in the document.
+      getNewConfirmDialogElements(dialogsBefore, selectors = void 0) {
+        return [...this.getOpenDialogElements(selectors)].filter((node) => !dialogsBefore?.has?.(node) && node.isConnected !== false && !node.closest?.(".dait-quick-settings-modal-root, .dait-settings"));
+      }
+      // Older BetterDiscord builds report neither Escape nor a backdrop click, and the fallback modal never reports
+      // a backdrop click. Once the dialog showed up, the confirmation counts as cancelled when no dialog that opened
+      // with it is left, so a dismissed dialog never leaves the settings window lowered. When no dialog shows up
+      // within 10 s, onNotFound gives the settings window its layer and keys back; the dialog's buttons still answer.
+      watchConfirmDialogDismiss(dialogsBefore, onDismiss, onNotFound = null) {
         if (typeof document === "undefined" || typeof setInterval !== "function") return () => {
         };
-        let dialog = null;
+        let seen = false;
         let polls = 0;
         let timer = null;
         const stop = () => {
@@ -32528,14 +32669,18 @@ ${raw}`;
             onDismiss();
             return;
           }
-          if (!dialog) {
-            dialog = [...this.getOpenDialogElements()].find((node) => !dialogsBefore.has(node) && !node.closest?.(".dait-quick-settings-modal-root, .dait-settings")) || null;
-            if (!dialog && ++polls > 40) stop();
+          if (this.getNewConfirmDialogElements(dialogsBefore).length) {
+            seen = true;
             return;
           }
-          if (dialog.isConnected === false) {
+          if (seen) {
             stop();
             onDismiss();
+            return;
+          }
+          if (++polls > 40) {
+            stop();
+            onNotFound?.();
           }
         }, 250));
         return stop;
@@ -32623,19 +32768,46 @@ ${raw}`;
         return h(ResetDialogBody);
       }
       // Rebuilds every open settings panel (BetterDiscord's plugin settings and the settings window) so they
-      // show the values after a reset.
+      // show the values after a reset. Each one opens on the tab it showed, and the stored tab is the one of the
+      // panel the reset came from, whose new reset button takes the focus.
       refreshOpenSettingsPanels(sourcePanel = null) {
         if (typeof document === "undefined") return 0;
         const panels = /* @__PURE__ */ new Set();
         if (sourcePanel) panels.add(sourcePanel);
         document.querySelectorAll?.(".dait-settings")?.forEach((panel) => panels.add(panel));
+        const sourceTab = sourcePanel?.__daitSettingsUi?.activeTab;
         let replaced = 0;
+        let rebuiltSource = null;
         panels.forEach((panel) => {
           if (!panel || panel.isConnected === false) return;
           const quickSettings = Boolean(panel.closest?.(".dait-quick-settings-modal-root"));
-          if (this.replaceSettingsPanelElement(panel, this.getSettingsPanel({ quickSettings }))) replaced++;
+          const activeTab = panel.__daitSettingsUi?.activeTab;
+          if (activeTab && this.settings?.ui) this.settings.ui.settingsActiveTab = activeTab;
+          const next = this.replaceSettingsPanelElement(panel, this.getSettingsPanel({ quickSettings }));
+          if (!next) return;
+          replaced++;
+          if (panel === sourcePanel) rebuiltSource = next;
         });
+        if (sourceTab && this.settings?.ui) this.settings.ui.settingsActiveTab = sourceTab;
+        if (rebuiltSource) this.focusSettingsResetControl(rebuiltSource);
         return replaced;
+      }
+      // The focused reset button left with the old panel. BetterDiscord's dialog hands the focus back to it once it
+      // has finished closing, which leaves the focus nowhere, so the new button is focused again then.
+      focusSettingsResetControl(panel) {
+        const target = () => {
+          const button = panel?.querySelector?.("[data-dait-action='resetSettings']");
+          if (button && !button.closest?.("[hidden]")) return button;
+          const state = panel?.__daitSettingsUi;
+          return state?.tabs?.find((tab) => tab.id === state.activeTab)?.button || null;
+        };
+        this.focusSettingsElement(target());
+        if (typeof setTimeout !== "function") return;
+        [300, 1e3].forEach((delay) => this.unrefTimer(setTimeout(() => {
+          if (!panel?.isConnected || typeof document === "undefined") return;
+          const active = document.activeElement;
+          if (!active || active === document.body || active.isConnected === false) this.focusSettingsElement(target());
+        }, delay)));
       }
       injectStyles() {
         const css = PLUGIN_CSS;
@@ -32971,6 +33143,9 @@ ${raw}`;
       }
       clearLastApiTestResult(...args) {
         return this.providerLayer.clearLastApiTestResult(...args);
+      }
+      isApiTestRunning(...args) {
+        return this.providerLayer.isApiTestRunning(...args);
       }
       getReportedResponseModel(...args) {
         return this.providerLayer.getReportedResponseModel(...args);
