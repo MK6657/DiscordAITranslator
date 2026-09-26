@@ -15667,6 +15667,7 @@ module.exports = class DiscordAITranslator {
     markAutoTranslationProviderFailure(...args) { return this.autoQueueCore.markAutoTranslationProviderFailure(...args); }
     getAutoTranslationProviderFailure(...args) { return this.autoQueueCore.getAutoTranslationProviderFailure(...args); }
     isAutoTranslationProviderCoolingDown(...args) { return this.autoQueueCore.isAutoTranslationProviderCoolingDown(...args); }
+    getNextAutoTranslationFailureCount(...args) { return this.autoQueueCore.getNextAutoTranslationFailureCount(...args); }
     createAutoTranslationFailure(...args) { return this.autoQueueCore.createAutoTranslationFailure(...args); }
     rememberAutoTranslationFailureHistory(...args) { return this.autoQueueCore.rememberAutoTranslationFailureHistory(...args); }
     getAutoTranslationFailureHistoryCount(...args) { return this.autoQueueCore.getAutoTranslationFailureHistoryCount(...args); }

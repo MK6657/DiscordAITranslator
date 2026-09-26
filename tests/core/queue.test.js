@@ -244,6 +244,39 @@ test("strict retry off: a network error on a prefetch batch records weak retryab
     });
 });
 
+test("repeated batch timeouts on prefetch items back off instead of retrying every 4 s", async t => {
+    const plugin = createQueuePlugin(t);
+    plugin.settings.ui.autoTranslateStrictRetry = false;
+    const items = ["a", "b"].map(name => makeItem(plugin, `prefetch-timeout-${name}`));
+    let calls = 0;
+    plugin.runModelTask = async () => {
+        calls++;
+        throw timeoutError();
+    };
+    const delays = [];
+    for (let round = 0; round < 4; round++) {
+        // The previous weak failure has run out and the scan sends the same prefetch batch again.
+        items.forEach(item => {
+            const recorded = plugin.autoTranslationFailures.get(item.cacheKey);
+            if (recorded) recorded.retryAt = Date.now() - 1;
+            plugin.getAutoTranslationFailure(item.cacheKey);
+            item.daitPrefetchRequest = true;
+        });
+        plugin.autoTranslationQueue = [];
+        plugin.autoTranslationQueuedKeys.clear();
+        startInFlight(plugin, items);
+        await plugin.autoTranslateQueuedBatch(items);
+        const failure = plugin.autoTranslationFailures.get(items[0].cacheKey);
+        assert.ok(failure && failure.weak && !failure.terminal, `round ${round + 1} records a weak failure`);
+        delays.push(failure.retryAfterMs);
+    }
+    assert.equal(calls, 4);
+    assert.ok(delays[0] >= 10000, `first delay ${delays[0]}`);
+    assert.ok(delays[3] > delays[0], `delays ${delays.join(", ")}`);
+    assert.ok(delays.every(delay => delay <= 120000));
+    assert.equal(plugin.autoTranslationProviderFailures.size, 0, "prefetch timeouts still do not cool down the provider");
+});
+
 test("strict retry off: an unparsable batch sends its messages again as single requests", async t => {
     const plugin = createQueuePlugin(t);
     plugin.settings.ui.autoTranslateStrictRetry = false;

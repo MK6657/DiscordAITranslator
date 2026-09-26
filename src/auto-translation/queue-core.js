@@ -2123,6 +2123,16 @@ class AutoTranslationQueueCore {
         storageError.autoTranslationWeakFailure = true;
         // Keep the truncated type so its growing backoff applies to prefetch too.
         if (error?.modelOutputTruncated) storageError.modelOutputTruncated = true;
+        if (["timeout", "network", "server"].includes(this.plugin.getAutoTranslationFailureType(error))) {
+            // A slow or failing provider is not a bad answer: the weak failure waits longer with each
+            // repeat instead of sending the same (billed) prefetch request again every few seconds.
+            const count = this.plugin.getNextAutoTranslationFailureCount(item.cacheKey);
+            storageError.retryAfterMs = Math.min(
+                AUTO_TRANSLATE_FAILURE_MAX_TTL,
+                Math.max(Number(error?.retryAfterMs || 0), AUTO_TRANSLATE_TRANSIENT_FAILURE_TTL * Math.pow(2, Math.max(0, count - 1)))
+            );
+            return storageError;
+        }
         storageError.retryAfterMs = Math.min(
             storageError.autoTranslationTerminalFailure ? AUTO_TRANSLATE_FINAL_INVALID_OUTPUT_FAILURE_TTL : AUTO_TRANSLATE_INVALID_OUTPUT_FAILURE_TTL,
             Math.max(1000, Number(error?.retryAfterMs || AUTO_TRANSLATE_INVALID_OUTPUT_FAILURE_TTL))
@@ -2167,11 +2177,17 @@ class AutoTranslationQueueCore {
         return this.plugin.translationScheduler.isProviderCoolingDown(requestOptions, now);
     }
 
-    createAutoTranslationFailure(cacheKey, error) {
+    // The count the next failure of this message gets: one more than its live record or its
+    // remembered history, capped.
+    getNextAutoTranslationFailureCount(cacheKey) {
         const previous = this.plugin.autoTranslationFailures.get(cacheKey);
         const previousCount = typeof previous === "object" ? Number(previous.count || 0) : 0;
         const historyCount = this.plugin.getAutoTranslationFailureHistoryCount(cacheKey);
-        const count = Math.min(5, Math.max(previousCount, historyCount) + 1);
+        return Math.min(5, Math.max(previousCount, historyCount) + 1);
+    }
+
+    createAutoTranslationFailure(cacheKey, error) {
+        const count = this.plugin.getNextAutoTranslationFailureCount(cacheKey);
         const retryAfterMs = this.plugin.getAutoTranslationRetryAfter(error, count);
         const now = Date.now();
         const terminal = Boolean(error?.autoTranslationTerminalFailure);
