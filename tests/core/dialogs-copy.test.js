@@ -365,8 +365,8 @@ test("destructive settings actions ask first: clear cache, clear logs, Google us
     plugin.resetGoogleTranslateUsageStats = () => done.push("google");
     plugin.refreshDiagnosticSummary = () => {};
 
-    const cacheButtons = plugin.createTranslationCacheStatsRow().querySelectorAll(".dait-small-button-danger");
-    const logButtons = plugin.createDiagnosticLogsRow().querySelectorAll(".dait-small-button");
+    const cacheButtons = plugin.createTranslationCacheClearRow().querySelectorAll(".dait-small-button-danger");
+    const logButtons = plugin.createDiagnosticLogsClearRow().querySelectorAll(".dait-small-button");
     const clearLogs = logButtons.find(button => button.textContent === plugin.t("clearDiagnosticLogs"));
     const googleReset = plugin.createGoogleTranslateStatsRow().querySelectorAll(".dait-small-button-danger")[0];
     for (const button of [cacheButtons[0], clearLogs, googleReset]) await button.dispatch("click");

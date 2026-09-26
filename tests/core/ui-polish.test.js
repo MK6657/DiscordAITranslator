@@ -492,6 +492,75 @@ test("settings window: Escape right after the recorder is clicked (before it lis
     assert.equal(doc.count("keydown", true), 1, "the cancelled recording never starts listening");
 });
 
+// --- UI-4: the data tab gives each action its own row, with unique labels ---
+
+const tabPanel = (panel, id) => panel.querySelector(`[data-dait-settings-tab-panel='${id}']`);
+const controlButtons = row => (row.children[1] ? row.children[1].querySelectorAll("button") : []);
+
+test("data tab: every row label is unique and each destructive action has a row of its own", t => {
+    const { plugin, doc } = createPlugin(t, { tab: "data" });
+    const panel = plugin.getSettingsPanel({ quickSettings: true });
+    doc.body.appendChild(panel);
+    const data = tabPanel(panel, "data");
+    const labels = labelsIn(data);
+    assert.deepEqual(labels.filter((label, index) => labels.indexOf(label) !== index), [], "no two rows share a label");
+
+    const rows = data.querySelectorAll(".dait-settings-row");
+    const danger = rows.filter(row => controlButtons(row).some(button => button.classList.contains("dait-small-button-danger")));
+    danger.forEach(row => assert.equal(controlButtons(row).length, 1, `${row.querySelector(".dait-row-label").textContent} holds only its destructive button`));
+    const dangerTexts = danger.map(row => controlButtons(row)[0].textContent);
+    for (const key of ["clearTranslationCache", "clearDiagnosticLogs", "reset"]) assert.ok(dangerTexts.includes(plugin.t(key)), key);
+
+    // One row holds a small group of related buttons (copy and export the logs); every other row one control.
+    const groups = rows.filter(row => controlButtons(row).length > 1);
+    assert.deepEqual(groups.map(row => row.querySelector(".dait-row-label").textContent), [plugin.t("exportDiagnosticLogs")]);
+    assert.deepEqual(controlButtons(groups[0]).map(button => button.textContent), ["copyDiagnosticLogs", "exportDiagnosticJson", "exportDiagnosticTxt"].map(key => plugin.t(key)));
+    const stats = rowByLabel(data, plugin.t("translationCacheStats"));
+    assert.deepEqual(controlButtons(stats).map(button => button.textContent), [plugin.t("clearTranslationCacheStats")]);
+    assert.equal(stats.querySelector(".dait-row-description").textContent, plugin.getTranslationCacheStatsText());
+    assert.equal(groups[0].querySelector(".dait-row-description").textContent, plugin.getDiagnosticLogsStatsText());
+    plugin.destroySettingsModalSizing(panel);
+});
+
+test("data tab: clearing the cache or the logs updates the counts shown in the stats rows", async t => {
+    const { plugin, doc } = createPlugin(t, { tab: "data" });
+    plugin.confirmAction = async () => true;
+    plugin.refreshDiagnosticSummary = () => {};
+    let statsText = "hits 5";
+    plugin.getTranslationCacheStatsText = () => statsText;
+    let logsText = "logs 9";
+    plugin.getDiagnosticLogsStatsText = () => logsText;
+    plugin.clearTranslationCache = () => { statsText = "hits 0"; };
+    plugin.clearDiagnosticLogs = () => { logsText = "logs 0"; };
+    const panel = plugin.getSettingsPanel({ quickSettings: true });
+    doc.body.appendChild(panel);
+    const data = tabPanel(panel, "data");
+    const stats = rowByLabel(data, plugin.t("translationCacheStats"));
+    const logs = rowByLabel(data, plugin.t("exportDiagnosticLogs"));
+    assert.equal(stats.querySelector(".dait-row-description").textContent, "hits 5");
+    assert.equal(logs.querySelector(".dait-row-description").textContent, "logs 9");
+
+    data.querySelectorAll("button").find(button => button.textContent === plugin.t("clearTranslationCache")).click();
+    data.querySelectorAll("button").find(button => button.textContent === plugin.t("clearDiagnosticLogs")).click();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(stats.querySelector(".dait-row-description").textContent, "hits 0");
+    assert.equal(logs.querySelector(".dait-row-description").textContent, "logs 0");
+    plugin.destroySettingsModalSizing(panel);
+});
+
+test("settings: no tab page shows two rows with the same label", t => {
+    for (const language of ["zh-CN", "en"]) {
+        const { plugin, doc } = createPlugin(t, { language });
+        const panel = plugin.getSettingsPanel({ quickSettings: true });
+        doc.body.appendChild(panel);
+        for (const tabpanel of panel.querySelectorAll("[role=tabpanel]")) {
+            const labels = labelsIn(tabpanel);
+            assert.deepEqual(labels.filter((label, index) => labels.indexOf(label) !== index), [], `${language} ${tabpanel.dataset.daitSettingsTabPanel}`);
+        }
+        plugin.destroySettingsModalSizing(panel);
+    }
+});
+
 test("settings window: a key that ends an IME composition does not close the window", t => {
     const { doc, isOpen } = openHotkeyRecorder(t);
     doc.dispatchEvent("keydown", { key: "Escape", isComposing: true });

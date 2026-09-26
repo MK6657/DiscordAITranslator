@@ -3219,6 +3219,7 @@ module.exports = class DiscordAITranslator {
         section.appendChild(this.createSelectRow("ui.translationCacheTtlHours", this.t("translationCacheTtl"), TRANSLATION_CACHE_TTL_OPTIONS.map(value => [String(value), this.getTranslationCacheTtlLabel(value)]), { description: this.t("translationCacheTtlDesc") }));
         section.appendChild(this.createInputRow("ui.translationCacheMaxEntries", this.t("translationCacheMaxEntries"), "number", String(TRANSLATION_CACHE_DEFAULT_LIMIT), { min: String(TRANSLATION_CACHE_MIN_LIMIT), max: String(TRANSLATION_CACHE_MAX_LIMIT), step: "100" }, { description: this.t("translationCacheMaxEntriesDesc") }));
         section.appendChild(this.createTranslationCacheStatsRow());
+        section.appendChild(this.createTranslationCacheClearRow());
         return section;
     }
 
@@ -3228,6 +3229,7 @@ module.exports = class DiscordAITranslator {
         const section = this.createSettingsGroup(this.t("diagnosticsSettingsTitle"), "diagnostics");
         section.appendChild(this.createCheckboxRow("ui.diagnosticsEnabled", this.t("diagnosticLogs"), { description: this.t("diagnosticLogsDesc") }));
         section.appendChild(this.createDiagnosticLogsRow());
+        section.appendChild(this.createDiagnosticLogsClearRow());
         section.appendChild(this.createSettingsSnapshotRow());
         section.appendChild(this.createDiagnosticSummaryRow());
         return section;
@@ -3309,20 +3311,28 @@ module.exports = class DiscordAITranslator {
         return this.createRow(this.t("polishHotkey"), controls, { ...rowOptions, description: this.t("polishHotkeyDesc") });
     }
 
+    // The data tab gives every action a row of its own (a destructive one always), so a row never mixes unrelated
+    // buttons: the stats rows show the counts, the clear rows below them update those counts.
     createTranslationCacheStatsRow() {
         const controls = document.createElement("div");
         controls.className = "dait-cache-actions";
         const clearStats = this.createSmallButton(this.t("clearTranslationCacheStats"));
-        const clearCache = this.createSmallButton(this.t("clearTranslationCache"), "danger");
-        const refreshDescription = button => {
-            const row = button.closest(".dait-settings-row");
-            const description = row?.querySelector?.(".dait-row-description");
-            if (description) description.textContent = this.getTranslationCacheStatsText();
-        };
         clearStats.addEventListener("click", () => {
             this.clearTranslationCacheStats();
-            refreshDescription(clearStats);
+            this.refreshSettingsStatsRow(clearStats, "translation-cache");
         });
+        controls.appendChild(clearStats);
+        const row = this.createRow(this.t("translationCacheStats"), controls, {
+            description: this.getTranslationCacheStatsText()
+        });
+        row.dataset.daitStats = "translation-cache";
+        return row;
+    }
+
+    createTranslationCacheClearRow() {
+        const controls = document.createElement("div");
+        controls.className = "dait-cache-actions";
+        const clearCache = this.createSmallButton(this.t("clearTranslationCache"), "danger");
         clearCache.addEventListener("click", async () => {
             const confirmed = await this.confirmAction({
                 title: this.t("clearTranslationCache"),
@@ -3332,44 +3342,34 @@ module.exports = class DiscordAITranslator {
             });
             if (!confirmed) return;
             this.clearTranslationCache();
-            refreshDescription(clearCache);
+            this.refreshSettingsStatsRow(clearCache, "translation-cache");
         });
-        controls.appendChild(clearStats);
         controls.appendChild(clearCache);
-        return this.createRow(this.t("translationCacheStats"), controls, {
-            description: this.getTranslationCacheStatsText()
-        });
+        return this.createRow(this.t("clearTranslationCache"), controls, { description: this.t("clearTranslationCacheDesc") });
     }
 
+    // Writes the current counts into the stats row of the same group ("translation-cache" or "diagnostic-logs").
+    refreshSettingsStatsRow(source, kind) {
+        const scope = source?.closest?.(".dait-settings-group") || source?.closest?.(".dait-settings");
+        const row = scope?.querySelector?.(`[data-dait-stats='${kind}']`);
+        const description = row?.querySelector?.(".dait-row-description");
+        if (!description) return;
+        description.textContent = kind === "translation-cache" ? this.getTranslationCacheStatsText() : this.getDiagnosticLogsStatsText();
+    }
+
+    // Copy and export: one small group of related buttons, with the log counts as the row's description.
     createDiagnosticLogsRow() {
         const controls = document.createElement("div");
         controls.className = "dait-diagnostic-actions";
-        const clear = this.createSmallButton(this.t("clearDiagnosticLogs"));
         const copy = this.createSmallButton(this.t("copyDiagnosticLogs"));
         const exportJson = this.createSmallButton(this.t("exportDiagnosticJson"));
         const exportTxt = this.createSmallButton(this.t("exportDiagnosticTxt"));
-        const refreshDescription = button => {
-            const row = button.closest(".dait-settings-row");
-            const description = row?.querySelector?.(".dait-row-description");
-            if (description) description.textContent = this.getDiagnosticLogsStatsText();
-        };
         // The summary row sits in the same diagnostics group as this row.
         const refreshDiagnostics = button => {
-            refreshDescription(button);
+            this.refreshSettingsStatsRow(button, "diagnostic-logs");
             this.refreshDiagnosticSummary(button.closest(".dait-settings-group") || button.closest(".dait-settings"));
         };
 
-        clear.addEventListener("click", async () => {
-            const confirmed = await this.confirmAction({
-                title: this.t("clearDiagnosticLogs"),
-                body: this.t("clearDiagnosticLogsConfirm"),
-                confirmText: this.t("clearDiagnosticLogs"),
-                danger: true
-            });
-            if (!confirmed) return;
-            this.clearDiagnosticLogs();
-            refreshDiagnostics(clear);
-        });
         copy.addEventListener("click", async () => {
             await this.copyDiagnosticLogs();
             refreshDiagnostics(copy);
@@ -3383,13 +3383,34 @@ module.exports = class DiscordAITranslator {
             refreshDiagnostics(exportTxt);
         });
 
-        controls.appendChild(clear);
         controls.appendChild(copy);
         controls.appendChild(exportJson);
         controls.appendChild(exportTxt);
-        return this.createRow(this.t("diagnosticLogs"), controls, {
+        const row = this.createRow(this.t("exportDiagnosticLogs"), controls, {
             description: this.getDiagnosticLogsStatsText()
         });
+        row.dataset.daitStats = "diagnostic-logs";
+        return row;
+    }
+
+    createDiagnosticLogsClearRow() {
+        const controls = document.createElement("div");
+        controls.className = "dait-diagnostic-actions";
+        const clear = this.createSmallButton(this.t("clearDiagnosticLogs"), "danger");
+        clear.addEventListener("click", async () => {
+            const confirmed = await this.confirmAction({
+                title: this.t("clearDiagnosticLogs"),
+                body: this.t("clearDiagnosticLogsConfirm"),
+                confirmText: this.t("clearDiagnosticLogs"),
+                danger: true
+            });
+            if (!confirmed) return;
+            this.clearDiagnosticLogs();
+            this.refreshSettingsStatsRow(clear, "diagnostic-logs");
+            this.refreshDiagnosticSummary(clear.closest(".dait-settings-group") || clear.closest(".dait-settings"));
+        });
+        controls.appendChild(clear);
+        return this.createRow(this.t("clearDiagnosticLogs"), controls, { description: this.t("clearDiagnosticLogsDesc") });
     }
 
     createSettingsSnapshotRow() {

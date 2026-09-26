@@ -2127,12 +2127,13 @@ uiSectionPlugin.requestExplicitHistoryBackfill = () => {
 uiSectionPlugin.showToast = () => {};
 historyBackfillButton.listeners.click({ preventDefault() {}, stopPropagation() {} });
 assert.equal(historyBackfillButtonCalled, true);
-const cacheStatsControls = uiCreatedElements.find(element => element.className === "dait-cache-actions");
-assert.ok(cacheStatsControls);
-assert.equal(cacheStatsControls.children.length, 2);
+// Every data-tab action has a row of its own: clear stats, then clear cache (destructive, alone in its row).
+const cacheActionControls = uiCreatedElements.filter(element => element.className === "dait-cache-actions");
+assert.deepEqual(cacheActionControls.map(element => element.children.length), [1, 1]);
+// Copy, export JSON and export TXT share one row; clearing the logs has a row of its own.
 const diagnosticControls = uiCreatedElements.find(element => element.className === "dait-diagnostic-actions");
 assert.ok(diagnosticControls);
-assert.equal(diagnosticControls.children.length, 4);
+assert.equal(diagnosticControls.children.length, 3);
 [translationControlsSection, autoTranslateSection, advancedSection, historyBackfillSection, providerFallbackSection, displaySection, displayNoticesSection, cacheSection, diagnosticsSection]
     .forEach(section => assert.ok(section.children.length > 0));
 // The description sits in the row's text column (div.dait-settings-row > div.dait-row-text > p.dait-row-description).
