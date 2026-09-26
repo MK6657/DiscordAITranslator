@@ -661,11 +661,12 @@ class QuickPanel {
 
     // --- Position, keyboard and pointer ---
 
-    // While the launcher is briefly gone (a language switch re-creates it), the panel stays where it was anchored.
+    // While the launcher is briefly gone or not laid out (a language switch or Discord re-creates the user panel), the
+    // panel stays where it was anchored.
     getAnchorRect() {
         const launcher = this.plugin.isNodeConnected(this.launcher) ? this.launcher : null;
         const rect = launcher?.getBoundingClientRect?.();
-        if (!rect || (!rect.width && !rect.height)) return launcher ? null : this.lastAnchorRect;
+        if (!rect || (!rect.width && !rect.height)) return this.lastAnchorRect;
         this.lastAnchorRect = {
             left: Number(rect.left || 0),
             top: Number(rect.top || 0),
@@ -808,8 +809,30 @@ class QuickPanel {
 
     startRouteWatch() {
         if (this.routeTimer) clearInterval(this.routeTimer);
-        this.routeTimer = setInterval(() => this.handleRouteChange(), ROUTE_CHECK_INTERVAL_MS);
+        this.routeTimer = setInterval(() => {
+            this.handleRouteChange();
+            this.followAnchor();
+        }, ROUTE_CHECK_INTERVAL_MS);
         this.routeTimer?.unref?.();
+    }
+
+    // Discord can move the user panel, and the launcher in it, without a window resize: the open panel follows on
+    // the route watch's tick. Nothing is written while the launcher stays put.
+    followAnchor() {
+        if (!this.isOpen()) return false;
+        if (!this.plugin.isNodeConnected(this.launcher)) {
+            const found = this.findLauncher();
+            if (!found) return false;
+            this.launcher = found;
+            this.setLauncherExpanded(found, true);
+        }
+        const rect = this.launcher.getBoundingClientRect?.();
+        if (!rect || (!rect.width && !rect.height)) return false;
+        const previous = this.lastAnchorRect;
+        const same = previous && ["left", "top", "width", "height"].every(side => Math.round(Number(rect[side] || 0)) === Math.round(previous[side]));
+        if (same) return false;
+        this.position();
+        return true;
     }
 
     stopTimers() {

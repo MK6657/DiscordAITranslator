@@ -505,3 +505,65 @@ test("reopened while its test runs, the quick panel shows a busy Test button unt
     assert.equal(rebuilt.disabled, false);
     assert.equal(rebuilt.textContent, "测试");
 });
+
+// --- QP-5: the open panel stays with its launcher ---
+
+test("the open quick panel keeps its place while the launcher is gone or hidden, and follows a new launcher", t => {
+    const { plugin, doc, launcher, userPanel } = statusPlugin(t);
+    dispatch(doc, launcher, "click", { detail: 0 });
+    t.mock.timers.tick(1);
+    const popover = doc.querySelector(".dait-quick-popover");
+    assert.equal(popover.style.left, "46px");
+    assert.equal(popover.style.top, "322px");
+    // The note line makes the panel taller: a status change repositions it.
+    doc.layout = element => element.classList.contains("dait-quick-popover")
+        ? { top: 0, left: 0, width: 340, height: byClass(popover, "dait-qp-status-note").hidden ? 520 : 540, right: 340, bottom: 540 }
+        : null;
+
+    // Discord re-mounts the user panel: the launcher is gone for a moment while the queue moves on.
+    launcher.remove();
+    plugin.autoTranslationInFlight = 1;
+    plugin.autoTranslationInFlightItems = 2;
+    plugin.requestLauncherStatusUpdate();
+    t.mock.timers.tick(250);
+    assert.equal(byClass(popover, "dait-qp-status-detail").textContent, "正在翻译 2 条，排队 0 条");
+    assert.equal(popover.style.left, "46px", "not snapped to the left edge");
+    assert.equal(popover.style.top, "322px", "not snapped to the bottom over the user panel");
+
+    // The new launcher sits elsewhere: the panel moves above it.
+    const replacement = plugin.createQuickSettingsButton("panel", userPanel);
+    userPanel.appendChild(replacement);
+    replacement.rect = { left: 300, top: 700, width: 32, height: 32, right: 332, bottom: 732 };
+    t.mock.timers.tick(20);
+    assert.equal(popover.style.left, "146px");
+    assert.equal(popover.style.top, "172px");
+    assert.equal(replacement.getAttribute("aria-expanded"), "true");
+
+    // A launcher that is there but not laid out (zero size) keeps the last good place as well.
+    replacement.rect = { left: 0, top: 0, width: 0, height: 0, right: 0, bottom: 0 };
+    plugin.settings.translation.apiStatus = { state: "failed", message: "connect ECONNREFUSED 127.0.0.1:8080" };
+    plugin.requestLauncherStatusUpdate();
+    t.mock.timers.tick(250);
+    assert.equal(byClass(popover, "dait-qp-status-note").hidden, false, "the taller status was drawn");
+    assert.equal(popover.style.left, "146px");
+    assert.equal(popover.style.top, "152px", "moved up for the taller panel, above the last launcher place");
+});
+
+test("the open quick panel follows its launcher when Discord moves it without a window resize", t => {
+    const { plugin, doc, launcher } = statusPlugin(t);
+    dispatch(doc, launcher, "click", { detail: 0 });
+    t.mock.timers.tick(1);
+    const popover = doc.querySelector(".dait-quick-popover");
+    assert.equal(popover.style.top, "322px");
+    launcher.rect = { left: 200, top: 760, width: 32, height: 32, right: 232, bottom: 792 };
+    t.mock.timers.tick(800);
+    assert.equal(popover.style.top, "232px", "the panel ends 8 px above the launcher again");
+    assert.equal(plugin.isQuickPopoverOpen(), true);
+    // Nothing moved: nothing is written.
+    let writes = 0;
+    const style = popover.style;
+    popover.style = new Proxy(style, { set(target, prop, value) { writes++; target[prop] = value; return true; } });
+    t.mock.timers.tick(800);
+    t.mock.timers.tick(800);
+    assert.equal(writes, 0);
+});
