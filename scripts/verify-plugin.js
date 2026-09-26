@@ -615,6 +615,8 @@ global.setTimeout = callback => {
     return quickOpenCallbacks.length;
 };
 global.clearTimeout = id => quickOpenCleared.push(id);
+// The launcher's timer opens the quick panel (which can then open the full settings window).
+quickOpenTimerPlugin.toggleQuickPopover = () => { quickOpenCount++; };
 quickOpenTimerPlugin.openQuickSettingsPanel = () => { quickOpenCount++; };
 quickOpenTimerPlugin.handleQuickSettingsButtonEvent({
     type: "click",
@@ -705,12 +707,32 @@ assert.equal(panelQuickSettings.dataset.daitDiscordTheme, "light");
 quickSettingsPlugin.injectQuickSettingsButtons();
 assert.equal(quickSettingsButtonQueryCount, 1);
 global.document.activeElement = discordSettingsButton;
+// The launcher carries a status badge and says what the translator is doing.
+assert.ok(panelQuickSettings.children.some(child => fakeElementHasClass(child, "dait-launcher-status")));
+assert.ok(["ok", "busy", "waiting", "needs-you", "off"].includes(panelQuickSettings.dataset.daitStatus));
+assert.match(panelQuickSettings.getAttribute("aria-label"), /^AI 翻译助手：/);
 panelQuickSettings.listeners.pointerup({ currentTarget: panelQuickSettings, preventDefault() {}, stopPropagation() {}, stopImmediatePropagation() {} });
+// v0.4.0: the launcher opens the compact quick panel, not the full settings window.
+const launcherQuickPopover = findByClass("dait-quick-popover");
+assert.ok(launcherQuickPopover);
+assert.equal(findByClass("dait-quick-settings-modal-root"), null);
+assert.equal(launcherQuickPopover.parentElement, quickSettingsBody);
+assert.equal(launcherQuickPopover.getAttribute("role"), "dialog");
+assert.equal(launcherQuickPopover.dataset.daitDiscordTheme, "light");
+assert.equal(panelQuickSettings.getAttribute("aria-expanded"), "true");
+assert.equal(fakeElementHasClass(panelQuickSettings, "dait-quick-settings-button-active"), true);
+assert.equal(findByClass("dait-qp-header-open-full").focused, true);
+assert.equal(quickSettingsDocumentListeners.has("keydown"), true);
+assert.equal(quickSettingsDocumentListeners.has("pointerdown"), true);
+// Its "open full settings" opens the full settings window from the launcher.
+findByClass("dait-qp-footer-open-full").listeners.click({ preventDefault() {}, stopPropagation() {} });
+assert.equal(launcherQuickPopover.removed, true);
+assert.equal(quickSettingsDocumentListeners.has("pointerdown"), false);
 const quickSettingsRoot = findByClass("dait-quick-settings-modal-root");
 assert.ok(quickSettingsRoot);
 assert.equal(panelQuickSettings.getAttribute("aria-expanded"), "true");
 assert.equal(fakeElementHasClass(panelQuickSettings, "dait-quick-settings-button-active"), true);
-assert.equal(quickSettingsRoot.dataset.daitQuickSettingsSource, "panel");
+assert.equal(quickSettingsRoot.dataset.daitQuickSettingsSource, "quick-panel");
 assert.equal(fakeElementHasClass(quickSettingsRoot, "theme-light"), true);
 assert.equal(quickSettingsRoot.dataset.daitDiscordTheme, "light");
 const quickSettingsDialog = findByClass("dait-quick-settings-dialog");
@@ -1057,6 +1079,7 @@ assert.equal(quickSettingsDisableTimerPlugin.quickSettingsOpenTimer, 2);
 let quickDisableInjected = false;
 let quickDisableOpened = false;
 quickSettingsDisableTimerPlugin.injectQuickSettingsPanelButton = () => { quickDisableInjected = true; };
+quickSettingsDisableTimerPlugin.toggleQuickPopover = () => { quickDisableOpened = true; };
 quickSettingsDisableTimerPlugin.openQuickSettingsPanel = () => { quickDisableOpened = true; };
 quickSettingsDisableTimerPlugin.settings.ui.showQuickSettingsPanelButton = false;
 quickSettingsDisableTimerPlugin.injectQuickSettingsButtons();

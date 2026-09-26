@@ -27,6 +27,7 @@ const { TranslationCacheStore } = require("./cache/translation-cache-store");
 const { PLUGIN_VERSION } = require("./version");
 const { ProviderLayer } = require("./providers/provider-layer");
 const { SettingsStore } = require("./settings/settings-store");
+const { QuickPanel } = require("./quick-panel/quick-panel");
 const { convertDiscordMarkupToDisplayText, DISCORD_MARKUP_DISPLAY_TEXT_MEMO_MAX } = require("./intake/discord-markup");
 const { removeStandardEmoji, getEmojiNeutralTextLength } = require("./intake/emoji-text");
 
@@ -836,6 +837,7 @@ module.exports = class DiscordAITranslator {
             heavyTextLength: AUTO_TRANSLATE_FORCE_SINGLE_TEXT_LENGTH
         });
         this.composerWriter = new ComposerWriter(this);
+        this.quickPanel = new QuickPanel(this);
         this.settingsSchema = new SettingsSchema({
             tabs: SETTINGS_TABS_DEFINITION,
             providerCapabilities: PROVIDER_CAPABILITIES,
@@ -1127,6 +1129,7 @@ module.exports = class DiscordAITranslator {
         this.removePolishRestoreControl();
         this.removeInputActionMenu();
         this.closeQuickSettingsPanel(null, "stop");
+        this.quickPanel.destroy("stop");
         document.querySelectorAll?.(".dait-settings")?.forEach(panel => this.destroySettingsModalSizing(panel));
         this.restoreAllTranslationSourceVisibility();
         document.querySelectorAll(".dait-message-button, .dait-polish-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-menu-button, .dait-input-action-menu, .dait-quick-settings-button, .dait-translation-line, .dait-translation-box, .dait-input-action-group").forEach(node => node.remove());
@@ -3998,6 +4001,8 @@ module.exports = class DiscordAITranslator {
     }
 
     syncSettingControls(path, value, options = {}) {
+        // Every settings write passes here: the quick panel and the launcher status follow it.
+        this.quickPanel?.handleSettingChanged(path);
         if (typeof document === "undefined") return;
         if (path === "ui.providerFallbackOrder") value = this.formatProviderFallbackOrder(value);
         const channelRule = path === "ui.currentChannelAutoTranslatePolicy";
@@ -4722,6 +4727,7 @@ module.exports = class DiscordAITranslator {
         this.removePolishRestoreControl();
         this.removeInputActionMenu();
         this.closeQuickSettingsPanel();
+        this.closeQuickPopover("language");
         this.restoreAllTranslationSourceVisibility();
         document.querySelectorAll(".dait-message-button, .dait-polish-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-menu-button, .dait-input-action-menu, .dait-quick-settings-button").forEach(node => node.remove());
         document.querySelectorAll(".dait-translation-line, .dait-translation-box").forEach(node => node.remove());
@@ -4773,7 +4779,7 @@ module.exports = class DiscordAITranslator {
     }
 
     isOwnPluginElement(element) {
-        return Boolean(element?.closest?.(".dait-settings, .dait-quick-settings-button, .dait-quick-settings-modal-root, .dait-message-button, .dait-polish-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-menu-button, .dait-input-action-menu, .dait-polish-result-panel, .dait-polish-restore-control, .dait-translation-line, .dait-translation-box"));
+        return Boolean(element?.closest?.(".dait-settings, .dait-quick-settings-button, .dait-quick-settings-modal-root, .dait-quick-popover, .dait-message-button, .dait-polish-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-menu-button, .dait-input-action-menu, .dait-polish-result-panel, .dait-polish-restore-control, .dait-translation-line, .dait-translation-box"));
     }
 
     startObserver() {
@@ -5022,7 +5028,7 @@ module.exports = class DiscordAITranslator {
     isOwnMutationNode(node) {
         const element = node?.nodeType === 3 ? node.parentElement : node;
         if (this.isOwnPluginElement(element)) return true;
-        return Boolean(element?.matches?.(".dait-settings, .dait-quick-settings-button, .dait-quick-settings-modal-root, .dait-message-button, .dait-polish-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-menu-button, .dait-input-action-menu, .dait-polish-result-panel, .dait-polish-restore-control, .dait-translation-line, .dait-translation-box"));
+        return Boolean(element?.matches?.(".dait-settings, .dait-quick-settings-button, .dait-quick-settings-modal-root, .dait-quick-popover, .dait-message-button, .dait-polish-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-menu-button, .dait-input-action-menu, .dait-polish-result-panel, .dait-polish-restore-control, .dait-translation-line, .dait-translation-box"));
     }
 
     isMediaOnlyMutation(mutation) {
@@ -5619,6 +5625,8 @@ module.exports = class DiscordAITranslator {
             this.refreshChannelRuleControls();
             // The previous chat's scroller is unmounted; the draw pass finds the new one.
             this.cachedDrawScroller = null;
+            // The channel rule shown by the quick panel and the launcher status depend on the channel.
+            this.quickPanel.handleRouteChange();
             const delayMs = Math.max(
                 AUTO_TRANSLATE_VIEWPORT_STABLE_RESCAN_MS,
                 this.getAutoTranslationViewportSettleRemainingMs()
@@ -6232,6 +6240,8 @@ module.exports = class DiscordAITranslator {
         button.addEventListener("click", event => {
             this.handleQuickSettingsButtonEvent(event, variant);
         }, true);
+        // Status badge plus a title and label that say what the translator is doing right now.
+        this.quickPanel.decorateLauncher(button);
         return button;
     }
 
@@ -6259,11 +6269,20 @@ module.exports = class DiscordAITranslator {
             eventType: event?.type || "",
             variant
         });
+        // currentTarget is cleared once the event finishes dispatching, so the launcher is resolved now.
+        const launcher = event?.currentTarget?.closest?.(".dait-quick-settings-button")
+            || event?.target?.closest?.(".dait-quick-settings-button")
+            || event?.currentTarget
+            || event?.target
+            || null;
+        // A click from Enter/Space has detail 0; pointer events and mouse clicks come from a pointer.
+        const viaPointer = String(event?.type || "").startsWith("pointer") || (event?.type === "click" && Number(event?.detail) > 0);
         if (this.quickSettingsOpenTimer) clearTimeout(this.quickSettingsOpenTimer);
         this.quickSettingsOpenTimer = setTimeout(() => {
             this.quickSettingsOpenTimer = null;
             if (!this.isStarted || !this.settings.ui?.showQuickSettingsPanelButton) return;
-            this.openQuickSettingsPanel(variant, event?.currentTarget || event?.target || null);
+            // The launcher opens the compact quick panel; its "open full settings" leads to the full window.
+            this.toggleQuickPopover(launcher, variant, { viaPointer });
         }, 0);
     }
 
@@ -6331,7 +6350,7 @@ module.exports = class DiscordAITranslator {
     }
 
     isLikelyDiscordUserSettingsButton(button) {
-        if (!button || button.closest?.(".dait-settings, .dait-quick-settings-modal-root, .dait-quick-settings-button")) return false;
+        if (!button || button.closest?.(".dait-settings, .dait-quick-settings-modal-root, .dait-quick-settings-button, .dait-quick-popover")) return false;
         const buttonLabel = this.getDiscordButtonLabel(button).toLowerCase();
         const exactSettingsLabel = /user settings|用户设置|使用者設定|ユーザー設定|사용자 설정|param[eè]tres utilisateur|impostazioni utente|ajustes de usuario|configura[cç][aã]o do usu[aá]rio|настройки пользователя/i.test(buttonLabel);
         const genericSettingsLabel = /(^|[\s_-])settings([\s_-]|$)|设置|設定/i.test(buttonLabel);
@@ -6377,7 +6396,7 @@ module.exports = class DiscordAITranslator {
         let depth = 0;
         while (current && current !== document.body && depth < 6) {
             const controls = [...(current.querySelectorAll?.("button, [role='button']") || [])]
-                .filter(button => button && !button.closest?.(".dait-settings, .dait-quick-settings-modal-root, .dait-quick-settings-button"));
+                .filter(button => button && !button.closest?.(".dait-settings, .dait-quick-settings-modal-root, .dait-quick-settings-button, .dait-quick-popover"));
             if (controls.length >= 2 && controls.length <= 8) return current;
             current = current.parentElement;
             depth++;
@@ -7189,6 +7208,14 @@ module.exports = class DiscordAITranslator {
         }
         this.resumeQuickSettingsDeferredWork(reason);
     }
+
+    // --- Delegators to QuickPanel (the launcher's compact popover and status badge). ---
+    toggleQuickPopover(...args) { return this.quickPanel.toggle(...args); }
+    openQuickPopover(...args) { return this.quickPanel.open(...args); }
+    closeQuickPopover(...args) { return this.quickPanel.close(...args); }
+    isQuickPopoverOpen(...args) { return this.quickPanel.isOpen(...args); }
+    getLauncherStatus(...args) { return this.quickPanel.getStatus(...args); }
+    requestLauncherStatusUpdate(...args) { return this.quickPanel.requestStatusUpdate(...args); }
 
     injectInputButtons(options = {}) {
         const textbox = this.getActiveTextbox() || this.getTextbox();
@@ -16620,8 +16647,8 @@ module.exports = class DiscordAITranslator {
     getEffectiveRequestApiKey(...args) { return this.providerLayer.getEffectiveRequestApiKey(...args); }
     getRequestHeaders(...args) { return this.providerLayer.getRequestHeaders(...args); }
     hasUsableApiConfig(...args) { return this.providerLayer.hasUsableApiConfig(...args); }
-    setApiStatus(...args) { return this.providerLayer.setApiStatus(...args); }
-    setApiRuntimeStatus(...args) { return this.providerLayer.setApiRuntimeStatus(...args); }
+    setApiStatus(...args) { const result = this.providerLayer.setApiStatus(...args); this.quickPanel?.requestStatusUpdate(); return result; }
+    setApiRuntimeStatus(...args) { const result = this.providerLayer.setApiRuntimeStatus(...args); this.quickPanel?.requestStatusUpdate(); return result; }
     markLocalProviderHealthy(...args) { return this.providerLayer.markLocalProviderHealthy(...args); }
     shouldBlockAutoTranslationForLocalProviderHealth(...args) { return this.providerLayer.shouldBlockAutoTranslationForLocalProviderHealth(...args); }
     getLocalProviderHealthProbeRetryMs(...args) { return this.providerLayer.getLocalProviderHealthProbeRetryMs(...args); }
@@ -16798,7 +16825,7 @@ module.exports = class DiscordAITranslator {
 
     // --- Delegators to AutoTranslationQueueCore (Phase 6 pre-step A: auto-translation queue state, scheduling, failures, decisions, channel policy and timing windows.) ---
     shouldInvalidateAutoTranslationForSetting(...args) { return this.autoQueueCore.shouldInvalidateAutoTranslationForSetting(...args); }
-    invalidateAutoTranslationQueue(...args) { return this.autoQueueCore.invalidateAutoTranslationQueue(...args); }
+    invalidateAutoTranslationQueue(...args) { const result = this.autoQueueCore.invalidateAutoTranslationQueue(...args); this.quickPanel?.requestStatusUpdate(); return result; }
     getAutoTranslationQueueSnapshot(...args) { return this.autoQueueCore.getAutoTranslationQueueSnapshot(...args); }
     getAutoTranslationDiagnosticQueueType(...args) { return this.autoQueueCore.getAutoTranslationDiagnosticQueueType(...args); }
     getAutoTranslationDiagnosticQueuePriority(...args) { return this.autoQueueCore.getAutoTranslationDiagnosticQueuePriority(...args); }
@@ -16830,7 +16857,7 @@ module.exports = class DiscordAITranslator {
     trackAutoTranslationRouteChange(...args) { return this.autoQueueCore.trackAutoTranslationRouteChange(...args); }
     removeQueuedAutoTranslationItem(...args) { return this.autoQueueCore.removeQueuedAutoTranslationItem(...args); }
     pruneAutoTranslationQueue(...args) { return this.autoQueueCore.pruneAutoTranslationQueue(...args); }
-    drainAutoTranslationQueue(...args) { return this.autoQueueCore.drainAutoTranslationQueue(...args); }
+    drainAutoTranslationQueue(...args) { const result = this.autoQueueCore.drainAutoTranslationQueue(...args); this.quickPanel?.requestStatusUpdate(); return result; }
     retainProviderBlockedVisibleAutoTranslationBatch(...args) { return this.autoQueueCore.retainProviderBlockedVisibleAutoTranslationBatch(...args); }
     restoreBlockedAutoTranslationPrefetch(...args) { return this.autoQueueCore.restoreBlockedAutoTranslationPrefetch(...args); }
     restoreAutoTranslationBatch(...args) { return this.autoQueueCore.restoreAutoTranslationBatch(...args); }
@@ -16929,7 +16956,7 @@ module.exports = class DiscordAITranslator {
     pruneAutoTranslationFailureMapSize(...args) { return this.autoQueueCore.pruneAutoTranslationFailureMapSize(...args); }
     shouldMarkAutoTranslationProviderFailureForItem(...args) { return this.autoQueueCore.shouldMarkAutoTranslationProviderFailureForItem(...args); }
     isProviderWideAutoTranslationPrefetchFailure(...args) { return this.autoQueueCore.isProviderWideAutoTranslationPrefetchFailure(...args); }
-    markAutoTranslationProviderFailure(...args) { return this.autoQueueCore.markAutoTranslationProviderFailure(...args); }
+    markAutoTranslationProviderFailure(...args) { const result = this.autoQueueCore.markAutoTranslationProviderFailure(...args); this.quickPanel?.requestStatusUpdate(); return result; }
     getAutoTranslationProviderFailure(...args) { return this.autoQueueCore.getAutoTranslationProviderFailure(...args); }
     isAutoTranslationProviderCoolingDown(...args) { return this.autoQueueCore.isAutoTranslationProviderCoolingDown(...args); }
     getNextAutoTranslationFailureCount(...args) { return this.autoQueueCore.getNextAutoTranslationFailureCount(...args); }
