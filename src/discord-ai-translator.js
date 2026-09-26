@@ -15242,9 +15242,15 @@ module.exports = class DiscordAITranslator {
             return "";
         }
 
-        const directText = this.extractElementTextWithoutClone(element, excludedSelectors);
+        // While the cache holds entries saved before 0.4.0, which read no standard emoji, the text as those
+        // versions read it is remembered for their lookups.
+        const emojiTrace = this.hasLegacyTranslationCacheEntries() ? { parts: null, emoji: new Set() } : null;
+        const directText = this.extractElementTextWithoutClone(element, excludedSelectors, emojiTrace);
         if (directText !== null) {
             const normalized = this.normalizeExtractedText(directText);
+            if (emojiTrace?.emoji.size) {
+                this.rememberPreEmojiSourceText(normalized, this.normalizeExtractedText(emojiTrace.parts.filter((part, index) => !emojiTrace.emoji.has(index)).join("")));
+            }
             this.setElementTextCacheValue(element, cacheKey, normalized);
             return normalized;
         }
@@ -15329,7 +15335,8 @@ module.exports = class DiscordAITranslator {
         return "";
     }
 
-    extractElementTextWithoutClone(element, excludedSelectors = []) {
+    // emojiTrace (optional): receives the parts and the indexes of the standard emoji among them.
+    extractElementTextWithoutClone(element, excludedSelectors = [], emojiTrace = null) {
         if (!element?.childNodes || typeof element.childNodes[Symbol.iterator] !== "function") return null;
         const blockedSelector = excludedSelectors.filter(Boolean).join(",");
         const blockTags = new Set(["ADDRESS", "ARTICLE", "ASIDE", "BLOCKQUOTE", "DIV", "FIGCAPTION", "FIGURE", "FOOTER", "H1", "H2", "H3", "H4", "H5", "H6", "HEADER", "LI", "MAIN", "NAV", "OL", "P", "PRE", "SECTION", "TABLE", "TR", "UL"]);
@@ -15360,6 +15367,7 @@ module.exports = class DiscordAITranslator {
             const tagName = String(node.tagName || node.nodeName || "").toUpperCase();
             if (tagName === "IMG") {
                 const alt = this.getExtractedImageAltText(node);
+                if (alt && emojiTrace && !/^:.+:$/.test(alt)) emojiTrace.emoji.add(parts.length);
                 if (alt) parts.push(` ${alt} `);
                 continue;
             }
@@ -15376,6 +15384,7 @@ module.exports = class DiscordAITranslator {
                 stack.push({ node: children[index], root: false });
             }
         }
+        if (emojiTrace) emojiTrace.parts = parts;
         return parts.join("");
     }
 
@@ -16725,7 +16734,7 @@ module.exports = class DiscordAITranslator {
     }
 
     getTranslationLineCacheAliases(text, options = {}) {
-        return this.getTranslationCacheAliases(text, options, { includePreMessageIdentity: false });
+        return this.getTranslationCacheAliases(text, options, { includePreMessageIdentity: false, includePlaceholderModel: true });
     }
 
     getAutoTextTranslationFailureKey(text, options = {}) {
@@ -17316,6 +17325,8 @@ module.exports = class DiscordAITranslator {
     getPreMessageIdentityTranslationCacheKey(...args) { return this.translationCacheStore.getPreMessageIdentityTranslationCacheKey(...args); }
     buildTranslationCacheKey(...args) { return this.translationCacheStore.buildTranslationCacheKey(...args); }
     getServedModelTranslationCacheKey(...args) { return this.translationCacheStore.getServedModelTranslationCacheKey(...args); }
+    hasLegacyTranslationCacheEntries(...args) { return this.translationCacheStore.hasLegacyTranslationCacheEntries(...args); }
+    rememberPreEmojiSourceText(...args) { return this.translationCacheStore.rememberPreEmojiSourceText(...args); }
     getCompactTranslationCacheConfigParts(...args) { return this.translationCacheStore.getCompactTranslationCacheConfigParts(...args); }
     getCacheConfigSnapshot(...args) { return this.translationCacheStore.getCacheConfigSnapshot(...args); }
     getTranslationCacheValueCached(...args) { return this.translationCacheStore.getTranslationCacheValueCached(...args); }

@@ -129,6 +129,8 @@ class ProviderLayer {
         // The served model is part of the cache key, so it is saved with the cache, and hits the
         // cached-draw memo remembered under the old model's keys must not be drawn again.
         if (previousModel !== normalized) {
+            // Lines drawn before a server's first detection carry keys that name the placeholder model.
+            if (!previousModel) this.plugin.localProviderModelFirstDetected = true;
             this.plugin.scheduleTranslationCachePersist();
             this.plugin.cachedDrawMemo?.clear?.();
         }
