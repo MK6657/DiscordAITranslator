@@ -105,7 +105,7 @@ class AutoTranslationQueueCore {
         if (!options.preserveFailures) {
             this.plugin.autoTranslationFailures.clear();
             this.plugin.autoTranslationProviderFailures.clear();
-            this.plugin.autoTranslationProviderNoticeAt.clear();
+            if (!options.preserveNotices) this.plugin.autoTranslationProviderNoticeAt.clear();
         }
         if (this.plugin.autoTranslationRetryTimer && !options.preserveFailures && !options.preserveRetry) {
             clearTimeout(this.plugin.autoTranslationRetryTimer);
@@ -1065,7 +1065,9 @@ class AutoTranslationQueueCore {
             || this.plugin.autoTranslationRenderQueue?.length
         );
         if (!hasRetryTimer && !hasWork) return false;
-        this.plugin.invalidateAutoTranslationQueue();
+        // Passing through a channel without auto-translate fixes nothing at the provider: the
+        // "needs you" episode goes on, so its notice is not shown again on the way back.
+        this.plugin.invalidateAutoTranslationQueue({ preserveNotices: true });
         this.plugin.logDiagnostic("auto.queue.cancel", "ok", { reason });
         return true;
     }

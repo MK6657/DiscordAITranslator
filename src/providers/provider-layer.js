@@ -689,7 +689,8 @@ class ProviderLayer {
                     });
                 }
                 this.plugin.autoTranslationProviderFailures.delete(providerKey);
-                this.plugin.autoTranslationProviderNoticeAt.delete(providerKey);
+                // The "needs you" episode stays open: a server that answers this tiny request can still
+                // fail real messages (HTTP 5xx). A successful translation request ends it.
                 this.plugin.markLocalProviderHealthy(providerKey);
                 this.plugin.setApiRuntimeStatus("translation", "success", this.plugin.t("apiStatusSuccess"));
                 this.plugin.logDiagnostic("auto.provider.health", "success", {

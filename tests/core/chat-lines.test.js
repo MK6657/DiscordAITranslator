@@ -548,6 +548,46 @@ test("a successful translation request ends the provider's attention episode", a
     assert.equal(plugin.toasts.length, 2);
 });
 
+test("an attention episode survives a pass through a channel without auto-translate and a passing health probe", async t => {
+    const { plugin } = createChatPlugin(t);
+    plugin.settings.ui.showAutoTranslateToasts = false;
+    plugin.settings.translation.apiKey = "sk-fake-1";
+    const auth = Object.assign(new Error("API_ERROR"), { status: 401 });
+    plugin.showAutoTranslateError(auth);
+    assert.equal(plugin.toasts.length, 1);
+
+    // Every failure that is not terminal schedules a retry scan. The user then opens a channel where
+    // auto-translate is off, and the scan there cancels the runtime work.
+    plugin.autoTranslationRetryTimer = setTimeout(() => {}, 60000);
+    plugin.autoTranslationRetryAt = Date.now() + 60000;
+    t.after(() => clearTimeout(plugin.autoTranslationRetryTimer));
+    plugin.isAutoTranslateEnabled = () => false;
+    assert.equal(plugin.createAutoTranslationScanWork({}), null);
+    assert.equal(plugin.autoTranslationRetryTimer, null, "the runtime work is still cancelled");
+    plugin.isAutoTranslateEnabled = () => true;
+    // Back in the translated channel the same error is not announced again.
+    plugin.showAutoTranslateError(auth);
+    assert.equal(plugin.toasts.length, 1, "the episode did not end");
+
+    // A local server that answers the tiny health probe but still fails messages keeps its episode:
+    // only a real translation (or a passing connection test, or new settings) ends it.
+    plugin.settings.translation.provider = "sakuraLocal";
+    plugin.settings.translation.apiKey = "";
+    plugin.setApiRuntimeStatus = () => {};
+    plugin.queueScan = () => {};
+    const options = plugin.getAutoTranslationOptions();
+    const providerKey = options.providerKey;
+    const local = Object.assign(new Error("API_ERROR"), { status: 500, localProviderUnavailable: true, providerKey });
+    plugin.showAutoTranslateError(local);
+    assert.equal(plugin.toasts.length, 2);
+    plugin.fetchApiResponseText = async () => JSON.stringify({ choices: [{ message: { content: "OK" } }] });
+    plugin.startLocalProviderHealthProbe(providerKey, options);
+    await plugin.localProviderHealthChecks.get(providerKey);
+    assert.equal(plugin.localProviderHealthyKeys.has(providerKey), true, "the probe passed");
+    plugin.showAutoTranslateError(local);
+    assert.equal(plugin.toasts.length, 2, "the probe alone does not end the episode");
+});
+
 // --- display settings ---
 
 test("translation style and text size have defaults, are normalized and restyle existing lines", t => {
