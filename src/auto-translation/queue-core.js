@@ -1881,7 +1881,7 @@ class AutoTranslationQueueCore {
             });
             return;
         }
-        this.plugin.setTranslationCache(cacheKey, translated);
+        this.plugin.setTranslationCache(this.plugin.getServedModelTranslationCacheKey(cacheKey, requestOptions), translated);
         this.plugin.clearAutoTranslationPartialResult(cacheKey);
         if (this.plugin.shouldStoreAutoTextTranslationCache(text, requestOptions, translated)) {
             this.plugin.setAutoTextTranslationCache(text, requestOptions, translated);

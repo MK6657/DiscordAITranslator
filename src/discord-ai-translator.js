@@ -15454,6 +15454,7 @@ module.exports = class DiscordAITranslator {
     getFullConfigTranslationCacheKey(...args) { return this.translationCacheStore.getFullConfigTranslationCacheKey(...args); }
     getPreMessageIdentityTranslationCacheKey(...args) { return this.translationCacheStore.getPreMessageIdentityTranslationCacheKey(...args); }
     buildTranslationCacheKey(...args) { return this.translationCacheStore.buildTranslationCacheKey(...args); }
+    getServedModelTranslationCacheKey(...args) { return this.translationCacheStore.getServedModelTranslationCacheKey(...args); }
     getCompactTranslationCacheConfigParts(...args) { return this.translationCacheStore.getCompactTranslationCacheConfigParts(...args); }
     getCacheConfigSnapshot(...args) { return this.translationCacheStore.getCacheConfigSnapshot(...args); }
     getTranslationCacheValueCached(...args) { return this.translationCacheStore.getTranslationCacheValueCached(...args); }

@@ -586,6 +586,41 @@ test("a newly detected local model stops the cached-draw memo from drawing the o
     assert.equal(plugin.getCachedDrawMemoEntry(memoKey), null);
 });
 
+// prov-5: a queued item's key names the model detected when it was queued; the request re-detects.
+test("a local result is cached under the model that answered, not the one detected when the item was queued", async () => {
+    const plugin = new Plugin();
+    plugin.scheduleTranslationCachePersist = () => {};
+    Object.assign(plugin.settings.translation, { provider: "sakuraLocal", endpoint: LOCAL_ENDPOINT, apiKey: "", model: "local-model" });
+    const config = plugin.settings.translation;
+    // Model A was restored from the cache file; the next request re-detects and finds model B.
+    plugin.restoreLocalProviderDetectedModels([{ key: plugin.getLocalProviderModelDetectionCacheKey(config, {}), model: "HY-MT1.5-1.8B.gguf" }]);
+    const text = "bonjour tout le monde, comment allez-vous";
+    const options = plugin.getAutoTranslationOptions();
+    const queuedKey = plugin.getTranslationCacheKey(text, options);
+
+    plugin.fetchLocalProviderDetectedModel = async () => "Qwen3-8B.gguf";
+    let bodyModel = "";
+    plugin.fetchApiResponseText = async (_endpoint, request) => {
+        bodyModel = request.body.model;
+        return JSON.stringify({ choices: [{ message: { content: "大家好，你们最近怎么样" }, finish_reason: "stop" }] });
+    };
+    const translated = await plugin.runModelTask("translation", text, { configOverrides: options.configOverrides, mode: "auto" });
+    assert.equal(bodyModel, "Qwen3-8B.gguf");
+    const servedKey = plugin.getTranslationCacheKey(text, plugin.getAutoTranslationOptions());
+    assert.notEqual(servedKey, queuedKey);
+
+    plugin.cacheAutoTranslationResultWithOptions(queuedKey, text, options, translated);
+    assert.equal(plugin.translationCache.get(servedKey), translated, "stored under the model that answered");
+    assert.equal(plugin.translationCache.has(queuedKey), false, "never under the other model's key");
+
+    // Nothing changes for keys whose model did not change, or for cloud providers.
+    assert.equal(plugin.getServedModelTranslationCacheKey(servedKey, options), servedKey);
+    const cloud = new Plugin();
+    cloud.settings.translation.apiKey = "sk-fake-1";
+    const cloudKey = cloud.getTranslationCacheKey(text, cloud.getAutoTranslationOptions());
+    assert.equal(cloud.getServedModelTranslationCacheKey(cloudKey, cloud.getAutoTranslationOptions()), cloudKey);
+});
+
 test("exports show only the model file name, not a local path", () => {
     const plugin = new Plugin();
     plugin.settings.translation.model = "C:\\Users\\fake-user\\models\\fake-model.gguf";
