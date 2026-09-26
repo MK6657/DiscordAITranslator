@@ -529,3 +529,72 @@ test("the prompt template select keeps both halves of the settings chevron", () 
         .filter(value => value !== null);
     assert.deepEqual(overrides.filter(value => layers(value) !== 2), [], "an override with one layer moves one half of the chevron away");
 });
+
+// --- SS-7: tab rail semantics --------------------------------------------------------------------------
+
+test("the tab rail's aria-orientation follows its layout: a row at 760 px of panel width or less", t => {
+    const { plugin, panel, state } = createShell(t);
+    let width = 920;
+    panel.getBoundingClientRect = () => ({ left: 0, top: 0, right: width, bottom: 600, width, height: 600 });
+    const observed = [];
+    useGlobals(t, {
+        ResizeObserver: class {
+            constructor(callback) { this.callback = callback; observed.push(this); }
+            observe(target) { this.target = target; }
+            disconnect() { this.disconnected = true; }
+        },
+        getComputedStyle: () => ({ paddingBottom: "0px", overflowY: "visible", maxHeight: "none" })
+    });
+    assert.equal(state.tablist.getAttribute("aria-orientation"), "vertical");
+    plugin.syncSettingsPanelHeight(panel, panel.parentElement);
+    assert.equal(state.tablist.getAttribute("aria-orientation"), "vertical");
+    assert.equal(observed.length, 1, "one observer per panel");
+    assert.equal(observed[0].target, panel);
+
+    width = 760;
+    observed[0].callback([]);
+    assert.equal(state.tablist.getAttribute("aria-orientation"), "horizontal");
+    width = 761;
+    observed[0].callback([]);
+    assert.equal(state.tablist.getAttribute("aria-orientation"), "vertical");
+    width = 600;
+    plugin.syncSettingsPanelHeight(panel, panel.parentElement);
+    assert.equal(state.tablist.getAttribute("aria-orientation"), "horizontal");
+    assert.equal(observed.length, 1);
+    // The breakpoint is the stylesheet's.
+    assert.match(PLUGIN_CSS, /@container dait-settings \(max-width: 760px\) \{[\s\S]*?\.dait-settings-tabs \{\s*flex-direction: row;/);
+
+    plugin.destroySettingsModalSizing(panel);
+    assert.equal(observed[0].disconnected, true);
+});
+
+test("while search results are shown no tab is selected; clearing the search or opening a result selects one again", t => {
+    const { plugin, panel, state } = createShell(t, { tab: "advanced" });
+    assert.deepEqual(selectedTabs(panel), ["advanced"]);
+    const advancedTab = tabs(panel).find(tab => tab.dataset.daitSettingsTab === "advanced");
+
+    state.searchInput.value = plugin.t("diagnosticLogs");
+    const entries = plugin.runSettingsSearch(state, state.searchInput.value);
+    assert.ok(entries.length > 0);
+    assert.deepEqual(visibleTab(panel), [], "every tab page is hidden");
+    assert.deepEqual(selectedTabs(panel), [], "no tab claims a hidden page");
+    assert.equal(advancedTab.getAttribute("tabindex"), "0", "the rail can still be reached with Tab");
+
+    plugin.clearSettingsSearch(state, { focus: false });
+    assert.deepEqual(visibleTab(panel), ["advanced"]);
+    assert.deepEqual(selectedTabs(panel), ["advanced"]);
+
+    plugin.runSettingsSearch(state, plugin.t("diagnosticLogs"));
+    assert.deepEqual(selectedTabs(panel), []);
+    const entry = state.searchEntries.find(item => item.tabId === "data");
+    assert.ok(entry);
+    plugin.openSettingsSearchResult(state, entry);
+    assert.deepEqual(visibleTab(panel), ["data"]);
+    assert.deepEqual(selectedTabs(panel), ["data"]);
+
+    // Picking a tab while results are shown ends the search and selects that tab.
+    plugin.runSettingsSearch(state, plugin.t("diagnosticLogs"));
+    tabs(panel).find(tab => tab.dataset.daitSettingsTab === "display").click();
+    assert.deepEqual(selectedTabs(panel), ["display"]);
+    assert.deepEqual(visibleTab(panel), ["display"]);
+});

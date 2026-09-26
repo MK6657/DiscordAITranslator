@@ -1397,7 +1397,7 @@ module.exports = class DiscordAITranslator {
         state.activeTab = target.id;
         state.tabs.forEach(tab => {
             const active = tab === target;
-            tab.button?.setAttribute?.("aria-selected", active ? "true" : "false");
+            tab.button?.setAttribute?.("aria-selected", active && !state.searchQuery ? "true" : "false");
             tab.button?.setAttribute?.("tabindex", active ? "0" : "-1");
             if (tab.tabpanel) tab.tabpanel.hidden = !active || Boolean(state.searchQuery);
         });
@@ -1533,8 +1533,10 @@ module.exports = class DiscordAITranslator {
         const terms = query.split(/\s+/).filter(Boolean);
         const entries = this.getSettingsSearchEntries(state).filter(entry => terms.every(term => entry.haystack.includes(term)));
         state.searchEntries = entries;
+        // The results replace every tab page, so no tab is selected meanwhile; the current one stays reachable with Tab.
         state.tabs.forEach(tab => {
             if (tab.tabpanel) tab.tabpanel.hidden = true;
+            tab.button?.setAttribute?.("aria-selected", "false");
         });
         if (state.results) state.results.hidden = false;
         if (state.resultsSummary) {
@@ -1586,6 +1588,7 @@ module.exports = class DiscordAITranslator {
         if (options.showTab !== false) {
             state.tabs.forEach(tab => {
                 if (tab.tabpanel) tab.tabpanel.hidden = tab.id !== state.activeTab;
+                tab.button?.setAttribute?.("aria-selected", tab.id === state.activeTab ? "true" : "false");
             });
         }
         if (options.focus) this.focusSettingsElement(state.searchInput);
@@ -1866,6 +1869,7 @@ module.exports = class DiscordAITranslator {
     // scrolls inside, so the header and the tab rail stay put.
     syncSettingsPanelHeight(panel, scroller = null) {
         if (!panel?.isConnected || !panel.style?.setProperty || typeof getComputedStyle !== "function") return false;
+        this.bindSettingsTabOrientation(panel);
         const host = scroller || this.getSettingsHostScroller(panel);
         const frame = panel.closest?.(".dait-quick-settings-dialog") || panel.closest?.("[data-dait-settings-modal-root='true']") || host;
         if (!host || !frame?.getBoundingClientRect) return false;
@@ -1886,6 +1890,29 @@ module.exports = class DiscordAITranslator {
         catch {
             return false;
         }
+    }
+
+    // The tab rail is a vertical list, or a row once the panel is 760 px wide or less (the @container rule in
+    // css/04-settings.js); aria-orientation follows the panel's width as it changes.
+    bindSettingsTabOrientation(panel) {
+        this.syncSettingsTabOrientation(panel);
+        if (!panel || panel.__daitSettingsOrientationObserver || typeof ResizeObserver !== "function") return;
+        try {
+            const observer = new ResizeObserver(() => this.syncSettingsTabOrientation(panel));
+            observer.observe(panel);
+            panel.__daitSettingsOrientationObserver = observer;
+        }
+        catch {}
+    }
+
+    syncSettingsTabOrientation(panel) {
+        const tablist = panel?.__daitSettingsUi?.tablist;
+        // The container query measures the panel's content box; the panel has no padding or border.
+        const width = Number(panel?.clientWidth || panel?.getBoundingClientRect?.()?.width || 0);
+        if (!tablist?.setAttribute || !width) return "";
+        const orientation = width <= 760 ? "horizontal" : "vertical";
+        if (tablist.getAttribute?.("aria-orientation") !== orientation) tablist.setAttribute("aria-orientation", orientation);
+        return orientation;
     }
 
     getSettingsHostScroller(panel) {
@@ -1922,6 +1949,10 @@ module.exports = class DiscordAITranslator {
             if (resize.raf !== null && typeof cancelAnimationFrame === "function") cancelAnimationFrame(resize.raf);
             if (typeof window !== "undefined") window.removeEventListener?.("resize", resize.listener, { passive: true });
             panel.__daitSettingsResize = null;
+        }
+        if (panel?.__daitSettingsOrientationObserver) {
+            panel.__daitSettingsOrientationObserver.disconnect?.();
+            panel.__daitSettingsOrientationObserver = null;
         }
         const state = panel?.__daitSettingsUi;
         if (state?.searchEscapeListener) {
