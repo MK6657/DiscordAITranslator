@@ -516,27 +516,24 @@ var require_quick_settings = __commonJS({
     "use strict";
     module2.exports = `.dait-quick-settings-modal-root {
     --dait-quick-backdrop: rgba(0, 0, 0, 0.42);
-    --dait-quick-dialog-bg: var(--modal-background, var(--dait-card, var(--background-surface-high, var(--background-secondary, #313338))));
-    --dait-quick-footer-bg: var(--modal-footer-background, var(--dait-card-soft, var(--background-surface-higher, var(--background-secondary-alt, #2b2d31))));
-    --dait-quick-border: var(--dait-border, var(--border-subtle, var(--background-modifier-accent, rgba(255, 255, 255, 0.08))));
-    --dait-quick-shadow: var(--elevation-high, 0 18px 52px rgba(0, 0, 0, 0.38));
-    --dait-quick-text: var(--text-normal, var(--text-primary, #dbdee1));
-    --dait-quick-title: var(--header-primary, var(--text-normal, #f2f3f5));
-    --dait-quick-muted: var(--dait-muted-readable, var(--interactive-normal, var(--text-muted, #b5bac1)));
-    --dait-quick-hover: var(--dait-control-hover, var(--background-modifier-hover, rgba(255, 255, 255, 0.08)));
     align-items: center;
     background: var(--dait-quick-backdrop);
-    color-scheme: dark;
-    color: var(--dait-quick-text);
+    color: var(--dait-text);
     display: flex;
     inset: 0;
     isolation: isolate;
     justify-content: center;
     overflow: hidden;
-    padding: clamp(16px, 4vh, 32px);
     pointer-events: auto;
     position: fixed;
     z-index: 2147483000;
+}
+
+.theme-light.dait-quick-settings-modal-root,
+.theme-light .dait-quick-settings-modal-root,
+.dait-quick-settings-modal-root[data-dait-discord-theme="light"],
+[data-dait-discord-theme="light"] .dait-quick-settings-modal-root {
+    --dait-quick-backdrop: rgba(6, 6, 7, 0.34);
 }
 
 .dait-quick-settings-backdrop {
@@ -545,201 +542,79 @@ var require_quick_settings = __commonJS({
 }
 
 .dait-quick-settings-dialog {
-    background: var(--dait-quick-dialog-bg);
-    border: 1px solid var(--dait-quick-border);
-    border-radius: 8px;
-    box-shadow: var(--dait-quick-shadow);
-    color: var(--dait-quick-text);
-    display: grid;
-    grid-template-rows: auto minmax(0, 1fr) auto;
-    max-height: min(86vh, 860px);
-    max-width: min(1280px, calc(100vw - 32px));
-    min-height: min(520px, calc(100vh - 32px));
+    background: var(--dait-bg);
+    border: 1px solid var(--dait-divider);
+    border-radius: var(--dait-radius-card);
+    box-shadow: var(--dait-shadow);
+    color: var(--dait-text);
+    display: flex;
+    flex-direction: column;
+    height: min(760px, calc(100vh - 64px));
     overflow: hidden;
     position: relative;
-    width: min(1280px, calc(100vw - 32px));
+    width: min(920px, calc(100vw - 48px));
     z-index: 1;
 }
 
-.theme-light.dait-quick-settings-modal-root,
-.theme-light .dait-quick-settings-modal-root,
-.dait-quick-settings-modal-root[data-dait-discord-theme="light"],
-[data-dait-discord-theme="light"] .dait-quick-settings-modal-root {
-    --dait-quick-backdrop: rgba(6, 6, 7, 0.34);
-    --dait-quick-dialog-bg: var(--modal-background, var(--dait-card, var(--bg-base-primary, var(--background-primary, #ffffff))));
-    --dait-quick-footer-bg: var(--modal-footer-background, var(--dait-card-soft, var(--background-surface-high, var(--background-secondary, #f2f3f5))));
-    --dait-quick-border: var(--dait-border, var(--border-subtle, rgba(116, 127, 141, 0.22)));
-    --dait-quick-shadow: 0 18px 52px rgba(24, 36, 61, 0.18);
-    --dait-quick-text: #2e3338;
-    --dait-quick-title: #1f232b;
-    --dait-quick-muted: #5c6472;
-    --dait-quick-hover: var(--dait-control-hover, var(--background-modifier-hover, rgba(79, 84, 92, 0.1)));
-    color-scheme: light;
-}
-
-.theme-dark.dait-quick-settings-modal-root,
-.theme-dark .dait-quick-settings-modal-root,
-.dait-quick-settings-modal-root[data-dait-discord-theme="dark"],
-[data-dait-discord-theme="dark"] .dait-quick-settings-modal-root {
-    --dait-quick-backdrop: rgba(0, 0, 0, 0.42);
-    --dait-quick-dialog-bg: var(--modal-background, var(--dait-card, var(--background-surface-high, var(--background-secondary, #313338))));
-    --dait-quick-footer-bg: var(--modal-footer-background, var(--dait-card-soft, var(--background-surface-higher, var(--background-secondary-alt, #2b2d31))));
-    --dait-quick-border: var(--dait-border, var(--border-subtle, var(--background-modifier-accent, rgba(255, 255, 255, 0.08))));
-    --dait-quick-shadow: var(--elevation-high, 0 18px 52px rgba(0, 0, 0, 0.38));
-    --dait-quick-text: var(--text-normal, var(--text-primary, #dbdee1));
-    --dait-quick-title: var(--header-primary, var(--text-normal, #f2f3f5));
-    --dait-quick-muted: var(--dait-muted-readable, var(--interactive-normal, var(--text-muted, #b5bac1)));
-    --dait-quick-hover: var(--dait-control-hover, var(--background-modifier-hover, rgba(255, 255, 255, 0.08)));
-    color-scheme: dark;
-}
-
-.theme-darker.dait-quick-settings-modal-root,
-.theme-darker .dait-quick-settings-modal-root,
-.dait-quick-settings-modal-root[data-dait-discord-theme="darker"],
-[data-dait-discord-theme="darker"] .dait-quick-settings-modal-root {
-    --dait-quick-backdrop: rgba(0, 0, 0, 0.5);
-    --dait-quick-dialog-bg: var(--modal-background, var(--dait-card, var(--background-surface-high, var(--background-secondary, #1e1f22))));
-    --dait-quick-footer-bg: var(--modal-footer-background, var(--dait-card-soft, var(--background-surface-higher, var(--background-secondary-alt, #191b1f))));
-    --dait-quick-border: var(--dait-border, var(--border-subtle, rgba(255, 255, 255, 0.09)));
-    --dait-quick-shadow: 0 20px 54px rgba(0, 0, 0, 0.46);
-    --dait-quick-text: var(--text-normal, var(--text-primary, #dbdee1));
-    --dait-quick-title: var(--header-primary, var(--text-normal, #f2f3f5));
-    --dait-quick-muted: var(--dait-muted-readable, var(--interactive-normal, var(--text-muted, #b5bac1)));
-    --dait-quick-hover: var(--dait-control-hover, var(--background-modifier-hover, rgba(255, 255, 255, 0.07)));
-    color-scheme: dark;
-}
-
-.theme-midnight.dait-quick-settings-modal-root,
-.theme-midnight .dait-quick-settings-modal-root,
-.dait-quick-settings-modal-root[data-dait-discord-theme="midnight"],
-[data-dait-discord-theme="midnight"] .dait-quick-settings-modal-root {
-    --dait-quick-backdrop: rgba(0, 0, 0, 0.58);
-    --dait-quick-dialog-bg: var(--modal-background, var(--dait-card, var(--background-surface-high, var(--background-secondary, #101114))));
-    --dait-quick-footer-bg: var(--modal-footer-background, var(--dait-card-soft, var(--background-surface-higher, var(--background-secondary-alt, #0b0c10))));
-    --dait-quick-border: var(--dait-border, var(--border-subtle, rgba(255, 255, 255, 0.08)));
-    --dait-quick-shadow: 0 22px 56px rgba(0, 0, 0, 0.52);
-    --dait-quick-text: var(--text-normal, var(--text-primary, #f2f3f5));
-    --dait-quick-title: var(--header-primary, var(--text-normal, #ffffff));
-    --dait-quick-muted: var(--dait-muted-readable, var(--interactive-normal, var(--text-muted, #b8c0cc)));
-    --dait-quick-hover: var(--dait-control-hover, var(--background-modifier-hover, rgba(255, 255, 255, 0.06)));
-    color-scheme: dark;
-}
-
-.dait-quick-settings-header {
-    align-items: center;
-    border-bottom: 1px solid var(--dait-quick-border);
+.dait-quick-settings-body {
     display: flex;
-    flex: 0 0 auto;
-    gap: 16px;
-    justify-content: space-between;
-    min-height: 58px;
-    padding: 16px 18px 14px;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
+    overflow-y: auto;
 }
 
-.dait-quick-settings-title {
-    color: var(--dait-quick-title);
-    font-size: 20px;
+/* The panel fills the window; its own content pane scrolls, so the title bar and the tab rail stay put. */
+.dait-quick-settings-body > .dait-settings {
+    border-radius: 0;
+    flex: 1 1 auto;
+    height: auto;
+    min-height: 0;
+}
+
+.dait-quick-settings-error {
+    background: var(--dait-surface);
+    border: 1px solid var(--dait-danger);
+    border-radius: var(--dait-radius-card);
+    color: var(--dait-text);
+    display: grid;
+    gap: var(--dait-space-3);
+    justify-items: start;
+    margin: auto;
+    padding: var(--dait-space-5);
+    width: min(560px, calc(100% - 48px));
+}
+
+.dait-quick-settings-error h3 {
+    color: var(--dait-heading);
+    font-size: var(--dait-font-title);
     font-weight: 700;
-    letter-spacing: 0;
     line-height: 1.25;
     margin: 0;
 }
 
-.dait-quick-settings-body {
-    background: var(--dait-quick-dialog-bg);
-    color: var(--dait-quick-text);
-    min-height: 0;
-    overflow-y: auto;
-    padding: 22px 52px 26px;
-    scrollbar-gutter: stable;
-}
-
-.dait-quick-settings-body > .dait-settings {
-    margin: 0 auto;
-    max-width: 100%;
-    overflow: visible;
-    padding: 0;
-    width: min(1208px, 100%);
-}
-
-.dait-quick-settings-footer {
-    align-items: center;
-    background: var(--dait-quick-footer-bg);
-    border-top: 1px solid var(--dait-quick-border);
-    display: flex;
-    flex: 0 0 auto;
-    justify-content: flex-end;
-    min-height: 72px;
-    padding: 14px 18px;
+.dait-quick-settings-error p {
+    color: var(--dait-text-muted);
+    font-size: var(--dait-font-body);
+    line-height: 1.5;
+    margin: 0;
 }
 
 .dait-quick-settings-done {
-    background: var(--button-positive-background, var(--brand-500, #5865f2));
+    background: var(--dait-brand);
     border: 0;
-    border-radius: 6px;
-    color: var(--white-500, #ffffff);
+    border-radius: var(--dait-radius-control);
+    color: var(--dait-on-fill);
     cursor: pointer;
-    font-size: 14px;
-    font-weight: 700;
-    line-height: 1;
-    min-height: 38px;
-    min-width: 96px;
-    padding: 0 18px;
-}
-
-.dait-quick-settings-done:hover,
-.dait-quick-settings-done:focus-visible {
-    background: var(--button-positive-background-hover, var(--brand-560, #4752c4));
-}
-
-.dait-quick-settings-error {
-    background: var(--dait-quick-dialog-bg);
-    border: 1px solid var(--status-danger, #d83c3e);
-    border-radius: 8px;
-    box-shadow: var(--dait-shadow, 0 14px 34px rgba(0, 0, 0, 0.2));
-    color: var(--dait-quick-text);
-    display: grid;
-    gap: 10px;
-    margin: 0 auto;
-    max-width: 720px;
-    padding: 22px 24px;
-}
-
-.dait-quick-settings-error h3 {
-    color: var(--dait-quick-title);
-    font-size: 18px;
-    line-height: 1.3;
-    margin: 0;
-}
-
-.dait-quick-settings-error p {
-    color: var(--text-muted, #b5bac1);
-    font-size: 14px;
-    line-height: 1.45;
-    margin: 0;
-}
-
-.dait-quick-settings-close {
-    align-items: center;
-    background: transparent;
-    border: 0;
-    border-radius: 6px;
-    color: var(--dait-quick-muted);
-    cursor: pointer;
-    display: inline-flex;
-    flex: 0 0 auto;
-    font-size: 24px;
+    font-size: var(--dait-font-body);
     font-weight: 500;
-    height: 32px;
-    justify-content: center;
+    height: var(--dait-control-h);
     line-height: 1;
-    width: 32px;
+    padding: 0 14px;
 }
 
-.dait-quick-settings-close:hover,
-.dait-quick-settings-close:focus-visible {
-    background: var(--dait-quick-hover);
-    color: var(--interactive-hover, var(--dait-quick-title));
+.dait-quick-settings-done:hover {
+    background: var(--dait-brand-hover);
 }
 
 .dait-quick-settings-button {
@@ -860,13 +735,10 @@ var require_quick_settings = __commonJS({
     color: var(--dait-quick-button-hover-text);
 }
 
+/* The launcher's size and position come from 07-quick-popover; this keeps it from shrinking in the user panel. */
 .dait-quick-settings-panel {
     flex: 0 0 auto;
-    height: 28px;
     margin: 0 2px;
-    min-width: 28px;
-    padding: 0 7px;
-    position: static;
 }
 
 `;
@@ -1440,9 +1312,7 @@ var require_settings = __commonJS({
 .dait-settings-row textarea:disabled,
 .dait-prompt-editor textarea:disabled,
 .dait-prompt-tools input:disabled,
-.dait-prompt-tools select:disabled,
-.dait-test-panel textarea:disabled,
-.dait-test-panel select:disabled {
+.dait-prompt-tools select:disabled {
     background-color: color-mix(in srgb, var(--dait-input-bg) 60%, var(--dait-bg));
     color: var(--dait-disabled-text);
     cursor: not-allowed;
@@ -1748,9 +1618,15 @@ var require_settings = __commonJS({
 .dait-provider-connection {
     align-items: center;
     display: inline-flex;
-    flex: 0 0 auto;
-    gap: var(--dait-space-3);
+    flex: 0 1 auto;
+    gap: var(--dait-space-2);
     margin-left: auto;
+    max-width: 100%;
+    min-width: 0;
+}
+
+.dait-provider-connection > .dait-small-button {
+    margin-left: var(--dait-space-1);
 }
 
 .dait-provider-settings-block > .dait-settings-details:last-child,
@@ -1828,91 +1704,373 @@ var require_settings = __commonJS({
     justify-self: start;
 }
 
-/* Test mode (shown under its switch in the data tab). */
-.dait-test-mode-section {
+/* Text only screen readers get (the state words of the setup checklist). */
+.dait-settings .dait-visually-hidden {
+    border: 0;
+    clip: rect(0 0 0 0);
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    padding: 0;
+    position: absolute;
+    white-space: nowrap;
+    width: 1px;
+}
+
+/* Overview: setup checklist (hidden once complete), then the two service status cards. */
+.dait-setup-card {
     background: var(--dait-surface);
     border-radius: var(--dait-radius-card);
     display: grid;
-    gap: var(--dait-space-3);
-    margin-top: var(--dait-space-2);
+    gap: var(--dait-space-2);
+    margin-bottom: var(--dait-space-6);
     padding: var(--dait-space-4);
 }
 
-.dait-test-mode-section h3 {
+.dait-setup-head {
+    align-items: baseline;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--dait-space-1) var(--dait-space-3);
+}
+
+.dait-setup-title {
     color: var(--dait-heading);
     font-size: var(--dait-font-heading);
     font-weight: 700;
+    line-height: 1.3;
 }
 
-.dait-note {
-    color: var(--dait-text-muted);
-    font-size: var(--dait-font-body);
-    line-height: 1.5;
-}
-
-.dait-test-panel {
-    display: grid;
-    gap: var(--dait-space-4);
-    min-width: 0;
-}
-
-.dait-test-toolbar {
-    align-items: center;
-    display: grid;
-    gap: var(--dait-space-3);
-    grid-template-columns: var(--dait-control-w) minmax(0, 1fr);
-    min-width: 0;
-}
-
-.dait-test-config {
+.dait-setup-progress {
     color: var(--dait-text-muted);
     font-size: var(--dait-font-caption);
-    line-height: 1.45;
+    line-height: 1.4;
+}
+
+.dait-setup-list {
+    display: grid;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.dait-setup-item {
+    align-items: center;
+    column-gap: var(--dait-space-3);
+    display: grid;
+    grid-template-areas: "icon label detail action";
+    grid-template-columns: 18px minmax(112px, 168px) minmax(0, 1fr) auto;
+    min-height: 44px;
+    padding: 6px 0;
+}
+
+.dait-setup-item + .dait-setup-item {
+    border-top: 1px solid var(--dait-divider);
+}
+
+.dait-setup-icon {
+    border-radius: var(--dait-radius-pill);
+    box-sizing: border-box;
+    grid-area: icon;
+    height: 18px;
+    position: relative;
+    width: 18px;
+}
+
+.dait-setup-item-done .dait-setup-icon {
+    background: var(--dait-success);
+    border-radius: 0;
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6L9 17l-5-5'/%3E%3C/svg%3E") center / contain no-repeat;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6L9 17l-5-5'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+.dait-setup-item-todo .dait-setup-icon,
+.dait-setup-item-busy .dait-setup-icon {
+    border: 2px solid var(--dait-text-muted);
+    height: 16px;
+    margin: 1px;
+    width: 16px;
+}
+
+.dait-setup-item-busy .dait-setup-icon {
+    border-color: var(--dait-warning);
+    border-style: dashed;
+}
+
+.dait-setup-item-error .dait-setup-icon {
+    background: var(--dait-danger-fill);
+}
+
+.dait-setup-item-error .dait-setup-icon::after {
+    color: var(--dait-on-fill);
+    content: "!";
+    font-size: 12px;
+    font-weight: 700;
+    left: 0;
+    line-height: 18px;
+    position: absolute;
+    right: 0;
+    text-align: center;
+    top: 0;
+}
+
+.dait-setup-item-off .dait-setup-icon::after {
+    background: var(--dait-text-muted);
+    border-radius: 1px;
+    content: "";
+    height: 2px;
+    left: 4px;
+    position: absolute;
+    right: 4px;
+    top: 8px;
+}
+
+.dait-setup-label {
+    color: var(--dait-heading);
+    font-size: var(--dait-font-label);
+    font-weight: 500;
+    grid-area: label;
+    line-height: 1.4;
     min-width: 0;
+}
+
+.dait-setup-detail {
+    color: var(--dait-text-muted);
+    font-size: var(--dait-font-body);
+    grid-area: detail;
+    line-height: 1.5;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dait-setup-item-error .dait-setup-detail {
+    color: var(--dait-danger);
+    white-space: normal;
+}
+
+.dait-setup-item > .dait-small-button {
+    grid-area: action;
+    justify-self: end;
+}
+
+.dait-service-cards {
+    display: grid;
+    gap: var(--dait-space-3);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin-bottom: var(--dait-space-2);
+}
+
+.dait-service-card {
+    align-items: center;
+    background: var(--dait-surface);
+    border-radius: var(--dait-radius-card);
+    display: flex;
+    gap: var(--dait-space-3);
+    min-width: 0;
+    padding: 14px var(--dait-space-4);
+}
+
+.dait-service-card-text {
+    display: grid;
+    flex: 1 1 auto;
+    gap: var(--dait-space-1);
+    min-width: 0;
+}
+
+.dait-service-card-title {
+    color: var(--dait-heading);
+    font-size: var(--dait-font-label);
+    font-weight: 500;
+    line-height: 1.35;
     overflow-wrap: anywhere;
 }
 
-.dait-test-block {
+.dait-service-card-status {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px 6px;
+    min-width: 0;
+}
+
+/* In a card the last test's details get their own line. */
+.dait-settings .dait-service-card .dait-api-test-detail {
+    flex-basis: 100%;
+    white-space: normal;
+}
+
+.dait-settings .dait-service-card .dait-api-test-detail::before {
+    content: none;
+}
+
+.dait-service-card > .dait-small-button {
+    flex: 0 0 auto;
+}
+
+/* Status without a connection to show: dash = off, "!" = needs you. */
+.dait-status-mark {
+    align-items: center;
+    color: var(--dait-text);
+    display: inline-flex;
+    font-size: var(--dait-font-caption);
+    gap: 6px;
+    line-height: 1.3;
+    min-width: 0;
+}
+
+.dait-status-mark::before {
+    background: var(--dait-text-muted);
+    border-radius: 1px;
+    content: "";
+    flex: 0 0 auto;
+    height: 2px;
+    width: 10px;
+}
+
+.dait-status-mark-needs {
+    color: var(--dait-danger);
+}
+
+.dait-status-mark-needs::before {
+    align-items: center;
+    background: var(--dait-danger-fill);
+    border-radius: var(--dait-radius-pill);
+    color: var(--dait-on-fill);
+    content: "!";
+    display: inline-flex;
+    font-size: 12px;
+    font-weight: 700;
+    height: 14px;
+    justify-content: center;
+    line-height: 1;
+    width: 14px;
+}
+
+/* The last test's details after a status badge; hidden as soon as the badge shows another state. */
+.dait-settings .dait-api-test-detail {
+    color: var(--dait-text-muted);
+    font-size: var(--dait-font-caption);
+    line-height: 1.3;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dait-settings .dait-api-test-detail::before {
+    content: "·";
+    margin-right: 6px;
+}
+
+.dait-settings .dait-api-status:not(.dait-api-status-success) + .dait-api-test-detail[data-dait-for="success"],
+.dait-settings .dait-api-status:not(.dait-api-status-failed) + .dait-api-test-detail[data-dait-for="failed"] {
+    display: none;
+}
+
+.dait-provider-connection .dait-api-test-detail {
+    max-width: 260px;
+}
+
+/* An error is worth reading in full: it wraps instead of being cut off. */
+.dait-settings .dait-api-test-detail[data-dait-for="failed"] {
+    white-space: normal;
+}
+
+.dait-provider-connection .dait-api-test-detail[data-dait-for="failed"] {
+    max-width: 300px;
+}
+
+/* With an error to read, the status takes its own full-width line under the card title. */
+.dait-provider-settings-header:has(.dait-api-status-failed + .dait-api-test-detail[data-dait-for="failed"]:not([hidden])) > .dait-provider-connection {
+    flex-basis: 100%;
+    margin-left: 0;
+}
+
+.dait-provider-settings-header:has(.dait-api-status-failed + .dait-api-test-detail[data-dait-for="failed"]:not([hidden])) .dait-api-test-detail {
+    flex: 1 1 auto;
+    max-width: none;
+}
+
+/* Model field (Sakura local, OpenAI-compatible): name + "Detect models", the picker below. */
+.dait-model-field,
+.dait-try-field {
     display: grid;
     gap: 6px;
     min-width: 0;
 }
 
-.dait-test-block-header {
+.dait-model-field-line,
+.dait-try-line {
     align-items: center;
     display: flex;
     gap: var(--dait-space-2);
-    justify-content: space-between;
     min-width: 0;
 }
 
-.dait-test-block-header > span {
-    color: var(--dait-heading);
-    font-size: var(--dait-font-label);
-    font-weight: 500;
-}
-
-.dait-test-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--dait-space-2);
+.dait-settings .dait-model-field-line > input,
+.dait-settings .dait-try-line > input {
+    flex: 1 1 auto;
     min-width: 0;
+    width: auto;
 }
 
-.dait-test-output {
-    background: var(--dait-input-bg);
-    border: 1px solid var(--dait-input-border);
-    border-radius: var(--dait-radius-control);
+.dait-settings .dait-model-picker {
+    width: 100%;
+}
+
+.dait-settings .dait-row-description.dait-row-description-error {
+    color: var(--dait-danger);
+}
+
+/* "Try a sentence" / "Try polishing": the result goes under the help text, with the time it took. */
+.dait-settings-row-stacked.dait-try-row {
+    grid-template-areas:
+        "label"
+        "control"
+        "desc"
+        "result";
+}
+
+.dait-settings-row-stacked.dait-try-row > .dait-row-control,
+.dait-settings-row-stacked.dait-try-row .dait-try-field {
+    display: contents;
+}
+
+.dait-try-row .dait-try-line {
+    grid-area: control;
+}
+
+.dait-try-result {
+    border-left: 3px solid var(--dait-divider);
     color: var(--dait-text);
-    font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
-    font-size: 13px;
-    line-height: 1.55;
-    margin: 0;
-    min-height: 96px;
-    overflow: auto;
-    padding: 8px 10px;
+    font-size: var(--dait-font-body);
+    grid-area: result;
+    line-height: 1.5;
+    margin: 2px 0 0;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    padding: 2px 0 2px 10px;
     white-space: pre-wrap;
-    word-break: break-word;
+}
+
+.dait-try-time {
+    color: var(--dait-text-muted);
+    font-size: var(--dait-font-caption);
+    white-space: nowrap;
+}
+
+.dait-try-time::before {
+    content: " · ";
+}
+
+.dait-try-result-error {
+    border-left-color: var(--dait-danger);
+}
+
+.dait-try-result-error .dait-try-output {
+    color: var(--dait-danger);
 }
 
 /* Prompt templates and the prompt editor (their own group on the translate and composer tabs). */
@@ -2103,8 +2261,23 @@ var require_settings = __commonJS({
         max-width: 100%;
     }
 
-    .dait-prompt-tools,
-    .dait-test-toolbar {
+    .dait-prompt-tools {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .dait-setup-item {
+        grid-template-areas:
+            "icon label action"
+            ". detail action";
+        grid-template-columns: 18px minmax(0, 1fr) auto;
+        row-gap: 2px;
+    }
+
+    .dait-setup-detail {
+        white-space: normal;
+    }
+
+    .dait-service-cards {
         grid-template-columns: minmax(0, 1fr);
     }
 }
@@ -2494,12 +2667,13 @@ var require_composer = __commonJS({
     border-color: color-mix(in srgb, var(--brand-500, #5865f2) 62%, var(--background-modifier-accent, #4e5058));
 }
 
+/* Colours come from the shared tokens (01-theme-tokens), so every Discord theme is covered without per-theme copies. */
 .dait-polish-result-panel {
-    background: color-mix(in srgb, var(--background-secondary, #2b2d31) 94%, #000000);
-    border: 1px solid color-mix(in srgb, var(--background-modifier-accent, #4e5058) 72%, transparent);
+    background: var(--dait-surface);
+    border: 1px solid var(--dait-divider);
     border-radius: 8px;
-    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.34);
-    color: var(--text-normal, #dbdee1);
+    box-shadow: var(--dait-shadow);
+    color: var(--dait-text);
     display: grid;
     gap: 7px;
     max-height: min(34vh, 260px);
@@ -2507,44 +2681,6 @@ var require_composer = __commonJS({
     padding: 9px;
     position: fixed;
     z-index: 10000;
-}
-
-.theme-light.dait-polish-result-panel,
-.theme-light .dait-polish-result-panel,
-.dait-polish-result-panel[data-dait-discord-theme="light"],
-[data-dait-discord-theme="light"] .dait-polish-result-panel {
-    background: rgba(255, 255, 255, 0.98);
-    border-color: rgba(79, 84, 92, 0.22);
-    box-shadow: 0 12px 32px rgba(24, 36, 61, 0.16);
-    color: #242832;
-}
-
-.theme-dark.dait-polish-result-panel,
-.theme-dark .dait-polish-result-panel,
-.dait-polish-result-panel[data-dait-discord-theme="dark"],
-[data-dait-discord-theme="dark"] .dait-polish-result-panel {
-    background: color-mix(in srgb, var(--background-secondary, #2b2d31) 94%, #000000);
-    border-color: color-mix(in srgb, var(--background-modifier-accent, #4e5058) 72%, transparent);
-    color: var(--text-normal, #dbdee1);
-}
-
-.theme-darker.dait-polish-result-panel,
-.theme-darker .dait-polish-result-panel,
-.dait-polish-result-panel[data-dait-discord-theme="darker"],
-[data-dait-discord-theme="darker"] .dait-polish-result-panel {
-    background: var(--background-surface-high, var(--background-secondary, #1e1f22));
-    border-color: rgba(255, 255, 255, 0.09);
-    color: var(--text-normal, #dbdee1);
-}
-
-.theme-midnight.dait-polish-result-panel,
-.theme-midnight .dait-polish-result-panel,
-.dait-polish-result-panel[data-dait-discord-theme="midnight"],
-[data-dait-discord-theme="midnight"] .dait-polish-result-panel {
-    background: var(--background-surface-high, var(--background-secondary, #101114));
-    border-color: rgba(255, 255, 255, 0.08);
-    box-shadow: 0 16px 38px rgba(0, 0, 0, 0.48);
-    color: var(--text-normal, #f2f3f5);
 }
 
 .dait-polish-result-header {
@@ -2585,10 +2721,10 @@ var require_composer = __commonJS({
 }
 
 .dait-polish-result-output {
-    background: color-mix(in srgb, var(--background-tertiary, #1e1f22) 86%, transparent);
-    border: 1px solid color-mix(in srgb, var(--background-modifier-accent, #4e5058) 70%, transparent);
+    background: var(--dait-input-bg);
+    border: 1px solid var(--dait-divider);
     border-radius: 7px;
-    color: var(--text-normal, #dbdee1);
+    color: var(--dait-text);
     font: inherit;
     line-height: 1.45;
     max-height: min(18vh, 150px);
@@ -2596,24 +2732,6 @@ var require_composer = __commonJS({
     padding: 8px 10px;
     white-space: pre-wrap;
     word-break: break-word;
-}
-
-.theme-light .dait-polish-result-output,
-.dait-polish-result-panel[data-dait-discord-theme="light"] .dait-polish-result-output,
-[data-dait-discord-theme="light"] .dait-polish-result-output {
-    background: #f6f8fc;
-    border-color: rgba(79, 84, 92, 0.18);
-    color: #242832;
-}
-
-.theme-darker .dait-polish-result-output,
-.dait-polish-result-panel[data-dait-discord-theme="darker"] .dait-polish-result-output,
-[data-dait-discord-theme="darker"] .dait-polish-result-output,
-.theme-midnight .dait-polish-result-output,
-.dait-polish-result-panel[data-dait-discord-theme="midnight"] .dait-polish-result-output,
-[data-dait-discord-theme="midnight"] .dait-polish-result-output {
-    background: color-mix(in srgb, var(--background-tertiary, #111318) 88%, transparent);
-    border-color: rgba(255, 255, 255, 0.09);
 }
 
 .dait-polish-result-actions {
@@ -3184,158 +3302,15 @@ var require_messages_and_lines = __commonJS({
     }
 }
 
+/* Narrow windows: the prompt tools and the test toolbar stack. The settings window itself adapts to its own width
+   with the container queries in 04-settings. */
 @media (max-width: 860px) {
-    [data-dait-settings-modal="true"] {
-        max-width: calc(100vw - 28px) !important;
-        width: calc(100vw - 28px) !important;
-    }
-
-    .dait-quick-settings-modal-root {
-        padding: 14px;
-    }
-
-    .dait-quick-settings-dialog {
-        max-height: calc(100vh - 28px);
-        min-height: min(520px, calc(100vh - 28px));
-    }
-
-    .dait-quick-settings-header {
-        min-height: 54px;
-        padding: 13px 14px 12px;
-    }
-
-    .dait-quick-settings-title {
-        font-size: 18px;
-    }
-
-    .dait-quick-settings-body {
-        padding: 14px;
-    }
-
-    .dait-quick-settings-footer {
-        min-height: 62px;
-        padding: 12px 14px;
-    }
-
-    .dait-settings {
-        width: 100%;
-    }
-
-    .dait-settings-hero {
-        grid-template-columns: 44px minmax(0, 1fr);
-    }
-
-    .dait-settings-layout {
-        grid-template-columns: 1fr;
-    }
-
-    .dait-settings-sidebar {
-        align-items: center;
-        display: flex;
-        gap: 8px;
-        max-height: none;
-        overflow-x: auto;
-        overflow-y: hidden;
-        position: sticky;
-        top: 0;
-    }
-
-    .dait-settings-nav-list {
-        display: flex;
-        flex: 1 1 auto;
-        gap: 6px;
-        min-width: max-content;
-    }
-
-    .dait-settings-nav-button {
-        justify-content: center;
-        min-width: max-content;
-        padding-left: 11px;
-        padding-right: 11px;
-        text-align: center;
-        width: auto;
-    }
-
-    .dait-settings-nav-secondary {
-        padding-left: 11px;
-    }
-
-    .dait-settings-sidebar-reset {
-        flex: 0 0 auto;
-        margin-top: 0;
-        min-width: max-content;
-        width: auto;
-    }
-
-    .dait-settings-section {
-        scroll-margin-top: 78px;
-    }
-
-    .dait-settings-mark {
-        height: 44px;
-        width: 44px;
-    }
-
     .dait-prompt-tools {
         grid-template-columns: 1fr;
     }
 
-    .dait-prompt-actions .dait-small-button {
-        flex: 1 1 120px;
-    }
-
     .dait-test-toolbar {
         grid-template-columns: 1fr;
-    }
-
-    .dait-api-key-row {
-        grid-template-columns: 1fr;
-        grid-template-areas:
-            "label"
-            "desc"
-            "status"
-            "control";
-    }
-
-    .dait-settings-row > .dait-api-status {
-        justify-self: start;
-    }
-
-    .dait-api-controls {
-        grid-template-columns: 1fr;
-    }
-}
-
-@media (min-width: 760px) {
-    .dait-section-polish,
-    .dait-section-translation,
-    .dait-section-polish-controls,
-    .dait-section-translation-controls,
-    .dait-section-auto-translate,
-    .dait-section-public-bilingual,
-    .dait-section-display,
-    .dait-section-cache,
-    .dait-section-diagnostics {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-
-    .dait-section-polish h3,
-    .dait-section-translation h3,
-    .dait-section-polish-controls h3,
-    .dait-section-translation-controls h3,
-    .dait-section-auto-translate h3,
-    .dait-section-public-bilingual h3,
-    .dait-section-display h3,
-    .dait-section-cache h3,
-    .dait-section-diagnostics h3,
-    .dait-section-polish > .dait-note,
-    .dait-section-translation > .dait-note,
-    .dait-section-public-bilingual > .dait-note,
-    .dait-section-polish .dait-prompt-manager,
-    .dait-section-translation .dait-prompt-manager,
-    .dait-section-translation .dait-google-settings,
-    .dait-section-public-bilingual .dait-settings-row-wide {
-        grid-column: 1 / -1;
     }
 }
 `;
@@ -3535,6 +3510,22 @@ var require_quick_popover = __commonJS({
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+/* The last passed connection test: model and response time, e.g. "Hy-MT2 · 820 ms". */
+.dait-qp-status-test {
+    color: var(--dait-qp-muted);
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.45;
+    margin: 2px 0 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dait-qp-status-test[hidden] {
+    display: none;
 }
 
 .dait-qp-status-detail {
@@ -3922,6 +3913,11 @@ label.dait-qp-label {
 
     .dait-quick-popover[data-dait-placement="bottom"] {
         animation-name: dait-qp-enter-below;
+    }
+
+    /* Rebuilt in place (a language switch): it is already open, so it does not slide in again. */
+    .dait-quick-popover[data-dait-rerendered="true"] {
+        animation: none;
     }
 
     .dait-qp-switch,
@@ -4466,39 +4462,6 @@ var require_constants = __commonJS({
         autoTranslateRequestBatchSize: 1
       }
     };
-    var SETTINGS_TAB_POLISH = "polish";
-    var SETTINGS_TAB_TRANSLATION = "translation";
-    var SETTINGS_TAB_PUBLIC_BILINGUAL = "publicBilingual";
-    var SETTINGS_TAB_DISPLAY = "display";
-    var SETTINGS_TAB_DEFAULT = SETTINGS_TAB_POLISH;
-    var SETTINGS_TABS = [
-      SETTINGS_TAB_POLISH,
-      SETTINGS_TAB_TRANSLATION,
-      SETTINGS_TAB_PUBLIC_BILINGUAL,
-      SETTINGS_TAB_DISPLAY
-    ];
-    var SETTINGS_SECTION_GENERAL = "general";
-    var SETTINGS_SECTION_POLISH = "polish";
-    var SETTINGS_SECTION_POLISH_CONTROLS = "polishControls";
-    var SETTINGS_SECTION_TRANSLATION = "translation";
-    var SETTINGS_SECTION_TRANSLATION_CONTROLS = "translationControls";
-    var SETTINGS_SECTION_AUTO_TRANSLATE = "autoTranslate";
-    var SETTINGS_SECTION_PUBLIC_BILINGUAL = "publicBilingual";
-    var SETTINGS_SECTION_DISPLAY = "display";
-    var SETTINGS_SECTION_CACHE = "cache";
-    var SETTINGS_SECTION_DIAGNOSTICS = "diagnostics";
-    var SETTINGS_SECTION_IDS = [
-      SETTINGS_SECTION_GENERAL,
-      SETTINGS_SECTION_POLISH,
-      SETTINGS_SECTION_POLISH_CONTROLS,
-      SETTINGS_SECTION_TRANSLATION,
-      SETTINGS_SECTION_TRANSLATION_CONTROLS,
-      SETTINGS_SECTION_AUTO_TRANSLATE,
-      SETTINGS_SECTION_PUBLIC_BILINGUAL,
-      SETTINGS_SECTION_DISPLAY,
-      SETTINGS_SECTION_CACHE,
-      SETTINGS_SECTION_DIAGNOSTICS
-    ];
     var PROVIDER_ORDER = ["deepseek", "openaiCompatible", "sakuraLocal", "googleCloud", "microsoft", "deepl", "baidu"];
     var PROVIDER_PROFILE_FIELDS = ["apiKey", "endpoint", "model", "enableThinking", "region", "deeplPlan", "appId", "secretKey"];
     var PROVIDER_CAPABILITIES = {
@@ -5089,23 +5052,6 @@ var require_constants = __commonJS({
       DISCORD_MEDIA_MUTATION_SELECTOR,
       DISCORD_THEME_VARIABLES,
       PROVIDER_DEFAULTS,
-      SETTINGS_TAB_POLISH,
-      SETTINGS_TAB_TRANSLATION,
-      SETTINGS_TAB_PUBLIC_BILINGUAL,
-      SETTINGS_TAB_DISPLAY,
-      SETTINGS_TAB_DEFAULT,
-      SETTINGS_TABS,
-      SETTINGS_SECTION_GENERAL,
-      SETTINGS_SECTION_POLISH,
-      SETTINGS_SECTION_POLISH_CONTROLS,
-      SETTINGS_SECTION_TRANSLATION,
-      SETTINGS_SECTION_TRANSLATION_CONTROLS,
-      SETTINGS_SECTION_AUTO_TRANSLATE,
-      SETTINGS_SECTION_PUBLIC_BILINGUAL,
-      SETTINGS_SECTION_DISPLAY,
-      SETTINGS_SECTION_CACHE,
-      SETTINGS_SECTION_DIAGNOSTICS,
-      SETTINGS_SECTION_IDS,
       PROVIDER_ORDER,
       PROVIDER_PROFILE_FIELDS,
       PROVIDER_CAPABILITIES,
@@ -10627,6 +10573,231 @@ var require_diagnostics_recorder = __commonJS({
   }
 });
 
+// src/diagnostics/diagnostic-labels.js
+var require_diagnostic_labels = __commonJS({
+  "src/diagnostics/diagnostic-labels.js"(exports2, module2) {
+    "use strict";
+    var DIAGNOSTIC_CODE_LABELS = {
+      "zh-CN": {
+        // Reason codes
+        "discovered": "发现消息",
+        "not-eligible-language": "不需要翻译的语言",
+        "prefetch-disabled": "预翻译已关闭",
+        "layout-unstable-prefetch": "页面未稳定，暂缓预翻译",
+        "google-prefetch-disabled": "Google 不用于预翻译",
+        "current-translation-present": "已有译文",
+        "recent-render-present": "刚刚画过",
+        "cache-hit": "缓存命中",
+        "text-cache-hit": "文本缓存命中",
+        "invalid-cache": "缓存无效",
+        "dedupe-active": "同一条正在翻译",
+        "terminal-failure": "多次失败后停止",
+        "retry-cooldown": "等待重试",
+        "api-work-blocked": "请求被暂停",
+        "config-missing": "缺少配置",
+        "batch-limit": "批次已满",
+        "queue-limit": "队列已满",
+        "enqueued": "进入队列",
+        "requeued": "重新排队",
+        "provider-cooldown": "服务冷却中",
+        "local-provider-health": "检查本地服务",
+        "prefetch-slot": "预翻译名额已满",
+        "request-started": "请求开始",
+        "output-received": "收到结果",
+        "output-invalid": "结果不合格",
+        "retrying": "重试中",
+        "rendered": "已显示",
+        "render-deferred": "稍后显示",
+        "render-disconnected": "消息已离开页面",
+        "render-text-changed": "原文已改变",
+        "render-identity-changed": "消息已变化",
+        "render-request-stale": "请求已过时",
+        "render-outside-viewport": "不在屏幕内",
+        "manual-line-present": "已有手动译文",
+        "failure": "失败",
+        "stale-dom": "页面已变化",
+        "local-unavailable": "本地服务不可用",
+        "request-success": "请求成功",
+        "request-error": "请求出错",
+        "request-dedupe": "合并相同请求",
+        "missing-api": "缺少 API 配置",
+        "missing-config": "缺少配置",
+        "cache-set": "写入缓存",
+        "cache-miss": "缓存未命中",
+        "cache-expired": "缓存过期",
+        "cache-delete": "删除缓存",
+        "cache-persist": "保存缓存",
+        "cache-persist-error": "保存缓存出错",
+        "auto-disabled": "自动翻译已关闭",
+        "route-change": "切换了频道",
+        "cooldown-expired": "冷却结束",
+        "viewport-settling": "等待页面稳定",
+        "write-cancelled": "写入已取消",
+        "write-failed": "写入失败",
+        "disabled": "已关闭",
+        "empty": "空内容",
+        // Message states
+        "skipped": "跳过",
+        "cacheHit": "缓存命中",
+        "queuedVisible": "排队（屏幕内）",
+        "queuedPrefetch": "排队（预翻译）",
+        "queuedLongText": "排队（长消息）",
+        "inFlight": "翻译中",
+        "validating": "检查结果",
+        "cached": "已缓存",
+        "failed": "失败",
+        "stale": "已过时",
+        "cancelled": "已取消",
+        // Queues
+        "manual": "手动",
+        "visible": "屏幕内",
+        "longText": "长消息",
+        "prefetch": "预翻译",
+        "history": "历史补翻",
+        "queueLength": "排队",
+        "inFlightItems": "进行中的消息",
+        "prefetchInFlight": "预翻译进行中",
+        "pendingTargets": "等待显示",
+        // Flows
+        "auto": "自动翻译",
+        "cache": "缓存",
+        "model": "模型请求",
+        "polish": "润色",
+        "public-bilingual": "公开双语",
+        "quick-settings": "快捷设置",
+        // Failure classes
+        "source-incomplete": "原文不完整",
+        "whole-pass-failed": "整段翻译失败",
+        "chunk-failed": "分段失败",
+        "subchunk-failed": "小段失败",
+        "validator-rejected": "结果被拒绝",
+        "render-blocked": "无法显示",
+        "cache-identity-mismatch": "缓存对不上",
+        "provider-output-bad": "服务返回异常",
+        // Failure layers and flow stages
+        "source": "读取原文",
+        "plan": "拆分",
+        "queue": "排队",
+        "request": "请求",
+        "output": "结果",
+        "validation": "检查",
+        "render": "显示"
+      },
+      en: {
+        // Reason codes
+        "discovered": "Found",
+        "not-eligible-language": "Language not translated",
+        "prefetch-disabled": "Prefetch off",
+        "layout-unstable-prefetch": "Prefetch waits for page",
+        "google-prefetch-disabled": "Google skips prefetch",
+        "current-translation-present": "Already translated",
+        "recent-render-present": "Just drawn",
+        "cache-hit": "Cache hit",
+        "text-cache-hit": "Text cache hit",
+        "invalid-cache": "Cache invalid",
+        "dedupe-active": "Already translating",
+        "terminal-failure": "Stopped after failures",
+        "retry-cooldown": "Waiting to retry",
+        "api-work-blocked": "Requests paused",
+        "config-missing": "Settings missing",
+        "batch-limit": "Batch full",
+        "queue-limit": "Queue full",
+        "enqueued": "Queued",
+        "requeued": "Queued again",
+        "provider-cooldown": "Service cooling down",
+        "local-provider-health": "Checking local server",
+        "prefetch-slot": "Prefetch slots full",
+        "request-started": "Request started",
+        "output-received": "Result received",
+        "output-invalid": "Result rejected",
+        "retrying": "Retrying",
+        "rendered": "Shown",
+        "render-deferred": "Shown later",
+        "render-disconnected": "Message left the page",
+        "render-text-changed": "Original changed",
+        "render-identity-changed": "Message changed",
+        "render-request-stale": "Request outdated",
+        "render-outside-viewport": "Off screen",
+        "manual-line-present": "Manual translation shown",
+        "failure": "Failed",
+        "stale-dom": "Page changed",
+        "local-unavailable": "Local server unavailable",
+        "request-success": "Request OK",
+        "request-error": "Request error",
+        "request-dedupe": "Same request merged",
+        "missing-api": "API settings missing",
+        "missing-config": "Settings missing",
+        "cache-set": "Cached",
+        "cache-miss": "Cache miss",
+        "cache-expired": "Cache expired",
+        "cache-delete": "Cache deleted",
+        "cache-persist": "Cache saved",
+        "cache-persist-error": "Cache save error",
+        "auto-disabled": "Auto-translate off",
+        "route-change": "Channel changed",
+        "cooldown-expired": "Cooldown over",
+        "viewport-settling": "Page settling",
+        "write-cancelled": "Write cancelled",
+        "write-failed": "Write failed",
+        "disabled": "Off",
+        "empty": "Empty",
+        // Message states
+        "skipped": "Skipped",
+        "cacheHit": "Cache hit",
+        "queuedVisible": "Queued (on screen)",
+        "queuedPrefetch": "Queued (prefetch)",
+        "queuedLongText": "Queued (long message)",
+        "inFlight": "Translating",
+        "validating": "Checking result",
+        "cached": "Cached",
+        "failed": "Failed",
+        "stale": "Outdated",
+        "cancelled": "Cancelled",
+        // Queues
+        "manual": "Manual",
+        "visible": "On screen",
+        "longText": "Long messages",
+        "prefetch": "Prefetch",
+        "history": "History backfill",
+        "queueLength": "Queued",
+        "inFlightItems": "Messages in progress",
+        "prefetchInFlight": "Prefetch in progress",
+        "pendingTargets": "Waiting to show",
+        // Flows
+        "auto": "Auto-translate",
+        "cache": "Cache",
+        "model": "Model requests",
+        "polish": "Polish",
+        "public-bilingual": "Public bilingual",
+        "quick-settings": "Quick settings",
+        // Failure classes
+        "source-incomplete": "Original incomplete",
+        "whole-pass-failed": "Whole message failed",
+        "chunk-failed": "Part failed",
+        "subchunk-failed": "Small part failed",
+        "validator-rejected": "Result rejected",
+        "render-blocked": "Could not show",
+        "cache-identity-mismatch": "Cache mismatch",
+        "provider-output-bad": "Bad service output",
+        // Failure layers and flow stages
+        "source": "Reading original",
+        "plan": "Splitting",
+        "queue": "Queue",
+        "request": "Request",
+        "output": "Result",
+        "validation": "Checking",
+        "render": "Showing"
+      }
+    };
+    function getDiagnosticCodeLabel(code, locale = "zh-CN") {
+      const value = String(code ?? "");
+      const table = DIAGNOSTIC_CODE_LABELS[locale] || DIAGNOSTIC_CODE_LABELS.en;
+      return Object.prototype.hasOwnProperty.call(table, value) ? table[value] : value;
+    }
+    module2.exports = { DIAGNOSTIC_CODE_LABELS, getDiagnosticCodeLabel };
+  }
+});
+
 // src/validation/output-guard.js
 var require_output_guard = __commonJS({
   "src/validation/output-guard.js"(exports2, module2) {
@@ -11818,6 +11989,7 @@ var require_provider_layer = __commonJS({
     var ProviderLayer = class {
       constructor(plugin) {
         this.plugin = plugin;
+        this.lastApiTestResults = /* @__PURE__ */ new Map();
       }
       getProviderDefaults(provider) {
         return PROVIDER_DEFAULTS[String(provider || "").trim()] || null;
@@ -12004,7 +12176,9 @@ var require_provider_layer = __commonJS({
           return `${clean || "http://127.0.0.1:8080/v1"}/models`;
         }
       }
-      parseLocalProviderModelsResponse(raw) {
+      // The model the server serves: the first .gguf id, else the first id. With { all: true }, every id the server
+      // lists, in its order (for the settings' "Detect models" picker).
+      parseLocalProviderModelsResponse(raw, options = {}) {
         const data = typeof raw === "string" ? this.plugin.parseApiJson(raw) : raw;
         const candidates = [];
         const addModel = (value) => {
@@ -12031,7 +12205,56 @@ var require_provider_layer = __commonJS({
         add(data?.models);
         add(data?.items);
         if (!candidates.length) add(data);
+        if (options?.all) return candidates;
         return candidates.find((model) => /\.gguf(?:$|[?#])/i.test(model)) || candidates[0] || "";
+      }
+      // "Detect models" in the settings: lists the models a Sakura local or OpenAI-compatible server reports. It runs
+      // only on that explicit click (automatic detection stays limited to loopback servers). For a local server whose
+      // model is left on local-model, the loaded model also refreshes the detection cache.
+      async detectProviderModels(kind, options = {}) {
+        const config = this.plugin.clone(this.plugin.getTaskConfig(kind));
+        const defaultConfig = DEFAULT_SETTINGS[kind] || {};
+        if (!this.plugin.isModelDetectionProvider(config.provider)) {
+          const error = new Error(this.plugin.t("modelDetectUnsupported"));
+          error.code = "MODEL_DETECTION_UNSUPPORTED";
+          throw error;
+        }
+        const endpoint = this.plugin.getEffectiveChatCompletionEndpoint(config, defaultConfig);
+        const modelsEndpoint = this.plugin.getLocalProviderModelsEndpoint(endpoint);
+        const local = this.plugin.isLocalTranslationProvider(config);
+        const timeoutMs = Math.max(1e3, Number(options.timeoutMs || (local ? LOCAL_PROVIDER_MODEL_DETECTION_TIMEOUT_MS : API_TEST_REQUEST_TIMEOUT_MS)) || API_TEST_REQUEST_TIMEOUT_MS);
+        const startedAt = Date.now();
+        try {
+          const raw = await this.plugin.fetchApiResponseText(modelsEndpoint, {
+            method: "GET",
+            provider: config.provider,
+            headers: this.plugin.getRequestHeaders(config, this.plugin.getEffectiveRequestApiKey(config))
+          }, timeoutMs);
+          const models = this.plugin.parseLocalProviderModelsResponse(raw, { all: true });
+          const loaded = local ? this.plugin.parseLocalProviderModelsResponse(raw) : "";
+          if (loaded && this.plugin.shouldAutoDetectLocalProviderModel(config, defaultConfig)) {
+            this.plugin.setCachedLocalProviderDetectedModel(config, loaded, { defaultConfig });
+          }
+          this.plugin.logDiagnostic("provider.models.detect", "success", {
+            kind,
+            provider: config.provider,
+            count: models.length,
+            ms: Date.now() - startedAt
+          });
+          return { models, loaded };
+        } catch (error) {
+          this.plugin.logDiagnostic("provider.models.detect", "failed", {
+            kind,
+            provider: config.provider,
+            failureType: this.plugin.getAutoTranslationFailureType(error),
+            status: Number(error?.status || 0),
+            ms: Date.now() - startedAt
+          });
+          throw error;
+        }
+      }
+      isModelDetectionProvider(provider) {
+        return ["sakuraLocal", "openaiCompatible"].includes(String(provider || ""));
       }
       normalizeLocalProviderModelId(value) {
         const text = String(value || "").trim();
@@ -12367,6 +12590,7 @@ var require_provider_layer = __commonJS({
         if (previous.state !== next.state || previous.message !== next.message) {
           this.plugin.settings[kind].apiStatus = next;
           this.plugin.saveSettings({ debounce: true, delayMs: SETTINGS_WRITE_DEBOUNCE_MS });
+          this.plugin.scheduleOverviewStatusRefresh?.(`${kind}.apiStatus`);
         }
         if (typeof document === "undefined") return;
         document.querySelectorAll(`.dait-api-status[data-dait-kind='${kind}']`).forEach((status) => {
@@ -12467,7 +12691,46 @@ var require_provider_layer = __commonJS({
         })();
         this.plugin.localProviderHealthChecks.set(providerKey, promise);
       }
+      // { ok, model, latencyMs, at, message } of the last connection test of this task, or null when none ran since
+      // the service settings last changed. model is the model the server reported (Sakura local, OpenAI-compatible),
+      // else the configured one; "" for machine-translation services. latencyMs is the test request's round trip.
+      getLastApiTestResult(kind) {
+        const result = this.lastApiTestResults.get(kind);
+        return result ? { ...result } : null;
+      }
+      recordApiTestResult(kind, result = {}) {
+        if (!kind) return null;
+        const latency = Number(result.latencyMs);
+        const entry = {
+          ok: Boolean(result.ok),
+          model: String(result.model || ""),
+          latencyMs: Number.isFinite(latency) && latency >= 0 ? Math.round(latency) : null,
+          at: Number(result.at) || Date.now(),
+          message: String(result.message || "")
+        };
+        this.lastApiTestResults.set(kind, entry);
+        return { ...entry };
+      }
+      clearLastApiTestResult(kind) {
+        return this.lastApiTestResults.delete(kind);
+      }
+      // The model named in a chat-completions reply ("model": "..."), shortened to its file name.
+      getReportedResponseModel(raw) {
+        try {
+          const data = typeof raw === "string" ? this.plugin.parseApiJson(raw) : raw;
+          const model = typeof data?.model === "string" ? data.model.trim() : "";
+          return model ? this.plugin.getDiagnosticModelLabel(model) : "";
+        } catch {
+          return "";
+        }
+      }
+      getApiTestModel(config = {}, request = {}, reportedModel = "") {
+        if (this.plugin.isDirectTranslateProvider(config)) return "";
+        if (reportedModel && (this.plugin.isLocalTranslationProvider(config) || config?.provider === "openaiCompatible")) return reportedModel;
+        return this.plugin.getDiagnosticModelLabel(String(request?.body?.model || config?.model || ""));
+      }
       resetApiStatus(kind, options = {}) {
+        this.plugin.clearLastApiTestResult?.(kind);
         if (this.plugin.settings[kind]) {
           this.plugin.settings[kind].apiStatus = { state: "untested", message: "" };
           if (options.save === "debounce") this.plugin.saveSettings({ debounce: true });
@@ -12857,6 +13120,12 @@ var require_provider_layer = __commonJS({
       async fetchModelResponse(endpoint, request, timeoutMs = MODEL_REQUEST_TIMEOUT_MS, options = {}) {
         try {
           const raw = await this.plugin.fetchApiResponseText(endpoint, request, timeoutMs, options.signal ? { signal: options.signal } : void 0);
+          if (typeof options.onRawResponse === "function") {
+            try {
+              options.onRawResponse(raw);
+            } catch {
+            }
+          }
           if (request?.responseParser === "googleTranslate") {
             const result = this.plugin.parseGoogleTranslateResponse(raw, request?.googleTranslate?.expectedCount || 1, {
               asArray: Boolean(options.googleTranslateAsArray || options.translateAsArray),
@@ -13115,6 +13384,15 @@ var require_provider_layer = __commonJS({
         let endpoint = "";
         let providerSnapshotKey = "";
         let testConfig = null;
+        let testRequest = null;
+        let requestStartedAt = 0;
+        let reportedModel = "";
+        const record = (ok, message = "") => this.plugin.recordApiTestResult?.(kind, {
+          ok,
+          model: this.plugin.getApiTestModel(testConfig || this.plugin.getTaskConfig(kind), testRequest, reportedModel),
+          latencyMs: requestStartedAt ? Date.now() - requestStartedAt : null,
+          message
+        });
         try {
           testConfig = this.plugin.clone(this.plugin.getTaskConfig(kind));
           providerSnapshotKey = kind === "translation" ? this.plugin.getAutoTranslationProviderKey({ configOverrides: testConfig }) : "";
@@ -13123,10 +13401,19 @@ var require_provider_layer = __commonJS({
           }
           const test = this.plugin.buildConnectionTestRequest(kind);
           endpoint = test.endpoint;
-          await this.plugin.fetchModelResponse(test.endpoint, test.request, API_TEST_REQUEST_TIMEOUT_MS, { lifecycleToken, connectionTest: true });
+          testRequest = test.request;
+          requestStartedAt = Date.now();
+          await this.plugin.fetchModelResponse(test.endpoint, test.request, API_TEST_REQUEST_TIMEOUT_MS, {
+            lifecycleToken,
+            connectionTest: true,
+            onRawResponse: (raw) => {
+              reportedModel = this.plugin.getReportedResponseModel(raw);
+            }
+          });
           if (!this.plugin.isLifecycleTokenCurrent(lifecycleToken) || kind === "translation" && !this.plugin.isAutoTranslationProviderSnapshotCurrent(providerSnapshotKey, { configOverrides: testConfig })) return;
           this.plugin.clearAutoTranslationProviderFailureForCurrentConfig(kind);
           if (kind === "translation" && this.plugin.isLocalTranslationProvider(testConfig)) this.plugin.markLocalProviderHealthy(providerSnapshotKey);
+          record(true);
           this.plugin.setApiStatus(status, "success", this.plugin.t("apiStatusSuccess"));
           if (kind === "translation") this.plugin.queueScan();
           this.plugin.showToast(this.plugin.t("apiTestSuccess", { name: this.plugin.getTaskDisplayName(kind) }), "success");
@@ -13144,6 +13431,7 @@ var require_provider_layer = __commonJS({
               this.plugin.markLocalProviderHealthy(providerSnapshotKey);
               this.plugin.queueScan();
             }
+            record(true);
             this.plugin.setApiStatus(status, "success", this.plugin.t("apiStatusSuccess"));
             this.plugin.showToast(this.plugin.t("apiTestSuccess", { name: this.plugin.getTaskDisplayName(kind) }), "success");
             return;
@@ -13155,6 +13443,7 @@ var require_provider_layer = __commonJS({
             if (error.localProviderUnavailable) this.plugin.markAutoTranslationProviderFailure(this.plugin.getAutoTranslationOptions(), error);
           }
           const message = this.plugin.formatGoogleTranslateKeyError(error);
+          record(false, message);
           this.plugin.setApiStatus(status, "failed", this.plugin.t("apiStatusFailed"), message);
           this.plugin.showToast(this.plugin.t("apiTestFailed", { name: this.plugin.getTaskDisplayName(kind), error: message }), "error");
         } finally {
@@ -14766,7 +15055,7 @@ var require_settings_store = __commonJS({
 var require_quick_panel = __commonJS({
   "src/quick-panel/quick-panel.js"(exports2, module2) {
     "use strict";
-    var { LANGUAGE_PRESETS } = require_constants();
+    var { LANGUAGE_PRESETS, API_ENDPOINT_ERROR_MESSAGE_KEYS } = require_constants();
     var { PLUGIN_VERSION } = require_version();
     var POPOVER_ID = "dait-quick-popover";
     var POPOVER_WIDTH_PX = 340;
@@ -14795,6 +15084,10 @@ var require_quick_panel = __commonJS({
       quota: "quickStatusReasonQuota",
       "local-unavailable": "quickStatusReasonLocal"
     };
+    var CONFIG_ERROR_REASON_KEYS = {
+      endpoint: "quickStatusReasonEndpoint",
+      "not-found": "quickStatusReasonNotFound"
+    };
     var ICON_NAMES = { gear: "dait-qp-icon-gear", close: "dait-qp-icon-close" };
     var QuickPanel = class {
       constructor(plugin) {
@@ -14817,6 +15110,8 @@ var require_quick_panel = __commonJS({
         this.lastStatusSignature = "";
         this.statusRouteKey = "";
         this.launcherRef = null;
+        this.lastAnchorRect = null;
+        this.configError = null;
       }
       // --- Popover lifecycle ---
       isOpen() {
@@ -14874,6 +15169,7 @@ var require_quick_panel = __commonJS({
         root.remove?.();
         this.root = null;
         this.controls = null;
+        this.lastAnchorRect = null;
         const launcher = this.launcher;
         this.launcher = null;
         this.setLauncherExpanded(launcher, false);
@@ -14897,7 +15193,50 @@ var require_quick_panel = __commonJS({
         this.lastStatusSignature = "";
         this.statusRouteKey = "";
         this.launcherRef = null;
+        this.configError = null;
         this.testRunning = false;
+      }
+      // The interface language changed while the panel is open: build it again where it is (same channel, focus on
+      // the same control) instead of closing it.
+      rerender(reason = "rerender") {
+        if (!this.isOpen()) return false;
+        const previous = this.root;
+        const previousFocusables = this.controls?.focusables || [];
+        const active = typeof document !== "undefined" ? document.activeElement : null;
+        const focusInside = Boolean(active && (active === previous || previous.contains?.(active)));
+        const focusIndex = focusInside ? previousFocusables.indexOf(active) : -1;
+        let root = null;
+        try {
+          root = this.build();
+        } catch (error) {
+          this.plugin.logQuickSettingsDiagnostic("popover.rerender", "error", {
+            reason,
+            errorName: error?.name || "",
+            errorText: this.plugin.formatError(error)
+          });
+          this.close(reason, { restoreFocus: false });
+          return false;
+        }
+        if (previous.classList?.contains?.(POINTER_OPENED_CLASS)) root.classList.add(POINTER_OPENED_CLASS);
+        root.dataset.daitRerendered = "true";
+        this.plugin.syncDiscordThemeClasses(root, this.plugin.isNodeConnected(this.launcher) ? this.launcher : document.body);
+        if (root.style && previous.style) {
+          root.style.left = previous.style.left;
+          root.style.top = previous.style.top;
+        }
+        if (previous.dataset?.daitPlacement) root.dataset.daitPlacement = previous.dataset.daitPlacement;
+        if (previous.parentElement?.insertBefore) previous.parentElement.insertBefore(root, previous);
+        else document.body.appendChild(root);
+        previous.remove?.();
+        this.root = root;
+        this.bindListeners();
+        this.update();
+        if (focusInside) {
+          const focusables = this.controls?.focusables || [];
+          this.focusElement(focusables[focusIndex] || this.getFocusableElements()[0] || root);
+        }
+        this.plugin.logQuickSettingsDiagnostic("popover.rerender", "ok", { reason });
+        return true;
       }
       removeStrayPopovers() {
         if (typeof document === "undefined") return;
@@ -15035,10 +15374,13 @@ var require_quick_panel = __commonJS({
         controls.statusLine = this.createElement("p", "dait-qp-status-line");
         controls.statusLine.setAttribute("role", "status");
         controls.statusLine.setAttribute("aria-live", "polite");
+        controls.statusTest = this.createElement("p", "dait-qp-status-test");
+        controls.statusTest.hidden = true;
         controls.statusDetail = this.createElement("p", "dait-qp-status-detail");
         controls.statusNote = this.createElement("p", "dait-qp-status-note");
         controls.statusNote.hidden = true;
         statusText.appendChild(controls.statusLine);
+        statusText.appendChild(controls.statusTest);
         statusText.appendChild(controls.statusDetail);
         statusText.appendChild(controls.statusNote);
         controls.test = this.createButton("dait-qp-button dait-qp-button-secondary dait-qp-test", t("apiTest"), (button) => this.runConnectionTest(button));
@@ -15246,6 +15588,12 @@ var require_quick_panel = __commonJS({
         if (this.root.dataset.daitStatus !== status.state) this.root.dataset.daitStatus = status.state;
         if (controls.statusDot.dataset.daitStatus !== status.state) controls.statusDot.dataset.daitStatus = status.state;
         let resized = this.setText(controls.statusLine, status.headline);
+        const testSummary = String(status.testSummary || "");
+        resized = this.setText(controls.statusTest, testSummary) || resized;
+        if (controls.statusTest.hidden !== !testSummary) {
+          controls.statusTest.hidden = !testSummary;
+          resized = true;
+        }
         resized = this.setText(controls.statusDetail, this.getStatusDetailText(status)) || resized;
         resized = this.setText(controls.statusNote, status.note) || resized;
         if (controls.statusNote.title !== (status.note || "")) controls.statusNote.title = status.note || "";
@@ -15304,17 +15652,19 @@ var require_quick_panel = __commonJS({
         return true;
       }
       // --- Position, keyboard and pointer ---
+      // While the launcher is briefly gone (a language switch re-creates it), the panel stays where it was anchored.
       getAnchorRect() {
         const launcher = this.plugin.isNodeConnected(this.launcher) ? this.launcher : null;
         const rect = launcher?.getBoundingClientRect?.();
-        if (!rect || !rect.width && !rect.height) return null;
-        return {
+        if (!rect || !rect.width && !rect.height) return launcher ? null : this.lastAnchorRect;
+        this.lastAnchorRect = {
           left: Number(rect.left || 0),
           top: Number(rect.top || 0),
           width: Number(rect.width || 0),
           height: Number(rect.height || 0),
           bottom: Number(rect.bottom ?? Number(rect.top || 0) + Number(rect.height || 0))
         };
+        return this.lastAnchorRect;
       }
       // Above the launcher when it fits (Discord's user panel sits at the bottom), else below; always clamped
       // into the viewport.
@@ -15469,6 +15819,88 @@ var require_quick_panel = __commonJS({
         this.requestStatusUpdate();
       }
       // --- Launcher status ---
+      // "endpoint" for an invalid or unsafe API URL, "not-found" for a URL or model the service does not know,
+      // "" for everything else (those are handled by the provider cooldowns and the connection test).
+      getConfigErrorKind(error) {
+        if (!error || this.plugin.isRequestCancelled?.(error)) return "";
+        if (Object.hasOwn(API_ENDPOINT_ERROR_MESSAGE_KEYS, error.code)) return "endpoint";
+        const status = Number(error.status || 0);
+        if (error.providerModelNotFound || status === 404 || status === 405) return "not-found";
+        return "";
+      }
+      // Called for every failed translation request (automatic and manual). Only the user can fix these errors,
+      // so the launcher shows "needs you" until the settings change, a request or test succeeds, or the plugin stops.
+      // The toast rules are not touched: they stay with notifyTranslationNeedsAttention.
+      noteRequestFailure(requestOptions, error) {
+        const kind = this.getConfigErrorKind(error);
+        if (!kind) return false;
+        let providerKey = "";
+        try {
+          providerKey = String(error?.providerKey || this.plugin.getAutoTranslationProviderKey(requestOptions) || "");
+        } catch {
+          providerKey = "";
+        }
+        if (!providerKey) return false;
+        let message = "";
+        try {
+          message = String(this.plugin.formatError(error) || "");
+        } catch {
+          message = "";
+        }
+        this.configError = { kind, providerKey, message, at: Date.now() };
+        return true;
+      }
+      // A passed connection test or a working request to the service ends the configuration error.
+      noteApiStatus(kind, state) {
+        if (kind === "translation" && state === "success") this.clearConfigError();
+      }
+      watchRequestResult(kind, requestOptions, result) {
+        const record = this.configError;
+        if (kind !== "translation" || !record || typeof result?.then !== "function") return;
+        result.then(() => {
+          let providerKey = "";
+          try {
+            providerKey = String(this.plugin.getAutoTranslationProviderKey(requestOptions) || "");
+          } catch {
+            providerKey = "";
+          }
+          if (this.configError === record && providerKey === record.providerKey) this.clearConfigError();
+        }, () => {
+        });
+      }
+      clearConfigError() {
+        if (!this.configError) return false;
+        this.configError = null;
+        this.requestStatusUpdate();
+        return true;
+      }
+      // The recorded configuration error, while it belongs to the service and settings in use (a changed URL, model
+      // or key makes a new provider key, so the old error no longer shows).
+      getConfigError(providerKey) {
+        const record = this.configError;
+        if (!record || !providerKey || record.providerKey !== providerKey) return null;
+        return CONFIG_ERROR_REASON_KEYS[record.kind] ? record : null;
+      }
+      // Model and response time of the last passed connection test (plugin.getLastApiTestResult, when the provider
+      // layer offers it), while the saved status still says connected, i.e. nothing was changed since.
+      getLastTestSummary(api) {
+        if (api?.state !== "success") return "";
+        let result = null;
+        try {
+          result = this.plugin.getLastApiTestResult?.("translation") || null;
+        } catch {
+          result = null;
+        }
+        if (!result || result.ok !== true) return "";
+        const parts = [];
+        const model = String(result.model || "").trim();
+        if (model) parts.push(model);
+        const latency = Number(result.latencyMs);
+        if (result.latencyMs !== null && result.latencyMs !== void 0 && Number.isFinite(latency) && latency >= 0) {
+          parts.push(this.plugin.t("quickStatusLatency", { ms: String(Math.round(latency)) }));
+        }
+        return parts.join(" · ");
+      }
       // One of LAUNCHER_STATUS_STATES plus the texts shown on the launcher and in the panel. Reads state only
       // (no probes, no timers): translation API status, provider cooldowns, local health probes, the auto
       // queue and whether auto-translate runs in the current channel.
@@ -15493,6 +15925,7 @@ var require_quick_panel = __commonJS({
         const failure = providerKey ? plugin.autoTranslationProviderFailures?.get?.(providerKey) || null : null;
         const failureType = String(failure?.type || "");
         const failureActive = Boolean(failure && (failureType === "local-unavailable" || Number(failure.retryAt || 0) > now));
+        const configError = this.getConfigError(providerKey);
         const probing = Boolean(providerKey && plugin.localProviderHealthChecks?.has?.(providerKey));
         const testing = api.state === "testing" || probing || this.testRunning;
         const queue = plugin.getAutoTranslationQueueSnapshot?.() || {};
@@ -15503,6 +15936,7 @@ var require_quick_panel = __commonJS({
         if (!configured) connection = t("quickStatusNotConfigured");
         else if (testing) connection = plugin.getApiStatusText("testing");
         else if (failureActive && ATTENTION_FAILURE_TYPES.has(failureType)) connection = plugin.getApiStatusText("failed");
+        else if (configError) connection = plugin.getApiStatusText("failed");
         let state = "ok";
         let activity = t("quickStatusActive");
         let note = "";
@@ -15520,6 +15954,10 @@ var require_quick_panel = __commonJS({
           state = "needs-you";
           reason = t(ATTENTION_REASON_KEYS[failureType]);
           message = api.state === "failed" ? api.message : "";
+        } else if (configError && !testing) {
+          state = "needs-you";
+          reason = t(CONFIG_ERROR_REASON_KEYS[configError.kind]);
+          message = configError.message;
         } else if (api.state === "failed" && !testing) {
           state = "needs-you";
           reason = t("quickStatusReasonFailed");
@@ -15546,12 +15984,14 @@ var require_quick_panel = __commonJS({
         }
         const headline = [provider, connection].filter(Boolean).join(" · ");
         const title = [provider, connection, activity].filter(Boolean).join(" · ");
+        const testSummary = state === "needs-you" ? "" : this.getLastTestSummary(api);
         return {
           state,
           provider,
           connection,
           activity,
           headline,
+          testSummary,
           // Panel lines: what is happening now, then an optional one-line note (hint or error text).
           detail: activity,
           note,
@@ -15633,6 +16073,7 @@ ${status.title}`;
         if (this.isOpen()) {
           this.launcher = button;
           this.setLauncherExpanded(button, true);
+          this.scheduleUpdate();
         }
         return button;
       }
@@ -15811,6 +16252,12 @@ var require_i18n = __commonJS({
         googleTranslateKeyError: "Key「{label}」：{error}",
         apiKey: "API Key",
         apiKeyDesc: "只保存在本机，不会写进消息；Sakura 本地可以留空。",
+        apiKeyDeepSeekDesc: "DeepSeek 开放平台的 API Key，只保存在本机。",
+        apiKeyOpenAIDesc: "服务给你的 API Key，只保存在本机，不会写进消息。",
+        apiKeyLocalDesc: "可选，本机服务通常不需要。",
+        apiKeyMicrosoftDesc: "Azure Translator 资源的密钥，只保存在本机。",
+        apiKeyDeepLDesc: "DeepL API 的认证密钥，只保存在本机。",
+        apiKeyOptionalPlaceholder: "可留空",
         apiTest: "测试",
         apiTestBusy: "检测中",
         apiStatusUntested: "未检测",
@@ -15819,17 +16266,40 @@ var require_i18n = __commonJS({
         apiStatusFailed: "连接失败",
         apiTestSuccess: "{name} API 连接正常。",
         apiTestFailed: "{name} API 连接失败：{error}",
+        apiTestJustNow: "刚刚",
+        apiTestMinutesAgo: "{count} 分钟前",
+        apiTestHoursAgo: "{count} 小时前",
+        apiTestNotYet: "还没测试",
         thinkingMode: "DeepSeek 思考模式",
         thinkingModeDesc: "模型先推理再回答，可能更准，但更慢、用量更多。",
         endpoint: "接口地址",
         endpointDesc: "服务的 API 地址，一般保持默认即可。",
+        endpointDeepSeekDesc: "DeepSeek 的接口地址，一般保持默认即可。",
+        endpointOpenAIDesc: "服务的 chat/completions 地址，远程地址要用 https。",
+        endpointLocalDesc: "本机服务的地址，只有本机地址可以用 http。",
+        endpointMicrosoftDesc: "Azure Translator 的接口地址，一般保持默认即可。",
+        endpointBaiduDesc: "百度翻译的接口地址，一般保持默认即可。",
         deepseekPreset: "DeepSeek V4 预设",
         deepseekPresetDesc: "在 DeepSeek V4 Flash 和 Pro 之间快速切换。",
-        localModelPreset: "本地模型预设",
-        localModelPresetDesc: "本地服务不区分模型名时，保持 local-model 即可。",
         customModel: "自定义（填写下方模型名）",
         model: "模型",
         modelDesc: "发给服务的模型名，例如 deepseek-v4-flash。",
+        modelOpenAIDesc: "服务提供的模型名，可点“检测模型”列出。",
+        modelLocalDesc: "local-model 表示使用服务端已加载的模型。",
+        modelLocalLoadedDesc: "local-model 使用服务端已加载的模型，现在是 {model}。",
+        modelDetect: "检测模型",
+        modelDetectBusy: "检测中",
+        modelDetectFound: "检测到 {count} 个模型，可在列表中选择。",
+        modelDetectFoundLoaded: "检测到 {count} 个模型，已加载：{model}。",
+        modelDetectNone: "服务端没有列出模型。",
+        modelDetectFailed: "检测失败：{error}",
+        modelDetectUnsupported: "这个服务不支持检测模型。",
+        modelPicker: "可选的模型",
+        modelPickerOther: "其他（填写上方的模型名）",
+        modelPickerServerLoaded: "使用服务端已加载的模型（local-model）",
+        modelPickerDetected: "服务端列出的模型",
+        modelPickerPresets: "常用模型",
+        modelPickerLoadedTag: "{model}（已加载）",
         outputLanguage: "输出语言",
         outputLanguageDesc: "润色结果使用的语言。",
         inputLanguage: "输入语言",
@@ -15959,29 +16429,17 @@ var require_i18n = __commonJS({
         hotkeyNotSet: "未设置",
         hotkeySaved: "快捷键已保存：{shortcut}",
         hotkeyInvalid: "快捷键无效：请用 Ctrl、Alt 或 Win 加一个按键（可再加 Shift），且不能占用复制、粘贴等编辑快捷键。",
-        testMode: "启用测试模式",
-        testModeDesc: "在下方显示测试区，用当前设置试运行润色或翻译。",
-        testModeTitle: "测试模式",
-        testModeNote: "不会发送 Discord 消息，只用来检查输出、调整提示词。",
-        testModeTask: "测试功能",
-        testModeInput: "测试输入",
-        testModeInputDesc: "输入一段示例文字，按所选功能的当前设置处理。",
-        testModeInputPlaceholder: "在这里输入要测试的 Discord 文本...",
-        testModePrompt: "当前提示词",
-        testModePromptDesc: "可在这里改提示词，点“保存提示词”后同步到上方设置。",
-        testModeOutput: "模型输出",
-        testModeOutputPlaceholder: "运行测试后会显示结果。",
-        testModeRun: "运行测试",
-        testModeRunning: "测试中",
-        testModeCopyInput: "复制输入",
-        testModeSavePrompt: "保存提示词",
-        testModeCopyPrompt: "复制提示词",
-        testModeCopyOutput: "复制输出",
-        testModeClear: "清空",
-        testModePromptSaved: "测试模式提示词已保存到 {name}。",
-        testModeInputRequired: "请输入测试文本。",
-        testModeOutputReady: "测试完成。",
-        testModeConfig: "当前配置：{provider} / {model} / 输出 {targetLanguage}",
+        tryTranslate: "试译一句",
+        tryTranslateDesc: "用当前设置翻译一句话，不会发到 Discord。",
+        tryTranslatePlaceholder: "例如：See you tomorrow, same time?",
+        tryTranslateRun: "试译",
+        tryPolish: "试润色",
+        tryPolishDesc: "用当前设置润色一句话，不会发到 Discord。",
+        tryPolishPlaceholder: "例如：明天老时间见？",
+        tryPolishRun: "试润色",
+        tryBusy: "处理中",
+        tryInputRequired: "先输入一句话。",
+        tryResultTime: "用时 {time}",
         reset: "恢复默认设置",
         resetConfirm: "设置、频道规则和显示选项会恢复默认；API Key、Google Key 池和提示词模板会保留。",
         resetDialogTitle: "恢复默认设置？",
@@ -16118,6 +16576,12 @@ var require_i18n = __commonJS({
         googleTranslateKeyError: 'Key "{label}": {error}',
         apiKey: "API key",
         apiKeyDesc: "Stored only on this computer, never in messages; Sakura local can leave it empty.",
+        apiKeyDeepSeekDesc: "Your DeepSeek platform API key, stored only on this computer.",
+        apiKeyOpenAIDesc: "The API key your service gave you, stored only on this computer.",
+        apiKeyLocalDesc: "Optional; local servers usually don't need one.",
+        apiKeyMicrosoftDesc: "Your Azure Translator resource key, stored only on this computer.",
+        apiKeyDeepLDesc: "Your DeepL API authentication key, stored only on this computer.",
+        apiKeyOptionalPlaceholder: "Optional",
         apiTest: "Test",
         apiTestBusy: "Testing",
         apiStatusUntested: "Untested",
@@ -16126,17 +16590,40 @@ var require_i18n = __commonJS({
         apiStatusFailed: "Failed",
         apiTestSuccess: "{name} API connection succeeded.",
         apiTestFailed: "{name} API connection failed: {error}",
+        apiTestJustNow: "just now",
+        apiTestMinutesAgo: "{count} min ago",
+        apiTestHoursAgo: "{count} h ago",
+        apiTestNotYet: "Not tested yet",
         thinkingMode: "DeepSeek thinking mode",
         thinkingModeDesc: "The model reasons before answering: maybe better, but slower and uses more tokens.",
         endpoint: "Endpoint",
         endpointDesc: "The service's API address; the default usually works.",
+        endpointDeepSeekDesc: "DeepSeek's API address; the default usually works.",
+        endpointOpenAIDesc: "Your service's chat/completions URL; remote addresses need https.",
+        endpointLocalDesc: "Your local server's address; only local addresses may use http.",
+        endpointMicrosoftDesc: "Azure Translator's API address; the default usually works.",
+        endpointBaiduDesc: "Baidu Translate's API address; the default usually works.",
         deepseekPreset: "DeepSeek V4 preset",
         deepseekPresetDesc: "Switch quickly between DeepSeek V4 Flash and Pro.",
-        localModelPreset: "Local model preset",
-        localModelPresetDesc: "If your local server ignores the model name, keep local-model.",
         customModel: "Custom (type it below)",
         model: "Model",
         modelDesc: "The model name sent to the service, e.g. deepseek-v4-flash.",
+        modelOpenAIDesc: "The model name your service offers; Detect models lists them.",
+        modelLocalDesc: "local-model uses whichever model the server has loaded.",
+        modelLocalLoadedDesc: "local-model uses the server's loaded model, now {model}.",
+        modelDetect: "Detect models",
+        modelDetectBusy: "Detecting",
+        modelDetectFound: "Found {count} models; pick one from the list.",
+        modelDetectFoundLoaded: "Found {count} models; loaded: {model}.",
+        modelDetectNone: "The server listed no models.",
+        modelDetectFailed: "Detection failed: {error}",
+        modelDetectUnsupported: "This service can't list its models.",
+        modelPicker: "Available models",
+        modelPickerOther: "Other (type it above)",
+        modelPickerServerLoaded: "Use the server's loaded model (local-model)",
+        modelPickerDetected: "Listed by the server",
+        modelPickerPresets: "Common models",
+        modelPickerLoadedTag: "{model} (loaded)",
         outputLanguage: "Output language",
         outputLanguageDesc: "The language of the polished text.",
         inputLanguage: "Input language",
@@ -16314,29 +16801,17 @@ var require_i18n = __commonJS({
         hotkeyNotSet: "Not set",
         hotkeySaved: "Shortcut saved: {shortcut}",
         hotkeyInvalid: "Invalid shortcut. Use Ctrl, Alt, or Win plus a key (Shift is optional); editing shortcuts such as copy and paste are not allowed.",
-        testMode: "Enable test mode",
-        testModeDesc: "Shows a test area below to try polishing or translation with your settings.",
-        testModeTitle: "Test Mode",
-        testModeNote: "Nothing is sent to Discord. Use it to check output and tune prompts.",
-        testModeTask: "Feature to test",
-        testModeInput: "Test input",
-        testModeInputDesc: "Sample text to run through the selected feature.",
-        testModeInputPlaceholder: "Enter Discord text to test...",
-        testModePrompt: "Current prompt",
-        testModePromptDesc: "Edit the prompt here; Save prompt copies it to the settings above.",
-        testModeOutput: "Model output",
-        testModeOutputPlaceholder: "The result appears here after running a test.",
-        testModeRun: "Run test",
-        testModeRunning: "Testing",
-        testModeCopyInput: "Copy input",
-        testModeSavePrompt: "Save prompt",
-        testModeCopyPrompt: "Copy prompt",
-        testModeCopyOutput: "Copy output",
-        testModeClear: "Clear",
-        testModePromptSaved: "Test prompt saved to {name}.",
-        testModeInputRequired: "Enter test text first.",
-        testModeOutputReady: "Test complete.",
-        testModeConfig: "Current config: {provider} / {model} / output {targetLanguage}",
+        tryTranslate: "Try a sentence",
+        tryTranslateDesc: "Translates one sentence with these settings; nothing goes to Discord.",
+        tryTranslatePlaceholder: "e.g. Bis morgen, gleiche Zeit?",
+        tryTranslateRun: "Translate",
+        tryPolish: "Try polishing",
+        tryPolishDesc: "Polishes one sentence with these settings; nothing goes to Discord.",
+        tryPolishPlaceholder: "e.g. see u tmrw same time?",
+        tryPolishRun: "Polish",
+        tryBusy: "Working",
+        tryInputRequired: "Type a sentence first.",
+        tryResultTime: "took {time}",
         reset: "Reset to defaults",
         resetConfirm: "Settings, channel rules and display options return to defaults; API keys, the Google key pool and prompt templates are kept.",
         resetDialogTitle: "Reset to defaults?",
@@ -16510,6 +16985,31 @@ var require_i18n = __commonJS({
       settingsSearchEmpty: "没有找到与“{query}”相关的设置",
       settingsClose: "关闭设置",
       settingsGroupCommon: "常用",
+      overviewSetupTitle: "开始使用：还差 {count} 步",
+      overviewSetupProgress: "{done} / {total} · 全部完成后这张卡片会自动收起",
+      overviewSetupService: "选择翻译服务",
+      overviewSetupServiceOff: "消息翻译已关闭",
+      overviewSetupServiceMissing: "{provider} 还没填完",
+      overviewSetupTest: "测试连接",
+      overviewSetupTestBlocked: "先选好翻译服务",
+      overviewSetupTarget: "目标语言",
+      overviewSetupAuto: "开启自动翻译",
+      overviewSetupAutoOn: "已开启",
+      overviewSetupAutoOff: "目前关闭，只能手动点“翻译”",
+      overviewSetupAutoChannel: "总开关关闭，本频道总是翻译",
+      overviewSetupChannel: "本频道",
+      overviewSetupChannelNone: "现在不在频道里",
+      overviewSetupChannelNever: "本频道设为不翻译",
+      overviewStateDone: "已完成",
+      overviewStateTodo: "未完成",
+      overviewSetUp: "去设置",
+      overviewTurnOn: "开启",
+      overviewChange: "更改",
+      overviewServicesTitle: "服务状态",
+      overviewCardTranslation: "翻译消息",
+      overviewCardPolish: "输入框润色",
+      overviewServiceOff: "已关闭",
+      overviewServiceMissing: "未填写：{field}",
       settingsGroupAutoTranslate: "自动翻译",
       settingsGroupHistoryBackfill: "历史补翻",
       settingsGroupFallback: "手动翻译备用服务",
@@ -16533,7 +17033,7 @@ var require_i18n = __commonJS({
       publicBilingualDependencyPolishOff: "关闭",
       displaySettingsTitle: "显示行为",
       cacheSettingsTitle: "翻译缓存",
-      diagnosticsSettingsTitle: "诊断与测试",
+      diagnosticsSettingsTitle: "诊断",
       providerStatus: "服务状态",
       providerStatusDesc: "用当前设置测试一次连接。",
       quickSettingsOpen: "打开 Discord AI Translator 设置",
@@ -16575,6 +17075,7 @@ var require_i18n = __commonJS({
       quickStatusActive: "本频道自动翻译中",
       quickStatusBusy: "正在翻译 {inFlight} 条，排队 {queued} 条",
       quickStatusTesting: "正在测试连接…",
+      quickStatusLatency: "{ms} ms",
       quickStatusWaiting: "{reason}，稍后自动继续",
       quickStatusWaitingSeconds: "{reason}，约 {seconds} 秒后自动继续",
       quickStatusReasonRateLimit: "服务繁忙",
@@ -16587,6 +17088,8 @@ var require_i18n = __commonJS({
       quickStatusReasonQuota: "额度用完或余额不足",
       quickStatusReasonLocal: "本地服务没有响应",
       quickStatusReasonFailed: "连接测试没有通过",
+      quickStatusReasonEndpoint: "接口地址不可用",
+      quickStatusReasonNotFound: "找不到接口或模型",
       quickStatusNotConfigured: "未配置",
       quickStatusOffChannel: "本频道不自动翻译",
       quickStatusOffDisabled: "频道翻译已关闭",
@@ -16634,6 +17137,31 @@ var require_i18n = __commonJS({
       settingsSearchEmpty: 'No settings match "{query}"',
       settingsClose: "Close settings",
       settingsGroupCommon: "Everyday",
+      overviewSetupTitle: "Get started: {count} to go",
+      overviewSetupProgress: "{done} of {total} done · this card hides when all are done",
+      overviewSetupService: "Choose a service",
+      overviewSetupServiceOff: "Message translation is off",
+      overviewSetupServiceMissing: "{provider} is not set up yet",
+      overviewSetupTest: "Test the connection",
+      overviewSetupTestBlocked: "Set up the service first",
+      overviewSetupTarget: "Target language",
+      overviewSetupAuto: "Turn on auto-translate",
+      overviewSetupAutoOn: "On",
+      overviewSetupAutoOff: "Off: only the Translate button works",
+      overviewSetupAutoChannel: "Main switch off; this channel always translates",
+      overviewSetupChannel: "This channel",
+      overviewSetupChannelNone: "Not in a channel right now",
+      overviewSetupChannelNever: "Set to never translate",
+      overviewStateDone: "Done",
+      overviewStateTodo: "To do",
+      overviewSetUp: "Set up",
+      overviewTurnOn: "Turn on",
+      overviewChange: "Change",
+      overviewServicesTitle: "Service status",
+      overviewCardTranslation: "Translate messages",
+      overviewCardPolish: "Composer polishing",
+      overviewServiceOff: "Off",
+      overviewServiceMissing: "Missing: {field}",
       settingsGroupAutoTranslate: "Auto-translate",
       settingsGroupHistoryBackfill: "History backfill",
       settingsGroupFallback: "Manual translation fallback",
@@ -16657,7 +17185,7 @@ var require_i18n = __commonJS({
       publicBilingualDependencyPolishOff: "off",
       displaySettingsTitle: "Display behavior",
       cacheSettingsTitle: "Translation cache",
-      diagnosticsSettingsTitle: "Diagnostics and test mode",
+      diagnosticsSettingsTitle: "Diagnostics",
       providerStatus: "Service status",
       providerStatusDesc: "Runs a quick connection test with the current settings.",
       quickSettingsOpen: "Open Discord AI Translator settings",
@@ -16699,6 +17227,7 @@ var require_i18n = __commonJS({
       quickStatusActive: "Auto-translating in this channel",
       quickStatusBusy: "Translating {inFlight}, {queued} queued",
       quickStatusTesting: "Testing the connection…",
+      quickStatusLatency: "{ms} ms",
       quickStatusWaiting: "{reason}; resumes automatically",
       quickStatusWaitingSeconds: "{reason}; resumes in about {seconds} s",
       quickStatusReasonRateLimit: "Service busy",
@@ -16711,6 +17240,8 @@ var require_i18n = __commonJS({
       quickStatusReasonQuota: "quota or balance used up",
       quickStatusReasonLocal: "local service not responding",
       quickStatusReasonFailed: "connection test failed",
+      quickStatusReasonEndpoint: "API URL not usable",
+      quickStatusReasonNotFound: "API URL or model not found",
       quickStatusNotConfigured: "Not set up",
       quickStatusOffChannel: "Not auto-translating in this channel",
       quickStatusOffDisabled: "Channel translation is off",
@@ -16835,6 +17366,7 @@ var require_discord_ai_translator = __commonJS({
     var { AutoTranslationRequestPipeline } = require_request_pipeline();
     var { AutoTranslationQueueCore } = require_queue_core();
     var { DiagnosticsRecorder } = require_diagnostics_recorder();
+    var { getDiagnosticCodeLabel } = require_diagnostic_labels();
     var { OutputGuard } = require_output_guard();
     var { TranslationCacheStore } = require_translation_cache_store();
     var { PLUGIN_VERSION } = require_version();
@@ -17974,13 +18506,13 @@ var require_discord_ai_translator = __commonJS({
         const panel = document.createElement("div");
         panel.className = "dait-settings";
         if (quickSettings) panel.dataset.daitQuickSettings = "true";
+        panel.dataset.daitLocale = this.getLocale();
         this.syncDiscordThemeClasses(panel);
         panel.appendChild(this.createSettingsHeader({ quickSettings }));
         panel.appendChild(this.createSettingsLayout(panel));
         if (!quickSettings) this.scheduleSettingsModalSizing(panel);
         this.logSlowOperation("settings.panel.build", startedAt, {
           tabs: SETTINGS_TAB_IDS.length,
-          testMode: Boolean(this.settings.ui?.testModeEnabled),
           quickSettings
         });
         return panel;
@@ -18095,6 +18627,7 @@ var require_discord_ai_translator = __commonJS({
           if (tab.tabpanel) tab.tabpanel.hidden = !active || Boolean(state.searchQuery);
         });
         if (options.resetScroll !== false && state.content) state.content.scrollTop = 0;
+        if (target.id === SETTINGS_TAB_OVERVIEW) this.refreshOverviewStatusSection(target.tabpanel);
         if (options.focusTab) this.focusSettingsElement(target.button);
         if (options.save !== false && this.settings?.ui && this.settings.ui.settingsActiveTab !== target.id) {
           this.settings.ui.settingsActiveTab = target.id;
@@ -18334,39 +18867,37 @@ var require_discord_ai_translator = __commonJS({
         return this.focusSettingsElement(entry.row);
       }
       // --- Header ---
-      createSettingsHeader(options = {}) {
+      // The one title bar of every settings window: the plugin's own window has no header of its own, so the panel
+      // shows the title and the close button there too.
+      createSettingsHeader() {
         const header = document.createElement("div");
-        header.className = options.quickSettings ? "dait-settings-header dait-settings-header-embedded" : "dait-settings-header";
-        if (!options.quickSettings) {
-          const logo = document.createElement("div");
-          logo.className = "dait-settings-logo";
-          logo.setAttribute("aria-hidden", "true");
-          logo.textContent = "AI";
-          header.appendChild(logo);
-          const title = document.createElement("h2");
-          title.className = "dait-settings-title";
-          title.textContent = this.t("settingsTitle");
-          header.appendChild(title);
-        }
+        header.className = "dait-settings-header";
+        const logo = document.createElement("div");
+        logo.className = "dait-settings-logo";
+        logo.setAttribute("aria-hidden", "true");
+        logo.textContent = "AI";
+        header.appendChild(logo);
+        const title = document.createElement("h2");
+        title.className = "dait-settings-title";
+        title.textContent = this.t("settingsTitle");
+        header.appendChild(title);
         const versionChip = document.createElement("span");
         versionChip.className = "dait-settings-version";
         versionChip.dataset.daitVersion = PLUGIN_VERSION;
         versionChip.textContent = `v${PLUGIN_VERSION}`;
         header.appendChild(versionChip);
         header.appendChild(this.createSettingsHeaderStatus());
-        if (!options.quickSettings) {
-          const close = document.createElement("button");
-          close.type = "button";
-          close.className = "dait-settings-close";
-          close.title = this.t("settingsClose");
-          close.setAttribute("aria-label", this.t("settingsClose"));
-          close.textContent = "×";
-          close.addEventListener("click", (event) => {
-            event?.preventDefault?.();
-            this.closeSettingsWindow(close);
-          });
-          header.appendChild(close);
-        }
+        const close = document.createElement("button");
+        close.type = "button";
+        close.className = "dait-settings-close";
+        close.title = this.t("settingsClose");
+        close.setAttribute("aria-label", this.t("settingsClose"));
+        close.textContent = "×";
+        close.addEventListener("click", (event) => {
+          event?.preventDefault?.();
+          this.closeSettingsWindow(close);
+        });
+        header.appendChild(close);
         return header;
       }
       createSettingsHero(options = {}) {
@@ -18422,6 +18953,7 @@ var require_discord_ai_translator = __commonJS({
       // the focused control.
       replaceSettingsPanelElement(panel, nextPanel = null) {
         if (!panel) return null;
+        if (panel.__daitReplacedBy && panel.isConnected === false) return panel.__daitReplacedBy;
         const scrollTop = Number(panel.__daitSettingsUi?.content?.scrollTop || 0);
         const active = typeof document !== "undefined" ? document.activeElement : null;
         const focusPath = active && panel.contains?.(active) ? String(active.dataset?.daitPath || "") : "";
@@ -18434,6 +18966,7 @@ var require_discord_ai_translator = __commonJS({
         });
         this.destroySettingsModalSizing(panel);
         panel.replaceWith?.(nextPanel);
+        panel.__daitReplacedBy = nextPanel;
         const content = nextPanel.__daitSettingsUi?.content;
         if (content && scrollTop) content.scrollTop = scrollTop;
         if (focusPath) {
@@ -18644,9 +19177,371 @@ var require_discord_ai_translator = __commonJS({
       createOverviewTabContent() {
         return [this.createOverviewStatusSection(), this.createGeneralSection()];
       }
-      // Setup checklist and service status cards go here (a later change fills this in).
+      // Setup checklist (hidden once everything is done) and the status of the two services, each with a Test button.
+      // Rebuilt in place when the overview is shown, after a test and when a setting it reports on changes.
       createOverviewStatusSection() {
-        return null;
+        const section = document.createElement("section");
+        section.className = "dait-settings-group dait-overview-status";
+        section.dataset.daitSettingsGroup = "overview-status";
+        section.dataset.daitSearchGroup = "";
+        const items = this.getOverviewSetupItems();
+        const done = items.filter((item) => item.done).length;
+        if (done < items.length) section.appendChild(this.createOverviewSetupCard(items, done));
+        const title = document.createElement("h3");
+        title.className = "dait-settings-group-title";
+        title.textContent = this.t("overviewServicesTitle");
+        section.appendChild(title);
+        const cards = document.createElement("div");
+        cards.className = "dait-service-cards";
+        ["translation", "polish"].forEach((kind) => cards.appendChild(this.createOverviewServiceCard(kind)));
+        section.appendChild(cards);
+        return section;
+      }
+      // One entry per setup step: { id, label, state, done, detail, action }. state is the icon: done, todo, error,
+      // busy or off (a step that does not apply, which counts as done). action: { key, text, run } or
+      // { key, text, tab, path } (opens that tab and focuses the control).
+      getOverviewSetupItems() {
+        const translation = this.settings.translation || {};
+        const providerName = this.getProviderDisplayName(translation.provider);
+        const enabled = translation.enabled !== false;
+        const configured = enabled && this.hasUsableApiConfig("translation");
+        const status = this.getApiStatus("translation");
+        const routeKey = this.getCurrentRouteKey();
+        const hasChannel = Boolean(this.getChannelAutoTranslatePolicyStorageKey(routeKey));
+        const rule = hasChannel ? this.getCurrentChannelAutoTranslatePolicyMode(routeKey) : "";
+        const autoOn = Boolean(this.settings.ui?.autoTranslateMessages);
+        const target = String(translation.targetLanguage || "").trim();
+        const items = [];
+        items.push({
+          id: "service",
+          label: this.t("overviewSetupService"),
+          done: configured,
+          state: configured ? "done" : "todo",
+          detail: !enabled ? this.t("overviewSetupServiceOff") : configured ? providerName : this.t("overviewSetupServiceMissing", { provider: providerName }),
+          action: configured ? null : { key: "setup", text: this.t("overviewSetUp"), tab: SETTINGS_TAB_TRANSLATE, path: enabled ? this.getMissingServiceSettingPath("translation") : "translation.enabled" }
+        });
+        const tested = status.state === "success";
+        items.push({
+          id: "test",
+          label: this.t("overviewSetupTest"),
+          done: tested,
+          state: tested ? "done" : status.state === "failed" ? "error" : status.state === "testing" ? "busy" : "todo",
+          detail: !configured && !tested ? this.t("overviewSetupTestBlocked") : this.getApiTestSummaryText("translation"),
+          action: tested || !configured ? null : { key: "test", text: this.t("apiTest"), run: "test" }
+        });
+        items.push({
+          id: "target",
+          label: this.t("overviewSetupTarget"),
+          done: Boolean(target),
+          state: target ? "done" : "todo",
+          detail: target ? this.getDisplayLanguage(target) : "",
+          action: target ? null : { key: "setup", text: this.t("overviewSetUp"), tab: SETTINGS_TAB_TRANSLATE, path: "translation.targetLanguage" }
+        });
+        const autoDone = autoOn || rule === "enabled";
+        items.push({
+          id: "auto",
+          label: this.t("overviewSetupAuto"),
+          done: autoDone,
+          state: autoDone ? "done" : "todo",
+          detail: autoOn ? this.t("overviewSetupAutoOn") : autoDone ? this.t("overviewSetupAutoChannel") : this.t("overviewSetupAutoOff"),
+          action: autoDone ? null : { key: "auto", text: this.t("overviewTurnOn"), run: "autoTranslate" }
+        });
+        const channelLabel = hasChannel ? this.getSettingsChannelLabel(routeKey) : "";
+        const channelDetail = !hasChannel ? this.t("overviewSetupChannelNone") : rule === "disabled" ? this.t("overviewSetupChannelNever") : rule === "enabled" ? this.t("channelRuleAlways") : this.t("channelRuleFollow");
+        items.push({
+          id: "channel",
+          label: this.t("overviewSetupChannel"),
+          done: rule !== "disabled",
+          state: !hasChannel ? "off" : rule === "disabled" ? "todo" : "done",
+          detail: channelLabel ? `${channelLabel} · ${channelDetail}` : channelDetail,
+          action: rule === "disabled" ? { key: "channel", text: this.t("overviewChange"), tab: SETTINGS_TAB_OVERVIEW, path: "ui.currentChannelAutoTranslatePolicy" } : null
+        });
+        return items;
+      }
+      createOverviewSetupCard(items, done) {
+        const card = document.createElement("div");
+        card.className = "dait-setup-card";
+        const titleId = this.createSettingsControlId("dait-setup-title");
+        card.setAttribute("role", "region");
+        card.setAttribute("aria-labelledby", titleId);
+        const head = document.createElement("div");
+        head.className = "dait-setup-head";
+        const title = document.createElement("h3");
+        title.className = "dait-setup-title";
+        title.id = titleId;
+        title.textContent = this.t("overviewSetupTitle", { count: items.length - done });
+        head.appendChild(title);
+        const progress = document.createElement("span");
+        progress.className = "dait-setup-progress";
+        progress.textContent = this.t("overviewSetupProgress", { done, total: items.length });
+        head.appendChild(progress);
+        card.appendChild(head);
+        const list = document.createElement("ul");
+        list.className = "dait-setup-list";
+        items.forEach((item) => {
+          const entry = document.createElement("li");
+          entry.className = `dait-setup-item dait-setup-item-${item.state}`;
+          entry.dataset.daitSetupItem = item.id;
+          const icon = document.createElement("span");
+          icon.className = "dait-setup-icon";
+          const iconText = document.createElement("span");
+          iconText.className = "dait-visually-hidden";
+          iconText.textContent = this.t(item.done ? "overviewStateDone" : "overviewStateTodo");
+          icon.appendChild(iconText);
+          entry.appendChild(icon);
+          const label = document.createElement("span");
+          label.className = "dait-setup-label";
+          label.textContent = item.label;
+          entry.appendChild(label);
+          const detail = document.createElement("span");
+          detail.className = "dait-setup-detail";
+          detail.textContent = item.detail || "";
+          detail.title = item.detail || "";
+          entry.appendChild(detail);
+          if (item.action) entry.appendChild(this.createOverviewActionButton(item.action, item.label));
+          list.appendChild(entry);
+        });
+        card.appendChild(list);
+        return card;
+      }
+      createOverviewActionButton(action, context = "") {
+        const button = this.createSmallButton(action.text, action.run === "autoTranslate" || action.run === "test" ? "primary" : "outline");
+        button.dataset.daitOverviewAction = action.key;
+        if (context) button.setAttribute("aria-label", `${action.text}: ${context}`);
+        button.addEventListener("click", (event) => {
+          event?.preventDefault?.();
+          if (action.run === "test") {
+            this.runOverviewApiTest("translation", button);
+            return;
+          }
+          if (action.run === "autoTranslate") {
+            this.setSetting("ui.autoTranslateMessages", true);
+            this.refreshOverviewStatusSection(button.closest?.(".dait-settings") || null);
+            return;
+          }
+          this.openSettingsControl(button, action.tab, action.path);
+        });
+        return button;
+      }
+      // Service card: task and service name, the connection state (the same live badge as the connection card), a
+      // detail line and Test, or "Set up" while the service is off or missing a field.
+      createOverviewServiceCard(kind) {
+        const task = this.settings[kind] || {};
+        const card = document.createElement("div");
+        card.className = "dait-service-card";
+        card.dataset.daitKind = kind;
+        const text = document.createElement("div");
+        text.className = "dait-service-card-text";
+        const title = document.createElement("div");
+        title.className = "dait-service-card-title";
+        title.textContent = `${this.t(kind === "polish" ? "overviewCardPolish" : "overviewCardTranslation")} · ${this.getProviderDisplayName(task.provider)}`;
+        text.appendChild(title);
+        const line = document.createElement("div");
+        line.className = "dait-service-card-status";
+        const enabled = task.enabled !== false;
+        const configured = enabled && this.hasUsableApiConfig(kind);
+        let action = null;
+        if (!enabled || !configured) {
+          const mark = document.createElement("span");
+          mark.className = `dait-status-mark dait-status-mark-${enabled ? "needs" : "off"}`;
+          mark.textContent = enabled ? this.t("overviewServiceMissing", { field: this.getSettingLabelForPath(this.getMissingServiceSettingPath(kind)) }) : this.t("overviewServiceOff");
+          line.appendChild(mark);
+          action = { key: "setup", text: this.t("overviewSetUp"), tab: kind === "polish" ? SETTINGS_TAB_COMPOSE : SETTINGS_TAB_TRANSLATE, path: enabled ? this.getMissingServiceSettingPath(kind) : `${kind}.enabled` };
+        } else {
+          line.appendChild(this.createApiStatusBadge(kind));
+          line.appendChild(this.createApiTestDetail(kind));
+        }
+        text.appendChild(line);
+        card.appendChild(text);
+        if (action) {
+          const setup = this.createOverviewActionButton(action, title.textContent);
+          card.appendChild(setup);
+        } else {
+          const test = this.createSmallButton(this.t("apiTest"));
+          test.dataset.daitAction = "apiTest";
+          test.dataset.daitKind = kind;
+          test.setAttribute("aria-label", `${this.t("apiTest")}: ${title.textContent}`);
+          test.addEventListener("click", (event) => {
+            event?.preventDefault?.();
+            this.runOverviewApiTest(kind, test, line.querySelector?.(".dait-api-status"));
+          });
+          card.appendChild(test);
+        }
+        return card;
+      }
+      // A test started from the overview: the card's badge shows it, then every view of this task's status follows.
+      runOverviewApiTest(kind, button, badge = null) {
+        const status = badge || this.createApiStatusBadge(kind);
+        const run = Promise.resolve(this.testApiConnection(kind, button, status));
+        return run.finally(() => this.refreshApiTestViews(kind));
+      }
+      // The first field a task's service still needs, or its provider select.
+      getMissingServiceSettingPath(kind) {
+        const config = this.getTaskConfig(kind) || {};
+        const provider = String(config.provider || "");
+        const defaults = this.getProviderDefaults(provider) || {};
+        const ui = this.getProviderCapabilities(provider)?.ui || {};
+        if (provider === "baidu") {
+          if (!String(config.appId || "").trim()) return `${kind}.appId`;
+          if (!String(config.secretKey || "").trim()) return `${kind}.secretKey`;
+        }
+        if (provider === "googleCloud" && !this.getEffectiveRequestApiKey(config)) return "googleTranslate.keyPoolText";
+        if (ui.apiKey && !this.isProviderApiKeyOptional(provider) && !String(config.apiKey || "").trim()) return `${kind}.apiKey`;
+        if (ui.endpoint && !String(config.endpoint || defaults.endpoint || "").trim()) return `${kind}.endpoint`;
+        if (ui.model && !String(config.model || defaults.model || "").trim()) return `${kind}.model`;
+        return `${kind}.provider`;
+      }
+      getSettingLabelForPath(path) {
+        const field = String(path || "").split(".").pop();
+        const keys = {
+          apiKey: "apiKey",
+          endpoint: "endpoint",
+          model: "model",
+          appId: "baiduAppId",
+          secretKey: "baiduSecretKey",
+          keyPoolText: "googleTranslateKeys",
+          provider: "provider",
+          enabled: "enabled"
+        };
+        return this.t(keys[field] || "provider");
+      }
+      // "#general" for the current channel when Discord's store knows it.
+      getSettingsChannelLabel(routeKey = this.getCurrentRouteKey()) {
+        const channelId = String(routeKey || "").split(":")[1] || "";
+        if (!channelId) return "";
+        try {
+          const name = String(this.getDiscordNamedStore?.("ChannelStore")?.getChannel?.(channelId)?.name || "").trim();
+          return name ? `#${name}` : "";
+        } catch {
+          return "";
+        }
+      }
+      // Opens a tab and brings one control into view with focus (the overview's "Set up" / "Change" buttons).
+      openSettingsControl(source, tabId, path) {
+        const panel = source?.closest?.(".dait-settings");
+        const state = panel?.__daitSettingsUi;
+        if (!state) return false;
+        const tab = state.tabs.find((item) => item.id === normalizeSettingsTabId(tabId)) || state.tabs[0];
+        const control = [...tab.tabpanel?.querySelectorAll?.(`[data-dait-path='${path}']`) || []][0] || null;
+        const row = control?.closest?.(".dait-settings-row") || null;
+        if (!row) {
+          this.showSettingsTab(state, tab.id);
+          return false;
+        }
+        return this.openSettingsSearchResult(state, { row, tabId: tab.id });
+      }
+      // Rebuilds the overview status sections under root (a panel, a tab page, or the whole document), keeping the
+      // keyboard focus on the same kind of button when it was inside.
+      refreshOverviewStatusSection(root = null) {
+        const scope = root || (typeof document !== "undefined" ? document : null);
+        let sections = [];
+        try {
+          sections = [...scope?.querySelectorAll?.(".dait-overview-status") || []];
+        } catch {
+          sections = [];
+        }
+        sections = sections.filter((section) => section?.replaceWith && !section.__daitReplaced && section.isConnected !== false);
+        sections.forEach((section) => {
+          section.__daitReplaced = true;
+          const active = typeof document !== "undefined" ? document.activeElement : null;
+          const hadFocus = Boolean(active && section.contains?.(active));
+          const focusAction = hadFocus ? String(active.dataset?.daitOverviewAction || active.dataset?.daitAction || "") : "";
+          const focusKind = hadFocus ? String(active.closest?.(".dait-service-card")?.dataset?.daitKind || "") : "";
+          const next = this.createOverviewStatusSection();
+          section.replaceWith(next);
+          if (!hadFocus) return;
+          const candidates = [...next.querySelectorAll?.("button") || []];
+          const target = candidates.find((button) => (button.dataset?.daitOverviewAction || button.dataset?.daitAction) === focusAction && String(button.closest?.(".dait-service-card")?.dataset?.daitKind || "") === focusKind) || candidates.find((button) => !button.disabled);
+          this.focusSettingsElement(target);
+        });
+        return sections.length;
+      }
+      // Setting writes the overview reports on refresh it once, after the current event.
+      scheduleOverviewStatusRefresh(path = "") {
+        if (!/^(translation|polish|googleTranslate)\./.test(path) && !["ui.autoTranslateMessages", "ui.currentChannelAutoTranslatePolicy"].includes(path)) return;
+        if (this.overviewStatusRefreshTimer || typeof setTimeout !== "function") return;
+        this.overviewStatusRefreshTimer = setTimeout(() => {
+          this.overviewStatusRefreshTimer = null;
+          if (!this.isStarted || typeof document === "undefined") return;
+          this.refreshOverviewStatusSection();
+        }, 0);
+        this.unrefTimer(this.overviewStatusRefreshTimer);
+      }
+      // After a connection test: every badge, detail line and overview of this task shows the new state.
+      refreshApiTestViews(kind) {
+        if (typeof document === "undefined") return;
+        const status = this.getApiStatus(kind);
+        let badges = [];
+        let details = [];
+        try {
+          badges = [...document.querySelectorAll?.(`.dait-api-status[data-dait-kind='${kind}']`) || []];
+          details = [...document.querySelectorAll?.(`.dait-api-test-detail[data-dait-kind='${kind}']`) || []];
+        } catch {
+        }
+        badges.forEach((badge) => {
+          badge.className = `dait-api-status dait-api-status-${status.state}`;
+          badge.textContent = this.getApiStatusText(status.state);
+          badge.title = status.message || "";
+        });
+        details.forEach((detail) => this.syncApiTestDetail(detail, kind));
+        this.refreshOverviewStatusSection();
+      }
+      // Text after the status badge: "Hy-MT2 · 820 ms · just now" after a passed test, the error after a failed one.
+      createApiTestDetail(kind) {
+        const detail = document.createElement("span");
+        detail.className = "dait-api-test-detail";
+        detail.dataset.daitKind = kind;
+        this.syncApiTestDetail(detail, kind);
+        return detail;
+      }
+      syncApiTestDetail(detail, kind) {
+        if (!detail) return;
+        const status = this.getApiStatus(kind);
+        const result = this.getLastApiTestResult(kind);
+        let text = "";
+        if (status.state === "success") text = result?.ok ? this.formatApiTestResult(result) : "";
+        else if (status.state === "failed") text = status.message || result?.message || "";
+        detail.dataset.daitFor = status.state;
+        detail.textContent = text;
+        detail.title = text;
+        detail.hidden = !text;
+      }
+      // "Hy-MT2 · 820 ms · just now"
+      formatApiTestResult(result) {
+        if (!result) return "";
+        return [
+          result.model || "",
+          this.formatLatency(result.latencyMs),
+          this.formatTimeAgo(result.at)
+        ].filter(Boolean).join(" · ");
+      }
+      // One line for the overview checklist: the result of the last test, or that none ran.
+      getApiTestSummaryText(kind) {
+        const status = this.getApiStatus(kind);
+        const result = this.getLastApiTestResult(kind);
+        if (status.state === "success") {
+          const details = result?.ok ? this.formatApiTestResult(result) : "";
+          return details ? `${this.t("apiStatusSuccess")} · ${details}` : this.t("apiStatusSuccess");
+        }
+        if (status.state === "failed") return status.message || this.t("apiStatusFailed");
+        if (status.state === "testing") return this.t("apiStatusTesting");
+        return this.t("apiTestNotYet");
+      }
+      formatLatency(ms) {
+        if (ms === null || ms === void 0 || ms === "") return "";
+        const value = Number(ms);
+        if (!Number.isFinite(value) || value < 0) return "";
+        if (value < 1e3) return `${Math.round(value)} ms`;
+        return `${(value / 1e3).toFixed(1)} s`;
+      }
+      formatTimeAgo(at, now = Date.now()) {
+        const time = Number(at);
+        if (!Number.isFinite(time) || time <= 0) return "";
+        const elapsed = Math.max(0, now - time);
+        if (elapsed < 60 * 1e3) return this.t("apiTestJustNow");
+        if (elapsed < 60 * 60 * 1e3) return this.t("apiTestMinutesAgo", { count: Math.floor(elapsed / 6e4) });
+        if (elapsed < 24 * 60 * 60 * 1e3) return this.t("apiTestHoursAgo", { count: Math.floor(elapsed / 36e5) });
+        return this.formatDiagnosticSummaryTime(new Date(time).toISOString());
       }
       createGeneralSection() {
         const group = this.createSettingsGroup(this.t("settingsGroupCommon"), "general");
@@ -18750,7 +19645,7 @@ var require_discord_ai_translator = __commonJS({
         };
         const apiKeyOptional = Boolean(ui.apiKey && this.isProviderApiKeyOptional(provider));
         if (ui.apiKey && !apiKeyOptional) append(this.createApiKeyRow(kind));
-        if (ui.endpoint) append(this.createInputRow(`${kind}.endpoint`, this.t("endpoint"), "text", defaults.endpoint || "https://api.example.com/v1/chat/completions", {}, { description: this.t("endpointDesc"), stacked: true }));
+        if (ui.endpoint) append(this.createInputRow(`${kind}.endpoint`, this.t("endpoint"), "text", defaults.endpoint || "", {}, { description: this.getProviderFieldHelp("endpoint", provider), stacked: true }));
         if (ui.region) append(this.createInputRow(`${kind}.region`, this.t("providerRegion"), "text", "eastus", {}, { description: this.t("providerRegionDesc") }));
         if (ui.deeplPlan) append(this.createSelectRow(`${kind}.deeplPlan`, this.t("deeplPlan"), [
           ["free", this.t("deeplPlanFree")],
@@ -18761,8 +19656,8 @@ var require_discord_ai_translator = __commonJS({
           append(this.createInputRow(`${kind}.secretKey`, this.t("baiduSecretKey"), "password", "", {}, { description: this.t("baiduSecretKeyDesc"), stacked: true }));
         }
         if (ui.deepseekPreset) append(this.createDeepSeekModelRow(kind));
-        if (ui.localModelPreset) append(this.createLocalModelRow(kind));
-        if (ui.model) append(this.createInputRow(`${kind}.model`, this.t("model"), "text", defaults.model || "", {}, { description: this.t("modelDesc"), stacked: true }));
+        if (ui.model && this.isModelDetectionProvider(provider)) append(this.createModelFieldRow(kind));
+        else if (ui.model) append(this.createInputRow(`${kind}.model`, this.t("model"), "text", defaults.model || "", {}, { description: this.getProviderFieldHelp("model", provider), stacked: true }));
         if (kind === "translation" && ui.googleTranslateSettings) append(this.createGoogleTranslateSettings());
         if (ui.enableThinking || ui.temperature || ui.maxTokens) {
           const details = this.createSettingsDetails(this.t("settingsMoreModelParams"), "model-params");
@@ -18777,7 +19672,232 @@ var require_discord_ai_translator = __commonJS({
           append(this.createApiKeyRow(kind), details);
           block.appendChild(details);
         }
+        if (hasRows) block.appendChild(this.createTryTaskRow(kind));
         return hasRows ? block : null;
+      }
+      // Help text that fits the selected service (endpoint, model, API key); other services use the general text.
+      getProviderFieldHelp(field, provider) {
+        const keys = {
+          endpoint: { deepseek: "endpointDeepSeekDesc", openaiCompatible: "endpointOpenAIDesc", sakuraLocal: "endpointLocalDesc", microsoft: "endpointMicrosoftDesc", baidu: "endpointBaiduDesc" },
+          model: { deepseek: "modelDesc", openaiCompatible: "modelOpenAIDesc", sakuraLocal: "modelLocalDesc" },
+          apiKey: { deepseek: "apiKeyDeepSeekDesc", openaiCompatible: "apiKeyOpenAIDesc", sakuraLocal: "apiKeyLocalDesc", microsoft: "apiKeyMicrosoftDesc", deepl: "apiKeyDeepLDesc" }
+        };
+        const fallback = { endpoint: "endpointDesc", model: "modelDesc", apiKey: "apiKeyDesc" }[field] || "";
+        const key = keys[field]?.[String(provider || "")] || fallback;
+        return key ? this.t(key) : "";
+      }
+      // The model field of Sakura local and OpenAI-compatible: the name, "Detect models", and a picker below with the
+      // server's models (after detection) and, for Sakura, "use the loaded model" plus common models. The picker
+      // follows the field (data-dait-model-preset), and picking writes the field.
+      createModelFieldRow(kind) {
+        const provider = String(this.settings[kind]?.provider || "");
+        const defaults = this.getProviderDefaults(provider) || {};
+        const local = this.isLocalTranslationProvider(provider);
+        const field = document.createElement("div");
+        field.className = "dait-model-field";
+        const line = document.createElement("div");
+        line.className = "dait-model-field-line";
+        const input = document.createElement("input");
+        input.type = "text";
+        input.dataset.daitPath = `${kind}.model`;
+        input.placeholder = defaults.model || "";
+        input.spellcheck = false;
+        input.autocomplete = "off";
+        input.value = this.getSetting(`${kind}.model`) ?? "";
+        input.addEventListener("change", () => this.setSetting(`${kind}.model`, input.value, { save: "immediate", retryOnError: false }));
+        line.appendChild(input);
+        const detect = this.createSmallButton(this.t("modelDetect"), "outline");
+        detect.dataset.daitAction = "detectModels";
+        detect.dataset.daitKind = kind;
+        line.appendChild(detect);
+        field.appendChild(line);
+        const picker = document.createElement("select");
+        picker.className = "dait-model-picker";
+        picker.dataset.daitModelPreset = kind;
+        picker.setAttribute("aria-label", this.t("modelPicker"));
+        this.renderModelPickerOptions(picker, kind, []);
+        picker.hidden = !local;
+        picker.addEventListener("change", () => {
+          if (!picker.value) {
+            this.focusSettingsElement(input);
+            return;
+          }
+          this.setSetting(`${kind}.model`, picker.value);
+        });
+        field.appendChild(picker);
+        let description = this.getProviderFieldHelp("model", provider);
+        if (local && this.isLocalProviderAutoModelValue(this.settings[kind]?.model)) {
+          const snapshot = this.getLocalProviderDetectedModelSnapshot(this.settings[kind]);
+          if (snapshot?.model) description = this.t("modelLocalLoadedDesc", { model: snapshot.model });
+        }
+        const row = this.createRow(this.t("model"), field, { description, stacked: true, labelFor: input });
+        row.classList.add("dait-model-field-row");
+        const status = row.__daitDescription;
+        status?.setAttribute?.("aria-live", "polite");
+        detect.addEventListener("click", (event) => {
+          event?.preventDefault?.();
+          this.runModelDetection(kind, { button: detect, picker, status });
+        });
+        return row;
+      }
+      renderModelPickerOptions(picker, kind, detected = [], loaded = "") {
+        if (!picker) return;
+        const provider = String(this.settings[kind]?.provider || "");
+        const local = this.isLocalTranslationProvider(provider);
+        const current = String(this.settings[kind]?.model || "");
+        [...picker.children || []].forEach((child) => child.remove?.());
+        picker.textContent = "";
+        const option = (parent, value, text) => {
+          const node = document.createElement("option");
+          node.value = value;
+          node.textContent = text;
+          node.selected = value === current;
+          parent.appendChild(node);
+          return node;
+        };
+        const group = (label) => {
+          const node = document.createElement("optgroup");
+          node.label = label;
+          node.setAttribute("label", label);
+          picker.appendChild(node);
+          return node;
+        };
+        const listed = /* @__PURE__ */ new Set();
+        if (local) {
+          option(picker, LOCAL_PROVIDER_AUTO_MODEL_VALUE, this.t("modelPickerServerLoaded"));
+          listed.add(LOCAL_PROVIDER_AUTO_MODEL_VALUE);
+        }
+        const fresh = detected.filter((model) => model && !listed.has(model));
+        if (fresh.length) {
+          const parent = group(this.t("modelPickerDetected"));
+          fresh.forEach((model) => {
+            listed.add(model);
+            option(parent, model, model === loaded ? this.t("modelPickerLoadedTag", { model: this.getDiagnosticModelLabel(model) }) : model);
+          });
+        }
+        if (local) {
+          const presets = LOCAL_MODEL_PRESETS.filter(([value]) => !listed.has(value));
+          if (presets.length) {
+            const parent = group(this.t("modelPickerPresets"));
+            presets.forEach(([value, text]) => option(parent, value, text));
+          }
+        }
+        const other = option(picker, "", this.t("modelPickerOther"));
+        const known = [...picker.querySelectorAll?.("option") || []].some((node) => node.value && node.value === current);
+        if (!known) other.selected = true;
+        picker.value = known ? current : "";
+      }
+      // "Detect models": asks the server for its models (only on this click), fills the picker and says what it found.
+      async runModelDetection(kind, { button = null, picker = null, status = null } = {}) {
+        const lifecycleToken = this.getLifecycleToken();
+        this.setButtonBusy(button, true, this.t("modelDetectBusy"));
+        try {
+          const { models, loaded } = await this.detectProviderModels(kind);
+          if (!this.isLifecycleTokenCurrent(lifecycleToken)) return null;
+          this.renderModelPickerOptions(picker, kind, models, loaded);
+          if (picker && models.length) picker.hidden = false;
+          const text = !models.length ? this.t("modelDetectNone") : loaded ? this.t("modelDetectFoundLoaded", { count: models.length, model: this.getDiagnosticModelLabel(loaded) }) : this.t("modelDetectFound", { count: models.length });
+          if (status) {
+            status.textContent = text;
+            status.hidden = false;
+            status.classList?.remove?.("dait-row-description-error");
+          }
+          return { models, loaded };
+        } catch (error) {
+          if (!this.isLifecycleTokenCurrent(lifecycleToken)) return null;
+          const text = this.t("modelDetectFailed", { error: this.formatError(error) });
+          if (status) {
+            status.textContent = text;
+            status.hidden = false;
+            status.classList?.add?.("dait-row-description-error");
+          }
+          return null;
+        } finally {
+          if (this.isLifecycleTokenCurrent(lifecycleToken)) this.setButtonBusy(button, false, this.t("modelDetect"));
+        }
+      }
+      // "Try a sentence" (translation) / "Try polishing" (composer), at the end of the connection card: runs one
+      // sentence through the task with the settings as they are now (like the old test mode) and shows the result with
+      // the time it took. Nothing is sent to Discord.
+      createTryTaskRow(kind) {
+        const polish = kind === "polish";
+        const wrap = document.createElement("div");
+        wrap.className = "dait-try-field";
+        const line = document.createElement("div");
+        line.className = "dait-try-line";
+        const input = document.createElement("input");
+        input.type = "text";
+        input.className = "dait-try-input";
+        input.placeholder = this.t(polish ? "tryPolishPlaceholder" : "tryTranslatePlaceholder");
+        input.autocomplete = "off";
+        line.appendChild(input);
+        const run = this.createSmallButton(this.t(polish ? "tryPolishRun" : "tryTranslateRun"));
+        run.dataset.daitAction = "tryTask";
+        run.dataset.daitKind = kind;
+        line.appendChild(run);
+        wrap.appendChild(line);
+        const result = document.createElement("p");
+        result.className = "dait-try-result";
+        result.setAttribute("aria-live", "polite");
+        result.hidden = true;
+        const output = document.createElement("span");
+        output.className = "dait-try-output";
+        result.appendChild(output);
+        const time = document.createElement("span");
+        time.className = "dait-try-time";
+        result.appendChild(time);
+        wrap.appendChild(result);
+        const start = () => this.runTryTask(kind, input.value, { button: run, result, output, time });
+        run.addEventListener("click", (event) => {
+          event?.preventDefault?.();
+          start();
+        });
+        input.addEventListener("keydown", (event) => {
+          if (event?.key !== "Enter" || event.isComposing) return;
+          event.preventDefault?.();
+          start();
+        });
+        const row = this.createRow(this.t(polish ? "tryPolish" : "tryTranslate"), wrap, {
+          description: this.t(polish ? "tryPolishDesc" : "tryTranslateDesc"),
+          stacked: true,
+          labelFor: input
+        });
+        row.classList.add("dait-try-row");
+        return row;
+      }
+      async runTryTask(kind, text, { button = null, result = null, output = null, time = null } = {}) {
+        const sample = String(text || "").trim();
+        const show = (value, seconds = "", failed = false) => {
+          if (output) output.textContent = value;
+          if (time) {
+            time.textContent = seconds ? this.t("tryResultTime", { time: seconds }) : "";
+            time.hidden = !seconds;
+          }
+          if (result) {
+            result.hidden = !value;
+            result.classList?.toggle?.("dait-try-result-error", Boolean(failed));
+          }
+        };
+        if (!sample) {
+          show(this.t("tryInputRequired"), "", true);
+          return null;
+        }
+        const lifecycleToken = this.getLifecycleToken();
+        const label = button?.textContent || "";
+        this.setButtonBusy(button, true, this.t("tryBusy"));
+        const startedAt = Date.now();
+        try {
+          const translated = await this.runModelTask(kind, sample, { mode: "test" });
+          if (!this.isLifecycleTokenCurrent(lifecycleToken)) return null;
+          show(String(translated ?? ""), this.formatLatency(Date.now() - startedAt));
+          return translated;
+        } catch (error) {
+          if (!this.isLifecycleTokenCurrent(lifecycleToken)) return null;
+          show(this.formatError(error), this.formatLatency(Date.now() - startedAt), true);
+          return null;
+        } finally {
+          if (this.isLifecycleTokenCurrent(lifecycleToken)) this.setButtonBusy(button, false, label);
+        }
       }
       createSettingsDetails(summaryText, key) {
         const details = document.createElement("details");
@@ -18788,18 +19908,20 @@ var require_discord_ai_translator = __commonJS({
         details.appendChild(summary);
         return details;
       }
+      // Status badge, the last test's details ("Hy-MT2 · 820 ms · just now") and Test.
       createProviderConnectionStatus(kind) {
         const wrap = document.createElement("span");
         wrap.className = "dait-provider-connection";
         const status = this.createApiStatusBadge(kind);
         wrap.appendChild(status);
+        wrap.appendChild(this.createApiTestDetail(kind));
         const test = this.createSmallButton(this.t("apiTest"));
         test.dataset.daitAction = "apiTest";
         test.dataset.daitKind = kind;
         test.addEventListener("click", (event) => {
           event?.preventDefault?.();
           event?.stopPropagation?.();
-          this.testApiConnection(kind, test, status);
+          Promise.resolve(this.testApiConnection(kind, test, status)).finally(() => this.refreshApiTestViews(kind));
         });
         wrap.appendChild(test);
         return wrap;
@@ -19103,18 +20225,14 @@ var require_discord_ai_translator = __commonJS({
         section.appendChild(this.createTranslationCacheStatsRow());
         return section;
       }
-      createDiagnosticsSection(state = null) {
+      // Test mode is gone: "Try a sentence" / "Try polishing" in the connection cards replace it. ui.testModeEnabled
+      // still loads from old settings and simply shows nothing.
+      createDiagnosticsSection() {
         const section = this.createSettingsGroup(this.t("diagnosticsSettingsTitle"), "diagnostics");
         section.appendChild(this.createCheckboxRow("ui.diagnosticsEnabled", this.t("diagnosticLogs"), { description: this.t("diagnosticLogsDesc") }));
         section.appendChild(this.createDiagnosticLogsRow());
         section.appendChild(this.createSettingsSnapshotRow());
         section.appendChild(this.createDiagnosticSummaryRow());
-        section.appendChild(this.createCheckboxRow("ui.testModeEnabled", this.t("testMode"), { description: this.t("testModeDesc"), refreshPanel: true }));
-        const slot = document.createElement("div");
-        slot.className = "dait-test-mode-slot";
-        if (this.settings.ui?.testModeEnabled) slot.appendChild(this.createTestModeSection());
-        if (state) state.testModeSlot = slot;
-        section.appendChild(slot);
         return section;
       }
       // Reset lives at the end of the data tab, away from navigation.
@@ -19142,44 +20260,20 @@ var require_discord_ai_translator = __commonJS({
         input.setAttribute("role", "switch");
         input.dataset.daitPath = path;
         input.checked = Boolean(this.getSetting(path));
-        input.addEventListener("change", () => {
-          this.setSetting(path, input.checked);
-          if (rowOptions.refreshPanel) {
-            const panel = input.closest?.(".dait-settings");
-            if (panel) this.updateTestModeVisibility(panel, input.checked);
-          }
-        });
+        input.addEventListener("change", () => this.setSetting(path, input.checked));
         return this.createRow(labelText, input, { ...rowOptions, checkbox: true });
-      }
-      updateTestModeVisibility(panel, enabled) {
-        const slot = panel?.__daitSettingsUi?.testModeSlot || panel?.querySelector?.(".dait-test-mode-slot");
-        if (!slot?.appendChild) {
-          const nextPanel = this.replaceSettingsPanelElement(panel);
-          if (enabled) nextPanel?.querySelector?.(".dait-test-mode-section")?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
-          return;
-        }
-        let section = slot.querySelector?.(".dait-test-mode-section") || null;
-        if (!enabled) {
-          section?.remove?.();
-          return;
-        }
-        if (!section) {
-          section = this.createTestModeSection();
-          slot.appendChild(section);
-        }
-        section.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
       }
       createApiKeyRow(kind) {
         const provider = String(this.settings[kind]?.provider || "");
         const input = document.createElement("input");
         input.type = "password";
         input.dataset.daitPath = `${kind}.apiKey`;
-        input.placeholder = ["deepseek", "openaiCompatible"].includes(provider) ? "sk-..." : "";
+        input.placeholder = this.isProviderApiKeyOptional(provider) ? this.t("apiKeyOptionalPlaceholder") : ["deepseek", "openaiCompatible"].includes(provider) ? "sk-..." : "";
         input.autocomplete = "off";
         input.spellcheck = false;
         input.value = this.getSetting(`${kind}.apiKey`) ?? "";
         input.addEventListener("change", () => this.setSetting(`${kind}.apiKey`, input.value));
-        const row = this.createRow(this.t("apiKey"), input, { description: this.t("apiKeyDesc"), stacked: true });
+        const row = this.createRow(this.t("apiKey"), input, { description: this.getProviderFieldHelp("apiKey", provider), stacked: true });
         row.className = `${row.className} dait-api-key-field`;
         return row;
       }
@@ -19328,6 +20422,12 @@ var require_discord_ai_translator = __commonJS({
         groups.forEach(([label, items]) => panel.appendChild(this.createDiagnosticSummaryGroup(label, items)));
         return panel;
       }
+      // A chip shows a short label for its code (service names for services); the code stays in the tooltip.
+      getDiagnosticChipLabel(code) {
+        const value = String(code ?? "");
+        if (PROVIDER_ORDER.includes(value)) return this.getProviderDisplayName(value);
+        return getDiagnosticCodeLabel(value, this.getLocale());
+      }
       createDiagnosticSummaryGroup(label, items = []) {
         const group = document.createElement("div");
         group.className = "dait-diagnostic-summary-group";
@@ -19340,7 +20440,9 @@ var require_discord_ai_translator = __commonJS({
         items.slice(0, 8).forEach((item) => {
           const chip = document.createElement("span");
           chip.className = "dait-diagnostic-chip";
-          chip.textContent = `${item.key}: ${item.count}`;
+          chip.dataset.daitCode = String(item.key ?? "");
+          chip.textContent = `${this.getDiagnosticChipLabel(item.key)}: ${item.count}`;
+          chip.title = String(item.key ?? "");
           chips.appendChild(chip);
         });
         group.appendChild(chips);
@@ -19464,146 +20566,6 @@ var require_discord_ai_translator = __commonJS({
         };
         return labels[value] || `${value}h`;
       }
-      createTestModeSection() {
-        const section = document.createElement("section");
-        section.className = "dait-settings-section dait-test-mode-section";
-        const title = document.createElement("h3");
-        title.textContent = this.t("testModeTitle");
-        section.appendChild(title);
-        const note = document.createElement("p");
-        note.className = "dait-note";
-        note.textContent = this.t("testModeNote");
-        section.appendChild(note);
-        const panel = document.createElement("div");
-        panel.className = "dait-test-panel";
-        const toolbar = document.createElement("div");
-        toolbar.className = "dait-test-toolbar";
-        const kindSelect = document.createElement("select");
-        kindSelect.className = "dait-test-kind";
-        [
-          ["polish", this.t("polishTitle")],
-          ["translation", this.t("translationTitle")]
-        ].forEach(([value, text]) => {
-          const option = document.createElement("option");
-          option.value = value;
-          option.textContent = text;
-          option.selected = value === this.getTestModeKind();
-          kindSelect.appendChild(option);
-        });
-        toolbar.appendChild(kindSelect);
-        const config = document.createElement("span");
-        config.className = "dait-test-config";
-        toolbar.appendChild(config);
-        panel.appendChild(toolbar);
-        const inputBlock = this.createTestBlock(this.t("testModeInput"), this.t("testModeInputDesc"), { compactHeader: true });
-        const copyInput = this.createSmallButton(this.t("testModeCopyInput"));
-        inputBlock.querySelector(".dait-test-block-header")?.appendChild(copyInput);
-        const input = document.createElement("textarea");
-        input.className = "dait-test-input";
-        input.placeholder = this.t("testModeInputPlaceholder");
-        input.rows = 5;
-        inputBlock.appendChild(input);
-        panel.appendChild(inputBlock);
-        const promptBlock = this.createTestBlock(this.t("testModePrompt"), this.t("testModePromptDesc"), { compactHeader: true });
-        const copyPrompt = this.createSmallButton(this.t("testModeCopyPrompt"));
-        promptBlock.querySelector(".dait-test-block-header")?.appendChild(copyPrompt);
-        const prompt = document.createElement("textarea");
-        prompt.className = "dait-test-prompt";
-        prompt.rows = 6;
-        this.bindSettingsTextarea(prompt);
-        promptBlock.appendChild(prompt);
-        panel.appendChild(promptBlock);
-        const actionBar = document.createElement("div");
-        actionBar.className = "dait-test-actions";
-        const run = this.createSmallButton(this.t("testModeRun"));
-        const savePrompt = this.createSmallButton(this.t("testModeSavePrompt"));
-        const clear = this.createSmallButton(this.t("testModeClear"));
-        actionBar.appendChild(run);
-        actionBar.appendChild(savePrompt);
-        actionBar.appendChild(clear);
-        panel.appendChild(actionBar);
-        const outputBlock = this.createTestBlock(this.t("testModeOutput"), "", { compactHeader: true });
-        const copyOutput = this.createSmallButton(this.t("testModeCopyOutput"));
-        copyOutput.classList.add("dait-test-copy-output");
-        outputBlock.querySelector(".dait-test-block-header")?.appendChild(copyOutput);
-        const output = document.createElement("pre");
-        output.className = "dait-test-output";
-        output.textContent = this.t("testModeOutputPlaceholder");
-        outputBlock.appendChild(output);
-        panel.appendChild(outputBlock);
-        const syncKind = () => {
-          const kind = kindSelect.value;
-          this.settings.ui.testModeKind = kind;
-          this.saveSettings({ debounce: true });
-          prompt.value = this.settings[kind]?.prompt || "";
-          config.textContent = this.t("testModeConfig", {
-            provider: PROVIDER_DEFAULTS[this.settings[kind]?.provider]?.label || this.settings[kind]?.provider || "",
-            model: this.settings[kind]?.model || "",
-            targetLanguage: this.getDisplayLanguage(this.settings[kind]?.targetLanguage)
-          });
-        };
-        kindSelect.addEventListener("change", () => {
-          syncKind();
-          output.textContent = this.t("testModeOutputPlaceholder");
-        });
-        savePrompt.addEventListener("click", () => {
-          const kind = kindSelect.value;
-          this.preserveSettingsScroll(prompt, () => {
-            this.setSetting(`${kind}.prompt`, prompt.value);
-            this.showToast(this.t("testModePromptSaved", { name: this.getTaskDisplayName(kind) }), "success");
-          });
-        });
-        copyInput.addEventListener("click", () => this.copyPromptText(input, "copiedToClipboard"));
-        copyPrompt.addEventListener("click", () => this.copyPromptText(prompt));
-        copyOutput.addEventListener("click", () => this.copyTextFromNode(output));
-        clear.addEventListener("click", () => {
-          input.value = "";
-          output.textContent = this.t("testModeOutputPlaceholder");
-        });
-        run.addEventListener("click", async () => {
-          const kind = kindSelect.value;
-          const sample = input.value.trim();
-          if (!sample) {
-            this.showToast(this.t("testModeInputRequired"), "error");
-            return;
-          }
-          output.textContent = "";
-          this.setButtonBusy(run, true, this.t("testModeRunning"));
-          try {
-            output.textContent = await this.runModelTask(kind, sample, {
-              configOverrides: { prompt: prompt.value },
-              mode: "test"
-            });
-            this.showToast(this.t("testModeOutputReady"), "success");
-          } catch (error) {
-            output.textContent = this.formatError(error);
-            this.showToast(this.formatError(error), "error");
-          } finally {
-            this.setButtonBusy(run, false, this.t("testModeRun"));
-          }
-        });
-        syncKind();
-        section.appendChild(panel);
-        return section;
-      }
-      createTestBlock(labelText, descriptionText, options = {}) {
-        const block = document.createElement("div");
-        block.className = "dait-test-block";
-        const header = document.createElement("div");
-        header.className = "dait-test-block-header";
-        if (options.compactHeader) header.classList.add("dait-test-block-header-compact");
-        const label = document.createElement("span");
-        label.textContent = labelText;
-        header.appendChild(label);
-        block.appendChild(header);
-        if (descriptionText) {
-          const description = document.createElement("p");
-          description.className = "dait-row-description";
-          description.textContent = descriptionText;
-          block.appendChild(description);
-        }
-        return block;
-      }
       createInputRow(path, labelText, type, placeholder, attrs = {}, rowOptions = {}) {
         const input = document.createElement("input");
         input.type = type;
@@ -19714,6 +20676,7 @@ var require_discord_ai_translator = __commonJS({
         customInput.className = "dait-language-custom";
         customInput.placeholder = this.t("customLanguagePlaceholder");
         customInput.title = this.t("customLanguageDesc");
+        customInput.setAttribute("aria-description", this.t("customLanguageDesc"));
         customInput.setAttribute("aria-label", `${labelText}: ${this.t("customLanguage")}`);
         customInput.value = isCustom ? current : "";
         customInput.hidden = !isCustom;
@@ -19991,29 +20954,6 @@ var require_discord_ai_translator = __commonJS({
           this.showToast(this.t("modelSet", { model: select.options[select.selectedIndex].textContent }), "success");
         });
         return this.createRow(this.t("deepseekPreset"), select, { description: this.t("deepseekPresetDesc") });
-      }
-      createLocalModelRow(kind) {
-        const select = document.createElement("select");
-        select.dataset.daitModelPreset = kind;
-        const current = this.settings[kind]?.model;
-        const custom = document.createElement("option");
-        custom.value = "";
-        custom.textContent = this.t("customModel");
-        custom.selected = !LOCAL_MODEL_PRESETS.some(([value]) => value === current);
-        select.appendChild(custom);
-        LOCAL_MODEL_PRESETS.forEach(([value, text]) => {
-          const option = document.createElement("option");
-          option.value = value;
-          option.textContent = text;
-          option.selected = value === current;
-          select.appendChild(option);
-        });
-        select.addEventListener("change", () => {
-          if (!select.value) return;
-          this.setSetting(`${kind}.model`, select.value);
-          this.showToast(this.t("modelSet", { model: select.options[select.selectedIndex].textContent }), "success");
-        });
-        return this.createRow(this.t("localModelPreset"), select, { description: this.t("localModelPresetDesc") });
       }
       // One settings row (UI-SPEC): a div with the label and a one-line description on the left and the control on
       // the right. Options:
@@ -20435,6 +21375,7 @@ var require_discord_ai_translator = __commonJS({
           this.syncSettingControls("ui.messageButtonMode", this.getMessageButtonMode(), { includeActive: true });
         }
         this.syncSettingsDependentRows(null, path);
+        this.scheduleOverviewStatusRefresh(path);
       }
       commitSettingsControls(root = null) {
         const scope = root?.querySelectorAll ? root : typeof document !== "undefined" ? document : null;
@@ -21051,14 +21992,29 @@ var require_discord_ai_translator = __commonJS({
         this.removePolishResultPanel();
         this.removePolishRestoreControl();
         this.removeInputActionMenu();
-        this.closeQuickSettingsPanel();
-        this.closeQuickPopover("language");
+        this.refreshSettingsWindowsLocale();
+        this.quickPanel?.rerender?.("language");
         this.restoreAllTranslationSourceVisibility();
         document.querySelectorAll(".dait-message-button, .dait-polish-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-menu-button, .dait-input-action-menu, .dait-quick-settings-button").forEach((node) => node.remove());
         document.querySelectorAll(".dait-translation-line, .dait-translation-box").forEach((node) => node.remove());
         this.unpatchContextMenus();
         this.patchMessageContextMenu();
         this.queueScan();
+      }
+      // Rebuilds every open settings panel that still shows another language, in place and on the same tab (the
+      // panel keeps its scroll position and focused control), and renames the plugin's own settings window.
+      refreshSettingsWindowsLocale() {
+        if (typeof document === "undefined") return 0;
+        const locale = this.getLocale();
+        this.getQuickSettingsModalRoots().forEach((root) => {
+          this.findQuickSettingsDialog(root)?.setAttribute?.("aria-label", this.t("settingsTitle"));
+        });
+        let rebuilt = 0;
+        [...document.querySelectorAll?.(".dait-settings") || []].forEach((panel) => {
+          if (!panel || panel.isConnected === false || panel.dataset?.daitLocale === locale) return;
+          if (this.replaceSettingsPanelElement(panel)) rebuilt++;
+        });
+        return rebuilt;
       }
       getLocale() {
         return I18N[this.settings.ui?.language] ? this.settings.ui.language : "zh-CN";
@@ -22599,27 +23555,6 @@ var require_discord_ai_translator = __commonJS({
           dialog.setAttribute("role", "dialog");
           dialog.setAttribute("aria-modal", "true");
           dialog.setAttribute("aria-label", this.t("settingsTitle"));
-          const header = document.createElement("div");
-          header.className = "dait-quick-settings-header";
-          const title = document.createElement("h2");
-          title.className = "dait-quick-settings-title";
-          title.id = "dait-quick-settings-title";
-          title.textContent = this.t("settingsTitle");
-          header.appendChild(title);
-          dialog.setAttribute("aria-labelledby", title.id);
-          const close = document.createElement("button");
-          close.className = "dait-quick-settings-close";
-          close.type = "button";
-          close.textContent = "×";
-          close.title = this.t("quickSettingsClose");
-          close.setAttribute("aria-label", this.t("quickSettingsClose"));
-          close.addEventListener("click", (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            this.closeQuickSettingsPanel(root, "button");
-          });
-          header.appendChild(close);
-          dialog.appendChild(header);
           const body = document.createElement("div");
           body.className = "dait-quick-settings-body";
           const panelStartedAt = Date.now();
@@ -22635,7 +23570,7 @@ var require_discord_ai_translator = __commonJS({
               bodyChildCount: this.getElementChildCount(body)
             });
           } catch (error) {
-            body.appendChild(this.createQuickSettingsErrorPanel(error));
+            body.appendChild(this.createQuickSettingsErrorPanel(error, () => this.closeQuickSettingsPanel(root, "done")));
             this.logQuickSettingsDiagnostic("panel.build", "error", {
               source,
               ms: Date.now() - panelStartedAt,
@@ -22645,19 +23580,6 @@ var require_discord_ai_translator = __commonJS({
             this.showToast(this.t("quickSettingsOpenFailed", { error: this.formatError(error) }), "error");
           }
           dialog.appendChild(body);
-          const footer = document.createElement("div");
-          footer.className = "dait-quick-settings-footer";
-          const done = document.createElement("button");
-          done.className = "dait-quick-settings-done";
-          done.type = "button";
-          done.textContent = this.t("quickSettingsDone");
-          done.addEventListener("click", (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            this.closeQuickSettingsPanel(root, "done");
-          });
-          footer.appendChild(done);
-          dialog.appendChild(footer);
           dialog.addEventListener("pointerdown", (event) => event.stopPropagation());
           root.addEventListener("pointerdown", (event) => {
             if (event.target === root || event.target === backdrop) this.closeQuickSettingsPanel(root, "backdrop");
@@ -22723,7 +23645,7 @@ var require_discord_ai_translator = __commonJS({
         button.setAttribute("aria-expanded", expanded ? "true" : "false");
       }
       focusQuickSettingsInitialControl(dialog) {
-        const focusTarget = dialog?.querySelector?.(".dait-quick-settings-close") || this.getQuickSettingsFocusableElements(dialog)[0] || dialog;
+        const focusTarget = dialog?.querySelector?.(".dait-settings-close") || dialog?.querySelector?.(".dait-quick-settings-done") || this.getQuickSettingsFocusableElements(dialog)[0] || dialog;
         try {
           focusTarget?.focus?.({ preventScroll: true });
         } catch {
@@ -22797,7 +23719,8 @@ var require_discord_ai_translator = __commonJS({
         const tabindex = element.getAttribute?.("tabindex");
         return tabindex !== void 0 && tabindex !== null && tabindex !== "-1";
       }
-      createQuickSettingsErrorPanel(error) {
+      // Shown in the window when the panel cannot be built; without the panel's title bar it carries its own close button.
+      createQuickSettingsErrorPanel(error, onClose = null) {
         const panel = document.createElement("div");
         panel.className = "dait-quick-settings-error";
         const title = document.createElement("h3");
@@ -22809,6 +23732,18 @@ var require_discord_ai_translator = __commonJS({
         panel.appendChild(title);
         panel.appendChild(detail);
         panel.appendChild(hint);
+        if (typeof onClose === "function") {
+          const done = document.createElement("button");
+          done.className = "dait-quick-settings-done";
+          done.type = "button";
+          done.textContent = this.t("quickSettingsDone");
+          done.addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onClose();
+          });
+          panel.appendChild(done);
+        }
         return panel;
       }
       syncDiscordThemeClasses(target, anchor = null) {
@@ -22826,11 +23761,7 @@ var require_discord_ai_translator = __commonJS({
           root,
           this.findQuickSettingsDialog(root),
           root.querySelector?.(".dait-quick-settings-backdrop"),
-          root.querySelector?.(".dait-quick-settings-header"),
           root.querySelector?.(".dait-quick-settings-body"),
-          root.querySelector?.(".dait-quick-settings-footer"),
-          root.querySelector?.(".dait-quick-settings-title"),
-          root.querySelector?.(".dait-quick-settings-close"),
           root.querySelector?.(".dait-quick-settings-done"),
           root.querySelector?.(".dait-quick-settings-error"),
           ...root.querySelectorAll?.(".dait-settings") || []
@@ -31893,6 +32824,12 @@ ${raw}`;
       parseLocalProviderModelsResponse(...args) {
         return this.providerLayer.parseLocalProviderModelsResponse(...args);
       }
+      detectProviderModels(...args) {
+        return this.providerLayer.detectProviderModels(...args);
+      }
+      isModelDetectionProvider(...args) {
+        return this.providerLayer.isModelDetectionProvider(...args);
+      }
       normalizeLocalProviderModelId(...args) {
         return this.providerLayer.normalizeLocalProviderModelId(...args);
       }
@@ -31994,11 +32931,13 @@ ${raw}`;
       }
       setApiStatus(...args) {
         const result = this.providerLayer.setApiStatus(...args);
+        this.quickPanel?.noteApiStatus?.(args[4] ?? args[0]?.dataset?.daitKind, args[1]);
         this.quickPanel?.requestStatusUpdate();
         return result;
       }
       setApiRuntimeStatus(...args) {
         const result = this.providerLayer.setApiRuntimeStatus(...args);
+        this.quickPanel?.noteApiStatus?.(args[0], args[1]);
         this.quickPanel?.requestStatusUpdate();
         return result;
       }
@@ -32022,6 +32961,22 @@ ${raw}`;
       }
       getApiStatus(...args) {
         return this.providerLayer.getApiStatus(...args);
+      }
+      // Contract (settings + quick panel): { ok, model, latencyMs, at, message } of the last connection test, or null.
+      getLastApiTestResult(...args) {
+        return this.providerLayer.getLastApiTestResult(...args);
+      }
+      recordApiTestResult(...args) {
+        return this.providerLayer.recordApiTestResult(...args);
+      }
+      clearLastApiTestResult(...args) {
+        return this.providerLayer.clearLastApiTestResult(...args);
+      }
+      getReportedResponseModel(...args) {
+        return this.providerLayer.getReportedResponseModel(...args);
+      }
+      getApiTestModel(...args) {
+        return this.providerLayer.getApiTestModel(...args);
       }
       getProviderFallbackOrder(...args) {
         return this.providerLayer.getProviderFallbackOrder(...args);
@@ -32063,7 +33018,9 @@ ${raw}`;
         return this.providerLayer.runModelTask(...args);
       }
       runModelTaskWithResult(...args) {
-        return this.providerLayer.runModelTaskWithResult(...args);
+        const result = this.providerLayer.runModelTaskWithResult(...args);
+        this.quickPanel?.watchRequestResult?.(args[0], args[2], result);
+        return result;
       }
       adoptSharedModelResult(...args) {
         return this.providerLayer.adoptSharedModelResult(...args);
@@ -32552,7 +33509,9 @@ ${raw}`;
         return this.autoQueueCore.getLastAutoTranslationDecisionsSnapshot(...args);
       }
       clearAutoTranslationProviderFailureForCurrentConfig(...args) {
-        return this.autoQueueCore.clearAutoTranslationProviderFailureForCurrentConfig(...args);
+        const result = this.autoQueueCore.clearAutoTranslationProviderFailureForCurrentConfig(...args);
+        if ((args[0] ?? "translation") === "translation") this.quickPanel?.clearConfigError?.();
+        return result;
       }
       releaseProviderBlockedAutoTranslationItems(...args) {
         return this.autoQueueCore.releaseProviderBlockedAutoTranslationItems(...args);
@@ -32909,6 +33868,7 @@ ${raw}`;
       }
       markAutoTranslationProviderFailure(...args) {
         const result = this.autoQueueCore.markAutoTranslationProviderFailure(...args);
+        this.quickPanel?.noteRequestFailure?.(args[0], args[1]);
         this.quickPanel?.requestStatusUpdate();
         return result;
       }
