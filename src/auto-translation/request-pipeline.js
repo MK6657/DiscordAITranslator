@@ -28,6 +28,8 @@ const {
     LOCAL_PROVIDER_HEALTH_RETRY_MS,
     MANUAL_LONG_TEXT_WHOLE_PASS_MAX_LENGTH,
     MANUAL_TRANSLATION_REQUEST_BUDGET,
+    MANUAL_TRANSLATION_REQUEST_BUDGET_MAX,
+    MANUAL_TRANSLATION_RESCUE_REQUEST_ALLOWANCE,
     MODEL_REQUEST_TIMEOUT_MS,
     TRANSLATION_VALIDATION_QUALITIES
 } = require("../constants");
@@ -1244,6 +1246,9 @@ class AutoTranslationRequestPipeline {
                 if (this.plugin.isAutoTranslationRequestBudgetError(error)) budgetError = error;
                 let rescued = null;
                 if (taskOptions?.manualRescue && !budgetError && !stopError) {
+                    // The rescue may not spend the requests the later chunks need: one each is held back.
+                    const requestBudget = taskOptions.requestBudget;
+                    if (requestBudget) requestBudget.reserved = chunks.length - index - 1;
                     try {
                         rescued = await this.plugin.runLongAutoTranslationChunkManualRescue(chunks[index], chunkOptions, error, taskOptions, {
                             sourceHash,
@@ -1254,8 +1259,11 @@ class AutoTranslationRequestPipeline {
                     catch (rescueError) {
                         if (this.plugin.isAbandonedTranslationError(rescueError)) throw rescueError;
                         stopOnChunkError(rescueError);
-                        if (this.plugin.isAutoTranslationRequestBudgetError(rescueError)) budgetError = rescueError;
+                        if (this.plugin.isAutoTranslationRequestBudgetError(rescueError) && !rescueError.requestBudgetReserved) budgetError = rescueError;
                         rescued = { translated: "", error };
+                    }
+                    finally {
+                        if (requestBudget) requestBudget.reserved = 0;
                     }
                 }
                 if (rescued?.translated) {
@@ -1930,7 +1938,18 @@ class AutoTranslationRequestPipeline {
     // A per-click budget of model requests (manual translation). Every attempt, rescue and chunk
     // request takes one; when none are left the attempt fails without sending anything.
     createAutoTranslationRequestBudget(limit = MANUAL_TRANSLATION_REQUEST_BUDGET) {
-        return { limit: Math.max(1, Math.floor(Number(limit) || MANUAL_TRANSLATION_REQUEST_BUDGET)), used: 0 };
+        return { limit: Math.max(1, Math.floor(Number(limit) || MANUAL_TRANSLATION_REQUEST_BUDGET)), used: 0, reserved: 0 };
+    }
+
+    // A long message needs one request per chunk (plus the whole pass), so its click budget grows
+    // with the chunk count, with a small rescue allowance on top, and stays bounded.
+    getManualTranslationRequestBudgetLimit(text = "", requestOptions = this.plugin.getManualTranslationRequestOptions()) {
+        if (!this.plugin.isLongAutoTranslationText(text)) return MANUAL_TRANSLATION_REQUEST_BUDGET;
+        const longOptions = requestOptions?.mode === "long-text" ? requestOptions : this.plugin.getLongTextTranslationOptions(requestOptions, text);
+        const chunkCount = this.plugin.splitLongAutoTranslationText(text, this.plugin.getLongAutoTranslationChunkLength(longOptions)).length;
+        const wholePass = String(text || "").length <= MANUAL_LONG_TEXT_WHOLE_PASS_MAX_LENGTH ? 1 : 0;
+        const planned = chunkCount + wholePass + MANUAL_TRANSLATION_RESCUE_REQUEST_ALLOWANCE;
+        return Math.min(MANUAL_TRANSLATION_REQUEST_BUDGET_MAX, Math.max(MANUAL_TRANSLATION_REQUEST_BUDGET, planned));
     }
 
     consumeAutoTranslationRequestBudget(taskOptions = {}) {
@@ -1941,13 +1960,15 @@ class AutoTranslationRequestPipeline {
             error.code = "REQUEST_BUDGET_EXHAUSTED";
             error.autoTranslationRequestBudgetExhausted = true;
             error.requestBudgetLimit = budget.limit;
+            // Only the requests held back for later chunks are left: this rescue ends, the click does not.
+            error.requestBudgetReserved = Number(budget.used || 0) < Number(budget.limit || 0);
             throw error;
         }
         budget.used++;
     }
 
     isAutoTranslationRequestBudgetExhausted(budget) {
-        return Boolean(budget && Number(budget.used || 0) >= Number(budget.limit || 0));
+        return Boolean(budget && Number(budget.used || 0) >= Number(budget.limit || 0) - Math.max(0, Number(budget.reserved || 0)));
     }
 
     isAutoTranslationRequestBudgetError(error) {

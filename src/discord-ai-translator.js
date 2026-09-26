@@ -11897,6 +11897,19 @@ module.exports = class DiscordAITranslator {
         return Boolean(error?.autoTranslationFinalInvalidOutput || error?.modelOutputTruncated);
     }
 
+    // True when a manual partial result leaves out a smaller share of the message than the kept
+    // one (or either share is unknown).
+    isManualPartialResultBetter(manualInfo, keptInfo) {
+        const missingShare = info => {
+            const total = Number(info?.totalSegments || 0);
+            return total > 0 && Array.isArray(info?.missingSegments) ? info.missingSegments.length / total : null;
+        };
+        const manualShare = missingShare(manualInfo);
+        const keptShare = missingShare(keptInfo);
+        if (manualShare === null || keptShare === null) return true;
+        return manualShare < keptShare;
+    }
+
     createManualRescueFailureError(reason = "invalid-output", validationQuality = "", attempts = []) {
         const error = this.createFinalInvalidAutoTranslationError(reason || "invalid-output", {
             terminal: false,
@@ -11916,7 +11929,7 @@ module.exports = class DiscordAITranslator {
         let lastValidation = null;
         let lastError = null;
         // One click may cause at most this many model requests across all attempts and chunks.
-        const requestBudget = this.createAutoTranslationRequestBudget();
+        const requestBudget = this.createAutoTranslationRequestBudget(this.getManualTranslationRequestBudgetLimit(plan.text, plan.requestOptions));
 
         for (let index = 0; index < attemptNames.length; index++) {
             const attemptName = attemptNames[index];
@@ -12005,6 +12018,9 @@ module.exports = class DiscordAITranslator {
         const cacheKey = plan.cacheKey;
         const startedAt = plan.startedAt;
         const lifecycleToken = plan.lifecycleToken;
+        // Retranslate on a kept auto partial: that partial is drawn back unless the manual result
+        // leaves out fewer parts of the message.
+        const keptAutoPartial = this.getAutoTranslationPartialResult(plan.autoCacheKey, text);
         this.clearManualBlockingState(plan);
         this.logDiagnostic("manual.translate", "start", {
             ...this.getTranslationDiagnosticMeta("manual", {
@@ -12086,6 +12102,22 @@ module.exports = class DiscordAITranslator {
                         messageState: DIAGNOSTIC_MESSAGE_STATES.STALE,
                         reasonCode: DIAGNOSTIC_REASON_CODES.STALE_DOM
                     }),
+                    key: this.getTextFingerprint(cacheKey),
+                    ms: Date.now() - startedAt
+                });
+                return;
+            }
+            if (keptAutoPartial
+                && validation.quality === TRANSLATION_VALIDATION_QUALITIES.PARTIAL
+                && !this.isManualPartialResultBetter(resultRequestOptions.longTextPartialInfo, keptAutoPartial.partialInfo)) {
+                this.rememberAutoTranslationPartialResult(plan.autoCacheKey, text, keptAutoPartial.translated, keptAutoPartial);
+                this.renderTranslation(messageNode, content, keptAutoPartial.translated, cacheKey, plan.domText, {
+                    partial: true,
+                    validationQuality: keptAutoPartial.validationQuality || TRANSLATION_VALIDATION_QUALITIES.PARTIAL,
+                    validationReason: keptAutoPartial.validationReason || "",
+                    ...(keptAutoPartial.partialInfo ? { partialInfo: keptAutoPartial.partialInfo } : {})
+                });
+                this.logDiagnostic("manual.translate", "kept-auto-partial", {
                     key: this.getTextFingerprint(cacheKey),
                     ms: Date.now() - startedAt
                 });
@@ -15709,6 +15741,7 @@ module.exports = class DiscordAITranslator {
     runAutoTranslationTaskWithOptions(...args) { return this.autoRequestPipeline.runAutoTranslationTaskWithOptions(...args); }
     runTruncatedAutoTranslationRetry(...args) { return this.autoRequestPipeline.runTruncatedAutoTranslationRetry(...args); }
     createAutoTranslationRequestBudget(...args) { return this.autoRequestPipeline.createAutoTranslationRequestBudget(...args); }
+    getManualTranslationRequestBudgetLimit(...args) { return this.autoRequestPipeline.getManualTranslationRequestBudgetLimit(...args); }
     consumeAutoTranslationRequestBudget(...args) { return this.autoRequestPipeline.consumeAutoTranslationRequestBudget(...args); }
     isAutoTranslationRequestBudgetExhausted(...args) { return this.autoRequestPipeline.isAutoTranslationRequestBudgetExhausted(...args); }
     isAutoTranslationRequestBudgetError(...args) { return this.autoRequestPipeline.isAutoTranslationRequestBudgetError(...args); }

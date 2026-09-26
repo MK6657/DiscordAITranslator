@@ -597,6 +597,119 @@ test("a manual long translation with a failed part returns its partial info with
     assert.ok(calls <= 8);
 });
 
+test("a manual click on a long local message with many chunks translates every chunk", async () => {
+    const plugin = new Plugin();
+    useLocalProvider(plugin);
+    const text = "Synthetic long source. ".repeat(170);
+    const chunks = Array.from({ length: 12 }, (_value, index) => `part ${index + 1} of the synthetic source`);
+    plugin.splitLongAutoTranslationText = () => chunks;
+    plugin.getAutoTranslationInvalidOutputReason = () => "";
+    let calls = 0;
+    plugin.runModelTask = async () => {
+        calls++;
+        return "已翻译的一部分内容";
+    };
+    const plan = manualPlan(plugin, text);
+    const result = await plugin.runManualRescueTranslationPlan(plan);
+    assert.equal(result.validation.renderable, true);
+    assert.equal(result.requestOptions.longTextPartialInfo, undefined, "no chunk is left out");
+    assert.equal(calls, 12);
+});
+
+test("a manual chunk rescue leaves one request for every later chunk", async () => {
+    const plugin = new Plugin();
+    const text = "Synthetic long source. ".repeat(72);
+    const chunks = [
+        "first part of the source",
+        "The second part keeps repeating the same line. ".repeat(7).trim(),
+        "third part of the source",
+        "fourth part of the source",
+        "fifth part of the source"
+    ];
+    const originalSplit = plugin.splitLongAutoTranslationText.bind(plugin);
+    plugin.splitLongAutoTranslationText = (value, maxLength) => (value === text ? chunks : originalSplit(value, maxLength));
+    plugin.getAutoTranslationInvalidOutputReason = () => "";
+    let calls = 0;
+    plugin.runModelTask = async (_kind, input) => {
+        calls++;
+        // The whole pass and every piece of the hard chunk come back untranslated.
+        return input === text || String(input).includes("second") ? String(input) : "已翻译的一部分内容";
+    };
+    const result = await plugin.runManualRescueTranslationPlan(manualPlan(plugin, text));
+    assert.equal(result.validation.renderable, true);
+    assert.deepEqual(result.requestOptions.longTextPartialInfo, { missingSegments: [2], totalSegments: 5 }, `${calls} requests`);
+});
+
+test("the manual request budget grows with the chunks but stays bounded", async () => {
+    const { MANUAL_TRANSLATION_REQUEST_BUDGET_MAX } = require("../../src/constants");
+    const plugin = new Plugin();
+    const text = "Synthetic long source. ".repeat(170);
+    plugin.splitLongAutoTranslationText = () => Array.from({ length: 60 }, (_value, index) => `part ${index + 1} of the source`);
+    let calls = 0;
+    plugin.runModelTask = async (_kind, input) => {
+        calls++;
+        return String(input);
+    };
+    await assert.rejects(plugin.runManualRescueTranslationPlan(manualPlan(plugin, text)));
+    assert.ok(MANUAL_TRANSLATION_REQUEST_BUDGET_MAX >= 16 && MANUAL_TRANSLATION_REQUEST_BUDGET_MAX <= 32);
+    assert.ok(calls <= MANUAL_TRANSLATION_REQUEST_BUDGET_MAX, `${calls} requests`);
+});
+
+function manualTranslateFixture(t) {
+    const plugin = createQueuePlugin(t);
+    const messageNode = { isConnected: true };
+    const content = { dataset: {}, isConnected: true };
+    plugin.getElementText = () => SOURCE;
+    plugin.resolveManualTranslationSource = () => ({ text: SOURCE, domText: SOURCE, source: "dom-content" });
+    plugin.isLowInformationRepeatedText = () => false;
+    plugin.clearTranslationLineDismissal = () => {};
+    plugin.getMessageIdentity = () => "";
+    plugin.renderManualLoading = () => {};
+    plugin.setButtonBusy = () => {};
+    plugin.isManualTranslationRequestCurrent = () => true;
+    plugin.isManualTranslationConfigCurrent = () => true;
+    plugin.isManualTranslationSourceStillCurrent = () => true;
+    const rendered = [];
+    plugin.renderTranslation = (...args) => {
+        rendered.push(args);
+        return {};
+    };
+    const removed = [];
+    plugin.removeTranslationNode = (...args) => { removed.push(args); };
+    const toasts = [];
+    plugin.showToast = (...args) => { toasts.push(args); };
+    const autoOptions = plugin.withMessageIdentity(plugin.getAutoTranslationRequestOptionsForText(SOURCE, plugin.getAutoTranslationOptions()), messageNode, content, SOURCE);
+    const autoKey = plugin.getTranslationCacheKey(SOURCE, autoOptions);
+    return { plugin, messageNode, content, rendered, removed, toasts, autoKey };
+}
+
+function manualPartialResult(plugin, translated, partialInfo) {
+    return {
+        translated,
+        validation: { renderable: true, cacheable: false, quality: "partial", reasonCode: "long-text-partial" },
+        requestOptions: { ...plugin.getManualTranslationRequestOptions(), longTextPartial: true, longTextPartialInfo: partialInfo }
+    };
+}
+
+test("retranslating a kept auto partial keeps it unless the manual result misses fewer parts", async t => {
+    const { plugin, messageNode, content, rendered, autoKey } = manualTranslateFixture(t);
+    const kept = "第一部分。第四部分。第五部分。";
+    const keptInfo = { missingSegments: [2, 3], totalSegments: 5 };
+    plugin.rememberAutoTranslationPartialResult(autoKey, SOURCE, kept, { validationQuality: "partial", partialInfo: keptInfo });
+    plugin.runManualTranslationPlan = async () => manualPartialResult(plugin, "第一部分。第三部分。", { missingSegments: [2, 4, 5], totalSegments: 5 });
+    await plugin.retranslateMessage(messageNode, content);
+    assert.equal(rendered.length, 1);
+    assert.equal(rendered[0][2], kept, "the better kept partial stays");
+    assert.deepEqual(rendered[0][5].partialInfo, keptInfo);
+    assert.ok(plugin.getAutoTranslationPartialResult(autoKey, SOURCE), "and stays kept for redraw");
+
+    plugin.runManualTranslationPlan = async () => manualPartialResult(plugin, "第一部分。第二部分。第三部分。第四部分。", { missingSegments: [5], totalSegments: 5 });
+    await plugin.retranslateMessage(messageNode, content);
+    assert.equal(rendered.length, 2);
+    assert.equal(rendered[1][2], "第一部分。第二部分。第三部分。第四部分。", "a better manual result replaces it");
+    assert.deepEqual(rendered[1][5].partialInfo, { missingSegments: [5], totalSegments: 5 });
+});
+
 test("manual rescue stops at the first non-retryable provider error", async () => {
     const plugin = new Plugin();
     const line = "Service log: request 42 finished with status ok and a retry was scheduled. ";

@@ -386,6 +386,10 @@ const AUTO_TRANSLATE_CLOUD_LONG_TEXT_TIMEOUT_MAX_MS = 45000;
 const MANUAL_LONG_TEXT_WHOLE_PASS_MAX_LENGTH = 1800;
 // Most model requests one manual Translate click may send, counting every rescue and chunk attempt.
 const MANUAL_TRANSLATION_REQUEST_BUDGET = 8;
+// A long message's click gets one request per chunk, the whole pass and this many rescue requests on top
+// (never less than the base budget above), up to the maximum.
+const MANUAL_TRANSLATION_RESCUE_REQUEST_ALLOWANCE = 4;
+const MANUAL_TRANSLATION_REQUEST_BUDGET_MAX = 24;
 const MODEL_REQUEST_TIMEOUT_MS = 45000;
 const API_TEST_REQUEST_TIMEOUT_MS = 15000;
 // Error codes thrown by assertSafeRequestEndpoint, mapped to their localized messages.
@@ -860,6 +864,8 @@ module.exports = {
     AUTO_TRANSLATE_CLOUD_LONG_TEXT_TIMEOUT_MAX_MS,
     MANUAL_LONG_TEXT_WHOLE_PASS_MAX_LENGTH,
     MANUAL_TRANSLATION_REQUEST_BUDGET,
+    MANUAL_TRANSLATION_RESCUE_REQUEST_ALLOWANCE,
+    MANUAL_TRANSLATION_REQUEST_BUDGET_MAX,
     MODEL_REQUEST_TIMEOUT_MS,
     API_TEST_REQUEST_TIMEOUT_MS,
     API_ENDPOINT_ERROR_MESSAGE_KEYS,
