@@ -742,41 +742,34 @@ assert.equal(quickSettingsRoot.children.includes(quickSettingsDialog), true);
 assert.equal(fakeElementHasClass(quickSettingsDialog, "theme-light"), true);
 assert.equal(quickSettingsDialog.dataset.daitDiscordTheme, "light");
 const quickSettingsBackdrop = findByClass("dait-quick-settings-backdrop");
-const quickSettingsHeader = findByClass("dait-quick-settings-header");
-const quickSettingsTitle = findByClass("dait-quick-settings-title");
 const quickSettingsBodyNode = findByClass("dait-quick-settings-body");
-const quickSettingsFooter = findByClass("dait-quick-settings-footer");
-const quickSettingsDone = findByClass("dait-quick-settings-done");
-const quickSettingsClose = findByClass("dait-quick-settings-close");
-assert.ok(quickSettingsHeader);
-assert.ok(quickSettingsTitle);
+// v0.4.0: one title bar. The window has no header or footer of its own; the tabbed panel fills it and shows the
+// title and the only close button.
+assert.equal(findByClass("dait-quick-settings-header"), null);
+assert.equal(findByClass("dait-quick-settings-footer"), null);
+assert.equal(findByClass("dait-quick-settings-done"), null);
+const quickSettingsTitle = findByClass("dait-settings-title");
+const quickSettingsClose = findByClass("dait-settings-close");
 assert.ok(quickSettingsBodyNode);
-assert.ok(quickSettingsFooter);
-assert.ok(quickSettingsDone);
+assert.ok(quickSettingsTitle);
 assert.ok(quickSettingsClose);
+assert.equal(findAllByClass("dait-settings-title").length, 1);
+assert.equal(findAllByClass("dait-settings-close").length, 1);
 assert.equal(fakeElementHasClass(quickSettingsBackdrop, "theme-light"), true);
 assert.equal(quickSettingsBackdrop.dataset.daitDiscordTheme, "light");
-assert.equal(fakeElementHasClass(quickSettingsHeader, "theme-light"), true);
-assert.equal(quickSettingsHeader.dataset.daitDiscordTheme, "light");
 assert.equal(fakeElementHasClass(quickSettingsBodyNode, "theme-light"), true);
 assert.equal(quickSettingsBodyNode.dataset.daitDiscordTheme, "light");
-assert.equal(fakeElementHasClass(quickSettingsFooter, "theme-light"), true);
-assert.equal(quickSettingsFooter.dataset.daitDiscordTheme, "light");
-assert.equal(fakeElementHasClass(quickSettingsDone, "theme-light"), true);
-assert.equal(quickSettingsDone.dataset.daitDiscordTheme, "light");
-assert.equal(fakeElementHasClass(quickSettingsClose, "theme-light"), true);
-assert.equal(quickSettingsClose.dataset.daitDiscordTheme, "light");
 assert.equal(quickSettingsRoot.style.getPropertyValue("--text-normal"), "#243040");
 assert.equal(quickSettingsDialog.style.getPropertyValue("--bg-base-primary"), "#fbfcff");
-assert.equal(quickSettingsFooter.style.getPropertyValue("--modal-footer-background"), "#eef1f6");
-assert.equal(quickSettingsHeader.style.getPropertyValue("--elevation-high"), "0 16px 40px rgba(24, 36, 61, 0.16)");
+assert.equal(quickSettingsBodyNode.style.getPropertyValue("--modal-footer-background"), "#eef1f6");
+assert.equal(quickSettingsBodyNode.style.getPropertyValue("--elevation-high"), "0 16px 40px rgba(24, 36, 61, 0.16)");
 assert.equal(quickSettingsTitle.textContent, quickSettingsPlugin.t("settingsTitle"));
+assert.equal(quickSettingsDialog.getAttribute("aria-label"), quickSettingsPlugin.t("settingsTitle"));
 assert.equal(quickSettingsDialog.dataset.daitSettingsModal, undefined);
 assert.equal(quickSettingsClose.focused, true);
-assert.equal(quickSettingsHeader.parentElement, quickSettingsDialog);
 assert.equal(quickSettingsBodyNode.parentElement, quickSettingsDialog);
-assert.equal(quickSettingsFooter.parentElement, quickSettingsDialog);
-assert.equal(quickSettingsDone.textContent, "完成");
+assert.equal(quickSettingsDialog.children.length, 1);
+assert.equal(quickSettingsDialog.children[0], quickSettingsBodyNode);
 const quickSettingsSettingsPanel = findByClass("dait-settings");
 assert.ok(quickSettingsSettingsPanel);
 assert.equal(fakeElementHasClass(quickSettingsSettingsPanel, "theme-light"), true);
@@ -864,19 +857,25 @@ settingsTestModeLocalPlugin.updateTestModeVisibility(settingsTestModePanel, fals
 assert.equal(settingsTestModeSlot.querySelector(".dait-test-mode-section"), null);
 assert.equal(settingsTestModePanelBuilds, 0);
 assert.equal(quickSettingsDocumentListeners.has("keydown"), true);
+// Tab stays inside the window: the panel's close button is its first stop, the panel's last control its last.
+const quickSettingsFocusables = quickSettingsPlugin.getQuickSettingsFocusableElements(quickSettingsDialog);
+const quickSettingsLastFocusable = quickSettingsFocusables[quickSettingsFocusables.length - 1];
+assert.equal(quickSettingsFocusables[0], quickSettingsClose);
+assert.notEqual(quickSettingsLastFocusable, quickSettingsClose);
 let quickSettingsTabPrevented = false;
 quickSettingsClose.focused = false;
-global.document.activeElement = quickSettingsDone;
+global.document.activeElement = quickSettingsLastFocusable;
 quickSettingsDocumentListeners.get("keydown")({ key: "Tab", shiftKey: false, preventDefault() { quickSettingsTabPrevented = true; }, stopPropagation() {} });
 assert.equal(quickSettingsTabPrevented, true);
 assert.equal(quickSettingsClose.focused, true);
 let quickSettingsShiftTabPrevented = false;
-quickSettingsDone.focused = false;
+quickSettingsLastFocusable.focused = false;
 global.document.activeElement = quickSettingsClose;
 quickSettingsDocumentListeners.get("keydown")({ key: "Tab", shiftKey: true, preventDefault() { quickSettingsShiftTabPrevented = true; }, stopPropagation() {} });
 assert.equal(quickSettingsShiftTabPrevented, true);
-assert.equal(quickSettingsDone.focused, true);
-quickSettingsDone.listeners.click({ preventDefault() {}, stopPropagation() {} });
+assert.equal(quickSettingsLastFocusable.focused, true);
+// The panel's close button closes the window through closeSettingsWindow (the fake DOM has no closest()).
+quickSettingsPlugin.closeQuickSettingsPanel(quickSettingsRoot, "button");
 assert.equal(quickSettingsRoot.removed, true);
 assert.equal(quickSettingsDocumentListeners.has("keydown"), false);
 assert.equal(panelQuickSettings.focused, true);
@@ -889,12 +888,12 @@ quickSettingsReuseDialog.className = "dait-quick-settings-dialog";
 const quickSettingsReusePanel = createFakeElement("div", quickSettingsCreated);
 quickSettingsReusePanel.className = "dait-settings";
 const quickSettingsReuseClose = createFakeElement("button", quickSettingsCreated);
-quickSettingsReuseClose.className = "dait-quick-settings-close";
+quickSettingsReuseClose.className = "dait-settings-close";
 const quickSettingsReuseDone = createFakeElement("button", quickSettingsCreated);
-quickSettingsReuseDone.className = "dait-quick-settings-done";
+quickSettingsReuseDone.className = "dait-small-button";
+quickSettingsReusePanel.appendChild(quickSettingsReuseClose);
+quickSettingsReusePanel.appendChild(quickSettingsReuseDone);
 quickSettingsReuseDialog.appendChild(quickSettingsReusePanel);
-quickSettingsReuseDialog.appendChild(quickSettingsReuseClose);
-quickSettingsReuseDialog.appendChild(quickSettingsReuseDone);
 quickSettingsReuseRoot.appendChild(quickSettingsReuseDialog);
 quickSettingsBody.appendChild(quickSettingsReuseRoot);
 quickSettingsPlugin.quickSettingsModalKeydown = null;
@@ -1043,12 +1042,19 @@ finally {
     console.warn = savedWarnForQuickSettingsFailure;
 }
 assert.ok(quickSettingsFailureRoot);
-assert.ok(findByClass("dait-quick-settings-error"));
-assert.ok(findByClass("dait-quick-settings-footer"));
-assert.ok(findByClass("dait-quick-settings-done"));
+// Without the panel (and its title bar) the error card carries the window's close button.
+const quickSettingsFailureCard = findByClass("dait-quick-settings-error");
+assert.ok(quickSettingsFailureCard);
+assert.equal(findByClass("dait-quick-settings-footer"), null);
+const quickSettingsFailureDone = findByClass("dait-quick-settings-done");
+assert.ok(quickSettingsFailureDone);
+assert.equal(quickSettingsFailureDone.parentElement, quickSettingsFailureCard);
+assert.equal(quickSettingsFailureDone.focused, true);
 assert.ok(quickSettingsFailurePlugin.quickSettingsDiagnosticLogs.some(entry => entry.action === "quick.settings.panel.build" && entry.status === "error"));
 assert.equal(quickSettingsFailureWarnings.length, 1);
 assert.equal(quickSettingsFailureToasts.some(toast => toast.type === "error"), true);
+quickSettingsFailureDone.listeners.click({ preventDefault() {}, stopPropagation() {} });
+assert.equal(quickSettingsFailureRoot.removed, true);
 quickSettingsFailurePlugin.closeQuickSettingsPanel();
 quickSettingsPlugin.isStarted = false;
 quickSettingsPlugin.setSetting("ui.showQuickSettingsRailButton", false);
@@ -1375,27 +1381,19 @@ const quickThemeBackdrop = createFakeElement("div", themeProbeCreated);
 quickThemeBackdrop.className = "dait-quick-settings-backdrop";
 const quickThemeDialog = createFakeElement("div", themeProbeCreated);
 quickThemeDialog.className = "dait-quick-settings-dialog";
-const quickThemeHeader = createFakeElement("div", themeProbeCreated);
-quickThemeHeader.className = "dait-quick-settings-header";
-const quickThemeTitle = createFakeElement("h2", themeProbeCreated);
-quickThemeTitle.className = "dait-quick-settings-title";
-const quickThemeClose = createFakeElement("button", themeProbeCreated);
-quickThemeClose.className = "dait-quick-settings-close";
+// The window: a body holding the settings panel (or, when the panel cannot be built, the error card with its button).
 const quickThemeBody = createFakeElement("div", themeProbeCreated);
 quickThemeBody.className = "dait-quick-settings-body";
-const quickThemeFooter = createFakeElement("div", themeProbeCreated);
-quickThemeFooter.className = "dait-quick-settings-footer";
+const quickThemeError = createFakeElement("div", themeProbeCreated);
+quickThemeError.className = "dait-quick-settings-error";
 const quickThemeDone = createFakeElement("button", themeProbeCreated);
 quickThemeDone.className = "dait-quick-settings-done";
 const quickThemeSettings = createFakeElement("div", themeProbeCreated);
 quickThemeSettings.className = "dait-settings";
-quickThemeHeader.appendChild(quickThemeTitle);
-quickThemeHeader.appendChild(quickThemeClose);
+quickThemeError.appendChild(quickThemeDone);
 quickThemeBody.appendChild(quickThemeSettings);
-quickThemeFooter.appendChild(quickThemeDone);
-quickThemeDialog.appendChild(quickThemeHeader);
+quickThemeBody.appendChild(quickThemeError);
 quickThemeDialog.appendChild(quickThemeBody);
-quickThemeDialog.appendChild(quickThemeFooter);
 quickThemeRoot.appendChild(quickThemeBackdrop);
 quickThemeRoot.appendChild(quickThemeDialog);
 themeProbeBody.appendChild(quickThemeRoot);
@@ -1403,11 +1401,8 @@ const quickThemeNodes = [
     quickThemeRoot,
     quickThemeBackdrop,
     quickThemeDialog,
-    quickThemeHeader,
-    quickThemeTitle,
-    quickThemeClose,
     quickThemeBody,
-    quickThemeFooter,
+    quickThemeError,
     quickThemeDone,
     quickThemeSettings
 ];
@@ -1422,8 +1417,8 @@ for (const themeClass of ["theme-light", "theme-dark", "theme-darker", "theme-mi
         }
     }
 }
-assert.equal(themeProbePlugin.isPluginThemeCandidate(quickThemeHeader), true);
-assert.equal(themeProbePlugin.isPluginThemeCandidate(quickThemeFooter), true);
+assert.equal(themeProbePlugin.isPluginThemeCandidate(quickThemeBody), true);
+assert.equal(themeProbePlugin.isPluginThemeCandidate(quickThemeError), true);
 assert.equal(themeProbePlugin.isPluginThemeCandidate(quickThemeDone), true);
 global.document = savedDocumentForThemeProbe;
 
@@ -2895,20 +2890,31 @@ assert.match(injectedCss, /\.dait-settings-rail \{[\s\S]*?overflow-y: auto;/);
 assert.match(injectedCss, /\.dait-settings-content \{[\s\S]*?min-height: 0;[\s\S]*?overflow-y: auto;/);
 assert.match(injectedCss, /\.dait-settings-tab\[aria-selected="true"\] \{/);
 assert.match(injectedCss, /\.dait-settings-danger-zone \.dait-settings-group-title \{/);
-assert.match(injectedCss, /\.dait-quick-settings-modal-root \{[\s\S]*?--dait-quick-dialog-bg:[\s\S]*?background: var\(--dait-quick-backdrop\);[\s\S]*?overflow: hidden;/);
+// The plugin's own settings window: a moderate window that the tabbed panel fills (one title bar, no footer);
+// colours come from the shared tokens, with no per-theme palette copies.
+const quickDialogBlock = injectedCss.match(/\.dait-quick-settings-dialog \{([\s\S]*?)\n\}/)?.[1] || "";
+assert.match(quickDialogBlock, /width: min\(920px, calc\(100vw - 48px\)\);/);
+assert.match(quickDialogBlock, /height: min\(760px, calc\(100vh - 64px\)\);/);
+assert.match(quickDialogBlock, /background: var\(--dait-bg\);/);
+assert.match(quickDialogBlock, /overflow: hidden;/);
+assert.equal(injectedCss.includes("1280px"), false);
+assert.match(injectedCss, /\.dait-quick-settings-modal-root \{[\s\S]*?background: var\(--dait-quick-backdrop\);[\s\S]*?overflow: hidden;/);
 assert.match(injectedCss, /\.theme-light\.dait-quick-settings-modal-root,[\s\S]*?\.dait-quick-settings-modal-root\[data-dait-discord-theme="light"\][\s\S]*?--dait-quick-backdrop: rgba\(6, 6, 7, 0\.34\);/);
-assert.match(injectedCss, /\.theme-light\.dait-quick-settings-modal-root,[\s\S]*?\.dait-quick-settings-modal-root\[data-dait-discord-theme="light"\][\s\S]*?color-scheme: light;/);
-assert.match(injectedCss, /\.theme-dark\.dait-quick-settings-modal-root,[\s\S]*?\.dait-quick-settings-modal-root\[data-dait-discord-theme="dark"\][\s\S]*?--dait-quick-backdrop: rgba\(0, 0, 0, 0\.42\);/);
-assert.match(injectedCss, /\.theme-dark\.dait-quick-settings-modal-root,[\s\S]*?\.dait-quick-settings-modal-root\[data-dait-discord-theme="dark"\][\s\S]*?color-scheme: dark;/);
-assert.match(injectedCss, /\.theme-darker\.dait-quick-settings-modal-root,[\s\S]*?\.dait-quick-settings-modal-root\[data-dait-discord-theme="darker"\][\s\S]*?--dait-quick-backdrop: rgba\(0, 0, 0, 0\.5\);/);
-assert.match(injectedCss, /\.theme-darker\.dait-quick-settings-modal-root,[\s\S]*?\.dait-quick-settings-modal-root\[data-dait-discord-theme="darker"\][\s\S]*?color-scheme: dark;/);
-assert.match(injectedCss, /\.theme-midnight\.dait-quick-settings-modal-root,[\s\S]*?\.dait-quick-settings-modal-root\[data-dait-discord-theme="midnight"\][\s\S]*?--dait-quick-backdrop: rgba\(0, 0, 0, 0\.58\);/);
-assert.match(injectedCss, /\.theme-midnight\.dait-quick-settings-modal-root,[\s\S]*?\.dait-quick-settings-modal-root\[data-dait-discord-theme="midnight"\][\s\S]*?color-scheme: dark;/);
-assert.match(injectedCss, /\.dait-quick-settings-dialog \{[\s\S]*?background: var\(--dait-quick-dialog-bg\);[\s\S]*?grid-template-rows: auto minmax\(0, 1fr\) auto;[\s\S]*?overflow: hidden;/);
-assert.match(injectedCss, /\.dait-quick-settings-header \{[\s\S]*?border-bottom: 1px solid var\(--dait-quick-border\);/);
-assert.match(injectedCss, /\.dait-quick-settings-body \{[\s\S]*?background: var\(--dait-quick-dialog-bg\);[\s\S]*?overflow-y: auto;/);
-assert.match(injectedCss, /\.dait-quick-settings-footer \{[\s\S]*?background: var\(--dait-quick-footer-bg\);[\s\S]*?border-top: 1px solid var\(--dait-quick-border\);/);
-assert.match(injectedCss, /\.dait-quick-settings-done \{/);
+assert.equal(/\.theme-(dark|darker|midnight)\.dait-quick-settings-modal-root/.test(injectedCss), false);
+assert.equal(injectedCss.includes("--dait-quick-dialog-bg"), false);
+const quickBodyBlock = injectedCss.match(/\.dait-quick-settings-body \{([\s\S]*?)\n\}/)?.[1] || "";
+assert.match(quickBodyBlock, /min-height: 0;/);
+assert.match(quickBodyBlock, /overflow-y: auto;/);
+assert.equal(quickBodyBlock.includes("padding"), false);
+assert.match(injectedCss, /\.dait-quick-settings-body > \.dait-settings \{[\s\S]*?flex: 1 1 auto;[\s\S]*?height: auto;[\s\S]*?min-height: 0;/);
+["header", "footer", "title", "close"].forEach(part => assert.equal(injectedCss.includes(".dait-quick-settings-" + part + " {"), false, part));
+assert.match(injectedCss, /\.dait-quick-settings-done \{[\s\S]*?background: var\(--dait-brand\);[\s\S]*?height: var\(--dait-control-h\);/);
+// The v0.3.0 settings layout rules (sidebar, hero, nav, 2-column sections) and their modal width override are gone.
+["dait-settings-sidebar", "dait-settings-layout", "dait-settings-hero", "dait-settings-nav", "dait-settings-mark", "dait-section-", "dait-api-key-row", "dait-api-controls", "dait-settings-row-wide"].forEach(name => {
+    assert.equal(injectedCss.includes(name), false, name);
+});
+assert.equal(injectedCss.includes("@media (min-width: 760px)"), false);
+assert.equal(injectedCss.includes("100vw - 28px"), false);
 assert.match(injectedCss, /\.theme-light\.dait-quick-settings-modal-root,[\s\S]*?\.dait-polish-result-panel\[data-dait-discord-theme="light"\] \{[\s\S]*?color-scheme: light;/);
 assert.equal(injectedCss.includes(".dait-quick-settings-rail {"), false);
 assert.match(injectedCss, /\.dait-quick-settings-panel \{/);
@@ -2921,7 +2927,6 @@ assert.match(injectedCss, /\.dait-quick-settings-button\[data-dait-discord-theme
 assert.match(injectedCss, /\[data-dait-discord-theme="dark"\] \.dait-quick-settings-button,[\s\S]*?\[data-dait-discord-theme="darker"\] \.dait-quick-settings-button,[\s\S]*?\[data-dait-discord-theme="midnight"\] \.dait-quick-settings-button/);
 assert.match(injectedCss, /\.dait-quick-settings-button \{[\s\S]*?--dait-quick-button-bg:[\s\S]*?background: var\(--dait-quick-button-bg\);[\s\S]*?color: var\(--dait-quick-button-text\);/);
 assert.match(injectedCss, /\.dait-quick-settings-button:hover,[\s\S]*?background: var\(--dait-quick-button-hover-bg\);[\s\S]*?color: var\(--dait-quick-button-hover-text\);/);
-assert.match(injectedCss, /\.dait-quick-settings-close \{/);
 assert.match(injectedCss, /\.dait-quick-settings-error \{/);
 // A narrow panel (BetterDiscord's own modal width) turns the tab rail into a scrolling row and stacks rows.
 assert.match(injectedCss, /@container dait-settings \(max-width: 760px\) \{[\s\S]*?\.dait-settings-body \{[\s\S]*?grid-template-columns: minmax\(0, 1fr\);/);
@@ -2942,8 +2947,11 @@ assert.match(injectedCss, /\[id\^="chat-messages-"\]:hover \.dait-message-button
 assert.match(injectedCss, /\.dait-translation-line \{[\s\S]*?overflow-anchor: none;/);
 assert.match(injectedCss, /\.dait-polish-result-panel \{/);
 assert.match(injectedCss, /\.theme-light\.dait-polish-result-panel,[\s\S]*?\.dait-polish-result-panel\[data-dait-discord-theme="light"\]/);
-assert.match(injectedCss, /\.theme-darker\.dait-polish-result-panel,[\s\S]*?\.dait-polish-result-panel\[data-dait-discord-theme="darker"\]/);
-assert.match(injectedCss, /\.theme-midnight\.dait-polish-result-panel,[\s\S]*?\.dait-polish-result-panel\[data-dait-discord-theme="midnight"\]/);
+// The polish result panel reads the shared tokens instead of four per-theme colour blocks.
+assert.match(injectedCss, /\.dait-polish-result-panel \{[\s\S]*?background: var\(--dait-surface\);[\s\S]*?border: 1px solid var\(--dait-divider\);[\s\S]*?box-shadow: var\(--dait-shadow\);[\s\S]*?color: var\(--dait-text\);/);
+assert.match(injectedCss, /\.dait-polish-result-output \{[\s\S]*?background: var\(--dait-input-bg\);[\s\S]*?color: var\(--dait-text\);/);
+assert.equal(/\.theme-(dark|darker|midnight)\.dait-polish-result-panel/.test(injectedCss), false);
+assert.equal(/\[data-dait-discord-theme="(light|darker|midnight)"\] \.dait-polish-result-output/.test(injectedCss), false);
 assert.match(injectedCss, /\.dait-polish-result-output \{/);
 assert.match(injectedCss, /\.dait-polish-result-action\.primary \{/);
 assert.match(injectedCss, /\.dait-polish-restore-control \{/);

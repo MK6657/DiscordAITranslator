@@ -1263,6 +1263,8 @@ module.exports = class DiscordAITranslator {
         const panel = document.createElement("div");
         panel.className = "dait-settings";
         if (quickSettings) panel.dataset.daitQuickSettings = "true";
+        // The language it is built in: a language change rebuilds the panels that differ (refreshSettingsWindowsLocale).
+        panel.dataset.daitLocale = this.getLocale();
         this.syncDiscordThemeClasses(panel);
 
         panel.appendChild(this.createSettingsHeader({ quickSettings }));
@@ -1659,23 +1661,22 @@ module.exports = class DiscordAITranslator {
 
     // --- Header ---
 
-    createSettingsHeader(options = {}) {
+    // The one title bar of every settings window: the plugin's own window has no header of its own, so the panel
+    // shows the title and the close button there too.
+    createSettingsHeader() {
         const header = document.createElement("div");
-        header.className = options.quickSettings ? "dait-settings-header dait-settings-header-embedded" : "dait-settings-header";
+        header.className = "dait-settings-header";
 
-        // The quick-settings window already shows the title and a close button above the panel.
-        if (!options.quickSettings) {
-            const logo = document.createElement("div");
-            logo.className = "dait-settings-logo";
-            logo.setAttribute("aria-hidden", "true");
-            logo.textContent = "AI";
-            header.appendChild(logo);
+        const logo = document.createElement("div");
+        logo.className = "dait-settings-logo";
+        logo.setAttribute("aria-hidden", "true");
+        logo.textContent = "AI";
+        header.appendChild(logo);
 
-            const title = document.createElement("h2");
-            title.className = "dait-settings-title";
-            title.textContent = this.t("settingsTitle");
-            header.appendChild(title);
-        }
+        const title = document.createElement("h2");
+        title.className = "dait-settings-title";
+        title.textContent = this.t("settingsTitle");
+        header.appendChild(title);
 
         const versionChip = document.createElement("span");
         versionChip.className = "dait-settings-version";
@@ -1685,19 +1686,17 @@ module.exports = class DiscordAITranslator {
 
         header.appendChild(this.createSettingsHeaderStatus());
 
-        if (!options.quickSettings) {
-            const close = document.createElement("button");
-            close.type = "button";
-            close.className = "dait-settings-close";
-            close.title = this.t("settingsClose");
-            close.setAttribute("aria-label", this.t("settingsClose"));
-            close.textContent = "×";
-            close.addEventListener("click", event => {
-                event?.preventDefault?.();
-                this.closeSettingsWindow(close);
-            });
-            header.appendChild(close);
-        }
+        const close = document.createElement("button");
+        close.type = "button";
+        close.className = "dait-settings-close";
+        close.title = this.t("settingsClose");
+        close.setAttribute("aria-label", this.t("settingsClose"));
+        close.textContent = "×";
+        close.addEventListener("click", event => {
+            event?.preventDefault?.();
+            this.closeSettingsWindow(close);
+        });
+        header.appendChild(close);
         return header;
     }
 
@@ -1760,6 +1759,9 @@ module.exports = class DiscordAITranslator {
     // the focused control.
     replaceSettingsPanelElement(panel, nextPanel = null) {
         if (!panel) return null;
+        // Already rebuilt earlier in the same change (the language select rebuilds its panel after setSetting, which
+        // has rebuilt it for the new language): hand back that panel instead of building a third one.
+        if (panel.__daitReplacedBy && panel.isConnected === false) return panel.__daitReplacedBy;
         const scrollTop = Number(panel.__daitSettingsUi?.content?.scrollTop || 0);
         const active = typeof document !== "undefined" ? document.activeElement : null;
         const focusPath = active && panel.contains?.(active) ? String(active.dataset?.daitPath || "") : "";
@@ -1773,6 +1775,7 @@ module.exports = class DiscordAITranslator {
         });
         this.destroySettingsModalSizing(panel);
         panel.replaceWith?.(nextPanel);
+        panel.__daitReplacedBy = nextPanel;
         const content = nextPanel.__daitSettingsUi?.content;
         if (content && scrollTop) content.scrollTop = scrollTop;
         if (focusPath) {
@@ -4726,14 +4729,31 @@ module.exports = class DiscordAITranslator {
         this.removePolishResultPanel();
         this.removePolishRestoreControl();
         this.removeInputActionMenu();
-        this.closeQuickSettingsPanel();
-        this.closeQuickPopover("language");
+        // The settings windows and the quick panel stay open and switch language in place.
+        this.refreshSettingsWindowsLocale();
+        this.quickPanel?.rerender?.("language");
         this.restoreAllTranslationSourceVisibility();
         document.querySelectorAll(".dait-message-button, .dait-polish-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-menu-button, .dait-input-action-menu, .dait-quick-settings-button").forEach(node => node.remove());
         document.querySelectorAll(".dait-translation-line, .dait-translation-box").forEach(node => node.remove());
         this.unpatchContextMenus();
         this.patchMessageContextMenu();
         this.queueScan();
+    }
+
+    // Rebuilds every open settings panel that still shows another language, in place and on the same tab (the
+    // panel keeps its scroll position and focused control), and renames the plugin's own settings window.
+    refreshSettingsWindowsLocale() {
+        if (typeof document === "undefined") return 0;
+        const locale = this.getLocale();
+        this.getQuickSettingsModalRoots().forEach(root => {
+            this.findQuickSettingsDialog(root)?.setAttribute?.("aria-label", this.t("settingsTitle"));
+        });
+        let rebuilt = 0;
+        [...(document.querySelectorAll?.(".dait-settings") || [])].forEach(panel => {
+            if (!panel || panel.isConnected === false || panel.dataset?.daitLocale === locale) return;
+            if (this.replaceSettingsPanelElement(panel)) rebuilt++;
+        });
+        return rebuilt;
     }
 
     getLocale() {
@@ -6495,34 +6515,13 @@ module.exports = class DiscordAITranslator {
             backdrop.className = "dait-quick-settings-backdrop";
             root.appendChild(backdrop);
 
+            // The tabbed panel fills the window and brings the only title bar (title, status, close); the
+            // window adds no header or footer of its own.
             dialog = document.createElement("div");
             dialog.className = "dait-quick-settings-dialog";
             dialog.setAttribute("role", "dialog");
             dialog.setAttribute("aria-modal", "true");
             dialog.setAttribute("aria-label", this.t("settingsTitle"));
-
-            const header = document.createElement("div");
-            header.className = "dait-quick-settings-header";
-            const title = document.createElement("h2");
-            title.className = "dait-quick-settings-title";
-            title.id = "dait-quick-settings-title";
-            title.textContent = this.t("settingsTitle");
-            header.appendChild(title);
-            dialog.setAttribute("aria-labelledby", title.id);
-
-            const close = document.createElement("button");
-            close.className = "dait-quick-settings-close";
-            close.type = "button";
-            close.textContent = "\u00d7";
-            close.title = this.t("quickSettingsClose");
-            close.setAttribute("aria-label", this.t("quickSettingsClose"));
-            close.addEventListener("click", event => {
-                event.preventDefault();
-                event.stopPropagation();
-                this.closeQuickSettingsPanel(root, "button");
-            });
-            header.appendChild(close);
-            dialog.appendChild(header);
 
             const body = document.createElement("div");
             body.className = "dait-quick-settings-body";
@@ -6541,7 +6540,7 @@ module.exports = class DiscordAITranslator {
                 });
             }
             catch (error) {
-                body.appendChild(this.createQuickSettingsErrorPanel(error));
+                body.appendChild(this.createQuickSettingsErrorPanel(error, () => this.closeQuickSettingsPanel(root, "done")));
                 this.logQuickSettingsDiagnostic("panel.build", "error", {
                     source,
                     ms: Date.now() - panelStartedAt,
@@ -6551,20 +6550,6 @@ module.exports = class DiscordAITranslator {
                 this.showToast(this.t("quickSettingsOpenFailed", { error: this.formatError(error) }), "error");
             }
             dialog.appendChild(body);
-
-            const footer = document.createElement("div");
-            footer.className = "dait-quick-settings-footer";
-            const done = document.createElement("button");
-            done.className = "dait-quick-settings-done";
-            done.type = "button";
-            done.textContent = this.t("quickSettingsDone");
-            done.addEventListener("click", event => {
-                event.preventDefault();
-                event.stopPropagation();
-                this.closeQuickSettingsPanel(root, "done");
-            });
-            footer.appendChild(done);
-            dialog.appendChild(footer);
 
             dialog.addEventListener("pointerdown", event => event.stopPropagation());
             root.addEventListener("pointerdown", event => {
@@ -6637,7 +6622,8 @@ module.exports = class DiscordAITranslator {
     }
 
     focusQuickSettingsInitialControl(dialog) {
-        const focusTarget = dialog?.querySelector?.(".dait-quick-settings-close")
+        const focusTarget = dialog?.querySelector?.(".dait-settings-close")
+            || dialog?.querySelector?.(".dait-quick-settings-done")
             || this.getQuickSettingsFocusableElements(dialog)[0]
             || dialog;
         try {
@@ -6718,7 +6704,8 @@ module.exports = class DiscordAITranslator {
         return tabindex !== undefined && tabindex !== null && tabindex !== "-1";
     }
 
-    createQuickSettingsErrorPanel(error) {
+    // Shown in the window when the panel cannot be built; without the panel's title bar it carries its own close button.
+    createQuickSettingsErrorPanel(error, onClose = null) {
         const panel = document.createElement("div");
         panel.className = "dait-quick-settings-error";
         const title = document.createElement("h3");
@@ -6730,6 +6717,18 @@ module.exports = class DiscordAITranslator {
         panel.appendChild(title);
         panel.appendChild(detail);
         panel.appendChild(hint);
+        if (typeof onClose === "function") {
+            const done = document.createElement("button");
+            done.className = "dait-quick-settings-done";
+            done.type = "button";
+            done.textContent = this.t("quickSettingsDone");
+            done.addEventListener("click", event => {
+                event.preventDefault();
+                event.stopPropagation();
+                onClose();
+            });
+            panel.appendChild(done);
+        }
         return panel;
     }
 
@@ -6749,11 +6748,7 @@ module.exports = class DiscordAITranslator {
             root,
             this.findQuickSettingsDialog(root),
             root.querySelector?.(".dait-quick-settings-backdrop"),
-            root.querySelector?.(".dait-quick-settings-header"),
             root.querySelector?.(".dait-quick-settings-body"),
-            root.querySelector?.(".dait-quick-settings-footer"),
-            root.querySelector?.(".dait-quick-settings-title"),
-            root.querySelector?.(".dait-quick-settings-close"),
             root.querySelector?.(".dait-quick-settings-done"),
             root.querySelector?.(".dait-quick-settings-error"),
             ...(root.querySelectorAll?.(".dait-settings") || [])
@@ -16647,8 +16642,8 @@ module.exports = class DiscordAITranslator {
     getEffectiveRequestApiKey(...args) { return this.providerLayer.getEffectiveRequestApiKey(...args); }
     getRequestHeaders(...args) { return this.providerLayer.getRequestHeaders(...args); }
     hasUsableApiConfig(...args) { return this.providerLayer.hasUsableApiConfig(...args); }
-    setApiStatus(...args) { const result = this.providerLayer.setApiStatus(...args); this.quickPanel?.requestStatusUpdate(); return result; }
-    setApiRuntimeStatus(...args) { const result = this.providerLayer.setApiRuntimeStatus(...args); this.quickPanel?.requestStatusUpdate(); return result; }
+    setApiStatus(...args) { const result = this.providerLayer.setApiStatus(...args); this.quickPanel?.noteApiStatus?.(args[4] ?? args[0]?.dataset?.daitKind, args[1]); this.quickPanel?.requestStatusUpdate(); return result; }
+    setApiRuntimeStatus(...args) { const result = this.providerLayer.setApiRuntimeStatus(...args); this.quickPanel?.noteApiStatus?.(args[0], args[1]); this.quickPanel?.requestStatusUpdate(); return result; }
     markLocalProviderHealthy(...args) { return this.providerLayer.markLocalProviderHealthy(...args); }
     shouldBlockAutoTranslationForLocalProviderHealth(...args) { return this.providerLayer.shouldBlockAutoTranslationForLocalProviderHealth(...args); }
     getLocalProviderHealthProbeRetryMs(...args) { return this.providerLayer.getLocalProviderHealthProbeRetryMs(...args); }
@@ -16669,7 +16664,7 @@ module.exports = class DiscordAITranslator {
     getAutoTranslationProviderKey(...args) { return this.providerLayer.getAutoTranslationProviderKey(...args); }
     getGoogleTranslateProviderKey(...args) { return this.providerLayer.getGoogleTranslateProviderKey(...args); }
     runModelTask(...args) { return this.providerLayer.runModelTask(...args); }
-    runModelTaskWithResult(...args) { return this.providerLayer.runModelTaskWithResult(...args); }
+    runModelTaskWithResult(...args) { const result = this.providerLayer.runModelTaskWithResult(...args); this.quickPanel?.watchRequestResult?.(args[0], args[2], result); return result; }
     adoptSharedModelResult(...args) { return this.providerLayer.adoptSharedModelResult(...args); }
     fetchModelResponse(...args) { return this.providerLayer.fetchModelResponse(...args); }
     annotateModelRequestError(...args) { return this.providerLayer.annotateModelRequestError(...args); }
@@ -16838,7 +16833,7 @@ module.exports = class DiscordAITranslator {
     getAutoTranslationDecisionAction(...args) { return this.autoQueueCore.getAutoTranslationDecisionAction(...args); }
     getAutoTranslationLastDecisionState(...args) { return this.autoQueueCore.getAutoTranslationLastDecisionState(...args); }
     getLastAutoTranslationDecisionsSnapshot(...args) { return this.autoQueueCore.getLastAutoTranslationDecisionsSnapshot(...args); }
-    clearAutoTranslationProviderFailureForCurrentConfig(...args) { return this.autoQueueCore.clearAutoTranslationProviderFailureForCurrentConfig(...args); }
+    clearAutoTranslationProviderFailureForCurrentConfig(...args) { const result = this.autoQueueCore.clearAutoTranslationProviderFailureForCurrentConfig(...args); if ((args[0] ?? "translation") === "translation") this.quickPanel?.clearConfigError?.(); return result; }
     releaseProviderBlockedAutoTranslationItems(...args) { return this.autoQueueCore.releaseProviderBlockedAutoTranslationItems(...args); }
     isAutoTranslationProviderSnapshotCurrent(...args) { return this.autoQueueCore.isAutoTranslationProviderSnapshotCurrent(...args); }
     isAutoTranslationScrollEventRelevant(...args) { return this.autoQueueCore.isAutoTranslationScrollEventRelevant(...args); }
@@ -16956,7 +16951,7 @@ module.exports = class DiscordAITranslator {
     pruneAutoTranslationFailureMapSize(...args) { return this.autoQueueCore.pruneAutoTranslationFailureMapSize(...args); }
     shouldMarkAutoTranslationProviderFailureForItem(...args) { return this.autoQueueCore.shouldMarkAutoTranslationProviderFailureForItem(...args); }
     isProviderWideAutoTranslationPrefetchFailure(...args) { return this.autoQueueCore.isProviderWideAutoTranslationPrefetchFailure(...args); }
-    markAutoTranslationProviderFailure(...args) { const result = this.autoQueueCore.markAutoTranslationProviderFailure(...args); this.quickPanel?.requestStatusUpdate(); return result; }
+    markAutoTranslationProviderFailure(...args) { const result = this.autoQueueCore.markAutoTranslationProviderFailure(...args); this.quickPanel?.noteRequestFailure?.(args[0], args[1]); this.quickPanel?.requestStatusUpdate(); return result; }
     getAutoTranslationProviderFailure(...args) { return this.autoQueueCore.getAutoTranslationProviderFailure(...args); }
     isAutoTranslationProviderCoolingDown(...args) { return this.autoQueueCore.isAutoTranslationProviderCoolingDown(...args); }
     getNextAutoTranslationFailureCount(...args) { return this.autoQueueCore.getNextAutoTranslationFailureCount(...args); }
