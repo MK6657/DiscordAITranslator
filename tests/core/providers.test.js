@@ -198,6 +198,30 @@ test("Google per-minute limits are rate limits with a short cooldown; daily and 
     assert.ok(cooldownUntil > before && cooldownUntil <= Date.now() + 120000, String(cooldownUntil - before));
 });
 
+// prov-6: Google answers a mistyped key with HTTP 400, not 401/403.
+test("a Google key Google calls invalid (HTTP 400 API_KEY_INVALID) is an auth failure that cools the key for long", () => {
+    for (const locale of ["zh-CN", "en"]) {
+        const plugin = createDirectPlugin("googleCloud");
+        plugin.settings.ui.language = locale;
+        plugin.saveSettings = () => true;
+        for (const body of [
+            { error: { code: 400, message: "API key not valid. Please pass a valid API key.", status: "INVALID_ARGUMENT", details: [{ "@type": "type.googleapis.com/google.rpc.ErrorInfo", reason: "API_KEY_INVALID", domain: "googleapis.com" }] } },
+            { error: { code: 400, message: "API key expired. Please renew the API key.", status: "INVALID_ARGUMENT", details: [{ reason: "API_KEY_EXPIRED" }] } }
+        ]) {
+            const error = googleApiError(plugin, 400, body);
+            assert.equal(plugin.getAutoTranslationFailureType(error), "auth", body.error.message);
+            assert.equal(plugin.formatError(error), `${plugin.t("errorUnauthorized")} (400)`);
+            const before = Date.now();
+            plugin.markGoogleTranslateKeyFailure(error.googleTranslateApiKey, error);
+            assert.ok(plugin.settings.googleTranslate.keys[0].cooldownUntil >= before + 29 * 60 * 1000, "cools like a rejected key");
+            plugin.settings.googleTranslate.keys[0].cooldownUntil = 0;
+        }
+        // Other 400s stay client errors.
+        const badRequest = googleApiError(plugin, 400, { error: { code: 400, message: "Invalid Value", status: "INVALID_ARGUMENT", errors: [{ reason: "invalid" }] } });
+        assert.equal(plugin.getAutoTranslationFailureType(badRequest), "client");
+    }
+});
+
 const GOOGLE_PER_MINUTE_BODY = { error: { code: 429, status: "RESOURCE_EXHAUSTED", message: "Quota exceeded for quota metric 'v2 and v3 general model characters' and limit 'v2 and v3 general model characters per minute per user' of service 'translate.googleapis.com'.", errors: [{ reason: "rateLimitExceeded" }] } };
 const GOOGLE_MONTHLY_BODY = { error: { code: 403, status: "RESOURCE_EXHAUSTED", message: "Quota exceeded for quota metric 'Characters per month'", errors: [{ reason: "quotaExceeded" }] } };
 

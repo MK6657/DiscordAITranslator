@@ -1429,6 +1429,12 @@ class ProviderLayer {
             error.googleTranslateQuotaExceeded = true;
             error.retryAfterMs = Math.max(Number(error.retryAfterMs || 0), this.plugin.getGoogleTranslateQuotaRetryAfterMs());
         }
+        else if (/API_KEY_INVALID|API_KEY_EXPIRED|API key not valid|API key expired|PERMISSION_DENIED/i.test(text)) {
+            // Google answers a mistyped or expired key with HTTP 400: the key is rejected, so it
+            // cools like one and the message says the key is invalid.
+            error.providerAuthFailed = true;
+            error.googleTranslateKeyInvalid = true;
+        }
         return error;
     }
 
