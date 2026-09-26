@@ -2,12 +2,13 @@
 // Upgrading from v0.3.0 keeps the translation cache working: lines v0.3.0 cached still draw at once
 // after the upgrade and are never requested again, also once the plugin has detected the model a
 // local server serves (v0.4.0 puts that model into its cache keys). The v0.3.0 data comes from
-// tests/fixtures/v030-sakura-cache.json, which the released v0.3.0 artifact wrote for the chat in
+// tests/fixtures/v030-*-cache.json, which the released v0.3.0 artifact wrote for the chat in
 // tests/fixtures/chat-harness.js.
 const assert = require("node:assert/strict");
 const test = require("node:test");
 const Plugin = require("../../src");
 const fixture = require("../fixtures/v030-sakura-cache.json");
+const remoteFixture = require("../fixtures/v030-remote-cache.json");
 const {
     CHAT_MESSAGES,
     NEW_MESSAGE,
@@ -26,8 +27,8 @@ const AUTO_MESSAGES = CHAT_MESSAGES.filter(message => !message.manual);
 const PLAIN_MESSAGES = AUTO_MESSAGES.filter(message => ["300000000000000001", "300000000000000002", "300000000000000005"].includes(message.id));
 
 // The v0.3.0 settings file, saved a minute ago (the fixture's time stamps are moved to now).
-function loadV030Data(savedAgoMs = 60 * 1000) {
-    const data = JSON.parse(JSON.stringify(fixture.data));
+function loadV030Data(savedAgoMs = 60 * 1000, source = fixture) {
+    const data = JSON.parse(JSON.stringify(source.data));
     const cache = data.DiscordAITranslator.translationCache;
     const shift = Date.now() - savedAgoMs - cache.savedAt;
     cache.savedAt += shift;
@@ -143,6 +144,35 @@ test("upgrade from v0.3.0: the cache stays usable when the model is detected bef
     plugin.setCachedLocalProviderDetectedModel(plugin.settings.translation, SERVED_MODEL);
     await scanUntilIdle();
     assertLinesDrawn(lineText, AUTO_MESSAGES, "detected first");
+    assert.deepEqual(server.chatPhrases(), []);
+});
+
+test("a cache saved without the key schema by a v0.4.0 preview (model list, same old keys) is read as old data", async t => {
+    const data = loadV030Data();
+    data.DiscordAITranslator.translationCache.localModels = [];
+    const { server, plugin, scanUntilIdle, lineText } = openChat(t, { data });
+    plugin.setCachedLocalProviderDetectedModel(plugin.settings.translation, SERVED_MODEL);
+    await scanUntilIdle();
+    assertLinesDrawn(lineText, AUTO_MESSAGES, "preview cache");
+    assert.deepEqual(server.chatPhrases(), []);
+});
+
+test("upgrade from v0.3.0 on a remote provider: messages with standard emoji hit their v0.3.0 entries too", async t => {
+    const { bdApi, server, plugin, scanUntilIdle, lineText, translate, restart } = openChat(t, { data: loadV030Data(60 * 1000, remoteFixture) });
+    assert.equal(plugin.settings.translation.provider, "deepseek");
+    await scanUntilIdle();
+    assertLinesDrawn(lineText, AUTO_MESSAGES, "after the upgrade");
+    const manual = CHAT_MESSAGES.find(message => message.manual);
+    await translate(manual.id);
+    assert.equal(lineText(manual.id), manual.translation);
+    assert.deepEqual(server.chatPhrases(), [], "nothing cached by v0.3.0 is requested again");
+
+    const next = restart();
+    const saved = bdApi.files["DiscordAITranslator.cache"].translationCache;
+    assert.equal(saved.entries.filter(entry => entry.l && saved.strings[entry.k[0]] !== "auto-text").length, 0,
+        "every entry a lookup reached is a current one now");
+    await next.scanUntilIdle();
+    assertLinesDrawn(next.lineText, AUTO_MESSAGES, "after a restart");
     assert.deepEqual(server.chatPhrases(), []);
 });
 

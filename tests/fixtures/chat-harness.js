@@ -34,8 +34,16 @@ const CHAT_MESSAGES = [
 // Not cached by v0.3.0: its request makes the plugin detect the model the local server serves.
 const NEW_MESSAGE = { id: "300000000000000099", phrase: "tournament bracket", parts: () => ["Where can I find the tournament bracket for tonight"], translation: "今晚的比赛对阵表在哪里可以找到" };
 
-// The settings of a v0.3.0 user on Sakura with the model left on "local-model".
-function createV030Settings() {
+// A remote provider without model detection, for comparison. The key is a fake; no request leaves the test.
+const REMOTE_TRANSLATION = {
+    provider: "deepseek",
+    endpoint: "https://api.deepseek.com/chat/completions",
+    model: "deepseek-chat",
+    apiKey: "sk-fake-1"
+};
+
+// The settings of a v0.3.0 user on Sakura with the model left on "local-model" (or on the remote provider).
+function createV030Settings({ remote = false } = {}) {
     return {
         translation: {
             enabled: true,
@@ -46,7 +54,8 @@ function createV030Settings() {
             sourceLanguage: "auto",
             targetLanguage: "Chinese",
             temperature: 0.2,
-            maxTokens: 1200
+            maxTokens: 1200,
+            ...(remote ? REMOTE_TRANSLATION : {})
         },
         ui: {
             settingsVersion: 2,
@@ -108,6 +117,21 @@ function createFakeLocalServer({ messages = [...CHAT_MESSAGES, NEW_MESSAGE], ser
                 return JSON.stringify({ object: "list", data: [{ id: servedModel, object: "model" }] });
             }
             const body = JSON.stringify(request.body || {});
+            const find = text => messages.find(item => String(text).includes(item.phrase));
+            // A remote provider gets several messages at once: [{id, text}] in, [{id, translation}] out.
+            let batch = null;
+            try {
+                const input = JSON.parse(request.body?.messages?.at(-1)?.content || "");
+                if (Array.isArray(input) && input.every(item => item && typeof item.id === "string" && typeof item.text === "string")) batch = input;
+            }
+            catch {}
+            if (batch) {
+                const found = batch.map(item => ({ id: item.id, message: find(item.text) }));
+                found.forEach(item => log.push({ kind: "chat", phrase: item.message?.phrase || "?" }));
+                await wait("chat");
+                const content = JSON.stringify(found.map(item => ({ id: item.id, translation: item.message?.translation || "" })));
+                return JSON.stringify({ choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content } }] });
+            }
             const message = messages.find(item => body.includes(JSON.stringify(item.phrase).slice(1, -1)));
             if (!message && body.includes("Reply with OK only")) {
                 // The plugin checks that a local server is up before it sends messages to it.
@@ -276,6 +300,7 @@ module.exports = {
     CHANNEL,
     LOCAL_ENDPOINT,
     SERVED_MODEL,
+    REMOTE_TRANSLATION,
     CHAT_MESSAGES,
     NEW_MESSAGE,
     createV030Settings,

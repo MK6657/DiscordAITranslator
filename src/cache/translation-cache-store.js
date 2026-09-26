@@ -28,7 +28,7 @@ const { removeStandardEmoji } = require("../intake/emoji-text");
 // so many messages with the same short translation cannot grow the key count without bound.
 const TRANSLATION_CACHE_MAX_KEYS_PER_MESSAGE = 4;
 
-// The key format a saved cache was written with. Caches saved before 0.4.0 have neither this nor a model list.
+// The key format a saved cache was written with; caches saved before 0.4.0 (and by its previews) have none.
 // Their keys name a local server's "local-model" placeholder instead of the model it serves, and were built from
 // message text without standard emoji (only ":name:" emoji were read then). Such entries stay reachable through
 // compatibility aliases and move to their current key on their first hit.
@@ -109,7 +109,7 @@ class TranslationCacheStore {
     isPreKeySchemaTranslationCachePayload(payload) {
         if (Array.isArray(payload)) return true;
         if (!payload || typeof payload !== "object") return false;
-        return !(Number(payload.keySchema) >= TRANSLATION_CACHE_KEY_SCHEMA) && !Array.isArray(payload.localModels);
+        return !(Number(payload.keySchema) >= TRANSLATION_CACHE_KEY_SCHEMA);
     }
 
     hasLegacyTranslationCacheEntries() {
