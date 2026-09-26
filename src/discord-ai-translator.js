@@ -1744,6 +1744,9 @@ module.exports = class DiscordAITranslator {
         const scrollTop = Number(panel.__daitSettingsUi?.content?.scrollTop || 0);
         const active = typeof document !== "undefined" ? document.activeElement : null;
         const focusPath = active && panel.contains?.(active) ? String(active.dataset?.daitPath || "") : "";
+        // A reset restores the default tab; the rebuilt panel still opens where the user was.
+        const activeTab = panel.__daitSettingsUi?.activeTab;
+        if (activeTab && this.settings?.ui) this.settings.ui.settingsActiveTab = activeTab;
         nextPanel = nextPanel || this.getSettingsPanel({ quickSettings: panel.dataset?.daitQuickSettings === "true" });
         ["--dait-host-chrome", "--dait-host-max"].forEach(name => {
             const value = panel.style?.getPropertyValue?.(name);

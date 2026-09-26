@@ -857,7 +857,12 @@ test("rebuilding the panel (provider or language change) keeps the tab, the scro
     const keyDetails = next.querySelector("[data-dait-path='translation.apiKey']").closest("details");
     assert.ok(keyDetails);
     assert.equal(keyDetails.open, false);
-    plugin.destroySettingsModalSizing(next);
+    // A reset puts the default tab back in the settings; the rebuilt panel still opens on the current tab.
+    plugin.settings.ui.settingsActiveTab = "overview";
+    const third = plugin.replaceSettingsPanelElement(next);
+    assert.deepEqual(visibleTab(third), ["translate"]);
+    assert.equal(plugin.settings.ui.settingsActiveTab, "translate");
+    plugin.destroySettingsModalSizing(third);
 });
 
 test("test mode tools appear under their switch without rebuilding the panel", t => {
