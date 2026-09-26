@@ -26,47 +26,28 @@ module.exports = `
     margin-top: clamp(16px, 4vh, 32px) !important;
 }
 
-/* One token layer for the settings window, the settings/quick modal shell and the polish result panel. Every token
-   reads Discord's own variables (so dark, light and custom themes follow Discord) with a single fallback. */
+/* The plugin's own windows: the settings panel (in BetterDiscord's modal and in the launcher's window), the
+   launcher's window frame, the quick panel, the polish result panel, the composer's action menu and the content of
+   the confirmation dialogs. Their colours come only from the two palettes below, picked by data-dait-panel-theme
+   (set by applyPanelTheme from ui.panelTheme; "auto" follows Discord's light or dark theme). Nothing here reads a
+   Discord colour variable, so a part of Discord themed differently from the page cannot mix into these windows.
+   Chat translation lines and the message/composer buttons live inside Discord's UI and keep Discord's colours. */
 .dait-settings,
 .dait-quick-settings-modal-root,
-[data-dait-settings-modal="true"],
-.dait-polish-result-panel {
-    --dait-bg: var(--background-base-low, var(--background-primary, #313338));
-    --dait-surface: var(--background-base-lower, var(--background-secondary, #2b2d31));
-    --dait-surface-2: var(--background-base-lowest, var(--background-tertiary, #1e1f22));
-    --dait-input-bg: var(--input-background, var(--background-tertiary, #1e1f22));
-    --dait-input-border: var(--input-border, color-mix(in srgb, var(--dait-text-muted) 28%, transparent));
-    --dait-divider: var(--border-subtle, var(--background-modifier-accent, #3f4147));
-    --dait-hover: var(--background-modifier-hover, rgba(78, 80, 88, 0.3));
-    --dait-selected: var(--background-modifier-selected, rgba(78, 80, 88, 0.6));
-    --dait-text: var(--text-default, var(--text-normal, #dbdee1));
-    --dait-text-muted: var(--header-secondary, var(--text-muted, #b5bac1));
-    --dait-heading: var(--text-strong, var(--header-primary, #f2f3f5));
-    --dait-brand: var(--button-filled-brand-background, #4752c4);
-    --dait-brand-hover: var(--button-filled-brand-background-hover, #3c45a5);
-    --dait-on-fill: #ffffff;
-    --dait-button-secondary: var(--button-secondary-background, #4e5058);
-    --dait-button-secondary-hover: var(--button-secondary-background-hover, #6d6f78);
-    --dait-positive-fill: var(--button-positive-background, #248046);
-    --dait-danger-fill: var(--button-danger-background, #da373c);
-    --dait-danger: var(--text-danger, #fa777c);
-    --dait-warning: var(--text-warning, #f0b232);
-    --dait-success: var(--text-positive, #4ec183);
-    --dait-focus: var(--focus-primary, #00a8fc);
-    --dait-link: var(--text-link, #00a8fc);
-    --dait-shadow: var(--elevation-high, 0 8px 24px rgba(0, 0, 0, 0.24));
-    --dait-scrollbar-thumb: var(--scrollbar-thin-thumb, rgba(128, 132, 142, 0.45));
-    --dait-scrollbar-thumb-hover: var(--scrollbar-auto-thumb, rgba(128, 132, 142, 0.7));
-    --dait-scrollbar-track: var(--scrollbar-thin-track, transparent);
-
-    /* Type scale (px), 4/8 spacing grid, radii and the shared control size. */
-    --dait-font-title: 20px;
-    --dait-font-heading: 16px;
-    --dait-font-label: 15px;
-    --dait-font-body: 14px;
-    --dait-font-caption: 13px;
-    --dait-font-chip: 12px;
+.dait-quick-popover,
+.dait-polish-result-panel,
+.dait-input-action-menu,
+.dait-dialog {
+    /* One type scale for every window: body 15/1.55 for everything that is not a heading; small 13 only for the
+       version chip, the search summary and status badges next to a title. Weights 400/500/600. */
+    --dait-font-window: 18px;
+    --dait-font-page: 20px;
+    --dait-font-group: 16px;
+    --dait-font-body: 15px;
+    --dait-font-small: 13px;
+    --dait-line: 1.55;
+    --dait-font-family: var(--font-primary, "gg sans", "Noto Sans", "Microsoft YaHei", "Helvetica Neue", Helvetica, Arial, sans-serif);
+    /* 4/8 spacing grid, radii and the shared control size. */
     --dait-space-1: 4px;
     --dait-space-2: 8px;
     --dait-space-3: 12px;
@@ -77,47 +58,83 @@ module.exports = `
     --dait-radius-card: 8px;
     --dait-radius-pill: 999px;
     --dait-control-w: 240px;
-    --dait-control-h: 32px;
-
-    /* v0.3.0 token names, kept as aliases for the stylesheets that still use them. */
-    --dait-accent: var(--brand-500, #5865f2);
-    --dait-card: var(--dait-bg);
-    --dait-card-raised: var(--dait-surface);
-    --dait-card-soft: var(--dait-surface-2);
-    --dait-border: var(--dait-divider);
-    --dait-border-strong: color-mix(in srgb, var(--dait-text-muted) 45%, var(--dait-divider));
-    --dait-control: var(--dait-input-bg);
-    --dait-control-hover: color-mix(in srgb, var(--dait-text) 6%, var(--dait-input-bg));
-    --dait-label: var(--dait-text);
-    --dait-muted-readable: var(--dait-text-muted);
-    --dait-disabled-text: color-mix(in srgb, var(--dait-text-muted) 72%, var(--dait-bg));
+    --dait-control-h: 36px;
+    /* Derived from the palette: hover of filled buttons, the switch track when off, scrollbars. */
+    --dait-brand-hover: color-mix(in srgb, var(--dait-brand) 86%, #000000);
+    --dait-raised-hover: color-mix(in srgb, var(--dait-raised) 88%, var(--dait-text));
+    --dait-switch-off: color-mix(in srgb, var(--dait-placeholder) 78%, var(--dait-bg));
+    --dait-scrollbar-thumb: color-mix(in srgb, var(--dait-placeholder) 55%, transparent);
+    --dait-scrollbar-thumb-hover: color-mix(in srgb, var(--dait-placeholder) 80%, transparent);
+    --dait-scrollbar-track: transparent;
     color: var(--dait-text);
+    font-family: var(--dait-font-family);
+    font-size: var(--dait-font-body);
+    font-weight: 400;
+    letter-spacing: 0;
+    line-height: var(--dait-line);
+}
+
+/* Dark palette (also the default for a window that has not been given a theme yet). */
+[data-dait-panel-theme="dark"],
+:is(.dait-settings, .dait-quick-settings-modal-root, .dait-quick-popover, .dait-polish-result-panel, .dait-input-action-menu, .dait-dialog):not([data-dait-panel-theme]) {
+    --dait-bg: #2b2d31;
+    --dait-rail: #232428;
+    --dait-surface: #313338;
+    --dait-raised: #383a40;
+    --dait-input-bg: #1e1f22;
+    --dait-input-border: #4e5058;
+    --dait-divider: #3f4147;
+    --dait-text: #e3e5e8;
+    --dait-heading: #f2f3f5;
+    --dait-placeholder: #949ba4;
+    --dait-brand: #4f5bd5;
+    --dait-on-fill: #ffffff;
+    --dait-link: #a4abf8;
+    --dait-focus: #6f79e8;
+    --dait-success-fill: #3ba55d;
+    --dait-success: #6ccf8e;
+    --dait-warning-fill: #f0b232;
+    --dait-warning: #f5c55c;
+    --dait-danger-fill: #da373c;
+    --dait-danger: #ff8a8e;
+    --dait-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    --dait-backdrop: rgba(0, 0, 0, 0.5);
     color-scheme: dark;
 }
 
-/* Light theme: only the tokens whose Discord variable can be missing get a light fallback. */
-.theme-light.dait-settings,
-.theme-light .dait-settings,
-.dait-settings[data-dait-discord-theme="light"],
-[data-dait-discord-theme="light"] .dait-settings,
-.theme-light.dait-quick-settings-modal-root,
-.theme-light .dait-quick-settings-modal-root,
-.dait-quick-settings-modal-root[data-dait-discord-theme="light"],
-[data-dait-discord-theme="light"] .dait-quick-settings-modal-root,
-.theme-light [data-dait-settings-modal="true"],
-.theme-light[data-dait-settings-modal="true"],
-[data-dait-settings-modal="true"][data-dait-discord-theme="light"],
-.theme-light.dait-polish-result-panel,
-.theme-light .dait-polish-result-panel,
-.dait-polish-result-panel[data-dait-discord-theme="light"] {
-    --dait-danger: var(--text-danger, #c4323a);
-    --dait-warning: var(--text-warning, #9a5b00);
-    --dait-success: var(--text-positive, #1a7545);
-    --dait-link: var(--text-link, #006ce7);
-    --dait-hover: var(--background-modifier-hover, rgba(116, 124, 138, 0.14));
-    --dait-selected: var(--background-modifier-selected, rgba(116, 124, 138, 0.24));
-    --dait-shadow: var(--elevation-high, 0 8px 24px rgba(24, 36, 61, 0.14));
+/* Light palette. */
+[data-dait-panel-theme="light"] {
+    --dait-bg: #ffffff;
+    --dait-rail: #f2f3f5;
+    --dait-surface: #f6f7f8;
+    --dait-raised: #ebedef;
+    --dait-input-bg: #ffffff;
+    --dait-input-border: #c4c9ce;
+    --dait-divider: #e3e5e8;
+    --dait-text: #2e3035;
+    --dait-heading: #1f2124;
+    --dait-placeholder: #6d6f78;
+    --dait-brand: #4f5bd5;
+    --dait-on-fill: #ffffff;
+    --dait-link: #3c45a5;
+    --dait-focus: #4f5bd5;
+    --dait-success-fill: #248046;
+    --dait-success: #1a7f45;
+    --dait-warning-fill: #c7860d;
+    --dait-warning: #8a5a00;
+    --dait-danger-fill: #da373c;
+    --dait-danger: #c42b2f;
+    --dait-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+    --dait-backdrop: rgba(0, 0, 0, 0.36);
     color-scheme: light;
+}
+
+/* BetterDiscord's modal frame is Discord's own element: it keeps Discord's colours, and its scrollbar is a neutral
+   grey that reads on light and dark frames. */
+[data-dait-settings-modal="true"] {
+    --dait-scrollbar-thumb: rgba(128, 132, 142, 0.45);
+    --dait-scrollbar-thumb-hover: rgba(128, 132, 142, 0.7);
+    --dait-scrollbar-track: transparent;
 }
 
 .dait-settings *,
@@ -130,7 +147,11 @@ module.exports = `
 .dait-polish-result-panel,
 .dait-polish-result-panel *,
 .dait-polish-restore-control,
-.dait-message-button {
+.dait-message-button,
+.dait-input-action-menu,
+.dait-input-action-menu *,
+.dait-dialog,
+.dait-dialog * {
     box-sizing: border-box;
 }
 
@@ -215,7 +236,9 @@ module.exports = `
 /* One visible focus ring for every control in these surfaces. */
 .dait-settings :focus-visible,
 .dait-quick-settings-modal-root :focus-visible,
-.dait-polish-result-panel :focus-visible {
+.dait-polish-result-panel :focus-visible,
+.dait-input-action-menu :focus-visible,
+.dait-dialog :focus-visible {
     outline: 2px solid var(--dait-focus);
     outline-offset: 2px;
 }
@@ -226,7 +249,9 @@ module.exports = `
     .dait-quick-settings-modal-root,
     .dait-quick-settings-modal-root *,
     .dait-polish-result-panel,
-    .dait-polish-result-panel * {
+    .dait-polish-result-panel *,
+    .dait-input-action-menu,
+    .dait-input-action-menu * {
         animation-duration: 0.01ms !important;
         animation-iteration-count: 1 !important;
         scroll-behavior: auto !important;

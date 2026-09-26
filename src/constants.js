@@ -400,6 +400,8 @@ const MESSAGE_BUTTON_VISIBILITY_HOVER = "hover";
 // How a translated line looks in chat (Display settings): faint background, dimmer text, or a small tag.
 const TRANSLATION_LINE_STYLES = Object.freeze(["tint", "muted", "tag"]);
 const TRANSLATION_LINE_TEXT_SCALES = Object.freeze([100, 90]);
+// The palette of the plugin's own windows (Display settings): follow Discord's light/dark theme, or always light/dark.
+const PANEL_THEMES = Object.freeze(["auto", "light", "dark"]);
 // Target languages written right to left; their translation lines get dir="rtl".
 const RTL_LANGUAGE_CODES = Object.freeze(["ar", "fa", "he", "iw", "ur", "ps", "yi", "dv", "ug", "ckb", "sd"]);
 const POLISH_REPOLISH_SOURCE_ORIGINAL = "original";
@@ -740,6 +742,8 @@ const DEFAULT_SETTINGS = {
         hideOriginalAfterTranslation: false,
         translationStyle: "tint",
         translationTextScale: 100,
+        // One of PANEL_THEMES: the colours of the settings window, the quick panel and the dialogs.
+        panelTheme: "auto",
         injectMessageContextMenu: true,
         enablePolishHotkey: true,
         polishHotkey: "Ctrl+Alt+P",
@@ -854,6 +858,7 @@ module.exports = {
     MESSAGE_BUTTON_VISIBILITY_HOVER,
     TRANSLATION_LINE_STYLES,
     TRANSLATION_LINE_TEXT_SCALES,
+    PANEL_THEMES,
     RTL_LANGUAGE_CODES,
     POLISH_REPOLISH_SOURCE_ORIGINAL,
     POLISH_REPOLISH_SOURCE_LAST_RESULT,

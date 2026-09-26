@@ -365,7 +365,9 @@ class DiagnosticsRecorder {
                 historyBackfillEnabled: this.plugin.settings.ui?.historyBackfillEnabled,
                 providerFallbackEnabled: this.plugin.settings.ui?.providerFallbackEnabled,
                 providerFallbackOrder: this.plugin.getProviderFallbackOrder("translation"),
-                localProviderModel: this.plugin.getLocalProviderDetectedModelSnapshot(this.plugin.settings.translation)
+                localProviderModel: this.plugin.getLocalProviderDetectedModelSnapshot(this.plugin.settings.translation),
+                panelTheme: this.plugin.settings.ui?.panelTheme,
+                panelThemeResolved: this.plugin.resolvePanelTheme()
             },
             stats: {
                 entries: this.plugin.diagnosticLogs.length,

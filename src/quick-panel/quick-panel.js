@@ -9,7 +9,7 @@ const { PLUGIN_VERSION } = require("../version");
 const { getChannelRouteParts, getChannelRuleKey } = require("../auto-translation/channel-rule");
 
 const POPOVER_ID = "dait-quick-popover";
-const POPOVER_WIDTH_PX = 340;
+const POPOVER_WIDTH_PX = 360;
 const ANCHOR_GAP_PX = 8;
 const VIEWPORT_MARGIN_PX = 8;
 const POPOVER_UPDATE_DELAY_MS = 16;
@@ -98,7 +98,7 @@ class QuickPanel {
             // a focus ring there (Chromium shows one when focus comes from the composer); the first key
             // press brings the rings back.
             if (options.viaPointer) root.classList.add(POINTER_OPENED_CLASS);
-            this.plugin.syncDiscordThemeClasses(root, anchor || document.body);
+            this.plugin.applyPanelTheme(root);
             document.body.appendChild(root);
             this.update();
             this.position();
@@ -187,7 +187,7 @@ class QuickPanel {
         }
         if (previous.classList?.contains?.(POINTER_OPENED_CLASS)) root.classList.add(POINTER_OPENED_CLASS);
         root.dataset.daitRerendered = "true";
-        this.plugin.syncDiscordThemeClasses(root, this.plugin.isNodeConnected(this.launcher) ? this.launcher : document.body);
+        this.plugin.applyPanelTheme(root);
         // Start where the old panel was; position() then only moves it if the new text changes its height.
         if (root.style && previous.style) {
             root.style.left = previous.style.left;

@@ -646,7 +646,8 @@ function cssRule(selector) {
 
 test("polish result panel: readable title and buttons on the shared scale, a labelled × close button", t => {
     const title = cssRule(".dait-polish-result-title");
-    assert.match(title, /font-size: var\(--dait-font-label\);/);
+    // THEME-SPEC typography: the panel's title is a group heading (16/600).
+    assert.match(title, /font-size: var\(--dait-font-group\);/);
     assert.match(title, /font-weight: 600;/);
     const action = cssRule(".dait-polish-result-action");
     assert.match(action, /font-family: inherit;/);
@@ -656,12 +657,12 @@ test("polish result panel: readable title and buttons on the shared scale, a lab
     assert.match(action, /border-radius: var\(--dait-radius-control\);/);
     const close = cssRule(".dait-polish-result-icon");
     assert.match(close, /font-family: inherit;/);
-    // Weights 400-700 only, nothing under 12 px, no hard-coded colours in the panel's rules.
+    // Weights 400-600 only, nothing under 12 px, no hard-coded colours in the panel's rules.
     const rules = PLUGIN_CSS.match(/\n\.dait-polish-result-[\w-]+(?:[.:][\w-]+(?:\([^)]*\))?)* \{[\s\S]*?\n\}/g) || [];
     assert.ok(rules.length >= 6);
     // The token definitions (custom properties with their fallbacks) are not declarations of the panel's rules.
     for (const rule of rules.map(text => text.replace(/^\s*--[^\n]*$/gm, ""))) {
-        for (const [, weight] of rule.matchAll(/font-weight: (\d+);/g)) assert.ok([400, 500, 600, 700].includes(Number(weight)), rule);
+        for (const [, weight] of rule.matchAll(/font-weight: (\d+);/g)) assert.ok([400, 500, 600].includes(Number(weight)), rule);
         for (const [, size] of rule.matchAll(/font-size: (\d+)px;/g)) assert.ok(Number(size) >= 12, rule);
         assert.equal(/#[0-9a-f]{3,8}\b|rgba?\(/i.test(rule), false, rule);
     }

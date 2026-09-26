@@ -834,16 +834,20 @@ test("the quick panel styles follow the UI spec and respect reduced motion", () 
         return [...PLUGIN_CSS.matchAll(new RegExp(`(?:^|\\n)${escaped} \\{([\\s\\S]*?)\\n\\}`, "g"))].map(match => match[1]).join("\n");
     };
     const popover = rule(".dait-quick-popover");
-    assert.match(popover, /width: 340px;/);
+    // v0.4.0 theme follow-up: 360 px wide for the 15 px body text (THEME-SPEC "Layout details").
+    assert.match(popover, /width: 360px;/);
     assert.match(popover, /max-height: min\(600px, calc\(100vh - 96px\)\);/);
     assert.match(popover, /border-radius: 8px;/);
     assert.match(rule(".dait-qp-body"), /overflow-y: auto;/);
-    assert.match(rule(".dait-qp-label"), /font-size: 14px;[\s\S]*font-weight: 500;/);
-    assert.match(rule(".dait-qp-desc"), /font-size: 13px;/);
-    assert.match(rule(".dait-qp-section"), /font-size: 12px;[\s\S]*font-weight: 700;/);
+    // One type scale: labels and descriptions at the body size (weight tells them apart), the section as a group
+    // heading, the title as a window title.
+    assert.match(rule(".dait-qp-label"), /font-size: var\(--dait-font-body\);[\s\S]*font-weight: 600;/);
+    assert.match(rule(".dait-qp-desc"), /font-size: var\(--dait-font-body\);[\s\S]*font-weight: 400;/);
+    assert.match(rule(".dait-qp-section"), /font-size: var\(--dait-font-group\);[\s\S]*font-weight: 600;/);
+    assert.match(rule(".dait-qp-title"), /font-size: var\(--dait-font-window\);[\s\S]*font-weight: 600;/);
     assert.match(rule(".dait-qp-switch"), /height: 24px;[\s\S]*width: 40px;/);
-    assert.match(rule(".dait-qp-segmented"), /min-height: 32px;/);
-    assert.match(rule(".dait-qp-button"), /height: 32px;[\s\S]*padding: 0 14px;/);
+    assert.match(rule(".dait-qp-segmented"), /min-height: var\(--dait-control-h\);/);
+    assert.match(rule(".dait-qp-button"), /height: var\(--dait-control-h\);[\s\S]*padding: 0 14px;/);
     // Every status state has its own shape rule.
     ["ok", "busy", "waiting", "needs-you", "off"].forEach(state => {
         assert.ok(PLUGIN_CSS.includes(`.dait-qp-dot[data-dait-status="${state}"] {`), state);
@@ -851,8 +855,11 @@ test("the quick panel styles follow the UI spec and respect reduced motion", () 
     // Motion only when the user allows it; the popover sheet comes last.
     assert.doesNotMatch(popover, /animation|transition/);
     assert.match(PLUGIN_CSS, /@media \(prefers-reduced-motion: no-preference\) \{\s*\.dait-quick-popover \{\s*animation: dait-qp-enter/);
-    const sizes = [...PLUGIN_CSS.slice(PLUGIN_CSS.indexOf(".dait-quick-popover,")).matchAll(/font-size: (\d+)px/g)].map(match => Number(match[1]));
-    assert.ok(sizes.length > 0 && sizes.every(size => size >= 12), "no text below 12 px in the quick panel");
+    // Every text size in the popover comes from the shared scale (body 15, small 13, headings 16/18).
+    const popoverSheet = require("../../src/css/07-quick-popover");
+    const popoverRules = [...popoverSheet.matchAll(/\n(\.dait-(?:qp-|quick-popover)[^{]*)\{([^}]*)\}/g)];
+    const sizes = popoverRules.flatMap(match => [...match[2].matchAll(/font-size: ([^;]+);/g)].map(size => size[1]));
+    assert.ok(sizes.length > 0 && sizes.every(size => /^var\(--dait-font-(body|small|group|window)\)$/.test(size)), sizes.join(", "));
     assert.ok(PLUGIN_CSS.trimEnd().endsWith("}"));
     assert.ok(PLUGIN_CSS.lastIndexOf(".dait-quick-popover") > PLUGIN_CSS.lastIndexOf(".dait-translation-line"), "07-quick-popover is the last sheet");
 });
