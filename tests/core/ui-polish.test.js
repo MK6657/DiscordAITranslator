@@ -590,6 +590,50 @@ test("the source-language row names channel messages on the translate tab and th
     assert.doesNotMatch(I18N.en.messageLanguageDesc, /draft/);
 });
 
+// --- UI-6: settings search finds actions by their button text; Latin terms match at word starts ---
+
+function searchShell(t, language) {
+    const { plugin, doc } = createPlugin(t, { language, tab: "overview" });
+    const panel = plugin.getSettingsPanel({ quickSettings: true });
+    doc.body.appendChild(panel);
+    const state = panel.__daitSettingsUi;
+    const search = query => plugin.runSettingsSearch(state, query);
+    t.after(() => plugin.destroySettingsModalSizing(panel));
+    return { plugin, doc, panel, state, search };
+}
+
+test("settings search finds buttons: clear, test and export in Chinese", t => {
+    const { plugin, doc, state, search } = searchShell(t, "zh-CN");
+    const labels = query => search(query).map(entry => entry.label);
+    assert.ok(labels("清空统计").includes(plugin.t("translationCacheStats")), "a row is found by its button");
+    assert.ok(labels("清空").length >= 3);
+    assert.ok(labels("导出 JSON").includes(plugin.t("exportDiagnosticLogs")));
+    // Chinese matches anywhere in a word, as before.
+    assert.ok(labels("缓存").includes(plugin.t("translationCacheStats")));
+    const test = search("测试");
+    const card = test.find(entry => entry.tabId === "translate" && entry.row.classList.contains("dait-provider-settings-header"));
+    assert.ok(card, "the translation connection card's Test action is a search target");
+    assert.ok(test.some(entry => entry.tabId === "compose" && entry.row.classList.contains("dait-provider-settings-header")));
+    // Opening that result shows the tab and focuses Test.
+    plugin.openSettingsSearchResult(state, card);
+    assert.equal(doc.activeElement?.dataset?.daitAction, "apiTest");
+    assert.equal(doc.activeElement?.dataset?.daitKind, "translation");
+});
+
+test("settings search in English: clear, test and cache find the actions; 'reset' does not match 'preset'", t => {
+    const { plugin, search } = searchShell(t, "en");
+    const labels = query => search(query).map(entry => entry.label);
+    assert.ok(labels("clear").includes(plugin.t("translationCacheStats")), "Clear stats");
+    assert.ok(labels("clear cache").includes(plugin.t("clearTranslationCache")));
+    assert.ok(labels("test").some(label => label.startsWith(plugin.t("providerSettingsTitle"))));
+    assert.ok(labels("json").includes(plugin.t("exportDiagnosticLogs")));
+    const reset = labels("reset");
+    assert.ok(reset.includes(plugin.t("reset")));
+    assert.deepEqual(reset.filter(label => /preset/i.test(label)), [], "no match inside another word");
+    assert.ok(labels("preset").some(label => /preset/i.test(label)), "the whole word still matches");
+    assert.ok(labels("api").length > 0, "a word start in the middle of a label");
+});
+
 test("settings window: a key that ends an IME composition does not close the window", t => {
     const { doc, isOpen } = openHotkeyRecorder(t);
     doc.dispatchEvent("keydown", { key: "Escape", isComposing: true });

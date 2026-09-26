@@ -1496,7 +1496,8 @@ module.exports = class DiscordAITranslator {
         return results;
     }
 
-    // Every searchable row with the tab it lives on. Group titles take part in matching but are not shown.
+    // Every searchable row with the tab it lives on. Group titles and the row's own button texts (Clear stats,
+    // Export JSON, Test) take part in matching but are not shown.
     getSettingsSearchEntries(state) {
         const entries = [];
         const visit = (node, tab, groupTitle) => {
@@ -1514,7 +1515,7 @@ module.exports = class DiscordAITranslator {
                             tabLabel: tab.label,
                             label,
                             description,
-                            haystack: `${label} ${description} ${nextGroup || ""} ${tab.label}`.toLocaleLowerCase()
+                            haystack: `${label} ${description} ${this.getSettingsSearchButtonText(child)} ${nextGroup || ""} ${tab.label}`.toLocaleLowerCase()
                         });
                     }
                 }
@@ -1523,6 +1524,25 @@ module.exports = class DiscordAITranslator {
         };
         (state?.tabs || []).forEach(tab => visit(tab.tabpanel, tab, ""));
         return entries;
+    }
+
+    // The texts of the buttons that belong to this row (not to a row nested in it).
+    getSettingsSearchButtonText(row) {
+        return [...(row?.querySelectorAll?.("button") || [])]
+            .filter(button => button.closest?.(".dait-settings-row, .dait-settings-search-target") === row)
+            .map(button => String(button.textContent || "").trim())
+            .filter(Boolean)
+            .join(" ");
+    }
+
+    // A Latin or numeric term matches at the start of a word ("reset" is not found in "preset"); other scripts,
+    // which do not separate words with spaces, match anywhere.
+    matchesSettingsSearchTerm(haystack, term) {
+        if (!/^[a-z0-9]/.test(term)) return haystack.includes(term);
+        for (let index = haystack.indexOf(term); index >= 0; index = haystack.indexOf(term, index + 1)) {
+            if (index === 0 || !/[a-z0-9]/.test(haystack[index - 1])) return true;
+        }
+        return false;
     }
 
     runSettingsSearch(state, rawQuery) {
@@ -1534,7 +1554,7 @@ module.exports = class DiscordAITranslator {
             return [];
         }
         const terms = query.split(/\s+/).filter(Boolean);
-        const entries = this.getSettingsSearchEntries(state).filter(entry => terms.every(term => entry.haystack.includes(term)));
+        const entries = this.getSettingsSearchEntries(state).filter(entry => terms.every(term => this.matchesSettingsSearchTerm(entry.haystack, term)));
         state.searchEntries = entries;
         // The results replace every tab page, so no tab is selected meanwhile; the current one stays reachable with Tab.
         state.tabs.forEach(tab => {
@@ -2564,7 +2584,13 @@ module.exports = class DiscordAITranslator {
         title.textContent = `${this.t("providerSettingsTitle")} · ${this.getProviderDisplayName(provider)}`;
         title.title = this.t("providerSettingsDesc");
         header.appendChild(title);
-        if (ui.apiTest || ui.apiKey) header.appendChild(this.createProviderConnectionStatus(kind));
+        if (ui.apiTest || ui.apiKey) {
+            header.appendChild(this.createProviderConnectionStatus(kind));
+            // Search finds the card (and its Test button) by the card title or "Test".
+            header.className = `${header.className} dait-settings-search-target`;
+            header.dataset.daitSearchLabel = title.textContent;
+            header.dataset.daitSearchDescription = this.t("providerStatusDesc");
+        }
         block.appendChild(header);
 
         let hasRows = false;
