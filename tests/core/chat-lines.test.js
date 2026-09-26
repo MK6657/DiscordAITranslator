@@ -612,6 +612,44 @@ test("resetting the settings restyles lines already on screen to the default sty
     assert.equal(line.dataset.daitTag, undefined);
 });
 
+test("a new text size restyles every line in one scroll correction that keeps the visible chat in place", t => {
+    const { plugin, doc } = createChatPlugin(t);
+    const scroller = doc.body.appendChild(doc.createElement("div"));
+    const messages = [];
+    const lines = [];
+    for (let index = 0; index < 7; index++) {
+        const { messageNode, content } = createMessage(doc, `message ${index}`, `chat-messages-111111111111111111-30000000000000000${index}`);
+        scroller.appendChild(messageNode);
+        messages.push(messageNode);
+        // Messages 0-3 sit above the visible chat (3 only partly); 4 is the first one fully in view.
+        if (index !== 4) lines.push(plugin.renderTranslation(messageNode, content, `译文 ${index}`, "", content.text));
+    }
+    // A tiny layout: messages stacked in a scroller that shows its content at y=50..750; a line is 22px, 20px at 90%.
+    Object.assign(scroller, { scrollTop: 200, scrollHeight: 5000, clientHeight: 700, rect: { top: 50, bottom: 750, left: 0, right: 600, width: 600, height: 700 } });
+    const heightOf = message => 40 + message.querySelectorAll(".dait-translation-line")
+        .reduce((sum, line) => sum + (line.classList.contains("dait-translation-scale-90") ? 20 : 22), 0);
+    messages.forEach((message, index) => {
+        message.getBoundingClientRect = () => {
+            const top = 50 - scroller.scrollTop + messages.slice(0, index).reduce((sum, other) => sum + heightOf(other), 0);
+            return { top, bottom: top + heightOf(message), left: 0, right: 600, width: 600, height: heightOf(message) };
+        };
+    });
+    const anchorTop = messages[4].getBoundingClientRect().top;
+    assert.equal(anchorTop, 98);
+
+    const before = plugin.stableRenders;
+    plugin.setSetting("ui.translationTextScale", 90);
+    assert.ok(lines.every(line => line.classList.contains("dait-translation-scale-90")));
+    assert.equal(plugin.stableRenders, before + 1, "one scroll-stability snapshot for the whole restyle");
+    assert.equal(messages[4].getBoundingClientRect().top, anchorTop, "the first message in view stays where it was");
+    assert.equal(scroller.scrollTop, 192, "the four lines above it shrank by 2px each");
+
+    // A chat pinned to its newest message stays pinned.
+    Object.assign(scroller, { scrollTop: 4300 });
+    plugin.setSetting("ui.translationTextScale", 100);
+    assert.equal(scroller.scrollTop, 4300);
+});
+
 test("the Display section offers the style and text size selects", t => {
     const { plugin } = createChatPlugin(t);
     const selects = [];

@@ -12374,7 +12374,11 @@ module.exports = class DiscordAITranslator {
 
     syncAllTranslationDisplaySettings() {
         if (typeof document === "undefined" || !document.querySelectorAll) return;
-        document.querySelectorAll(".dait-translation-line[data-dait-owner]").forEach(line => {
+        const lines = [...document.querySelectorAll(".dait-translation-line[data-dait-owner]")];
+        if (!lines.length) return;
+        // A new text size, style or position changes the height of every line at once. One snapshot
+        // around the whole restyle keeps the first message in view where it was.
+        this.withTranslationScrollStability(this.getTranslationRestyleScrollAnchor(lines), () => lines.forEach(line => {
             const content = this.getTranslationContentForLine(line);
             if (!content?.isConnected) return;
             const isStateLine = line.classList?.contains?.("dait-translation-loading")
@@ -12387,7 +12391,26 @@ module.exports = class DiscordAITranslator {
             }
             this.positionExistingTranslationLine(line, content);
             this.syncTranslationSourceVisibility(line, content);
-        });
+        }), { allowScrollCorrectionWhilePaused: true, keepAnchorTop: true });
+    }
+
+    // The first message whose top is inside the visible chat (else the one partly in view): lines
+    // above its top may change height, and keeping that top in place keeps what the user reads in place.
+    getTranslationRestyleScrollAnchor(lines) {
+        const first = lines.find(line => line?.isConnected);
+        const scroller = first ? this.getTranslationScrollContainer(first) : null;
+        const band = scroller ? this.getScrollContainerBand(scroller) : null;
+        if (!band) return null;
+        const root = this.isDocumentScroller(scroller) ? document : scroller;
+        let partlyVisible = null;
+        for (const message of root.querySelectorAll?.(DISCORD_MESSAGE_NODE_SELECTOR) || []) {
+            const rect = message.getBoundingClientRect?.();
+            if (!rect || !(Number(rect.bottom) > band.top)) continue;
+            if (Number(rect.top) >= band.bottom) break;
+            if (Number(rect.top) >= band.top) return message;
+            if (!partlyVisible) partlyVisible = message;
+        }
+        return partlyVisible;
     }
 
     positionExistingTranslationLine(line, content) {
@@ -13107,6 +13130,8 @@ module.exports = class DiscordAITranslator {
         const scrollTop = this.getScrollContainerTop(scroller);
         if (!Number.isFinite(scrollTop) || !rect) return null;
         const atBottom = this.isScrollContainerAtBottom(scroller, scrollTop);
+        // A restyle of every line keeps the anchor's top edge in place, wherever the lines are.
+        if (options.keepAnchorTop) return { anchor, edge: "top", top: Number(rect.top || 0), scroller, scrollTop, atBottom };
         const band = this.getScrollContainerBand(scroller);
         const insertY = Number(this.settings.ui?.translationPosition === "after" ? rect.bottom : rect.top);
         const placement = !band ? "visible" : insertY <= band.top ? "above" : insertY >= band.bottom ? "below" : "visible";
