@@ -33,7 +33,7 @@ module.exports = `
     left: 8px;
     letter-spacing: 0;
     line-height: var(--dait-line);
-    max-height: min(720px, calc(100vh - 96px));
+    max-height: min(760px, calc(100vh - 64px));
     max-width: calc(100vw - 16px);
     overflow: hidden;
     position: fixed;
@@ -131,6 +131,8 @@ module.exports = `
     scrollbar-width: thin;
 }
 
+/* Status card: the dot, the service line and Test share the first line; the test result, what is happening now
+   and the note take the full width under them (the text column is not squeezed beside the button). */
 .dait-qp-status {
     align-items: center;
     background: var(--dait-surface);
@@ -142,20 +144,26 @@ module.exports = `
     padding: 10px 12px;
 }
 
-/* The dot sits on the first text line (not the middle of a wrapped block). */
 .dait-qp-status > .dait-qp-dot {
-    align-self: start;
-    margin-top: 7px;
+    grid-column: 1;
+    grid-row: 1;
 }
 
 .dait-qp-status-text {
-    min-width: 0;
+    display: contents;
+}
+
+.dait-qp-status > .dait-qp-test {
+    grid-column: 3;
+    grid-row: 1;
 }
 
 .dait-qp-status-line {
     color: var(--dait-text);
     font-size: var(--dait-font-body);
     font-weight: 600;
+    grid-column: 2;
+    grid-row: 1;
     line-height: var(--dait-line);
     margin: 0;
     overflow: hidden;
@@ -171,6 +179,7 @@ module.exports = `
     display: -webkit-box;
     font-size: var(--dait-font-body);
     font-variant-numeric: tabular-nums;
+    grid-column: 2 / -1;
     -webkit-line-clamp: 2;
     line-height: var(--dait-line);
     margin: 2px 0 0;
@@ -182,11 +191,19 @@ module.exports = `
     display: none;
 }
 
+/* "model · 820 ms": each dot stays with the part before it and the time stays whole, so a wrap never starts a line
+   with a dot or splits "820 ms"; a long model name can still wrap. */
+.dait-qp-status-sep,
+.dait-qp-status-part {
+    white-space: nowrap;
+}
+
 .dait-qp-status-detail {
     -webkit-box-orient: vertical;
     color: var(--dait-text);
     display: -webkit-box;
     font-size: var(--dait-font-body);
+    grid-column: 2 / -1;
     -webkit-line-clamp: 2;
     line-height: var(--dait-line);
     margin: 2px 0 0;
@@ -201,6 +218,7 @@ module.exports = `
     color: var(--dait-text);
     display: -webkit-box;
     font-size: var(--dait-font-body);
+    grid-column: 2 / -1;
     -webkit-line-clamp: 3;
     line-height: var(--dait-line);
     margin: 2px 0 0;

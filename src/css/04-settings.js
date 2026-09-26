@@ -542,14 +542,15 @@ module.exports = `.dait-settings {
     opacity: 0.55;
 }
 
-/* Segmented control: equal-width options filling the control width. */
+/* Segmented control: each option as wide as its label, the spare width shared out equally, so labels that fit
+   together keep the shared 240 px control width (segmentedLabelsFit decides when a row has to stack instead). */
 .dait-segmented {
     background: var(--dait-input-bg);
     border: 1px solid var(--dait-input-border);
     border-radius: var(--dait-radius-control);
     display: grid;
     gap: 2px;
-    grid-auto-columns: minmax(0, 1fr);
+    grid-auto-columns: auto;
     grid-auto-flow: column;
     height: var(--dait-control-h);
     padding: 2px;
@@ -955,7 +956,7 @@ module.exports = `.dait-settings {
     column-gap: var(--dait-space-3);
     display: grid;
     grid-template-areas: "icon label detail action";
-    grid-template-columns: 18px minmax(112px, 168px) minmax(0, 1fr) auto;
+    grid-template-columns: 18px minmax(112px, 184px) minmax(0, 1fr) auto;
     min-height: 44px;
     padding: 6px 0;
 }

@@ -4371,16 +4371,16 @@ module.exports = class DiscordAITranslator {
         if (group?.dataset) group.dataset.daitValue = wanted;
     }
 
-    // Rough text width at the segmented control's 15 px font: CJK characters are 1em, other characters ~0.55em. An
-    // option is the control width (less its 1 px border, 2 px padding and 2 px gaps) shared equally, less 6 px padding
-    // on each side.
+    // Rough text width at the segmented control's 15 px font: CJK characters are 1em, other characters ~0.55em (a
+    // generous estimate). Options are as wide as their labels plus 6 px padding on each side (css/04 .dait-segmented),
+    // so the labels fit when together they need no more than the control width less its 1 px border, 2 px padding
+    // and the 2 px gaps between options.
     segmentedLabelsFit(labels, controlWidth = SETTINGS_CONTROL_WIDTH) {
         const count = labels.length || 1;
-        const available = (controlWidth - 6 - 2 * (count - 1)) / count - 12;
-        return labels.every(label => {
-            const width = [...String(label || "")].reduce((sum, char) => sum + (/[⺀-鿿豈-﫿＀-￯]/.test(char) ? 15 : 8.3), 0);
-            return width <= available;
-        });
+        const available = controlWidth - 6 - 2 * (count - 1);
+        const needed = labels.reduce((total, label) => total + 12
+            + [...String(label || "")].reduce((sum, char) => sum + (/[⺀-鿿豈-﫿＀-￯]/.test(char) ? 15 : 8.3), 0), 0);
+        return needed <= available;
     }
 
     getLanguageLabel(language) {

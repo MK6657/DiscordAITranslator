@@ -2909,7 +2909,8 @@ assert.match(injectedCss, /\.dait-settings-body \{[\s\S]*?grid-template-columns:
 assert.match(injectedCss, /\.dait-settings-row \{[\s\S]*?column-gap: var\(--dait-space-5\);[\s\S]*?grid-template-columns: minmax\(0, 1fr\) auto;/);
 assert.match(injectedCss, /\.dait-row-control > select,\n\.dait-row-control > input:not\(\[type="checkbox"\]\),\n\.dait-row-control > \.dait-segmented,\n\.dait-row-control > \.dait-language-controls \{\n    width: var\(--dait-control-w\);/);
 assert.match(injectedCss, /\.dait-settings input\.dait-switch \{[\s\S]*?height: 24px;[\s\S]*?width: 40px;/);
-assert.match(injectedCss, /\.dait-segmented \{[\s\S]*?grid-auto-columns: minmax\(0, 1fr\);[\s\S]*?height: var\(--dait-control-h\);/);
+// Segmented options are as wide as their labels, the spare width shared out (theme audit).
+assert.match(injectedCss, /\.dait-segmented \{[\s\S]*?grid-auto-columns: auto;[\s\S]*?height: var\(--dait-control-h\);/);
 // Labels and descriptions: the same size and colour, the label at 600.
 assert.match(injectedCss, /\.dait-row-label \{\n    color: var\(--dait-text\);\n    font-size: var\(--dait-font-body\);\n    font-weight: 600;/);
 assert.match(injectedCss, /\.dait-row-description \{\n    color: var\(--dait-text\);\n    font-size: var\(--dait-font-body\);\n    font-weight: 400;/);

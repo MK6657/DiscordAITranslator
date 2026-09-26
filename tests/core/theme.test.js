@@ -1004,3 +1004,37 @@ test("one secondary button style, and the danger zone heading in the heading col
     // Group headings carry a rule, so a heading does not read like the row label right under it.
     assert.equal(rule(".dait-settings-group-title").get("border-bottom"), "1px solid var(--dait-divider)");
 });
+
+test("quick panel status card: Test sits on the service line, the lines under it use the card's full width", t => {
+    const rule = selector => declarations(cssRules().find(item => item.selector === selector && !item.context)?.body || "");
+    assert.equal(rule(".dait-qp-status-text").get("display"), "contents");
+    assert.equal(rule(".dait-qp-status > .dait-qp-test").get("grid-row"), "1");
+    assert.equal(rule(".dait-qp-status > .dait-qp-test").get("grid-column"), "3");
+    assert.equal(rule(".dait-qp-status-line").get("grid-row"), "1");
+    for (const selector of [".dait-qp-status-test", ".dait-qp-status-detail", ".dait-qp-status-note"]) {
+        assert.equal(rule(selector).get("grid-column"), "2 / -1", selector);
+    }
+    assert.equal(rule(".dait-qp-status-sep,\n.dait-qp-status-part").get("white-space"), "nowrap");
+
+    const { plugin, doc } = createPlugin(t, { discord: "theme-dark" });
+    plugin.setTaskProvider("translation", "sakuraLocal");
+    plugin.getLastApiTestResult = () => ({ ok: true, model: "Hy-MT2-1.8B-Q4_K_M.gguf", latencyMs: 20, at: Date.now() });
+    plugin.settings.translation.apiStatus = { state: "success", message: "" };
+    const userPanel = doc.body.appendChild(doc.createElement("section"));
+    const launcher = plugin.createQuickSettingsButton("panel", userPanel);
+    userPanel.appendChild(launcher);
+    const popover = plugin.openQuickPopover(launcher, { source: "test" });
+    const summary = popover.querySelector(".dait-qp-status-test");
+    assert.equal(summary.hidden, false);
+    assert.equal(summary.textContent, "Hy-MT2-1.8B-Q4_K_M.gguf · 20 ms");
+    // The dot stays with the model name and "20 ms" stays whole; the model name itself can wrap.
+    assert.deepEqual(summary.children.map(child => [child.className, child.textContent]), [
+        ["dait-qp-status-model", "Hy-MT2-1.8B-Q4_K_M.gguf"],
+        ["dait-qp-status-sep", " ·"],
+        ["dait-qp-status-gap", " "],
+        ["dait-qp-status-part", "20 ms"]
+    ]);
+    // The Test button and the status text are children of the card's grid.
+    const card = popover.querySelector(".dait-qp-status");
+    assert.deepEqual(card.children.map(child => child.className.split(" ").pop()), ["dait-qp-dot", "dait-qp-status-text", "dait-qp-test"]);
+});

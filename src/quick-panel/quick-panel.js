@@ -580,6 +580,22 @@ class QuickPanel {
         return true;
     }
 
+    // "model · 820 ms" as parts: the dots and the time do not break (css/07 .dait-qp-status-part); the text reads
+    // the same as the summary.
+    setTestSummary(node, text) {
+        const value = String(text ?? "");
+        if (!node || node.textContent === value) return false;
+        node.textContent = "";
+        value.split(" · ").forEach((part, index) => {
+            if (index > 0) {
+                node.appendChild(this.createElement("span", "dait-qp-status-sep", " ·"));
+                node.appendChild(this.createElement("span", "dait-qp-status-gap", " "));
+            }
+            node.appendChild(this.createElement("span", index > 0 ? "dait-qp-status-part" : "dait-qp-status-model", part));
+        });
+        return true;
+    }
+
     renderStatus(status) {
         const controls = this.controls;
         if (!this.root || !controls || !status) return;
@@ -587,7 +603,7 @@ class QuickPanel {
         if (controls.statusDot.dataset.daitStatus !== status.state) controls.statusDot.dataset.daitStatus = status.state;
         let resized = this.setText(controls.statusLine, status.headline);
         const testSummary = String(status.testSummary || "");
-        resized = this.setText(controls.statusTest, testSummary) || resized;
+        resized = this.setTestSummary(controls.statusTest, testSummary) || resized;
         if (controls.statusTest.hidden !== !testSummary) {
             controls.statusTest.hidden = !testSummary;
             resized = true;

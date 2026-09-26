@@ -704,11 +704,14 @@ test("segmented controls: radiogroup of radios, arrow keys choose, saved through
 
 test("segmented labels that do not fit the shared width make the row stacked", t => {
     const plugin = new Plugin();
-    // At the 15 px body size (THEME-SPEC) an option of the 240 px control holds about 64 px of text in thirds and
-    // 104 px in halves; "跟随总开关" (75 px) and "Above original" (105 px) no longer fit, so those rows stack.
-    assert.equal(plugin.segmentedLabelsFit(["跟随总开关", "总是翻译", "不翻译"]), false);
+    // Options are as wide as their labels (15 px text, 6 px padding each side) and share the 240 px control, less its
+    // border, padding and gaps: "跟随总开关 / 总是翻译 / 不翻译" (about 216 px) and "跟随 Discord / 浅色 / 深色" fit and
+    // keep the right-hand column; "Above original / Below original" (about 256 px) does not, so that row stacks.
+    assert.equal(plugin.segmentedLabelsFit(["跟随总开关", "总是翻译", "不翻译"]), true);
     assert.equal(plugin.segmentedLabelsFit(["总是翻译", "不翻译", "跟随"]), true);
     assert.equal(plugin.segmentedLabelsFit(["在原文上方", "在原文下方"]), true);
+    assert.equal(plugin.segmentedLabelsFit(["跟随 Discord", "浅色", "深色"]), true);
+    assert.equal(plugin.segmentedLabelsFit(["Follow Discord", "Light", "Dark"]), true);
     assert.equal(plugin.segmentedLabelsFit(["Above original", "Below original"]), false);
     assert.equal(plugin.segmentedLabelsFit(["Above", "Below"]), true);
     assert.equal(plugin.segmentedLabelsFit(["Follow main switch", "Always translate", "Never translate"]), false);
@@ -717,9 +720,17 @@ test("segmented labels that do not fit the shared width make the row stacked", t
     assert.ok(rowOf(rule).classList.contains("dait-settings-row-stacked"));
     const position = panel.querySelector("[data-dait-path='ui.translationPosition']");
     assert.equal(rowOf(position).classList.contains("dait-settings-row-stacked"), true);
+    assert.equal(rowOf(panel.querySelector("[data-dait-path='ui.panelTheme']")).classList.contains("dait-settings-row-stacked"), false);
     const zh = createShell(t, { language: "zh-CN" }, { doc, win }).panel;
     const zhPosition = zh.querySelector("[data-dait-path='ui.translationPosition']");
     assert.equal(rowOf(zhPosition).classList.contains("dait-settings-row-stacked"), false);
+    // The window theme and the channel rule keep the shared right-hand column in Chinese (theme audit).
+    assert.equal(rowOf(zh.querySelector("[data-dait-path='ui.panelTheme']")).classList.contains("dait-settings-row-stacked"), false);
+    zh.querySelectorAll("[data-dait-path='ui.currentChannelAutoTranslatePolicy']").forEach(control => {
+        assert.equal(rowOf(control).classList.contains("dait-settings-row-stacked"), false);
+    });
+    // Options sized to their labels, the spare width shared out.
+    assert.match(PLUGIN_CSS, /\.dait-segmented \{[\s\S]*?grid-auto-columns: auto;[\s\S]*?grid-auto-flow: column;/);
 });
 
 test("the model preset select follows the model field", t => {
