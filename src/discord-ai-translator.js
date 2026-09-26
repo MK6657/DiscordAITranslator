@@ -16958,19 +16958,48 @@ module.exports = class DiscordAITranslator {
     }
 
     // Rebuilds every open settings panel (BetterDiscord's plugin settings and the settings window) so they
-    // show the values after a reset.
+    // show the values after a reset. Each one opens on the tab it showed, and the stored tab is the one of the
+    // panel the reset came from, whose new reset button takes the focus.
     refreshOpenSettingsPanels(sourcePanel = null) {
         if (typeof document === "undefined") return 0;
         const panels = new Set();
         if (sourcePanel) panels.add(sourcePanel);
         document.querySelectorAll?.(".dait-settings")?.forEach(panel => panels.add(panel));
+        const sourceTab = sourcePanel?.__daitSettingsUi?.activeTab;
         let replaced = 0;
+        let rebuiltSource = null;
         panels.forEach(panel => {
             if (!panel || panel.isConnected === false) return;
             const quickSettings = Boolean(panel.closest?.(".dait-quick-settings-modal-root"));
-            if (this.replaceSettingsPanelElement(panel, this.getSettingsPanel({ quickSettings }))) replaced++;
+            // The reset put the default tab back; the new panel is built on the tab this one shows.
+            const activeTab = panel.__daitSettingsUi?.activeTab;
+            if (activeTab && this.settings?.ui) this.settings.ui.settingsActiveTab = activeTab;
+            const next = this.replaceSettingsPanelElement(panel, this.getSettingsPanel({ quickSettings }));
+            if (!next) return;
+            replaced++;
+            if (panel === sourcePanel) rebuiltSource = next;
         });
+        if (sourceTab && this.settings?.ui) this.settings.ui.settingsActiveTab = sourceTab;
+        if (rebuiltSource) this.focusSettingsResetControl(rebuiltSource);
         return replaced;
+    }
+
+    // The focused reset button left with the old panel. BetterDiscord's dialog hands the focus back to it once it
+    // has finished closing, which leaves the focus nowhere, so the new button is focused again then.
+    focusSettingsResetControl(panel) {
+        const target = () => {
+            const button = panel?.querySelector?.("[data-dait-action='resetSettings']");
+            if (button && !button.closest?.("[hidden]")) return button;
+            const state = panel?.__daitSettingsUi;
+            return state?.tabs?.find(tab => tab.id === state.activeTab)?.button || null;
+        };
+        this.focusSettingsElement(target());
+        if (typeof setTimeout !== "function") return;
+        [300, 1000].forEach(delay => this.unrefTimer(setTimeout(() => {
+            if (!panel?.isConnected || typeof document === "undefined") return;
+            const active = document.activeElement;
+            if (!active || active === document.body || active.isConnected === false) this.focusSettingsElement(target());
+        }, delay)));
     }
 
     injectStyles() {
