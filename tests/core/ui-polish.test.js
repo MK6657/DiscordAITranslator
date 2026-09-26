@@ -769,6 +769,22 @@ test("the bilingual flow line says whether polishing runs before the bilingual m
     assert.match(plugin.getPublicBilingualFlowText(), new RegExp(`^Polish before bilingual: ${plugin.getProviderDisplayName(plugin.settings.polish.provider)}; `));
 });
 
+// --- UI-10: the quick panel shows the whole actionable error; segment labels stay on one line ---
+
+test("quick panel: the status note wraps (up to three lines) instead of being cut to one", () => {
+    const note = cssRule(".dait-qp-status-note");
+    assert.doesNotMatch(note, /white-space: nowrap;/);
+    assert.doesNotMatch(note, /text-overflow: ellipsis;/);
+    assert.match(note, /-webkit-line-clamp: 3;/);
+    assert.match(note, /display: -webkit-box;/);
+    assert.match(note, /overflow-wrap: anywhere;/);
+    // Hidden still hides it (the clamp's display must not win over [hidden]).
+    assert.match(PLUGIN_CSS, /\.dait-qp-status-note\[hidden\] \{\n    display: none;/);
+    const segment = cssRule(".dait-qp-segment");
+    assert.match(segment, /white-space: nowrap;/);
+    assert.match(segment, /padding: 4px;/);
+});
+
 test("settings window: a key that ends an IME composition does not close the window", t => {
     const { doc, isOpen } = openHotkeyRecorder(t);
     doc.dispatchEvent("keydown", { key: "Escape", isComposing: true });

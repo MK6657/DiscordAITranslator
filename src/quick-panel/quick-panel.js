@@ -593,7 +593,7 @@ class QuickPanel {
             resized = true;
         }
         resized = this.setText(controls.statusDetail, this.getStatusDetailText(status)) || resized;
-        // The note is one line (a hint or the service's own error text); the tooltip holds all of it.
+        // The note (a hint or the service's own error text) wraps to at most three lines; the tooltip holds all of it.
         resized = this.setText(controls.statusNote, status.note) || resized;
         if (controls.statusNote.title !== (status.note || "")) controls.statusNote.title = status.note || "";
         if (controls.statusNote.hidden !== !status.note) {
