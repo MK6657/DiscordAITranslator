@@ -1182,6 +1182,44 @@ class AutoTranslationQueueCore {
         };
     }
 
+    // Quick settings can stay open across a channel switch (a notification click or a keybind) while scans are
+    // held, so a "current channel" rule control would keep showing and editing the channel it was built for.
+    // Each control bound to another channel is rebuilt, row and all, for the channel open now; on a screen with
+    // no channel there is nothing to set a rule for, so the rebuilt control is disabled. Returns the rows rebuilt.
+    refreshChannelRuleControls(routeKey = this.plugin.getCurrentRouteKey()) {
+        const path = "ui.currentChannelAutoTranslatePolicy";
+        const selector = `[data-dait-path='${path}']`;
+        let controls = [];
+        try {
+            if (typeof document !== "undefined" && typeof document.querySelectorAll === "function") controls = [...document.querySelectorAll(selector)];
+        }
+        catch {}
+        const channel = this.plugin.getChannelAutoTranslatePolicyStorageKey(routeKey);
+        let rebuilt = 0;
+        controls.forEach(control => {
+            const bound = control?.dataset?.daitRouteKey;
+            if (typeof bound !== "string") return;
+            const boundChannel = this.plugin.getChannelAutoTranslatePolicyStorageKey(bound);
+            if (boundChannel === channel && (channel || control.disabled)) return;
+            const row = this.plugin.createCurrentChannelPolicyRow();
+            const fresh = row?.dataset?.daitPath === path ? row : row?.querySelectorAll?.(selector)?.[0];
+            if (!fresh) return;
+            if (!channel) fresh.disabled = true;
+            // The old row holds its control as deep as the new row holds its own; swap the whole row when it matches.
+            let depth = 0;
+            for (let node = fresh; node && node !== row; node = node.parentNode) depth++;
+            let oldRow = control;
+            for (let step = 0; step < depth && oldRow; step++) oldRow = oldRow.parentNode;
+            if (oldRow && oldRow.tagName === row.tagName && String(oldRow.className || "") === String(row.className || "") && typeof oldRow.replaceWith === "function") {
+                oldRow.replaceWith(row);
+            }
+            else if (typeof control.replaceWith === "function") control.replaceWith(fresh);
+            else return;
+            rebuilt++;
+        });
+        return rebuilt;
+    }
+
     // Channels whose rule is 'enabled': they auto-translate even while the main switch is off.
     getChannelAutoTranslateAllowListCount(policies = this.plugin.settings.ui?.channelAutoTranslatePolicies) {
         if (!policies || typeof policies !== "object" || Array.isArray(policies)) return 0;

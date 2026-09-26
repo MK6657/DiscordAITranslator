@@ -61,7 +61,16 @@ function createFakeDocument() {
             },
             querySelectorAll(selector) { return descendants(this).filter(node => !node.removed && matches(node, selector)); },
             closest() { return null; },
-            remove() { this.removed = true; }
+            remove() { this.removed = true; },
+            replaceWith(next) {
+                const parent = this.parentNode;
+                const index = parent ? parent.children.indexOf(this) : -1;
+                if (index < 0) return;
+                parent.children.splice(index, 1, next);
+                next.parentNode = parent;
+                this.parentNode = null;
+                [this, ...descendants(this)].forEach(node => { node.removed = true; });
+            }
         };
         if (element.tagName === "SELECT") {
             Object.defineProperty(element, "value", {
@@ -197,7 +206,8 @@ test("channel rule control stays bound to the channel it was built for (quick se
     const [select] = root.querySelectorAll("[data-dait-path='ui.currentChannelAutoTranslatePolicy']");
     assert.equal(select.value, "inherit");
 
-    // Discord moves to channel B while the modal is open; closing it commits every control.
+    // Discord moves to channel B while the modal is open; closing it commits every control. (No scan has run
+    // yet, so the control has not been rebuilt for B; see the refreshChannelRuleControls tests below.)
     route = "g1:B:";
     plugin.commitSettingsControls(root);
     assert.deepEqual(plugin.settings.ui.channelAutoTranslatePolicies, { "g1:B": { mode: "disabled" } });
@@ -214,6 +224,76 @@ test("channel rule control stays bound to the channel it was built for (quick se
     assert.deepEqual(plugin.settings.ui.channelAutoTranslatePolicies, { "g1:A": { mode: "enabled" } });
     plugin.commitSettingsControls(root);
     assert.deepEqual(plugin.settings.ui.channelAutoTranslatePolicies, { "g1:A": { mode: "enabled" } });
+});
+
+test("after a channel switch the 'current channel' rule control is rebuilt for the channel now open", t => {
+    const doc = createFakeDocument();
+    useGlobals(t, { document: doc });
+    const plugin = quietPlugin();
+    let route = "g1:A:";
+    plugin.getCurrentRouteKey = () => route;
+    plugin.saveSettings = () => true;
+    plugin.queueScan = () => {};
+    plugin.settings.ui.channelAutoTranslatePolicies = { "g1:B": { mode: "disabled" } };
+    const selectorFor = "[data-dait-path='ui.currentChannelAutoTranslatePolicy']";
+
+    const section = doc.createElement("section");
+    section.appendChild(doc.createElement("h3"));
+    section.appendChild(plugin.createCurrentChannelPolicyRow());
+    section.appendChild(plugin.createCheckboxRow("ui.historyBackfillEnabled", "History"));
+    const [first] = section.querySelectorAll(selectorFor);
+    assert.equal(first.value, "inherit");
+    assert.equal(plugin.refreshChannelRuleControls(), 0);
+
+    // A notification click moves Discord to channel B while quick settings stays open.
+    route = "g1:B:";
+    assert.equal(plugin.refreshChannelRuleControls(), 1);
+    const controls = section.querySelectorAll(selectorFor);
+    assert.equal(controls.length, 1);
+    const [select] = controls;
+    assert.notEqual(select, first);
+    assert.equal(select.dataset.daitRouteKey, "g1:B:");
+    assert.equal(select.value, "disabled");
+    // The whole row was swapped in place: same position, nothing added.
+    assert.equal(section.children.length, 3);
+    assert.equal(section.children[1].children.includes(select), true);
+    // Editing it changes B, the channel it now shows; A keeps no rule.
+    select.value = "enabled";
+    select.dispatch("change");
+    assert.deepEqual(plugin.settings.ui.channelAutoTranslatePolicies, { "g1:B": { mode: "enabled" } });
+    assert.equal(plugin.refreshChannelRuleControls(), 0);
+
+    // A screen without a channel has nothing to set a rule for: the control is shown disabled.
+    route = "@me::";
+    assert.equal(plugin.refreshChannelRuleControls(), 1);
+    const [none] = section.querySelectorAll(selectorFor);
+    assert.equal(none.disabled, true);
+    assert.equal(plugin.refreshChannelRuleControls(), 0);
+    route = "g1:A:";
+    assert.equal(plugin.refreshChannelRuleControls(), 1);
+    assert.equal(Boolean(section.querySelectorAll(selectorFor)[0].disabled), false);
+});
+
+test("scans held while quick settings is open still rebuild the channel rule control after a switch", t => {
+    const doc = createFakeDocument();
+    useGlobals(t, { document: doc });
+    const plugin = quietPlugin();
+    let route = "g1:A:";
+    plugin.getCurrentRouteKey = () => route;
+    plugin.isStarted = true;
+    Object.assign(plugin, {
+        isDiscordMediaViewerQuiet: () => false,
+        isDiscordMediaViewerOpen: () => false,
+        isQuickSettingsPanelOpen: () => true,
+        logSlowOperation() {}
+    });
+    const section = doc.createElement("section");
+    section.appendChild(plugin.createCurrentChannelPolicyRow());
+    route = "g1:B:";
+    plugin.scanDiscordUi();
+    assert.equal(plugin.quickSettingsScanDeferred, true);
+    const [select] = section.querySelectorAll("[data-dait-path='ui.currentChannelAutoTranslatePolicy']");
+    assert.equal(select.dataset.daitRouteKey, "g1:B:");
 });
 
 // --- reset-1 + lifecycle-7 -------------------------------------------------------------------------

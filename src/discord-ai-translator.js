@@ -4819,6 +4819,8 @@ module.exports = class DiscordAITranslator {
             return;
         }
         if (this.isQuickSettingsPanelOpen()) {
+            // The route can change under the open panel; its channel rule control must follow it.
+            this.refreshChannelRuleControls();
             this.quickSettingsScanDeferred = true;
             this.logSlowOperation("scan.discord-ui", startedAt, { outcome: "blocked", reason: "quick-settings-open" }, 0);
             return;
@@ -4830,6 +4832,7 @@ module.exports = class DiscordAITranslator {
         }
         const routeChanged = this.trackAutoTranslationRouteChange();
         if (routeChanged) {
+            this.refreshChannelRuleControls();
             // The previous chat's scroller is unmounted; the draw pass finds the new one.
             this.cachedDrawScroller = null;
             const delayMs = Math.max(
@@ -15592,6 +15595,7 @@ module.exports = class DiscordAITranslator {
     getCurrentChannelAutoTranslatePolicy(...args) { return this.autoQueueCore.getCurrentChannelAutoTranslatePolicy(...args); }
     isCurrentChannelAutoTranslateAllowed(...args) { return this.autoQueueCore.isCurrentChannelAutoTranslateAllowed(...args); }
     getChannelAutoTranslateAllowListCount(...args) { return this.autoQueueCore.getChannelAutoTranslateAllowListCount(...args); }
+    refreshChannelRuleControls(...args) { return this.autoQueueCore.refreshChannelRuleControls(...args); }
     isAutoTranslationRequestCurrent(...args) { return this.autoQueueCore.isAutoTranslationRequestCurrent(...args); }
     isAutoTranslationRenderRequestCurrent(...args) { return this.autoQueueCore.isAutoTranslationRenderRequestCurrent(...args); }
     isSameAutoTranslationRouteScope(...args) { return this.autoQueueCore.isSameAutoTranslationRouteScope(...args); }
