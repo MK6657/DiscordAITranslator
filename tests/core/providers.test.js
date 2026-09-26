@@ -309,6 +309,51 @@ test("Baidu error codes map to provider-level failures with friendly messages", 
     assert.equal(plugin.parseBaiduTranslateResponse(JSON.stringify({ error_code: "52000", trans_result: [{ src: "a", dst: "b" }] })), "b");
 });
 
+// prov-1 / X2: Baidu's IP, language and parameter errors pause the provider like a bad key, but the
+// chat line, the one attention toast and the API status must name the real problem and the code.
+test("Baidu IP, language and parameter errors say what is wrong, with the Baidu code, on the line, toast and API status", () => {
+    const expected = {
+        "58000": "errorIpNotAllowed",
+        "58001": "errorLanguageUnsupported",
+        "54000": "errorProviderRequestRejected"
+    };
+    for (const locale of ["zh-CN", "en"]) {
+        for (const [code, key] of Object.entries(expected)) {
+            const plugin = createDirectPlugin("baidu");
+            plugin.settings.ui.language = locale;
+            plugin.settings.ui.showAutoTranslateToasts = false;
+            plugin.saveSettings = () => true;
+            const toasts = [];
+            plugin.showToast = (text, type) => toasts.push({ text, type });
+            const specific = plugin.t(key).replace(/[。.]$/, "");
+            const error = plugin.createBaiduTranslateError({ error_code: code, error_msg: "RAW BAIDU MESSAGE" });
+
+            const presentation = plugin.getTranslationErrorPresentation(error);
+            assert.equal(presentation.action, "settings", `${locale} ${code}`);
+            assert.ok(presentation.message.includes(specific), `${locale} ${code}: ${presentation.message}`);
+            assert.ok(presentation.message.includes(code), `${locale} ${code}: ${presentation.message}`);
+            assert.equal(presentation.message.includes(plugin.t("translationErrorAuth")), false, `${locale} ${code}: ${presentation.message}`);
+
+            plugin.markAutoTranslationProviderFailure(plugin.getAutoTranslationOptions(), error);
+            plugin.showAutoTranslateError(error);
+            assert.equal(toasts.length, 1, JSON.stringify(toasts));
+            assert.ok(toasts[0].text.includes(specific) && toasts[0].text.includes(code), `${locale} ${code}: ${toasts[0].text}`);
+            assert.equal(toasts[0].text.includes(plugin.t("translationErrorAuth")), false);
+
+            const status = plugin.getApiStatus("translation");
+            assert.equal(status.state, "failed");
+            assert.ok(status.message.includes(plugin.t(key)) && status.message.includes(code), `${locale} ${code}: ${status.message}`);
+        }
+        // A bad app id or key still says so, now with the Baidu code.
+        const plugin = createDirectPlugin("baidu");
+        plugin.settings.ui.language = locale;
+        const badKey = plugin.getTranslationErrorPresentation(plugin.createBaiduTranslateError({ error_code: "52003" }));
+        assert.ok(badKey.message.startsWith(plugin.t("translationErrorAuth")) && badKey.message.includes("52003"), badKey.message);
+        const quota = plugin.getTranslationErrorPresentation(plugin.createBaiduTranslateError({ error_code: "54004" }));
+        assert.ok(quota.message.startsWith(plugin.t("translationErrorQuota")) && quota.message.includes("54004"), quota.message);
+    }
+});
+
 test("HTTP errors: 402 is quota; digits inside a body never decide the type", () => {
     const plugin = createDirectPlugin("deepl");
     assert.equal(plugin.getAutoTranslationFailureType(Object.assign(new Error("API_ERROR"), { status: 402 })), "quota");

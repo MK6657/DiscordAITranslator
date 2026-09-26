@@ -12618,9 +12618,14 @@ module.exports = class DiscordAITranslator {
         if (attention === "config-key") return { action: "settings", reason: attention, message: this.t("translationErrorMissingKey") };
         if (attention === "endpoint") return { action: "settings", reason: attention, message: this.t(API_ENDPOINT_ERROR_MESSAGE_KEYS[error.code]) };
         if (attention === "auth") {
-            return { action: "settings", reason: attention, message: `${this.t("translationErrorAuth")}${this.formatTranslationErrorStatus(error)}` };
+            // Some rejections pause the provider like a bad key, but the key is fine: say what is wrong.
+            const rejection = this.getTranslationRejectionMessageKey(error);
+            const text = rejection ? this.t(rejection).replace(/[。.]\s*$/, "") : this.t("translationErrorAuth");
+            return { action: "settings", reason: attention, message: `${text}${this.formatTranslationErrorStatus(error)}` };
         }
-        if (attention === "quota") return { action: "settings", reason: attention, message: this.t("translationErrorQuota") };
+        if (attention === "quota") {
+            return { action: "settings", reason: attention, message: `${this.t("translationErrorQuota")}${this.formatTranslationErrorStatus(error)}` };
+        }
         if (attention === "local-unavailable") {
             const host = this.getTranslationEndpointHost();
             return {
@@ -12644,10 +12649,19 @@ module.exports = class DiscordAITranslator {
         return { action: "retry", reason: type, message: this.t("translationFailedInline", { error: this.formatError(error) }) };
     }
 
+    // The HTTP status and, for Baidu (which answers HTTP 200), its own error code.
     formatTranslationErrorStatus(error) {
-        const status = Number(error?.status || 0);
-        if (!status) return "";
-        return this.getLocale() === "en" ? ` (${status})` : `（${status}）`;
+        const codes = [Number(error?.status || 0) || "", String(error?.baiduErrorCode || "")].filter(Boolean);
+        if (!codes.length) return "";
+        const text = codes.join(", ");
+        return this.getLocale() === "en" ? ` (${text})` : `（${text}）`;
+    }
+
+    getTranslationRejectionMessageKey(error) {
+        if (error?.providerLanguageUnsupported) return "errorLanguageUnsupported";
+        if (error?.providerIpRejected) return "errorIpNotAllowed";
+        if (error?.providerRequestRejected) return "errorProviderRequestRejected";
+        return "";
     }
 
     getTranslationEndpointHost() {
