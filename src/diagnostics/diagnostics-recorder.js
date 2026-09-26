@@ -392,22 +392,28 @@ class DiagnosticsRecorder {
         };
     }
 
-    loadDiagnosticLogs() {
+    // options.keepLogged: the entries in memory were logged during start() before the stored log was loaded
+    // (settings load, data move, a failed read). They are added after the stored entries instead of being
+    // dropped, and the stored entries are never replaced by them on disk.
+    loadDiagnosticLogs(options = {}) {
+        const logged = options.keepLogged && Array.isArray(this.plugin.diagnosticLogs) ? this.plugin.diagnosticLogs : [];
+        const loggedCompressed = options.keepLogged ? Math.max(0, Number(this.plugin.diagnosticCompressedCount || 0) || 0) : 0;
         const payload = this.plugin.loadData(DIAGNOSTIC_DATA_KEY);
         const logs = Array.isArray(payload) ? payload : payload?.logs;
         if (!Array.isArray(logs)) {
-            this.plugin.diagnosticLogs = [];
-            this.plugin.diagnosticCompressedCount = 0;
+            this.plugin.diagnosticLogs = logged.slice(-DIAGNOSTICS_MAX_ENTRIES);
+            this.plugin.diagnosticCompressedCount = loggedCompressed;
             return;
         }
 
-        this.plugin.diagnosticLogs = logs
+        const stored = logs
             .map(entry => this.plugin.normalizePersistedDiagnosticEntry(entry))
-            .filter(Boolean)
-            .slice(-DIAGNOSTICS_MAX_ENTRIES);
-        this.plugin.diagnosticCompressedCount = Math.max(0, Number(payload?.compressed || 0) || 0);
+            .filter(Boolean);
+        this.plugin.diagnosticLogs = [...stored, ...logged].slice(-DIAGNOSTICS_MAX_ENTRIES);
+        this.plugin.diagnosticCompressedCount = Math.max(0, Number(payload?.compressed || 0) || 0) + loggedCompressed;
         this.plugin.diagnosticLogsDirty = false;
         this.plugin.diagnosticLogsDirtyAt = 0;
+        if (logged.length) this.plugin.scheduleDiagnosticLogsPersist();
     }
 
     createPersistedDiagnosticLogsPayload() {

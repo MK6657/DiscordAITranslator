@@ -725,3 +725,62 @@ test("start() migrates before loading, so the old cache is available right away"
     assert.deepEqual(Object.keys(bdApi.files.DiscordAITranslator), ["settings"]);
     assert.ok(bdApi.files["DiscordAITranslator.cache"].translationCache.entries.length >= 1);
 });
+
+// --- review 1: SD-1 (diagnostics moved while diagnostics are on) -----------------------------------
+
+function startablePlugin() {
+    const plugin = quietPlugin();
+    Object.assign(plugin, { injectStyles() {}, removeStyles() {}, patchMessageContextMenu() {}, startObserver() {}, queueScan() {}, showToast() {} });
+    return plugin;
+}
+
+test("start() keeps the moved diagnostics log when the move itself is logged (diagnostics on)", t => {
+    const now = Date.now();
+    const oldLogs = [0, 1, 2, 3, 4].map(index => ({ ts: now - 1000 + index, action: `old.entry.${index}`, status: "ok", key: "", count: 1, meta: {} }));
+    const bdApi = createFakeDataApi({
+        DiscordAITranslator: { settings: { ui: { settingsVersion: 2, diagnosticsEnabled: true } }, diagnosticLogs: { version: 1, compressed: 2, logs: oldLogs } }
+    });
+    useGlobals(t, { BdApi: bdApi, window: { addEventListener() {}, removeEventListener() {} }, document: createFakeDocument() });
+    const plugin = startablePlugin();
+    plugin.start();
+    const actions = plugin.diagnosticLogs.map(entry => entry.action);
+    assert.deepEqual(actions.slice(0, 5), oldLogs.map(entry => entry.action));
+    assert.ok(actions.includes("data.migrate"));
+    assert.equal(plugin.diagnosticCompressedCount, 2);
+    assert.equal(bdApi.files.DiscordAITranslator.diagnosticLogs, undefined);
+    plugin.stop();
+    const stored = bdApi.files["DiscordAITranslator.diagnostics"].diagnosticLogs;
+    assert.deepEqual(stored.logs.slice(0, 5).map(entry => entry.action), oldLogs.map(entry => entry.action));
+    assert.ok(stored.logs.some(entry => entry.action === "data.migrate"));
+});
+
+test("start() keeps the stored diagnostics log when a failing data step logs before it is loaded", t => {
+    const now = Date.now();
+    const bdApi = createFakeDataApi({
+        DiscordAITranslator: { settings: { ui: { settingsVersion: 2, diagnosticsEnabled: true } }, translationCache: cachePayload([{ key: "k1", value: "one", c: now, t: now, e: now + 40 * HOUR }]) },
+        "DiscordAITranslator.diagnostics": { diagnosticLogs: { version: 1, compressed: 0, logs: [{ ts: now - 5000, action: "kept.entry", status: "ok", key: "", count: 1, meta: {} }] } }
+    });
+    // The old cache cannot be removed from the settings file, so every start logs a data.io error first.
+    bdApi.failures.delete.add("DiscordAITranslator");
+    useGlobals(t, { BdApi: bdApi, window: { addEventListener() {}, removeEventListener() {} }, document: createFakeDocument() });
+    const plugin = startablePlugin();
+    plugin.start();
+    const actions = plugin.diagnosticLogs.map(entry => entry.action);
+    assert.equal(actions[0], "kept.entry");
+    assert.ok(actions.includes("data.io"));
+    plugin.stop();
+    assert.equal(bdApi.files["DiscordAITranslator.diagnostics"].diagnosticLogs.logs[0].action, "kept.entry");
+});
+
+test("start() still writes diagnostics a previous stop() could not save before it reloads the log", t => {
+    const bdApi = createFakeDataApi({ DiscordAITranslator: { settings: { ui: { settingsVersion: 2, diagnosticsEnabled: true } } } });
+    useGlobals(t, { BdApi: bdApi, window: { addEventListener() {}, removeEventListener() {} }, document: createFakeDocument() });
+    const plugin = startablePlugin();
+    plugin.settings.ui.diagnosticsEnabled = true;
+    plugin.logDiagnostic("unsaved.entry", "ok", {});
+    assert.equal(plugin.diagnosticLogsDirty, true);
+    plugin.start();
+    assert.deepEqual(bdApi.files["DiscordAITranslator.diagnostics"].diagnosticLogs.logs.map(entry => entry.action), ["unsaved.entry"]);
+    assert.deepEqual(plugin.diagnosticLogs.map(entry => entry.action), ["unsaved.entry"]);
+    plugin.stop();
+});

@@ -1021,6 +1021,14 @@ module.exports = class DiscordAITranslator {
         this.isStarted = true;
         this.apiRequestsClosed = false;
         try {
+            // Diagnostics a previous stop() could not save are still in memory; they are written before the log
+            // is loaded again. Otherwise the stored log is the only copy, and whatever is logged until it is loaded
+            // (settings load, data move below) is added to it rather than written over it.
+            const unsavedDiagnostics = Boolean(this.diagnosticLogsDirty);
+            if (!unsavedDiagnostics) {
+                this.diagnosticLogs = [];
+                this.diagnosticCompressedCount = 0;
+            }
             if (this.settingsLoadBlocked) {
                 this.loadSettings();
             }
@@ -1033,7 +1041,10 @@ module.exports = class DiscordAITranslator {
             }
             try { this.migrateLegacyDataStores(); }
             catch (error) { this.warnSanitized("Data store migration failed; old data kept", error); }
-            if (this.settings.ui?.diagnosticsEnabled) {
+            if (this.settings.ui?.diagnosticsEnabled && !unsavedDiagnostics) {
+                this.loadDiagnosticLogs({ keepLogged: true });
+            }
+            else if (this.settings.ui?.diagnosticsEnabled) {
                 if (this.diagnosticLogsDirty) this.flushDiagnosticLogs({ retryOnError: false });
                 if (!this.diagnosticLogsDirty) this.loadDiagnosticLogs();
                 else this.scheduleDiagnosticLogsPersist();
