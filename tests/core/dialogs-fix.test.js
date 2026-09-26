@@ -160,3 +160,179 @@ test("a confirmed Ask-before-sending sends the polished draft with Enter, not wi
     assert.equal(buttons.reduce((sum, button) => sum + button.clicks, 0), 0, "no composer button was clicked");
     assertSentWithEnter(textbox, doc);
 });
+
+// --- F5: a confirmation always ends, also with BetterDiscord's fallback modal ---------------------------
+
+// Elements with attributes, classes and a connected flag; the document finds them by [role='dialog'] or
+// by one class name, like the lookups confirmAction makes.
+function createDialogDocument() {
+    const elements = [];
+    const matches = (element, selector) => {
+        if (selector === "[role='dialog']") return element.attributes.role === "dialog";
+        if (/^\.[\w-]+$/.test(selector)) return element.classNames.has(selector.slice(1));
+        return false;
+    };
+    const createElement = (className = "", attributes = {}) => {
+        const element = {
+            classNames: new Set(String(className).split(/\s+/).filter(Boolean)),
+            attributes: { ...attributes },
+            isConnected: true,
+            setAttribute(name, value) { this.attributes[name] = String(value); },
+            getAttribute(name) { return this.attributes[name]; },
+            removeAttribute(name) { delete this.attributes[name]; },
+            closest() { return null; },
+            remove() { this.isConnected = false; }
+        };
+        elements.push(element);
+        return element;
+    };
+    return {
+        elements,
+        createElement,
+        activeElement: null,
+        body: {},
+        addEventListener() {},
+        removeEventListener() {},
+        getElementById: () => null,
+        querySelectorAll(selector) {
+            const parts = String(selector).split(",").map(part => part.trim());
+            return elements.filter(node => node.isConnected && parts.some(part => matches(node, part)));
+        }
+    };
+}
+
+function createConfirmHarness(t, showConfirmationModal) {
+    const doc = createDialogDocument();
+    const settingsRoot = doc.createElement("dait-quick-settings-modal-root");
+    const intervals = [];
+    const timeouts = [];
+    const calls = [];
+    useGlobals(t, {
+        document: doc,
+        window: { addEventListener() {}, removeEventListener() {} },
+        BdApi: { UI: { showConfirmationModal: (title, content, options) => {
+            calls.push({ title, content, options });
+            return showConfirmationModal(doc, options);
+        } } },
+        setInterval: callback => { intervals.push(callback); return intervals.length; },
+        clearInterval: id => { intervals[id - 1] = null; },
+        setTimeout: callback => { timeouts.push(callback); return timeouts.length; },
+        clearTimeout: id => { timeouts[id - 1] = null; }
+    });
+    const plugin = quietPlugin();
+    const poll = (count = 1) => {
+        for (let index = 0; index < count; index++) intervals.filter(Boolean).forEach(callback => callback());
+    };
+    const flushTimeouts = () => {
+        while (timeouts.some(Boolean)) {
+            const index = timeouts.findIndex(Boolean);
+            const callback = timeouts[index];
+            timeouts[index] = null;
+            callback();
+        }
+    };
+    return { doc, plugin, settingsRoot, calls, poll, flushTimeouts };
+}
+
+// BetterDiscord's Modals.default(): a .bd-modal-wrapper without role=dialog; a backdrop click only removes it.
+function openFallbackModal(doc) {
+    return doc.createElement("bd-modal-wrapper theme-dark");
+}
+
+test("a fallback modal dismissed by a backdrop click cancels and gives the settings window its keys back", async t => {
+    let wrapper = null;
+    const h = createConfirmHarness(t, doc => { wrapper = openFallbackModal(doc); return undefined; });
+    let result = null;
+    h.plugin.confirmAction({ title: "Clear the cache?" }).then(value => { result = value; });
+    assert.equal(h.plugin.isConfirmDialogOpen(), true);
+    assert.equal(h.settingsRoot.getAttribute("data-dait-confirm-open"), "true");
+    h.poll(3);
+    assert.equal(result, null, "still open");
+    // Backdrop click: the wrapper gets .closing and is removed 300 ms later; no callback runs.
+    wrapper.classNames.add("closing");
+    h.poll();
+    wrapper.remove();
+    h.poll();
+    await tick();
+    assert.equal(result, false);
+    assert.equal(h.plugin.isConfirmDialogOpen(), false);
+    assert.equal(h.settingsRoot.getAttribute("data-dait-confirm-open"), undefined);
+});
+
+test("the fallback modal's own buttons still answer", async t => {
+    const h = createConfirmHarness(t, doc => { openFallbackModal(doc); return undefined; });
+    const pending = h.plugin.confirmAction({ title: "Reset?" });
+    h.poll(2);
+    h.calls[0].options.onConfirm();
+    assert.equal(await pending, true);
+    assert.equal(h.plugin.isConfirmDialogOpen(), false);
+});
+
+test("Confirm in the fallback modal counts after the first dialog closed because its content failed", async t => {
+    let discordDialog = null;
+    const h = createConfirmHarness(t, doc => {
+        discordDialog = doc.createElement("bd-modal-root", { role: "dialog" });
+        return "modal-1";
+    });
+    let result = null;
+    h.plugin.confirmAction({ title: "Reset?" }).then(value => { result = value; });
+    h.poll();
+    // ErrorBoundary.onError: Discord's dialog closes (reporting onClose) and Modals.default() opens with the
+    // same callbacks.
+    discordDialog.remove();
+    h.calls[0].options.onClose();
+    openFallbackModal(h.doc);
+    h.flushTimeouts();
+    h.poll(2);
+    await tick();
+    assert.equal(result, null, "closing the failed dialog is not a cancel while the fallback is open");
+    assert.equal(h.plugin.isConfirmDialogOpen(), true);
+    h.calls[0].options.onConfirm();
+    await tick();
+    assert.equal(result, true);
+});
+
+test("a dialog that never shows up does not keep the settings window paused", async t => {
+    const h = createConfirmHarness(t, () => "modal-1");
+    let result = null;
+    h.plugin.confirmAction({ title: "Clear?" }).then(value => { result = value; });
+    h.poll(60);
+    assert.equal(h.plugin.isConfirmDialogOpen(), false, "Escape and Tab work again");
+    assert.equal(h.settingsRoot.getAttribute("data-dait-confirm-open"), undefined);
+    // A late answer from the dialog still counts.
+    h.calls[0].options.onConfirm();
+    await tick();
+    assert.equal(result, true);
+});
+
+test("stop() ends an open confirmation and clears the paused state", async t => {
+    const h = createConfirmHarness(t, () => undefined);
+    Object.assign(h.plugin, {
+        loadSettings: () => true,
+        loadDiagnosticLogs() {},
+        loadTranslationCache() {},
+        injectStyles() {},
+        patchMessageContextMenu() {},
+        startObserver() {},
+        showSettingsUpgradeNotices() {}
+    });
+    h.plugin.start();
+    const pending = h.plugin.confirmAction({ title: "Clear?" });
+    assert.equal(h.plugin.isConfirmDialogOpen(), true);
+    h.plugin.stop();
+    assert.equal(await pending, false);
+    assert.equal(h.plugin.isConfirmDialogOpen(), false);
+    assert.equal(h.settingsRoot.getAttribute("data-dait-confirm-open"), undefined);
+    h.plugin.start();
+    assert.equal(h.plugin.isConfirmDialogOpen(), false);
+    h.plugin.stop();
+});
+
+test("while a confirmation is open the settings window sits below BetterDiscord's fallback modal", () => {
+    const css = require("../../src/css/08-dialogs.js");
+    const rule = /\.dait-quick-settings-modal-root\[data-dait-confirm-open="true"\]\s*\{([^}]*)\}/.exec(css);
+    assert.ok(rule, "the confirm-open rule exists");
+    const zIndex = Number(/z-index:\s*(\d+)/.exec(rule[1])?.[1]);
+    // .bd-modal-wrapper uses z-index 1000 and comes earlier in the document than the settings window.
+    assert.ok(zIndex < 1000, `z-index ${zIndex}`);
+});
