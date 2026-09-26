@@ -27,6 +27,10 @@ const {
 
 // Provider fields a reset keeps: the secrets themselves, plus the region (Microsoft) and plan (DeepL) a key only works with.
 const RESET_KEPT_CREDENTIAL_FIELDS = ["apiKey", "appId", "secretKey", "region", "deeplPlan"];
+const RESET_SECRET_FIELDS = ["apiKey", "appId", "secretKey"];
+// A kept secret also keeps the endpoint and model it was used with, so a reset never sends it to another host
+// (a relay key to the provider's own API, for example).
+const RESET_KEPT_CONNECTION_FIELDS = ["endpoint", "model"];
 
 function normalizeTranslationLineStyle(value) {
     const style = String(value || "");
@@ -887,8 +891,8 @@ class SettingsStore {
     }
 
     // Restores the defaults. With keepCredentials (default) it keeps API keys and the other credential fields of
-    // every provider profile, the Google key pool with its usage counters and monthly limit, and the prompt
-    // templates. The UI language is kept unless keepLanguage is false. Applies the same runtime effects
+    // every provider profile (each key with the endpoint and model it was used with), the Google key pool with its
+    // usage counters and monthly limit, and the prompt templates. The UI language is kept unless keepLanguage is false. Applies the same runtime effects
     // setSetting applies to each changed setting. Stable entry point for the reset dialog.
     resetSettingsToDefaults({ keepCredentials = true, keepLanguage = true } = {}) {
         const previous = this.plugin.settings && typeof this.plugin.settings === "object" ? this.plugin.settings : {};
@@ -912,10 +916,21 @@ class SettingsStore {
 
     carryOverResetCredentials(previous, next) {
         const isObject = value => Boolean(value) && typeof value === "object" && !Array.isArray(value);
+        const isFilled = value => typeof value === "string" && Boolean(value.trim());
         const pickCredentials = source => {
             const picked = {};
             RESET_KEPT_CREDENTIAL_FIELDS.forEach(field => {
-                if (typeof source?.[field] === "string" && source[field].trim()) picked[field] = source[field];
+                if (isFilled(source?.[field])) picked[field] = source[field];
+            });
+            if (!RESET_SECRET_FIELDS.some(field => picked[field])) return picked;
+            // An empty or missing endpoint means the preset one, before and after the reset. An endpoint that
+            // cannot be read leaves no known host to pair the secret with, so the secret is dropped instead.
+            if (source.endpoint !== undefined && typeof source.endpoint !== "string") {
+                RESET_SECRET_FIELDS.forEach(field => delete picked[field]);
+                return picked;
+            }
+            RESET_KEPT_CONNECTION_FIELDS.forEach(field => {
+                if (isFilled(source[field])) picked[field] = source[field];
             });
             return picked;
         };
@@ -929,14 +944,18 @@ class SettingsStore {
                 const kept = pickCredentials(profile);
                 if (Object.keys(kept).length) profiles[provider] = kept;
             });
-            // The active provider's live fields are newer than its stored profile.
+            // The active provider's stored profile is only as new as the last switch away from it; its live
+            // fields are what the user sees, and a field cleared there stays cleared.
             const activeProvider = String(before.provider || "").trim();
-            const live = pickCredentials(before);
-            if (activeProvider && Object.keys(live).length) profiles[activeProvider] = { ...(profiles[activeProvider] || {}), ...live };
+            if (activeProvider) {
+                const live = pickCredentials(before);
+                if (Object.keys(live).length) profiles[activeProvider] = live;
+                else delete profiles[activeProvider];
+            }
             after.providerProfiles = profiles;
             const own = profiles[after.provider];
             if (own) {
-                RESET_KEPT_CREDENTIAL_FIELDS.forEach(field => {
+                [...RESET_KEPT_CREDENTIAL_FIELDS, ...RESET_KEPT_CONNECTION_FIELDS].forEach(field => {
                     if (own[field] !== undefined && Object.prototype.hasOwnProperty.call(after, field)) after[field] = own[field];
                 });
             }

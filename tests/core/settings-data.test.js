@@ -2,7 +2,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 const Plugin = require("../../src");
-const { DEFAULT_SETTINGS } = require("../../src/constants");
+const { DEFAULT_SETTINGS, PROVIDER_DEFAULTS } = require("../../src/constants");
 
 const HOUR = 60 * 60 * 1000;
 
@@ -289,7 +289,6 @@ test("resetSettingsToDefaults keeps keys, the Google pool with usage and the tem
     const settings = plugin.settings;
     // Defaults are back.
     assert.equal(settings.translation.provider, DEFAULT_SETTINGS.translation.provider);
-    assert.equal(settings.translation.endpoint, DEFAULT_SETTINGS.translation.endpoint);
     assert.equal(settings.translation.targetLanguage, DEFAULT_SETTINGS.translation.targetLanguage);
     assert.equal(settings.translation.activePromptTemplate, DEFAULT_SETTINGS.translation.activePromptTemplate);
     assert.equal(settings.translation.prompt, DEFAULT_SETTINGS.translation.prompt);
@@ -302,14 +301,20 @@ test("resetSettingsToDefaults keeps keys, the Google pool with usage and the tem
     assert.deepEqual(settings.ui.channelAutoTranslatePolicies, {});
     assert.equal(settings.ui.translationCacheMaxEntries, DEFAULT_SETTINGS.ui.translationCacheMaxEntries);
     // Credentials are kept: the default provider starts with its saved key, others keep theirs in profiles.
+    // A key keeps the endpoint and model it was used with, so it is never sent to another host.
     assert.equal(settings.translation.apiKey, "sk-fake-ds");
+    assert.equal(settings.translation.endpoint, "https://custom.example/v1");
+    assert.equal(settings.translation.model, "custom-model");
     assert.equal(settings.translation.providerProfiles.microsoft.apiKey, "sk-fake-ms");
     assert.equal(settings.translation.providerProfiles.microsoft.region, "eastasia");
+    assert.equal(settings.translation.providerProfiles.microsoft.endpoint, "https://fake-ms.example/translate");
     assert.equal(settings.translation.providerProfiles.deepl.apiKey, "sk-fake-dl");
     assert.equal(settings.translation.providerProfiles.deepl.deeplPlan, "pro");
-    assert.equal(settings.translation.providerProfiles.deepseek.endpoint, undefined);
-    assert.equal(settings.translation.providerProfiles.deepseek.model, undefined);
+    assert.equal(settings.translation.providerProfiles.deepseek.endpoint, "https://custom.example/v1");
+    assert.equal(settings.translation.providerProfiles.deepseek.model, "custom-model");
     assert.equal(settings.translation.providerProfiles.broken, undefined);
+    // The polish key was used with the preset endpoint and stays with it.
+    assert.equal(settings.polish.endpoint, DEFAULT_SETTINGS.polish.endpoint);
     assert.equal(settings.polish.apiKey, "sk-fake-polish");
     assert.equal(settings.googleTranslate.keys.length, 1);
     assert.equal(settings.googleTranslate.keys[0].apiKey, "AIza-fake-1");
@@ -770,6 +775,82 @@ test("start() keeps the stored diagnostics log when a failing data step logs bef
     assert.ok(actions.includes("data.io"));
     plugin.stop();
     assert.equal(bdApi.files["DiscordAITranslator.diagnostics"].diagnosticLogs.logs[0].action, "kept.entry");
+});
+
+// --- review 1: SD-2 / SD-3 (credentials kept by a reset) -------------------------------------------
+
+// Every provider key that would be sent somewhere, with the host it would go to.
+function keyedHosts(settings) {
+    const result = {};
+    for (const kind of ["polish", "translation"]) {
+        const task = settings[kind];
+        for (const provider of Object.keys(PROVIDER_DEFAULTS)) {
+            const source = provider === task.provider ? task : task.providerProfiles?.[provider];
+            const apiKey = String(source?.apiKey || "");
+            if (!apiKey) continue;
+            result[`${kind}:${provider}`] = { apiKey, endpoint: String(source.endpoint || PROVIDER_DEFAULTS[provider].endpoint) };
+        }
+    }
+    return result;
+}
+
+test("reset keeps a relay key together with its endpoint and model, never with the preset host", () => {
+    const plugin = quietPlugin();
+    stubResetEffects(plugin);
+    plugin.saveData = () => true;
+    const relay = { provider: "deepseek", apiKey: "sk-fake-relay", endpoint: "https://relay.example/v1/chat/completions", model: "relay-model" };
+    Object.assign(plugin.settings.polish, relay, { apiKey: "sk-fake-relay-polish" });
+    Object.assign(plugin.settings.translation, relay, {
+        providerProfiles: {
+            openaiCompatible: { apiKey: "sk-fake-relay-2", endpoint: "https://relay-2.example/v1/chat/completions", model: "relay-2-model" },
+            sakuraLocal: { apiKey: "", endpoint: "http://127.0.0.1:5000/v1/chat/completions" },
+            // An endpoint that cannot be read leaves no safe host for the key: the key is dropped.
+            microsoft: { apiKey: "sk-fake-ms", endpoint: 42, region: "eastasia" }
+        }
+    });
+    const before = keyedHosts(plugin.settings);
+
+    assert.equal(plugin.resetSettingsToDefaults(), true);
+    const after = keyedHosts(plugin.settings);
+    for (const [name, pair] of Object.entries(after)) {
+        assert.deepEqual(pair, before[name], name);
+    }
+    // The relay keys are kept, with their hosts.
+    assert.equal(plugin.settings.translation.provider, "deepseek");
+    assert.equal(plugin.settings.translation.endpoint, relay.endpoint);
+    assert.equal(plugin.settings.translation.model, "relay-model");
+    assert.equal(plugin.settings.translation.apiKey, "sk-fake-relay");
+    assert.equal(plugin.settings.polish.endpoint, relay.endpoint);
+    assert.equal(plugin.settings.polish.apiKey, "sk-fake-relay-polish");
+    assert.equal(plugin.hasUsableApiConfig("translation"), true);
+    assert.equal(plugin.settings.translation.providerProfiles.microsoft.apiKey, undefined);
+    assert.equal(plugin.settings.translation.providerProfiles.microsoft.region, "eastasia");
+    // A profile without a key keeps nothing but what a reset always keeps.
+    assert.equal(plugin.settings.translation.providerProfiles.sakuraLocal, undefined);
+
+    // Switching to the kept profile later brings its own host back, not the preset one.
+    plugin.setTaskProvider("translation", "openaiCompatible");
+    assert.equal(plugin.settings.translation.endpoint, "https://relay-2.example/v1/chat/completions");
+    assert.equal(plugin.settings.translation.model, "relay-2-model");
+    assert.equal(plugin.settings.translation.apiKey, "sk-fake-relay-2");
+});
+
+test("reset does not bring back a key the user cleared from the active provider", () => {
+    const plugin = quietPlugin();
+    stubResetEffects(plugin);
+    plugin.saveData = () => true;
+    plugin.setSetting("translation.apiKey", "sk-fake-old-k1");
+    plugin.setTaskProvider("translation", "microsoft");
+    plugin.setTaskProvider("translation", "deepseek");
+    assert.equal(plugin.settings.translation.apiKey, "sk-fake-old-k1");
+    // The stored profile still holds the old key; the live field is what the user sees and cleared.
+    plugin.setSetting("translation.apiKey", "");
+    assert.equal(plugin.settings.translation.providerProfiles.deepseek.apiKey, "sk-fake-old-k1");
+
+    assert.equal(plugin.resetSettingsToDefaults(), true);
+    assert.equal(plugin.settings.translation.apiKey, "");
+    assert.equal(plugin.settings.translation.providerProfiles.deepseek?.apiKey, undefined);
+    assert.equal(plugin.hasUsableApiConfig("translation"), false);
 });
 
 test("start() still writes diagnostics a previous stop() could not save before it reloads the log", t => {
