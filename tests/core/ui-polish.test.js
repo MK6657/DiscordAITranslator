@@ -561,6 +561,35 @@ test("settings: no tab page shows two rows with the same label", t => {
     }
 });
 
+// --- UI-5: the source-language row says whose language it is ---
+
+test("the source-language row names channel messages on the translate tab and the draft on the composer tab", t => {
+    for (const language of ["zh-CN", "en"]) {
+        const { plugin, doc } = createPlugin(t, { language });
+        const panel = plugin.getSettingsPanel({ quickSettings: true });
+        doc.body.appendChild(panel);
+        // The source-language select is the one that offers auto-detect.
+        const rowOf = tab => tabPanel(panel, tab).querySelectorAll(".dait-language-select")
+            .find(select => select.querySelectorAll("option").some(option => option.textContent === plugin.t("autoDetectLanguage")))
+            .closest(".dait-settings-row");
+        const translation = rowOf("translate");
+        assert.equal(translation.querySelector(".dait-row-label").textContent, plugin.t("messageLanguage"), language);
+        assert.equal(translation.querySelector(".dait-row-description").textContent, plugin.t("messageLanguageDesc"), language);
+        const polish = rowOf("compose");
+        assert.equal(polish.querySelector(".dait-row-label").textContent, plugin.t("inputLanguage"), language);
+        assert.equal(polish.querySelector(".dait-row-description").textContent, plugin.t("inputLanguageDesc"), language);
+        // The custom field's accessible name follows the row.
+        assert.match(translation.querySelector(".dait-language-custom").getAttribute("aria-label"), new RegExp(`^${plugin.t("messageLanguage")}:`));
+        plugin.destroySettingsModalSizing(panel);
+    }
+    assert.equal(I18N["zh-CN"].messageLanguage, "原文语言");
+    assert.equal(I18N.en.messageLanguage, "Message language");
+    assert.match(I18N["zh-CN"].messageLanguageDesc, /频道消息/);
+    assert.match(I18N.en.messageLanguageDesc, /channel messages/);
+    assert.doesNotMatch(I18N["zh-CN"].messageLanguageDesc, /草稿/);
+    assert.doesNotMatch(I18N.en.messageLanguageDesc, /draft/);
+});
+
 test("settings window: a key that ends an IME composition does not close the window", t => {
     const { doc, isOpen } = openHotkeyRecorder(t);
     doc.dispatchEvent("keydown", { key: "Escape", isComposing: true });

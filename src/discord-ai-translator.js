@@ -2516,7 +2516,11 @@ module.exports = class DiscordAITranslator {
         const ui = capabilities.ui || {};
         const providerSettings = this.createTaskProviderSettingsBlock(kind, ui);
         if (providerSettings) section.appendChild(providerSettings);
-        if (ui.sourceLanguage) section.appendChild(this.createLanguageRow(kind, "sourceLanguage", this.t("inputLanguage"), this.t("inputLanguageDesc"), { allowAuto: true }));
+        // Translation reads channel messages; polishing reads the user's draft.
+        if (ui.sourceLanguage) {
+            const sourceKey = kind === "polish" ? "inputLanguage" : "messageLanguage";
+            section.appendChild(this.createLanguageRow(kind, "sourceLanguage", this.t(sourceKey), this.t(`${sourceKey}Desc`), { allowAuto: true }));
+        }
         if (ui.targetLanguage) section.appendChild(this.createLanguageRow(kind, "targetLanguage", kind === "polish" ? this.t("outputLanguage") : this.t("targetLanguage"), kind === "polish" ? this.t("outputLanguageDesc") : this.t("targetLanguageDesc")));
 
         if (kind === "polish") {
