@@ -10886,7 +10886,7 @@ module.exports = class DiscordAITranslator {
     // separates them.
     getPublicBilingualSpoilerText(original) {
         const escaped = this.escapeDiscordSpoilerText(this.normalizeDraftRawText(original));
-        return escaped.endsWith("|") ? `${escaped}​` : escaped;
+        return escaped.endsWith("|") ? `${escaped}\u200b` : escaped;
     }
 
     isPolishSessionAlreadyPolished(session, text) {

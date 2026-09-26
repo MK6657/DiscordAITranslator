@@ -382,11 +382,11 @@ test("a plain contenteditable keeps block and <br> line breaks", t => {
     assert.equal(plugin.getTextboxRawTextSafe(editor), "a\n\nb\nc");
 });
 
-// CMP-R2: a zero-width space the user typed ("@​everyone" does not ping) is part of the draft.
+// CMP-R2: a zero-width space the user typed ("@\u200beveryone" does not ping) is part of the draft.
 test("the reader keeps the user's zero-width spaces through Polish, the bilingual spoiler and Restore original", async t => {
     const browser = useComposerBrowser(t);
     const plugin = new Plugin();
-    const typed = "@​everyone meeting moved";
+    const typed = "@\u200beveryone meeting moved";
     const editor = createSlateEditor([typed]);
     browser.document.activeElement = editor;
     assert.equal(plugin.getTextboxDraftText(editor), typed);
