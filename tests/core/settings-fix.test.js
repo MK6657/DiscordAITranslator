@@ -598,3 +598,42 @@ test("while search results are shown no tab is selected; clearing the search or 
     assert.deepEqual(selectedTabs(panel), ["display"]);
     assert.deepEqual(visibleTab(panel), ["display"]);
 });
+
+// --- SS-8: the channel rule on a screen without a channel ---------------------------------------------
+
+test("on a screen without a channel the channel rule row is locked and says why; a channel unlocks it again", t => {
+    const { doc } = installDom(t);
+    const plugin = new Plugin();
+    plugin.saveSettings = () => true;
+    plugin.queueScan = () => {};
+    let route = "@me::";
+    plugin.getCurrentRouteKey = () => route;
+    const selector = "[data-dait-path='ui.currentChannelAutoTranslatePolicy']";
+    const section = doc.body.appendChild(doc.createElement("section"));
+    section.className = "dait-settings-group";
+    section.appendChild(plugin.createCurrentChannelPolicyRow());
+    const reason = plugin.t("quickPanelRuleCaptionNoChannel");
+    const usual = plugin.t("currentChannelAutoTranslatePolicyDesc");
+
+    const check = locked => {
+        const [control] = section.querySelectorAll(selector);
+        const row = rowOf(control);
+        assert.equal(row.classList.contains("dait-settings-row-inactive"), locked);
+        assert.equal(row.dataset.daitLocked, locked ? "true" : undefined);
+        assert.equal(descriptionOf(control), locked ? reason : usual);
+        assert.equal(plugin.isChannelRuleControlDisabled(control), locked);
+        assert.equal(control.children.every(button => button.disabled === locked), true);
+        assert.equal(row.dataset.daitSearchDescription, usual, "search still finds the row by its usual description");
+        assert.equal(section.querySelectorAll(".dait-settings-row").length, 1, "one row, swapped in place");
+    };
+    check(true);
+
+    // A channel opens while the window stays open: the row is rebuilt unlocked, with its usual description.
+    route = "g1:c1:";
+    assert.equal(plugin.refreshChannelRuleControls(), 1);
+    check(false);
+    // Back to a screen without a channel: locked again, with the reason.
+    route = "@me::";
+    assert.equal(plugin.refreshChannelRuleControls(), 1);
+    check(true);
+});

@@ -2982,13 +2982,18 @@ module.exports = class DiscordAITranslator {
 
     createCurrentChannelPolicyRow() {
         const routeKey = this.getCurrentRouteKey();
+        // A screen without a channel (home, DM list) has nothing to set a rule for: the row is locked and says why.
+        const noChannel = !this.getChannelAutoTranslatePolicyStorageKey(routeKey);
         const row = this.createSegmentedRow("ui.currentChannelAutoTranslatePolicy", this.t("currentChannelAutoTranslatePolicy"), [
             ["inherit", this.t("channelRuleFollow")],
             ["enabled", this.t("channelRuleAlways")],
             ["disabled", this.t("channelRuleNever")]
-        ], { description: this.t("currentChannelAutoTranslatePolicyDesc"), routeKey });
-        // A screen without a channel (home, DM list) has nothing to set a rule for.
-        if (!this.getChannelAutoTranslatePolicyStorageKey(routeKey)) {
+        ], {
+            description: this.t("currentChannelAutoTranslatePolicyDesc"),
+            disabledReason: noChannel && this.t("quickPanelRuleCaptionNoChannel"),
+            routeKey
+        });
+        if (noChannel) {
             const control = row?.querySelectorAll?.("[data-dait-path='ui.currentChannelAutoTranslatePolicy']")?.[0];
             if (control) this.setChannelRuleControlDisabled(control, true);
         }
