@@ -241,8 +241,12 @@ try {
         # Console hosts wrap long warning lines; compare with whitespace collapsed.
         $blockedOutput = (& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer -PluginPath $source -SkipSyntaxCheck @extraArguments | Out-String) -replace '\s+', ' '
         $blockedExitCode = $LASTEXITCODE
-        if ($blockedExitCode -eq 0 -or $blockedOutput -notmatch [regex]::Escape($redirectPackage) -or $blockedOutput -notmatch "normally started Discord will not see") {
+        if ($blockedOutput -notmatch [regex]::Escape($redirectPackage) -or $blockedOutput -notmatch "normally started Discord will not see") {
             throw "Installer did not refuse a redirected AppData window ($mode), exit $($blockedExitCode): $blockedOutput"
+        }
+        # Exit code 2 (not 1, not a thrown error) tells callers "redirected window, nothing installed" apart from a real failure.
+        if ($blockedExitCode -ne 2) {
+            throw "Installer refused a redirected AppData window ($mode) with exit $($blockedExitCode); expected exit 2: $blockedOutput"
         }
         if ($blockedOutput -notmatch "-AllowRedirectedAppData" -or $blockedOutput -match "Installed DiscordAITranslator") {
             throw "Refusal must name -AllowRedirectedAppData and must not report an install: $blockedOutput"

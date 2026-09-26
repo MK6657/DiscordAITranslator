@@ -4,11 +4,16 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
-const { findBrowserProfilePaths, findLocalOnlyPaths } = require("./release-guards");
+const {
+    collectPublishedTexts,
+    findBrowserProfilePaths,
+    findForceAddedIgnoredPaths,
+    findLocalOnlyPaths,
+    findNestedRepositories,
+    readGitIndex
+} = require("./release-guards");
 
 const root = path.resolve(__dirname, "..");
-// Local-only folders the text scan skips; the Git index guard below still rejects them if tracked.
-const excludedDirectories = new Set([".git", ".agents", ".claude", "node_modules", "external", "work", "dist", "coverage"]);
 const textExtensions = new Set(["", ".js", ".json", ".md", ".ps1", ".txt", ".yml", ".yaml"]);
 const secretPatterns = [
     /-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/,
@@ -21,35 +26,8 @@ const secretPatterns = [
     /\bBearer\s+[A-Za-z0-9._-]{24,}\b/i
 ];
 
-function collectPublicFiles(directory, output = []) {
-    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-        if (entry.isDirectory() && entry.name === ".git") {
-            if (path.resolve(directory) !== root) throw new Error(`Nested .git directory found: ${path.relative(root, path.join(directory, entry.name))}`);
-            continue;
-        }
-        if (entry.isDirectory() && excludedDirectories.has(entry.name)) continue;
-        const fullPath = path.join(directory, entry.name);
-        if (entry.isDirectory()) {
-            collectPublicFiles(fullPath, output);
-        }
-        else if (entry.isFile() && textExtensions.has(path.extname(entry.name).toLowerCase())) output.push(fullPath);
-    }
-    return output;
-}
-
 const gitignore = fs.readFileSync(path.join(root, ".gitignore"), "utf8");
 if (!/^\/external\/$/m.test(gitignore)) throw new Error(".gitignore must exclude the local GPL reference checkout at /external/.");
-
-const privateHome = path.join("C:\\Users", os.userInfo().username).toLowerCase();
-for (const file of collectPublicFiles(root)) {
-    const content = fs.readFileSync(file, "utf8");
-    if (secretPatterns.some(pattern => pattern.test(content))) {
-        throw new Error(`Potential secret detected in ${path.relative(root, file)}.`);
-    }
-    if (privateHome.length > "C:\\Users\\".length && content.toLowerCase().includes(privateHome)) {
-        throw new Error(`Private machine path detected in ${path.relative(root, file)}.`);
-    }
-}
 
 const requiredFiles = [
     "LICENSE",
@@ -88,19 +66,41 @@ const gitRoot = spawnSync("git", ["rev-parse", "--show-toplevel"], { cwd: root, 
 if (gitRoot.status !== 0 || path.resolve(gitRoot.stdout.trim()) !== root) {
     throw new Error("Release checks require a valid Git repository rooted at the project directory.");
 }
-const trackedResult = spawnSync("git", ["ls-files", "-z"], { cwd: root, encoding: "utf8" });
-if (trackedResult.status !== 0) throw new Error("Unable to inspect Git tracked files.");
-const trackedFiles = trackedResult.stdout.split("\0").filter(Boolean).map(file => file.replace(/\\/g, "/"));
-// `git ls-files` lists the index, so staged files are checked as well as committed ones.
+// The Git index holds staged files as well as committed ones, including ignored files added with `git add -f`.
+const indexEntries = readGitIndex(root);
+const trackedFiles = [...new Set(indexEntries.map(entry => entry.path.replace(/\\/g, "/")))];
 const forbiddenTracked = findLocalOnlyPaths(trackedFiles);
 if (forbiddenTracked.length) {
     throw new Error(`Local-only files are tracked by Git: ${forbiddenTracked.join(", ")}`);
 }
-// Browser profile stores are binary databases, so the text scan above cannot see the logins, cookies or history in them.
+// Browser profiles are binary databases, so the text scan below cannot see the logins, cookies, history or site tokens in them.
 const browserProfileFiles = findBrowserProfilePaths(trackedFiles);
 if (browserProfileFiles.length) {
-    throw new Error(`Browser profile data (logins, cookies or history) is staged or tracked by Git: ${browserProfileFiles.join(", ")}. Remove it from Git with 'git rm --cached' and keep browser profiles outside the repository.`);
+    const listed = browserProfileFiles.slice(0, 20).join(", ") + (browserProfileFiles.length > 20 ? ` and ${browserProfileFiles.length - 20} more` : "");
+    throw new Error(`Browser profile data (logins, cookies, history or site storage) is staged or tracked by Git: ${listed}. Remove the whole profile folder from Git with 'git rm -r --cached' and keep browser profiles outside the repository.`);
 }
+const forceAddedIgnored = findForceAddedIgnoredPaths(root);
+if (forceAddedIgnored.length) {
+    throw new Error(`Files that .gitignore excludes are staged or tracked by Git (added with 'git add -f'?): ${forceAddedIgnored.join(", ")}. Remove them with 'git rm --cached', or change .gitignore if they belong in the repository.`);
+}
+const nestedRepositories = findNestedRepositories(root, indexEntries);
+if (nestedRepositories.length) {
+    throw new Error(`Nested Git repositories found: ${nestedRepositories.join(", ")}. Keep reference checkouts in the ignored external/ folder.`);
+}
+
+// Secrets and private paths in anything Git would publish: staged content, working copies of tracked files,
+// and untracked files that `git add .` would stage. Ignored files outside the index are never published.
+const privateHome = path.join("C:\\Users", os.userInfo().username).toLowerCase();
+const isScannedText = file => textExtensions.has(path.extname(file).toLowerCase());
+for (const text of collectPublishedTexts(root, indexEntries, isScannedText)) {
+    if (secretPatterns.some(pattern => pattern.test(text.content))) {
+        throw new Error(`Potential secret detected in ${text.path} (${text.source}).`);
+    }
+    if (privateHome.length > "C:\\Users\\".length && text.content.toLowerCase().includes(privateHome)) {
+        throw new Error(`Private machine path detected in ${text.path} (${text.source}).`);
+    }
+}
+
 const requiredTracked = [
     ...requiredFiles,
     ".github/workflows/ci.yml",

@@ -35,22 +35,9 @@ DiscordAITranslator-handoff-*.zip
 /.chromium-*/
 /.edge-*/
 /.browser-profile*/
-# Browser login, cookie and history stores, wherever a profile folder lands
-# (scripts/release-guards.js rejects the same files if they are ever staged)
-Local State
-Login Data*
-*Cookies
-*Cookies-journal
-History
-History-journal
-*Web Data
-*Web Data-journal
-cookies.sqlite*
-places.sqlite*
-formhistory.sqlite*
-logins.json
-logins-backup.json
-key[34].db
+# Store names such as History, Cookies or Local State are deliberately not ignored anywhere else: a
+# profile outside the folders above is then staged whole, so scripts/release-guards.js sees its login,
+# cookie and history stores and blocks the release, instead of the rest of the profile slipping through.
 
 # Editors and operating systems
 .idea/
