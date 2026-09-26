@@ -33,7 +33,7 @@ module.exports = `
     left: 8px;
     letter-spacing: 0;
     line-height: var(--dait-line);
-    max-height: min(600px, calc(100vh - 96px));
+    max-height: min(720px, calc(100vh - 96px));
     max-width: calc(100vw - 16px);
     overflow: hidden;
     position: fixed;
@@ -361,8 +361,19 @@ label.dait-qp-label {
     width: var(--dait-qp-control-w);
 }
 
+/* The same select as in the settings window: the palette's colours and its chevron. */
 .dait-qp-select {
-    background: var(--dait-input-bg);
+    -webkit-appearance: none;
+    appearance: none;
+    background-color: var(--dait-input-bg);
+    background-image:
+        linear-gradient(45deg, transparent 50%, var(--dait-placeholder) 50%),
+        linear-gradient(135deg, var(--dait-placeholder) 50%, transparent 50%);
+    background-position:
+        calc(100% - 16px) 50%,
+        calc(100% - 11px) 50%;
+    background-repeat: no-repeat;
+    background-size: 5px 5px, 5px 5px;
     border: 1px solid var(--dait-input-border);
     border-radius: 4px;
     color: var(--dait-text);
@@ -373,7 +384,11 @@ label.dait-qp-label {
     justify-self: end;
     line-height: 1.2;
     min-width: 0;
-    padding: 0 8px;
+    padding: 0 30px 0 10px;
+}
+
+.dait-qp-select:hover {
+    border-color: var(--dait-placeholder);
 }
 
 .dait-qp-select option {

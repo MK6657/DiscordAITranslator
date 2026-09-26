@@ -773,8 +773,9 @@ test("one type scale for every window: body 15/1.55, small 13, headings 16/18/20
         assert.match(size, /^var\(--dait-font-(body|small|group|window|page)\)$/, rule.selector);
         if (size === "var(--dait-font-small)") smallUsers.push(rule.selector);
     });
-    // Small text only for the version chip, the search summary and status badges next to a title.
-    smallUsers.forEach(selector => assert.match(selector, /version|qp-chip|search-summary|search-result-tab|header-status|provider-connection|setup-progress/, selector));
+    // Small text only for the version chip, the search box's hint and status badges next to a title.
+    smallUsers.forEach(selector => assert.match(selector, /version|qp-chip|search-input::placeholder|search-result-tab|header-status|provider-connection|setup-progress/, selector));
+    assert.ok(smallUsers.some(selector => selector.includes("search-input::placeholder")), "the search box's hint is small");
     // Labels and descriptions share size and colour; the label's weight sets them apart.
     const rule = selector => declarations(cssRules().find(item => item.selector === selector && !item.context)?.body || "");
     for (const [label, description] of [[".dait-row-label", ".dait-row-description"], [".dait-qp-label", ".dait-qp-desc"]]) {

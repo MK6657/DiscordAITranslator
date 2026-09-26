@@ -834,9 +834,10 @@ test("the quick panel styles follow the UI spec and respect reduced motion", () 
         return [...PLUGIN_CSS.matchAll(new RegExp(`(?:^|\\n)${escaped} \\{([\\s\\S]*?)\\n\\}`, "g"))].map(match => match[1]).join("\n");
     };
     const popover = rule(".dait-quick-popover");
-    // v0.4.0 theme follow-up: 360 px wide for the 15 px body text (THEME-SPEC "Layout details").
+    // v0.4.0 theme follow-up: 360 px wide and up to 720 px tall for the 15 px body text (THEME-SPEC "Layout
+    // details"), so the whole panel shows without scrolling on a common window; the body still scrolls below that.
     assert.match(popover, /width: 360px;/);
-    assert.match(popover, /max-height: min\(600px, calc\(100vh - 96px\)\);/);
+    assert.match(popover, /max-height: min\(720px, calc\(100vh - 96px\)\);/);
     assert.match(popover, /border-radius: 8px;/);
     assert.match(rule(".dait-qp-body"), /overflow-y: auto;/);
     // One type scale: labels and descriptions at the body size (weight tells them apart), the section as a group

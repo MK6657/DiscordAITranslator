@@ -39,7 +39,7 @@ module.exports = `
 .dait-input-action-menu,
 .dait-dialog {
     /* One type scale for every window: body 15/1.55 for everything that is not a heading; small 13 only for the
-       version chip, the search summary and status badges next to a title. Weights 400/500/600. */
+       version chip, the search box's hint and status badges next to a title. Weights 400/500/600. */
     --dait-font-window: 18px;
     --dait-font-page: 20px;
     --dait-font-group: 16px;

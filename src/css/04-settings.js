@@ -234,8 +234,15 @@ module.exports = `.dait-settings {
 }
 
 .dait-settings .dait-settings-search-input {
-    padding-left: 33px;
+    padding-left: 32px;
+    padding-right: 8px;
     width: 100%;
+}
+
+/* The search box's hint: the small size, so it fits the rail in every language. */
+.dait-settings .dait-settings-search-input::placeholder {
+    font-size: var(--dait-font-small);
+    font-weight: 500;
 }
 
 .dait-settings-tabs {
@@ -255,7 +262,7 @@ module.exports = `.dait-settings {
     font-weight: 500;
     line-height: 1.3;
     min-height: 38px;
-    padding: 8px 12px;
+    padding: 8px 10px;
     text-align: left;
     width: 100%;
 }
@@ -773,20 +780,22 @@ module.exports = `.dait-settings {
     padding: 0 var(--dait-space-4);
 }
 
+/* Title and connection status share one line; the test details shorten with an ellipsis before the line wraps
+   (it wraps in a narrow panel, and when an error needs the whole width). */
 .dait-provider-settings-header {
     align-items: center;
     border-bottom: 1px solid var(--dait-divider);
     display: flex;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     gap: var(--dait-space-2) var(--dait-space-3);
-    min-height: 56px;
+    min-height: 60px;
     min-width: 0;
     padding: 12px 0;
 }
 
 .dait-provider-settings-title {
     color: var(--dait-heading);
-    flex: 1 1 auto;
+    flex: 0 0 auto;
     font-size: var(--dait-font-group);
     font-weight: 600;
     line-height: 1.3;
@@ -798,8 +807,9 @@ module.exports = `.dait-settings {
 .dait-provider-connection {
     align-items: center;
     display: inline-flex;
-    flex: 0 1 auto;
+    flex: 1 1 auto;
     gap: var(--dait-space-2);
+    justify-content: flex-end;
     margin-left: auto;
     max-width: 100%;
     min-width: 0;
@@ -1170,8 +1180,13 @@ module.exports = `.dait-settings {
 }
 
 /* With an error to read, the status takes its own full-width line under the card title. */
+.dait-provider-settings-header:has(.dait-api-status-failed + .dait-api-test-detail[data-dait-for="failed"]:not([hidden])) {
+    flex-wrap: wrap;
+}
+
 .dait-provider-settings-header:has(.dait-api-status-failed + .dait-api-test-detail[data-dait-for="failed"]:not([hidden])) > .dait-provider-connection {
     flex-basis: 100%;
+    justify-content: flex-start;
     margin-left: 0;
 }
 
@@ -1311,11 +1326,10 @@ module.exports = `.dait-settings {
     min-height: 160px;
 }
 
-/* Search results replace the tab page while a query is typed. The summary is the search box's hint: small. */
+/* Search results replace the tab page while a query is typed. */
 .dait-settings-search-summary {
     color: var(--dait-text);
-    font-size: var(--dait-font-small);
-    font-weight: 500;
+    font-size: var(--dait-font-body);
     margin-bottom: var(--dait-space-2);
 }
 
@@ -1470,6 +1484,19 @@ module.exports = `.dait-settings {
 
     .dait-service-cards {
         grid-template-columns: minmax(0, 1fr);
+    }
+
+    .dait-provider-settings-header {
+        flex-wrap: wrap;
+    }
+
+    .dait-provider-settings-title {
+        flex: 1 1 auto;
+    }
+
+    .dait-provider-connection {
+        justify-content: flex-start;
+        margin-left: 0;
     }
 }
 `;
