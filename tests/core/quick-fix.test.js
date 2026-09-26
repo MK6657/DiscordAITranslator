@@ -461,3 +461,47 @@ test("a connection test started in the full settings window shows as testing unt
     t.mock.timers.tick(250);
     assert.equal(byClass(popover, "dait-qp-test").disabled, false);
 });
+
+// --- QP-4: a panel reopened during its own test shows the test running ---
+
+test("reopened while its test runs, the quick panel shows a busy Test button until the test ends", async t => {
+    const { plugin, doc, launcher } = statusPlugin(t);
+    const calls = [];
+    let finish = null;
+    plugin.testApiConnection = (kind, button) => {
+        calls.push(button);
+        plugin.setButtonBusy(button, true, plugin.t("apiTestBusy"));
+        return new Promise(resolve => {
+            finish = () => {
+                plugin.setButtonBusy(button, false, plugin.t("apiTest"));
+                resolve();
+            };
+        });
+    };
+    dispatch(doc, launcher, "click", { detail: 0 });
+    t.mock.timers.tick(1);
+    const first = byClass(doc.querySelector(".dait-quick-popover"), "dait-qp-test");
+    dispatch(doc, first, "click");
+    assert.equal(calls.length, 1);
+    assert.equal(first.disabled, true);
+
+    // Escape, then open the panel again before the test is over.
+    key(doc, "Escape");
+    assert.equal(plugin.isQuickPopoverOpen(), false);
+    dispatch(doc, launcher, "click", { detail: 0 });
+    t.mock.timers.tick(1);
+    const popover = doc.querySelector(".dait-quick-popover");
+    const rebuilt = byClass(popover, "dait-qp-test");
+    assert.notEqual(rebuilt, first);
+    assert.equal(rebuilt.disabled, true, "the rebuilt Test button waits for the running test");
+    assert.equal(rebuilt.textContent, "检测中");
+    assert.equal(byClass(popover, "dait-qp-status-line").textContent, "Sakura 本地 · 检测中");
+    dispatch(doc, rebuilt, "click");
+    assert.equal(calls.length, 1, "no second test");
+
+    finish();
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.equal(rebuilt.disabled, false);
+    assert.equal(rebuilt.textContent, "测试");
+});

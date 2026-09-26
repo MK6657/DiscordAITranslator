@@ -598,7 +598,10 @@ class QuickPanel {
             controls.statusNote.hidden = !status.note;
             resized = true;
         }
-        if (!this.testRunning) controls.test.disabled = status.testing;
+        // While this panel's test runs, a panel built again in the meantime shows it too (the test only updates the
+        // button it started from); another test or probe in flight also keeps the button off.
+        controls.test.disabled = Boolean(status.testing || this.testRunning);
+        this.setText(controls.test, this.plugin.t(this.testRunning ? "apiTestBusy" : "apiTest"));
         this.syncCountdown(status);
         // New text can change the panel's height; keep it above the launcher and inside the window.
         if (resized) this.position();
