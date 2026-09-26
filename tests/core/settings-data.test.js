@@ -435,7 +435,7 @@ test("resetSettingsToDefaults({ keepCredentials: false }) clears secrets; keepLa
     assert.ok(calls.includes("refreshLocalizedUi"));
 });
 
-test("reset: the button keeps credentials, says so, and open controls cannot commit old values back", t => {
+test("reset: the button keeps credentials, says so, and open controls cannot commit old values back", async t => {
     const doc = createFakeDocument();
     const confirms = [];
     useGlobals(t, { document: doc, window: { confirm: message => { confirms.push(message); return true; } } });
@@ -457,6 +457,8 @@ test("reset: the button keeps credentials, says so, and open controls cannot com
     const dangerZone = plugin.createSettingsDangerZone();
     const [reset] = dangerZone.querySelectorAll(".dait-settings-reset-button");
     reset.dispatch("click");
+    // The reset dialog is asynchronous (it resolves after the confirmation).
+    await new Promise(resolve => setImmediate(resolve));
     assert.equal(confirms.length, 1);
     assert.match(confirms[0], /API Key/);
     assert.match(confirms[0], /Google Key/);

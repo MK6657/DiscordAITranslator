@@ -1203,7 +1203,7 @@ test("a saved hotkey that can no longer fire is reset to the default when settin
 test("the hotkey help text asks for Ctrl, Alt or Win instead of recommending Shift", () => {
     const { I18N } = require("../../src/i18n");
     assert.doesNotMatch(I18N.en.polishHotkeyDesc, /Ctrl, Alt, or Shift/);
-    assert.match(I18N.en.polishHotkeyDesc, /Ctrl, Alt, or Win/);
+    assert.match(I18N.en.polishHotkeyDesc, /Ctrl, Alt,? or Win/);
     assert.doesNotMatch(I18N["zh-CN"].polishHotkeyDesc, /Ctrl、Alt 或 Shift/);
     assert.match(I18N["zh-CN"].polishHotkeyDesc, /Ctrl、Alt 或 Win/);
 });

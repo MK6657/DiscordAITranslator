@@ -434,9 +434,9 @@ test("search finds rows on every tab by label or description, names the tab, ope
     assert.equal(results()[0].querySelector(".dait-settings-search-result-tab").textContent, "数据与诊断");
 
     // A word from a description finds the row too; several words must all match.
-    input.value = "spoiler";
+    input.value = "润色输出语言";
     input.dispatch("input");
-    assert.ok(results().some(result => result.textContent.includes("当前链路")));
+    assert.ok(results().some(result => result.textContent.includes(plugin.t("publicBilingualDependencyTitle"))));
     input.value = "缓存 统计";
     input.dispatch("input");
     assert.deepEqual(results().map(result => result.querySelector(".dait-settings-search-result-label").textContent), ["缓存命中统计"]);
@@ -811,30 +811,31 @@ test("reset lives in the danger zone of the data tab and prefers the reset dialo
     const button = zone.querySelector("[data-dait-action=resetSettings]");
     let dialogCalls = 0;
     let resets = 0;
-    let rebuilt = 0;
     plugin.resetSettingsToDefaults = () => { resets++; return true; };
-    plugin.replaceSettingsPanelElement = () => { rebuilt++; return null; };
-    plugin.openResetSettingsDialog = source => {
+    plugin.openResetSettingsDialog = options => {
         dialogCalls++;
-        assert.equal(source, button);
+        assert.equal(options.source, button);
+        assert.equal(options.panel, panel);
         return Promise.resolve(true);
     };
     button.click();
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(dialogCalls, 1);
     assert.equal(resets, 0, "the dialog does the reset");
-    assert.equal(rebuilt, 1);
 
-    // Without the dialog: confirm, then reset keeping credentials.
+    // The real dialog: cancelled does nothing; confirmed resets keeping credentials and refreshes the panels.
     delete plugin.openResetSettingsDialog;
     let keepCredentials = null;
+    let refreshed = 0;
     plugin.resetSettingsToDefaults = options => { keepCredentials = options.keepCredentials; return true; };
-    globalThis.window.confirm = () => false;
-    button.click();
+    plugin.refreshOpenSettingsPanels = () => { refreshed++; return 1; };
+    plugin.confirmAction = () => Promise.resolve(false);
+    await plugin.runSettingsResetFromUi(button);
     assert.equal(keepCredentials, null);
-    globalThis.window.confirm = () => true;
-    button.click();
+    plugin.confirmAction = () => Promise.resolve(true);
+    await plugin.runSettingsResetFromUi(button);
     assert.equal(keepCredentials, true);
+    assert.equal(refreshed, 1);
 });
 
 test("rebuilding the panel (provider or language change) keeps the tab, the scroll position and the focus", t => {
