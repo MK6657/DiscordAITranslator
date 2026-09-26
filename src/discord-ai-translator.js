@@ -935,7 +935,8 @@ module.exports = class DiscordAITranslator {
         this.quickSettingsModalRoot = null;
         this.quickSettingsModalKeydown = null;
         this.quickSettingsPreviousFocus = null;
-        this.quickSettingsLastOpenAt = 0;
+        // The launcher press in progress ({ pointerId }), so its pointerup and click do not toggle the panel again.
+        this.quickSettingsPress = null;
         this.quickSettingsRetryTimer = null;
         this.quickSettingsOpenTimer = null;
         this.quickSettingsVerifyRaf = null;
@@ -1149,6 +1150,7 @@ module.exports = class DiscordAITranslator {
         this.inputButtonScanDueAt = 0;
         this.quickSettingsRetryTimer = null;
         this.quickSettingsOpenTimer = null;
+        this.quickSettingsPress = null;
         if (diagnosticLogsPersisted) this.quickSettingsDiagnosticLogs = [];
         if (translationCachePersisted) this.persistentTranslationCacheCount = 0;
         if (diagnosticLogsPersisted) {
@@ -6707,40 +6709,47 @@ module.exports = class DiscordAITranslator {
                 event.stopImmediatePropagation?.();
             });
         });
-        button.addEventListener("pointerdown", event => this.handleQuickSettingsButtonEvent(event, variant), true);
-        button.addEventListener("pointerup", event => this.handleQuickSettingsButtonEvent(event, variant), true);
-        button.addEventListener("click", event => {
-            this.handleQuickSettingsButtonEvent(event, variant);
-        }, true);
+        ["pointerdown", "pointerup", "click"].forEach(type => {
+            button.addEventListener(type, event => this.handleQuickSettingsButtonEvent(event, variant, type), true);
+        });
         // Status badge plus a title and label that say what the translator is doing right now.
         this.quickPanel.decorateLauncher(button);
         return button;
     }
 
-    handleQuickSettingsButtonEvent(event, variant = "panel") {
+    // One toggle per press, however long the button is held. A mouse or touch press sends pointerdown, pointerup
+    // and click; the first of them that reaches the launcher toggles the quick panel and the rest of that press are
+    // swallowed (each one is a fallback in case Discord swallowed the ones before it). Only the primary button
+    // counts. A click from Enter or Space (detail 0) is a press of its own.
+    handleQuickSettingsButtonEvent(event, variant = "panel", listenerType = "") {
         event?.preventDefault?.();
         event?.stopPropagation?.();
         event?.stopImmediatePropagation?.();
-        const now = Date.now();
-        const elapsedMs = now - Number(this.quickSettingsLastOpenAt || 0);
-        this.logQuickSettingsDiagnostic("button.event", "received", {
-            eventType: event?.type || "",
-            variant,
-            elapsedMs: Number.isFinite(elapsedMs) ? elapsedMs : 0
-        });
-        if (elapsedMs < 300) {
-            this.logQuickSettingsDiagnostic("button.event", "deduped", {
-                eventType: event?.type || "",
-                variant,
-                elapsedMs
-            });
+        const eventType = String(listenerType || event?.type || "");
+        this.logQuickSettingsDiagnostic("button.event", "received", { eventType, variant });
+        if (eventType.startsWith("pointer") && (Number(event?.button || 0) !== 0 || event?.isPrimary === false)) {
+            this.logQuickSettingsDiagnostic("button.event", "ignored", { eventType, variant, reason: "not-primary" });
             return;
         }
-        this.quickSettingsLastOpenAt = now;
-        this.logQuickSettingsDiagnostic("button.event", "scheduled", {
-            eventType: event?.type || "",
-            variant
-        });
+        const keyboard = eventType === "click" && Number(event?.detail) === 0;
+        const pointerId = event?.pointerId ?? null;
+        const press = this.quickSettingsPress;
+        // A later event of the press in progress: same pointer, or (for the click) any pointer's click. A click
+        // that no pointer caused (assistive technology) is a press of its own.
+        const samePress = Boolean(press) && !keyboard && eventType !== "pointerdown" && (
+            pointerId === null
+            || press.pointerId === null
+            || pointerId === press.pointerId
+            || (eventType === "click" && Boolean(event?.pointerType))
+        );
+        // A click ends its press; a pointerdown, or a pointerup whose pointerdown never arrived, starts one.
+        if (eventType === "click") this.quickSettingsPress = null;
+        else if (!samePress) this.quickSettingsPress = { pointerId };
+        if (samePress) {
+            this.logQuickSettingsDiagnostic("button.event", "deduped", { eventType, variant });
+            return;
+        }
+        this.logQuickSettingsDiagnostic("button.event", "scheduled", { eventType, variant });
         // currentTarget is cleared once the event finishes dispatching, so the launcher is resolved now.
         const launcher = event?.currentTarget?.closest?.(".dait-quick-settings-button")
             || event?.target?.closest?.(".dait-quick-settings-button")
@@ -6748,7 +6757,7 @@ module.exports = class DiscordAITranslator {
             || event?.target
             || null;
         // A click from Enter/Space has detail 0; pointer events and mouse clicks come from a pointer.
-        const viaPointer = String(event?.type || "").startsWith("pointer") || (event?.type === "click" && Number(event?.detail) > 0);
+        const viaPointer = eventType.startsWith("pointer") || (eventType === "click" && Number(event?.detail) > 0);
         if (this.quickSettingsOpenTimer) clearTimeout(this.quickSettingsOpenTimer);
         this.quickSettingsOpenTimer = setTimeout(() => {
             this.quickSettingsOpenTimer = null;
