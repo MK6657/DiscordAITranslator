@@ -302,8 +302,9 @@ test("downgrade to v0.3.0 and upgrade again: a cache cleared in v0.3.0 stays cle
     const upgraded = start();
     assert.equal(upgraded.plugin.translationCache.size, 0);
     assert.deepEqual(bdApi.files["DiscordAITranslator.cache"].translationCache.entries, []);
+    const before = server.chatPhrases().length;
     await upgraded.scanUntilIdle(PLAIN_MESSAGES.map(message => message.id));
-    assert.deepEqual([...server.chatPhrases()].sort(), PLAIN_MESSAGES.map(message => message.phrase).sort());
+    assert.deepEqual(server.chatPhrases().slice(before).sort(), PLAIN_MESSAGES.map(message => message.phrase).sort());
 });
 
 // v0.4.0 logged a failed request, then the user went back to v0.3.0 and cleared the log or turned
