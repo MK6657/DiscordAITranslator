@@ -690,3 +690,10 @@ test("the diagnostic summary row description is one sentence, with or without ev
         assert.equal(sentences(empty, locale), 1, empty);
     }
 });
+
+// --- W3-i18n: unused strings --------------------------------------------------------------------------
+
+test("the unused quickSettingsClose string is gone from both tables", () => {
+    assert.equal("quickSettingsClose" in I18N["zh-CN"], false);
+    assert.equal("quickSettingsClose" in I18N.en, false);
+});
