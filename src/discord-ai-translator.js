@@ -3541,11 +3541,12 @@ module.exports = class DiscordAITranslator {
         });
     }
 
+    // One sentence (UI-SPEC descriptions): the count, what the chips group by, and the latest event.
     getDiagnosticSummaryStatsText(summary = this.createDiagnosticSummary(this.diagnosticLogs)) {
         const events = Number(summary?.totalEvents || 0) || 0;
         if (!events) return this.t("diagnosticSummaryEmpty");
         const latest = this.formatDiagnosticSummaryTime(summary?.latestIso);
-        return `${this.t("diagnosticSummaryEvents", { events, latest })} ${this.t("diagnosticSummaryDesc")}`;
+        return this.t("diagnosticSummaryEvents", { events, latest });
     }
 
     formatDiagnosticSummaryTime(iso) {

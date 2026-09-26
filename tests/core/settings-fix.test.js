@@ -671,3 +671,22 @@ test("dead rules are gone: the test-mode panel scrollbars and the embedded heade
     // The scrollbars that remain keep their thin style.
     assert.match(PLUGIN_CSS, /\.dait-prompt-editor textarea,\n\.dait-polish-result-output \{\n    scrollbar-color: var\(--dait-scrollbar-thumb\) var\(--dait-scrollbar-track\);\n    scrollbar-width: thin;/);
 });
+
+// --- W3-summary: one sentence under the diagnostic summary ---------------------------------------------
+
+test("the diagnostic summary row description is one sentence, with or without events", t => {
+    installDom(t);
+    const sentences = (text, locale) => locale === "en"
+        ? (String(text).match(/[.!?](\s|$)/g) || []).length
+        : (String(text).match(/[。！？]/g) || []).length;
+    for (const locale of ["zh-CN", "en"]) {
+        const plugin = new Plugin();
+        plugin.settings.ui.language = locale;
+        const summary = { totalEvents: 5, latestIso: "2026-01-02T03:04:05.000Z" };
+        const withEvents = plugin.getDiagnosticSummaryStatsText(summary);
+        assert.equal(sentences(withEvents, locale), 1, withEvents);
+        assert.match(withEvents, /5/);
+        const empty = plugin.getDiagnosticSummaryStatsText({ totalEvents: 0 });
+        assert.equal(sentences(empty, locale), 1, empty);
+    }
+});
