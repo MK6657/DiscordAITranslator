@@ -2,7 +2,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 const Plugin = require("../../src");
-const { DEFAULT_SETTINGS } = require("../../src/constants");
+const { DEFAULT_SETTINGS, PROVIDER_DEFAULTS } = require("../../src/constants");
 
 const HOUR = 60 * 60 * 1000;
 
@@ -61,7 +61,16 @@ function createFakeDocument() {
             },
             querySelectorAll(selector) { return descendants(this).filter(node => !node.removed && matches(node, selector)); },
             closest() { return null; },
-            remove() { this.removed = true; }
+            remove() { this.removed = true; },
+            replaceWith(next) {
+                const parent = this.parentNode;
+                const index = parent ? parent.children.indexOf(this) : -1;
+                if (index < 0) return;
+                parent.children.splice(index, 1, next);
+                next.parentNode = parent;
+                this.parentNode = null;
+                [this, ...descendants(this)].forEach(node => { node.removed = true; });
+            }
         };
         if (element.tagName === "SELECT") {
             Object.defineProperty(element, "value", {
@@ -197,7 +206,8 @@ test("channel rule control stays bound to the channel it was built for (quick se
     const [select] = root.querySelectorAll("[data-dait-path='ui.currentChannelAutoTranslatePolicy']");
     assert.equal(select.value, "inherit");
 
-    // Discord moves to channel B while the modal is open; closing it commits every control.
+    // Discord moves to channel B while the modal is open; closing it commits every control. (No scan has run
+    // yet, so the control has not been rebuilt for B; see the refreshChannelRuleControls tests below.)
     route = "g1:B:";
     plugin.commitSettingsControls(root);
     assert.deepEqual(plugin.settings.ui.channelAutoTranslatePolicies, { "g1:B": { mode: "disabled" } });
@@ -214,6 +224,76 @@ test("channel rule control stays bound to the channel it was built for (quick se
     assert.deepEqual(plugin.settings.ui.channelAutoTranslatePolicies, { "g1:A": { mode: "enabled" } });
     plugin.commitSettingsControls(root);
     assert.deepEqual(plugin.settings.ui.channelAutoTranslatePolicies, { "g1:A": { mode: "enabled" } });
+});
+
+test("after a channel switch the 'current channel' rule control is rebuilt for the channel now open", t => {
+    const doc = createFakeDocument();
+    useGlobals(t, { document: doc });
+    const plugin = quietPlugin();
+    let route = "g1:A:";
+    plugin.getCurrentRouteKey = () => route;
+    plugin.saveSettings = () => true;
+    plugin.queueScan = () => {};
+    plugin.settings.ui.channelAutoTranslatePolicies = { "g1:B": { mode: "disabled" } };
+    const selectorFor = "[data-dait-path='ui.currentChannelAutoTranslatePolicy']";
+
+    const section = doc.createElement("section");
+    section.appendChild(doc.createElement("h3"));
+    section.appendChild(plugin.createCurrentChannelPolicyRow());
+    section.appendChild(plugin.createCheckboxRow("ui.historyBackfillEnabled", "History"));
+    const [first] = section.querySelectorAll(selectorFor);
+    assert.equal(first.value, "inherit");
+    assert.equal(plugin.refreshChannelRuleControls(), 0);
+
+    // A notification click moves Discord to channel B while quick settings stays open.
+    route = "g1:B:";
+    assert.equal(plugin.refreshChannelRuleControls(), 1);
+    const controls = section.querySelectorAll(selectorFor);
+    assert.equal(controls.length, 1);
+    const [select] = controls;
+    assert.notEqual(select, first);
+    assert.equal(select.dataset.daitRouteKey, "g1:B:");
+    assert.equal(select.value, "disabled");
+    // The whole row was swapped in place: same position, nothing added.
+    assert.equal(section.children.length, 3);
+    assert.equal(section.children[1].children.includes(select), true);
+    // Editing it changes B, the channel it now shows; A keeps no rule.
+    select.value = "enabled";
+    select.dispatch("change");
+    assert.deepEqual(plugin.settings.ui.channelAutoTranslatePolicies, { "g1:B": { mode: "enabled" } });
+    assert.equal(plugin.refreshChannelRuleControls(), 0);
+
+    // A screen without a channel has nothing to set a rule for: the control is shown disabled.
+    route = "@me::";
+    assert.equal(plugin.refreshChannelRuleControls(), 1);
+    const [none] = section.querySelectorAll(selectorFor);
+    assert.equal(none.disabled, true);
+    assert.equal(plugin.refreshChannelRuleControls(), 0);
+    route = "g1:A:";
+    assert.equal(plugin.refreshChannelRuleControls(), 1);
+    assert.equal(Boolean(section.querySelectorAll(selectorFor)[0].disabled), false);
+});
+
+test("scans held while quick settings is open still rebuild the channel rule control after a switch", t => {
+    const doc = createFakeDocument();
+    useGlobals(t, { document: doc });
+    const plugin = quietPlugin();
+    let route = "g1:A:";
+    plugin.getCurrentRouteKey = () => route;
+    plugin.isStarted = true;
+    Object.assign(plugin, {
+        isDiscordMediaViewerQuiet: () => false,
+        isDiscordMediaViewerOpen: () => false,
+        isQuickSettingsPanelOpen: () => true,
+        logSlowOperation() {}
+    });
+    const section = doc.createElement("section");
+    section.appendChild(plugin.createCurrentChannelPolicyRow());
+    route = "g1:B:";
+    plugin.scanDiscordUi();
+    assert.equal(plugin.quickSettingsScanDeferred, true);
+    const [select] = section.querySelectorAll("[data-dait-path='ui.currentChannelAutoTranslatePolicy']");
+    assert.equal(select.dataset.daitRouteKey, "g1:B:");
 });
 
 // --- reset-1 + lifecycle-7 -------------------------------------------------------------------------
@@ -289,7 +369,6 @@ test("resetSettingsToDefaults keeps keys, the Google pool with usage and the tem
     const settings = plugin.settings;
     // Defaults are back.
     assert.equal(settings.translation.provider, DEFAULT_SETTINGS.translation.provider);
-    assert.equal(settings.translation.endpoint, DEFAULT_SETTINGS.translation.endpoint);
     assert.equal(settings.translation.targetLanguage, DEFAULT_SETTINGS.translation.targetLanguage);
     assert.equal(settings.translation.activePromptTemplate, DEFAULT_SETTINGS.translation.activePromptTemplate);
     assert.equal(settings.translation.prompt, DEFAULT_SETTINGS.translation.prompt);
@@ -302,14 +381,20 @@ test("resetSettingsToDefaults keeps keys, the Google pool with usage and the tem
     assert.deepEqual(settings.ui.channelAutoTranslatePolicies, {});
     assert.equal(settings.ui.translationCacheMaxEntries, DEFAULT_SETTINGS.ui.translationCacheMaxEntries);
     // Credentials are kept: the default provider starts with its saved key, others keep theirs in profiles.
+    // A key keeps the endpoint and model it was used with, so it is never sent to another host.
     assert.equal(settings.translation.apiKey, "sk-fake-ds");
+    assert.equal(settings.translation.endpoint, "https://custom.example/v1");
+    assert.equal(settings.translation.model, "custom-model");
     assert.equal(settings.translation.providerProfiles.microsoft.apiKey, "sk-fake-ms");
     assert.equal(settings.translation.providerProfiles.microsoft.region, "eastasia");
+    assert.equal(settings.translation.providerProfiles.microsoft.endpoint, "https://fake-ms.example/translate");
     assert.equal(settings.translation.providerProfiles.deepl.apiKey, "sk-fake-dl");
     assert.equal(settings.translation.providerProfiles.deepl.deeplPlan, "pro");
-    assert.equal(settings.translation.providerProfiles.deepseek.endpoint, undefined);
-    assert.equal(settings.translation.providerProfiles.deepseek.model, undefined);
+    assert.equal(settings.translation.providerProfiles.deepseek.endpoint, "https://custom.example/v1");
+    assert.equal(settings.translation.providerProfiles.deepseek.model, "custom-model");
     assert.equal(settings.translation.providerProfiles.broken, undefined);
+    // The polish key was used with the preset endpoint and stays with it.
+    assert.equal(settings.polish.endpoint, DEFAULT_SETTINGS.polish.endpoint);
     assert.equal(settings.polish.apiKey, "sk-fake-polish");
     assert.equal(settings.googleTranslate.keys.length, 1);
     assert.equal(settings.googleTranslate.keys[0].apiKey, "AIza-fake-1");
@@ -648,6 +733,8 @@ test("migration merges an old copy left next to a new one (downgrade and upgrade
         { key: "k-shared", value: "older", c: now, t: now + 5, e: now + 40 * HOUR },
         { key: "k-legacy", value: "legacy only", c: now, t: now + 30, e: now + 40 * HOUR }
     ]);
+    // Saved at the same time: neither copy is newer, so the entries of both are kept.
+    legacy.savedAt = current.savedAt;
     const bdApi = createFakeDataApi({
         DiscordAITranslator: { translationCache: legacy, diagnosticLogs: { logs: [{ ts: 5, action: "b", status: "ok", count: 1 }, { ts: 1, action: "a", status: "ok", count: 1 }], compressed: 1 } },
         "DiscordAITranslator.cache": { translationCache: current },
@@ -724,4 +811,258 @@ test("start() migrates before loading, so the old cache is available right away"
     plugin.stop();
     assert.deepEqual(Object.keys(bdApi.files.DiscordAITranslator), ["settings"]);
     assert.ok(bdApi.files["DiscordAITranslator.cache"].translationCache.entries.length >= 1);
+});
+
+// --- review 1: SD-1 (diagnostics moved while diagnostics are on) -----------------------------------
+
+function startablePlugin() {
+    const plugin = quietPlugin();
+    Object.assign(plugin, { injectStyles() {}, removeStyles() {}, patchMessageContextMenu() {}, startObserver() {}, queueScan() {}, showToast() {} });
+    return plugin;
+}
+
+test("start() keeps the moved diagnostics log when the move itself is logged (diagnostics on)", t => {
+    const now = Date.now();
+    const oldLogs = [0, 1, 2, 3, 4].map(index => ({ ts: now - 1000 + index, action: `old.entry.${index}`, status: "ok", key: "", count: 1, meta: {} }));
+    const bdApi = createFakeDataApi({
+        DiscordAITranslator: { settings: { ui: { settingsVersion: 2, diagnosticsEnabled: true } }, diagnosticLogs: { version: 1, compressed: 2, logs: oldLogs } }
+    });
+    useGlobals(t, { BdApi: bdApi, window: { addEventListener() {}, removeEventListener() {} }, document: createFakeDocument() });
+    const plugin = startablePlugin();
+    plugin.start();
+    const actions = plugin.diagnosticLogs.map(entry => entry.action);
+    assert.deepEqual(actions.slice(0, 5), oldLogs.map(entry => entry.action));
+    assert.ok(actions.includes("data.migrate"));
+    assert.equal(plugin.diagnosticCompressedCount, 2);
+    assert.equal(bdApi.files.DiscordAITranslator.diagnosticLogs, undefined);
+    plugin.stop();
+    const stored = bdApi.files["DiscordAITranslator.diagnostics"].diagnosticLogs;
+    assert.deepEqual(stored.logs.slice(0, 5).map(entry => entry.action), oldLogs.map(entry => entry.action));
+    assert.ok(stored.logs.some(entry => entry.action === "data.migrate"));
+});
+
+test("start() keeps the stored diagnostics log when a failing data step logs before it is loaded", t => {
+    const now = Date.now();
+    const bdApi = createFakeDataApi({
+        DiscordAITranslator: { settings: { ui: { settingsVersion: 2, diagnosticsEnabled: true } }, translationCache: cachePayload([{ key: "k1", value: "one", c: now, t: now, e: now + 40 * HOUR }]) },
+        "DiscordAITranslator.diagnostics": { diagnosticLogs: { version: 1, compressed: 0, logs: [{ ts: now - 5000, action: "kept.entry", status: "ok", key: "", count: 1, meta: {} }] } }
+    });
+    // The old cache cannot be removed from the settings file, so every start logs a data.io error first.
+    bdApi.failures.delete.add("DiscordAITranslator");
+    useGlobals(t, { BdApi: bdApi, window: { addEventListener() {}, removeEventListener() {} }, document: createFakeDocument() });
+    const plugin = startablePlugin();
+    plugin.start();
+    const actions = plugin.diagnosticLogs.map(entry => entry.action);
+    assert.equal(actions[0], "kept.entry");
+    assert.ok(actions.includes("data.io"));
+    plugin.stop();
+    assert.equal(bdApi.files["DiscordAITranslator.diagnostics"].diagnosticLogs.logs[0].action, "kept.entry");
+});
+
+// --- review 1: SD-2 / SD-3 (credentials kept by a reset) -------------------------------------------
+
+// Every provider key that would be sent somewhere, with the host it would go to.
+function keyedHosts(settings) {
+    const result = {};
+    for (const kind of ["polish", "translation"]) {
+        const task = settings[kind];
+        for (const provider of Object.keys(PROVIDER_DEFAULTS)) {
+            const source = provider === task.provider ? task : task.providerProfiles?.[provider];
+            const apiKey = String(source?.apiKey || "");
+            if (!apiKey) continue;
+            result[`${kind}:${provider}`] = { apiKey, endpoint: String(source.endpoint || PROVIDER_DEFAULTS[provider].endpoint) };
+        }
+    }
+    return result;
+}
+
+test("reset keeps a relay key together with its endpoint and model, never with the preset host", () => {
+    const plugin = quietPlugin();
+    stubResetEffects(plugin);
+    plugin.saveData = () => true;
+    const relay = { provider: "deepseek", apiKey: "sk-fake-relay", endpoint: "https://relay.example/v1/chat/completions", model: "relay-model" };
+    Object.assign(plugin.settings.polish, relay, { apiKey: "sk-fake-relay-polish" });
+    Object.assign(plugin.settings.translation, relay, {
+        providerProfiles: {
+            openaiCompatible: { apiKey: "sk-fake-relay-2", endpoint: "https://relay-2.example/v1/chat/completions", model: "relay-2-model" },
+            sakuraLocal: { apiKey: "", endpoint: "http://127.0.0.1:5000/v1/chat/completions" },
+            // An endpoint that cannot be read leaves no safe host for the key: the key is dropped.
+            microsoft: { apiKey: "sk-fake-ms", endpoint: 42, region: "eastasia" }
+        }
+    });
+    const before = keyedHosts(plugin.settings);
+
+    assert.equal(plugin.resetSettingsToDefaults(), true);
+    const after = keyedHosts(plugin.settings);
+    for (const [name, pair] of Object.entries(after)) {
+        assert.deepEqual(pair, before[name], name);
+    }
+    // The relay keys are kept, with their hosts.
+    assert.equal(plugin.settings.translation.provider, "deepseek");
+    assert.equal(plugin.settings.translation.endpoint, relay.endpoint);
+    assert.equal(plugin.settings.translation.model, "relay-model");
+    assert.equal(plugin.settings.translation.apiKey, "sk-fake-relay");
+    assert.equal(plugin.settings.polish.endpoint, relay.endpoint);
+    assert.equal(plugin.settings.polish.apiKey, "sk-fake-relay-polish");
+    assert.equal(plugin.hasUsableApiConfig("translation"), true);
+    assert.equal(plugin.settings.translation.providerProfiles.microsoft.apiKey, undefined);
+    assert.equal(plugin.settings.translation.providerProfiles.microsoft.region, "eastasia");
+    // A profile without a key keeps nothing but what a reset always keeps.
+    assert.equal(plugin.settings.translation.providerProfiles.sakuraLocal, undefined);
+
+    // Switching to the kept profile later brings its own host back, not the preset one.
+    plugin.setTaskProvider("translation", "openaiCompatible");
+    assert.equal(plugin.settings.translation.endpoint, "https://relay-2.example/v1/chat/completions");
+    assert.equal(plugin.settings.translation.model, "relay-2-model");
+    assert.equal(plugin.settings.translation.apiKey, "sk-fake-relay-2");
+});
+
+test("reset does not bring back a key the user cleared from the active provider", () => {
+    const plugin = quietPlugin();
+    stubResetEffects(plugin);
+    plugin.saveData = () => true;
+    plugin.setSetting("translation.apiKey", "sk-fake-old-k1");
+    plugin.setTaskProvider("translation", "microsoft");
+    plugin.setTaskProvider("translation", "deepseek");
+    assert.equal(plugin.settings.translation.apiKey, "sk-fake-old-k1");
+    // The stored profile still holds the old key; the live field is what the user sees and cleared.
+    plugin.setSetting("translation.apiKey", "");
+    assert.equal(plugin.settings.translation.providerProfiles.deepseek.apiKey, "sk-fake-old-k1");
+
+    assert.equal(plugin.resetSettingsToDefaults(), true);
+    assert.equal(plugin.settings.translation.apiKey, "");
+    assert.equal(plugin.settings.translation.providerProfiles.deepseek?.apiKey, undefined);
+    assert.equal(plugin.hasUsableApiConfig("translation"), false);
+});
+
+// --- review 1: SD-5 / X7 (merged cache copies keep the detected local models) ----------------------
+
+test("merging the old and new cache copies keeps the detected local models", t => {
+    const now = Date.now();
+    const localKey = ["sakuraLocal", "http://127.0.0.1:8080/v1/chat/completions", "fp-1"].join("\n---\n");
+    const otherKey = ["sakuraLocal", "http://127.0.0.1:5000/v1/chat/completions", "fp-2"].join("\n---\n");
+    const current = cachePayload([{ key: "k-current", value: "current", c: now, t: now + 10, e: now + 40 * HOUR }]);
+    current.localModels = [{ key: localKey, model: "sakura-14b" }];
+    const legacy = cachePayload([{ key: "k-legacy", value: "legacy", c: now, t: now + 20, e: now + 40 * HOUR }]);
+    legacy.savedAt = current.savedAt;
+    // A copy that also names models: the newer copy's model wins for a server both name.
+    legacy.localModels = [{ key: localKey, model: "sakura-7b" }, { key: otherKey, model: "sakura-1.5b" }];
+    const bdApi = createFakeDataApi({
+        DiscordAITranslator: { translationCache: legacy },
+        "DiscordAITranslator.cache": { translationCache: current }
+    });
+    useGlobals(t, { BdApi: bdApi });
+    const plugin = quietPlugin();
+    assert.equal(plugin.migrateLegacyDataStoreKey("translationCache"), "merged");
+    assert.deepEqual(bdApi.files["DiscordAITranslator.cache"].translationCache.localModels, [
+        { key: localKey, model: "sakura-14b" },
+        { key: otherKey, model: "sakura-1.5b" }
+    ]);
+    plugin.loadTranslationCache();
+    assert.equal(plugin.localProviderDetectedModels.get(localKey)?.model, "sakura-14b");
+    assert.equal(plugin.localProviderDetectedModels.get(otherKey)?.model, "sakura-1.5b");
+    // A 0.3.0 copy has no list; the current one is kept as it is.
+    const merged = plugin.mergePersistedTranslationCachePayloads(current, cachePayload([]));
+    assert.deepEqual(merged.localModels, current.localModels);
+});
+
+// --- review 1: SD-8 (a cache cleared in the other version stays cleared) ---------------------------
+
+test("a cache cleared in 0.3.0 after a downgrade stays cleared on the next upgrade", t => {
+    const now = Date.now();
+    const current = cachePayload([{ key: "k-before-downgrade", value: "cleared translation", c: now - 3 * HOUR, t: now - 2 * HOUR, e: now + 40 * HOUR }]);
+    current.savedAt = now - 2 * HOUR;
+    // 0.3.0 cannot see the new file; its "Clear translation cache" writes an empty payload to the old key.
+    const cleared = cachePayload([]);
+    cleared.savedAt = now - HOUR;
+    const bdApi = createFakeDataApi({
+        DiscordAITranslator: { translationCache: cleared },
+        "DiscordAITranslator.cache": { translationCache: current }
+    });
+    useGlobals(t, { BdApi: bdApi });
+    const plugin = quietPlugin();
+    assert.equal(plugin.migrateLegacyDataStoreKey("translationCache"), "merged");
+    assert.deepEqual(bdApi.files["DiscordAITranslator.cache"].translationCache.entries, []);
+    plugin.loadTranslationCache();
+    assert.equal(plugin.translationCache.size, 0);
+
+    // What 0.3.0 translated after the clear is kept; nothing from before it comes back.
+    const usedAfterClear = cachePayload([{ key: "k-after-clear", value: "new translation", c: now - 50 * 60 * 1000, t: now - 40 * 60 * 1000, e: now + 40 * HOUR }]);
+    usedAfterClear.savedAt = now - 30 * 60 * 1000;
+    const merged = plugin.mergePersistedTranslationCachePayloads(current, usedAfterClear);
+    assert.deepEqual(merged.entries.map(entry => merged.strings[entry.v]), ["new translation"]);
+
+    // The same holds the other way: a cache cleared here while the old copy could not be deleted yet.
+    const oldCopy = cachePayload([{ key: "k-old-copy", value: "old copy", c: now - 5 * HOUR, t: now - 4 * HOUR, e: now + 40 * HOUR }]);
+    oldCopy.savedAt = now - 4 * HOUR;
+    const clearedHere = cachePayload([]);
+    clearedHere.savedAt = now - HOUR;
+    assert.deepEqual(plugin.mergePersistedTranslationCachePayloads(clearedHere, oldCopy).entries, []);
+});
+
+// --- review 1: SD-6 (stored 'enabled' channel rules become an allow-list on upgrade) ---------------
+
+test("upgrading with stored 'enabled' channel rules logs them, tells the user once and shows the count", t => {
+    const storedUi = {
+        settingsVersion: 2,
+        autoTranslateMessages: false,
+        diagnosticsEnabled: true,
+        // Two channels are allow-listed (one of them also under an old per-message key), one is blocked.
+        channelAutoTranslatePolicies: { "g1:c1": { mode: "enabled" }, "g1:c2": { mode: "enabled" }, "g1:c2:m9": { mode: "enabled" }, "g1:c3": { mode: "disabled" } }
+    };
+    const bdApi = createFakeDataApi({ DiscordAITranslator: { settings: { ui: storedUi } } });
+    useGlobals(t, { BdApi: bdApi, window: { addEventListener() {}, removeEventListener() {} }, document: createFakeDocument() });
+    const plugin = startablePlugin();
+    const toasts = [];
+    plugin.showToast = (message, type) => { toasts.push([message, type]); };
+    plugin.start();
+    // The notice names the rule as the settings show it, so it follows any relabelling of the rule.
+    const notices = toasts.filter(([message]) => message.includes(plugin.t("channelPolicyEnabled")));
+    assert.equal(toasts.length, 2);
+    assert.equal(notices.length, 1);
+    assert.equal(notices[0][1], "info");
+    assert.match(notices[0][0], /2/);
+    assert.ok(plugin.diagnosticLogs.some(entry => entry.action === "settings.channel-rules" && entry.meta.allowListed === 2));
+    assert.equal(plugin.getChannelAutoTranslateAllowListCount(), 2);
+    assert.equal(plugin.createSettingsSnapshot().effective.allowListedChannels, 2);
+    assert.equal(plugin.getDiagnosticLogsSnapshot().settings.allowListedChannels, 2);
+    // The rules themselves are unchanged, and the notice is recorded as shown.
+    assert.deepEqual(plugin.settings.ui.channelAutoTranslatePolicies, storedUi.channelAutoTranslatePolicies);
+    assert.equal(bdApi.files.DiscordAITranslator.settings.ui.channelAutoTranslatePoliciesVersion, DEFAULT_SETTINGS.ui.channelAutoTranslatePoliciesVersion);
+    plugin.stop();
+
+    // One time only.
+    const again = startablePlugin();
+    const laterToasts = [];
+    again.showToast = (message, type) => { laterToasts.push([message, type]); };
+    again.start();
+    assert.equal(laterToasts.filter(([message]) => message.includes(again.t("channelPolicyEnabled"))).length, 0);
+    again.stop();
+});
+
+test("no allow-list notice for a new install or when no channel rule is 'enabled'", t => {
+    for (const stored of [{}, { settings: { ui: { settingsVersion: 2, channelAutoTranslatePolicies: { "g1:c3": { mode: "disabled" } } } } }]) {
+        const bdApi = createFakeDataApi({ DiscordAITranslator: stored });
+        useGlobals(t, { BdApi: bdApi, window: { addEventListener() {}, removeEventListener() {} }, document: createFakeDocument() });
+        const plugin = startablePlugin();
+        const toasts = [];
+        plugin.showToast = (message, type) => { toasts.push([message, type]); };
+        plugin.start();
+        assert.equal(toasts.length, 1, JSON.stringify(stored));
+        assert.equal(bdApi.files.DiscordAITranslator.settings.ui.channelAutoTranslatePoliciesVersion, DEFAULT_SETTINGS.ui.channelAutoTranslatePoliciesVersion);
+        plugin.stop();
+    }
+});
+
+test("start() still writes diagnostics a previous stop() could not save before it reloads the log", t => {
+    const bdApi = createFakeDataApi({ DiscordAITranslator: { settings: { ui: { settingsVersion: 2, diagnosticsEnabled: true } } } });
+    useGlobals(t, { BdApi: bdApi, window: { addEventListener() {}, removeEventListener() {} }, document: createFakeDocument() });
+    const plugin = startablePlugin();
+    plugin.settings.ui.diagnosticsEnabled = true;
+    plugin.logDiagnostic("unsaved.entry", "ok", {});
+    assert.equal(plugin.diagnosticLogsDirty, true);
+    plugin.start();
+    assert.deepEqual(bdApi.files["DiscordAITranslator.diagnostics"].diagnosticLogs.logs.map(entry => entry.action), ["unsaved.entry"]);
+    assert.deepEqual(plugin.diagnosticLogs.map(entry => entry.action), ["unsaved.entry"]);
+    plugin.stop();
 });

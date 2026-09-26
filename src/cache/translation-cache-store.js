@@ -549,7 +549,8 @@ class TranslationCacheStore {
     }
 
     // Used once when the cache moves to its own data file (and after a downgrade left an old copy behind):
-    // keeps every key of both payloads, the more recently used copy of a key wins, oldest first (LRU order).
+    // keeps the keys of both payloads that are not older than the newer copy, the more recently used copy of a
+    // key wins, oldest first (LRU order).
     mergePersistedTranslationCachePayloads(current, legacy) {
         const now = Date.now();
         const decode = payload => {
@@ -571,10 +572,18 @@ class TranslationCacheStore {
                 };
             }).filter(Boolean);
         };
-        const currentEntries = decode(current);
-        const legacyEntries = decode(legacy);
+        let currentEntries = decode(current);
+        let legacyEntries = decode(legacy);
         if (!legacyEntries) return current;
         if (!currentEntries) return legacy;
+        // Each copy is the whole cache as it was when saved. Nothing older than the newer copy's save time is taken
+        // from the older copy: it was cleared, evicted or expired there (0.3.0 after a downgrade writes an empty
+        // payload on "Clear translation cache"), or that version could not read it. A cleared cache must not come
+        // back; a missed entry is only translated again.
+        const currentSavedAt = Number(current?.savedAt) || 0;
+        const legacySavedAt = Number(legacy?.savedAt) || 0;
+        if (legacySavedAt > currentSavedAt) currentEntries = currentEntries.filter(item => item.touchedAt >= legacySavedAt);
+        else if (currentSavedAt > legacySavedAt) legacyEntries = legacyEntries.filter(item => item.touchedAt >= currentSavedAt);
         const byKey = new Map();
         [...legacyEntries, ...currentEntries].forEach(item => {
             const existing = byKey.get(item.key);
@@ -604,9 +613,25 @@ class TranslationCacheStore {
             savedAt: now,
             ttlHours: this.plugin.normalizeTranslationCacheTtlHours(current?.ttlHours ?? legacy?.ttlHours),
             maxEntries: Number(current?.maxEntries || legacy?.maxEntries || 0) || this.plugin.getTranslationCacheMaxEntries(),
+            // Local-model cache keys name the served model; without the list those lines stop matching.
+            localModels: this.mergePersistedLocalModels(current?.localModels, legacy?.localModels),
             strings,
             entries
         };
+    }
+
+    // One entry per local server, the current copy's model first; restoreLocalProviderDetectedModels reads 8.
+    mergePersistedLocalModels(current, legacy) {
+        const seen = new Set();
+        return [...(Array.isArray(current) ? current : []), ...(Array.isArray(legacy) ? legacy : [])]
+            .filter(item => {
+                const key = String(item?.key || "");
+                if (!key || !String(item?.model || "").trim() || seen.has(key)) return false;
+                seen.add(key);
+                return true;
+            })
+            .slice(0, 8)
+            .map(item => ({ key: String(item.key), model: String(item.model).trim() }));
     }
 
     decodePersistedTranslationCacheKey(entry, strings = []) {

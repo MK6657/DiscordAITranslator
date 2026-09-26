@@ -1025,6 +1025,14 @@ module.exports = class DiscordAITranslator {
         this.isStarted = true;
         this.apiRequestsClosed = false;
         try {
+            // Diagnostics a previous stop() could not save are still in memory; they are written before the log
+            // is loaded again. Otherwise the stored log is the only copy, and whatever is logged until it is loaded
+            // (settings load, data move below) is added to it rather than written over it.
+            const unsavedDiagnostics = Boolean(this.diagnosticLogsDirty);
+            if (!unsavedDiagnostics) {
+                this.diagnosticLogs = [];
+                this.diagnosticCompressedCount = 0;
+            }
             if (this.settingsLoadBlocked) {
                 this.loadSettings();
             }
@@ -1037,7 +1045,10 @@ module.exports = class DiscordAITranslator {
             }
             try { this.migrateLegacyDataStores(); }
             catch (error) { this.warnSanitized("Data store migration failed; old data kept", error); }
-            if (this.settings.ui?.diagnosticsEnabled) {
+            if (this.settings.ui?.diagnosticsEnabled && !unsavedDiagnostics) {
+                this.loadDiagnosticLogs({ keepLogged: true });
+            }
+            else if (this.settings.ui?.diagnosticsEnabled) {
                 if (this.diagnosticLogsDirty) this.flushDiagnosticLogs({ retryOnError: false });
                 if (!this.diagnosticLogsDirty) this.loadDiagnosticLogs();
                 else this.scheduleDiagnosticLogsPersist();
@@ -1063,6 +1074,7 @@ module.exports = class DiscordAITranslator {
             window.addEventListener("beforeunload", this.getPageHideHandler(), true);
             this.queueScan();
             this.showToast(this.t("pluginStarted", { version: PLUGIN_VERSION }), "success");
+            this.showSettingsUpgradeNotices();
             return true;
         }
         catch (error) {
@@ -3780,7 +3792,9 @@ module.exports = class DiscordAITranslator {
                 localProvider: this.isLocalTranslationProvider(this.settings.translation),
                 concurrency: this.getAutoTranslateConcurrency(),
                 prefetchRange: this.getAutoTranslatePrefetchRange(),
-                intakeMode: this.normalizeAutoTranslateIntakeMode(this.settings.ui?.autoTranslateIntakeMode)
+                intakeMode: this.normalizeAutoTranslateIntakeMode(this.settings.ui?.autoTranslateIntakeMode),
+                // Channels that auto-translate even with the main switch off.
+                allowListedChannels: this.getChannelAutoTranslateAllowListCount()
             },
             settings: sanitize(this.settings, "", DEFAULT_SETTINGS)
         };
@@ -4809,6 +4823,8 @@ module.exports = class DiscordAITranslator {
             return;
         }
         if (this.isQuickSettingsPanelOpen()) {
+            // The route can change under the open panel; its channel rule control must follow it.
+            this.refreshChannelRuleControls();
             this.quickSettingsScanDeferred = true;
             this.logSlowOperation("scan.discord-ui", startedAt, { outcome: "blocked", reason: "quick-settings-open" }, 0);
             return;
@@ -4820,6 +4836,7 @@ module.exports = class DiscordAITranslator {
         }
         const routeChanged = this.trackAutoTranslationRouteChange();
         if (routeChanged) {
+            this.refreshChannelRuleControls();
             // The previous chat's scroller is unmounted; the draw pass finds the new one.
             this.cachedDrawScroller = null;
             const delayMs = Math.max(
@@ -15401,6 +15418,7 @@ module.exports = class DiscordAITranslator {
     flushSettings(...args) { return this.settingsStore.flushSettings(...args); }
     mergeSettings(...args) { return this.settingsStore.mergeSettings(...args); }
     ensureSettingsShape(...args) { return this.settingsStore.ensureSettingsShape(...args); }
+    showSettingsUpgradeNotices(...args) { return this.settingsStore.showSettingsUpgradeNotices(...args); }
     migrateDefaultTranslationPrompt(...args) { return this.settingsStore.migrateDefaultTranslationPrompt(...args); }
     isLegacyTranslationNaturalPrompt(...args) { return this.settingsStore.isLegacyTranslationNaturalPrompt(...args); }
     normalizePromptForMigration(...args) { return this.settingsStore.normalizePromptForMigration(...args); }
@@ -15726,6 +15744,8 @@ module.exports = class DiscordAITranslator {
     setCurrentChannelAutoTranslatePolicyMode(...args) { return this.autoQueueCore.setCurrentChannelAutoTranslatePolicyMode(...args); }
     getCurrentChannelAutoTranslatePolicy(...args) { return this.autoQueueCore.getCurrentChannelAutoTranslatePolicy(...args); }
     isCurrentChannelAutoTranslateAllowed(...args) { return this.autoQueueCore.isCurrentChannelAutoTranslateAllowed(...args); }
+    getChannelAutoTranslateAllowListCount(...args) { return this.autoQueueCore.getChannelAutoTranslateAllowListCount(...args); }
+    refreshChannelRuleControls(...args) { return this.autoQueueCore.refreshChannelRuleControls(...args); }
     isAutoTranslationRequestCurrent(...args) { return this.autoQueueCore.isAutoTranslationRequestCurrent(...args); }
     isAutoTranslationRenderRequestCurrent(...args) { return this.autoQueueCore.isAutoTranslationRenderRequestCurrent(...args); }
     isSameAutoTranslationRouteScope(...args) { return this.autoQueueCore.isSameAutoTranslationRouteScope(...args); }
