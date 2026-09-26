@@ -2600,11 +2600,9 @@ module.exports = class DiscordAITranslator {
             ["flowStage", summary.top?.flowStages || []]
         ].filter(([, items]) => Array.isArray(items) && items.length);
 
+        // With nothing to show, the row description already says so.
         if (!groups.length) {
-            const empty = document.createElement("span");
-            empty.className = "dait-diagnostic-summary-empty";
-            empty.textContent = this.t("diagnosticSummaryEmpty");
-            panel.appendChild(empty);
+            panel.hidden = true;
             return panel;
         }
 

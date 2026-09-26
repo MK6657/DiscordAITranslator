@@ -1067,7 +1067,7 @@ module.exports = `.dait-settings {
 }
 
 /* Narrow panel: rows put their control under the text (switches stay on the right). */
-@container dait-settings (max-width: 560px) {
+@container dait-settings (max-width: 600px) {
     .dait-settings-header-provider {
         display: none;
     }

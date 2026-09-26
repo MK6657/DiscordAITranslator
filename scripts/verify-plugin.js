@@ -2887,7 +2887,7 @@ assert.match(injectedCss, /\.dait-quick-settings-error \{/);
 // A narrow panel (BetterDiscord's own modal width) turns the tab rail into a scrolling row and stacks rows.
 assert.match(injectedCss, /@container dait-settings \(max-width: 760px\) \{[\s\S]*?\.dait-settings-body \{[\s\S]*?grid-template-columns: minmax\(0, 1fr\);/);
 assert.match(injectedCss, /@container dait-settings \(max-width: 760px\) \{[\s\S]*?\.dait-settings-tabs \{[\s\S]*?flex-direction: row;[\s\S]*?overflow-x: auto;/);
-assert.match(injectedCss, /@container dait-settings \(max-width: 560px\) \{[\s\S]*?\.dait-settings-row:not\(\.dait-settings-row-switch\) \{[\s\S]*?grid-template-columns: minmax\(0, 1fr\);/);
+assert.match(injectedCss, /@container dait-settings \(max-width: 600px\) \{[\s\S]*?\.dait-settings-row:not\(\.dait-settings-row-switch\) \{[\s\S]*?grid-template-columns: minmax\(0, 1fr\);/);
 assert.match(injectedCss, /\.dait-message-button \{[\s\S]*?border: 1px solid color-mix/);
 assert.match(injectedCss, /\.theme-light\.dait-polish-button,[\s\S]*?\.dait-polish-button\[data-dait-discord-theme="light"\]/);
 assert.match(injectedCss, /\.theme-dark\.dait-polish-button,[\s\S]*?\.theme-darker\.dait-polish-button,[\s\S]*?\.theme-midnight\.dait-polish-button/);
