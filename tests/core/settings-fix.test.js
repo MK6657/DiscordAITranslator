@@ -484,3 +484,36 @@ test("BetterDiscord's modal: only the frame is widened; the scroller and BetterD
     plugin.cleanupSettingsModalSizing(panel);
     assert.equal(wrap.dataset.daitSettingsModal, undefined);
 });
+
+// --- SS-4: Clear logs refreshes the diagnostic summary ------------------------------------------------
+
+test("Clear logs (and copy/export) refresh the diagnostic summary row next to the logs row", async t => {
+    const { plugin, panel } = createShell(t, { tab: "data" });
+    startedPlugin(plugin);
+    confirmingBdApi(t);
+    plugin.saveData = () => true;
+    const now = new Date().toISOString();
+    const entry = { time: now, event: "auto.batch", status: "failed", meta: { messageState: "failed", reasonCode: "timeout", provider: "deepseek" } };
+    plugin.diagnosticLogs = [{ ...entry }, { ...entry }];
+    const summaryRow = () => panel.querySelector(".dait-diagnostic-summary-row");
+    const summaryText = () => summaryRow().querySelector(".dait-row-description").textContent;
+    plugin.refreshDiagnosticSummary(panel);
+    assert.notEqual(summaryText(), plugin.t("diagnosticSummaryEmpty"));
+    assert.ok(summaryRow().querySelectorAll(".dait-diagnostic-chip").length > 0);
+
+    const clear = panel.querySelectorAll(".dait-diagnostic-actions button").find(button => button.textContent === plugin.t("clearDiagnosticLogs"));
+    assert.ok(clear);
+    clear.click();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(plugin.diagnosticLogs.length, 0);
+    assert.equal(summaryText(), plugin.t("diagnosticSummaryEmpty"));
+    assert.equal(summaryRow().querySelectorAll(".dait-diagnostic-chip").length, 0);
+
+    // Copy refreshes it as well (new events since the panel was built show up).
+    plugin.diagnosticLogs = [{ ...entry }];
+    plugin.copyDiagnosticLogs = async () => true;
+    const copy = panel.querySelectorAll(".dait-diagnostic-actions button").find(button => button.textContent === plugin.t("copyDiagnosticLogs"));
+    copy.click();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.notEqual(summaryText(), plugin.t("diagnosticSummaryEmpty"));
+});

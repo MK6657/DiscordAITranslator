@@ -3309,9 +3309,10 @@ module.exports = class DiscordAITranslator {
             const description = row?.querySelector?.(".dait-row-description");
             if (description) description.textContent = this.getDiagnosticLogsStatsText();
         };
+        // The summary row sits in the same diagnostics group as this row.
         const refreshDiagnostics = button => {
             refreshDescription(button);
-            this.refreshDiagnosticSummary(button.closest(".dait-settings-section"));
+            this.refreshDiagnosticSummary(button.closest(".dait-settings-group") || button.closest(".dait-settings"));
         };
 
         clear.addEventListener("click", async () => {
