@@ -193,6 +193,22 @@ module.exports = `
     white-space: nowrap;
 }
 
+/* The last passed connection test: model and response time, e.g. "Hy-MT2 · 820 ms". */
+.dait-qp-status-test {
+    color: var(--dait-qp-muted);
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.45;
+    margin: 2px 0 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dait-qp-status-test[hidden] {
+    display: none;
+}
+
 .dait-qp-status-detail {
     -webkit-box-orient: vertical;
     color: var(--dait-qp-muted);

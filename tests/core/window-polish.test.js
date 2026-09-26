@@ -507,13 +507,13 @@ test("launcher status: an invalid or unsafe API URL needs the user until a test 
     let status = plugin.getLauncherStatus();
     assert.equal(status.state, "needs-you");
     assert.equal(status.connection, plugin.getApiStatusText("failed"));
-    assert.equal(status.activity, "需要处理：接口地址无效或不安全");
-    assert.equal(status.title, "DeepSeek · 连接失败 · 需要处理：接口地址无效或不安全");
+    assert.equal(status.activity, "需要处理：接口地址不可用");
+    assert.equal(status.title, "DeepSeek · 连接失败 · 需要处理：接口地址不可用");
     assert.equal(status.note, plugin.formatError(invalid), "the localized error is the note");
     assert.equal(plugin.toasts.length, 0, "the toast rules are unchanged: no extra toast from the status");
 
     plugin.markAutoTranslationProviderFailure(options(), endpointError("UNSAFE_API_ENDPOINT"));
-    assert.equal(plugin.getLauncherStatus().activity, "需要处理：接口地址无效或不安全");
+    assert.equal(plugin.getLauncherStatus().activity, "需要处理：接口地址不可用");
     // A running test shows as busy, not as the error.
     plugin.settings.translation.apiStatus = { state: "testing", message: "" };
     assert.equal(plugin.getLauncherStatus().state, "busy");
@@ -524,7 +524,7 @@ test("launcher status: an invalid or unsafe API URL needs the user until a test 
     // In English.
     plugin.markAutoTranslationProviderFailure(options(), invalid);
     plugin.settings.ui.language = "en";
-    assert.equal(plugin.getLauncherStatus().activity, "Needs attention: API URL invalid or unsafe");
+    assert.equal(plugin.getLauncherStatus().activity, "Needs attention: API URL not usable");
     // A connection test from the settings (setApiStatus on the status badge) ends it too.
     const badge = { dataset: { daitKind: "translation" } };
     plugin.setApiStatus(badge, "success", "ok");
@@ -536,7 +536,7 @@ test("launcher status: an unknown API URL or model (404, or a named unknown mode
     plugin.markAutoTranslationProviderFailure(options(), httpError(404));
     let status = plugin.getLauncherStatus();
     assert.equal(status.state, "needs-you");
-    assert.equal(status.activity, "需要处理：找不到接口地址或模型");
+    assert.equal(status.activity, "需要处理：找不到接口或模型");
     assert.match(status.note, /404/);
 
     // A different model is a different configuration: the old error no longer shows.
@@ -554,7 +554,7 @@ test("launcher status: an unknown API URL or model (404, or a named unknown mode
 
     // A 400 that names an unknown model counts too; a failed request does not end it.
     plugin.markAutoTranslationProviderFailure(options(), httpError(400, { providerModelNotFound: true }));
-    assert.equal(plugin.getLauncherStatus().activity, "需要处理：找不到接口地址或模型");
+    assert.equal(plugin.getLauncherStatus().activity, "需要处理：找不到接口或模型");
     plugin.providerLayer.runModelTaskWithResult = async () => { throw httpError(404); };
     await assert.rejects(plugin.runModelTaskWithResult("translation", "hello", options()));
     assert.equal(plugin.getLauncherStatus().state, "needs-you");
@@ -575,53 +575,69 @@ test("launcher status: other failures and other services are not configuration e
     assert.equal(plugin.getLauncherStatus().state, "needs-you");
 });
 
-test("the status detail shows the last passed test's model and response time when the provider layer reports it", t => {
+test("the status shows the last passed test's model and response time when the provider layer reports it", t => {
     const { plugin } = statusPlugin(t, "sakuraLocal");
     let status = plugin.getLauncherStatus();
-    assert.equal(status.detail, "本频道自动翻译中", "without getLastApiTestResult the detail is the activity");
+    assert.equal(status.testSummary, "", "nothing without getLastApiTestResult");
+    assert.equal(status.detail, "本频道自动翻译中");
 
     let result = { ok: true, model: "Hy-MT2", latencyMs: 820.4, at: Date.now() };
     plugin.getLastApiTestResult = kind => kind === "translation" ? result : null;
     status = plugin.getLauncherStatus();
-    assert.equal(status.detail, "Hy-MT2 · 820 ms · 本频道自动翻译中");
+    assert.equal(status.testSummary, "Hy-MT2 · 820 ms");
+    assert.equal(status.detail, "本频道自动翻译中", "the activity keeps its own line");
     assert.equal(status.title, "Sakura 本地 · 连接正常 · 本频道自动翻译中", "the launcher tooltip stays short");
 
     // Machine translation services have no model name.
     result = { ok: true, model: "", latencyMs: 95, at: Date.now() };
-    assert.equal(plugin.getLauncherStatus().detail, "95 ms · 本频道自动翻译中");
+    assert.equal(plugin.getLauncherStatus().testSummary, "95 ms");
     result = { ok: true, model: "Hy-MT2", at: Date.now() };
-    assert.equal(plugin.getLauncherStatus().detail, "Hy-MT2 · 本频道自动翻译中");
+    assert.equal(plugin.getLauncherStatus().testSummary, "Hy-MT2");
 
     // A failed test, or settings changed since the test (the status is no longer "connected"), show nothing.
     result = { ok: false, model: "Hy-MT2", latencyMs: 820, at: Date.now() };
-    assert.equal(plugin.getLauncherStatus().detail, "本频道自动翻译中");
+    assert.equal(plugin.getLauncherStatus().testSummary, "");
     result = { ok: true, model: "Hy-MT2", latencyMs: 820, at: Date.now() };
     plugin.settings.translation.apiStatus = { state: "untested", message: "" };
-    assert.equal(plugin.getLauncherStatus().detail, "本频道自动翻译中");
+    assert.equal(plugin.getLauncherStatus().testSummary, "");
     plugin.settings.translation.apiStatus = { state: "success", message: "" };
 
-    // Busy and off keep it; "needs you" shows the problem instead.
+    // Off keeps it; "needs you" shows the problem instead.
     plugin.settings.ui.autoTranslateMessages = false;
-    assert.equal(plugin.getLauncherStatus().detail, "Hy-MT2 · 820 ms · 本频道不自动翻译");
+    assert.equal(plugin.getLauncherStatus().testSummary, "Hy-MT2 · 820 ms");
     plugin.settings.ui.autoTranslateMessages = true;
     plugin.markAutoTranslationProviderFailure(plugin.getAutoTranslationOptions(), httpError(404));
-    assert.equal(plugin.getLauncherStatus().detail, "需要处理：找不到接口地址或模型");
+    assert.equal(plugin.getLauncherStatus().testSummary, "");
     plugin.setApiRuntimeStatus("translation", "success");
 
     plugin.settings.ui.language = "en";
-    assert.equal(plugin.getLauncherStatus().detail, "Hy-MT2 · 820 ms · Auto-translating in this channel");
+    assert.equal(plugin.getLauncherStatus().testSummary, "Hy-MT2 · 820 ms");
     plugin.getLastApiTestResult = () => { throw new Error("not ready"); };
-    assert.equal(plugin.getLauncherStatus().detail, "Auto-translating in this channel");
+    assert.equal(plugin.getLauncherStatus().testSummary, "");
 });
 
-test("the open quick panel shows the test summary in its status detail", t => {
+test("the open quick panel shows the test summary on its own line under the connection", t => {
     const { plugin, doc } = statusPlugin(t, "sakuraLocal");
-    plugin.getLastApiTestResult = () => ({ ok: true, model: "Hy-MT2", latencyMs: 820, at: Date.now() });
+    let result = null;
+    plugin.getLastApiTestResult = () => result;
     const userPanel = doc.body.appendChild(doc.createElement("section"));
     const launcher = plugin.createQuickSettingsButton("panel", userPanel);
     userPanel.appendChild(launcher);
     plugin.openQuickPopover(launcher, { source: "test" });
     const popover = doc.querySelector(".dait-quick-popover");
-    assert.equal(popover.querySelector(".dait-qp-status-detail").textContent, "Hy-MT2 · 820 ms · 本频道自动翻译中");
-    assert.equal(popover.querySelector(".dait-qp-status-line").textContent, "Sakura 本地 · 连接正常");
+    const line = popover.querySelector(".dait-qp-status-line");
+    const summary = popover.querySelector(".dait-qp-status-test");
+    const detail = popover.querySelector(".dait-qp-status-detail");
+    assert.ok(line.nextSibling === summary || line.parentNode.children.indexOf(summary) === line.parentNode.children.indexOf(line) + 1, "right under the connection");
+    assert.equal(summary.hidden, true, "hidden while no test result is known");
+    assert.equal(line.textContent, "Sakura 本地 · 连接正常");
+    assert.equal(detail.textContent, "本频道自动翻译中");
+
+    result = { ok: true, model: "Hy-MT2", latencyMs: 820, at: Date.now() };
+    plugin.quickPanel.refreshStatus();
+    assert.equal(summary.hidden, false);
+    assert.equal(summary.textContent, "Hy-MT2 · 820 ms");
+    assert.equal(detail.textContent, "本频道自动翻译中");
+    assert.match(PLUGIN_CSS, /\.dait-qp-status-test \{[\s\S]*?font-size: 13px;[\s\S]*?white-space: nowrap;/);
+    assert.match(PLUGIN_CSS, /\.dait-qp-status-test\[hidden\] \{\n    display: none;/);
 });

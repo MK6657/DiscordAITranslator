@@ -359,10 +359,14 @@ class QuickPanel {
         controls.statusLine = this.createElement("p", "dait-qp-status-line");
         controls.statusLine.setAttribute("role", "status");
         controls.statusLine.setAttribute("aria-live", "polite");
+        // Under the connection: the last passed test's model and response time, when known.
+        controls.statusTest = this.createElement("p", "dait-qp-status-test");
+        controls.statusTest.hidden = true;
         controls.statusDetail = this.createElement("p", "dait-qp-status-detail");
         controls.statusNote = this.createElement("p", "dait-qp-status-note");
         controls.statusNote.hidden = true;
         statusText.appendChild(controls.statusLine);
+        statusText.appendChild(controls.statusTest);
         statusText.appendChild(controls.statusDetail);
         statusText.appendChild(controls.statusNote);
         controls.test = this.createButton("dait-qp-button dait-qp-button-secondary dait-qp-test", t("apiTest"), button => this.runConnectionTest(button));
@@ -579,6 +583,12 @@ class QuickPanel {
         if (this.root.dataset.daitStatus !== status.state) this.root.dataset.daitStatus = status.state;
         if (controls.statusDot.dataset.daitStatus !== status.state) controls.statusDot.dataset.daitStatus = status.state;
         let resized = this.setText(controls.statusLine, status.headline);
+        const testSummary = String(status.testSummary || "");
+        resized = this.setText(controls.statusTest, testSummary) || resized;
+        if (controls.statusTest.hidden !== !testSummary) {
+            controls.statusTest.hidden = !testSummary;
+            resized = true;
+        }
         resized = this.setText(controls.statusDetail, this.getStatusDetailText(status)) || resized;
         // The note is one line (a hint or the service's own error text); the tooltip holds all of it.
         resized = this.setText(controls.statusNote, status.note) || resized;
@@ -998,7 +1008,8 @@ class QuickPanel {
         }
         const headline = [provider, connection].filter(Boolean).join(" · ");
         const title = [provider, connection, activity].filter(Boolean).join(" · ");
-        // The last passed connection test's model and response time, e.g. "Hy-MT2 · 820 ms · 本频道自动翻译中".
+        // The last passed connection test's model and response time ("Hy-MT2 · 820 ms"), a line of its own under
+        // the connection; not while the user has something to fix.
         const testSummary = state === "needs-you" ? "" : this.getLastTestSummary(api);
         return {
             state,
@@ -1006,9 +1017,9 @@ class QuickPanel {
             connection,
             activity,
             headline,
-            // Panel lines: what is happening now, then an optional one-line note (hint or error text).
-            detail: [testSummary, activity].filter(Boolean).join(" · "),
             testSummary,
+            // Panel lines: what is happening now, then an optional one-line note (hint or error text).
+            detail: activity,
             note,
             reason,
             message,
