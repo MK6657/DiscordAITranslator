@@ -13889,7 +13889,8 @@ module.exports = class DiscordAITranslator {
                 const childQuoted = quoted || this.getSlateElementFromDom(child)?.type === "blockQuote";
                 if (!this.collectSlateComposerLines(child, blockedSelector, lines, childQuoted)) {
                     const text = this.readComposerInlineText(child, blockedSelector);
-                    lines.push(childQuoted && !text.startsWith(">") ? `> ${text}` : text);
+                    // Discord drops the "> " marker from a blockQuote's text, so a leading ">" is content.
+                    lines.push(childQuoted ? `> ${text}` : text);
                 }
                 continue;
             }

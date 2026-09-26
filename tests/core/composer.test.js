@@ -360,6 +360,20 @@ test("composer reader maps mentions, emoji and quotes to what Discord would send
     assert.equal(plugin.getTextboxDraftText(createSlateEditor([quote, "reply"])), "> quoted line\nreply");
 });
 
+// CMP-R6: Discord's blockQuote element text has no marker, so text that itself starts with ">" is content.
+test("a quoted line whose text starts with '>' keeps its quote marker", t => {
+    useComposerBrowser(t);
+    const plugin = new Plugin();
+    const quoteLine = text => {
+        const line = slateLine(text);
+        line["__reactFiber$test"] = { memoizedProps: { element: { type: "blockQuote", children: [{ text }] } } };
+        return line;
+    };
+    assert.equal(plugin.getTextboxDraftText(createSlateEditor([quoteLine(">_< so cute"), "reply"])), "> >_< so cute\nreply");
+    assert.equal(plugin.getTextboxDraftText(createSlateEditor([quoteLine(">>> x")])), "> >>> x");
+    assert.equal(plugin.getTextboxDraftText(createSlateEditor([">_< not quoted"])), ">_< not quoted", "an unquoted line is read as typed");
+});
+
 test("a plain contenteditable keeps block and <br> line breaks", t => {
     useComposerBrowser(t);
     const plugin = new Plugin();
