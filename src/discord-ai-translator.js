@@ -10042,14 +10042,18 @@ module.exports = class DiscordAITranslator {
         const text = sourceText ?? this.getElementText(content);
         // A partial line drawn from a kept partial result (a long message with a missing part)
         // would fail validation as a complete translation; removing it would only make the scan
-        // draw it again.
-        if (line.classList?.contains?.("dait-translation-partial") && this.getAutoTranslationPartialResult(cacheKey, text)) return false;
+        // draw it again. While it is shown, its kept result stays alive.
+        const partialLine = line.classList?.contains?.("dait-translation-partial") === true;
+        if (partialLine && this.touchAutoTranslationPartialResult(cacheKey, text)) return false;
+        // Once the kept result has expired, the line is still checked as the partial it is, so a
+        // line on screen (or hidden by the user) is not torn down and the message paid for again.
+        const validationOptions = partialLine ? { ...options, longTextPartial: true } : options;
         const validation = this.getAutoTranslationOutputValidationResult(
             text,
             renderedText,
             this.getAutoTranslationTargetLanguage(options),
-            this.getAutoTranslationOutputValidationOptions(text, renderedText, options),
-            options
+            this.getAutoTranslationOutputValidationOptions(text, renderedText, validationOptions),
+            validationOptions
         );
         if (validation.cacheable || (validation.renderable && this.isAcceptedNonCacheableCurrentTranslationLine(line, validation))) {
             this.rememberRecentAutoTranslationRender(cacheKey, text, options, {
@@ -15629,6 +15633,7 @@ module.exports = class DiscordAITranslator {
     pruneRecentAutoTranslationRenders(...args) { return this.autoQueueCore.pruneRecentAutoTranslationRenders(...args); }
     rememberAutoTranslationPartialResult(...args) { return this.autoQueueCore.rememberAutoTranslationPartialResult(...args); }
     getAutoTranslationPartialResult(...args) { return this.autoQueueCore.getAutoTranslationPartialResult(...args); }
+    touchAutoTranslationPartialResult(...args) { return this.autoQueueCore.touchAutoTranslationPartialResult(...args); }
     clearAutoTranslationPartialResult(...args) { return this.autoQueueCore.clearAutoTranslationPartialResult(...args); }
     pruneAutoTranslationPartialResults(...args) { return this.autoQueueCore.pruneAutoTranslationPartialResults(...args); }
     getAutoTranslationAbortSignal(...args) { return this.autoQueueCore.getAutoTranslationAbortSignal(...args); }

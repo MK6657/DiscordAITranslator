@@ -1722,6 +1722,17 @@ class AutoTranslationQueueCore {
         return entry;
     }
 
+    // A partial line that is still shown keeps its kept result alive (and last to be pruned), so a
+    // rebuilt message is redrawn from it instead of requested again.
+    touchAutoTranslationPartialResult(cacheKey, text, now = Date.now()) {
+        const entry = this.plugin.getAutoTranslationPartialResult(cacheKey, text, now);
+        if (!entry) return null;
+        entry.expiresAt = now + AUTO_TRANSLATE_PARTIAL_RESULT_TTL_MS;
+        this.plugin.autoTranslationPartialResults.delete(String(cacheKey));
+        this.plugin.autoTranslationPartialResults.set(String(cacheKey), entry);
+        return entry;
+    }
+
     clearAutoTranslationPartialResult(...cacheKeys) {
         if (!this.plugin.autoTranslationPartialResults?.size) return;
         cacheKeys.forEach(cacheKey => {

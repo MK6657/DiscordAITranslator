@@ -510,19 +510,57 @@ test("a drawn partial line is kept by the next scan instead of being removed and
     const options = plugin.getAutoTranslationRequestOptionsForText(source, plugin.getAutoTranslationOptions());
     const cacheKey = plugin.getTranslationCacheKey(source, options);
     let removed = false;
-    const makeLine = () => ({
+    const makeLine = (partialMark = true) => ({
         dataset: { daitMode: plugin.getTranslationCacheMode(cacheKey) },
-        classList: { contains: name => name === "dait-translation-partial" },
+        classList: { contains: name => partialMark && name === "dait-translation-partial" },
         querySelector: () => ({ textContent: partial }),
         remove: () => { removed = true; }
     });
     plugin.restoreTranslationSourceVisibility = () => {};
-    // Validated as a complete translation, the line would be removed ("undertranslated").
-    assert.equal(plugin.removeInvalidCurrentAutoTranslationLine(makeLine(), {}, source, cacheKey, [], options), true);
+    // Validated as a complete translation (a line without the partial mark), it would be removed ("undertranslated").
+    assert.equal(plugin.removeInvalidCurrentAutoTranslationLine(makeLine(false), {}, source, cacheKey, [], options), true);
     removed = false;
     plugin.rememberAutoTranslationPartialResult(cacheKey, source, partial, { validationQuality: "partial", partialInfo: { missingSegments: [2, 3], totalSegments: 3 } });
     assert.equal(plugin.removeInvalidCurrentAutoTranslationLine(makeLine(), {}, source, cacheKey, [], options), false);
     assert.equal(removed, false);
+});
+
+test("a partial line that stays on screen outlives its kept result instead of being torn down and requested again", () => {
+    const { AUTO_TRANSLATE_PARTIAL_RESULT_TTL_MS } = require("../../src/constants");
+    const plugin = new Plugin();
+    const source = [
+        "This is the first paragraph of a long message about the release plan for next week.",
+        "The second paragraph explains why the build failed yesterday afternoon on the main branch.",
+        "The third paragraph lists the people who will review the fix before Friday."
+    ].map(line => line.repeat(3)).join("\n");
+    const partial = "这是关于下周发布计划的长消息的第一段。".repeat(3);
+    const options = plugin.getAutoTranslationRequestOptionsForText(source, plugin.getAutoTranslationOptions());
+    const cacheKey = plugin.getTranslationCacheKey(source, options);
+    let removed = false;
+    const makeLine = (text = partial) => ({
+        dataset: { daitMode: plugin.getTranslationCacheMode(cacheKey) },
+        classList: { contains: name => name === "dait-translation-partial" },
+        querySelector: () => ({ textContent: text }),
+        remove: () => { removed = true; }
+    });
+    plugin.restoreTranslationSourceVisibility = () => {};
+    plugin.rememberAutoTranslationPartialResult(cacheKey, source, partial, { validationQuality: "partial", partialInfo: { missingSegments: [2, 3], totalSegments: 3 } });
+
+    // While the line is shown, each scan keeps its kept result alive for a redraw after a rebuild.
+    const entry = plugin.autoTranslationPartialResults.get(cacheKey);
+    entry.expiresAt = Date.now() + 1000;
+    assert.equal(plugin.removeInvalidCurrentAutoTranslationLine(makeLine(), {}, source, cacheKey, [], options), false);
+    assert.ok(plugin.getAutoTranslationPartialResult(cacheKey, source).expiresAt >= Date.now() + AUTO_TRANSLATE_PARTIAL_RESULT_TTL_MS - 5000, "kept result refreshed");
+
+    // Even once the kept result has expired, the partial line is not validated as a complete one.
+    plugin.autoTranslationPartialResults.get(cacheKey).expiresAt = Date.now() - 1;
+    assert.equal(plugin.removeInvalidCurrentAutoTranslationLine(makeLine(), {}, source, cacheKey, [], options), false);
+    assert.equal(removed, false, "the line stays");
+    assert.ok(plugin.getRecentAutoTranslationRender(cacheKey, source, options), "and blocks a new request");
+
+    // A partial line whose text is unusable is still removed.
+    assert.equal(plugin.removeInvalidCurrentAutoTranslationLine(makeLine(source), {}, source, cacheKey, [], options), true);
+    assert.equal(removed, true);
 });
 
 // --- render-5: emoji restore ---
