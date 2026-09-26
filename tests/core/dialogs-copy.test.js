@@ -197,6 +197,12 @@ test("zh text says 服务商, never 'provider', and no string names internal too
     for (const [key, value] of Object.entries(I18N.en)) {
         assert.doesNotMatch(value, /codex/i, `en.${key}`);
     }
+    // No raw error codes such as MODEL_OUTPUT_TRUNCATED in either language.
+    for (const locale of ["zh-CN", "en"]) {
+        for (const [key, value] of Object.entries(I18N[locale])) {
+            assert.doesNotMatch(value, /\b[A-Z][A-Z0-9]+_[A-Z0-9_]+\b/, `${locale}.${key}`);
+        }
+    }
 });
 
 test("row descriptions stay within the one-sentence length budget", () => {
