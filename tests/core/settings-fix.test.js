@@ -637,3 +637,27 @@ test("on a screen without a channel the channel rule row is locked and says why;
     assert.equal(plugin.refreshChannelRuleControls(), 1);
     check(true);
 });
+
+// --- SS-9: the panel's minimum height leaves room for its host ----------------------------------------
+
+test("the panel's minimum height never pushes it past the space its host leaves (no second scrollbar in short windows)", () => {
+    const body = cssRuleBody(".dait-settings");
+    const height = declarationOf(body, "height");
+    const minHeight = declarationOf(body, "min-height");
+    assert.ok(height && minHeight);
+    const cases = [
+        { vh: 520, chrome: 150, hostMax: 456 },
+        { vh: 520, chrome: 185, hostMax: 447 },
+        { vh: 500, chrome: 140 },
+        { vh: 640, chrome: 210, hostMax: 576 },
+        { vh: 900, chrome: 150, hostMax: 836 },
+        { vh: 1080, chrome: 120, hostMax: 760 }
+    ];
+    for (const size of cases) {
+        const available = Math.min(size.vh - 64, size.hostMax ?? size.vh) - (size.chrome ?? 140);
+        assert.ok(cssLength(minHeight, size) <= available + 0.5, `min-height ${cssLength(minHeight, size)} > ${available} at ${JSON.stringify(size)}`);
+        assert.ok(cssLength(height, size) <= available + 0.5, JSON.stringify(size));
+    }
+    // With room to spare the floor is still 360 px.
+    assert.equal(cssLength(minHeight, { vh: 900, chrome: 150, hostMax: 836 }), 360);
+});
