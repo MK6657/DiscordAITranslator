@@ -1210,11 +1210,13 @@ class AutoTranslationQueueCore {
             const fresh = row?.dataset?.daitPath === path ? row : row?.querySelectorAll?.(selector)?.[0];
             if (!fresh) return;
             // The old row holds its control as deep as the new row holds its own; swap the whole row when it matches.
+            // Only the first class is compared: a row without a channel is also locked (dait-settings-row-inactive).
             let depth = 0;
             for (let node = fresh; node && node !== row; node = node.parentNode) depth++;
             let oldRow = control;
             for (let step = 0; step < depth && oldRow; step++) oldRow = oldRow.parentNode;
-            if (oldRow && oldRow.tagName === row.tagName && String(oldRow.className || "") === String(row.className || "") && typeof oldRow.replaceWith === "function") {
+            const rowClass = node => String(node?.className || "").trim().split(/\s+/)[0];
+            if (oldRow && oldRow.tagName === row.tagName && rowClass(oldRow) === rowClass(row) && typeof oldRow.replaceWith === "function") {
                 oldRow.replaceWith(row);
             }
             else if (typeof control.replaceWith === "function") control.replaceWith(fresh);

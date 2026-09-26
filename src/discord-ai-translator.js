@@ -1397,7 +1397,7 @@ module.exports = class DiscordAITranslator {
         state.activeTab = target.id;
         state.tabs.forEach(tab => {
             const active = tab === target;
-            tab.button?.setAttribute?.("aria-selected", active ? "true" : "false");
+            tab.button?.setAttribute?.("aria-selected", active && !state.searchQuery ? "true" : "false");
             tab.button?.setAttribute?.("tabindex", active ? "0" : "-1");
             if (tab.tabpanel) tab.tabpanel.hidden = !active || Boolean(state.searchQuery);
         });
@@ -1533,8 +1533,10 @@ module.exports = class DiscordAITranslator {
         const terms = query.split(/\s+/).filter(Boolean);
         const entries = this.getSettingsSearchEntries(state).filter(entry => terms.every(term => entry.haystack.includes(term)));
         state.searchEntries = entries;
+        // The results replace every tab page, so no tab is selected meanwhile; the current one stays reachable with Tab.
         state.tabs.forEach(tab => {
             if (tab.tabpanel) tab.tabpanel.hidden = true;
+            tab.button?.setAttribute?.("aria-selected", "false");
         });
         if (state.results) state.results.hidden = false;
         if (state.resultsSummary) {
@@ -1586,6 +1588,7 @@ module.exports = class DiscordAITranslator {
         if (options.showTab !== false) {
             state.tabs.forEach(tab => {
                 if (tab.tabpanel) tab.tabpanel.hidden = tab.id !== state.activeTab;
+                tab.button?.setAttribute?.("aria-selected", tab.id === state.activeTab ? "true" : "false");
             });
         }
         if (options.focus) this.focusSettingsElement(state.searchInput);
@@ -1866,6 +1869,7 @@ module.exports = class DiscordAITranslator {
     // scrolls inside, so the header and the tab rail stay put.
     syncSettingsPanelHeight(panel, scroller = null) {
         if (!panel?.isConnected || !panel.style?.setProperty || typeof getComputedStyle !== "function") return false;
+        this.bindSettingsTabOrientation(panel);
         const host = scroller || this.getSettingsHostScroller(panel);
         const frame = panel.closest?.(".dait-quick-settings-dialog") || panel.closest?.("[data-dait-settings-modal-root='true']") || host;
         if (!host || !frame?.getBoundingClientRect) return false;
@@ -1886,6 +1890,29 @@ module.exports = class DiscordAITranslator {
         catch {
             return false;
         }
+    }
+
+    // The tab rail is a vertical list, or a row once the panel is 760 px wide or less (the @container rule in
+    // css/04-settings.js); aria-orientation follows the panel's width as it changes.
+    bindSettingsTabOrientation(panel) {
+        this.syncSettingsTabOrientation(panel);
+        if (!panel || panel.__daitSettingsOrientationObserver || typeof ResizeObserver !== "function") return;
+        try {
+            const observer = new ResizeObserver(() => this.syncSettingsTabOrientation(panel));
+            observer.observe(panel);
+            panel.__daitSettingsOrientationObserver = observer;
+        }
+        catch {}
+    }
+
+    syncSettingsTabOrientation(panel) {
+        const tablist = panel?.__daitSettingsUi?.tablist;
+        // The container query measures the panel's content box; the panel has no padding or border.
+        const width = Number(panel?.clientWidth || panel?.getBoundingClientRect?.()?.width || 0);
+        if (!tablist?.setAttribute || !width) return "";
+        const orientation = width <= 760 ? "horizontal" : "vertical";
+        if (tablist.getAttribute?.("aria-orientation") !== orientation) tablist.setAttribute("aria-orientation", orientation);
+        return orientation;
     }
 
     getSettingsHostScroller(panel) {
@@ -1922,6 +1949,10 @@ module.exports = class DiscordAITranslator {
             if (resize.raf !== null && typeof cancelAnimationFrame === "function") cancelAnimationFrame(resize.raf);
             if (typeof window !== "undefined") window.removeEventListener?.("resize", resize.listener, { passive: true });
             panel.__daitSettingsResize = null;
+        }
+        if (panel?.__daitSettingsOrientationObserver) {
+            panel.__daitSettingsOrientationObserver.disconnect?.();
+            panel.__daitSettingsOrientationObserver = null;
         }
         const state = panel?.__daitSettingsUi;
         if (state?.searchEscapeListener) {
@@ -2951,13 +2982,18 @@ module.exports = class DiscordAITranslator {
 
     createCurrentChannelPolicyRow() {
         const routeKey = this.getCurrentRouteKey();
+        // A screen without a channel (home, DM list) has nothing to set a rule for: the row is locked and says why.
+        const noChannel = !this.getChannelAutoTranslatePolicyStorageKey(routeKey);
         const row = this.createSegmentedRow("ui.currentChannelAutoTranslatePolicy", this.t("currentChannelAutoTranslatePolicy"), [
             ["inherit", this.t("channelRuleFollow")],
             ["enabled", this.t("channelRuleAlways")],
             ["disabled", this.t("channelRuleNever")]
-        ], { description: this.t("currentChannelAutoTranslatePolicyDesc"), routeKey });
-        // A screen without a channel (home, DM list) has nothing to set a rule for.
-        if (!this.getChannelAutoTranslatePolicyStorageKey(routeKey)) {
+        ], {
+            description: this.t("currentChannelAutoTranslatePolicyDesc"),
+            disabledReason: noChannel && this.t("quickPanelRuleCaptionNoChannel"),
+            routeKey
+        });
+        if (noChannel) {
             const control = row?.querySelectorAll?.("[data-dait-path='ui.currentChannelAutoTranslatePolicy']")?.[0];
             if (control) this.setChannelRuleControlDisabled(control, true);
         }
@@ -3309,9 +3345,10 @@ module.exports = class DiscordAITranslator {
             const description = row?.querySelector?.(".dait-row-description");
             if (description) description.textContent = this.getDiagnosticLogsStatsText();
         };
+        // The summary row sits in the same diagnostics group as this row.
         const refreshDiagnostics = button => {
             refreshDescription(button);
-            this.refreshDiagnosticSummary(button.closest(".dait-settings-section"));
+            this.refreshDiagnosticSummary(button.closest(".dait-settings-group") || button.closest(".dait-settings"));
         };
 
         clear.addEventListener("click", async () => {
@@ -3504,11 +3541,12 @@ module.exports = class DiscordAITranslator {
         });
     }
 
+    // One sentence (UI-SPEC descriptions): the count, what the chips group by, and the latest event.
     getDiagnosticSummaryStatsText(summary = this.createDiagnosticSummary(this.diagnosticLogs)) {
         const events = Number(summary?.totalEvents || 0) || 0;
         if (!events) return this.t("diagnosticSummaryEmpty");
         const latest = this.formatDiagnosticSummaryTime(summary?.latestIso);
-        return `${this.t("diagnosticSummaryEvents", { events, latest })} ${this.t("diagnosticSummaryDesc")}`;
+        return this.t("diagnosticSummaryEvents", { events, latest });
     }
 
     formatDiagnosticSummaryTime(iso) {
@@ -16958,19 +16996,48 @@ module.exports = class DiscordAITranslator {
     }
 
     // Rebuilds every open settings panel (BetterDiscord's plugin settings and the settings window) so they
-    // show the values after a reset.
+    // show the values after a reset. Each one opens on the tab it showed, and the stored tab is the one of the
+    // panel the reset came from, whose new reset button takes the focus.
     refreshOpenSettingsPanels(sourcePanel = null) {
         if (typeof document === "undefined") return 0;
         const panels = new Set();
         if (sourcePanel) panels.add(sourcePanel);
         document.querySelectorAll?.(".dait-settings")?.forEach(panel => panels.add(panel));
+        const sourceTab = sourcePanel?.__daitSettingsUi?.activeTab;
         let replaced = 0;
+        let rebuiltSource = null;
         panels.forEach(panel => {
             if (!panel || panel.isConnected === false) return;
             const quickSettings = Boolean(panel.closest?.(".dait-quick-settings-modal-root"));
-            if (this.replaceSettingsPanelElement(panel, this.getSettingsPanel({ quickSettings }))) replaced++;
+            // The reset put the default tab back; the new panel is built on the tab this one shows.
+            const activeTab = panel.__daitSettingsUi?.activeTab;
+            if (activeTab && this.settings?.ui) this.settings.ui.settingsActiveTab = activeTab;
+            const next = this.replaceSettingsPanelElement(panel, this.getSettingsPanel({ quickSettings }));
+            if (!next) return;
+            replaced++;
+            if (panel === sourcePanel) rebuiltSource = next;
         });
+        if (sourceTab && this.settings?.ui) this.settings.ui.settingsActiveTab = sourceTab;
+        if (rebuiltSource) this.focusSettingsResetControl(rebuiltSource);
         return replaced;
+    }
+
+    // The focused reset button left with the old panel. BetterDiscord's dialog hands the focus back to it once it
+    // has finished closing, which leaves the focus nowhere, so the new button is focused again then.
+    focusSettingsResetControl(panel) {
+        const target = () => {
+            const button = panel?.querySelector?.("[data-dait-action='resetSettings']");
+            if (button && !button.closest?.("[hidden]")) return button;
+            const state = panel?.__daitSettingsUi;
+            return state?.tabs?.find(tab => tab.id === state.activeTab)?.button || null;
+        };
+        this.focusSettingsElement(target());
+        if (typeof setTimeout !== "function") return;
+        [300, 1000].forEach(delay => this.unrefTimer(setTimeout(() => {
+            if (!panel?.isConnected || typeof document === "undefined") return;
+            const active = document.activeElement;
+            if (!active || active === document.body || active.isConnected === false) this.focusSettingsElement(target());
+        }, delay)));
     }
 
     injectStyles() {

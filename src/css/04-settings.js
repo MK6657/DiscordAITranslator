@@ -18,7 +18,8 @@ module.exports = `.dait-settings {
     line-height: 1.4;
     margin-left: auto;
     margin-right: auto;
-    min-height: min(360px, calc(100vh - 96px));
+    /* At least 360 px, but never more than the host leaves: a taller panel would make the host scroll too. */
+    min-height: min(360px, calc(min(100vh - 64px, var(--dait-host-max, 100vh)) - var(--dait-host-chrome, 140px)));
     min-width: 0;
     overflow: hidden;
     text-align: left;
@@ -53,11 +54,6 @@ module.exports = `.dait-settings {
     min-height: 60px;
     min-width: 0;
     padding: 12px 12px 12px 20px;
-}
-
-.dait-settings-header-embedded {
-    min-height: 44px;
-    padding: 8px 16px;
 }
 
 .dait-settings-logo {
