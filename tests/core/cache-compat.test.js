@@ -156,3 +156,65 @@ test("upgrade from v0.3.0: a line drawn before model detection stays up after it
     assert.deepEqual(drawn.slice(draws).map(entry => `${entry.kind}:${entry.id}`), [], "no line is torn down and drawn again");
     assert.deepEqual(server.chatPhrases(), []);
 });
+
+// --- The first model detection happens while work is queued (fresh install, upgrade, model switch) ----
+
+function freshInstallData(uiPatch = {}) {
+    const settings = createV030Settings();
+    Object.assign(settings.ui, uiPatch);
+    return { DiscordAITranslator: { settings } };
+}
+
+async function ticks(count = 20) {
+    for (let index = 0; index < count; index++) await new Promise(resolve => setImmediate(resolve));
+}
+
+// The message a queued or in-flight cache key belongs to.
+function messageIdOfKey(key) {
+    return String(key || "").split("\n---\n")[1]?.split(":")[3] || "";
+}
+
+test("first model detection with messages queued and in flight: no message is requested twice, no finished line is redrawn", async t => {
+    const { server, plugin, drawn, scan, scanUntilIdle, lineText } = openChat(t, { data: freshInstallData({ autoTranslateConcurrency: 1 }) });
+    const ids = AUTO_MESSAGES.map(message => message.id);
+    // The local server has answered the plugin's health check already (Discord has been open a while).
+    plugin.shouldBlockAutoTranslationForLocalProviderHealth(plugin.getAutoTranslationOptions());
+    await ticks();
+    assert.equal(plugin.shouldBlockAutoTranslationForLocalProviderHealth(plugin.getAutoTranslationOptions()), false);
+    server.hold("models");
+    server.hold("chat");
+    scan(ids);
+    await ticks();
+    scan(ids);
+    assert.equal(server.waitingCount("models"), 1, "the first request waits for the model lookup");
+    assert.ok(plugin.autoTranslationQueue.length >= 1, "more messages wait in the queue, keyed before the detection");
+
+    server.release("models");
+    await ticks();
+    assert.equal(detectedModel(plugin), SERVED_MODEL);
+    // Scans after the detection build keys with the served model for the same messages.
+    scan(ids);
+    scan(ids);
+    const active = [...plugin.autoTranslationQueue.map(item => item.cacheKey), ...plugin.autoTranslationInFlightKeys].map(messageIdOfKey);
+    assert.deepEqual(active.filter((id, index) => active.indexOf(id) !== index), [], "a message waits or runs once");
+
+    server.release("chat");
+    await scanUntilIdle(ids);
+    assertLinesDrawn(lineText, AUTO_MESSAGES, "all translated");
+    assert.deepEqual([...server.chatPhrases()].sort(), AUTO_MESSAGES.map(message => message.phrase).sort(), "each message is requested once");
+    const finals = drawn.filter(entry => entry.kind === "final").map(entry => entry.id);
+    assert.deepEqual(finals.filter((id, index) => finals.indexOf(id) !== index), [], "no finished line is torn down and drawn again");
+});
+
+test("a message translated with its button before the model was detected is a cache hit afterwards", async t => {
+    const { server, chat, translate, lineText } = openChat(t, { data: freshInstallData({ autoTranslateMessages: false }) });
+    const message = PLAIN_MESSAGES[0];
+    await translate(message.id);
+    assert.equal(lineText(message.id), message.translation);
+    assert.deepEqual(server.chatPhrases(), [message.phrase]);
+    // Discord rebuilds the message; the Translate button is clicked again.
+    chat.remount([message.id]);
+    await translate(message.id);
+    assert.equal(lineText(message.id), message.translation);
+    assert.deepEqual(server.chatPhrases(), [message.phrase], "the stored result is found");
+});

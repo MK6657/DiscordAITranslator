@@ -9737,7 +9737,8 @@ module.exports = class DiscordAITranslator {
                         sawInvalidTarget = true;
                         return;
                     }
-                    const renderCacheKey = identityUpgrade?.cacheKey || item.cacheKey;
+                    // The request may have detected the local model: the line carries the key the result is cached under.
+                    const renderCacheKey = identityUpgrade?.cacheKey || this.getServedModelTranslationCacheKey(item.cacheKey, item.requestOptions);
                     if (identityUpgrade?.cacheKey) upgradedCacheTargets.set(identityUpgrade.cacheKey, identityUpgrade);
                     cacheable = true;
                     if (this.hasManualTranslationLine(target.content, this.getAutoTranslationTargetDomText(target))) {
@@ -9782,6 +9783,8 @@ module.exports = class DiscordAITranslator {
                 partialInfo
             };
             this.rememberAutoTranslationPartialResult(item.cacheKey, item.text, translated, partialMeta);
+            const servedCacheKey = this.getServedModelTranslationCacheKey(item.cacheKey, item.requestOptions);
+            if (servedCacheKey !== item.cacheKey) this.rememberAutoTranslationPartialResult(servedCacheKey, item.text, translated, partialMeta);
             upgradedCacheTargets.forEach(upgrade => this.rememberAutoTranslationPartialResult(upgrade.cacheKey, item.text, translated, partialMeta));
         }
         if (this.isAutoTranslateEnabled()) {
@@ -9825,7 +9828,7 @@ module.exports = class DiscordAITranslator {
             this.logAutoTranslationRenderSkip(item, target, "identity-changed");
             return false;
         }
-        const renderCacheKey = identityUpgrade?.cacheKey || item.cacheKey;
+        const renderCacheKey = identityUpgrade?.cacheKey || this.getServedModelTranslationCacheKey(item.cacheKey, item.requestOptions);
         if (identityUpgrade?.cacheKey && validationResult.cacheable) this.cacheAutoTranslationResultWithOptions(identityUpgrade.cacheKey, item.text, identityUpgrade.requestOptions, translated);
         const domText = this.getAutoTranslationTargetDomText(target);
         if (this.hasManualTranslationLine(target.content, domText)) {
@@ -13578,11 +13581,14 @@ module.exports = class DiscordAITranslator {
                 return;
             }
             const usedProviderFallback = Boolean(resultRequestOptions.requestContext?.fallbackProvider);
+            // The request may have detected the local model: the result belongs under the served model's key,
+            // which the next lookup of this message builds.
+            const resultCacheKey = this.getServedModelTranslationCacheKey(cacheKey, requestOptions);
             if (validation.cacheable && !usedProviderFallback) {
-                this.setTranslationCache(cacheKey, translated);
+                this.setTranslationCache(resultCacheKey, translated);
                 this.syncManualTranslationToAutoCache(messageNode, content, text, translated, textOptions, plan.domText);
             }
-            this.renderTranslation(messageNode, content, translated, cacheKey, plan.domText, {
+            this.renderTranslation(messageNode, content, translated, resultCacheKey, plan.domText, {
                 partial: validation.quality === TRANSLATION_VALIDATION_QUALITIES.PARTIAL,
                 validationQuality: validation.quality,
                 validationReason: validation.reasonCode || "",
@@ -17498,6 +17504,7 @@ module.exports = class DiscordAITranslator {
     requeueAutoTranslationItem(...args) { return this.autoQueueCore.requeueAutoTranslationItem(...args); }
     enqueueAutoTranslationItem(...args) { return this.autoQueueCore.enqueueAutoTranslationItem(...args); }
     hasActiveAutoTranslationKey(...args) { return this.autoQueueCore.hasActiveAutoTranslationKey(...args); }
+    resolveActiveAutoTranslationKey(...args) { return this.autoQueueCore.resolveActiveAutoTranslationKey(...args); }
     pruneAutoTranslationActiveState(...args) { return this.autoQueueCore.pruneAutoTranslationActiveState(...args); }
     pruneAutoTranslationRenderPendingKeys(...args) { return this.autoQueueCore.pruneAutoTranslationRenderPendingKeys(...args); }
     getAutoTranslationRecentRenderKey(...args) { return this.autoQueueCore.getAutoTranslationRecentRenderKey(...args); }

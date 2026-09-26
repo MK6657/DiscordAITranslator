@@ -137,8 +137,16 @@ function mountChat(document, messages = CHAT_MESSAGES) {
     const list = el("ol", { class: "scrollerInner_abc", "data-list-id": "chat-messages" });
     document.body.appendChild(list);
     const nodes = new Map();
+    // Every message is on screen, one below the other.
+    const rectOf = (messageNode, inset = 0) => {
+        const top = 100 + 60 * Math.max(0, list.children.indexOf(messageNode)) + inset;
+        const height = 50 - inset;
+        return { top, bottom: top + height, left: 0, right: 600, width: 600, height, x: 0, y: top };
+    };
     const mount = message => {
         const built = buildMessageNode(message);
+        built.messageNode.getBoundingClientRect = () => rectOf(built.messageNode);
+        built.content.getBoundingClientRect = () => rectOf(built.messageNode, 10);
         const previous = nodes.get(message.id);
         if (previous) {
             const index = list.childNodes.indexOf(previous.messageNode);
@@ -241,14 +249,15 @@ function startChatPlugin(Plugin, { server, chat }) {
             if (!plugin.autoTranslationQueue.length && !plugin.autoTranslationInFlight) return;
         }
     };
-    // Scans and lets the requests finish until a scan queues nothing new: a scan queues only a few
+    // Scans and lets the requests finish until two scans in a row send nothing: a scan queues only a few
     // messages at a time.
-    const scanUntilIdle = async (ids, maxScans = 20) => {
-        for (let index = 0; index < maxScans; index++) {
+    const scanUntilIdle = async (ids, maxScans = 30) => {
+        let idleScans = 0;
+        for (let index = 0; index < maxScans && idleScans < 2; index++) {
             const before = server.log.length;
             scan(ids);
             await settle();
-            if (server.log.length === before && !plugin.autoTranslationQueue.length) return;
+            idleScans = server.log.length === before && !plugin.autoTranslationQueue.length ? idleScans + 1 : 0;
         }
     };
     const lineText = id => {

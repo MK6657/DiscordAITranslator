@@ -1618,11 +1618,44 @@ class AutoTranslationQueueCore {
 
     hasActiveAutoTranslationKey(cacheKey) {
         this.plugin.pruneAutoTranslationActiveState();
-        return Boolean(cacheKey && (
-            this.plugin.autoTranslationQueuedKeys.has(cacheKey)
-            || this.plugin.autoTranslationInFlightKeys.has(cacheKey)
-            || this.plugin.autoTranslationRenderPendingKeys?.has?.(cacheKey)
-        ));
+        return Boolean(this.findActiveAutoTranslationKey(cacheKey));
+    }
+
+    // The key this message's work is queued, in flight or waiting to render under: the key itself or, for a
+    // local server whose model is detected, the same key naming the model known when the work was queued.
+    // (Work queued before the first detection is keyed with the "local-model" placeholder, and a scan after
+    // it keys the same message with the served model.) "" when there is no such work.
+    resolveActiveAutoTranslationKey(cacheKey) {
+        this.plugin.pruneAutoTranslationActiveState();
+        return this.findActiveAutoTranslationKey(cacheKey);
+    }
+
+    findActiveAutoTranslationKey(cacheKey) {
+        if (!cacheKey) return "";
+        const activeSets = [
+            this.plugin.autoTranslationQueuedKeys,
+            this.plugin.autoTranslationInFlightKeys,
+            this.plugin.autoTranslationRenderPendingKeys
+        ].filter(keys => keys?.size);
+        if (activeSets.some(keys => keys.has(cacheKey))) return cacheKey;
+        if (!activeSets.length) return "";
+        if (!this.plugin.shouldAutoDetectLocalProviderModel(this.plugin.getEffectiveTaskConfig("translation"), DEFAULT_SETTINGS.translation || {})) return "";
+        const wanted = this.getModelAgnosticAutoTranslationKey(cacheKey);
+        if (!wanted) return "";
+        for (const keys of activeSets) {
+            for (const key of keys) {
+                if (key !== cacheKey && this.getModelAgnosticAutoTranslationKey(key) === wanted) return key;
+            }
+        }
+        return "";
+    }
+
+    getModelAgnosticAutoTranslationKey(cacheKey) {
+        const parts = String(cacheKey || "").split("\n---\n");
+        const index = parts.findIndex((part, position) => position > 0 && part.startsWith("model:") && parts[position - 1].startsWith("endpoint:"));
+        if (index < 0) return "";
+        parts[index] = "model:";
+        return parts.join("\n---\n");
     }
 
     pruneAutoTranslationActiveState(now = Date.now()) {
