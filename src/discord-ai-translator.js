@@ -16833,7 +16833,7 @@ module.exports = class DiscordAITranslator {
     getAutoTranslationDecisionAction(...args) { return this.autoQueueCore.getAutoTranslationDecisionAction(...args); }
     getAutoTranslationLastDecisionState(...args) { return this.autoQueueCore.getAutoTranslationLastDecisionState(...args); }
     getLastAutoTranslationDecisionsSnapshot(...args) { return this.autoQueueCore.getLastAutoTranslationDecisionsSnapshot(...args); }
-    clearAutoTranslationProviderFailureForCurrentConfig(...args) { return this.autoQueueCore.clearAutoTranslationProviderFailureForCurrentConfig(...args); }
+    clearAutoTranslationProviderFailureForCurrentConfig(...args) { const result = this.autoQueueCore.clearAutoTranslationProviderFailureForCurrentConfig(...args); if ((args[0] ?? "translation") === "translation") this.quickPanel?.clearConfigError?.(); return result; }
     releaseProviderBlockedAutoTranslationItems(...args) { return this.autoQueueCore.releaseProviderBlockedAutoTranslationItems(...args); }
     isAutoTranslationProviderSnapshotCurrent(...args) { return this.autoQueueCore.isAutoTranslationProviderSnapshotCurrent(...args); }
     isAutoTranslationScrollEventRelevant(...args) { return this.autoQueueCore.isAutoTranslationScrollEventRelevant(...args); }

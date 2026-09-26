@@ -560,6 +560,11 @@ test("launcher status: an unknown API URL or model (404, or a named unknown mode
     plugin.providerLayer.runModelTaskWithResult = async () => { throw httpError(404); };
     await assert.rejects(plugin.runModelTaskWithResult("translation", "hello", options()));
     assert.equal(plugin.getLauncherStatus().state, "needs-you");
+
+    // A passed connection test started from a chat error line (it has no status badge) ends it too.
+    plugin.fetchModelResponse = async () => ({ text: "OK" });
+    await plugin.testTranslationConnectionFromChat(null);
+    assert.equal(plugin.getLauncherStatus().state, "ok");
 });
 
 test("launcher status: other failures and other services are not configuration errors", t => {
