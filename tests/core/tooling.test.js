@@ -58,7 +58,15 @@ const ordinaryFiles = [
     "tests/core/login-data.test.js",
     "design/discord-ai-translator-settings-concept.svg",
     "docs/web-data.md",
-    "src/css/01-base.js"
+    "src/css/01-base.js",
+    // Folders named like a store (Git matches names case-insensitively on Windows).
+    "src/history/index.js",
+    "src/History/backfill.js",
+    "src/cookies/store.js",
+    "src/settings/local state/defaults.js",
+    "tests/fixtures/history/sample.json",
+    "tests/fixtures/login data/sample.json",
+    "docs/web data/overview.md"
 ];
 
 test("the release gate finds browser profiles and cookie stores among staged files", () => {
@@ -171,8 +179,9 @@ test(".gitignore keeps local tool state and browser profiles out without ignorin
         t.skip("git repository not available");
         return;
     }
+    const inTopLevelProfile = file => file.startsWith(".chrome-svg-preview/");
     const mustIgnore = [
-        ...browserProfileFiles,
+        ...browserProfileFiles.filter(inTopLevelProfile),
         ".claude/launch.json",
         ".claude/worktrees/wf-example/src/index.js",
         ".chrome-svg-preview/Variations",
@@ -185,6 +194,14 @@ test(".gitignore keeps local tool state and browser profiles out without ignorin
     assert.ok(checked && (checked.status === 0 || checked.status === 1), `git check-ignore failed: ${checked?.stderr || ""}`);
     const ignored = new Set(checked.stdout.split("\0").filter(Boolean));
     assert.deepEqual(mustIgnore.filter(file => !ignored.has(file)), [], "these local-only paths are not ignored");
+
+    // A store outside those folders must not be ignored on its own: `git add .` would then stage the rest of
+    // its profile (sessions, local storage) without the store the release guard recognises.
+    const mustStayVisible = browserProfileFiles.filter(file => !inTopLevelProfile(file));
+    assert.ok(mustStayVisible.length > 0);
+    const visible = git(["check-ignore", "--no-index", "--stdin", "-z"], mustStayVisible.join("\0") + "\0");
+    assert.ok(visible && (visible.status === 0 || visible.status === 1));
+    assert.deepEqual(visible.stdout.split("\0").filter(Boolean), [], "browser stores outside the ignored profile folders must stay visible to the release guard");
 
     const publishable = git(["check-ignore", "--no-index", "--stdin", "-z"], ordinaryFiles.join("\0") + "\0");
     assert.ok(publishable && (publishable.status === 0 || publishable.status === 1));
