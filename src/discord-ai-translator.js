@@ -1108,6 +1108,7 @@ module.exports = class DiscordAITranslator {
         this.composerWriter.cancelAll("stop");
         this.clearHotkeyRecording();
         this.clearPolishSubmitTimer();
+        this.cancelPendingConfirmDialogs();
         this.cancelTextboxReplacementCleanup();
         this.localProviderHealthChecks.clear();
         this.localProviderHealthProbeStartedAt.clear();
@@ -3284,8 +3285,10 @@ module.exports = class DiscordAITranslator {
         const controls = document.createElement("div");
         controls.className = "dait-hotkey-controls";
 
+        // The recorder shows the current shortcut; its tooltip says that clicking it records a new one.
         const record = this.createSmallButton(this.getHotkeyLabel());
         record.classList.add("dait-hotkey-recorder");
+        record.title = this.t("hotkeyRecord");
 
         const reset = this.createSmallButton(this.t("hotkeyReset"), "link");
         reset.addEventListener("click", () => {
@@ -3959,6 +3962,11 @@ module.exports = class DiscordAITranslator {
 
         textarea.addEventListener("change", () => this.preserveSettingsScroll(textarea, () => this.setSetting(`${kind}.prompt`, textarea.value)));
         textarea.addEventListener("input", syncStatus);
+        // The prompt set from elsewhere (another open settings panel, a template applied or deleted there).
+        textarea.__daitAfterSync = () => {
+            syncStatus();
+            syncPreview();
+        };
         search.addEventListener("input", () => renderOptions());
         select.addEventListener("change", syncPreview);
         apply.addEventListener("click", async () => {
@@ -4518,6 +4526,8 @@ module.exports = class DiscordAITranslator {
             }
 
             control.value = value ?? "";
+            // A control that shows state derived from its value (the prompt manager's status) refreshes it.
+            if (typeof control.__daitAfterSync === "function") control.__daitAfterSync();
         });
         // A model preset select shows the preset matching the model field, or "custom".
         const modelKind = /^(polish|translation)\.model$/.exec(path)?.[1];
@@ -16669,14 +16679,12 @@ module.exports = class DiscordAITranslator {
         }
     }
 
+    // Sends the way the user does: Enter on the focused composer, which Discord's editor turns into a send.
+    // Never clicks a button: Discord shows no send button by default, and the toolbar in the same form holds
+    // controls such as "Send a gift", GIF, stickers and emoji that must never be pressed for the user.
     submitTextbox(textbox) {
-        const form = textbox.closest("form");
-        const sendButton = form?.querySelector("button[aria-label*='Send'], button[type='submit']");
-        if (sendButton && !sendButton.disabled) {
-            sendButton.click();
-            return;
-        }
-
+        if (!textbox || textbox.isConnected === false || typeof textbox.dispatchEvent !== "function") return false;
+        if (typeof KeyboardEvent !== "function") return false;
         textbox.focus?.();
         ["keydown", "keypress", "keyup"].forEach(type => {
             textbox.dispatchEvent(new KeyboardEvent(type, {
@@ -16688,6 +16696,7 @@ module.exports = class DiscordAITranslator {
                 which: 13
             }));
         });
+        return true;
     }
 
     setButtonBusy(button, busy, text) {
@@ -16831,13 +16840,17 @@ module.exports = class DiscordAITranslator {
             let settled = false;
             let stopWatching = null;
             const release = this.holdConfirmDialogLayer();
+            // stop() answers every open confirmation with "no" (see cancelPendingConfirmDialogs).
+            const pending = this.pendingConfirmDialogs || (this.pendingConfirmDialogs = new Set());
             const settle = confirmed => {
                 if (settled) return;
                 settled = true;
+                pending.delete(settle);
                 stopWatching?.();
                 release();
                 resolve(Boolean(confirmed) && this.isLifecycleTokenCurrent(lifecycleToken));
             };
+            pending.add(settle);
             const dialogsBefore = this.getOpenDialogElements();
             try {
                 ui.showConfirmationModal(title, content ?? this.createConfirmDialogContent(paragraphs, previewText), {
@@ -16847,8 +16860,12 @@ module.exports = class DiscordAITranslator {
                     onConfirm: () => settle(true),
                     onCancel: () => settle(false),
                     // Reported by newer BetterDiscord builds on Escape or a backdrop click. Deferred so a close
-                    // that follows the confirm callback in the same click cannot turn it into a cancel.
-                    onClose: () => setTimeout(() => settle(false), 0)
+                    // that follows the confirm callback in the same click cannot turn it into a cancel. When the
+                    // content failed to render, BetterDiscord closes this dialog and shows its fallback modal
+                    // with the same callbacks instead; that close is not a cancel while the fallback is open.
+                    onClose: () => setTimeout(() => {
+                        if (!this.getNewConfirmDialogElements(dialogsBefore, ".bd-modal-wrapper").length) settle(false);
+                    }, 0)
                 });
             }
             catch (error) {
@@ -16856,8 +16873,16 @@ module.exports = class DiscordAITranslator {
                 settle(confirmNatively());
                 return;
             }
-            if (!settled) stopWatching = this.watchConfirmDialogDismiss(dialogsBefore, () => settle(false));
+            if (!settled) stopWatching = this.watchConfirmDialogDismiss(dialogsBefore, () => settle(false), release);
         });
+    }
+
+    // Plugin stop: every open confirmation resolves false and the settings window leaves its paused state.
+    cancelPendingConfirmDialogs() {
+        [...(this.pendingConfirmDialogs || [])].forEach(settle => settle(false));
+        this.pendingConfirmDialogs?.clear();
+        this.openConfirmDialogCount = 0;
+        this.syncConfirmDialogLayer();
     }
 
     // Paragraphs plus an optional quoted preview. React elements when BetterDiscord exposes React (the preview
@@ -16874,21 +16899,35 @@ module.exports = class DiscordAITranslator {
         );
     }
 
-    getOpenDialogElements() {
+    // Where a confirmation can show up: Discord's modal layer (role=dialog), BetterDiscord's modal root, and
+    // BetterDiscord's fallback modal (.bd-modal-wrapper, no role), used when Discord's modal API is missing or
+    // the dialog content failed to render.
+    getOpenDialogElements(selectors = ["[role='dialog']", ".bd-modal-root", ".bd-modal-wrapper"]) {
         if (typeof document === "undefined" || !document.querySelectorAll) return new Set();
-        try {
-            return new Set(document.querySelectorAll("[role='dialog']"));
+        const found = new Set();
+        for (const selector of [].concat(selectors)) {
+            try {
+                document.querySelectorAll(selector).forEach(node => found.add(node));
+            }
+            catch {}
         }
-        catch {
-            return new Set();
-        }
+        return found;
     }
 
-    // Older BetterDiscord builds report neither Escape nor a backdrop click. Find the dialog that opened and
-    // treat its removal as a cancel, so a dismissed dialog never leaves the settings window lowered.
-    watchConfirmDialogDismiss(dialogsBefore, onDismiss) {
+    // Dialog elements that opened after dialogsBefore was taken and are still in the document.
+    getNewConfirmDialogElements(dialogsBefore, selectors = undefined) {
+        return [...this.getOpenDialogElements(selectors)].filter(node => !dialogsBefore?.has?.(node)
+            && node.isConnected !== false
+            && !node.closest?.(".dait-quick-settings-modal-root, .dait-settings"));
+    }
+
+    // Older BetterDiscord builds report neither Escape nor a backdrop click, and the fallback modal never reports
+    // a backdrop click. Once the dialog showed up, the confirmation counts as cancelled when no dialog that opened
+    // with it is left, so a dismissed dialog never leaves the settings window lowered. When no dialog shows up
+    // within 10 s, onNotFound gives the settings window its layer and keys back; the dialog's buttons still answer.
+    watchConfirmDialogDismiss(dialogsBefore, onDismiss, onNotFound = null) {
         if (typeof document === "undefined" || typeof setInterval !== "function") return () => {};
-        let dialog = null;
+        let seen = false;
         let polls = 0;
         let timer = null;
         const stop = () => {
@@ -16901,15 +16940,18 @@ module.exports = class DiscordAITranslator {
                 onDismiss();
                 return;
             }
-            if (!dialog) {
-                dialog = [...this.getOpenDialogElements()].find(node => !dialogsBefore.has(node)
-                    && !node.closest?.(".dait-quick-settings-modal-root, .dait-settings")) || null;
-                if (!dialog && ++polls > 40) stop();
+            if (this.getNewConfirmDialogElements(dialogsBefore).length) {
+                seen = true;
                 return;
             }
-            if (dialog.isConnected === false) {
+            if (seen) {
                 stop();
                 onDismiss();
+                return;
+            }
+            if (++polls > 40) {
+                stop();
+                onNotFound?.();
             }
         }, 250));
         return stop;

@@ -4,8 +4,9 @@
 // Discord's variables directly), the settings window's layer while such a dialog is open, and the parts of
 // the prompt-template manager added with the preview and inline naming.
 module.exports = `
+/* Below Discord's layers and BetterDiscord's fallback modal (.bd-modal-wrapper, z-index 1000, earlier in the document). */
 .dait-quick-settings-modal-root[data-dait-confirm-open="true"] {
-    z-index: 1000;
+    z-index: 999;
 }
 
 .dait-dialog {
