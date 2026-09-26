@@ -1087,6 +1087,12 @@ class ProviderLayer {
                     this.plugin.markLocalProviderHealthy(providerSnapshotKey);
                     this.plugin.setApiRuntimeStatus("translation", "success", this.plugin.t("apiStatusSuccess"));
                 }
+                // A working request to the configured service clears an earlier "failed" status (e.g. after a
+                // top-up), so the launcher does not keep asking the user to fix it.
+                else if (requestStillCurrent && kind === "translation" && taskConfig?.provider === this.plugin.settings.translation?.provider
+                    && this.plugin.getApiStatus("translation").state === "failed") {
+                    this.plugin.setApiRuntimeStatus("translation", "success", this.plugin.t("apiStatusSuccess"));
+                }
                 // A working request ends the provider's "needs your attention" episode.
                 if (requestStillCurrent && kind === "translation" && this.plugin.autoTranslationProviderNoticeAt?.size) {
                     this.plugin.endTranslationAttentionEpisode?.(providerSnapshotKey || this.plugin.getAutoTranslationProviderKey({ configOverrides: taskConfig }));
