@@ -504,6 +504,17 @@ test("the channel rule is bound to the channel the panel shows and follows route
     assert.equal(caption.textContent, "打开一个频道后可以单独设置");
 });
 
+test("in English the channel rule shows short labels and keeps the full rule names as accessible names", t => {
+    const { doc, launcher } = createQuickPanelPlugin(t, { locale: "en" });
+    const popover = openByLauncher(t, doc, launcher);
+    const buttons = ["inherit", "enabled", "disabled"].map(value => segmentButton(popover, "rule", value));
+    assert.deepEqual(buttons.map(button => button.textContent), ["Follow main", "Always", "Never"]);
+    assert.deepEqual(buttons.map(button => button.getAttribute("aria-label")), ["Follow main switch", "Always translate", "Never translate"]);
+    assert.deepEqual(buttons.map(button => button.title), ["Follow main switch", "Always translate", "Never translate"]);
+    // The group itself is still named by its row label.
+    assert.equal(byId(popover, "dait-quick-popover-rule").getAttribute("aria-labelledby"), "dait-quick-popover-rule-label");
+});
+
 test("open full settings closes the quick panel and opens the full window from the launcher", t => {
     const { plugin, doc, launcher } = createQuickPanelPlugin(t);
     let popover = openByLauncher(t, doc, launcher);
@@ -585,7 +596,8 @@ test("launcher status: ok, busy, waiting, needs-you and off each have their own 
     status = plugin.getLauncherStatus(now);
     assert.equal(status.state, "needs-you");
     assert.equal(status.title, "Sakura 本地 · 连接失败 · 需要处理：本地服务没有响应");
-    assert.equal(status.detail, "需要处理：本地服务没有响应 · connect ECONNREFUSED 127.0.0.1:8080");
+    assert.equal(status.detail, "需要处理：本地服务没有响应");
+    assert.equal(status.note, "connect ECONNREFUSED 127.0.0.1:8080", "the service's own error text is the note");
     // A running health probe shows as busy, not as an error.
     plugin.localProviderHealthChecks.set(providerKey(), Promise.resolve());
     assert.equal(plugin.getLauncherStatus(now).state, "busy");
@@ -602,7 +614,8 @@ test("launcher status: ok, busy, waiting, needs-you and off each have their own 
     status = plugin.getLauncherStatus(now);
     assert.equal(status.state, "off");
     assert.equal(status.title, "Sakura 本地 · 连接正常 · 本频道不自动翻译");
-    assert.equal(status.detail, "本频道不自动翻译 · 手动翻译仍可用");
+    assert.equal(status.detail, "本频道不自动翻译");
+    assert.equal(status.note, "手动翻译仍可用");
     // The channel rule decides for this channel.
     plugin.setCurrentChannelAutoTranslatePolicyMode("enabled", "111:222:");
     assert.equal(plugin.getLauncherStatus(now).state, "ok");
@@ -615,6 +628,52 @@ test("launcher status: ok, busy, waiting, needs-you and off each have their own 
     status = plugin.getLauncherStatus(now);
     assert.equal(status.state, "off");
     assert.equal(status.activity, "频道翻译已关闭");
+    assert.equal(status.note, "", "with translation off, manual translation is off too");
+});
+
+test("the panel's status shows the activity and a separate one-line note, and an unchanged status writes nothing", t => {
+    const { plugin, doc, launcher, providerKey } = statusPlugin(t);
+    const popover = openByLauncher(t, doc, launcher);
+    const line = byClass(popover, "dait-qp-status-line");
+    const detail = byClass(popover, "dait-qp-status-detail");
+    const note = byClass(popover, "dait-qp-status-note");
+    assert.equal(line.getAttribute("role"), "status", "the service line is announced");
+    assert.equal(detail.getAttribute("role"), null, "the activity line (queue counts, countdown) is not");
+    assert.equal(line.textContent, "Sakura 本地 · 连接正常");
+    assert.equal(detail.textContent, "本频道自动翻译中");
+    assert.equal(note.hidden, true);
+
+    plugin.autoTranslationProviderFailures.set(providerKey(), { type: "local-unavailable", count: 1, retryAt: 0 });
+    plugin.setApiRuntimeStatus("translation", "failed", "failed", "connect ECONNREFUSED 127.0.0.1:8080");
+    t.mock.timers.tick(250);
+    assert.equal(popover.dataset.daitStatus, "needs-you");
+    assert.equal(line.textContent, "Sakura 本地 · 连接失败");
+    assert.equal(detail.textContent, "需要处理：本地服务没有响应");
+    assert.equal(note.hidden, false);
+    assert.equal(note.textContent, "connect ECONNREFUSED 127.0.0.1:8080");
+    assert.equal(note.title, "connect ECONNREFUSED 127.0.0.1:8080", "the full text is in the tooltip");
+
+    // The open panel's route watch keeps ticking; with the same route and status nothing is rewritten.
+    let writes = 0;
+    const textContent = Object.getOwnPropertyDescriptor(FakeElement.prototype, "textContent");
+    [line, detail, note, launcher].forEach(node => Object.defineProperty(node, "textContent", {
+        configurable: true,
+        get: textContent.get,
+        set(value) { writes++; textContent.set.call(this, value); }
+    }));
+    t.mock.timers.tick(800);
+    t.mock.timers.tick(800);
+    t.mock.timers.tick(800);
+    t.mock.timers.tick(250);
+    assert.equal(writes, 0);
+    assert.equal(plugin.quickPanel.statusPending, false, "no status read is queued while nothing changes");
+
+    // The test passes: the error note goes away.
+    plugin.autoTranslationProviderFailures.clear();
+    plugin.setApiRuntimeStatus("translation", "success", "ok");
+    t.mock.timers.tick(250);
+    assert.equal(detail.textContent, "本频道自动翻译中");
+    assert.equal(note.hidden, true);
 });
 
 test("launcher status: a cloud service without a key, a rejected key or no quota needs the user", t => {
@@ -707,6 +766,16 @@ test("a new launcher shows the current status at once; settings and failures ref
     plugin.markAutoTranslationProviderFailure(plugin.getAutoTranslationOptions(), Object.assign(new Error("slow down"), { status: 429, providerKey: providerKey() }));
     t.mock.timers.tick(250);
     assert.equal(replacement.dataset.daitStatus, "waiting");
+});
+
+test("a launcher re-created after a language switch speaks the new language at once", t => {
+    const { plugin, doc, launcher } = statusPlugin(t);
+    plugin.quickPanel.refreshStatus({ force: true });
+    assert.equal(launcher.title, "Sakura 本地 · 连接正常 · 本频道自动翻译中");
+    plugin.settings.ui.language = "en";
+    const replacement = plugin.createQuickSettingsButton("panel", doc.body);
+    assert.equal(replacement.title, "Sakura local · Connected · Auto-translating in this channel");
+    assert.equal(replacement.getAttribute("aria-label"), "AI Translator: Sakura local · Connected · Auto-translating in this channel");
 });
 
 // --- Integration with the rest of the plugin ---

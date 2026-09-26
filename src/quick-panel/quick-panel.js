@@ -55,6 +55,7 @@ class QuickPanel {
         this.statusExpiryAt = 0;
         this.lastStatus = null;
         this.lastStatusSignature = "";
+        this.statusRouteKey = "";
         this.launcherRef = null;
     }
 
@@ -141,6 +142,7 @@ class QuickPanel {
         this.statusExpiryAt = 0;
         this.lastStatus = null;
         this.lastStatusSignature = "";
+        this.statusRouteKey = "";
         this.launcherRef = null;
         this.testRunning = false;
     }
@@ -293,12 +295,17 @@ class QuickPanel {
         controls.statusDot = this.createElement("span", "dait-qp-dot");
         controls.statusDot.setAttribute("aria-hidden", "true");
         const statusText = this.createElement("div", "dait-qp-status-text");
-        statusText.setAttribute("role", "status");
-        statusText.setAttribute("aria-live", "polite");
+        // Only the service line is announced (it changes when a test starts and ends); the activity
+        // line changes with every queue step and the countdown every second.
         controls.statusLine = this.createElement("p", "dait-qp-status-line");
+        controls.statusLine.setAttribute("role", "status");
+        controls.statusLine.setAttribute("aria-live", "polite");
         controls.statusDetail = this.createElement("p", "dait-qp-status-detail");
+        controls.statusNote = this.createElement("p", "dait-qp-status-note");
+        controls.statusNote.hidden = true;
         statusText.appendChild(controls.statusLine);
         statusText.appendChild(controls.statusDetail);
+        statusText.appendChild(controls.statusNote);
         controls.test = this.createButton("dait-qp-button dait-qp-button-secondary dait-qp-test", t("apiTest"), button => this.runConnectionTest(button));
         controls.test.title = t("translationTestConnectionTitle");
         status.appendChild(controls.statusDot);
@@ -321,6 +328,15 @@ class QuickPanel {
             ["enabled", t("quickPanelRuleEnabled")],
             ["disabled", t("quickPanelRuleDisabled")]
         ], ruleLabel.id, mode => this.setChannelRule(mode));
+        // The narrow panel shows short labels; the full rule names are the accessible names and tooltips.
+        const ruleNames = { inherit: t("quickPanelRuleInheritFull"), enabled: t("quickPanelRuleEnabledFull"), disabled: t("quickPanelRuleDisabledFull") };
+        rule.buttons.forEach(button => {
+            const name = ruleNames[button.dataset.daitValue];
+            if (name && name !== button.textContent) {
+                button.title = name;
+                button.setAttribute("aria-label", name);
+            }
+        });
         controls.rule = rule;
         controls.ruleCaption = this.createElement("p", "dait-qp-desc dait-qp-rule-caption");
         controls.ruleCaption.id = `${POPOVER_ID}-rule-caption`;
@@ -408,9 +424,9 @@ class QuickPanel {
 
         const channelKey = this.plugin.getChannelAutoTranslatePolicyStorageKey(this.routeKey);
         const mode = channelKey ? this.plugin.getCurrentChannelAutoTranslatePolicyMode(this.routeKey) : "inherit";
-        controls.channelName.textContent = this.getChannelLabel(this.routeKey);
+        this.setText(controls.channelName, this.getChannelLabel(this.routeKey));
         this.setSegmentedValue(controls.rule, mode, { disabled: !channelKey });
-        controls.ruleCaption.textContent = this.getChannelRuleCaption(mode, Boolean(channelKey));
+        this.setText(controls.ruleCaption, this.getChannelRuleCaption(mode, Boolean(channelKey)));
 
         this.syncTargetOptions(String(settings.translation?.targetLanguage || ""));
         this.refreshStatus();
@@ -488,14 +504,23 @@ class QuickPanel {
         return this.plugin.setCurrentChannelAutoTranslatePolicyMode(mode, this.routeKey);
     }
 
+    // Writes only what differs, so an unchanged status touches nothing (and re-announces nothing).
+    setText(node, text) {
+        const value = String(text ?? "");
+        if (node && node.textContent !== value) node.textContent = value;
+    }
+
     renderStatus(status) {
         const controls = this.controls;
         if (!this.root || !controls || !status) return;
-        this.root.dataset.daitStatus = status.state;
-        controls.statusDot.dataset.daitStatus = status.state;
-        controls.statusLine.textContent = status.headline;
-        controls.statusDetail.textContent = this.getStatusDetailText(status);
-        controls.statusDetail.title = status.message || "";
+        if (this.root.dataset.daitStatus !== status.state) this.root.dataset.daitStatus = status.state;
+        if (controls.statusDot.dataset.daitStatus !== status.state) controls.statusDot.dataset.daitStatus = status.state;
+        this.setText(controls.statusLine, status.headline);
+        this.setText(controls.statusDetail, this.getStatusDetailText(status));
+        // The note is one line (a hint or the service's own error text); the tooltip holds all of it.
+        this.setText(controls.statusNote, status.note);
+        if (controls.statusNote.title !== (status.note || "")) controls.statusNote.title = status.note || "";
+        controls.statusNote.hidden = !status.note;
         if (!this.testRunning) controls.test.disabled = status.testing;
         this.syncCountdown(status);
     }
@@ -524,7 +549,7 @@ class QuickPanel {
                 this.countdownTimer = null;
                 return;
             }
-            this.controls.statusDetail.textContent = this.getStatusDetailText(current);
+            this.setText(this.controls.statusDetail, this.getStatusDetailText(current));
         }, 1000);
         this.countdownTimer?.unref?.();
     }
@@ -722,14 +747,16 @@ class QuickPanel {
         this.requestStatusUpdate();
     }
 
+    // Called by the scan when Discord navigates and, while the panel is open, by its route watch;
+    // nothing is re-read unless the channel really changed.
     handleRouteChange() {
-        if (this.isOpen()) {
-            const routeKey = this.plugin.getCurrentRouteKey();
-            if (routeKey !== this.routeKey) {
-                this.routeKey = routeKey;
-                this.update();
-            }
+        const routeKey = this.plugin.getCurrentRouteKey();
+        if (this.isOpen() && routeKey !== this.routeKey) {
+            this.routeKey = routeKey;
+            this.update();
         }
+        if (routeKey === this.statusRouteKey) return;
+        this.statusRouteKey = routeKey;
         this.requestStatusUpdate();
     }
 
@@ -768,14 +795,13 @@ class QuickPanel {
 
         let state = "ok";
         let activity = t("quickStatusActive");
-        let detail = activity;
+        let note = "";
         let reason = "";
         let retryAt = 0;
         let message = "";
         if (translation.enabled === false) {
             state = "off";
             activity = t("quickStatusOffDisabled");
-            detail = activity;
         }
         else if (!configured) {
             state = "needs-you";
@@ -795,28 +821,26 @@ class QuickPanel {
         else if (testing) {
             state = "busy";
             activity = t("quickStatusTesting");
-            detail = activity;
         }
         else if (!autoActive) {
             state = "off";
             activity = t("quickStatusOffChannel");
-            detail = `${activity} · ${t("quickStatusManualHint")}`;
+            note = t("quickStatusManualHint");
         }
         else if (failureActive && WAITING_FAILURE_TYPES.has(failureType)) {
             state = "waiting";
             reason = t(WAITING_REASON_KEYS[failureType]);
             retryAt = Number(failure.retryAt || 0);
             activity = t("quickStatusWaiting", { reason });
-            detail = activity;
         }
         else if (inFlight > 0 || queued > 0) {
             state = "busy";
             activity = t("quickStatusBusy", { inFlight: String(inFlight), queued: String(queued) });
-            detail = activity;
         }
         if (state === "needs-you") {
             activity = t("quickStatusNeedsYou", { reason });
-            detail = message ? `${activity} · ${message}` : activity;
+            // The service's own words (e.g. "connect ECONNREFUSED …") help the user fix it.
+            note = String(message || "").trim();
         }
         const headline = [provider, connection].filter(Boolean).join(" · ");
         const title = [provider, connection, activity].filter(Boolean).join(" · ");
@@ -826,7 +850,9 @@ class QuickPanel {
             connection,
             activity,
             headline,
-            detail,
+            // Panel lines: what is happening now, then an optional one-line note (hint or error text).
+            detail: activity,
+            note,
             reason,
             message,
             retryAt,
@@ -897,10 +923,11 @@ class QuickPanel {
     }
 
     // Called for each launcher Discord's user panel gets; the badge shows the current status at once.
+    // Read fresh: a launcher is re-created after a language switch, and the cached texts would be stale.
     decorateLauncher(button) {
         if (!button) return button;
         this.launcherRef = button;
-        const status = this.lastStatus || this.getStatusSafe();
+        const status = this.getStatusSafe() || this.lastStatus;
         if (status) {
             this.lastStatus = status;
             this.lastStatusSignature = `${status.state}\n${status.title}`;

@@ -23,7 +23,6 @@ module.exports = `
     --dait-qp-link: var(--text-link, #949cf7);
     --dait-qp-danger-text: var(--text-danger, #fa777c);
     --dait-qp-hover: var(--background-modifier-hover, rgba(78, 80, 88, 0.3));
-    --dait-qp-selected: var(--background-modifier-selected, #404249);
     --dait-qp-button-bg: var(--button-secondary-background, #4e5058);
     --dait-qp-button-hover-bg: var(--button-secondary-background-hover, #6d6f78);
     --dait-qp-button-text: var(--white-500, #ffffff);
@@ -67,7 +66,6 @@ module.exports = `
     --dait-qp-link: var(--text-link, #2e5bd1);
     --dait-qp-danger-text: var(--text-danger, #c4314b);
     --dait-qp-hover: var(--background-modifier-hover, rgba(116, 127, 141, 0.16));
-    --dait-qp-selected: var(--background-modifier-selected, #d4d7dc);
     --dait-qp-button-bg: var(--button-secondary-background, #6d6f78);
     --dait-qp-button-hover-bg: var(--button-secondary-background-hover, #4e5058);
     --dait-qp-switch-off: var(--interactive-muted, #80848e);
@@ -174,6 +172,12 @@ module.exports = `
     padding: 10px 12px;
 }
 
+/* The dot sits on the first text line (not the middle of a wrapped block). */
+.dait-qp-status > .dait-qp-dot {
+    align-self: start;
+    margin-top: 5px;
+}
+
 .dait-qp-status-text {
     min-width: 0;
 }
@@ -199,6 +203,20 @@ module.exports = `
     margin: 2px 0 0;
     overflow: hidden;
     overflow-wrap: anywhere;
+}
+
+.dait-qp-status-note {
+    color: var(--dait-qp-muted);
+    font-size: 13px;
+    line-height: 1.45;
+    margin: 2px 0 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dait-qp-status-note[hidden] {
+    display: none;
 }
 
 .dait-quick-popover[data-dait-status="needs-you"] .dait-qp-status-detail {
@@ -401,9 +419,10 @@ label.dait-qp-label {
     color: var(--dait-qp-text);
 }
 
+/* The chosen value reads at a glance in both themes: filled like a secondary button, white text. */
 .dait-qp-segment[aria-checked="true"] {
-    background: var(--dait-qp-selected);
-    color: var(--dait-qp-heading);
+    background: var(--dait-qp-button-bg);
+    color: var(--dait-qp-button-text);
 }
 
 .dait-qp-segment:disabled {
