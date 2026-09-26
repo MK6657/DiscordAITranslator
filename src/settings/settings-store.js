@@ -450,6 +450,24 @@ class SettingsStore {
             this.plugin.settings.ui.channelAutoTranslatePolicies = {};
             changed = true;
         }
+        // In 0.3.x an 'enabled' channel rule behaved like 'inherit'; now it keeps the channel translating while the
+        // main switch is off. Rules stored by an older version are logged and announced once after start.
+        const policiesVersion = DEFAULT_SETTINGS.ui.channelAutoTranslatePoliciesVersion;
+        if (storedSettings && typeof storedSettings === "object" && !(Number(storedSettings.ui?.channelAutoTranslatePoliciesVersion) >= policiesVersion)) {
+            const allowListed = this.plugin.getChannelAutoTranslateAllowListCount();
+            if (allowListed > 0) {
+                this.pendingChannelAllowListNotice = allowListed;
+                try {
+                    this.plugin.logDiagnostic("settings.channel-rules", "upgraded", {
+                        allowListed,
+                        autoTranslateMessages: Boolean(this.plugin.settings.ui.autoTranslateMessages)
+                    });
+                }
+                catch {}
+            }
+            this.plugin.settings.ui.channelAutoTranslatePoliciesVersion = policiesVersion;
+            changed = true;
+        }
         if (typeof this.plugin.settings.ui.historyBackfillEnabled !== "boolean") {
             this.plugin.settings.ui.historyBackfillEnabled = DEFAULT_SETTINGS.ui.historyBackfillEnabled;
             changed = true;
@@ -521,6 +539,22 @@ class SettingsStore {
         if (this.settingsLoadBlockedNoticeShown) return false;
         this.settingsLoadBlockedNoticeShown = true;
         try { this.plugin.showToast(this.plugin.t("settingsLoadBlocked"), "error"); }
+        catch {}
+        return true;
+    }
+
+    // Shown by start() after the settings load that found them; each notice is shown once.
+    showSettingsUpgradeNotices() {
+        const allowListed = Number(this.pendingChannelAllowListNotice || 0);
+        this.pendingChannelAllowListNotice = 0;
+        if (allowListed <= 0) return false;
+        try {
+            this.plugin.showToast(this.plugin.t("channelAllowListUpgradeNotice", {
+                count: allowListed,
+                rule: this.plugin.t("channelPolicyEnabled"),
+                inherit: this.plugin.t("channelPolicyInherit")
+            }), "info");
+        }
         catch {}
         return true;
     }

@@ -1182,6 +1182,19 @@ class AutoTranslationQueueCore {
         };
     }
 
+    // Channels whose rule is 'enabled': they auto-translate even while the main switch is off.
+    getChannelAutoTranslateAllowListCount(policies = this.plugin.settings.ui?.channelAutoTranslatePolicies) {
+        if (!policies || typeof policies !== "object" || Array.isArray(policies)) return 0;
+        const channels = new Set();
+        Object.entries(policies).forEach(([key, policy]) => {
+            if (!policy || typeof policy !== "object") return;
+            if (this.plugin.normalizeChannelAutoTranslatePolicyMode(policy.mode) !== "enabled") return;
+            const channel = this.plugin.getChannelAutoTranslatePolicyStorageKey(key);
+            if (channel) channels.add(channel);
+        });
+        return channels.size;
+    }
+
     isCurrentChannelAutoTranslateAllowed(routeKey = this.plugin.getCurrentRouteKey()) {
         const policy = this.plugin.getCurrentChannelAutoTranslatePolicy(routeKey);
         if (policy.mode === "enabled") return true;

@@ -920,6 +920,60 @@ test("a cache cleared in 0.3.0 after a downgrade stays cleared on the next upgra
     assert.deepEqual(plugin.mergePersistedTranslationCachePayloads(clearedHere, oldCopy).entries, []);
 });
 
+// --- review 1: SD-6 (stored 'enabled' channel rules become an allow-list on upgrade) ---------------
+
+test("upgrading with stored 'enabled' channel rules logs them, tells the user once and shows the count", t => {
+    const storedUi = {
+        settingsVersion: 2,
+        autoTranslateMessages: false,
+        diagnosticsEnabled: true,
+        // Two channels are allow-listed (one of them also under an old per-message key), one is blocked.
+        channelAutoTranslatePolicies: { "g1:c1": { mode: "enabled" }, "g1:c2": { mode: "enabled" }, "g1:c2:m9": { mode: "enabled" }, "g1:c3": { mode: "disabled" } }
+    };
+    const bdApi = createFakeDataApi({ DiscordAITranslator: { settings: { ui: storedUi } } });
+    useGlobals(t, { BdApi: bdApi, window: { addEventListener() {}, removeEventListener() {} }, document: createFakeDocument() });
+    const plugin = startablePlugin();
+    const toasts = [];
+    plugin.showToast = (message, type) => { toasts.push([message, type]); };
+    plugin.start();
+    // The notice names the rule as the settings show it, so it follows any relabelling of the rule.
+    const notices = toasts.filter(([message]) => message.includes(plugin.t("channelPolicyEnabled")));
+    assert.equal(toasts.length, 2);
+    assert.equal(notices.length, 1);
+    assert.equal(notices[0][1], "info");
+    assert.match(notices[0][0], /2/);
+    assert.ok(plugin.diagnosticLogs.some(entry => entry.action === "settings.channel-rules" && entry.meta.allowListed === 2));
+    assert.equal(plugin.getChannelAutoTranslateAllowListCount(), 2);
+    assert.equal(plugin.createSettingsSnapshot().effective.allowListedChannels, 2);
+    assert.equal(plugin.getDiagnosticLogsSnapshot().settings.allowListedChannels, 2);
+    // The rules themselves are unchanged, and the notice is recorded as shown.
+    assert.deepEqual(plugin.settings.ui.channelAutoTranslatePolicies, storedUi.channelAutoTranslatePolicies);
+    assert.equal(bdApi.files.DiscordAITranslator.settings.ui.channelAutoTranslatePoliciesVersion, DEFAULT_SETTINGS.ui.channelAutoTranslatePoliciesVersion);
+    plugin.stop();
+
+    // One time only.
+    const again = startablePlugin();
+    const laterToasts = [];
+    again.showToast = (message, type) => { laterToasts.push([message, type]); };
+    again.start();
+    assert.equal(laterToasts.filter(([message]) => message.includes(again.t("channelPolicyEnabled"))).length, 0);
+    again.stop();
+});
+
+test("no allow-list notice for a new install or when no channel rule is 'enabled'", t => {
+    for (const stored of [{}, { settings: { ui: { settingsVersion: 2, channelAutoTranslatePolicies: { "g1:c3": { mode: "disabled" } } } } }]) {
+        const bdApi = createFakeDataApi({ DiscordAITranslator: stored });
+        useGlobals(t, { BdApi: bdApi, window: { addEventListener() {}, removeEventListener() {} }, document: createFakeDocument() });
+        const plugin = startablePlugin();
+        const toasts = [];
+        plugin.showToast = (message, type) => { toasts.push([message, type]); };
+        plugin.start();
+        assert.equal(toasts.length, 1, JSON.stringify(stored));
+        assert.equal(bdApi.files.DiscordAITranslator.settings.ui.channelAutoTranslatePoliciesVersion, DEFAULT_SETTINGS.ui.channelAutoTranslatePoliciesVersion);
+        plugin.stop();
+    }
+});
+
 test("start() still writes diagnostics a previous stop() could not save before it reloads the log", t => {
     const bdApi = createFakeDataApi({ DiscordAITranslator: { settings: { ui: { settingsVersion: 2, diagnosticsEnabled: true } } } });
     useGlobals(t, { BdApi: bdApi, window: { addEventListener() {}, removeEventListener() {} }, document: createFakeDocument() });

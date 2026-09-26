@@ -361,6 +361,7 @@ class DiagnosticsRecorder {
                 autoTranslateIntakeMode: this.plugin.settings.ui?.autoTranslateIntakeMode,
                 autoTranslateConcurrency: this.plugin.settings.ui?.autoTranslateConcurrency,
                 channelPolicy: this.plugin.getCurrentChannelAutoTranslatePolicy(),
+                allowListedChannels: this.plugin.getChannelAutoTranslateAllowListCount(),
                 historyBackfillEnabled: this.plugin.settings.ui?.historyBackfillEnabled,
                 providerFallbackEnabled: this.plugin.settings.ui?.providerFallbackEnabled,
                 providerFallbackOrder: this.plugin.getProviderFallbackOrder("translation"),

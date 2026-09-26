@@ -1070,6 +1070,7 @@ module.exports = class DiscordAITranslator {
             window.addEventListener("beforeunload", this.getPageHideHandler(), true);
             this.queueScan();
             this.showToast(this.t("pluginStarted", { version: PLUGIN_VERSION }), "success");
+            this.showSettingsUpgradeNotices();
             return true;
         }
         catch (error) {
@@ -3787,7 +3788,9 @@ module.exports = class DiscordAITranslator {
                 localProvider: this.isLocalTranslationProvider(this.settings.translation),
                 concurrency: this.getAutoTranslateConcurrency(),
                 prefetchRange: this.getAutoTranslatePrefetchRange(),
-                intakeMode: this.normalizeAutoTranslateIntakeMode(this.settings.ui?.autoTranslateIntakeMode)
+                intakeMode: this.normalizeAutoTranslateIntakeMode(this.settings.ui?.autoTranslateIntakeMode),
+                // Channels that auto-translate even with the main switch off.
+                allowListedChannels: this.getChannelAutoTranslateAllowListCount()
             },
             settings: sanitize(this.settings, "", DEFAULT_SETTINGS)
         };
@@ -15269,6 +15272,7 @@ module.exports = class DiscordAITranslator {
     flushSettings(...args) { return this.settingsStore.flushSettings(...args); }
     mergeSettings(...args) { return this.settingsStore.mergeSettings(...args); }
     ensureSettingsShape(...args) { return this.settingsStore.ensureSettingsShape(...args); }
+    showSettingsUpgradeNotices(...args) { return this.settingsStore.showSettingsUpgradeNotices(...args); }
     migrateDefaultTranslationPrompt(...args) { return this.settingsStore.migrateDefaultTranslationPrompt(...args); }
     isLegacyTranslationNaturalPrompt(...args) { return this.settingsStore.isLegacyTranslationNaturalPrompt(...args); }
     normalizePromptForMigration(...args) { return this.settingsStore.normalizePromptForMigration(...args); }
@@ -15587,6 +15591,7 @@ module.exports = class DiscordAITranslator {
     setCurrentChannelAutoTranslatePolicyMode(...args) { return this.autoQueueCore.setCurrentChannelAutoTranslatePolicyMode(...args); }
     getCurrentChannelAutoTranslatePolicy(...args) { return this.autoQueueCore.getCurrentChannelAutoTranslatePolicy(...args); }
     isCurrentChannelAutoTranslateAllowed(...args) { return this.autoQueueCore.isCurrentChannelAutoTranslateAllowed(...args); }
+    getChannelAutoTranslateAllowListCount(...args) { return this.autoQueueCore.getChannelAutoTranslateAllowListCount(...args); }
     isAutoTranslationRequestCurrent(...args) { return this.autoQueueCore.isAutoTranslationRequestCurrent(...args); }
     isAutoTranslationRenderRequestCurrent(...args) { return this.autoQueueCore.isAutoTranslationRenderRequestCurrent(...args); }
     isSameAutoTranslationRouteScope(...args) { return this.autoQueueCore.isSameAutoTranslationRouteScope(...args); }

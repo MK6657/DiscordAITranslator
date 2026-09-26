@@ -748,6 +748,8 @@ const DEFAULT_SETTINGS = {
         autoTranslateConcurrency: AUTO_TRANSLATE_DEFAULT_CONCURRENCY,
         autoTranslateStrictRetry: false,
         channelAutoTranslatePolicies: {},
+        // 2: an 'enabled' rule allow-lists the channel even while autoTranslateMessages is off (v0.4.0).
+        channelAutoTranslatePoliciesVersion: 2,
         historyBackfillEnabled: false,
         historyBackfillLimit: 20,
         providerFallbackEnabled: false,
