@@ -475,6 +475,51 @@ test("the hotkey row's recorder is the control its description names", t => {
     }
 });
 
+// --- F8: no copy is left over from the removed test mode --------------------------------------------------
+
+test("no string describes the removed test mode or points to prompt settings 'above'", () => {
+    const { I18N } = require("../../src/i18n");
+    for (const locale of ["zh-CN", "en"]) {
+        // "Try a sentence" / "Try polishing" in the service cards replaced the test area.
+        assert.deepEqual(Object.keys(I18N[locale]).filter(key => /^testMode/.test(key)), [], locale);
+        for (const [key, value] of Object.entries(I18N[locale])) {
+            assert.doesNotMatch(value, /测试模式|上方设置|test mode|settings above/i, `${locale}.${key}`);
+        }
+    }
+});
+
+// --- F9: descriptions promise only what the code does ------------------------------------------------------
+
+test("the reset row does not promise that every option returns to its default", () => {
+    const { I18N } = require("../../src/i18n");
+    const zh = I18N["zh-CN"].settingsResetDesc;
+    const en = I18N.en.settingsResetDesc;
+    // The reset keeps the interface language and, unless unticked, the API keys and prompt templates.
+    assert.doesNotMatch(zh, /所有选项|全部选项/);
+    assert.doesNotMatch(en, /every option|all options/i);
+    assert.match(zh, /保留/);
+    assert.match(zh, /API Key/);
+    assert.match(zh, /模板/);
+    assert.match(en, /keep/i);
+    assert.match(en, /API keys?/i);
+    assert.match(en, /templates?/i);
+});
+
+test("the local concurrency row describes the setting's range, not what the local server can handle", () => {
+    const { I18N } = require("../../src/i18n");
+    const zh = I18N["zh-CN"].localConcurrencyDesc;
+    const en = I18N.en.localConcurrencyDesc;
+    for (const text of [zh, en]) {
+        assert.match(text, /\{min\}/);
+        assert.match(text, /\{max\}/);
+    }
+    assert.doesNotMatch(zh, /可同时处理/);
+    assert.doesNotMatch(en, /can handle/i);
+    // It still says what to match the value to.
+    assert.match(zh, /并行槽位/);
+    assert.match(en, /parallel slots/i);
+});
+
 test("while a confirmation is open the settings window sits below BetterDiscord's fallback modal", () => {
     const css = require("../../src/css/08-dialogs.js");
     const rule = /\.dait-quick-settings-modal-root\[data-dait-confirm-open="true"\]\s*\{([^}]*)\}/.exec(css);
