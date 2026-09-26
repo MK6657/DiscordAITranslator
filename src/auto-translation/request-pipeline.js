@@ -33,6 +33,7 @@ const {
     MODEL_REQUEST_TIMEOUT_MS,
     TRANSLATION_VALIDATION_QUALITIES
 } = require("../constants");
+const { removeStandardEmoji } = require("../intake/emoji-text");
 
 class AutoTranslationRequestPipeline {
     constructor(plugin) {
@@ -2630,7 +2631,13 @@ class AutoTranslationRequestPipeline {
     }
 
     computeAutoTranslationPrecheckSkipReason(text, targetLanguage = this.plugin.settings.translation.targetLanguage) {
-        const value = String(text || "").trim();
+        const source = String(text || "").trim();
+        if (source.length < 2) return "too-short";
+        if (!this.plugin.hasLetters(source)) return "no-letters";
+        // Standard emoji are sent with the text, but no skip rule counts them: "https://… ❤️" and
+        // ":pepe: ❤️" are still a link or custom emoji alone, "a 👍" is still too short.
+        const withoutEmoji = removeStandardEmoji(source);
+        const value = withoutEmoji === source ? source : this.plugin.normalizeExtractedText(withoutEmoji);
         if (value.length < 2) return "too-short";
         if (!this.plugin.hasLetters(value)) return "no-letters";
         if (this.plugin.isAutoTranslationLinkOnlyText(value)) return "link-only";

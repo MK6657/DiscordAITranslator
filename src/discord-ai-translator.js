@@ -14,6 +14,7 @@ const { PLUGIN_VERSION } = require("./version");
 const { ProviderLayer } = require("./providers/provider-layer");
 const { SettingsStore } = require("./settings/settings-store");
 const { convertDiscordMarkupToDisplayText, DISCORD_MARKUP_DISPLAY_TEXT_MEMO_MAX } = require("./intake/discord-markup");
+const { removeStandardEmoji, getEmojiNeutralTextLength } = require("./intake/emoji-text");
 
 const {
     PLUGIN_NAME,
@@ -9918,7 +9919,8 @@ module.exports = class DiscordAITranslator {
     isCommonTargetShortText(text, targetLanguage) {
         const target = this.normalizeLanguageName(targetLanguage);
         if (!["英语", "English"].includes(target)) return false;
-        const normalized = String(text || "").trim().toLocaleLowerCase();
+        // "thanks 🙏" is as common a reply as "thanks": emoji do not count.
+        const normalized = removeStandardEmoji(text).trim().toLocaleLowerCase();
         if (!/^[a-z0-9\s'’.,!?-]+$/.test(normalized)) return false;
         const compact = normalized.replace(/[^\w'’]+/g, " ").trim();
         const common = new Set(["hi", "hello", "hey", "ok", "okay", "yes", "no", "thanks", "thank you", "lol", "bro", "same", "sure", "done", "nice", "good", "bad", "why", "what"]);
@@ -14238,7 +14240,8 @@ module.exports = class DiscordAITranslator {
         const displayText = convertDiscordMarkupToDisplayText(raw, {
             user: userId => this.getDiscordMentionUserName(userId, guildId),
             role: roleId => this.getDiscordMentionRoleName(roleId, guildId),
-            channel: channelId => this.getDiscordNamedStore("ChannelStore")?.getChannel?.(channelId)?.name || ""
+            channel: channelId => this.getDiscordNamedStore("ChannelStore")?.getChannel?.(channelId)?.name || "",
+            emoji: name => this.getDiscordUnicodeEmojiSurrogate(name)
         });
         // A name that cannot be resolved yet (stores still loading) is looked up again next time.
         if (!displayText) return displayText;
@@ -14265,6 +14268,37 @@ module.exports = class DiscordAITranslator {
         return String(role?.name || "").trim();
     }
 
+    // Discord draws a standard emoji written as its name (":white_check_mark:", as bots send it) as
+    // the emoji itself. "" when the name is unknown or Discord's emoji utils cannot be found.
+    getDiscordUnicodeEmojiSurrogate(name) {
+        const emojiUtils = this.getDiscordUnicodeEmojiUtils();
+        try {
+            return String(emojiUtils?.convertNameToSurrogate?.(name) || "");
+        }
+        catch {
+            return "";
+        }
+    }
+
+    getDiscordUnicodeEmojiUtils() {
+        const cached = this.discordUnicodeEmojiUtils;
+        if (cached?.module) return cached.module;
+        const now = Date.now();
+        if (cached && now < cached.retryAt) return null;
+        let module = null;
+        try {
+            module = globalThis.BdApi?.Webpack?.getByKeys?.("convertNameToSurrogate") || null;
+        }
+        catch (error) {
+            this.warnSanitized("Failed to locate Discord emoji utils", error);
+        }
+        // As with a missing store, a missing module is not searched for again soon: a lookup scans modules.
+        this.discordUnicodeEmojiUtils = typeof module?.convertNameToSurrogate === "function"
+            ? { module }
+            : { module: null, retryAt: now + 60000 };
+        return this.discordUnicodeEmojiUtils.module;
+    }
+
     getDiscordNamedStore(name) {
         if (!this.discordNamedStores) this.discordNamedStores = new Map();
         const cached = this.discordNamedStores.get(name);
@@ -14284,12 +14318,14 @@ module.exports = class DiscordAITranslator {
     }
 
     // MessageStore text replaces the text on screen only as the request text, and only when it holds
-    // more than the target element shows (a message whose content element shows part of it).
+    // more than the target element shows (a message whose content element shows part of it). Each
+    // emoji counts as one character, drawn or written as a shortcode, so a content element that shows
+    // the whole message is never taken for part of it.
     isStoreFullRequestText(storeText, domText) {
         const store = String(storeText || "");
         const dom = String(domText || "");
         return Boolean(store && dom
-            && store.length > dom.length + 4
+            && getEmojiNeutralTextLength(store) > getEmojiNeutralTextLength(dom) + 4
             && this.isManualTranslationSourceCompatible(store, dom));
     }
 
