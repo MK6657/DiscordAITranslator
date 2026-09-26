@@ -5,7 +5,7 @@ const Plugin = require("../../src");
 const { PLUGIN_CSS } = require("../../src/styles");
 const { I18N } = require("../../src/i18n");
 const { DEFAULT_SETTINGS } = require("../../src/constants");
-const { normalizePanelTheme, PANEL_THEME_ROOT_SELECTOR } = require("../../src/settings/panel-theme");
+const { normalizePanelTheme, parseComputedColor, PANEL_THEME_ROOT_SELECTOR } = require("../../src/settings/panel-theme");
 
 // v0.4.0 theme follow-up (THEME-SPEC): the plugin's own windows get one complete light or dark palette from
 // data-dait-panel-theme (ui.panelTheme: auto / light / dark) instead of stitching Discord variables together, and
@@ -572,28 +572,123 @@ test("every plugin window root carries data-dait-panel-theme", t => {
     assert.equal(frame.style.getPropertyValue("--background-primary"), "");
 });
 
-test("confirmation and reset dialog content carry the palette, with their own background only when it differs from Discord's", t => {
-    const { plugin, doc } = createPlugin(t, { discord: "theme-light" });
+// Discord's modal around dialog content: the layer's backdrop, the modal (background as given) and the content
+// wrapper (transparent), with getComputedStyle reading the inline backgrounds.
+function mountInModal(doc, win, props, modalBackground) {
+    win.getComputedStyle = element => ({ backgroundColor: element.style.getPropertyValue("background-color") || "rgba(0, 0, 0, 0)" });
+    const layer = doc.body.appendChild(doc.createElement("div"));
+    layer.style.setProperty("background-color", "rgba(0, 0, 0, 0.7)");
+    const modal = layer.appendChild(doc.createElement("div"));
+    modal.setAttribute("role", "dialog");
+    if (modalBackground) modal.style.setProperty("background-color", modalBackground);
+    const wrapper = modal.appendChild(doc.createElement("div"));
+    const node = wrapper.appendChild(doc.createElement("div"));
+    Object.entries(props).forEach(([name, value]) => {
+        if (name === "className") node.className = value;
+        else if (name !== "ref") node.setAttribute(name, value);
+    });
+    props.ref(node);
+    return { node, modal, layer };
+}
+
+test("dialog content takes the palette of Discord's modal around it, whatever the window theme says", t => {
+    const { plugin, doc, win } = createPlugin(t, { discord: "theme-light" });
     useGlobals(t, { BdApi: { React: FakeReact } });
     let content = plugin.createConfirmDialogContent(["Delete the template?"], "preview text");
     assert.equal(content.props.className, "dait-dialog");
-    assert.equal(content.props["data-dait-panel-theme"], "light");
-    assert.equal(content.props["data-dait-dialog-surface"], undefined, "auto matches Discord's modal");
-    const reset = plugin.createResetDialogContent(FakeReact, { keepCredentials: true });
-    const resetBody = reset.type();
+    assert.equal(content.props["data-dait-panel-theme"], "light", "before it is mounted: Discord's theme");
+    assert.equal(content.props["data-dait-dialog-surface"], undefined, "no box inside the modal");
+    assert.equal(typeof content.props.ref, "function");
+    const resetBody = plugin.createResetDialogContent(FakeReact, { keepCredentials: true }).type();
     assert.equal(resetBody.props.className, "dait-dialog");
     assert.equal(resetBody.props["data-dait-panel-theme"], "light");
+    assert.equal(typeof resetBody.props.ref, "function");
 
-    // An explicit dark choice inside Discord's light modal: the content brings its dark background.
+    // An explicit dark choice does not turn the content into a dark box inside Discord's light modal.
     plugin.settings.ui.panelTheme = "dark";
     content = plugin.createConfirmDialogContent(["Delete the template?"]);
-    assert.equal(content.props["data-dait-panel-theme"], "dark");
-    assert.equal(content.props["data-dait-dialog-surface"], "true");
-    assert.equal(plugin.createResetDialogContent(FakeReact, { keepCredentials: true }).type().props["data-dait-dialog-surface"], "true");
+    assert.equal(content.props["data-dait-panel-theme"], "light");
+    assert.equal(content.props["data-dait-dialog-surface"], undefined);
+    const light = mountInModal(doc, win, content.props, "rgb(255, 255, 255)");
+    assert.equal(light.node.dataset.daitPanelTheme, "light");
+    assert.equal(light.node.getAttribute("data-dait-dialog-surface"), null);
+
+    // Once mounted it goes by the modal's real background: a dark modal on a page whose class says light (a themed
+    // region, a client theme) gets the dark palette, so the text is never dark on dark.
+    const dark = mountInModal(doc, win, plugin.createConfirmDialogContent(["x"]).props, "rgb(49, 51, 56)");
+    assert.equal(dark.node.dataset.daitPanelTheme, "dark");
+    assert.equal(dark.node.getAttribute("data-dait-dialog-surface"), null);
+    const resetDark = mountInModal(doc, win, plugin.createResetDialogContent(FakeReact, { keepCredentials: true }).type().props, "#313338");
+    assert.equal(resetDark.node.dataset.daitPanelTheme, "dark", "a modal background the parser cannot read is skipped: the layer's dark backdrop decides");
+});
+
+test("dialog content without a Discord theme or a readable modal background brings its own background", t => {
+    // No theme class anywhere, the system says light, Discord's modal is dark (the audit's case a).
+    const { plugin, doc, win, media } = createPlugin(t, { discord: "", system: "light" });
+    useGlobals(t, { BdApi: { React: FakeReact } });
+    const props = plugin.createConfirmDialogContent(["Delete the template?"]).props;
+    assert.equal(props["data-dait-panel-theme"], "light", "before it is mounted: the resolved palette");
+    assert.equal(props["data-dait-dialog-surface"], "true", "…on its own background, so it reads on any modal");
+    const { node } = mountInModal(doc, win, props, "rgb(49, 51, 56)");
+    assert.equal(node.dataset.daitPanelTheme, "dark", "mounted: the modal's palette");
+    assert.equal(node.getAttribute("data-dait-dialog-surface"), null);
+
+    // Neither palette reads on a mid-grey modal: the content keeps its own background.
+    const grey = mountInModal(doc, win, plugin.createConfirmDialogContent(["x"]).props, "rgb(128, 128, 128)");
+    assert.equal(grey.node.getAttribute("data-dait-dialog-surface"), "true");
+    // No background to read at all (every ancestor transparent, or no getComputedStyle): its own background in
+    // the resolved palette.
+    const bare = doc.body.appendChild(doc.createElement("div"));
+    win.getComputedStyle = () => ({ backgroundColor: "rgba(0, 0, 0, 0)" });
+    plugin.syncDialogPanelTheme(bare.appendChild(Object.assign(doc.createElement("div"), { className: "dait-dialog" })));
+    assert.equal(bare.children[0].dataset.daitPanelTheme, "light");
+    assert.equal(bare.children[0].getAttribute("data-dait-dialog-surface"), "true");
+    delete win.getComputedStyle;
+    media.system = "dark";
+    plugin.syncDialogPanelTheme(bare.children[0]);
+    assert.equal(bare.children[0].dataset.daitPanelTheme, "dark");
+    assert.equal(bare.children[0].getAttribute("data-dait-dialog-surface"), "true");
     const surface = cssRules().find(rule => rule.selector === '.dait-dialog[data-dait-dialog-surface="true"]');
     assert.ok(surface, "the dialog surface rule exists");
     assert.match(surface.body, /background: var\(--dait-bg\);/);
-    assert.equal(doc.querySelector(".dait-dialog"), null);
+});
+
+test("open dialog content follows its modal when the window theme or Discord's theme changes", t => {
+    const { plugin, doc, win } = createPlugin(t, { discord: "theme-dark" });
+    useGlobals(t, { BdApi: { React: FakeReact } });
+    plugin.panelTheme.startWatching();
+    const observer = FakeMutationObserver.instances.at(-1);
+    const { node, modal } = mountInModal(doc, win, plugin.createResetDialogContent(FakeReact, { keepCredentials: true }).type().props, "rgb(49, 51, 56)");
+    assert.equal(node.dataset.daitPanelTheme, "dark");
+    // The window theme changes while the dialog is open (audit case b): the other windows restyle, the dialog
+    // content still matches Discord's dark modal and gains no box.
+    plugin.setSetting("ui.panelTheme", "light");
+    assert.equal(node.dataset.daitPanelTheme, "dark");
+    assert.equal(node.getAttribute("data-dait-dialog-surface"), null);
+    // Discord switches to light: the modal turns white and the content follows, though the window theme (an
+    // explicit "light") did not change.
+    doc.root.className = "theme-light";
+    modal.style.setProperty("background-color", "rgb(255, 255, 255)");
+    observer.fire([{ type: "attributes", attributeName: "class", target: doc.root }]);
+    assert.equal(node.dataset.daitPanelTheme, "light");
+    plugin.setSetting("ui.panelTheme", "dark");
+    assert.equal(node.dataset.daitPanelTheme, "light", "still the modal's palette");
+    assert.equal(node.getAttribute("data-dait-dialog-surface"), null);
+    // The plugin's own Discord observer path re-checks it too.
+    doc.root.className = "theme-dark";
+    modal.style.setProperty("background-color", "rgb(49, 51, 56)");
+    plugin.refreshDiscordThemeClasses();
+    assert.equal(node.dataset.daitPanelTheme, "dark");
+});
+
+test("computed background colours are read in the forms browsers report", () => {
+    assert.deepEqual(parseComputedColor("rgb(49, 51, 56)"), { rgb: [49, 51, 56], alpha: 1 });
+    assert.deepEqual(parseComputedColor("rgba(0, 0, 0, 0)"), { rgb: [0, 0, 0], alpha: 0 });
+    assert.deepEqual(parseComputedColor("rgb(255 255 255 / 50%)"), { rgb: [255, 255, 255], alpha: 0.5 });
+    assert.deepEqual(parseComputedColor("transparent"), { rgb: [0, 0, 0], alpha: 0 });
+    assert.deepEqual(parseComputedColor("color(srgb 1 1 1)"), { rgb: [255, 255, 255], alpha: 1 });
+    assert.equal(parseComputedColor("oklch(0.5 0.1 200)"), null);
+    assert.equal(parseComputedColor("#313338"), null);
 });
 
 // --- Live restyling ---

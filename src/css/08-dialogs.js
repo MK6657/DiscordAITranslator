@@ -2,9 +2,10 @@
 
 // Dialog content rendered inside BetterDiscord's confirmation modal, the settings window's layer while such a
 // dialog is open, and the parts of the prompt-template manager added with the preview and inline naming. The
-// dialog content carries data-dait-panel-theme like the other plugin windows, so its colours come from the panel
-// palette (01-theme-tokens); when the chosen palette is not the one Discord's modal is drawn in (an explicit
-// light/dark choice), the content brings its own background so it stays readable.
+// dialog content carries data-dait-panel-theme like the other plugin windows, so its colours come from a panel
+// palette (01-theme-tokens): the one that matches the background of Discord's modal around it (PanelTheme
+// syncDialog), so the content, Discord's title and Discord's buttons read as one dialog. Only when that background
+// cannot be read does the content bring its own background.
 module.exports = `
 /* Below Discord's layers and BetterDiscord's fallback modal (.bd-modal-wrapper, z-index 1000, earlier in the document). */
 .dait-quick-settings-modal-root[data-dait-confirm-open="true"] {

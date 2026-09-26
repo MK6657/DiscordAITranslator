@@ -17123,13 +17123,30 @@ module.exports = class DiscordAITranslator {
         );
     }
 
-    // Dialog content is a plugin window inside Discord's modal: it takes the panel palette. When the user picked a
-    // palette other than the one Discord draws the modal in, the content brings its own background (css/08-dialogs).
+    // Dialog content sits inside Discord's modal, between Discord's own title and buttons: it takes the palette of
+    // that modal, whatever ui.panelTheme says, so the dialog is one piece and its text always reads. Until the
+    // content is in the page it goes by Discord's theme; once mounted (the ref) it goes by the modal's actual
+    // background, and PanelTheme.refresh() checks it again when Discord's theme changes. Without a Discord theme or
+    // a readable modal background it brings its own background in the current palette (css/08-dialogs).
     getDialogPanelThemeProps() {
-        const theme = this.resolvePanelTheme();
-        const props = { "data-dait-panel-theme": theme };
-        if (theme !== this.resolvePanelTheme("auto")) props["data-dait-dialog-surface"] = "true";
+        const discordTheme = this.panelTheme.getDiscordTheme();
+        const props = {
+            "data-dait-panel-theme": discordTheme || this.resolvePanelTheme(),
+            ref: node => this.syncDialogPanelTheme(node)
+        };
+        if (!discordTheme) props["data-dait-dialog-surface"] = "true";
         return props;
+    }
+
+    syncDialogPanelTheme(node) {
+        if (!node) return "";
+        try {
+            return this.panelTheme.syncDialog(node);
+        }
+        catch (error) {
+            this.logDiagnostic?.("dialog.theme", "warn", { error: this.formatError?.(error) });
+            return "";
+        }
     }
 
     // Where a confirmation can show up: Discord's modal layer (role=dialog), BetterDiscord's modal root, and
