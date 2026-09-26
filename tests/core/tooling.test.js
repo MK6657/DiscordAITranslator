@@ -231,7 +231,7 @@ test("the release scan reads what Git would publish, including force-added and n
         assert.equal(scratch.git(["update-index", "--add", "--cacheinfo", "160000,1234567890123456789012345678901234567890,vendor/reference"])?.status, 0);
         fs.rmSync(path.join(scratch.directory, "src", "removed.js"));
         write("src/changed.js", "working copy\n");
-        write("notes/todo.md", "untracked, staged by the next git add\n");
+        write("docs/todo.md", "untracked, staged by the next git add\n");
         write(".env", "ignored local file\n");
         write("work/notes.txt", "ignored local folder\n");
 
@@ -243,7 +243,7 @@ test("the release scan reads what Git would publish, including force-added and n
             "src/removed.js: staged, then deleted from the working tree",
             "src/changed.js: staged version",
             "src/changed.js: working copy",
-            "notes/todo.md: untracked, staged by the next git add"
+            "docs/todo.md: untracked, staged by the next git add"
         ]) {
             assert.ok(scanned.includes(expected), `not scanned: ${expected}`);
         }
