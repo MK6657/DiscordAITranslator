@@ -11078,6 +11078,8 @@ assert.equal(menuTree.props.children[0], menuItem);
 
     const sakuraHealthFailurePlugin = new Plugin();
     sakuraHealthFailurePlugin.settings.translation.provider = "sakuraLocal";
+    // Its own endpoint, as picking the provider in the settings sets it (not DeepSeek's default).
+    sakuraHealthFailurePlugin.settings.translation.endpoint = "http://127.0.0.1:8080/v1/chat/completions";
     sakuraHealthFailurePlugin.settings.translation.apiKey = "";
     sakuraHealthFailurePlugin.settings.translation.apiStatus = { state: "untested", message: "" };
     sakuraHealthFailurePlugin.fetchApiResponseText = async () => {
@@ -12635,6 +12637,8 @@ global.document = {
 
     const sakuraSingleFailurePlugin = new Plugin();
     sakuraSingleFailurePlugin.settings.translation.provider = "sakuraLocal";
+    // Its own endpoint, as picking the provider in the settings sets it (not DeepSeek's default).
+    sakuraSingleFailurePlugin.settings.translation.endpoint = "http://127.0.0.1:8080/v1/chat/completions";
     sakuraSingleFailurePlugin.settings.ui.autoTranslateMessages = true;
     sakuraSingleFailurePlugin.settings.translation.apiKey = "";
     sakuraSingleFailurePlugin.settings.translation.apiStatus = { state: "success", message: "" };

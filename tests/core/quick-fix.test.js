@@ -668,6 +668,46 @@ test("a public bilingual request on the polish key does not mark a broken transl
     assert.equal(plugin.getApiStatus("translation").state, "success");
 });
 
+// --- "Local service not responding" is only said of the local service, with its own address ---
+
+test("the local-service message names the local service that failed, even after a switch to a cloud service", t => {
+    const { plugin } = createQuickPanelPlugin(t, { endpoint: LOOPBACK_SAKURA });
+    const sakura = plugin.clone(plugin.getTaskConfig("translation"));
+    // A manual translation waits on a hung local service; meanwhile the user switches to DeepSeek.
+    const error = Object.assign(new Error("fetch failed"), { cause: { code: "ECONNREFUSED" } });
+    plugin.settings.translation.provider = "deepseek";
+    plugin.settings.translation.endpoint = "https://api.deepseek.com/chat/completions";
+    plugin.annotateModelRequestError(error, "translation", LOOPBACK_SAKURA, sakura, { configOverrides: sakura });
+    assert.equal(error.localProviderUnavailable, true);
+    assert.equal(plugin.getTranslationErrorPresentation(error).message, "本地翻译服务没有响应（127.0.0.1:8080）");
+    // An error that does not say where it came from names the service set up now, as before.
+    plugin.settings.translation.provider = "sakuraLocal";
+    plugin.settings.translation.endpoint = "http://127.0.0.1:18080/v1/chat/completions";
+    assert.equal(plugin.getTranslationErrorPresentation(Object.assign(new Error("x"), { localProviderUnavailable: true })).message, "本地翻译服务没有响应（127.0.0.1:18080）");
+});
+
+test("a cloud or OpenAI-compatible service that does not answer gets the network message, never the local one", t => {
+    const { plugin } = createQuickPanelPlugin(t, { provider: "deepseek" });
+    const services = [
+        ["deepseek", "https://api.deepseek.com/chat/completions"],
+        ["openaiCompatible", "https://llm.example.com/v1/chat/completions"],
+        // A local OpenAI-compatible server (LM Studio, Ollama) is not the Sakura local service either.
+        ["openaiCompatible", "http://127.0.0.1:1234/v1/chat/completions"]
+    ];
+    for (const [provider, endpoint] of services) {
+        plugin.settings.translation.provider = provider;
+        plugin.settings.translation.endpoint = endpoint;
+        const config = plugin.clone(plugin.getTaskConfig("translation"));
+        const error = Object.assign(new Error("fetch failed"), { cause: { code: "ECONNREFUSED" } });
+        plugin.annotateModelRequestError(error, "translation", endpoint, config, { configOverrides: config });
+        assert.equal(Boolean(error.localProviderUnavailable), false, endpoint);
+        assert.equal(plugin.getAutoTranslationFailureType(error), "network", endpoint);
+        const presentation = plugin.getTranslationErrorPresentation(error);
+        assert.equal(presentation.action, "retry", endpoint);
+        assert.equal(presentation.message, "翻译失败：网络连接失败。", endpoint);
+    }
+});
+
 // --- X7: what counts as a channel for the channel rule ---
 
 test("channels, threads and DMs have a channel rule; Discord's guild pages and the DM list do not", () => {

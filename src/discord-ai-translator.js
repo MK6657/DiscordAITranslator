@@ -14096,7 +14096,7 @@ module.exports = class DiscordAITranslator {
             return { action: "settings", reason: attention, message: `${this.t("translationErrorQuota")}${this.formatTranslationErrorStatus(error)}` };
         }
         if (attention === "local-unavailable") {
-            const host = this.getTranslationEndpointHost();
+            const host = this.getTranslationEndpointHost(error);
             return {
                 action: "test",
                 reason: attention,
@@ -14143,9 +14143,10 @@ module.exports = class DiscordAITranslator {
         return "";
     }
 
-    getTranslationEndpointHost() {
+    // The local service that did not answer when the error says which; else the translation service set up now.
+    getTranslationEndpointHost(error = null) {
         try {
-            const endpoint = String(this.getEffectiveTaskConfig("translation")?.endpoint || this.settings.translation?.endpoint || "").trim();
+            const endpoint = String(error?.localProviderEndpoint || this.getEffectiveTaskConfig("translation")?.endpoint || this.settings.translation?.endpoint || "").trim();
             return endpoint ? new URL(endpoint).host : "";
         }
         catch {

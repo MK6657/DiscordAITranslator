@@ -820,6 +820,7 @@ class ProviderLayer {
                     error.localProviderUnavailable = true;
                     error.retryAfterMs = Math.max(Number(error.retryAfterMs || 0), LOCAL_PROVIDER_UNAVAILABLE_RETRY_MS);
                     error.providerKey = providerKey;
+                    error.localProviderEndpoint = error.localProviderEndpoint || String(endpoint || config.endpoint || "");
                 }
                 this.plugin.markAutoTranslationProviderFailure(requestOptions, error);
                 // Failures the provider cooldown does not record (an invalid or unsafe API URL) still end the
@@ -1393,6 +1394,8 @@ class ProviderLayer {
             error.localProviderUnavailable = true;
             error.retryAfterMs = Math.max(Number(error.retryAfterMs || 0), LOCAL_PROVIDER_UNAVAILABLE_RETRY_MS);
             error.providerKey = error.providerKey || this.plugin.getAutoTranslationProviderKey({ configOverrides: options.configOverrides });
+            // The address that did not answer, for the message: the settings may name another service by then.
+            error.localProviderEndpoint = error.localProviderEndpoint || String(endpoint || config?.endpoint || "");
         }
         return error;
     }
