@@ -755,6 +755,8 @@ test("one select for the message Translate button maps onto injectMessageButtons
 
 test("header: title, version chip, live translation status, close; no static provider chip", t => {
     const { plugin, doc } = createShell(t);
+    // A service with its key: the badge shows the connection state (without one it says "Not set up").
+    plugin.settings.translation.apiKey = "sk-fake-1";
     const panel = plugin.getSettingsPanel();
     doc.body.appendChild(panel);
     const header = panel.querySelector(".dait-settings-header");

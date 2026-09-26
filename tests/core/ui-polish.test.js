@@ -675,6 +675,50 @@ test("polish result panel: readable title and buttons on the shared scale, a lab
     plugin.removePolishResultPanel();
 });
 
+// --- UI-8: one name for a service that is missing a required field ---
+
+test("a service without its API key reads 'Not set up' everywhere: title bar, connection card, overview card and quick panel", t => {
+    for (const language of ["zh-CN", "en"]) {
+        const { plugin, doc } = createPlugin(t, { language, tab: "overview" });
+        const panel = plugin.getSettingsPanel({ quickSettings: true });
+        doc.body.appendChild(panel);
+        const notSetUp = plugin.t("quickStatusNotConfigured");
+        const header = panel.querySelector(".dait-settings-header .dait-api-status");
+        const card = tabPanel(panel, "translate").querySelector(".dait-provider-settings-header .dait-api-status");
+        for (const badge of [header, card]) {
+            assert.equal(badge.textContent, notSetUp, language);
+            assert.equal(badge.className, "dait-api-status dait-api-status-unconfigured");
+            assert.equal(badge.title, plugin.t("overviewServiceMissing", { field: plugin.t("apiKey") }));
+        }
+        const mark = tabPanel(panel, "overview").querySelector(".dait-service-card .dait-status-mark-needs");
+        assert.equal(mark.textContent, plugin.t("overviewServiceMissing", { field: plugin.t("apiKey") }));
+        assert.ok(mark.textContent.startsWith(notSetUp), `${language}: the overview card uses the same name`);
+        assert.equal(plugin.getLauncherStatus().connection, notSetUp);
+
+        // With the key the badges say the service has not been tested yet.
+        plugin.setSetting("translation.apiKey", "sk-fake-1");
+        for (const badge of [header, card]) {
+            assert.equal(badge.textContent, plugin.t("apiStatusUntested"));
+            assert.equal(badge.className, "dait-api-status dait-api-status-untested");
+        }
+        // A result reported while the key is missing again still shows as not set up; a running test shows as testing.
+        plugin.settings.translation.apiKey = "";
+        plugin.setApiRuntimeStatus("translation", "success");
+        assert.equal(header.textContent, notSetUp);
+        plugin.setApiStatus(header, "testing", plugin.t("apiStatusTesting"), "", "translation");
+        assert.equal(header.textContent, plugin.t("apiStatusTesting"));
+        // The test ends (failed: the key is missing); every badge shows what to fix.
+        plugin.settings.translation.apiStatus = { state: "failed", message: "missing key" };
+        plugin.refreshApiTestViews("translation");
+        assert.equal(header.className, "dait-api-status dait-api-status-unconfigured");
+        assert.equal(card.className, "dait-api-status dait-api-status-unconfigured");
+        plugin.destroySettingsModalSizing(panel);
+    }
+    // The "needs you" mark: the same "!" as a failed connection.
+    assert.match(PLUGIN_CSS, /\.dait-settings \.dait-api-status\.dait-api-status-failed,\n\.dait-settings \.dait-api-status\.dait-api-status-unconfigured \{\n    color: var\(--dait-danger\);/);
+    assert.match(PLUGIN_CSS, /\.dait-settings \.dait-api-status\.dait-api-status-failed::before,\n\.dait-settings \.dait-api-status\.dait-api-status-unconfigured::before \{[\s\S]*?content: "!";/);
+});
+
 test("settings window: a key that ends an IME composition does not close the window", t => {
     const { doc, isOpen } = openHotkeyRecorder(t);
     doc.dispatchEvent("keydown", { key: "Escape", isComposing: true });

@@ -1748,11 +1748,30 @@ module.exports = class DiscordAITranslator {
     createApiStatusBadge(kind) {
         const status = document.createElement("span");
         const savedStatus = this.getApiStatus(kind);
-        status.className = `dait-api-status dait-api-status-${savedStatus.state}`;
         status.dataset.daitKind = kind;
-        status.textContent = this.getApiStatusText(savedStatus.state);
-        status.title = savedStatus.message || "";
+        this.renderApiStatusBadge(status, kind, savedStatus.state, this.getApiStatusText(savedStatus.state), savedStatus.message || "");
         return status;
+    }
+
+    // What a status badge shows: "Not set up" (with the "needs you" mark) while the service is missing a required
+    // field, the same name the quick panel and the overview cards use; otherwise the saved or live state. A test
+    // that is running still shows as testing.
+    getApiStatusBadgeState(kind, state = this.getApiStatus(kind).state) {
+        if (state === "testing" || !kind) return state;
+        let configured = true;
+        try { configured = Boolean(this.hasUsableApiConfig(kind)); }
+        catch { configured = true; }
+        return configured ? state : "unconfigured";
+    }
+
+    renderApiStatusBadge(badge, kind, state, text = this.getApiStatusText(state), title = "") {
+        if (!badge) return;
+        const shown = this.getApiStatusBadgeState(kind, state);
+        badge.className = `dait-api-status dait-api-status-${shown}`;
+        badge.textContent = shown === state ? text : this.getApiStatusText(shown);
+        badge.title = shown === state
+            ? title || ""
+            : this.t("overviewServiceMissing", { field: this.getSettingLabelForPath(this.getMissingServiceSettingPath(kind)) });
     }
 
     // The close button closes whichever window holds the panel: the plugin's own settings window, or
@@ -2404,11 +2423,7 @@ module.exports = class DiscordAITranslator {
             details = [...(document.querySelectorAll?.(`.dait-api-test-detail[data-dait-kind='${kind}']`) || [])];
         }
         catch {}
-        badges.forEach(badge => {
-            badge.className = `dait-api-status dait-api-status-${status.state}`;
-            badge.textContent = this.getApiStatusText(status.state);
-            badge.title = status.message || "";
-        });
+        badges.forEach(badge => this.renderApiStatusBadge(badge, kind, status.state, this.getApiStatusText(status.state), status.message || ""));
         details.forEach(detail => this.syncApiTestDetail(detail, kind));
         this.refreshOverviewStatusSection();
     }
@@ -5265,7 +5280,8 @@ module.exports = class DiscordAITranslator {
             testing: "apiStatusTesting",
             success: "apiStatusSuccess",
             failed: "apiStatusFailed",
-            untested: "apiStatusUntested"
+            untested: "apiStatusUntested",
+            unconfigured: "quickStatusNotConfigured"
         }[state] || "apiStatusUntested";
         return this.t(key);
     }
