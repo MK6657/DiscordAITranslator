@@ -522,7 +522,7 @@ test("the channel rule is bound to the channel the panel shows and follows route
     assert.equal(caption.textContent, "现在：会自动翻译（跟随总开关）");
     plugin.setSetting("translation.enabled", false);
     t.mock.timers.tick(20);
-    assert.equal(caption.textContent, "现在：不自动翻译（跟随总开关）", "with translation off nothing is auto-translated");
+    assert.equal(caption.textContent, "频道翻译已关闭，这里的规则暂不生效", "with translation off nothing is auto-translated");
     plugin.setSetting("translation.enabled", true);
 
     // Without a channel the rule cannot be set.

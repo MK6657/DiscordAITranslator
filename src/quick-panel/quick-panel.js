@@ -557,11 +557,11 @@ class QuickPanel {
 
     getChannelRuleCaption(mode, hasChannel) {
         if (!hasChannel) return this.plugin.t("quickPanelRuleCaptionNoChannel");
+        // With channel translation off altogether nothing is auto-translated, whatever the rule or the main switch says.
+        if (this.plugin.settings?.translation?.enabled === false) return this.plugin.t("quickPanelRuleCaptionTranslationOff");
         if (mode === "enabled") return this.plugin.t("quickPanelRuleCaptionEnabled");
         if (mode === "disabled") return this.plugin.t("quickPanelRuleCaptionDisabled");
-        // With channel translation off altogether nothing is auto-translated, whatever the main switch says.
-        const on = this.plugin.settings?.translation?.enabled !== false && Boolean(this.plugin.settings?.ui?.autoTranslateMessages);
-        return this.plugin.t(on ? "quickPanelRuleCaptionInheritOn" : "quickPanelRuleCaptionInheritOff");
+        return this.plugin.t(this.plugin.settings?.ui?.autoTranslateMessages ? "quickPanelRuleCaptionInheritOn" : "quickPanelRuleCaptionInheritOff");
     }
 
     // Bound to the channel the panel was rendered for, even if Discord has navigated since.

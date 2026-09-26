@@ -601,3 +601,38 @@ test("Tab in Discord's composer is not taken by an open quick panel; from the pa
     assert.equal(event.defaultPrevented, true);
     assert.equal(doc.activeElement, first);
 });
+
+// --- X6: with channel translation off, no rule caption promises auto-translation ---
+
+test("with channel translation off, the channel rule caption says so for every rule", t => {
+    const { plugin, doc, launcher } = createQuickPanelPlugin(t);
+    plugin.settings.ui.autoTranslateMessages = true;
+    dispatch(doc, launcher, "click", { detail: 0 });
+    t.mock.timers.tick(1);
+    const popover = doc.querySelector(".dait-quick-popover");
+    const caption = byClass(popover, "dait-qp-rule-caption");
+    const click = value => dispatch(doc, segmentButton(popover, "rule", value), "click");
+    click("enabled");
+    assert.equal(caption.textContent, "总开关关闭时，这个频道也会自动翻译");
+
+    plugin.setSetting("translation.enabled", false);
+    t.mock.timers.tick(20);
+    assert.equal(plugin.isAutoTranslateEnabled(), false, "nothing is auto-translated");
+    assert.equal(caption.textContent, "频道翻译已关闭，这里的规则暂不生效");
+    for (const mode of ["disabled", "inherit", "enabled"]) {
+        click(mode);
+        assert.equal(caption.textContent, "频道翻译已关闭，这里的规则暂不生效", mode);
+        assert.equal(segmentButton(popover, "rule", mode).getAttribute("aria-checked"), "true", "the rule can still be set");
+    }
+    // The status line above says the same.
+    assert.equal(byClass(popover, "dait-qp-status-detail").textContent, "频道翻译已关闭");
+
+    plugin.settings.ui.language = "en";
+    plugin.quickPanel.rerender("language");
+    assert.equal(byClass(doc.querySelector(".dait-quick-popover"), "dait-qp-rule-caption").textContent, "Channel translation is off; this rule applies once it is on");
+
+    // Back on: the rule's own caption returns.
+    plugin.setSetting("translation.enabled", true);
+    t.mock.timers.tick(20);
+    assert.equal(byClass(doc.querySelector(".dait-quick-popover"), "dait-qp-rule-caption").textContent, "Auto-translates here even when the main switch is off");
+});
