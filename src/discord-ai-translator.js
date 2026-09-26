@@ -16631,14 +16631,12 @@ module.exports = class DiscordAITranslator {
         }
     }
 
+    // Sends the way the user does: Enter on the focused composer, which Discord's editor turns into a send.
+    // Never clicks a button: Discord shows no send button by default, and the toolbar in the same form holds
+    // controls such as "Send a gift", GIF, stickers and emoji that must never be pressed for the user.
     submitTextbox(textbox) {
-        const form = textbox.closest("form");
-        const sendButton = form?.querySelector("button[aria-label*='Send'], button[type='submit']");
-        if (sendButton && !sendButton.disabled) {
-            sendButton.click();
-            return;
-        }
-
+        if (!textbox || textbox.isConnected === false || typeof textbox.dispatchEvent !== "function") return false;
+        if (typeof KeyboardEvent !== "function") return false;
         textbox.focus?.();
         ["keydown", "keypress", "keyup"].forEach(type => {
             textbox.dispatchEvent(new KeyboardEvent(type, {
@@ -16650,6 +16648,7 @@ module.exports = class DiscordAITranslator {
                 which: 13
             }));
         });
+        return true;
     }
 
     setButtonBusy(button, busy, text) {
