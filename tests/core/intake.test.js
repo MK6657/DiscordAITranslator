@@ -433,6 +433,110 @@ test("store markup: an escaped backtick opens no code span, and no placeholder l
     }
 });
 
+// ---------------------------------------------------------------- standard emoji written as shortcodes
+
+// A stand-in for Discord's emoji utils, which know every standard emoji name.
+const EMOJI_SURROGATES = { white_check_mark: "✅", warning: "⚠️", cool: "🆒", fire: "🔥", thumbsup: "👍" };
+const fakeEmojiUtils = { convertNameToSurrogate: name => EMOJI_SURROGATES[name] || "" };
+const useFakeEmojiUtils = t => useGlobals(t, {
+    BdApi: { Webpack: { getByKeys: (...keys) => (keys.includes("convertNameToSurrogate") ? fakeEmojiUtils : undefined), getStore: () => null } }
+});
+
+test("store markup: a standard emoji shortcode becomes the emoji Discord draws, or the text on screen is kept", () => {
+    const emoji = name => EMOJI_SURROGATES[name] || "";
+    const convert = (text, resolvers = { emoji }) => convertDiscordMarkupToDisplayText(text, resolvers);
+    assert.equal(convert(`:white_check_mark: done, see :warning: and <:pepe:${EMOJI}> **:fire:**`), "✅ done, see ⚠️ and :pepe: 🔥");
+    assert.equal(convert(`<:fire:${EMOJI}> <a:cool:${EMOJI}>`), ":fire: :cool:", "custom emoji keep their own name");
+    assert.equal(convert("`:warning:` is how you write it"), ":warning: is how you write it", "code is shown as written");
+    assert.equal(convert("at 12:30:45 UTC, ratio 1:2:3"), "at 12:30:45 UTC, ratio 1:2:3");
+    assert.equal(convert("https://example.com/a:fire:b"), "https://example.com/a:fire:b");
+    assert.equal(convert(`hi <@${USER}>`, { emoji, user: () => ":cool: _kid_" }), "hi @:cool: _kid_", "a nickname is shown as written");
+    // A name that cannot be turned into an emoji: keep the text on screen.
+    assert.equal(convert(":white_check_mark: done", {}), "");
+    assert.equal(convert(":not_an_emoji: done"), "");
+    assert.equal(convert(":white_check_mark: done", { emoji: name => name }), "");
+    assert.equal(convert(":white_check_mark: done", { emoji: () => { throw new Error("gone"); } }), "");
+});
+
+test("the store-full check counts an emoji as one character, drawn or written as a shortcode", () => {
+    const plugin = new Plugin();
+    const text = "Successfully banned the user for spamming in the channel";
+    assert.equal(plugin.isStoreFullRequestText(`:white_check_mark: :warning: ${text}`, `✅ ⚠️ ${text}`), false);
+    assert.equal(plugin.isStoreFullRequestText(`:white_check_mark: ${text}`, `✅ ${text}`), false);
+    assert.equal(plugin.isStoreFullRequestText(`✅ 👨‍💻 ${text}`, `✅ 👨‍💻 ${text}`), false);
+    assert.equal(plugin.isStoreFullRequestText(`step 1: open the settings page\n${text}`, text), true, "a longer store text is still store-full");
+});
+
+for (const withEmojiUtils of [false, true]) {
+    test(`auto: a bot message with a standard emoji shortcode is requested as the text on screen${withEmojiUtils ? " (emoji utils found)" : ""}`, async t => {
+        const domText = "✅ Successfully banned the user for spamming in the channel";
+        const { plugin, drawn, scan } = createIntakePlugin(t, {
+            domParts: [unicodeEmoji("✅", "white_check_mark"), " Successfully banned the user for spamming in the channel"],
+            storeContent: ":white_check_mark: Successfully banned the user for spamming in the channel"
+        });
+        if (withEmojiUtils) useFakeEmojiUtils(t);
+        const storeContent = ":white_check_mark: Successfully banned the user for spamming in the channel";
+        assert.equal(plugin.getDiscordStoreMessageText({ content: storeContent }), withEmojiUtils ? domText : "", "the store text is what Discord draws, or not used");
+        const requests = [];
+        plugin.runAutoTranslationTask = async text => {
+            requests.push(text);
+            return "✅ 已成功封禁该用户，原因是在频道中刷屏";
+        };
+
+        scan();
+        assert.equal(plugin.autoTranslationQueue.length, 1);
+        const item = plugin.autoTranslationQueue.shift();
+        assert.equal(item.sourceTextKind, "dom");
+        assert.equal(item.text, domText);
+        await plugin.autoTranslateQueuedMessage(item);
+        assert.deepEqual(requests, [domText]);
+        assert.deepEqual(drawn.map(entry => [entry.kind, entry.text]), [["loading", ""], ["final", "✅ 已成功封禁该用户，原因是在频道中刷屏"]]);
+        assert.equal(plugin.autoTranslationFailures.size, 0);
+    });
+}
+
+test("auto: a store-full request carries the emoji a shortcode draws, never the shortcode", async t => {
+    const storeContent = [
+        ":white_check_mark: step 1: sign in with the invite link",
+        ":warning: step 2: copy the key from the docs page",
+        "step 3: paste the model name into the box"
+    ].join("\n");
+    const domParts = ["step 3: paste the model name into the box"];
+
+    // Without Discord's emoji utils the shortcodes cannot be drawn: the text on screen is requested.
+    const plain = createIntakePlugin(t, { domParts, storeContent });
+    plain.scan();
+    assert.equal(plain.plugin.autoTranslationQueue[0].sourceTextKind, "dom");
+    assert.equal(plain.plugin.autoTranslationQueue[0].text, "step 3: paste the model name into the box");
+
+    const { plugin, scan } = createIntakePlugin(t, { domParts, storeContent });
+    useFakeEmojiUtils(t);
+    scan();
+    const item = plugin.autoTranslationQueue[0];
+    assert.equal(item.sourceTextKind, "store-full");
+    assert.equal(item.text, "✅ step 1: sign in with the invite link\n⚠️ step 2: copy the key from the docs page\nstep 3: paste the model name into the box");
+});
+
+test("manual: a bot message with a standard emoji shortcode is translated once and drawn", async t => {
+    const domText = "✅ Successfully banned the user for spamming in the channel";
+    const { plugin, messageNode, content, drawn } = createIntakePlugin(t, {
+        domParts: [unicodeEmoji("✅", "white_check_mark"), " Successfully banned the user for spamming in the channel"],
+        storeContent: ":white_check_mark: Successfully banned the user for spamming in the channel",
+        autoTranslate: false
+    });
+    const requests = [];
+    const toasts = [];
+    plugin.showToast = message => toasts.push(message);
+    plugin.runManualRescueModelAttempt = async plan => {
+        requests.push(plan.text);
+        return "✅ 已成功封禁该用户，原因是在频道中刷屏";
+    };
+    await plugin.translateMessage(messageNode, content, null);
+    assert.deepEqual(requests, [domText]);
+    assert.deepEqual(drawn.map(entry => [entry.kind, entry.sourceText]), [["loading", domText], ["final", domText]]);
+    assert.deepEqual(toasts, []);
+});
+
 // ---------------------------------------------------------------- render-1: auto translation
 
 test("auto: a message with a mention, custom emoji and masked link is requested once, drawn and cached", async t => {

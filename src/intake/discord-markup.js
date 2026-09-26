@@ -6,8 +6,10 @@
 // checked against is always the text on screen.
 //
 // convertDiscordMarkupToDisplayText returns the display text, or "" when the markup cannot be shown
-// faithfully (a mention whose name is unknown, a timestamp, a hidden spoiler, markup this does not
-// know). Callers then keep the text on screen.
+// faithfully (a mention whose name is unknown, a timestamp, a hidden spoiler, a standard emoji
+// shortcode with no known emoji, markup this does not know). Callers then keep the text on screen.
+
+const { isStandardEmojiText } = require("./emoji-text");
 
 const PLACEHOLDER_START = "\uE000";
 const PLACEHOLDER_END = "\uE001";
@@ -28,6 +30,9 @@ const ROLE_MENTION_PATTERN = /<@&(\d{15,25})>/g;
 const CHANNEL_MENTION_PATTERN = /<#(\d{15,25})>/g;
 const AUTOLINK_PATTERN = /<((?:https?|steam|discord):\/\/[^\s<>]+)>/g;
 const MASKED_LINK_PATTERN = /\[([^[\]\n]+?)\]\(\s*<?(?:https?:\/\/[^\s()<>]+)>?\s*\)/g;
+// A standard emoji written as its name (bots and webhooks send ":white_check_mark:"); Discord draws
+// the emoji itself.
+const EMOJI_SHORTCODE_PATTERN = /:([a-z0-9_+-]{1,64}):/g;
 // Anything still shaped like Discord markup (a snowflake inside angle brackets) is not understood.
 const UNKNOWN_MARKUP_PATTERN = /<[^<>\s]*\d{15,25}[^<>\s]*>/;
 
@@ -63,16 +68,30 @@ function convertDiscordMarkupToDisplayText(text, resolvers = {}) {
         return name;
     };
 
-    value = value.replace(CUSTOM_EMOJI_PATTERN, (match, name) => `:${name}:`);
+    // Custom emoji names and mention names are shown as written: no shortcode or markdown in them.
+    value = value.replace(CUSTOM_EMOJI_PATTERN, (match, name) => protect(`:${name}:`));
     value = value.replace(SLASH_COMMAND_PATTERN, (match, name) => `/${name.trim()}`);
-    value = value.replace(ROLE_MENTION_PATTERN, (match, id) => `@${resolveName("role", id)}`);
-    value = value.replace(USER_MENTION_PATTERN, (match, id) => `@${resolveName("user", id)}`);
-    value = value.replace(CHANNEL_MENTION_PATTERN, (match, id) => `#${resolveName("channel", id)}`);
+    value = value.replace(ROLE_MENTION_PATTERN, (match, id) => `@${protect(resolveName("role", id))}`);
+    value = value.replace(USER_MENTION_PATTERN, (match, id) => `@${protect(resolveName("user", id))}`);
+    value = value.replace(CHANNEL_MENTION_PATTERN, (match, id) => `#${protect(resolveName("channel", id))}`);
     if (unresolved || UNKNOWN_MARKUP_PATTERN.test(value)) return "";
 
     value = value.replace(MASKED_LINK_PATTERN, (match, label) => label);
     value = value.replace(AUTOLINK_PATTERN, (match, url) => protect(url));
     value = value.replace(BARE_URL_PATTERN, url => protect(url));
+
+    // A shortcode is drawn as its emoji. One that cannot be turned into an emoji here cannot be shown
+    // faithfully, unless it holds no letter (the ":30:" of "12:30:45" is not an emoji name).
+    let unknownEmoji = false;
+    value = value.replace(EMOJI_SHORTCODE_PATTERN, (match, name) => {
+        let emoji = "";
+        try { emoji = String(resolvers?.emoji?.(name) || ""); }
+        catch { emoji = ""; }
+        if (isStandardEmojiText(emoji)) return emoji;
+        if (/[a-z]/.test(name)) unknownEmoji = true;
+        return match;
+    });
+    if (unknownEmoji) return "";
 
     // Line markers: block quotes, headings, subtext and list bullets are drawn, not written.
     value = value.replace(/^>>> ?/m, "");
