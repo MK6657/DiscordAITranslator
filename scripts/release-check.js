@@ -96,10 +96,11 @@ const forbiddenTracked = findLocalOnlyPaths(trackedFiles);
 if (forbiddenTracked.length) {
     throw new Error(`Local-only files are tracked by Git: ${forbiddenTracked.join(", ")}`);
 }
-// Browser profile stores are binary databases, so the text scan above cannot see the logins, cookies or history in them.
+// Browser profiles are binary databases, so the text scan above cannot see the logins, cookies, history or site tokens in them.
 const browserProfileFiles = findBrowserProfilePaths(trackedFiles);
 if (browserProfileFiles.length) {
-    throw new Error(`Browser profile data (logins, cookies or history) is staged or tracked by Git: ${browserProfileFiles.join(", ")}. Remove it from Git with 'git rm --cached' and keep browser profiles outside the repository.`);
+    const listed = browserProfileFiles.slice(0, 20).join(", ") + (browserProfileFiles.length > 20 ? ` and ${browserProfileFiles.length - 20} more` : "");
+    throw new Error(`Browser profile data (logins, cookies, history or site storage) is staged or tracked by Git: ${listed}. Remove the whole profile folder from Git with 'git rm -r --cached' and keep browser profiles outside the repository.`);
 }
 const requiredTracked = [
     ...requiredFiles,

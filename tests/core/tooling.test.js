@@ -1,6 +1,7 @@
 "use strict";
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 const { spawnSync } = require("node:child_process");
@@ -8,11 +9,35 @@ const { findBrowserProfilePaths, findLocalOnlyPaths } = require("../../scripts/r
 
 const root = path.resolve(__dirname, "..", "..");
 
-// Runs git in the repository; null when git or the repository is unavailable (for example a ZIP handoff).
-function git(args, input = undefined) {
-    const result = spawnSync("git", args, { cwd: root, encoding: "utf8", input });
+// Runs git in `cwd`; null when git is unavailable.
+function gitIn(cwd, args, input = undefined) {
+    const result = spawnSync("git", args, { cwd, encoding: "utf8", input });
     if (result.error || result.status === null) return null;
     return result;
+}
+
+// Runs git in the repository; null when git or the repository is unavailable (for example a ZIP handoff).
+function git(args, input = undefined) {
+    return gitIn(root, args, input);
+}
+
+// A throwaway Git repository with this project's .gitignore and the given files (fake contents), for
+// checking what a stray `git add` would stage. The user's global excludes are switched off.
+function withScratchRepository(files, callback) {
+    const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "dait-release-guard-"));
+    try {
+        fs.copyFileSync(path.join(root, ".gitignore"), path.join(scratch, ".gitignore"));
+        for (const file of files) {
+            fs.mkdirSync(path.dirname(path.join(scratch, file)), { recursive: true });
+            fs.writeFileSync(path.join(scratch, file), `fake ${file}\n`);
+        }
+        const scratchGit = (args, input) => gitIn(scratch, ["-c", `core.excludesFile=${path.join(scratch, "no-global-excludes")}`, ...args], input);
+        assert.equal(scratchGit(["init", "-q"])?.status, 0, "git init failed");
+        return callback({ directory: scratch, git: scratchGit });
+    }
+    finally {
+        fs.rmSync(scratch, { recursive: true, force: true });
+    }
 }
 
 function isGitWorkTree() {
@@ -75,6 +100,65 @@ test("the release gate finds browser profiles and cookie stores among staged fil
     // Windows paths and case differences do not hide a store.
     assert.deepEqual(findBrowserProfilePaths(["profile\\Default\\Network\\cookies", "PROFILE/LOCAL STATE"]), ["profile\\Default\\Network\\cookies", "PROFILE/LOCAL STATE"]);
     assert.deepEqual(findBrowserProfilePaths([]), []);
+});
+
+test("a browser profile staged outside the ignored folders is caught whole by the release guard", t => {
+    if (!isGitWorkTree()) {
+        t.skip("git repository not available");
+        return;
+    }
+    // A headless run with --user-data-dir=tmp/chrome-profile, one started from design/, and an Electron
+    // app's user-data folder (Discord's own has this layout: no profile subfolder, token in Local Storage).
+    const profileFiles = [
+        "tmp/chrome-profile/Local State",
+        "tmp/chrome-profile/First Run",
+        "tmp/chrome-profile/Default/Preferences",
+        "tmp/chrome-profile/Default/Secure Preferences",
+        "tmp/chrome-profile/Default/History",
+        "tmp/chrome-profile/Default/Login Data",
+        "tmp/chrome-profile/Default/Web Data",
+        "tmp/chrome-profile/Default/Network/Cookies",
+        "tmp/chrome-profile/Default/Sessions/Session_13370000",
+        "tmp/chrome-profile/Default/Local Storage/leveldb/000005.ldb",
+        "tmp/chrome-profile/Default/Top Sites",
+        "tmp/chrome-profile/Default/Visited Links",
+        "tmp/chrome-profile/Default/Favicons",
+        "tmp/chrome-profile/Default/Shortcuts",
+        "tmp/chrome-profile/Default/GPUCache/data_0",
+        "design/.chrome-preview/Local State",
+        "design/.chrome-preview/Default/Preferences",
+        "design/.chrome-preview/Default/Network/Cookies",
+        "fixtures/app-data/Preferences",
+        "fixtures/app-data/Local Storage/leveldb/000003.ldb",
+        "fixtures/app-data/Network/Cookies"
+    ];
+    const projectFiles = ["src/index.js", "src/history/backfill.js", "docs/notes.md", "design/logo.svg"];
+    withScratchRepository([...profileFiles, ...projectFiles], scratch => {
+        assert.equal(scratch.git(["add", "."])?.status, 0, "git add failed");
+        const staged = scratch.git(["ls-files", "-z"]).stdout.split("\0").filter(Boolean);
+        assert.deepEqual([...profileFiles, ...projectFiles].filter(file => !staged.includes(file)), [], "a stray profile must be staged whole, stores included");
+        assert.deepEqual(findBrowserProfilePaths(staged).sort(), [...profileFiles].sort());
+    });
+    // Parts of a profile staged on their own, without any login, cookie or history store.
+    for (const file of [
+        "tmp/chrome-profile/Default/Local Storage/leveldb/000005.ldb",
+        "tmp/chrome-profile/Default/Session Storage/000003.ldb",
+        "tmp/chrome-profile/Default/Sessions/Tabs_13370000",
+        "tmp/chrome-profile/Default/IndexedDB/https_discord.com_0.indexeddb.leveldb/000003.ldb",
+        "tmp/chrome-profile/Default/Secure Preferences",
+        "design/.chrome-preview/Profile 1/Preferences",
+        "design/.chrome-preview/Default/Visited Links"
+    ]) {
+        assert.deepEqual(findBrowserProfilePaths([file, "src/index.js"]), [file], file);
+    }
+    // Look-alikes in project code stay publishable.
+    assert.deepEqual(findBrowserProfilePaths([
+        "src/sessions/session_1.js",
+        "src/settings/preferences.js",
+        "docs/Preferences.md",
+        "src/storage/local-storage.js",
+        "src/default/index.js"
+    ]), []);
 });
 
 test("the release gate rejects tracked local tool folders but keeps .github and dot files", () => {
