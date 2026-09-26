@@ -142,8 +142,8 @@ module.exports = `
     padding: 5px 10px;
 }
 
+/* The chevron (two gradient layers) keeps the positions from the settings stylesheet. */
 .dait-prompt-manager .dait-prompt-tools select {
-    background-position: right 8px center;
     padding-right: 34px;
 }
 

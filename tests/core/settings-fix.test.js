@@ -517,3 +517,15 @@ test("Clear logs (and copy/export) refresh the diagnostic summary row next to th
     await new Promise(resolve => setImmediate(resolve));
     assert.notEqual(summaryText(), plugin.t("diagnosticSummaryEmpty"));
 });
+
+// --- SS-6: the prompt template select keeps the settings chevron --------------------------------------
+
+test("the prompt template select keeps both halves of the settings chevron", () => {
+    const layers = value => value.split(",").map(part => part.trim()).filter(Boolean).length;
+    const settingsSelect = declarationOf(cssRuleBody(".dait-settings :where(select)"), "background-position");
+    assert.equal(layers(settingsSelect), 2);
+    const overrides = cssRules().filter(rule => rule.selectors.some(selector => /dait-prompt-tools select$/.test(selector)))
+        .map(rule => declarationOf(rule.body, "background-position"))
+        .filter(value => value !== null);
+    assert.deepEqual(overrides.filter(value => layers(value) !== 2), [], "an override with one layer moves one half of the chevron away");
+});
