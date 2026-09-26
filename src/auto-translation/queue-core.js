@@ -51,6 +51,7 @@ const {
     LOCAL_PROVIDER_HEALTH_RETRY_MS,
     LOCAL_PROVIDER_UNAVAILABLE_RETRY_MS
 } = require("../constants");
+const { getChannelRuleKey } = require("./channel-rule");
 
 class AutoTranslationQueueCore {
     constructor(plugin) {
@@ -1124,12 +1125,9 @@ class AutoTranslationQueueCore {
         return this.plugin.normalizeChannelAutoTranslatePolicyMode(this.plugin.getCurrentChannelAutoTranslatePolicy(routeKey)?.mode);
     }
 
+    // "" on a screen that is not a channel (channel-rule.js decides): such a screen gets no rule.
     getChannelAutoTranslatePolicyStorageKey(routeKey = this.plugin.getCurrentRouteKey()) {
-        const parts = String(routeKey || "").split(":");
-        const guildId = parts[0] || "";
-        const channelId = parts[1] || "";
-        if (!channelId) return "";
-        return `${guildId}:${channelId}`;
+        return getChannelRuleKey(routeKey);
     }
 
     setCurrentChannelAutoTranslatePolicyMode(mode, routeKey = this.plugin.getCurrentRouteKey(), options = {}) {

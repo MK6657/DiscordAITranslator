@@ -2269,8 +2269,8 @@ module.exports = class DiscordAITranslator {
 
     // "#general" for the current channel when Discord's store knows it.
     getSettingsChannelLabel(routeKey = this.getCurrentRouteKey()) {
+        if (!this.getChannelAutoTranslatePolicyStorageKey(routeKey)) return "";
         const channelId = String(routeKey || "").split(":")[1] || "";
-        if (!channelId) return "";
         try {
             const name = String(this.getDiscordNamedStore?.("ChannelStore")?.getChannel?.(channelId)?.name || "").trim();
             return name ? `#${name}` : "";

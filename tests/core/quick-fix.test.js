@@ -667,3 +667,67 @@ test("a public bilingual request on the polish key does not mark a broken transl
     assert.match(requests[1], /sk-fake-expired/);
     assert.equal(plugin.getApiStatus("translation").state, "success");
 });
+
+// --- X7: what counts as a channel for the channel rule ---
+
+test("channels, threads and DMs have a channel rule; Discord's guild pages and the DM list do not", () => {
+    const { getChannelRuleKey } = require("../../src/auto-translation/channel-rule");
+    const cases = {
+        // Text channel, a thread or forum post opened full size, a message link, a DM and a group DM.
+        "111111111111111111:222222222222222222:": "111111111111111111:222222222222222222",
+        "111111111111111111:444444444444444444:555555555555555555": "111111111111111111:444444444444444444",
+        "@me:333333333333333333:": "@me:333333333333333333",
+        // Discord's own guild pages share the /channels/<guild>/<name> route.
+        "111111111111111111:channel-browser:": "",
+        "111111111111111111:customize-community:": "",
+        "111111111111111111:onboarding:": "",
+        "111111111111111111:member-safety:": "",
+        "111111111111111111:role-subscriptions:": "",
+        "111111111111111111:shop:": "",
+        "111111111111111111:@home:": "",
+        // The DM list and screens outside /channels.
+        "@me::": "",
+        "::": "",
+        "": ""
+    };
+    for (const [routeKey, expected] of Object.entries(cases)) assert.equal(getChannelRuleKey(routeKey), expected, routeKey);
+});
+
+test("on a guild page such as Browse Channels the rule is off in the quick panel, the settings and the store", t => {
+    const { plugin, doc, launcher } = createQuickPanelPlugin(t, { pathname: "/channels/111/channel-browser" });
+    assert.equal(plugin.getCurrentRouteKey(), "111:channel-browser:");
+    assert.equal(plugin.getChannelAutoTranslatePolicyStorageKey(), "");
+
+    // Quick panel: no channel, the rule cannot be set.
+    dispatch(doc, launcher, "click", { detail: 0 });
+    t.mock.timers.tick(1);
+    const popover = doc.querySelector(".dait-quick-popover");
+    assert.equal(byClass(popover, "dait-qp-channel-name").textContent, "未打开频道");
+    assert.ok(["inherit", "enabled", "disabled"].every(mode => segmentButton(popover, "rule", mode).disabled));
+    assert.equal(byClass(popover, "dait-qp-rule-caption").textContent, "打开一个频道后可以单独设置");
+
+    // Settings: the "this channel" rule row is disabled the same way.
+    const row = plugin.createCurrentChannelPolicyRow();
+    const control = row.querySelectorAll("[data-dait-path='ui.currentChannelAutoTranslatePolicy']")[0];
+    assert.ok(control);
+    assert.equal(plugin.isChannelRuleControlDisabled(control), true);
+    assert.equal(plugin.getSettingsChannelLabel(), "");
+
+    // Nothing is stored for the page, and an entry stored for one before does not count as an allow-listed channel.
+    assert.equal(plugin.setCurrentChannelAutoTranslatePolicyMode("enabled"), false);
+    assert.deepEqual(plugin.settings.ui.channelAutoTranslatePolicies || {}, {});
+    plugin.settings.ui.channelAutoTranslatePolicies = {
+        "111:channel-browser": { mode: "enabled" },
+        "111:222": { mode: "enabled" }
+    };
+    assert.equal(plugin.getChannelAutoTranslateAllowListCount(), 1);
+    // The page follows the main switch like any screen without a channel.
+    assert.equal(plugin.getCurrentChannelAutoTranslatePolicyMode(), "inherit");
+
+    // Back in a channel, the rule works again.
+    window.location.pathname = "/channels/111/222";
+    plugin.quickPanel.handleRouteChange();
+    assert.equal(byClass(popover, "dait-qp-channel-name").textContent, "#general");
+    assert.equal(segmentButton(popover, "rule", "enabled").disabled, false);
+    assert.equal(segmentButton(popover, "rule", "enabled").getAttribute("aria-checked"), "true");
+});

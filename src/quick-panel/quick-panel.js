@@ -6,6 +6,7 @@
 
 const { LANGUAGE_PRESETS, API_ENDPOINT_ERROR_MESSAGE_KEYS } = require("../constants");
 const { PLUGIN_VERSION } = require("../version");
+const { getChannelRouteParts, getChannelRuleKey } = require("../auto-translation/channel-rule");
 
 const POPOVER_ID = "dait-quick-popover";
 const POPOVER_WIDTH_PX = 340;
@@ -542,8 +543,9 @@ class QuickPanel {
     }
 
     getChannelLabel(routeKey) {
-        const [guildId = "", channelId = ""] = String(routeKey || "").split(":");
-        if (!channelId) return this.plugin.t("quickPanelChannelNone");
+        // Discord's guild pages (Browse Channels, Members, ...) are not channels either.
+        if (!getChannelRuleKey(routeKey)) return this.plugin.t("quickPanelChannelNone");
+        const { guildId, channelId } = getChannelRouteParts(routeKey);
         let name = "";
         try {
             name = String(this.plugin.getDiscordNamedStore("ChannelStore")?.getChannel?.(channelId)?.name || "").trim();
