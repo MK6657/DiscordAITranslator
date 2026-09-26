@@ -636,3 +636,34 @@ test("with channel translation off, the channel rule caption says so for every r
     t.mock.timers.tick(20);
     assert.equal(byClass(doc.querySelector(".dait-quick-popover"), "dait-qp-rule-caption").textContent, "Auto-translates here even when the main switch is off");
 });
+
+// --- X3: only a request made with the translation settings clears their "failed" status ---
+
+test("a public bilingual request on the polish key does not mark a broken translation key as working", async t => {
+    const { plugin } = createQuickPanelPlugin(t, { provider: "deepseek" });
+    plugin.settings.translation.apiKey = "sk-fake-expired";
+    plugin.settings.translation.apiStatus = { state: "failed", message: "API key rejected" };
+    plugin.settings.polish.provider = "deepseek";
+    plugin.settings.polish.apiKey = "sk-fake-polish";
+    const requests = [];
+    plugin.fetchModelResponse = async (endpoint, request) => {
+        requests.push(request?.headers?.Authorization || "");
+        return "Hola";
+    };
+    // Public bilingual picks the (working) polish profile and pins it.
+    assert.equal(plugin.getPublicBilingualBaseConfig(), plugin.settings.polish);
+    const result = await plugin.runModelTaskWithResult("translation", "hello", {
+        configOverrides: plugin.getPublicBilingualTranslationOverrides(),
+        mode: "public-bilingual",
+        providerProfilePinned: true
+    });
+    assert.equal(result.text, "Hola");
+    assert.match(requests[0], /sk-fake-polish/);
+    assert.deepEqual(plugin.getApiStatus("translation"), { state: "failed", message: "API key rejected" }, "the translation key is still broken");
+    assert.equal(plugin.getLauncherStatus().state, "needs-you");
+
+    // A working request with the translation settings themselves does clear it (e.g. after a top-up).
+    await plugin.runModelTaskWithResult("translation", "good morning", { mode: "manual" });
+    assert.match(requests[1], /sk-fake-expired/);
+    assert.equal(plugin.getApiStatus("translation").state, "success");
+});

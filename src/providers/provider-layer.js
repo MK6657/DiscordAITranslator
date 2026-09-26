@@ -1256,8 +1256,10 @@ class ProviderLayer {
                     this.plugin.setApiRuntimeStatus("translation", "success", this.plugin.t("apiStatusSuccess"));
                 }
                 // A working request to the configured service clears an earlier "failed" status (e.g. after a
-                // top-up), so the launcher does not keep asking the user to fix it.
-                else if (requestStillCurrent && kind === "translation" && taskConfig?.provider === this.plugin.settings.translation?.provider
+                // top-up), so the launcher does not keep asking the user to fix it. Only a request built from the
+                // live translation settings counts (a current snapshot key means the same service, URL, model and
+                // key): a pinned profile, such as public bilingual on the polish key, says nothing about them.
+                else if (requestStillCurrent && providerSnapshotKey && kind === "translation" && taskConfig?.provider === this.plugin.settings.translation?.provider
                     && this.plugin.getApiStatus("translation").state === "failed") {
                     this.plugin.setApiRuntimeStatus("translation", "success", this.plugin.t("apiStatusSuccess"));
                 }
