@@ -170,7 +170,11 @@ test("the release gate rejects tracked local tool folders but keeps .github and 
         ".cursor/rules/example.md",
         "external/reference/README.md",
         "node_modules/esbuild/package.json",
-        "work/notes.txt"
+        "work/notes.txt",
+        // Agent state from a session started in a subfolder; its settings can hold tokens in permission rules.
+        "docs/.claude/settings.json",
+        "design/.claude/settings.local.json",
+        "src\\.agents\\state.json"
     ];
     assert.deepEqual(findLocalOnlyPaths(localOnly), localOnly);
     const publishable = [
@@ -195,8 +199,66 @@ test("release-check applies both guards to the Git index before running CI", () 
     assert.ok(localOnlyAt > 0, "release-check must reject tracked local tool folders");
     assert.ok(browserAt > 0, "release-check must reject tracked browser profile files");
     assert.ok(ciAt > localOnlyAt && ciAt > browserAt, "the guards must run before the CI step");
-    // The text scan skips local agent state; the index guard above still rejects it if tracked.
-    assert.match(source, /excludedDirectories = new Set\(\[[^\]]*"\.claude"/);
+    // Force-added ignored files and nested repositories are rejected, and the secret scan reads what Git
+    // would publish instead of walking the folder tree with a skip list (which skipped nested .claude folders).
+    const forceAddedAt = source.indexOf("findForceAddedIgnoredPaths(root)");
+    const nestedAt = source.indexOf("findNestedRepositories(root, indexEntries)");
+    const scanAt = source.indexOf("collectPublishedTexts(root, indexEntries");
+    assert.ok(forceAddedAt > 0 && nestedAt > 0 && scanAt > 0);
+    assert.ok(ciAt > forceAddedAt && ciAt > nestedAt && ciAt > scanAt, "the guards and the scan must run before the CI step");
+    assert.doesNotMatch(source, /excludedDirectories|readdirSync/);
+});
+
+test("the release scan reads what Git would publish, including force-added and nested agent files", t => {
+    if (!isGitWorkTree()) {
+        t.skip("git repository not available");
+        return;
+    }
+    const { collectPublishedTexts, findForceAddedIgnoredPaths, findNestedRepositories, readGitIndex } = require("../../scripts/release-guards");
+    const isText = file => [".js", ".json", ".md", ""].includes(path.extname(file).toLowerCase());
+    withScratchRepository([], scratch => {
+        const write = (file, content) => {
+            fs.mkdirSync(path.dirname(path.join(scratch.directory, file)), { recursive: true });
+            fs.writeFileSync(path.join(scratch.directory, file), content);
+        };
+        write(".claude/settings.json", "force-added agent settings\n");
+        write("docs/.claude/settings.json", "nested agent settings\n");
+        write("src/removed.js", "staged, then deleted from the working tree\n");
+        write("src/changed.js", "staged version\n");
+        write("src/image.png", "not scanned as text\n");
+        assert.equal(scratch.git(["add", ".gitignore", "docs", "src"])?.status, 0);
+        assert.equal(scratch.git(["add", "-f", ".claude/settings.json"])?.status, 0);
+        assert.equal(scratch.git(["update-index", "--add", "--cacheinfo", "160000,1234567890123456789012345678901234567890,vendor/reference"])?.status, 0);
+        fs.rmSync(path.join(scratch.directory, "src", "removed.js"));
+        write("src/changed.js", "working copy\n");
+        write("notes/todo.md", "untracked, staged by the next git add\n");
+        write(".env", "ignored local file\n");
+        write("work/notes.txt", "ignored local folder\n");
+
+        const entries = readGitIndex(scratch.directory);
+        const scanned = collectPublishedTexts(scratch.directory, entries, isText).map(text => `${text.path}: ${text.content.trim()}`);
+        for (const expected of [
+            ".claude/settings.json: force-added agent settings",
+            "docs/.claude/settings.json: nested agent settings",
+            "src/removed.js: staged, then deleted from the working tree",
+            "src/changed.js: staged version",
+            "src/changed.js: working copy",
+            "notes/todo.md: untracked, staged by the next git add"
+        ]) {
+            assert.ok(scanned.includes(expected), `not scanned: ${expected}`);
+        }
+        assert.deepEqual(scanned.filter(text => /^(?:\.env|work\/|src\/image\.png|vendor\/)/.test(text)), [], "ignored, binary and gitlink entries are not read");
+
+        assert.deepEqual(findForceAddedIgnoredPaths(scratch.directory), [".claude/settings.json"]);
+        assert.deepEqual(findLocalOnlyPaths(entries.map(entry => entry.path)).sort(), [".claude/settings.json", "docs/.claude/settings.json"]);
+
+        // A tracked gitlink and an untracked nested checkout that `git add .` would turn into one.
+        assert.deepEqual(findNestedRepositories(scratch.directory, entries), ["vendor/reference"]);
+        fs.mkdirSync(path.join(scratch.directory, "reference"));
+        assert.equal(gitIn(path.join(scratch.directory, "reference"), ["init", "-q"])?.status, 0);
+        write("reference/README.md", "a nested checkout\n");
+        assert.deepEqual(findNestedRepositories(scratch.directory, entries), ["vendor/reference", "reference/"]);
+    });
 });
 
 test("this repository tracks no local tool state or browser profile files", t => {
