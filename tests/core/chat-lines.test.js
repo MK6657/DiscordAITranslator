@@ -371,9 +371,15 @@ test("a masked translation is a keyboard button: Enter or Space reveals it", t =
     assert.equal(clickLine.classList.contains("dait-translation-revealed"), true);
 });
 
-test("hide original: hovering the mask or focusing the message shows the original again", () => {
-    const masked = '[data-dait-source-hidden="true"]:not(:hover):not(:focus-within):not(:is([id^="chat-messages-"], [data-list-item-id*="chat-messages"]):focus-within *)';
-    assert.ok(PLUGIN_CSS.includes(`${masked} {`), "the gray bar only applies while not hovered or focused");
+test("hide original: hovering the mask or focusing the message from the keyboard shows the original again", () => {
+    // Only keyboard focus (:focus-visible) outside the translation line reveals the original. A mouse press
+    // focuses the message (Discord's article has tabindex=-1) or a toolbar button; revealing then would
+    // push a line placed after the original down under the pointer, losing the click or the selection.
+    const keyboardFocus = ":focus-visible:not(.dait-translation-line, .dait-translation-line *)";
+    const masked = `[data-dait-source-hidden="true"]:not(:hover):not(:has(${keyboardFocus}))`
+        + `:not(:is([id^="chat-messages-"], [data-list-item-id*="chat-messages"]):is(${keyboardFocus}, :has(${keyboardFocus})) *)`;
+    assert.ok(PLUGIN_CSS.includes(`${masked} {`), "the gray bar only applies while not hovered or focused from the keyboard");
+    assert.equal(PLUGIN_CSS.includes('[data-dait-source-hidden="true"]:not(:hover):not(:focus-within)'), false, "pointer focus does not reveal the original");
     assert.ok(PLUGIN_CSS.includes(`${masked} > :not(.dait-message-button):not(.dait-translation-line) {`));
     assert.ok(PLUGIN_CSS.includes(`${masked}::before {`));
     // The masked text has font-size 0 and shrinks to fit, so the bar needs a real font size for its ch

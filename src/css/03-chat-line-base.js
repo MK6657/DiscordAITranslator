@@ -1,8 +1,13 @@
 "use strict";
 
 // A message's original text while "hide original" masks it. Hovering the mask or focusing the message
-// shows the original again; while masked it keeps the compact gray bar.
-const SOURCE_MASKED = '[data-dait-source-hidden="true"]:not(:hover):not(:focus-within):not(:is([id^="chat-messages-"], [data-list-item-id*="chat-messages"]):focus-within *)';
+// from the keyboard shows the original again; while masked it keeps the compact gray bar.
+// Only keyboard focus (:focus-visible) outside the translation line counts: a mouse press focuses the
+// message or a toolbar button, and revealing then would push a line placed after the original down
+// under the pointer, so the click or the text selection would be lost.
+const KEYBOARD_FOCUS = ":focus-visible:not(.dait-translation-line, .dait-translation-line *)";
+const SOURCE_MASKED = `[data-dait-source-hidden="true"]:not(:hover):not(:has(${KEYBOARD_FOCUS}))`
+    + `:not(:is([id^="chat-messages-"], [data-list-item-id*="chat-messages"]):is(${KEYBOARD_FOCUS}, :has(${KEYBOARD_FOCUS})) *)`;
 
 module.exports = `.dait-translation-line {
     --dait-line-text: var(--text-strong, var(--header-primary, #f2f3f5));
