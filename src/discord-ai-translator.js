@@ -7562,6 +7562,16 @@ module.exports = class DiscordAITranslator {
                 );
                 return;
             }
+            if (this.isManualTranslationInFlight(target.content, this.getAutoTranslationTargetDomText(target))) {
+                this.logAutoTranslationMessageState(
+                    "auto.message.state",
+                    "render-skip",
+                    { ...target, cacheKey, requestOptions },
+                    DIAGNOSTIC_MESSAGE_STATES.CACHED,
+                    DIAGNOSTIC_REASON_CODES.MANUAL_LINE_PRESENT
+                );
+                return;
+            }
             if (this.isAutoTranslationCacheTargetDrawable(target)) {
                 this.queueAutoTranslationRenderTask({
                     kind: "cache",
@@ -7787,13 +7797,15 @@ module.exports = class DiscordAITranslator {
     }
 
     // Outcome statuses: drawn (already shows a finished line), nothing (memoised skip or miss),
-    // queued, deferred (evaluation cap reached) or pending (a hit that cannot be drawn yet).
+    // queued, deferred (evaluation cap reached) or pending (a hit that cannot be drawn yet, or a
+    // translation the user asked for is still in flight).
     queueCachedDrawForCandidate(candidate, baseOptions, context = null, allowEvaluation = true) {
         const messageNode = candidate?.messageNode;
         const content = candidate?.content;
         const text = String(candidate?.text || "");
         if (!text || !messageNode?.isConnected || !content?.isConnected) return { status: "nothing" };
         if (this.hasFinishedTranslationLine(content)) return { status: "drawn" };
+        if (this.isManualTranslationInFlight(content, candidate.domText || text)) return { status: "pending" };
         const memoKey = this.getCachedDrawMemoKey(candidate, text);
         let entry = this.getCachedDrawMemoEntry(memoKey);
         const evaluated = !entry;
@@ -8110,6 +8122,17 @@ module.exports = class DiscordAITranslator {
                 { ...target, cacheKey, requestOptions },
                 DIAGNOSTIC_MESSAGE_STATES.STALE,
                 DIAGNOSTIC_REASON_CODES.RENDER_IDENTITY_CHANGED
+            );
+            return false;
+        }
+        // Queued before the user asked for a (re)translation: that request owns the line now.
+        if (this.isManualTranslationInFlight(target.content, this.getAutoTranslationTargetDomText(target))) {
+            this.logAutoTranslationMessageState(
+                "auto.message.state",
+                "render-skip",
+                { ...target, cacheKey, requestOptions },
+                DIAGNOSTIC_MESSAGE_STATES.CACHED,
+                DIAGNOSTIC_REASON_CODES.MANUAL_LINE_PRESENT
             );
             return false;
         }
@@ -8692,6 +8715,13 @@ module.exports = class DiscordAITranslator {
         if (!line || line.dataset?.daitMode !== "manual") return false;
         const text = sourceText ?? this.getElementText(content);
         return this.isTranslationLineSourceMatch(line, text);
+    }
+
+    // A translation the user asked for (translate, retranslate, retry) owns its line until it settles:
+    // the cached-draw pass and the scan must not draw the old cached translation over its loading line.
+    isManualTranslationInFlight(content, sourceText = null) {
+        return Boolean(this.getTranslationLine(content)?.classList?.contains?.("dait-translation-loading"))
+            && this.hasManualTranslationLine(content, sourceText);
     }
 
     clearAutoTextTranslationFailure(text, requestOptions = this.getAutoTranslationOptions()) {

@@ -795,6 +795,65 @@ test("retranslating skips the cache and renders the fresh result", async t => {
     assert.deepEqual(rendered, ["旧译文", "新译文"]);
 });
 
+test("a retranslation in flight is not drawn over by the cached translation it replaces", async t => {
+    const { plugin, doc } = createChatPlugin(t);
+    plugin.settings.translation.enabled = true;
+    plugin.settings.ui.autoTranslateMessages = true;
+    plugin.isAutoTranslateEnabled = () => true;
+    const { messageNode, content } = createMessage(doc, "Could you check the build logs from yesterday please");
+    const text = content.text;
+    plugin.resolveManualTranslationSource = (node, element) => ({ text: element.text, domText: element.text, source: "dom-content" });
+    plugin.isLowInformationRepeatedText = () => false;
+    // Layout checks: the message is in view.
+    plugin.isAutoTranslationCacheTargetDrawable = () => true;
+    plugin.isElementVisibleInViewport = () => true;
+
+    // The message shows an auto translation from the cache.
+    const candidate = { messageNode, content, text, domText: text, targetKind: "message" };
+    const autoOptions = plugin.withAutoTranslationCandidateIdentity(plugin.getAutoTranslationRequestOptionsForText(text, plugin.getAutoTranslationOptions()), candidate);
+    const autoKey = plugin.getTranslationCacheKey(text, autoOptions);
+    plugin.setTranslationCache(autoKey, "旧译文");
+    let line = plugin.renderTranslation(messageNode, content, "旧译文", autoKey, text);
+    assert.notEqual(line.dataset.daitMode, "manual");
+
+    // The user asks for a fresh translation; the model has not answered yet.
+    let answer;
+    plugin.runManualTranslationPlan = () => new Promise(resolve => { answer = resolve; });
+    const retranslating = plugin.retranslateMessage(messageNode, content);
+    line = plugin.getTranslationLine(content);
+    assert.equal(line.dataset.daitMode, "manual");
+    assert.equal(line.classList.contains("dait-translation-loading"), true);
+    const stillLoading = message => {
+        const current = plugin.getTranslationLine(content);
+        assert.equal(current.dataset.daitMode, "manual", message);
+        assert.equal(current.classList.contains("dait-translation-loading"), true, message);
+        assert.equal(current.textContent, plugin.t("translationLoading"), message);
+    };
+
+    // The cached-draw pass finds the old translation for this message and does not queue it.
+    const outcome = plugin.queueCachedDrawForCandidate(candidate, plugin.getAutoTranslationOptions());
+    assert.notEqual(outcome.status, "queued");
+    assert.equal(plugin.autoTranslationRenderQueue.length, 0);
+    // A cache render already queued before the click does not draw either.
+    assert.equal(plugin.renderAutoTranslationCacheTarget({ ...candidate, cacheKey: autoKey, requestOptions: autoOptions }, "旧译文", autoKey, autoOptions, { drawPass: true }), false);
+    stillLoading("the cached-draw pass leaves the retranslation alone");
+    // The regular scan neither draws the cache hit nor requests the message again.
+    plugin.isAutoTranslationTargetVisibleCached = () => true;
+    const decision = plugin.evaluateAutoTranslationCandidate(candidate, { requestOptions: plugin.getAutoTranslationOptions() });
+    assert.equal(decision.action, "skip");
+    assert.equal(decision.reasonCode, "manual-line-present");
+    plugin.completeAutoTranslationFromCache(messageNode, content, text, "旧译文", autoKey, true, autoOptions, null, null, text);
+    assert.equal(plugin.autoTranslationRenderQueue.length, 0, "no cache render is queued");
+    stillLoading("the scan leaves the retranslation alone");
+
+    // The fresh result replaces the loading line.
+    answer({ translated: "新译文", validation: { renderable: true, cacheable: true, quality: "good" } });
+    await retranslating;
+    line = plugin.getTranslationLine(content);
+    assert.equal(line.classList.contains("dait-translation-loading"), false);
+    assert.equal(plugin.translationLineTexts.get(line), "新译文");
+});
+
 // --- partial long-message results (contract with the queue branch) ---
 
 test("a partial long-message result shows which parts are missing and offers a full retranslation", t => {
