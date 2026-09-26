@@ -16,14 +16,12 @@ const {
     PLUGIN_NAME,
     POLISH_REPOLISH_SOURCE_LAST_RESULT,
     POLISH_REPOLISH_SOURCE_ORIGINAL,
-    SETTINGS_SECTION_GENERAL,
-    SETTINGS_SECTION_IDS,
-    SETTINGS_TABS,
     SETTINGS_WRITE_DEBOUNCE_MS,
     TRANSLATION_CACHE_WRITE_DEBOUNCE_MS,
     TRANSLATION_LINE_STYLES,
     TRANSLATION_LINE_TEXT_SCALES
 } = require("../constants");
+const { normalizeSettingsTabId } = require("./settings-schema");
 
 // Provider fields a reset keeps: the secrets themselves, plus the region (Microsoft) and plan (DeepL) a key only works with.
 const RESET_KEPT_CREDENTIAL_FIELDS = ["apiKey", "appId", "secretKey", "region", "deeplPlan"];
@@ -346,8 +344,10 @@ class SettingsStore {
             this.plugin.settings.ui = this.plugin.clone(DEFAULT_SETTINGS.ui);
             changed = true;
         }
-        if (!SETTINGS_SECTION_IDS.includes(this.plugin.settings.ui.settingsActiveTab) && !SETTINGS_TABS.includes(this.plugin.settings.ui.settingsActiveTab)) {
-            this.plugin.settings.ui.settingsActiveTab = SETTINGS_SECTION_GENERAL;
+        // v0.3.0 saved one of ten scroll-spy sections; each maps onto the tab that now holds it.
+        const settingsActiveTab = normalizeSettingsTabId(this.plugin.settings.ui.settingsActiveTab);
+        if (settingsActiveTab !== this.plugin.settings.ui.settingsActiveTab) {
+            this.plugin.settings.ui.settingsActiveTab = settingsActiveTab;
             changed = true;
         }
         const rawUiSettingsVersion = storedSettings && typeof storedSettings === "object"
@@ -560,8 +560,8 @@ class SettingsStore {
         try {
             this.plugin.showToast(this.plugin.t("channelAllowListUpgradeNotice", {
                 count: allowListed,
-                rule: this.plugin.t("channelPolicyEnabled"),
-                inherit: this.plugin.t("channelPolicyInherit")
+                rule: this.plugin.t("channelRuleAlways"),
+                inherit: this.plugin.t("channelRuleFollow")
             }), "info");
         }
         catch {}
@@ -772,6 +772,9 @@ class SettingsStore {
         if (path === "ui.providerFallbackOrder") {
             return this.plugin.formatProviderFallbackOrder(this.plugin.settings.ui?.providerFallbackOrder);
         }
+        if (path === "ui.messageButtonMode") {
+            return this.plugin.getMessageButtonMode();
+        }
         return path.split(".").reduce((value, key) => value?.[key], this.plugin.settings);
     }
 
@@ -782,8 +785,12 @@ class SettingsStore {
             const routeKey = options.routeKey !== undefined ? options.routeKey : this.plugin.getCurrentRouteKey();
             return this.plugin.setCurrentChannelAutoTranslatePolicyMode(value, routeKey, options);
         }
+        // One select for the message Translate button, stored as ui.injectMessageButtons + ui.messageButtonVisibility.
+        if (path === "ui.messageButtonMode") {
+            return this.plugin.setMessageButtonMode(value, options);
+        }
         if (path === "ui.settingsActiveTab") {
-            value = SETTINGS_SECTION_IDS.includes(value) || SETTINGS_TABS.includes(value) ? value : SETTINGS_SECTION_GENERAL;
+            value = normalizeSettingsTabId(value);
         }
         if (path === "ui.messageButtonVisibility") {
             value = this.plugin.normalizeMessageButtonVisibility(value);

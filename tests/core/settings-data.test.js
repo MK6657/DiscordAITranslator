@@ -203,24 +203,27 @@ test("channel rule control stays bound to the channel it was built for (quick se
 
     const root = doc.createElement("div");
     root.appendChild(plugin.createCurrentChannelPolicyRow());
-    const [select] = root.querySelectorAll("[data-dait-path='ui.currentChannelAutoTranslatePolicy']");
-    assert.equal(select.value, "inherit");
+    // The channel rule is a segmented control (role=radiogroup) of three radio buttons.
+    const [rule] = root.querySelectorAll("[data-dait-path='ui.currentChannelAutoTranslatePolicy']");
+    assert.equal(rule.getAttribute("role"), "radiogroup");
+    const checked = () => rule.children.filter(button => button.getAttribute("aria-checked") === "true").map(button => button.dataset.daitValue);
+    assert.deepEqual(checked(), ["inherit"]);
 
     // Discord moves to channel B while the modal is open; closing it commits every control. (No scan has run
     // yet, so the control has not been rebuilt for B; see the refreshChannelRuleControls tests below.)
     route = "g1:B:";
     plugin.commitSettingsControls(root);
     assert.deepEqual(plugin.settings.ui.channelAutoTranslatePolicies, { "g1:B": { mode: "disabled" } });
-    assert.equal(select.dataset.daitRouteKey, "g1:A:");
+    assert.equal(rule.dataset.daitRouteKey, "g1:A:");
 
     // Editing the control now changes A, the channel it shows.
-    select.value = "enabled";
-    select.dispatch("change");
+    rule.children.find(button => button.dataset.daitValue === "enabled").dispatch("click");
+    assert.deepEqual(checked(), ["enabled"]);
     assert.deepEqual(plugin.settings.ui.channelAutoTranslatePolicies, { "g1:B": { mode: "disabled" }, "g1:A": { mode: "enabled" } });
 
     // A change for B made elsewhere does not repaint the A-bound control, so a later commit cannot copy it.
     plugin.setSetting("ui.currentChannelAutoTranslatePolicy", "inherit");
-    assert.equal(select.value, "enabled");
+    assert.deepEqual(checked(), ["enabled"]);
     assert.deepEqual(plugin.settings.ui.channelAutoTranslatePolicies, { "g1:A": { mode: "enabled" } });
     plugin.commitSettingsControls(root);
     assert.deepEqual(plugin.settings.ui.channelAutoTranslatePolicies, { "g1:A": { mode: "enabled" } });
@@ -236,13 +239,15 @@ test("after a channel switch the 'current channel' rule control is rebuilt for t
     plugin.queueScan = () => {};
     plugin.settings.ui.channelAutoTranslatePolicies = { "g1:B": { mode: "disabled" } };
     const selectorFor = "[data-dait-path='ui.currentChannelAutoTranslatePolicy']";
+    const checked = rule => rule.children.filter(button => button.getAttribute("aria-checked") === "true").map(button => button.dataset.daitValue);
 
     const section = doc.createElement("section");
     section.appendChild(doc.createElement("h3"));
     section.appendChild(plugin.createCurrentChannelPolicyRow());
     section.appendChild(plugin.createCheckboxRow("ui.historyBackfillEnabled", "History"));
     const [first] = section.querySelectorAll(selectorFor);
-    assert.equal(first.value, "inherit");
+    assert.equal(first.getAttribute("role"), "radiogroup");
+    assert.deepEqual(checked(first), ["inherit"]);
     assert.equal(plugin.refreshChannelRuleControls(), 0);
 
     // A notification click moves Discord to channel B while quick settings stays open.
@@ -250,28 +255,29 @@ test("after a channel switch the 'current channel' rule control is rebuilt for t
     assert.equal(plugin.refreshChannelRuleControls(), 1);
     const controls = section.querySelectorAll(selectorFor);
     assert.equal(controls.length, 1);
-    const [select] = controls;
-    assert.notEqual(select, first);
-    assert.equal(select.dataset.daitRouteKey, "g1:B:");
-    assert.equal(select.value, "disabled");
+    const [rule] = controls;
+    assert.notEqual(rule, first);
+    assert.equal(rule.dataset.daitRouteKey, "g1:B:");
+    assert.deepEqual(checked(rule), ["disabled"]);
     // The whole row was swapped in place: same position, nothing added.
     assert.equal(section.children.length, 3);
-    assert.equal(section.children[1].children.includes(select), true);
     // Editing it changes B, the channel it now shows; A keeps no rule.
-    select.value = "enabled";
-    select.dispatch("change");
+    rule.children.find(button => button.dataset.daitValue === "enabled").dispatch("click");
     assert.deepEqual(plugin.settings.ui.channelAutoTranslatePolicies, { "g1:B": { mode: "enabled" } });
     assert.equal(plugin.refreshChannelRuleControls(), 0);
 
-    // A screen without a channel has nothing to set a rule for: the control is shown disabled.
+    // A screen without a channel has nothing to set a rule for: every choice is disabled.
     route = "@me::";
     assert.equal(plugin.refreshChannelRuleControls(), 1);
     const [none] = section.querySelectorAll(selectorFor);
-    assert.equal(none.disabled, true);
+    assert.equal(plugin.isChannelRuleControlDisabled(none), true);
+    assert.equal(none.children.every(button => button.disabled === true), true);
     assert.equal(plugin.refreshChannelRuleControls(), 0);
     route = "g1:A:";
     assert.equal(plugin.refreshChannelRuleControls(), 1);
-    assert.equal(Boolean(section.querySelectorAll(selectorFor)[0].disabled), false);
+    const [back] = section.querySelectorAll(selectorFor);
+    assert.equal(plugin.isChannelRuleControlDisabled(back), false);
+    assert.equal(back.children.some(button => button.disabled), false);
 });
 
 test("scans held while quick settings is open still rebuild the channel rule control after a switch", t => {
@@ -447,8 +453,9 @@ test("reset: the button keeps credentials, says so, and open controls cannot com
     mask.dataset.daitPath = "ui.maskTranslations";
     mask.checked = true;
 
-    const sidebar = plugin.createSettingsSidebar(null);
-    const [reset] = sidebar.querySelectorAll(".dait-settings-sidebar-reset");
+    // Reset sits in the danger zone at the end of the data tab.
+    const dangerZone = plugin.createSettingsDangerZone();
+    const [reset] = dangerZone.querySelectorAll(".dait-settings-reset-button");
     reset.dispatch("click");
     assert.equal(confirms.length, 1);
     assert.match(confirms[0], /API Key/);
@@ -1017,7 +1024,7 @@ test("upgrading with stored 'enabled' channel rules logs them, tells the user on
     plugin.showToast = (message, type) => { toasts.push([message, type]); };
     plugin.start();
     // The notice names the rule as the settings show it, so it follows any relabelling of the rule.
-    const notices = toasts.filter(([message]) => message.includes(plugin.t("channelPolicyEnabled")));
+    const notices = toasts.filter(([message]) => message.includes(plugin.t("channelRuleAlways")));
     assert.equal(toasts.length, 2);
     assert.equal(notices.length, 1);
     assert.equal(notices[0][1], "info");
@@ -1036,7 +1043,7 @@ test("upgrading with stored 'enabled' channel rules logs them, tells the user on
     const laterToasts = [];
     again.showToast = (message, type) => { laterToasts.push([message, type]); };
     again.start();
-    assert.equal(laterToasts.filter(([message]) => message.includes(again.t("channelPolicyEnabled"))).length, 0);
+    assert.equal(laterToasts.filter(([message]) => message.includes(again.t("channelRuleAlways"))).length, 0);
     again.stop();
 });
 

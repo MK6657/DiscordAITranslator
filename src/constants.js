@@ -737,7 +737,8 @@ const DEFAULT_SETTINGS = {
     },
     ui: {
         settingsVersion: 2,
-        settingsActiveTab: SETTINGS_SECTION_GENERAL,
+        // One of the settings tabs in src/settings/settings-schema.js.
+        settingsActiveTab: "overview",
         language: "zh-CN",
         showQuickSettingsRailButton: false,
         showQuickSettingsPanelButton: true,

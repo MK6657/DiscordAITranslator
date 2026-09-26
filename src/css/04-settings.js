@@ -1,402 +1,487 @@
 "use strict";
 
-module.exports = `.dait-settings h2,
+// The full settings window (UI-SPEC "Visual system"): header, a 184 px tab rail with search, and a content pane that
+// scrolls on its own. Rows are a 2-column grid whose right-hand controls share one width (--dait-control-w), so
+// their edges line up down the page. Below 640 px of panel width the rail becomes a row and rows stack.
+module.exports = `.dait-settings {
+    --dait-rail-w: 184px;
+    --dait-content-max: 680px;
+    --dait-switch-off: color-mix(in srgb, var(--dait-text-muted) 60%, var(--dait-surface-2));
+    background: var(--dait-bg);
+    border-radius: var(--dait-radius-card);
+    color: var(--dait-text);
+    container: dait-settings / inline-size;
+    display: flex;
+    flex-direction: column;
+    font-size: var(--dait-font-body);
+    height: calc(min(760px, 100vh - 64px, var(--dait-host-max, 100vh)) - var(--dait-host-chrome, 140px));
+    line-height: 1.4;
+    margin-left: auto;
+    margin-right: auto;
+    min-height: min(360px, calc(100vh - 96px));
+    min-width: 0;
+    overflow: hidden;
+    text-align: left;
+    width: 100%;
+}
+
+.dait-settings h2,
 .dait-settings h3,
 .dait-settings p {
     margin: 0;
 }
 
-.dait-settings-hero {
-    align-items: center;
-    background: var(--dait-card-raised);
-    border: 1px solid var(--dait-border);
-    border-radius: 12px;
-    box-shadow: var(--dait-shadow);
-    display: grid;
-    gap: 14px;
-    grid-template-columns: 50px minmax(0, 1fr);
-    padding: 16px;
-    position: relative;
-    overflow: hidden;
+.dait-settings [hidden] {
+    display: none !important;
 }
 
-.dait-settings-hero::before {
-    background: linear-gradient(90deg, var(--dait-accent), var(--dait-success));
-    content: "";
-    height: 3px;
-    left: 0;
-    opacity: 0.86;
-    position: absolute;
-    right: 0;
-    top: 0;
-}
-
-.dait-settings-mark {
-    align-items: center;
-    background: linear-gradient(145deg, var(--dait-accent), var(--dait-success));
-    border-radius: 12px;
-    color: #ffffff;
-    display: flex;
-    font-size: 15px;
-    font-weight: 850;
-    height: 50px;
-    justify-content: center;
+.dait-settings button,
+.dait-settings input,
+.dait-settings select,
+.dait-settings textarea {
+    font-family: inherit;
     letter-spacing: 0;
-    width: 50px;
 }
 
-.dait-settings-copy {
-    display: grid;
-    gap: 8px;
-    min-width: 0;
-}
-
-.dait-settings-copy h2 {
-    color: var(--dait-heading);
-    font-size: 20px;
-    font-weight: 760;
-    line-height: 1.2;
-}
-
-.dait-note {
-    color: var(--dait-muted-readable);
-    font-size: 12px;
-    line-height: 1.55;
-}
-
-.dait-settings-chips {
+/* Header: logo, title, version, translation status, close. */
+.dait-settings-header {
+    align-items: center;
+    border-bottom: 1px solid var(--dait-divider);
     display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
+    flex: 0 0 auto;
+    gap: var(--dait-space-3);
+    min-height: 60px;
+    min-width: 0;
+    padding: 12px 12px 12px 20px;
 }
 
-.dait-settings-chips span {
-    background: var(--dait-card-soft);
-    border: 1px solid var(--dait-border);
-    border-radius: 999px;
+.dait-settings-header-embedded {
+    min-height: 44px;
+    padding: 8px 16px;
+}
+
+.dait-settings-logo {
+    align-items: center;
+    background: var(--dait-brand);
+    border-radius: var(--dait-radius-card);
+    color: var(--dait-on-fill);
+    display: flex;
+    flex: 0 0 auto;
+    font-size: 13px;
+    font-weight: 700;
+    height: 32px;
+    justify-content: center;
+    width: 32px;
+}
+
+.dait-settings-title {
+    color: var(--dait-heading);
+    font-size: var(--dait-font-title);
+    font-weight: 700;
+    line-height: 1.25;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dait-settings-version {
+    background: var(--dait-surface-2);
+    border-radius: var(--dait-radius-pill);
     color: var(--dait-text);
-    font-size: 12px;
-    font-weight: 650;
-    line-height: 1;
-    padding: 6px 8px;
-}
-
-.dait-settings-chips span.dait-settings-version {
-    border-color: var(--dait-accent, #5865f2);
-    color: var(--dait-accent, #5865f2);
+    flex: 0 0 auto;
+    font-size: var(--dait-font-chip);
     font-variant-numeric: tabular-nums;
+    font-weight: 500;
+    line-height: 1.5;
+    padding: 1px 8px;
 }
 
-.dait-settings-layout {
-    align-items: start;
-    display: grid;
-    gap: 14px;
-    grid-template-columns: 220px minmax(0, 1fr);
+.dait-settings-header-status {
+    align-items: center;
+    color: var(--dait-text);
+    display: inline-flex;
+    font-size: var(--dait-font-caption);
+    gap: var(--dait-space-2);
+    margin-left: auto;
     min-width: 0;
 }
 
-.dait-settings-sidebar {
-    background: var(--dait-card-soft);
-    border: 1px solid var(--dait-border);
-    border-radius: 10px;
+.dait-settings-header-provider::before {
+    content: "·";
+    margin-right: var(--dait-space-2);
+}
+
+.dait-settings-header-provider {
+    color: var(--dait-text-muted);
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dait-settings-close {
+    align-items: center;
+    background: transparent;
+    border: 0;
+    border-radius: var(--dait-radius-control);
+    color: var(--dait-text-muted);
+    cursor: pointer;
+    display: inline-flex;
+    flex: 0 0 auto;
+    font-size: 24px;
+    font-weight: 400;
+    height: 36px;
+    justify-content: center;
+    line-height: 1;
+    width: 36px;
+}
+
+.dait-settings-close:hover {
+    background: var(--dait-hover);
+    color: var(--dait-heading);
+}
+
+/* Status: a 10 px mark plus text. The mark differs in shape as well as colour: dash = not tested,
+   ring = testing, filled = connected, "!" = needs you. */
+.dait-settings .dait-api-status {
+    align-items: center;
+    color: var(--dait-text);
+    display: inline-flex;
+    font-size: var(--dait-font-caption);
+    gap: 6px;
+    line-height: 1.3;
+    white-space: nowrap;
+}
+
+.dait-settings .dait-api-status::before {
+    background: var(--dait-text-muted);
+    border-radius: 1px;
+    content: "";
+    flex: 0 0 auto;
+    height: 2px;
+    width: 10px;
+}
+
+.dait-settings .dait-api-status.dait-api-status-testing::before {
+    background: transparent;
+    border: 2px solid var(--dait-text-muted);
+    border-radius: var(--dait-radius-pill);
+    height: 10px;
+}
+
+.dait-settings .dait-api-status.dait-api-status-success::before {
+    background: var(--dait-success);
+    border-radius: var(--dait-radius-pill);
+    height: 10px;
+}
+
+.dait-settings .dait-api-status.dait-api-status-failed {
+    color: var(--dait-danger);
+}
+
+.dait-settings .dait-api-status.dait-api-status-failed::before {
+    align-items: center;
+    background: var(--dait-danger-fill);
+    border-radius: var(--dait-radius-pill);
+    color: var(--dait-on-fill);
+    content: "!";
+    display: inline-flex;
+    font-size: 12px;
+    font-weight: 700;
+    height: 14px;
+    justify-content: center;
+    line-height: 1;
+    width: 14px;
+}
+
+/* Tab rail and content pane. */
+.dait-settings-body {
     display: grid;
-    gap: 10px;
-    max-height: min(72vh, 720px);
+    flex: 1 1 auto;
+    grid-template-columns: var(--dait-rail-w) minmax(0, 1fr);
+    min-height: 0;
+    min-width: 0;
+}
+
+.dait-settings-rail {
+    background: var(--dait-surface);
+    display: flex;
+    flex-direction: column;
+    gap: var(--dait-space-3);
+    min-height: 0;
     min-width: 0;
     overflow-y: auto;
     overscroll-behavior: contain;
-    padding: 8px;
-    position: sticky;
-    top: 12px;
-    z-index: 3;
+    padding: 16px 12px;
 }
 
-.dait-settings-nav-list {
-    display: grid;
-    gap: 6px;
-    min-width: 0;
+.dait-settings-search {
+    flex: 0 0 auto;
+    position: relative;
 }
 
-.dait-settings-nav-button {
-    align-items: center;
-    background: color-mix(in srgb, var(--dait-card-soft) 82%, var(--dait-card) 18%);
-    border: 1px solid color-mix(in srgb, var(--dait-border) 60%, transparent);
-    border-radius: 7px;
-    color: var(--dait-muted-readable);
-    cursor: pointer;
+.dait-settings-search::before {
+    background: var(--dait-text-muted);
+    content: "";
+    height: 14px;
+    left: 10px;
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='M20 20l-3.5-3.5'/%3E%3C/svg%3E") center / contain no-repeat;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='M20 20l-3.5-3.5'/%3E%3C/svg%3E") center / contain no-repeat;
+    pointer-events: none;
+    position: absolute;
+    top: 9px;
+    width: 14px;
+}
+
+.dait-settings .dait-settings-search-input {
+    padding-left: 32px;
+    width: 100%;
+}
+
+.dait-settings-tabs {
     display: flex;
-    font-size: 12px;
-    font-weight: 750;
-    justify-content: flex-start;
-    line-height: 1.25;
-    min-height: 38px;
-    overflow-wrap: anywhere;
-    padding: 9px 10px;
-    text-align: left;
-    transition: background 0.14s ease, border-color 0.14s ease, color 0.14s ease;
-    width: 100%;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
 }
 
-.dait-settings-nav-secondary {
+.dait-settings-tab {
     background: transparent;
-    border-color: transparent;
-    color: var(--dait-muted-readable);
-    font-size: 11px;
-    font-weight: 690;
-    min-height: 30px;
-    padding: 6px 9px 6px 22px;
-}
-
-.dait-settings-nav-button:hover {
-    background: var(--dait-control-hover);
-    border-color: var(--dait-border);
-    color: var(--dait-text);
-}
-
-.dait-settings-nav-active {
-    background: var(--dait-card);
-    border-color: var(--dait-border-strong);
-    color: var(--dait-heading);
-}
-
-.dait-settings-sidebar-reset {
-    background: transparent;
-    border: 1px solid color-mix(in srgb, var(--dait-danger) 60%, var(--dait-border));
-    border-radius: 8px;
-    color: var(--dait-danger);
+    border: 0;
+    border-radius: var(--dait-radius-control);
+    color: var(--dait-text-muted);
     cursor: pointer;
-    font-size: 12px;
-    font-weight: 720;
-    line-height: 1.2;
-    margin-top: 6px;
+    font-size: var(--dait-font-label);
+    font-weight: 500;
+    line-height: 1.3;
     min-height: 36px;
-    padding: 9px 10px;
+    padding: 7px 10px;
     text-align: left;
     width: 100%;
 }
 
-.dait-settings-sidebar-reset:hover {
-    background: color-mix(in srgb, var(--dait-danger) 12%, transparent);
-}
-
-.dait-settings-page {
-    display: grid;
-    gap: 14px;
-    min-width: 0;
-}
-
-.dait-settings-section {
-    background: var(--dait-card);
-    border: 1px solid var(--dait-border);
-    border-radius: 10px;
-    box-shadow: 0 10px 26px rgba(0, 0, 0, 0.12);
-    display: grid;
-    gap: 14px;
-    grid-template-columns: 1fr;
-    min-width: 0;
-    padding: 16px 18px;
-    scroll-margin-top: 22px;
-}
-
-.dait-settings-section-active {
-    border-color: color-mix(in srgb, var(--dait-accent) 34%, var(--dait-border));
-}
-
-.dait-provider-summary {
-    background: var(--dait-card-soft);
-    border: 1px solid var(--dait-border);
-    border-radius: 8px;
+.dait-settings-tab:hover {
+    background: var(--dait-hover);
     color: var(--dait-text);
-    font-size: 12px;
-    font-weight: 650;
-    line-height: 1.45;
-    padding: 10px 12px;
-    width: 100%;
 }
 
-.dait-provider-settings-block {
-    border-top: 1px solid var(--dait-border);
-    display: grid;
-    gap: 12px;
-    min-width: 0;
-    padding-top: 4px;
-}
-
-.dait-provider-settings-header {
-    display: grid;
-    gap: 4px;
-    min-width: 0;
-}
-
-.dait-provider-settings-title {
+.dait-settings-tab[aria-selected="true"] {
+    background: var(--dait-selected);
     color: var(--dait-heading);
-    font-size: 13px;
-    font-weight: 760;
+}
+
+.dait-settings-content {
+    min-height: 0;
+    min-width: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 24px 28px 32px;
+}
+
+.dait-settings-tabpanel,
+.dait-settings-search-results {
+    max-width: var(--dait-content-max);
+}
+
+.dait-settings-page-title {
+    color: var(--dait-heading);
+    font-size: var(--dait-font-title);
+    font-weight: 700;
     line-height: 1.25;
+}
+
+/* Groups: a heading, an optional one-line note, then flat rows with 1 px dividers. */
+.dait-settings-group {
+    margin-top: var(--dait-space-6);
     min-width: 0;
-    overflow-wrap: anywhere;
 }
 
-.dait-settings-section h3,
-.dait-settings-section > .dait-note {
-    grid-column: 1 / -1;
+.dait-settings-page-title + .dait-settings-group {
+    margin-top: var(--dait-space-4);
 }
 
-.dait-settings-section h3 {
+.dait-settings-group-title {
     color: var(--dait-heading);
-    font-size: 15px;
-    font-weight: 760;
-    letter-spacing: 0;
-    line-height: 1.2;
+    font-size: var(--dait-font-heading);
+    font-weight: 700;
+    line-height: 1.3;
+    margin-bottom: var(--dait-space-2);
 }
 
+.dait-settings-group-note {
+    color: var(--dait-text-muted);
+    font-size: var(--dait-font-body);
+    line-height: 1.5;
+    margin-bottom: var(--dait-space-1);
+}
+
+/* Rows. */
 .dait-settings-row {
-    background: var(--dait-card-raised);
-    border: 1px solid var(--dait-border);
-    border-radius: 10px;
-    display: grid;
-    gap: 8px;
-    min-width: 0;
-    overflow: visible;
-    padding: 13px;
-    transition: border-color 150ms ease, background 150ms ease, box-shadow 150ms ease;
-}
-
-.dait-settings-row:focus-within {
-    border-color: var(--dait-border-strong);
-    box-shadow: 0 0 0 2px var(--dait-focus);
-}
-
-.dait-settings-row-wide {
-    grid-column: 1 / -1;
-}
-
-.dait-settings-row-checkbox {
     align-items: center;
+    border-bottom: 1px solid var(--dait-divider);
+    column-gap: var(--dait-space-5);
+    display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-areas:
-        "label toggle"
-        "desc toggle";
-    column-gap: 14px;
-    min-height: 58px;
-}
-
-.dait-settings-row > span {
-    color: var(--dait-label);
-    font-size: 12px;
-    font-weight: 720;
-    letter-spacing: 0;
-    text-transform: none;
     min-width: 0;
-    overflow-wrap: anywhere;
-    word-break: normal;
+    padding: 12px 0;
+    transition: background-color 160ms ease, box-shadow 160ms ease;
 }
 
-.dait-settings-row-checkbox > span {
-    grid-area: label;
+.dait-settings-row:last-child {
+    border-bottom: 0;
+}
+
+.dait-row-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.dait-row-label {
+    color: var(--dait-heading);
+    font-size: var(--dait-font-label);
+    font-weight: 500;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
 }
 
 .dait-row-description {
-    color: var(--dait-muted-readable);
-    font-size: 12px;
-    line-height: 1.55;
-    margin: 0;
-    min-width: 0;
+    color: var(--dait-text-muted);
+    font-size: var(--dait-font-body);
+    font-weight: 400;
+    line-height: 1.5;
     overflow-wrap: anywhere;
 }
 
-.dait-settings-row-checkbox > .dait-row-description {
+.dait-row-control {
+    align-items: center;
+    display: flex;
+    gap: var(--dait-space-2);
+    justify-content: flex-end;
+    min-width: 0;
+}
+
+/* Every right-hand select, number/text input and segmented control has the same width. */
+.dait-row-control > select,
+.dait-row-control > input:not([type="checkbox"]),
+.dait-row-control > .dait-segmented,
+.dait-row-control > .dait-language-controls {
+    width: var(--dait-control-w);
+}
+
+/* Stacked field for long values: label, full-width control (6 px below), help under it. */
+.dait-settings-row-stacked {
+    align-items: stretch;
+    grid-template-areas:
+        "label"
+        "control"
+        "desc";
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 6px;
+}
+
+.dait-settings-row-stacked > .dait-row-text {
+    display: contents;
+}
+
+.dait-settings-row-stacked .dait-row-label {
+    grid-area: label;
+}
+
+.dait-settings-row-stacked .dait-row-description {
     grid-area: desc;
 }
 
-.dait-settings-row input[type='text'],
-.dait-settings-row input[type='password'],
-.dait-settings-row input[type='number'],
-.dait-settings-row select,
-.dait-settings-row textarea,
-.dait-prompt-editor textarea,
-.dait-prompt-tools input,
-.dait-prompt-tools select,
-.dait-test-panel textarea,
-.dait-test-panel select {
-    background-color: var(--dait-control);
-    border: 1px solid var(--dait-border);
-    border-radius: 8px;
-    color: var(--dait-text);
-    font-size: 13px;
-    font-weight: 560;
-    line-height: 20px;
-    min-height: 42px;
-    max-width: 100%;
-    min-width: 0;
-    outline: none;
-    padding: 10px 12px;
+.dait-settings-row-stacked > .dait-row-control {
+    grid-area: control;
+    justify-content: stretch;
+}
+
+.dait-settings-row-stacked > .dait-row-control > * {
+    flex: 1 1 auto;
     width: 100%;
 }
 
-.dait-settings-row select {
-    appearance: none;
-    background-image: var(--dait-arrow);
-    background-position: right 12px center;
-    background-repeat: no-repeat;
-    background-size: 18px 18px;
-    cursor: pointer;
-    padding-right: 42px;
+/* A dependent option sits right under its parent, indented, and is disabled while the parent is off. */
+.dait-settings-row-dependent {
+    padding-left: var(--dait-space-4);
 }
 
-.dait-prompt-tools select {
-    appearance: none;
-    background-image: var(--dait-arrow);
-    background-position: right 12px center;
-    background-repeat: no-repeat;
-    background-size: 18px 18px;
-    cursor: pointer;
-    padding-right: 42px;
+.dait-settings-row-inactive .dait-row-label {
+    color: var(--dait-text-muted);
 }
 
-.dait-test-panel select {
-    appearance: none;
-    background-image: var(--dait-arrow);
-    background-position: right 12px center;
-    background-repeat: no-repeat;
-    background-size: 18px 18px;
-    cursor: pointer;
-    padding-right: 42px;
+.dait-settings-row-found {
+    background: color-mix(in srgb, var(--dait-brand) 16%, transparent);
+    box-shadow: 0 0 0 6px color-mix(in srgb, var(--dait-brand) 16%, transparent);
 }
 
-.dait-settings-row input:hover,
-.dait-settings-row select:hover,
-.dait-settings-row textarea:hover,
-.dait-prompt-editor textarea:hover,
-.dait-prompt-tools input:hover,
-.dait-prompt-tools select:hover,
-.dait-test-panel textarea:hover,
-.dait-test-panel select:hover {
-    background-color: var(--dait-control-hover);
-    border-color: var(--interactive-normal, var(--dait-border-strong));
-}
-
-.dait-settings-row input:focus,
-.dait-settings-row select:focus,
-.dait-settings-row textarea:focus,
-.dait-prompt-editor textarea:focus,
-.dait-prompt-tools input:focus,
-.dait-prompt-tools select:focus,
-.dait-test-panel textarea:focus,
-.dait-test-panel select:focus {
-    border-color: var(--dait-accent);
-    box-shadow: 0 0 0 2px var(--dait-focus);
-}
-
-.dait-settings-row textarea {
-    font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
-    line-height: 1.45;
+/* Form controls. */
+.dait-settings :where(input:not([type="checkbox"]):not([type="radio"]), select, textarea) {
+    background-color: var(--dait-input-bg);
+    border: 1px solid var(--dait-input-border);
+    border-radius: var(--dait-radius-control);
+    color: var(--dait-text);
+    font-size: var(--dait-font-body);
+    font-weight: 400;
+    line-height: 20px;
     max-width: 100%;
-    min-height: 112px;
+    min-width: 0;
+    outline: none;
+}
+
+.dait-settings :where(input:not([type="checkbox"]):not([type="radio"]), select) {
+    height: var(--dait-control-h);
+    padding: 0 10px;
+}
+
+.dait-settings input::placeholder,
+.dait-settings textarea::placeholder {
+    color: color-mix(in srgb, var(--dait-text-muted) 80%, transparent);
+}
+
+.dait-settings :where(select) {
+    appearance: none;
+    background-image:
+        linear-gradient(45deg, transparent 50%, var(--dait-text-muted) 50%),
+        linear-gradient(135deg, var(--dait-text-muted) 50%, transparent 50%);
+    background-position:
+        calc(100% - 16px) 50%,
+        calc(100% - 11px) 50%;
+    background-repeat: no-repeat;
+    background-size: 5px 5px, 5px 5px;
+    cursor: pointer;
+    padding-right: 30px;
+    text-overflow: ellipsis;
+}
+
+.dait-settings select option,
+.dait-settings select optgroup {
+    background-color: var(--dait-surface);
+    color: var(--dait-text);
+}
+
+.dait-settings :where(textarea) {
+    font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+    font-size: 13px;
+    line-height: 1.5;
+    min-height: 96px;
     overflow-x: auto;
+    padding: 8px 10px;
     resize: vertical;
     white-space: pre-wrap;
+    width: 100%;
     word-break: break-word;
+}
+
+.dait-settings :where(input:not([type="checkbox"]):not([type="radio"]), select, textarea):hover:not(:disabled) {
+    border-color: color-mix(in srgb, var(--dait-text-muted) 60%, transparent);
+}
+
+.dait-settings :where(input:not([type="checkbox"]):not([type="radio"]), select, textarea):focus {
+    border-color: var(--dait-focus);
 }
 
 .dait-settings-row input:disabled,
@@ -407,138 +492,350 @@ module.exports = `.dait-settings h2,
 .dait-prompt-tools select:disabled,
 .dait-test-panel textarea:disabled,
 .dait-test-panel select:disabled {
-    background-color: color-mix(in srgb, var(--dait-control) 76%, var(--dait-card) 24%);
-    border-color: var(--dait-border);
+    background-color: color-mix(in srgb, var(--dait-input-bg) 60%, var(--dait-bg));
     color: var(--dait-disabled-text);
     cursor: not-allowed;
     opacity: 1;
     -webkit-text-fill-color: var(--dait-disabled-text);
 }
 
-.dait-settings-row input[type='checkbox'] {
+/* Switch: a native checkbox with role="switch", 40 x 24. */
+.dait-settings input.dait-switch {
     appearance: none;
-    background: var(--dait-control);
-    border: 1px solid var(--dait-border-strong);
-    border-radius: 999px;
+    background: var(--dait-switch-off);
+    border: 0;
+    border-radius: var(--dait-radius-pill);
     cursor: pointer;
     flex: 0 0 auto;
-    grid-area: toggle;
     height: 24px;
-    justify-self: end;
+    margin: 0;
     position: relative;
-    transition: background 140ms ease, border-color 140ms ease;
-    width: 44px;
+    transition: background-color 140ms ease;
+    width: 40px;
 }
 
-.dait-settings-row input[type='checkbox']::after {
-    background: var(--text-muted, #b5bac1);
-    border-radius: 999px;
+.dait-settings input.dait-switch::after {
+    background: #ffffff;
+    border-radius: var(--dait-radius-pill);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.24);
     content: "";
     height: 18px;
-    left: 2px;
+    left: 3px;
     position: absolute;
-    top: 2px;
-    transition: left 140ms ease, background 140ms ease;
+    top: 3px;
+    transition: transform 140ms ease;
     width: 18px;
 }
 
-.dait-settings-row input[type='checkbox']:checked {
-    background: color-mix(in srgb, var(--dait-success) 28%, var(--dait-control));
-    border-color: var(--dait-success);
+.dait-settings input.dait-switch:checked {
+    background: var(--dait-positive-fill);
 }
 
-.dait-settings-row input[type='checkbox']:checked::after {
-    background: var(--dait-success);
-    left: 22px;
+.dait-settings input.dait-switch:checked::after {
+    transform: translateX(16px);
 }
 
-.dait-language-controls {
+.dait-settings input.dait-switch:disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
+}
+
+/* Segmented control: equal-width options filling the control width. */
+.dait-segmented {
+    background: var(--dait-input-bg);
+    border: 1px solid var(--dait-input-border);
+    border-radius: var(--dait-radius-control);
     display: grid;
-    gap: 8px;
-    min-width: 0;
+    gap: 2px;
+    grid-auto-columns: minmax(0, 1fr);
+    grid-auto-flow: column;
+    height: var(--dait-control-h);
+    padding: 2px;
 }
 
-.dait-language-custom[hidden] {
-    display: none;
-}
-
-.dait-api-key-row {
-    align-items: start;
-    grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-areas:
-        "label status"
-        "desc status"
-        "control control";
-}
-
-.dait-api-key-row > .dait-row-label {
-    grid-area: label;
-}
-
-.dait-api-key-row > .dait-row-description {
-    grid-area: desc;
-}
-
-.dait-api-controls {
-    display: grid;
-    gap: 8px;
-    grid-area: control;
-    grid-template-columns: minmax(0, 1fr) max-content;
-    min-width: 0;
-}
-
-.dait-settings-row > .dait-api-status {
-    align-self: start;
-    border: 1px solid var(--dait-border);
-    border-radius: 999px;
-    color: var(--dait-muted-readable);
-    font-size: 11px;
-    font-weight: 760;
-    grid-area: status;
+.dait-segmented-option {
+    background: transparent;
+    border: 0;
+    border-radius: 3px;
+    color: var(--dait-text-muted);
+    cursor: pointer;
+    font-size: var(--dait-font-caption);
+    font-weight: 500;
     line-height: 1;
-    max-width: 120px;
+    min-width: 0;
     overflow: hidden;
-    padding: 5px 8px;
+    padding: 0 5px;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-.dait-settings-row > .dait-api-status-success {
-    background: color-mix(in srgb, var(--dait-success) 14%, transparent);
-    border-color: color-mix(in srgb, var(--dait-success) 62%, var(--dait-border));
-    color: var(--dait-success);
-}
-
-.dait-settings-row > .dait-api-status-failed {
-    background: color-mix(in srgb, var(--dait-danger) 12%, transparent);
-    border-color: color-mix(in srgb, var(--dait-danger) 62%, var(--dait-border));
-    color: var(--dait-danger);
-}
-
-.dait-settings-row > .dait-api-status-testing {
-    background: color-mix(in srgb, var(--dait-accent) 12%, transparent);
-    border-color: color-mix(in srgb, var(--dait-accent) 52%, var(--dait-border));
+.dait-segmented-option:hover:not(:disabled) {
+    background: var(--dait-hover);
     color: var(--dait-text);
 }
 
+.dait-segmented-option[aria-checked="true"] {
+    background: var(--dait-button-secondary);
+    color: var(--dait-on-fill);
+}
+
+.dait-segmented-option:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+
+/* Buttons: 32 px high, 14/500. Default is the grey secondary button. */
+.dait-small-button {
+    align-items: center;
+    background: var(--dait-button-secondary);
+    border: 1px solid transparent;
+    border-radius: var(--dait-radius-control);
+    color: var(--dait-on-fill);
+    cursor: pointer;
+    display: inline-flex;
+    flex: 0 0 auto;
+    font-size: var(--dait-font-body);
+    font-weight: 500;
+    height: var(--dait-control-h);
+    justify-content: center;
+    line-height: 1;
+    padding: 0 14px;
+    white-space: nowrap;
+}
+
+.dait-small-button:hover:not(:disabled) {
+    background: var(--dait-button-secondary-hover);
+}
+
+.dait-small-button:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+
+.dait-small-button-primary {
+    background: var(--dait-brand);
+}
+
+.dait-small-button-primary:hover:not(:disabled) {
+    background: var(--dait-brand-hover);
+}
+
+.dait-small-button-outline {
+    background: transparent;
+    border-color: var(--dait-input-border);
+    color: var(--dait-text);
+}
+
+.dait-small-button-outline:hover:not(:disabled) {
+    background: var(--dait-hover);
+}
+
+.dait-small-button-danger {
+    background: transparent;
+    border-color: var(--dait-danger);
+    color: var(--dait-danger);
+}
+
+.dait-small-button-danger:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--dait-danger-fill) 14%, transparent);
+}
+
+.dait-small-button-link {
+    background: transparent;
+    color: var(--dait-link);
+    padding: 0 6px;
+}
+
+.dait-small-button-link:hover:not(:disabled) {
+    background: transparent;
+    text-decoration: underline;
+}
+
+/* Rows of action buttons wrap and stay right-aligned. */
+.dait-cache-actions,
+.dait-diagnostic-actions,
+.dait-history-backfill-actions,
 .dait-hotkey-controls {
     display: flex;
     flex-wrap: wrap;
-    gap: 8px;
+    gap: var(--dait-space-2);
+    justify-content: flex-end;
     min-width: 0;
 }
 
-.dait-cache-actions,
-.dait-diagnostic-actions {
+.dait-hotkey-recorder {
+    font-variant-numeric: tabular-nums;
+    min-width: 120px;
+}
+
+.dait-language-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+}
+
+.dait-language-controls > * {
+    width: 100%;
+}
+
+/* Ordered list: the manual-translation fallback services, ticked and moved with arrow buttons. */
+.dait-order-list {
+    border: 1px solid var(--dait-divider);
+    border-radius: var(--dait-radius-card);
+    display: grid;
+    min-width: 0;
+}
+
+.dait-order-item {
+    align-items: center;
+    column-gap: var(--dait-space-2);
+    display: grid;
+    grid-template-columns: 20px auto minmax(0, 1fr) auto auto;
+    min-height: 44px;
+    padding: 6px 8px 6px 12px;
+}
+
+.dait-order-item + .dait-order-item {
+    border-top: 1px solid var(--dait-divider);
+}
+
+.dait-order-position {
+    color: var(--dait-text-muted);
+    font-size: var(--dait-font-caption);
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+}
+
+.dait-settings input.dait-order-include {
+    accent-color: var(--dait-brand);
+    cursor: pointer;
+    height: 16px;
+    margin: 0;
+    width: 16px;
+}
+
+.dait-order-name {
+    color: var(--dait-text);
+    cursor: pointer;
+    font-size: var(--dait-font-body);
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.dait-order-item:not(.dait-order-item-on) .dait-order-name {
+    color: var(--dait-text-muted);
+}
+
+.dait-order-note {
+    color: var(--dait-text-muted);
+    font-size: var(--dait-font-caption);
+}
+
+/* Only chosen services have a position to move. */
+.dait-order-item:not(.dait-order-item-on) .dait-order-move {
+    visibility: hidden;
+}
+
+.dait-small-button.dait-order-move {
+    font-size: var(--dait-font-label);
+    padding: 0;
+    width: var(--dait-control-h);
+}
+
+/* <details> for rarely changed options (more model parameters, optional API key). */
+.dait-settings-details {
+    border-top: 1px solid var(--dait-divider);
+}
+
+.dait-settings-details-summary {
+    color: var(--dait-text);
+    cursor: pointer;
+    font-size: var(--dait-font-body);
+    font-weight: 500;
+    padding: 12px 0;
+}
+
+.dait-settings-details-summary:hover {
+    color: var(--dait-heading);
+}
+
+.dait-settings-details[open] > .dait-settings-details-summary {
+    border-bottom: 1px solid var(--dait-divider);
+}
+
+/* Connection card: the only card on a page (UI-SPEC Q6). */
+.dait-provider-settings-block {
+    background: var(--dait-surface);
+    border-radius: var(--dait-radius-card);
+    margin: var(--dait-space-2) 0;
+    min-width: 0;
+    padding: 0 var(--dait-space-4);
+}
+
+.dait-provider-settings-header {
+    align-items: center;
+    border-bottom: 1px solid var(--dait-divider);
     display: flex;
     flex-wrap: wrap;
-    gap: 8px;
+    gap: var(--dait-space-2) var(--dait-space-3);
+    min-height: 56px;
+    min-width: 0;
+    padding: 12px 0;
+}
+
+.dait-provider-settings-title {
+    color: var(--dait-heading);
+    flex: 1 1 auto;
+    font-size: var(--dait-font-label);
+    font-weight: 600;
+    line-height: 1.3;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.dait-provider-connection {
+    align-items: center;
+    display: inline-flex;
+    flex: 0 0 auto;
+    gap: var(--dait-space-3);
+    margin-left: auto;
+}
+
+.dait-provider-settings-block > .dait-settings-details:last-child,
+.dait-provider-settings-block > .dait-settings-row:last-child {
+    border-bottom: 0;
+}
+
+.dait-settings-subheading {
+    color: var(--dait-heading);
+    font-size: var(--dait-font-body);
+    font-weight: 600;
+    padding-top: var(--dait-space-3);
+}
+
+.dait-google-settings {
+    border-bottom: 1px solid var(--dait-divider);
     min-width: 0;
 }
 
+.dait-google-settings > .dait-settings-row:last-child {
+    border-bottom: 0;
+}
+
+.dait-provider-summary {
+    background: var(--dait-surface);
+    border-radius: var(--dait-radius-control);
+    color: var(--dait-text);
+    font-size: var(--dait-font-body);
+    line-height: 1.5;
+    padding: 8px 12px;
+}
+
+/* Diagnostics summary. */
 .dait-diagnostic-summary {
     display: grid;
-    gap: 10px;
+    gap: var(--dait-space-3);
     min-width: 0;
 }
 
@@ -549,10 +846,10 @@ module.exports = `.dait-settings h2,
 }
 
 .dait-diagnostic-summary-title {
-    color: var(--dait-label);
-    font-size: 11px;
-    font-weight: 760;
-    line-height: 1.25;
+    color: var(--dait-text);
+    font-size: var(--dait-font-caption);
+    font-weight: 600;
+    line-height: 1.3;
 }
 
 .dait-diagnostic-summary-chips {
@@ -564,49 +861,61 @@ module.exports = `.dait-settings h2,
 
 .dait-diagnostic-chip,
 .dait-diagnostic-summary-empty {
-    background: color-mix(in srgb, var(--dait-control) 78%, transparent);
-    border: 1px solid var(--dait-border);
-    border-radius: 999px;
-    color: var(--dait-muted-readable);
-    font-size: 11px;
-    font-weight: 650;
-    line-height: 1.25;
+    background: var(--dait-surface-2);
+    border-radius: var(--dait-radius-pill);
+    color: var(--dait-text);
+    font-size: var(--dait-font-chip);
+    font-weight: 500;
+    line-height: 1.4;
     max-width: 100%;
     overflow-wrap: anywhere;
-    padding: 4px 8px;
+    padding: 2px 8px;
 }
 
 .dait-diagnostic-summary-empty {
+    color: var(--dait-text-muted);
     justify-self: start;
 }
 
-.dait-hotkey-recorder {
-    min-width: 136px;
+/* Test mode (shown under its switch in the data tab). */
+.dait-test-mode-section {
+    background: var(--dait-surface);
+    border-radius: var(--dait-radius-card);
+    display: grid;
+    gap: var(--dait-space-3);
+    margin-top: var(--dait-space-2);
+    padding: var(--dait-space-4);
 }
 
-.dait-test-mode-section {
-    border-color: color-mix(in srgb, var(--dait-accent) 30%, var(--dait-border));
+.dait-test-mode-section h3 {
+    color: var(--dait-heading);
+    font-size: var(--dait-font-heading);
+    font-weight: 700;
+}
+
+.dait-note {
+    color: var(--dait-text-muted);
+    font-size: var(--dait-font-body);
+    line-height: 1.5;
 }
 
 .dait-test-panel {
     display: grid;
-    gap: 14px;
-    grid-column: 1 / -1;
+    gap: var(--dait-space-4);
     min-width: 0;
 }
 
 .dait-test-toolbar {
     align-items: center;
     display: grid;
-    gap: 10px;
-    grid-template-columns: minmax(160px, 220px) minmax(0, 1fr);
+    gap: var(--dait-space-3);
+    grid-template-columns: var(--dait-control-w) minmax(0, 1fr);
     min-width: 0;
 }
 
 .dait-test-config {
-    color: var(--dait-muted-readable);
-    font-size: 12px;
-    font-weight: 650;
+    color: var(--dait-text-muted);
+    font-size: var(--dait-font-caption);
     line-height: 1.45;
     min-width: 0;
     overflow-wrap: anywhere;
@@ -614,157 +923,238 @@ module.exports = `.dait-settings h2,
 
 .dait-test-block {
     display: grid;
-    gap: 8px;
+    gap: 6px;
     min-width: 0;
 }
 
 .dait-test-block-header {
     align-items: center;
     display: flex;
-    gap: 8px;
+    gap: var(--dait-space-2);
     justify-content: space-between;
     min-width: 0;
 }
 
 .dait-test-block-header > span {
-    color: var(--dait-label);
-    font-size: 12px;
-    font-weight: 760;
-}
-
-.dait-test-block-header-compact .dait-small-button {
-    min-height: 30px;
-    padding: 0 9px;
-}
-
-.dait-test-panel textarea {
-    font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
-    line-height: 1.5;
-    min-height: 118px;
-    resize: vertical;
-    white-space: pre-wrap;
-    word-break: break-word;
+    color: var(--dait-heading);
+    font-size: var(--dait-font-label);
+    font-weight: 500;
 }
 
 .dait-test-actions {
     display: flex;
     flex-wrap: wrap;
-    gap: 8px;
+    gap: var(--dait-space-2);
     min-width: 0;
 }
 
 .dait-test-output {
-    background: var(--dait-control);
-    border: 1px solid var(--dait-border);
-    border-radius: 8px;
+    background: var(--dait-input-bg);
+    border: 1px solid var(--dait-input-border);
+    border-radius: var(--dait-radius-control);
     color: var(--dait-text);
     font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
     font-size: 13px;
     line-height: 1.55;
     margin: 0;
-    min-height: 118px;
+    min-height: 96px;
     overflow: auto;
-    padding: 12px;
+    padding: 8px 10px;
     white-space: pre-wrap;
     word-break: break-word;
 }
 
+/* Prompt templates and the prompt editor (their own group on the translate and composer tabs). */
 .dait-prompt-manager {
-    background: transparent;
-    border: 0;
-    border-radius: 0;
     display: grid;
-    gap: 10px;
-    grid-column: 1 / -1;
+    gap: var(--dait-space-3);
     min-width: 0;
-    overflow: visible;
-    padding: 2px 0 0;
 }
 
 .dait-prompt-manager-header {
     display: grid;
-    gap: 5px;
+    gap: 2px;
 }
 
 .dait-prompt-manager-header > span {
-    color: var(--dait-label);
-    font-size: 12px;
-    font-weight: 760;
+    color: var(--dait-heading);
+    font-size: var(--dait-font-heading);
+    font-weight: 700;
+    line-height: 1.3;
 }
 
 .dait-prompt-tools {
     align-items: center;
     display: grid;
-    gap: 8px;
-    grid-template-columns: minmax(120px, 0.8fr) minmax(190px, 1.2fr);
+    gap: var(--dait-space-2);
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
     min-width: 0;
 }
 
 .dait-prompt-actions {
     display: flex;
     flex-wrap: wrap;
-    gap: 6px;
+    gap: var(--dait-space-2);
     grid-column: 1 / -1;
     min-width: 0;
 }
 
 .dait-prompt-editor {
     display: grid;
-    gap: 8px;
+    gap: 6px;
     min-width: 0;
 }
 
 .dait-prompt-editor > span {
-    color: var(--dait-label);
-    font-size: 12px;
-    font-weight: 760;
+    color: var(--dait-heading);
+    font-size: var(--dait-font-label);
+    font-weight: 500;
 }
 
 .dait-prompt-editor textarea {
-    font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
-    line-height: 1.45;
-    max-width: 100%;
-    min-height: 128px;
-    overflow-x: auto;
-    resize: vertical;
-    white-space: pre-wrap;
-    word-break: break-word;
+    min-height: 160px;
 }
 
-.dait-prompt-tools input,
-.dait-prompt-tools select {
+/* Search results replace the tab page while a query is typed. */
+.dait-settings-search-summary {
+    color: var(--dait-text-muted);
+    font-size: var(--dait-font-caption);
+    margin-bottom: var(--dait-space-2);
+}
+
+.dait-settings-search-list {
+    display: grid;
+    gap: 2px;
+    list-style: none;
+    margin: 0 -12px;
+    padding: 0;
+}
+
+.dait-settings-search-result {
+    align-items: center;
+    background: transparent;
+    border: 0;
+    border-radius: var(--dait-radius-control);
+    color: var(--dait-text);
+    column-gap: var(--dait-space-3);
+    cursor: pointer;
+    display: grid;
+    grid-template-areas:
+        "label tab"
+        "desc desc";
+    grid-template-columns: minmax(0, 1fr) auto;
+    padding: 10px 12px;
+    row-gap: 2px;
+    text-align: left;
+    width: 100%;
+}
+
+.dait-settings-search-result:hover,
+.dait-settings-search-result:focus-visible {
+    background: var(--dait-hover);
+}
+
+.dait-settings-search-result-label {
+    color: var(--dait-heading);
+    font-size: var(--dait-font-label);
+    font-weight: 500;
+    grid-area: label;
     min-width: 0;
 }
 
-.dait-prompt-actions .dait-small-button {
-    min-height: 36px;
-}
-
-.dait-small-button {
-    align-items: center;
-    background: var(--dait-control);
-    border: 1px solid var(--dait-border);
-    border-radius: 8px;
+.dait-settings-search-result-tab {
+    background: var(--dait-surface-2);
+    border-radius: var(--dait-radius-pill);
     color: var(--dait-text);
-    cursor: pointer;
-    display: inline-flex;
-    font-size: 12px;
-    font-weight: 720;
-    justify-content: center;
-    line-height: 1.2;
-    min-height: 42px;
+    font-size: var(--dait-font-chip);
+    font-weight: 500;
+    grid-area: tab;
+    padding: 2px 8px;
     white-space: nowrap;
-    padding: 0 11px;
 }
 
-.dait-small-button:hover {
-    background: var(--dait-control-hover);
-    border-color: var(--interactive-normal, var(--dait-border-strong));
+.dait-settings-search-result-description {
+    color: var(--dait-text-muted);
+    font-size: var(--dait-font-body);
+    grid-area: desc;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
-.dait-small-button-danger {
-    border-color: color-mix(in srgb, var(--dait-danger) 62%, var(--dait-border));
+/* Danger zone at the end of the data tab. */
+.dait-settings-danger-zone .dait-settings-group-title {
     color: var(--dait-danger);
 }
 
+/* Narrower panel (BetterDiscord's own plugin-settings modal, small windows): the tab rail becomes a scrolling row
+   under the search box, so the rows keep room for their text. */
+@container dait-settings (max-width: 760px) {
+    .dait-settings-header {
+        padding-left: 16px;
+    }
+
+    .dait-settings-logo {
+        display: none;
+    }
+
+    .dait-settings-body {
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-rows: auto minmax(0, 1fr);
+    }
+
+    .dait-settings-rail {
+        border-bottom: 1px solid var(--dait-divider);
+        gap: var(--dait-space-2);
+        overflow: visible;
+        padding: 12px 16px 8px;
+    }
+
+    .dait-settings-tabs {
+        flex-direction: row;
+        overflow-x: auto;
+        overscroll-behavior-x: contain;
+        padding-bottom: 4px;
+        scrollbar-width: thin;
+    }
+
+    .dait-settings-tab {
+        flex: 0 0 auto;
+        white-space: nowrap;
+        width: auto;
+    }
+
+    .dait-settings-content {
+        padding: 16px 16px 24px;
+    }
+}
+
+/* Narrow panel: rows put their control under the text (switches stay on the right). */
+@container dait-settings (max-width: 600px) {
+    .dait-settings-header-provider {
+        display: none;
+    }
+
+    .dait-settings-row:not(.dait-settings-row-switch) {
+        grid-template-columns: minmax(0, 1fr);
+        row-gap: 8px;
+    }
+
+    .dait-settings-row:not(.dait-settings-row-switch) > .dait-row-control {
+        justify-content: flex-start;
+    }
+
+    .dait-row-control > select,
+    .dait-row-control > input:not([type="checkbox"]),
+    .dait-row-control > .dait-segmented,
+    .dait-row-control > .dait-language-controls {
+        max-width: 100%;
+    }
+
+    .dait-prompt-tools,
+    .dait-test-toolbar {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
 `;

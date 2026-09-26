@@ -1205,11 +1205,10 @@ class AutoTranslationQueueCore {
             const bound = control?.dataset?.daitRouteKey;
             if (typeof bound !== "string") return;
             const boundChannel = this.plugin.getChannelAutoTranslatePolicyStorageKey(bound);
-            if (boundChannel === channel && (channel || control.disabled)) return;
+            if (boundChannel === channel && (channel || this.plugin.isChannelRuleControlDisabled(control))) return;
             const row = this.plugin.createCurrentChannelPolicyRow();
             const fresh = row?.dataset?.daitPath === path ? row : row?.querySelectorAll?.(selector)?.[0];
             if (!fresh) return;
-            if (!channel) fresh.disabled = true;
             // The old row holds its control as deep as the new row holds its own; swap the whole row when it matches.
             let depth = 0;
             for (let node = fresh; node && node !== row; node = node.parentNode) depth++;

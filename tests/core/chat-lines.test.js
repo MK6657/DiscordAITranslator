@@ -421,7 +421,7 @@ test("error lines name the cause and offer the fix: settings, connection test, w
     plugin.openQuickSettingsPanel = (source, launcher) => { opened = { source, launcher, tab: plugin.settings.ui.settingsActiveTab }; };
     const settingsClick = line.querySelector(".dait-translation-error-button").click();
     assert.equal(settingsClick.propagationStopped, true);
-    assert.deepEqual({ source: opened.source, tab: opened.tab }, { source: "chat-line", tab: "translation" });
+    assert.deepEqual({ source: opened.source, tab: opened.tab }, { source: "chat-line", tab: "translate" });
 
     line = plugin.renderTranslationError(messageNode, content, new Error(plugin.t("apiKeyMissingTranslation")), "cache-key", content.text);
     assert.equal(messageOf(line), "还没有填写翻译用的 API Key");
