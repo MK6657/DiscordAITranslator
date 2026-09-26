@@ -187,7 +187,7 @@ module.exports = `.dait-settings {
     color: var(--dait-on-fill);
     content: "!";
     display: inline-flex;
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 700;
     height: 14px;
     justify-content: center;
