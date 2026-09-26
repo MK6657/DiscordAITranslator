@@ -742,13 +742,18 @@ class TranslationCacheStore {
         let legacyEntries = decode(legacy);
         if (!legacyEntries) return current;
         if (!currentEntries) return legacy;
-        // Each copy is the whole cache as it was when saved. Nothing older than the newer copy's save time is taken
-        // from the older copy: it was cleared, evicted or expired there (0.3.0 after a downgrade writes an empty
-        // payload on "Clear translation cache"), or that version could not read it. A cleared cache must not come
-        // back; a missed entry is only translated again.
+        // A copy saved by a version that read the other copy is the whole cache as it was then: nothing older than
+        // its save time is taken from the other copy, which was cleared, evicted or expired there. That holds for
+        // this store's copy over an old settings-file copy it was merged from (its deletion failed), and for an
+        // empty copy 0.3.0 saves on "Clear translation cache" after a downgrade: a cleared cache must not come
+        // back. Anything else 0.3.0 saves after a downgrade is only what it cached then, since it cannot read
+        // this store: both copies are kept, and the lifetime and size limits prune them.
         const currentSavedAt = Number(current?.savedAt) || 0;
         const legacySavedAt = Number(legacy?.savedAt) || 0;
-        if (legacySavedAt > currentSavedAt) currentEntries = currentEntries.filter(item => item.touchedAt >= legacySavedAt);
+        if (legacySavedAt > currentSavedAt) {
+            const legacySawCurrent = !this.isPreKeySchemaTranslationCachePayload(legacy);
+            if (!legacyEntries.length || legacySawCurrent) currentEntries = currentEntries.filter(item => item.touchedAt >= legacySavedAt);
+        }
         else if (currentSavedAt > legacySavedAt) legacyEntries = legacyEntries.filter(item => item.touchedAt >= currentSavedAt);
         const byKey = new Map();
         [...legacyEntries, ...currentEntries].forEach(item => {

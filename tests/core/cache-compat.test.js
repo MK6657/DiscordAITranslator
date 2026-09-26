@@ -39,8 +39,8 @@ function loadV030Data(savedAgoMs = 60 * 1000) {
     return data;
 }
 
-// A Discord window on the given data files. restart() writes the cache, stops the plugin and starts a
-// new one on the same files, the way a Discord restart does.
+// A Discord window on the given data files. quit() writes the cache and stops the plugin; start() starts a
+// new one on the same files; restart() does both, the way a Discord restart does.
 function openChat(t, { data = loadV030Data(), bdApi = createFakeDataApi(data), settingsPatch = null } = {}) {
     if (settingsPatch) settingsPatch(bdApi.files.DiscordAITranslator.settings);
     const globals = installChatGlobals({ bdApi });
@@ -54,19 +54,22 @@ function openChat(t, { data = loadV030Data(), bdApi = createFakeDataApi(data), s
     const server = createFakeLocalServer();
     const chat = mountChat(globals.document, CHAT_MESSAGES);
     const start = () => {
+        chat.remount();
         const session = startChatPlugin(Plugin, { server, chat });
         sessions.push(session);
         return session;
     };
-    const restart = () => {
+    const quit = () => {
         const session = sessions.at(-1);
         session.plugin.translationCacheDirty = true;
         assert.equal(session.plugin.flushTranslationCache({ retryOnError: false }), true);
         session.plugin.stop();
-        chat.remount();
+    };
+    const restart = () => {
+        quit();
         return start();
     };
-    return { bdApi, server, chat, globals, ...start(), restart };
+    return { bdApi, server, chat, globals, ...start(), quit, start, restart };
 }
 
 function assertLinesDrawn(lineText, messages, label) {
@@ -217,4 +220,58 @@ test("a message translated with its button before the model was detected is a ca
     await translate(message.id);
     assert.equal(lineText(message.id), message.translation);
     assert.deepEqual(server.chatPhrases(), [message.phrase], "the stored result is found");
+});
+
+// --- Downgrade to v0.3.0 and upgrade again -----------------------------------------------------------
+
+// What v0.3.0 saves after a downgrade: it cannot read the new cache file, so it starts empty and keeps
+// only what it translates then (here: the given messages, in its own key format), in the settings file.
+function v030CacheAfterDowngrade(messages, savedAgoMs) {
+    const cache = loadV030Data(savedAgoMs).DiscordAITranslator.translationCache;
+    const values = new Set(messages.map(message => message.translation));
+    cache.entries = cache.entries.filter(entry => values.has(cache.strings[entry.v]));
+    return cache;
+}
+
+// Moves every time stamp of a saved cache back, as if it was saved that long ago.
+function ageSavedCache(payload, ms) {
+    payload.savedAt -= ms;
+    payload.entries.forEach(entry => {
+        entry.c -= ms;
+        entry.t -= ms;
+    });
+}
+
+test("downgrade to v0.3.0 and upgrade again: the v0.4.0 cache and what v0.3.0 cached meanwhile are both kept", async t => {
+    const { bdApi, server, chat, scanUntilIdle, quit, start } = openChat(t);
+    await scanUntilIdle();
+    chat.add(NEW_MESSAGE);
+    await scanUntilIdle();
+    quit();
+    const requests = server.chatPhrases().length;
+
+    // Two hours on v0.3.0, which translated one message again and saved its own small cache.
+    ageSavedCache(bdApi.files["DiscordAITranslator.cache"].translationCache, 2 * HOUR);
+    bdApi.files.DiscordAITranslator.translationCache = v030CacheAfterDowngrade([PLAIN_MESSAGES[1]], 60 * 1000);
+
+    const upgraded = start();
+    assert.equal(bdApi.files.DiscordAITranslator.translationCache, undefined, "the old copy was merged and removed");
+    await upgraded.scanUntilIdle();
+    assertLinesDrawn(upgraded.lineText, [...AUTO_MESSAGES, NEW_MESSAGE], "after upgrading again");
+    assert.equal(server.chatPhrases().length, requests, "nothing cached in either version is requested again");
+});
+
+test("downgrade to v0.3.0 and upgrade again: a cache cleared in v0.3.0 stays cleared", async t => {
+    const { bdApi, server, scanUntilIdle, quit, start } = openChat(t);
+    await scanUntilIdle();
+    quit();
+    ageSavedCache(bdApi.files["DiscordAITranslator.cache"].translationCache, 2 * HOUR);
+    // v0.3.0's "Clear translation cache" saves an empty cache.
+    bdApi.files.DiscordAITranslator.translationCache = v030CacheAfterDowngrade([], 60 * 1000);
+
+    const upgraded = start();
+    assert.equal(upgraded.plugin.translationCache.size, 0);
+    assert.deepEqual(bdApi.files["DiscordAITranslator.cache"].translationCache.entries, []);
+    await upgraded.scanUntilIdle(PLAIN_MESSAGES.map(message => message.id));
+    assert.deepEqual([...server.chatPhrases()].sort(), PLAIN_MESSAGES.map(message => message.phrase).sort());
 });

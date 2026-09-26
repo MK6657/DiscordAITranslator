@@ -995,11 +995,12 @@ test("a cache cleared in 0.3.0 after a downgrade stays cleared on the next upgra
     plugin.loadTranslationCache();
     assert.equal(plugin.translationCache.size, 0);
 
-    // What 0.3.0 translated after the clear is kept; nothing from before it comes back.
-    const usedAfterClear = cachePayload([{ key: "k-after-clear", value: "new translation", c: now - 50 * 60 * 1000, t: now - 40 * 60 * 1000, e: now + 40 * HOUR }]);
-    usedAfterClear.savedAt = now - 30 * 60 * 1000;
-    const merged = plugin.mergePersistedTranslationCachePayloads(current, usedAfterClear);
-    assert.deepEqual(merged.entries.map(entry => merged.strings[entry.v]), ["new translation"]);
+    // A non-empty 0.3.0 copy cannot tell a clear from a downgrade: 0.3.0 never reads the new file, so its copy
+    // only holds what it translated meanwhile. Both copies are kept (UPG-2); only an empty copy counts as a clear.
+    const usedAfterDowngrade = cachePayload([{ key: "k-after-downgrade", value: "new translation", c: now - 50 * 60 * 1000, t: now - 40 * 60 * 1000, e: now + 40 * HOUR }]);
+    usedAfterDowngrade.savedAt = now - 30 * 60 * 1000;
+    const merged = plugin.mergePersistedTranslationCachePayloads(current, usedAfterDowngrade);
+    assert.deepEqual(merged.entries.map(entry => merged.strings[entry.v]), ["cleared translation", "new translation"]);
 
     // The same holds the other way: a cache cleared here while the old copy could not be deleted yet.
     const oldCopy = cachePayload([{ key: "k-old-copy", value: "old copy", c: now - 5 * HOUR, t: now - 4 * HOUR, e: now + 40 * HOUR }]);
