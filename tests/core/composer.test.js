@@ -368,6 +368,35 @@ test("a plain contenteditable keeps block and <br> line breaks", t => {
     assert.equal(plugin.getTextboxRawTextSafe(editor), "a\n\nb\nc");
 });
 
+// CMP-R2: a zero-width space the user typed ("@​everyone" does not ping) is part of the draft.
+test("the reader keeps the user's zero-width spaces through Polish, the bilingual spoiler and Restore original", async t => {
+    const browser = useComposerBrowser(t);
+    const plugin = new Plugin();
+    const typed = "@​everyone meeting moved";
+    const editor = createSlateEditor([typed]);
+    browser.document.activeElement = editor;
+    assert.equal(plugin.getTextboxDraftText(editor), typed);
+    assert.equal(plugin.formatPublicBilingualMessage("Meeting moved", typed), `Meeting moved\n\n||${typed}||`);
+
+    const pasted = [];
+    attachSlateBehaviour(editor, { initialText: typed, afterPaste: text => pasted.push(text) });
+    const requests = [];
+    plugin.runModelTask = async (kind, input) => {
+        requests.push(input);
+        return "The meeting has moved.";
+    };
+    plugin.showRestoreOriginalControl = () => {};
+    plugin.injectInputButtons = () => {};
+    await plugin.polishCurrentDraft(null, { textbox: editor });
+    assert.deepEqual(requests, [typed], "the model gets the draft as typed");
+    assert.equal(plugin.getTextboxDraftText(editor), "The meeting has moved.");
+    assert.equal(plugin.polishSession.originalRawText, typed);
+
+    assert.equal(await plugin.restorePolishOriginal(editor, plugin.polishSession), true);
+    assert.equal(pasted[pasted.length - 1], typed, "Restore original pastes exactly what was typed");
+    assert.equal(plugin.getTextboxDraftText(editor), typed);
+});
+
 // A Slate editor whose paste handler behaves like Discord: the pasted text replaces the content
 // and every line becomes its own block. `onUndo` models Ctrl+Z (Slate history).
 function attachSlateBehaviour(editor, options = {}) {

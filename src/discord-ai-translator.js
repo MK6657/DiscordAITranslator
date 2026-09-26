@@ -10558,8 +10558,10 @@ module.exports = class DiscordAITranslator {
         return this.normalizeExtractedText(left) === this.normalizeExtractedText(right);
     }
 
+    // Only Slate's U+FEFF placeholders are dropped. U+200B is the user's own text (for example
+    // "@\u200beveryone", which does not ping), so the draft, the spoiler and Restore keep it.
     normalizeDraftRawText(text) {
-        return String(text ?? "").replace(/[\u200b\ufeff]/g, "").replace(/\r\n?/g, "\n");
+        return String(text ?? "").replace(/\ufeff/g, "").replace(/\r\n?/g, "\n");
     }
 
     areDraftTextsEqualStrict(left, right) {
