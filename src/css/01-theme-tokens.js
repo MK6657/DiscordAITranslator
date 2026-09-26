@@ -233,6 +233,22 @@ module.exports = `
     background: transparent;
 }
 
+/* Icons in icon buttons (the settings window's and the polish panel's close): an SVG shape painted in the button's
+   text colour, 18 px like the quick panel's icons, instead of a text glyph outside the type scale. */
+.dait-icon {
+    background: currentColor;
+    display: block;
+    flex: 0 0 auto;
+    height: 18px;
+    -webkit-mask: var(--dait-icon-image) center / 18px 18px no-repeat;
+    mask: var(--dait-icon-image) center / 18px 18px no-repeat;
+    width: 18px;
+}
+
+.dait-icon-close {
+    --dait-icon-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M6 6l12 12M18 6L6 18'/%3E%3C/svg%3E");
+}
+
 /* One visible focus ring for every control in these surfaces. */
 .dait-settings :focus-visible,
 .dait-quick-settings-modal-root :focus-visible,

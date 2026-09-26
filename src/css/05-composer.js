@@ -297,7 +297,7 @@ module.exports = `.dait-polish-button,
     font-size: var(--dait-font-body);
     font-weight: 500;
     justify-content: flex-start;
-    line-height: 1.3;
+    line-height: var(--dait-line);
     min-height: var(--dait-control-h);
     padding: 0 12px;
     text-align: left;
@@ -381,10 +381,11 @@ module.exports = `.dait-polish-button,
     min-width: 0;
 }
 
-/* The settings type scale: title 16/600 (a group heading), text and buttons at the body size, 36 px buttons. */
+/* The windows' type scale: the window title (18/600) like the quick panel and the settings window, text and buttons
+   at the body size, 36 px buttons; close is a 36 px icon button with the shared close icon (01-theme-tokens). */
 .dait-polish-result-title {
     color: var(--dait-heading);
-    font-size: var(--dait-font-group);
+    font-size: var(--dait-font-window);
     font-weight: 600;
     line-height: 1.3;
     min-width: 0;
@@ -400,13 +401,11 @@ module.exports = `.dait-polish-button,
     display: inline-flex;
     flex: 0 0 auto;
     font-family: inherit;
-    font-size: 20px;
-    font-weight: 400;
-    height: 28px;
+    height: var(--dait-control-h);
     justify-content: center;
-    line-height: 1;
+    margin: -4px -6px -4px 0;
     padding: 0;
-    width: 28px;
+    width: var(--dait-control-h);
 }
 
 .dait-polish-result-icon:hover {
@@ -450,7 +449,7 @@ module.exports = `.dait-polish-button,
     font-weight: 500;
     height: var(--dait-control-h);
     justify-content: center;
-    line-height: 1;
+    line-height: var(--dait-line);
     padding: 0 14px;
     white-space: nowrap;
 }

@@ -860,17 +860,30 @@ test("one type scale for every window: body 15/1.55, small 13, headings 16/18/20
         const weight = values.get("font-weight");
         if (weight) assert.ok(["400", "500", "600"].includes(weight), `${rule.selector}: font-weight ${weight}`);
         if (!size) return;
-        // Text sizes come from the scale; pixel sizes are only left on icon glyphs.
-        if (/^\d+px$/.test(size)) {
-            assert.ok(/::(before|after)|close|icon|logo|dot/.test(rule.selector) || size === "12px", `${rule.selector}: ${size}`);
-            return;
-        }
+        // Every text size comes from the scale: icons are drawn shapes, not glyphs with a pixel size of their own.
         assert.match(size, /^var\(--dait-font-(body|small|group|window|page)\)$/, rule.selector);
         if (size === "var(--dait-font-small)") smallUsers.push(rule.selector);
     });
-    // Small text only for the version chip, the search box's hint and status badges next to a title.
-    smallUsers.forEach(selector => assert.match(selector, /version|qp-chip|search-input::placeholder|search-result-tab|header-status|provider-connection|setup-progress/, selector));
-    assert.ok(smallUsers.some(selector => selector.includes("search-input::placeholder")), "the search box's hint is small");
+    // Small text only for the version chips and the search box's hint. The header status, the connection card's
+    // status and test details, the search results' tab chips and the setup progress are body text (theme audit).
+    assert.deepEqual(smallUsers.sort(), [".dait-qp-chip", ".dait-settings .dait-settings-search-input::placeholder", ".dait-settings-version"]);
+    const bodyRule = selector => declarations(cssRules().find(item => item.selector === selector && !item.context)?.body || "");
+    for (const selector of [".dait-settings-header-status", ".dait-settings .dait-api-status", ".dait-settings .dait-api-test-detail",
+        ".dait-settings-search-result-tab", ".dait-setup-progress"]) {
+        assert.equal(bodyRule(selector).get("font-size"), "var(--dait-font-body)", selector);
+    }
+    assert.equal(bodyRule(".dait-settings .dait-api-status").get("font-weight"), "500", "status word");
+    assert.equal(bodyRule(".dait-settings .dait-api-test-detail").get("font-weight"), "400", "test details");
+    assert.equal(bodyRule(".dait-settings-header-status").get("font-weight"), "400", "the service name next to the status word");
+    assert.equal(bodyRule(".dait-setup-progress").get("font-weight"), "400");
+    // Window titles: settings window, quick panel, polish result panel.
+    for (const selector of [".dait-settings-title", ".dait-qp-title", ".dait-polish-result-title"]) {
+        assert.equal(bodyRule(selector).get("font-size"), "var(--dait-font-window)", selector);
+    }
+    // The "!" marks are drawn with the fill colours, not typed.
+    for (const rule of cssRules().filter(item => /::(before|after)/.test(item.selector) && WINDOW_PARTS.test(item.selector))) {
+        assert.equal(/content: "!"/.test(rule.body), false, rule.selector);
+    }
     // Labels and descriptions share size and colour; the label's weight sets them apart.
     const rule = selector => declarations(cssRules().find(item => item.selector === selector && !item.context)?.body || "");
     for (const [label, description] of [[".dait-row-label", ".dait-row-description"], [".dait-qp-label", ".dait-qp-desc"]]) {
@@ -893,4 +906,56 @@ test("disabled controls fade as a whole to 55 % instead of turning a dim grey", 
         assert.equal(values.has("color"), false, `${rule.selector} keeps its colour`);
         assert.equal(values.has("-webkit-text-fill-color"), false, rule.selector);
     });
+});
+
+// --- Theme audit, round 1 ---
+
+test("the connection card: title, status word and Test on one line, the test details or error on their own line at the body size", t => {
+    const rule = selector => declarations(cssRules().find(item => item.selector === selector && !item.context)?.body || "");
+    const header = rule(".dait-provider-settings-header");
+    assert.equal(header.get("display"), "grid");
+    assert.match(header.get("grid-template-areas"), /"title status test"\s+"detail detail detail"/);
+    assert.equal(rule(".dait-provider-connection").get("display"), "contents");
+    const detail = rule(".dait-settings .dait-provider-connection > .dait-api-test-detail");
+    assert.equal(detail.get("grid-area"), "detail");
+    assert.equal(detail.get("white-space"), "normal", "wraps instead of an ellipsis");
+    // No width cap and no small size left on the card's status.
+    assert.equal(cssRules().some(item => /provider-connection[^,{]*api-test-detail/.test(item.selector) && /max-width/.test(item.body)), false);
+    assert.equal(cssRules().some(item => /provider-connection/.test(item.selector) && /font-small/.test(item.body)), false);
+
+    const { plugin, doc } = createPlugin(t, { discord: "theme-light", tab: "translate" });
+    plugin.settings.translation.apiStatus = { state: "failed", message: "The service rejected the API key (401)." };
+    const panel = plugin.getSettingsPanel({ quickSettings: true });
+    doc.body.appendChild(panel);
+    const card = panel.querySelector(".dait-provider-settings-header");
+    const connection = card.querySelector(".dait-provider-connection");
+    assert.deepEqual(connection.children.map(child => child.className.split(" ")[0]), ["dait-api-status", "dait-api-test-detail", "dait-small-button"]);
+    plugin.destroySettingsModalSizing(panel);
+});
+
+test("close buttons are 36 px icon buttons with a drawn icon, not a × glyph", t => {
+    const { plugin, doc } = createPlugin(t, { discord: "theme-dark" });
+    const panel = plugin.getSettingsPanel({ quickSettings: true });
+    doc.body.appendChild(panel);
+    const close = panel.querySelector(".dait-settings-close");
+    assert.equal(close.textContent, "");
+    assert.equal(close.getAttribute("aria-label"), plugin.t("settingsClose"));
+    assert.equal(close.children[0].className, "dait-icon dait-icon-close");
+    const rule = selector => declarations(cssRules().find(item => item.selector === selector && !item.context)?.body || "");
+    assert.equal(rule(".dait-settings-close").get("height"), "var(--dait-control-h)");
+    assert.equal(rule(".dait-settings-close").has("font-size"), false);
+    assert.match(rule(".dait-icon").get("mask"), /var\(--dait-icon-image\)/);
+    assert.match(rule(".dait-icon-close").get("--dait-icon-image"), /^url\("data:image\/svg\+xml,/);
+    plugin.destroySettingsModalSizing(panel);
+});
+
+test("controls and single-line text use the body line height too", () => {
+    const rule = selector => declarations(cssRules().find(item => item.selector === selector && !item.context)?.body || "");
+    for (const selector of [".dait-small-button", ".dait-segmented-option", ".dait-settings-tab", ".dait-settings .dait-api-status",
+        ".dait-status-mark", ".dait-diagnostic-summary-title", ".dait-qp-button", ".dait-qp-select", ".dait-qp-segment",
+        ".dait-polish-result-action", ".dait-input-action-menu-item", ".dait-quick-settings-done", ".dait-prompt-preview-label"]) {
+        assert.equal(rule(selector).get("line-height"), "var(--dait-line)", selector);
+    }
+    const controls = cssRules().find(item => item.selector.startsWith(".dait-settings :where(input:not([type=\"checkbox\"]):not([type=\"radio\"]), select, textarea)") && !item.context);
+    assert.equal(declarations(controls.body).get("line-height"), "var(--dait-line)");
 });

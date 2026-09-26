@@ -92,7 +92,7 @@ module.exports = `.dait-quick-settings-modal-root {
     font-size: var(--dait-font-body);
     font-weight: 500;
     height: var(--dait-control-h);
-    line-height: 1;
+    line-height: var(--dait-line);
     padding: 0 14px;
 }
 

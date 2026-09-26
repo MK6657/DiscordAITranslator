@@ -227,7 +227,7 @@ module.exports = `
     font-weight: 500;
     height: var(--dait-control-h);
     justify-content: center;
-    line-height: 1;
+    line-height: var(--dait-line);
     min-width: 60px;
     padding: 0 14px;
     white-space: nowrap;
@@ -382,7 +382,7 @@ label.dait-qp-label {
     font-size: var(--dait-font-body);
     height: var(--dait-control-h);
     justify-self: end;
-    line-height: 1.2;
+    line-height: var(--dait-line);
     min-width: 0;
     padding: 0 30px 0 10px;
 }
@@ -422,11 +422,11 @@ label.dait-qp-label {
     font-family: inherit;
     font-size: var(--dait-font-body);
     font-weight: 500;
-    line-height: 1.25;
+    line-height: var(--dait-line);
     min-height: 30px;
     min-width: 0;
     overflow: hidden;
-    padding: 4px;
+    padding: 0 4px;
     text-align: center;
     text-overflow: ellipsis;
     /* One line, like the other segments ("Follow main" fits in a third of the panel). */

@@ -126,9 +126,9 @@ module.exports = `
     font-size: var(--dait-font-body);
     font-weight: 400;
     height: var(--dait-control-h);
-    line-height: 22px;
+    line-height: var(--dait-line);
     min-height: var(--dait-control-h);
-    padding: 6px 10px;
+    padding: 0 10px;
 }
 
 /* The chevron (two gradient layers) keeps the positions from the settings stylesheet. */
@@ -169,7 +169,7 @@ module.exports = `
     color: var(--dait-text);
     font-size: var(--dait-font-body);
     font-weight: 600;
-    line-height: 1.4;
+    line-height: var(--dait-line);
 }
 
 .dait-prompt-preview {

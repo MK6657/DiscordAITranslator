@@ -1736,13 +1736,21 @@ module.exports = class DiscordAITranslator {
         close.className = "dait-settings-close";
         close.title = this.t("settingsClose");
         close.setAttribute("aria-label", this.t("settingsClose"));
-        close.textContent = "×";
+        close.appendChild(this.createWindowIcon("close"));
         close.addEventListener("click", event => {
             event?.preventDefault?.();
             this.closeSettingsWindow(close);
         });
         header.appendChild(close);
         return header;
+    }
+
+    // An icon for an icon button in a plugin window (css/01-theme-tokens .dait-icon); the button carries the label.
+    createWindowIcon(name) {
+        const icon = document.createElement("span");
+        icon.className = `dait-icon dait-icon-${name}`;
+        icon.setAttribute("aria-hidden", "true");
+        return icon;
     }
 
     createSettingsHero(options = {}) {
@@ -12862,7 +12870,7 @@ module.exports = class DiscordAITranslator {
         const close = document.createElement("button");
         close.className = "dait-polish-result-icon";
         close.type = "button";
-        close.textContent = "×";
+        close.appendChild(this.createWindowIcon("close"));
         close.title = this.t("polishResultClose");
         close.setAttribute("aria-label", this.t("polishResultClose"));
         close.addEventListener("click", event => {

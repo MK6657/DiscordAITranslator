@@ -92,14 +92,16 @@ module.exports = `.dait-settings {
     padding: 1px 8px;
 }
 
-/* A status badge next to the window title: the small size. */
+/* The translation status next to the window title: one size for the whole line, the status word at 500 and the
+   service at 400. */
 .dait-settings-header-status {
     align-items: center;
     color: var(--dait-text);
     display: inline-flex;
-    font-size: var(--dait-font-small);
-    font-weight: 500;
+    font-size: var(--dait-font-body);
+    font-weight: 400;
     gap: var(--dait-space-2);
+    line-height: var(--dait-line);
     margin-left: auto;
     min-width: 0;
 }
@@ -117,6 +119,7 @@ module.exports = `.dait-settings {
     white-space: nowrap;
 }
 
+/* Close: a 36 px icon button with the shared close icon (01-theme-tokens), like the quick panel's. */
 .dait-settings-close {
     align-items: center;
     background: transparent;
@@ -126,12 +129,10 @@ module.exports = `.dait-settings {
     cursor: pointer;
     display: inline-flex;
     flex: 0 0 auto;
-    font-size: 24px;
-    font-weight: 400;
-    height: 36px;
+    height: var(--dait-control-h);
     justify-content: center;
-    line-height: 1;
-    width: 36px;
+    padding: 0;
+    width: var(--dait-control-h);
 }
 
 .dait-settings-close:hover {
@@ -146,8 +147,9 @@ module.exports = `.dait-settings {
     color: var(--dait-text);
     display: inline-flex;
     font-size: var(--dait-font-body);
+    font-weight: 500;
     gap: 6px;
-    line-height: 1.3;
+    line-height: var(--dait-line);
     white-space: nowrap;
 }
 
@@ -178,19 +180,15 @@ module.exports = `.dait-settings {
     color: var(--dait-danger);
 }
 
+/* The "!" is drawn (a bar and a dot), not a text glyph outside the type scale. */
 .dait-settings .dait-api-status.dait-api-status-failed::before,
 .dait-settings .dait-api-status.dait-api-status-unconfigured::before {
-    align-items: center;
-    background: var(--dait-danger-fill);
+    background:
+        linear-gradient(var(--dait-on-fill), var(--dait-on-fill)) 50% 3px / 2px 5px no-repeat,
+        linear-gradient(var(--dait-on-fill), var(--dait-on-fill)) 50% 9px / 2px 2px no-repeat,
+        var(--dait-danger-fill);
     border-radius: var(--dait-radius-pill);
-    color: var(--dait-on-fill);
-    content: "!";
-    display: inline-flex;
-    font-size: 12px;
-    font-weight: 600;
     height: 14px;
-    justify-content: center;
-    line-height: 1;
     width: 14px;
 }
 
@@ -260,9 +258,9 @@ module.exports = `.dait-settings {
     cursor: pointer;
     font-size: var(--dait-font-body);
     font-weight: 500;
-    line-height: 1.3;
+    line-height: var(--dait-line);
     min-height: 38px;
-    padding: 8px 10px;
+    padding: 7px 10px;
     text-align: left;
     width: 100%;
 }
@@ -434,7 +432,7 @@ module.exports = `.dait-settings {
     color: var(--dait-text);
     font-size: var(--dait-font-body);
     font-weight: 400;
-    line-height: 22px;
+    line-height: var(--dait-line);
     max-width: 100%;
     min-width: 0;
     outline: none;
@@ -567,7 +565,7 @@ module.exports = `.dait-settings {
     font-family: inherit;
     font-size: var(--dait-font-body);
     font-weight: 500;
-    line-height: 1;
+    line-height: var(--dait-line);
     min-width: 0;
     overflow: hidden;
     padding: 0 6px;
@@ -606,7 +604,7 @@ module.exports = `.dait-settings {
     font-weight: 500;
     height: var(--dait-control-h);
     justify-content: center;
-    line-height: 1;
+    line-height: var(--dait-line);
     padding: 0 14px;
     white-space: nowrap;
 }
@@ -785,14 +783,17 @@ module.exports = `.dait-settings {
     padding: 0 var(--dait-space-4);
 }
 
-/* Title and connection status share one line; the test details shorten with an ellipsis before the line wraps
-   (it wraps in a narrow panel, and when an error needs the whole width). */
+/* Title, status word and Test share the first line; the last test's details ("Hy-MT2 · 820 ms · just now") or its
+   error take their own full-width line under them, at the body size, and wrap instead of being cut off. */
 .dait-provider-settings-header {
     align-items: center;
     border-bottom: 1px solid var(--dait-divider);
-    display: flex;
-    flex-wrap: nowrap;
-    gap: var(--dait-space-2) var(--dait-space-3);
+    column-gap: var(--dait-space-3);
+    display: grid;
+    grid-template-areas:
+        "title status test"
+        "detail detail detail";
+    grid-template-columns: minmax(0, 1fr) auto auto;
     min-height: 60px;
     min-width: 0;
     padding: 12px 0;
@@ -800,34 +801,36 @@ module.exports = `.dait-settings {
 
 .dait-provider-settings-title {
     color: var(--dait-heading);
-    flex: 0 0 auto;
     font-size: var(--dait-font-group);
     font-weight: 600;
+    grid-area: title;
     line-height: 1.3;
     min-width: 0;
     overflow-wrap: anywhere;
 }
 
-/* The connection status next to the card title: the small size. */
+/* The status badge, the details and Test are placed in the card header's grid. */
 .dait-provider-connection {
-    align-items: center;
-    display: inline-flex;
-    flex: 1 1 auto;
-    gap: var(--dait-space-2);
-    justify-content: flex-end;
-    margin-left: auto;
-    max-width: 100%;
-    min-width: 0;
+    display: contents;
 }
 
-.dait-settings .dait-provider-connection .dait-api-status,
-.dait-settings .dait-provider-connection .dait-api-test-detail {
-    font-size: var(--dait-font-small);
-    font-weight: 500;
+.dait-provider-connection > .dait-api-status {
+    grid-area: status;
+    justify-self: end;
 }
 
 .dait-provider-connection > .dait-small-button {
-    margin-left: var(--dait-space-1);
+    grid-area: test;
+}
+
+.dait-settings .dait-provider-connection > .dait-api-test-detail {
+    grid-area: detail;
+    margin-top: var(--dait-space-1);
+    white-space: normal;
+}
+
+.dait-settings .dait-provider-connection > .dait-api-test-detail::before {
+    content: none;
 }
 
 .dait-provider-settings-block > .dait-settings-details:last-child,
@@ -877,7 +880,7 @@ module.exports = `.dait-settings {
     color: var(--dait-text);
     font-size: var(--dait-font-body);
     font-weight: 600;
-    line-height: 1.3;
+    line-height: var(--dait-line);
 }
 
 .dait-diagnostic-summary-chips {
@@ -894,10 +897,10 @@ module.exports = `.dait-settings {
     color: var(--dait-text);
     font-size: var(--dait-font-body);
     font-weight: 400;
-    line-height: 1.4;
+    line-height: var(--dait-line);
     max-width: 100%;
     overflow-wrap: anywhere;
-    padding: 3px 10px;
+    padding: 2px 10px;
 }
 
 .dait-diagnostic-summary-empty {
@@ -941,12 +944,13 @@ module.exports = `.dait-settings {
     line-height: 1.3;
 }
 
-/* The progress badge next to the card title: the small size. */
+/* The progress sentence: body text on its own line under the card title. */
 .dait-setup-progress {
     color: var(--dait-text);
-    font-size: var(--dait-font-small);
-    font-weight: 500;
-    line-height: 1.4;
+    flex-basis: 100%;
+    font-size: var(--dait-font-body);
+    font-weight: 400;
+    line-height: var(--dait-line);
 }
 
 .dait-setup-list {
@@ -1004,16 +1008,12 @@ module.exports = `.dait-settings {
 }
 
 .dait-setup-item-error .dait-setup-icon::after {
-    color: var(--dait-on-fill);
-    content: "!";
-    font-size: 12px;
-    font-weight: 600;
-    left: 0;
-    line-height: 18px;
+    background:
+        linear-gradient(var(--dait-on-fill), var(--dait-on-fill)) 50% 4px / 2px 6px no-repeat,
+        linear-gradient(var(--dait-on-fill), var(--dait-on-fill)) 50% 12px / 2px 2px no-repeat;
+    content: "";
+    inset: 0;
     position: absolute;
-    right: 0;
-    text-align: center;
-    top: 0;
 }
 
 .dait-setup-item-off .dait-setup-icon::after {
@@ -1118,7 +1118,7 @@ module.exports = `.dait-settings {
     display: inline-flex;
     font-size: var(--dait-font-body);
     gap: 6px;
-    line-height: 1.3;
+    line-height: var(--dait-line);
     min-width: 0;
 }
 
@@ -1136,17 +1136,12 @@ module.exports = `.dait-settings {
 }
 
 .dait-status-mark-needs::before {
-    align-items: center;
-    background: var(--dait-danger-fill);
+    background:
+        linear-gradient(var(--dait-on-fill), var(--dait-on-fill)) 50% 3px / 2px 5px no-repeat,
+        linear-gradient(var(--dait-on-fill), var(--dait-on-fill)) 50% 9px / 2px 2px no-repeat,
+        var(--dait-danger-fill);
     border-radius: var(--dait-radius-pill);
-    color: var(--dait-on-fill);
-    content: "!";
-    display: inline-flex;
-    font-size: 12px;
-    font-weight: 600;
     height: 14px;
-    justify-content: center;
-    line-height: 1;
     width: 14px;
 }
 
@@ -1154,7 +1149,8 @@ module.exports = `.dait-settings {
 .dait-settings .dait-api-test-detail {
     color: var(--dait-text);
     font-size: var(--dait-font-body);
-    line-height: 1.3;
+    font-weight: 400;
+    line-height: var(--dait-line);
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1171,33 +1167,9 @@ module.exports = `.dait-settings {
     display: none;
 }
 
-.dait-provider-connection .dait-api-test-detail {
-    max-width: 260px;
-}
-
 /* An error is worth reading in full: it wraps instead of being cut off. */
 .dait-settings .dait-api-test-detail[data-dait-for="failed"] {
     white-space: normal;
-}
-
-.dait-provider-connection .dait-api-test-detail[data-dait-for="failed"] {
-    max-width: 300px;
-}
-
-/* With an error to read, the status takes its own full-width line under the card title. */
-.dait-provider-settings-header:has(.dait-api-status-failed + .dait-api-test-detail[data-dait-for="failed"]:not([hidden])) {
-    flex-wrap: wrap;
-}
-
-.dait-provider-settings-header:has(.dait-api-status-failed + .dait-api-test-detail[data-dait-for="failed"]:not([hidden])) > .dait-provider-connection {
-    flex-basis: 100%;
-    justify-content: flex-start;
-    margin-left: 0;
-}
-
-.dait-provider-settings-header:has(.dait-api-status-failed + .dait-api-test-detail[data-dait-for="failed"]:not([hidden])) .dait-api-test-detail {
-    flex: 1 1 auto;
-    max-width: none;
 }
 
 /* Model field (Sakura local, OpenAI-compatible): name + "Detect models", the picker below. */
@@ -1379,15 +1351,16 @@ module.exports = `.dait-settings {
     min-width: 0;
 }
 
-/* The tab a result is on, a badge next to its title: the small size. */
+/* The tab a result is on, a chip next to its title: body text like the rest of the result. */
 .dait-settings-search-result-tab {
     background: var(--dait-raised);
     border-radius: var(--dait-radius-pill);
     color: var(--dait-text);
-    font-size: var(--dait-font-small);
-    font-weight: 500;
+    font-size: var(--dait-font-body);
+    font-weight: 400;
     grid-area: tab;
-    padding: 2px 8px;
+    line-height: var(--dait-line);
+    padding: 0 10px;
     white-space: nowrap;
 }
 
@@ -1489,19 +1462,6 @@ module.exports = `.dait-settings {
 
     .dait-service-cards {
         grid-template-columns: minmax(0, 1fr);
-    }
-
-    .dait-provider-settings-header {
-        flex-wrap: wrap;
-    }
-
-    .dait-provider-settings-title {
-        flex: 1 1 auto;
-    }
-
-    .dait-provider-connection {
-        justify-content: flex-start;
-        margin-left: 0;
     }
 }
 `;
