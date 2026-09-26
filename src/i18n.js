@@ -452,7 +452,7 @@ const I18N = {
         autoTranslatePrefetchRange: "Prefetch range",
         autoTranslatePrefetchRangeDesc: "How many messages above and below the screen to prefetch.",
         autoTranslateConcurrency: "Auto-translation concurrency",
-        autoTranslateConcurrencyDesc: "Translation requests at once. Default {default}, range {min}-{max}.",
+        autoTranslateConcurrencyDesc: "How many translation requests run at once: default {default}, range {min}-{max}.",
         autoTranslateStrictRetry: "Retry strictly when the output language is wrong",
         autoTranslateStrictRetryDesc: "Retries failed parts, then one message at a time, before showing Retry.",
         showAutoTranslateWarnings: "Show failures under messages",
@@ -520,7 +520,7 @@ const I18N = {
         translationTextScaleDesc: "Relative to the chat text size.",
         translationTag: "TR",
         hideOriginalAfterTranslation: "Mask original text after translation",
-        hideOriginalAfterTranslationDesc: "Turns the original into a gray bar; hover or focus to read it. Only you see this.",
+        hideOriginalAfterTranslationDesc: "Shows the original as a gray bar until you hover or focus it; only you see this.",
         showContextMenu: "Show Translate action in message right-click menus",
         showContextMenuDesc: "Adds Translate to the message right-click menu.",
         enableHotkey: "Enable input polishing hotkey",
@@ -844,7 +844,7 @@ Object.assign(I18N.en, {
     providerFallbackEnabled: "Use backup services when manual translation fails",
     providerFallbackEnabledDesc: "Only for manual translation and public bilingual; local services never use the cloud.",
     providerFallbackOrder: "Backup service order",
-    providerFallbackOrderDesc: "Separate with commas or new lines. Available: {providers}."
+    providerFallbackOrderDesc: "Separate with commas or new lines; available: {providers}."
 });
 
 Object.assign(I18N["zh-CN"], {

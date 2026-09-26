@@ -207,6 +207,11 @@ test("row descriptions stay within the one-sentence length budget", () => {
         const en = enLength(I18N.en[key]);
         if (zh > DESCRIPTION_BUDGET.zh) over.push(`zh.${key} (${zh})`);
         if (en > DESCRIPTION_BUDGET.en) over.push(`en.${key} (${en})`);
+        // One sentence: at most one sentence end ("e.g." is not one).
+        const zhEnds = (String(I18N["zh-CN"][key]).match(/[。！？]/g) || []).length;
+        const enEnds = (String(I18N.en[key]).replace(/\be\.g\./g, "eg").match(/[.!?](\s|$)/g) || []).length;
+        if (zhEnds > 1) over.push(`zh.${key} (${zhEnds} sentences)`);
+        if (enEnds > 1) over.push(`en.${key} (${enEnds} sentences)`);
     }
     assert.deepEqual(over, []);
     // The language row appends the custom-language hint; the pair stays one short line as well.
