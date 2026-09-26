@@ -477,6 +477,96 @@ test("a failed write is not rolled back over the user's new input", async t => {
     assert.equal(plugin.getTextboxDraftText(editor), "draft typed by user");
 });
 
+// CMP-R3: the user types right after the paste landed, before the 120 ms settle check ends.
+function typeRightAfterPaste(editor, typed = "!") {
+    return text => setImmediate(() => {
+        renderSlateLines(editor, `${text}${typed}`);
+        editor.dispatchEvent({ type: "input", isTrusted: true, inputType: "insertText", data: typed });
+    });
+}
+
+test("a write that landed before the user typed on counts as written; a newer write still cancels it", async t => {
+    const browser = useComposerBrowser(t);
+    const plugin = new Plugin();
+    const editor = createSlateEditor(["draft"]);
+    browser.document.activeElement = editor;
+    const behaviour = attachSlateBehaviour(editor, { initialText: "draft", afterPaste: typeRightAfterPaste(editor) });
+    const token = plugin.composerWriter.beginWrite(editor, "draft");
+    const result = await plugin.replaceTextboxTextSafelyAsync(editor, "polished", { expectedPreviousText: "draft", writeToken: token });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(result.userEditedAfter, true);
+    assert.equal(token.reason, "user-input");
+    assert.deepEqual(behaviour.events, ["paste"], "nothing is undone or re-inserted under the user's typing");
+    assert.equal(plugin.getTextboxDraftText(editor), "polished!");
+
+    const superseded = createSlateEditor(["draft"]);
+    browser.document.activeElement = superseded;
+    const newerToken = { current: null };
+    attachSlateBehaviour(superseded, {
+        initialText: "draft",
+        afterPaste: () => setImmediate(() => { newerToken.current = plugin.composerWriter.beginWrite(superseded, "polished"); })
+    });
+    const oldToken = plugin.composerWriter.beginWrite(superseded, "draft");
+    const cancelled = await plugin.replaceTextboxTextSafelyAsync(superseded, "polished", { expectedPreviousText: "draft", writeToken: oldToken });
+    assert.equal(cancelled.ok, false);
+    assert.equal(cancelled.reason, "write-cancelled");
+    plugin.composerWriter.finishWriteToken(newerToken.current);
+});
+
+test("typing right after a bilingual write landed shows no 'not inserted' notice and records the session", async t => {
+    const browser = useComposerBrowser(t);
+    const plugin = new Plugin();
+    const editor = createSlateEditor(["你好"]);
+    browser.document.activeElement = editor;
+    plugin.isInvalidAutoTranslationOutput = () => false;
+    plugin.runModelTask = async () => "Hello";
+    const toasts = [];
+    plugin.showToast = (text, type) => toasts.push({ text, type });
+    const panels = [];
+    plugin.showPolishResultPanel = (_box, text) => panels.push(text);
+    attachSlateBehaviour(editor, { initialText: "你好", afterPaste: typeRightAfterPaste(editor) });
+
+    const result = await plugin.publicBilingualCurrentDraft(null, { textbox: editor });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(result.wrote, true);
+    assert.equal(plugin.getTextboxDraftText(editor), "Hello\n\n||你好||!");
+    assert.deepEqual(toasts, []);
+    assert.deepEqual(panels, []);
+    assert.equal(plugin.polishSession.lastBilingualRawText, "Hello\n\n||你好||");
+    assert.equal(plugin.polishSession.lastBilingualSourceRawText, "你好");
+});
+
+test("typing right after a polish write landed records it and does not chain bilingual or send", async t => {
+    const browser = useComposerBrowser(t);
+    const plugin = new Plugin();
+    const editor = createSlateEditor(["draft"]);
+    browser.document.activeElement = editor;
+    plugin.settings.ui.publicBilingualAfterPolish = true;
+    plugin.settings.polish.afterAction = "confirmSend";
+    plugin.runModelTask = async () => "polished";
+    const followUps = [];
+    plugin.publicBilingualCurrentDraft = async () => {
+        followUps.push("bilingual");
+        return { ok: false, wrote: false };
+    };
+    browser.window.confirm = () => {
+        followUps.push("confirm-send");
+        return false;
+    };
+    const panels = [];
+    plugin.showPolishResultPanel = (_box, text) => panels.push(text);
+    const toasts = [];
+    plugin.showToast = (text, type) => toasts.push({ text, type });
+    attachSlateBehaviour(editor, { initialText: "draft", afterPaste: typeRightAfterPaste(editor) });
+
+    await plugin.polishCurrentDraft(null, { textbox: editor });
+    assert.deepEqual(followUps, [], "bilingual-after-polish and confirm-send do not run over the user's typing");
+    assert.deepEqual(toasts, []);
+    assert.deepEqual(panels, []);
+    assert.equal(plugin.getTextboxDraftText(editor), "polished!");
+    assert.equal(plugin.polishSession.lastWrittenRawText, "polished");
+});
+
 test("an ignored paste on a draft with trailing spaces sends no undo", async t => {
     const browser = useComposerBrowser(t);
     const plugin = new Plugin();

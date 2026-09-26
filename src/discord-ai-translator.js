@@ -11243,6 +11243,8 @@ module.exports = class DiscordAITranslator {
                 sourceHash: this.getStrongTextFingerprint(sourceText),
                 ms: Date.now() - startedAt
             });
+            // The user typed on right after the result landed: no follow-up step runs over their typing.
+            if (writeResult.userEditedAfter) return;
             if (this.isPublicBilingualAfterPolishEnabled()) {
                 const bilingualResult = await this.publicBilingualCurrentDraft(button, { skipAutoPolish: true });
                 if (!this.isLifecycleTokenCurrent(lifecycleToken)) return;
@@ -11550,7 +11552,7 @@ module.exports = class DiscordAITranslator {
                 expectedPreviousText: currentText,
                 writeToken
             });
-            if (result.ok && this.composerWriter.isWriteTokenCurrent(writeToken)) {
+            if (result.ok && (result.userEditedAfter || this.composerWriter.isWriteTokenCurrent(writeToken))) {
                 // The draft is the original again: nothing is left to restore, and the original must not
                 // count as already polished for the next bilingual-with-polish run.
                 session.lastWrittenText = "";
@@ -14258,8 +14260,13 @@ module.exports = class DiscordAITranslator {
         }
         const previousRawText = this.getTextboxRawTextSafe(textbox);
         // Shared by the write attempt and the rollback so the draft is undone at most once.
-        const writeOptions = { ...options, rollback: { undoAttempted: false } };
+        const writeOptions = { ...options, rollback: { undoAttempted: false }, writeState: { userEditedAfter: false } };
         const failAfterAttempt = async () => {
+            // The value was in the composer before the user typed on: the write happened. Nothing is
+            // undone or re-selected under the user's typing, and the caller records it as written.
+            if (writeOptions.writeState.userEditedAfter) {
+                return { ok: true, method: "written-then-edited", userEditedAfter: true, actual: this.getTextboxTextSafe(textbox) };
+            }
             // Never roll back over the user's new input, a newer write, or a remounted composer.
             if (!this.isTextboxReplacementWriteAllowed(textbox, writeOptions)) {
                 return { ok: false, reason: "write-cancelled", actual: this.getTextboxTextSafe(textbox) };
@@ -14466,9 +14473,15 @@ module.exports = class DiscordAITranslator {
             if (!await this.prepareTextboxFullReplacementSelection(textbox, previousText)) return false;
             attempt();
             if (!this.isTextboxReplacementWriteAllowed(textbox, options)) return false;
-            if (await this.waitForTextboxStableTextEqual(textbox, value)) {
-                return this.isTextboxReplacementWriteAllowed(textbox, options);
+            const observed = { equal: false };
+            const stable = await this.waitForTextboxStableTextEqual(textbox, value, observed);
+            if (stable && this.isTextboxReplacementWriteAllowed(textbox, options)) return true;
+            // The value landed and the user's own input came before the settle check ended.
+            if (observed.equal && this.isComposerWriteTakenOverByUser(textbox, options)) {
+                if (options.writeState) options.writeState.userEditedAfter = true;
+                return false;
             }
+            if (stable) return false;
 
             // Raw against raw: a normalized read never equals a draft with double or trailing spaces.
             const actual = this.getTextboxRawTextSafe(textbox);
@@ -14690,10 +14703,18 @@ module.exports = class DiscordAITranslator {
         return false;
     }
 
-    async waitForTextboxStableTextEqual(textbox, text) {
+    // `observed.equal` is set once the text was seen equal, even if it changes before it settles.
+    async waitForTextboxStableTextEqual(textbox, text, observed = null) {
         if (!await this.waitForTextboxTextEqual(textbox, text)) return false;
+        if (observed) observed.equal = true;
         await this.waitForTextboxSettle(120);
         return this.isTextboxTextEqual(textbox, text);
+    }
+
+    // The write token was cancelled by the user's own input (not a newer write or a remount).
+    isComposerWriteTakenOverByUser(textbox, options = {}) {
+        const token = options.writeToken;
+        return Boolean(textbox && textbox.isConnected !== false && token?.cancelled && token.reason === "user-input");
     }
 
     async waitForTextboxEmpty(textbox) {
