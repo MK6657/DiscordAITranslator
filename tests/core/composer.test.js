@@ -360,12 +360,55 @@ test("composer reader maps mentions, emoji and quotes to what Discord would send
     assert.equal(plugin.getTextboxDraftText(createSlateEditor([quote, "reply"])), "> quoted line\nreply");
 });
 
+// CMP-R6: Discord's blockQuote element text has no marker, so text that itself starts with ">" is content.
+test("a quoted line whose text starts with '>' keeps its quote marker", t => {
+    useComposerBrowser(t);
+    const plugin = new Plugin();
+    const quoteLine = text => {
+        const line = slateLine(text);
+        line["__reactFiber$test"] = { memoizedProps: { element: { type: "blockQuote", children: [{ text }] } } };
+        return line;
+    };
+    assert.equal(plugin.getTextboxDraftText(createSlateEditor([quoteLine(">_< so cute"), "reply"])), "> >_< so cute\nreply");
+    assert.equal(plugin.getTextboxDraftText(createSlateEditor([quoteLine(">>> x")])), "> >>> x");
+    assert.equal(plugin.getTextboxDraftText(createSlateEditor([">_< not quoted"])), ">_< not quoted", "an unquoted line is read as typed");
+});
+
 test("a plain contenteditable keeps block and <br> line breaks", t => {
     useComposerBrowser(t);
     const plugin = new Plugin();
     const editor = h("div", { role: "textbox", contenteditable: "true" },
         h("div", {}, "a"), h("div", {}, h("br")), h("div", {}, "b", h("br"), "c"));
     assert.equal(plugin.getTextboxRawTextSafe(editor), "a\n\nb\nc");
+});
+
+// CMP-R2: a zero-width space the user typed ("@\u200beveryone" does not ping) is part of the draft.
+test("the reader keeps the user's zero-width spaces through Polish, the bilingual spoiler and Restore original", async t => {
+    const browser = useComposerBrowser(t);
+    const plugin = new Plugin();
+    const typed = "@\u200beveryone meeting moved";
+    const editor = createSlateEditor([typed]);
+    browser.document.activeElement = editor;
+    assert.equal(plugin.getTextboxDraftText(editor), typed);
+    assert.equal(plugin.formatPublicBilingualMessage("Meeting moved", typed), `Meeting moved\n\n||${typed}||`);
+
+    const pasted = [];
+    attachSlateBehaviour(editor, { initialText: typed, afterPaste: text => pasted.push(text) });
+    const requests = [];
+    plugin.runModelTask = async (kind, input) => {
+        requests.push(input);
+        return "The meeting has moved.";
+    };
+    plugin.showRestoreOriginalControl = () => {};
+    plugin.injectInputButtons = () => {};
+    await plugin.polishCurrentDraft(null, { textbox: editor });
+    assert.deepEqual(requests, [typed], "the model gets the draft as typed");
+    assert.equal(plugin.getTextboxDraftText(editor), "The meeting has moved.");
+    assert.equal(plugin.polishSession.originalRawText, typed);
+
+    assert.equal(await plugin.restorePolishOriginal(editor, plugin.polishSession), true);
+    assert.equal(pasted[pasted.length - 1], typed, "Restore original pastes exactly what was typed");
+    assert.equal(plugin.getTextboxDraftText(editor), typed);
 });
 
 // A Slate editor whose paste handler behaves like Discord: the pasted text replaces the content
@@ -448,6 +491,96 @@ test("a failed write is not rolled back over the user's new input", async t => {
     assert.equal(plugin.getTextboxDraftText(editor), "draft typed by user");
 });
 
+// CMP-R3: the user types right after the paste landed, before the 120 ms settle check ends.
+function typeRightAfterPaste(editor, typed = "!") {
+    return text => setImmediate(() => {
+        renderSlateLines(editor, `${text}${typed}`);
+        editor.dispatchEvent({ type: "input", isTrusted: true, inputType: "insertText", data: typed });
+    });
+}
+
+test("a write that landed before the user typed on counts as written; a newer write still cancels it", async t => {
+    const browser = useComposerBrowser(t);
+    const plugin = new Plugin();
+    const editor = createSlateEditor(["draft"]);
+    browser.document.activeElement = editor;
+    const behaviour = attachSlateBehaviour(editor, { initialText: "draft", afterPaste: typeRightAfterPaste(editor) });
+    const token = plugin.composerWriter.beginWrite(editor, "draft");
+    const result = await plugin.replaceTextboxTextSafelyAsync(editor, "polished", { expectedPreviousText: "draft", writeToken: token });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(result.userEditedAfter, true);
+    assert.equal(token.reason, "user-input");
+    assert.deepEqual(behaviour.events, ["paste"], "nothing is undone or re-inserted under the user's typing");
+    assert.equal(plugin.getTextboxDraftText(editor), "polished!");
+
+    const superseded = createSlateEditor(["draft"]);
+    browser.document.activeElement = superseded;
+    const newerToken = { current: null };
+    attachSlateBehaviour(superseded, {
+        initialText: "draft",
+        afterPaste: () => setImmediate(() => { newerToken.current = plugin.composerWriter.beginWrite(superseded, "polished"); })
+    });
+    const oldToken = plugin.composerWriter.beginWrite(superseded, "draft");
+    const cancelled = await plugin.replaceTextboxTextSafelyAsync(superseded, "polished", { expectedPreviousText: "draft", writeToken: oldToken });
+    assert.equal(cancelled.ok, false);
+    assert.equal(cancelled.reason, "write-cancelled");
+    plugin.composerWriter.finishWriteToken(newerToken.current);
+});
+
+test("typing right after a bilingual write landed shows no 'not inserted' notice and records the session", async t => {
+    const browser = useComposerBrowser(t);
+    const plugin = new Plugin();
+    const editor = createSlateEditor(["你好"]);
+    browser.document.activeElement = editor;
+    plugin.isInvalidAutoTranslationOutput = () => false;
+    plugin.runModelTask = async () => "Hello";
+    const toasts = [];
+    plugin.showToast = (text, type) => toasts.push({ text, type });
+    const panels = [];
+    plugin.showPolishResultPanel = (_box, text) => panels.push(text);
+    attachSlateBehaviour(editor, { initialText: "你好", afterPaste: typeRightAfterPaste(editor) });
+
+    const result = await plugin.publicBilingualCurrentDraft(null, { textbox: editor });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(result.wrote, true);
+    assert.equal(plugin.getTextboxDraftText(editor), "Hello\n\n||你好||!");
+    assert.deepEqual(toasts, []);
+    assert.deepEqual(panels, []);
+    assert.equal(plugin.polishSession.lastBilingualRawText, "Hello\n\n||你好||");
+    assert.equal(plugin.polishSession.lastBilingualSourceRawText, "你好");
+});
+
+test("typing right after a polish write landed records it and does not chain bilingual or send", async t => {
+    const browser = useComposerBrowser(t);
+    const plugin = new Plugin();
+    const editor = createSlateEditor(["draft"]);
+    browser.document.activeElement = editor;
+    plugin.settings.ui.publicBilingualAfterPolish = true;
+    plugin.settings.polish.afterAction = "confirmSend";
+    plugin.runModelTask = async () => "polished";
+    const followUps = [];
+    plugin.publicBilingualCurrentDraft = async () => {
+        followUps.push("bilingual");
+        return { ok: false, wrote: false };
+    };
+    browser.window.confirm = () => {
+        followUps.push("confirm-send");
+        return false;
+    };
+    const panels = [];
+    plugin.showPolishResultPanel = (_box, text) => panels.push(text);
+    const toasts = [];
+    plugin.showToast = (text, type) => toasts.push({ text, type });
+    attachSlateBehaviour(editor, { initialText: "draft", afterPaste: typeRightAfterPaste(editor) });
+
+    await plugin.polishCurrentDraft(null, { textbox: editor });
+    assert.deepEqual(followUps, [], "bilingual-after-polish and confirm-send do not run over the user's typing");
+    assert.deepEqual(toasts, []);
+    assert.deepEqual(panels, []);
+    assert.equal(plugin.getTextboxDraftText(editor), "polished!");
+    assert.equal(plugin.polishSession.lastWrittenRawText, "polished");
+});
+
 test("an ignored paste on a draft with trailing spaces sends no undo", async t => {
     const browser = useComposerBrowser(t);
     const plugin = new Plugin();
@@ -493,6 +626,63 @@ test("a wrong write is undone by exactly one step, keeping the user's earlier ty
     assert.equal(behaviour.events.filter(event => event === "undo").length, 1);
     assert.deepEqual(behaviour.history, ["好"], "the user's earlier step is still in the undo history");
     assert.equal(plugin.getTextboxDraftText(editor), "好的 ");
+});
+
+// CMP-R5: document.execCommand fires trusted "input" events; the plugin's own fallbacks must not
+// read as the user typing and cancel the plugin's own write.
+test("the composer writer ignores trusted input fired by the plugin's own edits", () => {
+    const listeners = new Map();
+    const textbox = {
+        isConnected: true,
+        addEventListener(type, handler) { listeners.set(type, handler); },
+        removeEventListener(type) { listeners.delete(type); }
+    };
+    const writer = new ComposerWriter({ getTextboxComposerKey: () => "composer", normalizeDraftRawText: String });
+    const token = writer.beginWrite(textbox, "draft");
+    assert.equal(writer.runOwnEdit(() => {
+        listeners.get("input")({ isTrusted: true, inputType: "deleteContentBackward" });
+        return "done";
+    }), "done");
+    assert.equal(token.cancelled, false);
+    assert.throws(() => writer.runOwnEdit(() => { throw new Error("boom"); }), /boom/);
+    listeners.get("input")({ isTrusted: true, inputType: "insertText" });
+    assert.equal(token.cancelled, true, "the user's own typing still cancels once the plugin's edit is over");
+    assert.equal(token.reason, "user-input");
+});
+
+test("a failed write's rollback that clears with execCommand still re-inserts the draft", async t => {
+    const browser = useComposerBrowser(t);
+    const plugin = new Plugin();
+    const editor = createSlateEditor(["draft"]);
+    browser.document.activeElement = editor;
+    let pastes = 0;
+    const behaviour = attachSlateBehaviour(editor, {
+        initialText: "draft",
+        // Discord mangles the write and its history cannot undo it; synthetic deletes are ignored.
+        pasteResult: text => (++pastes === 1 ? "WRONG" : text),
+        afterPaste: () => { if (pastes === 1) behaviour.history.length = 0; }
+    });
+    const commands = [];
+    browser.document.execCommand = (command, _ui, value) => {
+        commands.push(command);
+        // Chromium fires a trusted "input" event for every execCommand edit.
+        const edit = (text, inputType) => {
+            editor.__text = text;
+            renderSlateLines(editor, text);
+            editor.dispatchEvent({ type: "input", isTrusted: true, inputType });
+            return true;
+        };
+        if (command === "delete") return edit("", "deleteContentBackward");
+        if (command === "insertText") return edit(String(value ?? ""), "insertText");
+        return false;
+    };
+    const token = plugin.composerWriter.beginWrite(editor, "draft");
+    const result = await plugin.replaceTextboxTextSafelyAsync(editor, "polished", { expectedPreviousText: "draft", writeToken: token });
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, "verification-failed");
+    assert.equal(commands.includes("delete"), true, "the rollback reached the execCommand clear");
+    assert.equal(token.cancelled, false, "the plugin's own clear did not cancel its write");
+    assert.equal(plugin.getTextboxDraftText(editor), "draft", "the draft is back, not an empty composer");
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -639,7 +829,41 @@ test("public bilingual escaping leaves code alone and keeps the spoiler closed",
     assert.equal(plugin.formatPublicBilingualMessage("path", "path is C:\\temp\\"), "path\n\n||path is C:\\temp\\\\||", "a trailing backslash cannot escape the closing marker");
     assert.equal(plugin.formatPublicBilingualMessage("t", "a \\| b"), "t\n\n||a \\| b||", "the user's own escape is kept, not doubled");
     assert.equal(plugin.formatPublicBilingualMessage("t", "\\`not code | x\\`"), "t\n\n||\\`not code \\| x\\`||");
-    assert.equal(plugin.getPublicBilingualReservedLength("a|"), "\n\n||a\\|||".length);
+    assert.equal(plugin.getPublicBilingualReservedLength("a|"), "\n\n||a\\|\u200b||".length);
+});
+
+// CMP-R4: Discord's spoiler rule is non-greedy and ignores backslashes, so "\|||" closes one pipe early.
+test("a spoiler source ending in '|' keeps the whole source inside the spoiler", () => {
+    const plugin = new Plugin();
+    const discordSpoiler = message => {
+        const spoiler = message.slice(message.indexOf("\n\n||") + 2);
+        const match = /^\|\|([\s\S]+?)\|\|/.exec(spoiler);
+        return { content: match?.[1], leftOver: spoiler.slice(match ? match[0].length : 0) };
+    };
+    for (const source of ["a |", "x|", "table: x | y |", "ends with an escaped pipe \\|"]) {
+        const message = plugin.formatPublicBilingualMessage("T", source);
+        const { content, leftOver } = discordSpoiler(message);
+        assert.equal(leftOver, "", `${JSON.stringify(source)} -> ${JSON.stringify(message)}`);
+        assert.equal(content.endsWith("|\u200b"), true, "a zero-width space separates the last pipe from the closing marker");
+        assert.equal(plugin.getPublicBilingualReservedLength(source), message.length - "T".length);
+    }
+    assert.equal(plugin.formatPublicBilingualMessage("T", "a |"), "T\n\n||a \\|\u200b||");
+    assert.equal(plugin.formatPublicBilingualMessage("T", "a | b"), "T\n\n||a \\| b||", "no separator when the source does not end in a pipe");
+    assert.equal(plugin.formatPublicBilingualMessage("T", "`x|`"), "T\n\n||`x|`||", "code ends with a backtick");
+});
+
+test("a bilingual message whose spoiler ends in '|' is written and verified in a Slate composer", async t => {
+    const browser = useComposerBrowser(t);
+    const plugin = new Plugin();
+    const editor = createSlateEditor(["x |"]);
+    browser.document.activeElement = editor;
+    attachSlateBehaviour(editor, { initialText: "x |" });
+    plugin.isInvalidAutoTranslationOutput = () => false;
+    plugin.runModelTask = async () => "Hello";
+    plugin.showPolishResultPanel = () => { throw new Error("a verified write must not open the fallback panel"); };
+    const result = await plugin.publicBilingualCurrentDraft(null, { textbox: editor });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(plugin.getTextboxDraftText(editor), "Hello\n\n||x \\|\u200b||");
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -667,6 +891,83 @@ test("running public bilingual again re-translates the source instead of nesting
     assert.equal(plugin.isVolatileTranslationCacheKey(cacheKey), true);
     const persisted = plugin.createPersistedTranslationCachePayload();
     assert.equal(persisted.entries.length, 0, "unsent draft translations stay in memory only");
+});
+
+// CMP-R1: the result panel's "Insert into input" counts as a write for the polish session.
+function useRealResultPanel(plugin) {
+    delete plugin.showPolishResultPanel;
+    const applyPanelText = plugin.applyPolishResultPanelText.bind(plugin);
+    let pending = null;
+    plugin.applyPolishResultPanelText = (...args) => (pending = applyPanelText(...args));
+    return async () => {
+        const apply = globalThis.document.body.querySelector(".dait-polish-result-apply");
+        assert.ok(apply, "the result panel offers Insert into input");
+        apply.dispatchEvent({ type: "click", preventDefault() {}, stopPropagation() {} });
+        return pending;
+    };
+}
+
+function createBilingualPanelFlow(t, options = {}) {
+    const browser = useComposerBrowser(t);
+    const flow = createPolishFlow(t, { textbox: createFlowTextbox("你好") });
+    const clickInsert = useRealResultPanel(flow.plugin);
+    flow.plugin.isInvalidAutoTranslationOutput = () => false;
+    const requests = [];
+    let answer = 0;
+    flow.plugin.runModelTask = async (kind, input) => {
+        requests.push(input);
+        answer++;
+        return `hello ${answer}`;
+    };
+    if (options.failFirstWrite) {
+        const write = flow.plugin.replaceTextboxTextSafelyAsync;
+        let writes = 0;
+        flow.plugin.replaceTextboxTextSafelyAsync = async (box, text, writeOptions) => {
+            if (++writes === 1) return { ok: false, reason: "verification-failed" };
+            return write(box, text, writeOptions);
+        };
+    }
+    return { ...flow, browser, clickInsert, requests };
+}
+
+for (const variant of ["held because focus moved", "after a failed write"]) {
+    test(`Insert into input on a bilingual result ${variant}: running bilingual again does not nest, and Restore is offered`, async t => {
+        const { plugin, textbox, browser, clickInsert, requests } = createBilingualPanelFlow(t, { failFirstWrite: variant !== "held because focus moved" });
+        if (variant === "held because focus moved") browser.document.activeElement = h("input", { type: "text" });
+        const first = await plugin.publicBilingualCurrentDraft();
+        assert.equal(first.ok, false);
+        assert.equal(textbox.text, "你好", "nothing was written by the run itself");
+
+        browser.document.activeElement = null;
+        assert.equal(await clickInsert(), true);
+        assert.equal(textbox.text, "hello 1\n\n||你好||");
+        assert.equal(plugin.canRestorePolishOriginal(textbox, plugin.polishSession), true, "Restore original is offered after Insert");
+
+        const second = await plugin.publicBilingualCurrentDraft();
+        assert.equal(second.ok, true);
+        assert.deepEqual(requests, ["你好", "你好"], "the second run translates the original draft, not the bilingual text");
+        assert.equal(textbox.text, "hello 2\n\n||你好||", "no nested bilingual text");
+    });
+}
+
+test("Insert into input on a held polish result records the write and offers Restore original", async t => {
+    const browser = useComposerBrowser(t);
+    const { plugin, textbox } = createPolishFlow(t, { textbox: createFlowTextbox("original draft") });
+    const clickInsert = useRealResultPanel(plugin);
+    const restoreControls = [];
+    plugin.showRestoreOriginalControl = (box, session) => restoreControls.push({ box, session });
+    browser.document.activeElement = h("input", { type: "text" });
+    await plugin.polishCurrentDraft();
+    assert.equal(textbox.text, "original draft");
+    assert.deepEqual(restoreControls, []);
+
+    browser.document.activeElement = null;
+    assert.equal(await clickInsert(), true);
+    assert.equal(textbox.text, "polished draft");
+    const session = plugin.polishSession;
+    assert.equal(session.lastWrittenRawText, "polished draft");
+    assert.deepEqual(restoreControls, [{ box: textbox, session }]);
+    assert.equal(plugin.canRestorePolishOriginal(textbox, session), true);
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -870,4 +1171,39 @@ test("a Shift+letter hotkey saved by an older version no longer hijacks typing",
     const event = keyEvent("H", { shiftKey: true, target: editor });
     plugin.handleKeydown(event);
     assert.equal(event.prevented, false);
+});
+
+// CMP-R7: a saved shortcut the hotkey no longer accepts would show in settings but never fire.
+test("a saved hotkey that can no longer fire is reset to the default when settings load", () => {
+    const cases = [
+        ["Shift+H", "Ctrl+Alt+P"],
+        ["Ctrl+V", "Ctrl+Alt+P"],
+        ["", "Ctrl+Alt+P"],
+        ["Ctrl+Shift+K", "Ctrl+Shift+K"],
+        ["Alt+Q", "Alt+Q"],
+        ["Shift+F5", "Shift+F5"]
+    ];
+    for (const [savedHotkey, expected] of cases) {
+        const plugin = new Plugin();
+        plugin.warnSanitized = () => {};
+        plugin.scheduleTranslationCachePersist = () => {};
+        plugin.loadData = key => key === "settings" ? { ui: { settingsVersion: 2, polishHotkey: savedHotkey } } : null;
+        let saved = null;
+        plugin.saveData = (key, value) => {
+            if (key === "settings") saved = JSON.parse(JSON.stringify(value));
+            return true;
+        };
+        assert.equal(plugin.loadSettings(), true);
+        assert.equal(plugin.settings.ui.polishHotkey, expected, JSON.stringify(savedHotkey));
+        assert.equal(plugin.getHotkeyLabel(), expected, "settings show the shortcut that actually works");
+        if (savedHotkey !== expected) assert.equal(saved?.ui?.polishHotkey, expected, "the repaired value is saved");
+    }
+});
+
+test("the hotkey help text asks for Ctrl, Alt or Win instead of recommending Shift", () => {
+    const { I18N } = require("../../src/i18n");
+    assert.doesNotMatch(I18N.en.polishHotkeyDesc, /Ctrl, Alt, or Shift/);
+    assert.match(I18N.en.polishHotkeyDesc, /Ctrl, Alt, or Win/);
+    assert.doesNotMatch(I18N["zh-CN"].polishHotkeyDesc, /Ctrl、Alt 或 Shift/);
+    assert.match(I18N["zh-CN"].polishHotkeyDesc, /Ctrl、Alt 或 Win/);
 });

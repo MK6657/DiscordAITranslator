@@ -10584,8 +10584,10 @@ module.exports = class DiscordAITranslator {
         return this.normalizeExtractedText(left) === this.normalizeExtractedText(right);
     }
 
+    // Only Slate's U+FEFF placeholders are dropped. U+200B is the user's own text (for example
+    // "@\u200beveryone", which does not ping), so the draft, the spoiler and Restore keep it.
     normalizeDraftRawText(text) {
-        return String(text ?? "").replace(/[\u200b\ufeff]/g, "").replace(/\r\n?/g, "\n");
+        return String(text ?? "").replace(/\ufeff/g, "").replace(/\r\n?/g, "\n");
     }
 
     areDraftTextsEqualStrict(left, right) {
@@ -10898,12 +10900,19 @@ module.exports = class DiscordAITranslator {
 
     formatPublicBilingualMessage(translated, original) {
         const translation = this.escapeDiscordVisibleText(String(translated || "").trim());
-        const source = this.normalizeDraftRawText(original);
-        return `${translation}\n\n||${this.escapeDiscordSpoilerText(source)}||`;
+        return `${translation}\n\n||${this.getPublicBilingualSpoilerText(original)}||`;
     }
 
     getPublicBilingualReservedLength(original) {
-        return `\n\n||${this.escapeDiscordSpoilerText(this.normalizeDraftRawText(original))}||`.length;
+        return `\n\n||${this.getPublicBilingualSpoilerText(original)}||`.length;
+    }
+
+    // Discord's spoiler rule is non-greedy and ignores backslashes, so a trailing "|" (written "\|")
+    // would join the closing "||" and end the spoiler one character early: a zero-width space
+    // separates them.
+    getPublicBilingualSpoilerText(original) {
+        const escaped = this.escapeDiscordSpoilerText(this.normalizeDraftRawText(original));
+        return escaped.endsWith("|") ? `${escaped}\u200b` : escaped;
     }
 
     isPolishSessionAlreadyPolished(session, text) {
@@ -11042,6 +11051,12 @@ module.exports = class DiscordAITranslator {
             if (composed.length > DISCORD_MESSAGE_MAX_LENGTH) {
                 throw new Error(this.t("publicBilingualTooLong", { length: composed.length, limit: DISCORD_MESSAGE_MAX_LENGTH }));
             }
+            // The panel's "Insert into input" writes the result: record it like this run's own write,
+            // so running bilingual again translates the source instead of nesting, and Restore works.
+            const recordPanelInsert = target => {
+                payload.session.composerKey = this.getTextboxComposerKey(target);
+                this.updatePolishSessionAfterBilingual(payload.session, target, composed, payload.translationSource, true);
+            };
             const staleReason = this.getComposerWriteStaleReason(textbox, writeToken, payload.expectedCurrentText);
             if (staleReason) {
                 this.logDiagnostic("public.bilingual", "stale-input", {
@@ -11062,7 +11077,8 @@ module.exports = class DiscordAITranslator {
                     sourceButton: button,
                     title: this.t("publicBilingualButton"),
                     ariaLabel: this.t("publicBilingualTitleAttr", { targetLanguage: this.getDisplayLanguage(this.getPublicBilingualTargetLanguage()) }),
-                    adjustTextboxSelection: false
+                    adjustTextboxSelection: false,
+                    onApplied: recordPanelInsert
                 });
                 this.showToast(this.t("composerResultHeld"), "info");
                 return { ok: false, wrote: false, stale: true, phase: "translation", reason: staleReason, fallbackText: composed };
@@ -11094,7 +11110,8 @@ module.exports = class DiscordAITranslator {
                     sourceButton: button,
                     title: this.t("publicBilingualButton"),
                     ariaLabel: this.t("publicBilingualTitleAttr", { targetLanguage: this.getDisplayLanguage(this.getPublicBilingualTargetLanguage()) }),
-                    adjustTextboxSelection: false
+                    adjustTextboxSelection: false,
+                    onApplied: recordPanelInsert
                 });
                 // The draft changed under us (typing, a newer write): the result stays in the panel.
                 if (["write-cancelled", "stale-input", "superseded", "user-input"].includes(writeResult.reason)) {
@@ -11203,6 +11220,12 @@ module.exports = class DiscordAITranslator {
             // A newer run on the same composer owns the result slot.
             if (this.isComposerWriteSuperseded(writeToken)) return;
             const action = this.getPolishAfterAction();
+            // The panel's "Insert into input" writes the result: record it like this run's own write.
+            const recordPanelInsert = target => {
+                session.composerKey = this.getTextboxComposerKey(target);
+                this.updatePolishSessionAfterResult(session, target, polished, true);
+                this.showRestoreOriginalControl(target, session, button);
+            };
             const staleReason = this.getComposerWriteStaleReason(textbox, writeToken, draft);
             if (staleReason) {
                 this.updatePolishSessionAfterResult(session, textbox, polished, false);
@@ -11217,7 +11240,7 @@ module.exports = class DiscordAITranslator {
                     reason: staleReason,
                     ms: Date.now() - startedAt
                 });
-                this.showPolishResultPanel(this.getComposerResultPanelAnchor(textbox), polished, { sourceButton: button });
+                this.showPolishResultPanel(this.getComposerResultPanelAnchor(textbox), polished, { sourceButton: button, onApplied: recordPanelInsert });
                 this.showToast(this.t("composerResultHeld"), "info");
                 return;
             }
@@ -11240,7 +11263,7 @@ module.exports = class DiscordAITranslator {
                     sourceHash: this.getStrongTextFingerprint(sourceText),
                     ms: Date.now() - startedAt
                 });
-                this.showPolishResultPanel(textbox, polished, { sourceButton: button });
+                this.showPolishResultPanel(textbox, polished, { sourceButton: button, onApplied: recordPanelInsert });
                 return;
             }
             this.logDiagnostic("polish", "success", {
@@ -11253,6 +11276,8 @@ module.exports = class DiscordAITranslator {
                 sourceHash: this.getStrongTextFingerprint(sourceText),
                 ms: Date.now() - startedAt
             });
+            // The user typed on right after the result landed: no follow-up step runs over their typing.
+            if (writeResult.userEditedAfter) return;
             if (this.isPublicBilingualAfterPolishEnabled()) {
                 const bilingualResult = await this.publicBilingualCurrentDraft(button, { skipAutoPolish: true });
                 if (!this.isLifecycleTokenCurrent(lifecycleToken)) return;
@@ -11352,7 +11377,7 @@ module.exports = class DiscordAITranslator {
                 if (apply.disabled) return;
                 apply.disabled = true;
                 try {
-                    await this.applyPolishResultPanelText(textbox, String(text || ""));
+                    await this.applyPolishResultPanelText(textbox, String(text || ""), { onApplied: options.onApplied });
                 }
                 finally {
                     apply.disabled = false;
@@ -11456,8 +11481,9 @@ module.exports = class DiscordAITranslator {
     }
 
     // The panel's "Insert into input" action: an explicit user request, so it replaces whatever the
-    // composer holds now (Discord's undo brings the previous draft back).
-    async applyPolishResultPanelText(textbox, text) {
+    // composer holds now (Discord's undo brings the previous draft back). `options.onApplied(target)`
+    // runs after a verified write so the run that produced the text can record it.
+    async applyPolishResultPanelText(textbox, text, options = {}) {
         const target = textbox && textbox.isConnected !== false ? textbox : this.resolveInputActionTextbox(null, {});
         if (!target) {
             this.showToast(this.t("textboxMissing"), "error");
@@ -11478,6 +11504,7 @@ module.exports = class DiscordAITranslator {
         }
         if (result?.ok) {
             this.removePolishResultPanel();
+            options.onApplied?.(target);
             return true;
         }
         if (result?.reason !== "write-cancelled") this.showToast(this.t("polishResultApplyFailed"), "error");
@@ -11558,7 +11585,7 @@ module.exports = class DiscordAITranslator {
                 expectedPreviousText: currentText,
                 writeToken
             });
-            if (result.ok && this.composerWriter.isWriteTokenCurrent(writeToken)) {
+            if (result.ok && (result.userEditedAfter || this.composerWriter.isWriteTokenCurrent(writeToken))) {
                 // The draft is the original again: nothing is left to restore, and the original must not
                 // count as already polished for the next bilingual-with-polish run.
                 session.lastWrittenText = "";
@@ -13986,7 +14013,8 @@ module.exports = class DiscordAITranslator {
                 const childQuoted = quoted || this.getSlateElementFromDom(child)?.type === "blockQuote";
                 if (!this.collectSlateComposerLines(child, blockedSelector, lines, childQuoted)) {
                     const text = this.readComposerInlineText(child, blockedSelector);
-                    lines.push(childQuoted && !text.startsWith(">") ? `> ${text}` : text);
+                    // Discord drops the "> " marker from a blockQuote's text, so a leading ">" is content.
+                    lines.push(childQuoted ? `> ${text}` : text);
                 }
                 continue;
             }
@@ -14398,8 +14426,13 @@ module.exports = class DiscordAITranslator {
         }
         const previousRawText = this.getTextboxRawTextSafe(textbox);
         // Shared by the write attempt and the rollback so the draft is undone at most once.
-        const writeOptions = { ...options, rollback: { undoAttempted: false } };
+        const writeOptions = { ...options, rollback: { undoAttempted: false }, writeState: { userEditedAfter: false } };
         const failAfterAttempt = async () => {
+            // The value was in the composer before the user typed on: the write happened. Nothing is
+            // undone or re-selected under the user's typing, and the caller records it as written.
+            if (writeOptions.writeState.userEditedAfter) {
+                return { ok: true, method: "written-then-edited", userEditedAfter: true, actual: this.getTextboxTextSafe(textbox) };
+            }
             // Never roll back over the user's new input, a newer write, or a remounted composer.
             if (!this.isTextboxReplacementWriteAllowed(textbox, writeOptions)) {
                 return { ok: false, reason: "write-cancelled", actual: this.getTextboxTextSafe(textbox) };
@@ -14606,9 +14639,15 @@ module.exports = class DiscordAITranslator {
             if (!await this.prepareTextboxFullReplacementSelection(textbox, previousText)) return false;
             attempt();
             if (!this.isTextboxReplacementWriteAllowed(textbox, options)) return false;
-            if (await this.waitForTextboxStableTextEqual(textbox, value)) {
-                return this.isTextboxReplacementWriteAllowed(textbox, options);
+            const observed = { equal: false };
+            const stable = await this.waitForTextboxStableTextEqual(textbox, value, observed);
+            if (stable && this.isTextboxReplacementWriteAllowed(textbox, options)) return true;
+            // The value landed and the user's own input came before the settle check ended.
+            if (observed.equal && this.isComposerWriteTakenOverByUser(textbox, options)) {
+                if (options.writeState) options.writeState.userEditedAfter = true;
+                return false;
             }
+            if (stable) return false;
 
             // Raw against raw: a normalized read never equals a draft with double or trailing spaces.
             const actual = this.getTextboxRawTextSafe(textbox);
@@ -14635,12 +14674,7 @@ module.exports = class DiscordAITranslator {
             },
             () => {
                 this.selectTextboxContents(textbox);
-                try {
-                    return Boolean(document.execCommand?.("delete", false, null));
-                }
-                catch {
-                    return false;
-                }
+                return this.runComposerExecCommand("delete");
             },
             () => {
                 this.clearRichTextboxTextWithKeyboard(textbox);
@@ -14648,12 +14682,7 @@ module.exports = class DiscordAITranslator {
             },
             () => {
                 this.selectTextboxContents(textbox);
-                try {
-                    return Boolean(document.execCommand?.("insertText", false, ""));
-                }
-                catch {
-                    return false;
-                }
+                return this.runComposerExecCommand("insertText", "");
             }
         ];
 
@@ -14666,19 +14695,25 @@ module.exports = class DiscordAITranslator {
         return false;
     }
 
+    // document.execCommand fires trusted "input" events: they are the plugin's own edit, not the user
+    // typing, so they must not cancel the write (or rollback) in progress.
+    runComposerExecCommand(command, value = null) {
+        return this.composerWriter.runOwnEdit(() => {
+            try {
+                return Boolean(document.execCommand?.(command, false, value));
+            }
+            catch {
+                return false;
+            }
+        });
+    }
+
     async insertRichTextboxTextAsync(textbox, text, options = {}) {
         const attempts = [
             () => this.dispatchTextboxPaste(textbox, text),
             () => this.dispatchTextboxBeforeInput(textbox, text, "insertFromPaste"),
             () => this.dispatchTextboxBeforeInput(textbox, text, "insertText"),
-            () => {
-                try {
-                    return Boolean(document.execCommand?.("insertText", false, text));
-                }
-                catch {
-                    return false;
-                }
-            }
+            () => this.runComposerExecCommand("insertText", text)
         ];
 
         for (const attempt of attempts) {
@@ -14830,10 +14865,18 @@ module.exports = class DiscordAITranslator {
         return false;
     }
 
-    async waitForTextboxStableTextEqual(textbox, text) {
+    // `observed.equal` is set once the text was seen equal, even if it changes before it settles.
+    async waitForTextboxStableTextEqual(textbox, text, observed = null) {
         if (!await this.waitForTextboxTextEqual(textbox, text)) return false;
+        if (observed) observed.equal = true;
         await this.waitForTextboxSettle(120);
         return this.isTextboxTextEqual(textbox, text);
+    }
+
+    // The write token was cancelled by the user's own input (not a newer write or a remount).
+    isComposerWriteTakenOverByUser(textbox, options = {}) {
+        const token = options.writeToken;
+        return Boolean(textbox && textbox.isConnected !== false && token?.cancelled && token.reason === "user-input");
     }
 
     async waitForTextboxEmpty(textbox) {
@@ -14887,14 +14930,7 @@ module.exports = class DiscordAITranslator {
         const attempts = [
             () => this.dispatchTextboxBeforeInput(textbox, "", "historyUndo"),
             () => this.dispatchTextboxKeyboardShortcut(textbox, "z", "KeyZ", { ctrlKey: true }),
-            () => {
-                try {
-                    return Boolean(document.execCommand?.("undo", false, null));
-                }
-                catch {
-                    return false;
-                }
-            }
+            () => this.runComposerExecCommand("undo")
         ];
 
         for (const attempt of attempts) {
