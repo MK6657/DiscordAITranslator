@@ -12794,8 +12794,9 @@ module.exports = class DiscordAITranslator {
         const close = document.createElement("button");
         close.className = "dait-polish-result-icon";
         close.type = "button";
-        close.textContent = "x";
+        close.textContent = "×";
         close.title = this.t("polishResultClose");
+        close.setAttribute("aria-label", this.t("polishResultClose"));
         close.addEventListener("click", event => {
             event.preventDefault();
             event.stopPropagation();
