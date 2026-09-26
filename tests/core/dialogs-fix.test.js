@@ -451,6 +451,30 @@ test("the prompt status and preview label follow a template applied in another s
     assert.equal(ui.previewLabel.textContent, ui.plugin.t("promptPreview"));
 });
 
+// --- F7: the hotkey description names the control the row really has -------------------------------------
+
+test("the hotkey row's recorder is the control its description names", t => {
+    useGlobals(t, { document: createSettingsDocument() });
+    const plugin = quietPlugin();
+    for (const language of ["zh-CN", "en"]) {
+        plugin.settings.ui.language = language;
+        const row = plugin.createHotkeyRow();
+        const buttons = row.querySelectorAll(".dait-small-button");
+        const recorder = buttons.find(button => button.textContent === plugin.getHotkeyLabel());
+        assert.ok(recorder, "the recorder shows the current shortcut");
+        // Its tooltip says what clicking it does.
+        assert.equal(recorder.title, plugin.t("hotkeyRecord"), language);
+        // A label the description quotes is the text or tooltip of a button in the row.
+        const names = buttons.flatMap(button => [button.textContent, button.title]).filter(Boolean);
+        const description = plugin.t("polishHotkeyDesc");
+        for (const [, quoted] of description.matchAll(/[“"]([^”"]+)[”"]/g)) {
+            assert.ok(names.includes(quoted), `${language}: "${quoted}" is not a control in the row`);
+        }
+        // No button reads "Record" / 录制快捷键: the recorder shows the shortcut itself.
+        assert.doesNotMatch(description, /\bClick Record\b|点“录制快捷键”/, language);
+    }
+});
+
 test("while a confirmation is open the settings window sits below BetterDiscord's fallback modal", () => {
     const css = require("../../src/css/08-dialogs.js");
     const rule = /\.dait-quick-settings-modal-root\[data-dait-confirm-open="true"\]\s*\{([^}]*)\}/.exec(css);

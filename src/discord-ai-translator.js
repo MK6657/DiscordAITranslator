@@ -3249,8 +3249,10 @@ module.exports = class DiscordAITranslator {
         const controls = document.createElement("div");
         controls.className = "dait-hotkey-controls";
 
+        // The recorder shows the current shortcut; its tooltip says that clicking it records a new one.
         const record = this.createSmallButton(this.getHotkeyLabel());
         record.classList.add("dait-hotkey-recorder");
+        record.title = this.t("hotkeyRecord");
 
         const reset = this.createSmallButton(this.t("hotkeyReset"), "link");
         reset.addEventListener("click", () => {
