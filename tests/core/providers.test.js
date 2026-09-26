@@ -341,6 +341,38 @@ test("resetting Google stats and a successful API test clear a key's cooldown; t
     assert.equal(plugin.settings.googleTranslate.keys[0].cooldownUntil, 0);
 });
 
+// prov-3: the API test uses a key that auto-translation can use; a cooling key only when all are cooling.
+test("the Google API test prefers a key that is not cooling down and names the key that failed", async () => {
+    const plugin = createGooglePoolPlugin("main|AIza-fake-main|450000\nbackup|AIza-fake-backup|450000", "en");
+    const mainCooldown = Date.now() + 10 * 60 * 60 * 1000;
+    plugin.settings.googleTranslate.keys[0].cooldownUntil = mainCooldown;
+    const sent = [];
+    let failWith = null;
+    plugin.fetchApiResponseText = async (_endpoint, request) => {
+        sent.push(request.headers["X-Goog-Api-Key"]);
+        if (failWith) {
+            const error = Object.assign(new Error("API_ERROR"), { status: failWith.status, retryAfterMs: 0 });
+            plugin.annotateGoogleTranslateApiError(error, JSON.stringify(failWith.body), request);
+            throw error;
+        }
+        return JSON.stringify({ data: { translations: [{ translatedText: "hola" }] } });
+    };
+    await plugin.testApiConnection("translation", null, null);
+    assert.deepEqual(sent, ["AIza-fake-backup"]);
+    assert.equal(plugin.toasts.at(-1)?.type, "success", JSON.stringify(plugin.toasts));
+    assert.equal(plugin.settings.googleTranslate.keys[0].cooldownUntil, mainCooldown, "the cooling key is left alone");
+
+    failWith = { status: 403, body: { error: { code: 403, message: "Daily Limit Exceeded", errors: [{ reason: "dailyLimitExceeded" }] } } };
+    const statusElement = { dataset: { daitKind: "translation" } };
+    await plugin.testApiConnection("translation", null, statusElement);
+    assert.deepEqual(sent, ["AIza-fake-backup", "AIza-fake-backup"]);
+    const failure = plugin.toasts.at(-1);
+    assert.equal(failure.type, "error");
+    assert.match(failure.text, /backup/, failure.text);
+    assert.match(plugin.getApiStatus("translation").message, /backup/);
+    assert.equal(JSON.stringify(plugin.toasts).includes("AIza"), false, "never the key itself");
+});
+
 test("a Google key removed from the pool and added back keeps this month's usage", () => {
     const plugin = new Plugin();
     const google = plugin.settings.googleTranslate;
@@ -613,7 +645,7 @@ test("user-facing errors are localized and never show internal codes", async t =
 });
 
 test("new strings exist in both locales", () => {
-    for (const key of ["errorOutputTruncated", "errorQuotaExceeded", "errorLanguageUnsupported", "errorIpNotAllowed", "errorProviderRequestRejected", "errorSaveFailed", "errorComposerWriteFailed", "clipboardUnavailable", "googleTranslateStatsCooldown"]) {
+    for (const key of ["errorOutputTruncated", "errorQuotaExceeded", "errorLanguageUnsupported", "errorIpNotAllowed", "errorProviderRequestRejected", "errorSaveFailed", "errorComposerWriteFailed", "clipboardUnavailable", "googleTranslateStatsCooldown", "googleTranslateKeysCooling", "googleTranslateKeyError"]) {
         assert.equal(typeof I18N["zh-CN"][key], "string", key);
         assert.equal(typeof I18N.en[key], "string", key);
     }

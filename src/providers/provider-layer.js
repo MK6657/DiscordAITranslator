@@ -410,6 +410,16 @@ class ProviderLayer {
         return this.plugin.t("googleTranslateKeysCooling", { time: this.plugin.formatDiagnosticSummaryTime(until) });
     }
 
+    // Names the pool key a Google error came from (by its label, never the key itself).
+    formatGoogleTranslateKeyError(error, options = {}) {
+        const message = this.plugin.formatError(error, options);
+        const keyId = String(error?.googleTranslateKeyId || "");
+        const apiKey = String(error?.googleTranslateApiKey || "");
+        if (!keyId && !apiKey) return message;
+        const key = this.plugin.getGoogleTranslateKeys().find(item => (keyId && item.id === keyId) || (apiKey && item.apiKey === apiKey));
+        return key?.label ? this.plugin.t("googleTranslateKeyError", { label: key.label, error: message }) : message;
+    }
+
     // A failure of one pool key needs the user only when no other key can take over.
     isGoogleTranslatePoolServing(error) {
         if (!error?.googleTranslateApiKey || error.googleTranslateKeysCooling) return false;
@@ -1524,7 +1534,7 @@ class ProviderLayer {
                 if (error?.googleTranslateApiKey) this.plugin.markGoogleTranslateKeyFailure(error.googleTranslateApiKey, error);
                 if (error.localProviderUnavailable) this.plugin.markAutoTranslationProviderFailure(this.plugin.getAutoTranslationOptions(), error);
             }
-            const message = this.plugin.formatError(error);
+            const message = this.plugin.formatGoogleTranslateKeyError(error);
             this.plugin.setApiStatus(status, "failed", this.plugin.t("apiStatusFailed"), message);
             this.plugin.showToast(this.plugin.t("apiTestFailed", { name: this.plugin.getTaskDisplayName(kind), error: message }), "error");
         }
@@ -1537,8 +1547,8 @@ class ProviderLayer {
         const taskConfig = this.plugin.getTaskConfig(kind);
         if (this.plugin.isDirectTranslateProvider(taskConfig)) {
             // Test the language pair the user actually translates into: some targets are
-            // rejected by some services. A Google key that is only cooling down is tested
-            // as well, so a passing test can bring it back.
+            // rejected by some services. When every Google key is cooling down, a cooling key
+            // is tested, so a passing test can bring it back.
             const targetLanguage = taskConfig.targetLanguage || this.plugin.settings.translation?.targetLanguage;
             return this.plugin.buildModelRequest("translation", "hello", {
                 configOverrides: {
@@ -1643,10 +1653,13 @@ class ProviderLayer {
         const target = this.plugin.getGoogleLanguageCode(config.targetLanguageCode || config.targetLanguage);
         if (!target || target === AUTO_LANGUAGE_VALUE) throw new Error(this.plugin.t("targetLanguageDesc"));
         const source = this.plugin.getGoogleLanguageCode(config.sourceLanguage, { source: true });
-        const key = this.plugin.selectGoogleTranslateKey(charCount, {
-            ignoreReservations: Boolean(options.ignoreReservations),
-            ignoreCooldown: Boolean(options.ignoreCooldown)
-        });
+        const selectOptions = { ignoreReservations: Boolean(options.ignoreReservations) };
+        // ignoreCooldown (the API test) still prefers a key that is not cooling down; a cooling
+        // key is used only when every key is cooling, so a passing test can bring it back.
+        const key = options.ignoreCooldown
+            ? this.plugin.selectGoogleTranslateKey(charCount, { ...selectOptions, persist: false })
+                || this.plugin.selectGoogleTranslateKey(charCount, { ...selectOptions, ignoreCooldown: true })
+            : this.plugin.selectGoogleTranslateKey(charCount, selectOptions);
         if (!key) {
             if (!this.plugin.getGoogleTranslateKeys().length) throw this.plugin.createGoogleTranslateNoKeyError();
             const coolingReadyAt = this.plugin.getGoogleTranslateCoolingKeyReadyAt(charCount, { ignoreReservations: Boolean(options.ignoreReservations) });

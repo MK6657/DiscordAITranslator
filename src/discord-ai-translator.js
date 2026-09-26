@@ -15344,6 +15344,7 @@ module.exports = class DiscordAITranslator {
     getGoogleTranslateCoolingKeyReadyAt(...args) { return this.providerLayer.getGoogleTranslateCoolingKeyReadyAt(...args); }
     createGoogleTranslateCooldownError(...args) { return this.providerLayer.createGoogleTranslateCooldownError(...args); }
     formatGoogleTranslateCooldownMessage(...args) { return this.providerLayer.formatGoogleTranslateCooldownMessage(...args); }
+    formatGoogleTranslateKeyError(...args) { return this.providerLayer.formatGoogleTranslateKeyError(...args); }
     isGoogleTranslatePoolServing(...args) { return this.providerLayer.isGoogleTranslatePoolServing(...args); }
     getGoogleTranslateQuotaRetryAfterMs(...args) { return this.providerLayer.getGoogleTranslateQuotaRetryAfterMs(...args); }
     getGoogleTranslateDailyQuotaRetryAfterMs(...args) { return this.providerLayer.getGoogleTranslateDailyQuotaRetryAfterMs(...args); }
