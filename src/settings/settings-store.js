@@ -32,6 +32,9 @@ const RESET_SECRET_FIELDS = ["apiKey", "appId", "secretKey"];
 // (a relay key to the provider's own API, for example).
 const RESET_KEPT_CONNECTION_FIELDS = ["endpoint", "model"];
 
+// ui settings that change how translation lines already on screen look; setSetting and a reset both restyle them.
+const TRANSLATION_LINE_DISPLAY_KEYS = ["maskTranslations", "translationPosition", "translationStyle", "translationTextScale"];
+
 function normalizeTranslationLineStyle(value) {
     const style = String(value || "");
     return TRANSLATION_LINE_STYLES.includes(style) ? style : DEFAULT_SETTINGS.ui.translationStyle;
@@ -924,7 +927,7 @@ class SettingsStore {
         if (path === "ui.hideOriginalAfterTranslation") {
             this.plugin.syncAllTranslationSourceVisibility();
         }
-        if (path === "ui.maskTranslations" || path === "ui.translationPosition" || path === "ui.translationStyle" || path === "ui.translationTextScale") {
+        if (TRANSLATION_LINE_DISPLAY_KEYS.some(key => path === `ui.${key}`)) {
             this.plugin.syncAllTranslationDisplaySettings();
         }
         this.plugin.queueScan();
@@ -1061,7 +1064,7 @@ class SettingsStore {
         if (turnedOff("showAutoTranslateWarnings") || turnedOff("showAutoTranslateToasts")) this.plugin.hideAutoTranslationWarningLines();
         if (prevUi.diagnosticsEnabled === true && ui.diagnosticsEnabled !== true) this.plugin.disableDiagnosticLogging();
         if (changed("hideOriginalAfterTranslation")) this.plugin.syncAllTranslationSourceVisibility();
-        if (changed("maskTranslations") || changed("translationPosition")) this.plugin.syncAllTranslationDisplaySettings();
+        if (TRANSLATION_LINE_DISPLAY_KEYS.some(changed)) this.plugin.syncAllTranslationDisplaySettings();
         this.plugin.queueScan();
     }
 

@@ -327,6 +327,18 @@ class AutoTranslationRequestPipeline {
                 counts: { eligible: 1, skippedCurrent: 1 }
             };
         }
+        // A translation the user asked for owns the message until it settles: no cached draw, no request.
+        if (this.plugin.isManualTranslationInFlight(target.content, this.plugin.getAutoTranslationTargetDomText(target))) {
+            return {
+                action: "skip",
+                status: "skipped",
+                state: DIAGNOSTIC_MESSAGE_STATES.SKIPPED,
+                reasonCode: DIAGNOSTIC_REASON_CODES.MANUAL_LINE_PRESENT,
+                cacheKey,
+                requestOptions: targetRequestOptions,
+                counts: { eligible: 1, skippedCurrent: 1 }
+            };
+        }
 
         // Discord rebuilds message elements while scrolling, dropping their translation line.
         // A cached translation is always drawn again; a recent render only blocks new requests below.

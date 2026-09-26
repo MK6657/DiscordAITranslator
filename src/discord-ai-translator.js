@@ -7583,6 +7583,16 @@ module.exports = class DiscordAITranslator {
                 );
                 return;
             }
+            if (this.isManualTranslationInFlight(target.content, this.getAutoTranslationTargetDomText(target))) {
+                this.logAutoTranslationMessageState(
+                    "auto.message.state",
+                    "render-skip",
+                    { ...target, cacheKey, requestOptions },
+                    DIAGNOSTIC_MESSAGE_STATES.CACHED,
+                    DIAGNOSTIC_REASON_CODES.MANUAL_LINE_PRESENT
+                );
+                return;
+            }
             if (this.isAutoTranslationCacheTargetDrawable(target)) {
                 this.queueAutoTranslationRenderTask({
                     kind: "cache",
@@ -7808,13 +7818,15 @@ module.exports = class DiscordAITranslator {
     }
 
     // Outcome statuses: drawn (already shows a finished line), nothing (memoised skip or miss),
-    // queued, deferred (evaluation cap reached) or pending (a hit that cannot be drawn yet).
+    // queued, deferred (evaluation cap reached) or pending (a hit that cannot be drawn yet, or a
+    // translation the user asked for is still in flight).
     queueCachedDrawForCandidate(candidate, baseOptions, context = null, allowEvaluation = true) {
         const messageNode = candidate?.messageNode;
         const content = candidate?.content;
         const text = String(candidate?.text || "");
         if (!text || !messageNode?.isConnected || !content?.isConnected) return { status: "nothing" };
         if (this.hasFinishedTranslationLine(content)) return { status: "drawn" };
+        if (this.isManualTranslationInFlight(content, candidate.domText || text)) return { status: "pending" };
         const memoKey = this.getCachedDrawMemoKey(candidate, text);
         let entry = this.getCachedDrawMemoEntry(memoKey);
         const evaluated = !entry;
@@ -8131,6 +8143,17 @@ module.exports = class DiscordAITranslator {
                 { ...target, cacheKey, requestOptions },
                 DIAGNOSTIC_MESSAGE_STATES.STALE,
                 DIAGNOSTIC_REASON_CODES.RENDER_IDENTITY_CHANGED
+            );
+            return false;
+        }
+        // Queued before the user asked for a (re)translation: that request owns the line now.
+        if (this.isManualTranslationInFlight(target.content, this.getAutoTranslationTargetDomText(target))) {
+            this.logAutoTranslationMessageState(
+                "auto.message.state",
+                "render-skip",
+                { ...target, cacheKey, requestOptions },
+                DIAGNOSTIC_MESSAGE_STATES.CACHED,
+                DIAGNOSTIC_REASON_CODES.MANUAL_LINE_PRESENT
             );
             return false;
         }
@@ -8713,6 +8736,13 @@ module.exports = class DiscordAITranslator {
         if (!line || line.dataset?.daitMode !== "manual") return false;
         const text = sourceText ?? this.getElementText(content);
         return this.isTranslationLineSourceMatch(line, text);
+    }
+
+    // A translation the user asked for (translate, retranslate, retry) owns its line until it settles:
+    // the cached-draw pass and the scan must not draw the old cached translation over its loading line.
+    isManualTranslationInFlight(content, sourceText = null) {
+        return Boolean(this.getTranslationLine(content)?.classList?.contains?.("dait-translation-loading"))
+            && this.hasManualTranslationLine(content, sourceText);
     }
 
     clearAutoTextTranslationFailure(text, requestOptions = this.getAutoTranslationOptions()) {
@@ -12493,7 +12523,11 @@ module.exports = class DiscordAITranslator {
 
     syncAllTranslationDisplaySettings() {
         if (typeof document === "undefined" || !document.querySelectorAll) return;
-        document.querySelectorAll(".dait-translation-line[data-dait-owner]").forEach(line => {
+        const lines = [...document.querySelectorAll(".dait-translation-line[data-dait-owner]")];
+        if (!lines.length) return;
+        // A new text size, style or position changes the height of every line at once. One snapshot
+        // around the whole restyle keeps the first message in view where it was.
+        this.withTranslationScrollStability(this.getTranslationRestyleScrollAnchor(lines), () => lines.forEach(line => {
             const content = this.getTranslationContentForLine(line);
             if (!content?.isConnected) return;
             const isStateLine = line.classList?.contains?.("dait-translation-loading")
@@ -12506,7 +12540,26 @@ module.exports = class DiscordAITranslator {
             }
             this.positionExistingTranslationLine(line, content);
             this.syncTranslationSourceVisibility(line, content);
-        });
+        }), { allowScrollCorrectionWhilePaused: true, keepAnchorTop: true });
+    }
+
+    // The first message whose top is inside the visible chat (else the one partly in view): lines
+    // above its top may change height, and keeping that top in place keeps what the user reads in place.
+    getTranslationRestyleScrollAnchor(lines) {
+        const first = lines.find(line => line?.isConnected);
+        const scroller = first ? this.getTranslationScrollContainer(first) : null;
+        const band = scroller ? this.getScrollContainerBand(scroller) : null;
+        if (!band) return null;
+        const root = this.isDocumentScroller(scroller) ? document : scroller;
+        let partlyVisible = null;
+        for (const message of root.querySelectorAll?.(DISCORD_MESSAGE_NODE_SELECTOR) || []) {
+            const rect = message.getBoundingClientRect?.();
+            if (!rect || !(Number(rect.bottom) > band.top)) continue;
+            if (Number(rect.top) >= band.bottom) break;
+            if (Number(rect.top) >= band.top) return message;
+            if (!partlyVisible) partlyVisible = message;
+        }
+        return partlyVisible;
     }
 
     positionExistingTranslationLine(line, content) {
@@ -12637,13 +12690,13 @@ module.exports = class DiscordAITranslator {
             if (renderOptions?.validationReason) line.dataset.daitValidationReason = String(renderOptions.validationReason);
             else delete line.dataset.daitValidationReason;
             this.resetTranslationLineState(line);
-            this.applyTranslationLineLanguage(line);
             this.applyTranslationLineDisplayClasses(line);
             this.applyTranslationLineMaskState(line);
             this.applyTranslationLineDismissal(line, messageNode, content);
             line.textContent = "";
             const text = document.createElement("span");
             text.className = "dait-translation-text";
+            this.applyTranslationLineLanguage(text);
             const emojiDescriptors = this.getTranslationEmojiDescriptors(content);
             if (emojiDescriptors.length && !this.appendTranslationTextWithDiscordEmoji(text, translatedText, content, emojiDescriptors)) {
                 this.removeTranslationNode(messageNode, content);
@@ -13014,12 +13067,23 @@ module.exports = class DiscordAITranslator {
         return value;
     }
 
-    // The line is in the target language: give it that language and a direction of its own,
-    // so right-to-left targets read and align correctly.
-    applyTranslationLineLanguage(line) {
+    // The translated text is in the target language: give it that language and a direction of its own,
+    // so right-to-left targets read and align correctly. Only the text span gets them: the toolbar and
+    // the partial note are in the interface language and follow the page's direction.
+    applyTranslationLineLanguage(textElement) {
         const { lang, dir } = this.getTranslationLineLanguage();
-        if (lang) line.setAttribute?.("lang", lang);
-        line.setAttribute?.("dir", dir);
+        if (lang) textElement.setAttribute?.("lang", lang);
+        textElement.setAttribute?.("dir", dir);
+    }
+
+    // Laid out right to left: the computed direction where there is layout, else the nearest dir attribute.
+    isRightToLeftElement(element) {
+        if (!element) return false;
+        try {
+            if (typeof getComputedStyle === "function" && element.nodeType === 1) return getComputedStyle(element)?.direction === "rtl";
+        }
+        catch {}
+        return element.closest?.("[dir]")?.getAttribute?.("dir") === "rtl";
     }
 
     applyTranslationLineDisplayClasses(line) {
@@ -13088,7 +13152,9 @@ module.exports = class DiscordAITranslator {
     }
 
     handleTranslationActionsKeydown(toolbar, event) {
-        const keys = { ArrowRight: 1, ArrowLeft: -1, Home: "first", End: "last" };
+        // The arrow keys follow the visual order: in a right-to-left toolbar the next button is to the left.
+        const forward = this.isRightToLeftElement(toolbar) ? "ArrowLeft" : "ArrowRight";
+        const keys = { [forward]: 1, [forward === "ArrowRight" ? "ArrowLeft" : "ArrowRight"]: -1, Home: "first", End: "last" };
         const move = keys[event?.key];
         if (move === undefined) return;
         const buttons = [...(toolbar?.querySelectorAll?.(".dait-translation-action") || [])];
@@ -13110,7 +13176,8 @@ module.exports = class DiscordAITranslator {
         const bounds = (line.closest?.(DISCORD_MESSAGE_NODE_SELECTOR) || line.parentElement)?.getBoundingClientRect?.();
         if (!lineRect || !bounds) return;
         const width = Number(toolbar.offsetWidth || 0) || 96;
-        const room = line.getAttribute?.("dir") === "rtl" ? lineRect.left - bounds.left : bounds.right - lineRect.right;
+        // The toolbar goes after the line's inline end: on the left when the line runs right to left.
+        const room = this.isRightToLeftElement(line) ? lineRect.left - bounds.left : bounds.right - lineRect.right;
         const placement = room >= width + 8 ? "end" : "inside";
         if (toolbar.dataset.daitPlacement !== placement) toolbar.dataset.daitPlacement = placement;
     }
@@ -13232,7 +13299,12 @@ module.exports = class DiscordAITranslator {
             if (target) this.restoreTranslationSourceVisibility(target);
         });
         if (hadFocus) {
-            try { owner?.focus?.({ preventScroll: true }); }
+            // The focused button is gone. Discord's focusable message element is the inner
+            // [data-list-item-id] one; the outer list item is not focusable, so focus would drop to <body>.
+            const focusTarget = line.closest?.("[data-list-item-id][tabindex]")
+                || owner?.querySelector?.("[data-list-item-id][tabindex]")
+                || owner;
+            try { focusTarget?.focus?.({ preventScroll: true }); }
             catch {}
         }
         return true;
@@ -13258,6 +13330,8 @@ module.exports = class DiscordAITranslator {
         const scrollTop = this.getScrollContainerTop(scroller);
         if (!Number.isFinite(scrollTop) || !rect) return null;
         const atBottom = this.isScrollContainerAtBottom(scroller, scrollTop);
+        // A restyle of every line keeps the anchor's top edge in place, wherever the lines are.
+        if (options.keepAnchorTop) return { anchor, edge: "top", top: Number(rect.top || 0), scroller, scrollTop, atBottom };
         const band = this.getScrollContainerBand(scroller);
         const insertY = Number(this.settings.ui?.translationPosition === "after" ? rect.bottom : rect.top);
         const placement = !band ? "visible" : insertY <= band.top ? "above" : insertY >= band.bottom ? "below" : "visible";

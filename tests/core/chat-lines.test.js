@@ -260,22 +260,33 @@ function getCssRule(selector) {
 
 // --- render-8: language and direction ---
 
-test("translation lines carry the target language and a direction; right-to-left targets get dir=rtl", t => {
+test("the translated text carries the target language and a direction; right-to-left targets get dir=rtl", t => {
     const { plugin, doc } = createChatPlugin(t, { targetLanguage: "阿拉伯语" });
     const { messageNode, content } = createMessage(doc, "See you tomorrow");
-    const line = plugin.renderTranslation(messageNode, content, "أراك غدا @user", "cache-key", content.text);
-    assert.equal(line.getAttribute("lang"), "ar");
-    assert.equal(line.getAttribute("dir"), "rtl");
+    const line = plugin.renderTranslation(messageNode, content, "أراك غدا @user", "cache-key", content.text, {
+        partialInfo: { missingSegments: [2], totalSegments: 4 }
+    });
+    const textOf = () => line.querySelector(".dait-translation-text");
+    assert.equal(textOf().getAttribute("lang"), "ar");
+    assert.equal(textOf().getAttribute("dir"), "rtl");
+    // The toolbar and the partial note are in the interface language and follow the page's direction.
+    assert.equal(line.getAttribute("lang"), null);
+    assert.equal(line.getAttribute("dir"), null);
+    assert.equal(line.querySelector(".dait-translation-note").closest("[lang]"), null);
+    assert.equal(line.querySelector(".dait-translation-actions").closest("[dir]"), null);
+    // A right-to-left translation is a box of its own, so wrapped lines align right to left.
+    assert.match(getCssRule('.dait-translation-line:not(.dait-translation-preview) > .dait-translation-text[dir="rtl"]'), /display: inline-block;/);
 
     plugin.settings.translation.targetLanguage = "Chinese";
     plugin.renderTranslation(messageNode, content, "明天见", "cache-key", content.text);
-    assert.equal(line.getAttribute("lang"), "zh-CN");
-    assert.equal(line.getAttribute("dir"), "auto");
+    assert.equal(textOf().getAttribute("lang"), "zh-CN");
+    assert.equal(textOf().getAttribute("dir"), "auto");
 
-    // State lines are in the interface language, so they drop the translation's language and direction.
+    // State lines are in the interface language: no translation language or direction anywhere.
     plugin.renderTranslationLoading(messageNode, content, "cache-key", content.text);
     assert.equal(line.getAttribute("lang"), null);
     assert.equal(line.getAttribute("dir"), null);
+    assert.equal(line.querySelector("[lang]"), null);
 
     assert.deepEqual(plugin.getTranslationLineLanguage("Hebrew"), { lang: "he", dir: "rtl" });
     assert.deepEqual(plugin.getTranslationLineLanguage("fa-IR"), { lang: "fa-IR", dir: "rtl" });
@@ -371,9 +382,15 @@ test("a masked translation is a keyboard button: Enter or Space reveals it", t =
     assert.equal(clickLine.classList.contains("dait-translation-revealed"), true);
 });
 
-test("hide original: hovering the mask or focusing the message shows the original again", () => {
-    const masked = '[data-dait-source-hidden="true"]:not(:hover):not(:focus-within):not(:is([id^="chat-messages-"], [data-list-item-id*="chat-messages"]):focus-within *)';
-    assert.ok(PLUGIN_CSS.includes(`${masked} {`), "the gray bar only applies while not hovered or focused");
+test("hide original: hovering the mask or focusing the message from the keyboard shows the original again", () => {
+    // Only keyboard focus (:focus-visible) outside the translation line reveals the original. A mouse press
+    // focuses the message (Discord's article has tabindex=-1) or a toolbar button; revealing then would
+    // push a line placed after the original down under the pointer, losing the click or the selection.
+    const keyboardFocus = ":focus-visible:not(.dait-translation-line, .dait-translation-line *)";
+    const masked = `[data-dait-source-hidden="true"]:not(:hover):not(:has(${keyboardFocus}))`
+        + `:not(:is([id^="chat-messages-"], [data-list-item-id*="chat-messages"]):is(${keyboardFocus}, :has(${keyboardFocus})) *)`;
+    assert.ok(PLUGIN_CSS.includes(`${masked} {`), "the gray bar only applies while not hovered or focused from the keyboard");
+    assert.equal(PLUGIN_CSS.includes('[data-dait-source-hidden="true"]:not(:hover):not(:focus-within)'), false, "pointer focus does not reveal the original");
     assert.ok(PLUGIN_CSS.includes(`${masked} > :not(.dait-message-button):not(.dait-translation-line) {`));
     assert.ok(PLUGIN_CSS.includes(`${masked}::before {`));
     // The masked text has font-size 0 and shrinks to fit, so the bar needs a real font size for its ch
@@ -548,6 +565,46 @@ test("a successful translation request ends the provider's attention episode", a
     assert.equal(plugin.toasts.length, 2);
 });
 
+test("an attention episode survives a pass through a channel without auto-translate and a passing health probe", async t => {
+    const { plugin } = createChatPlugin(t);
+    plugin.settings.ui.showAutoTranslateToasts = false;
+    plugin.settings.translation.apiKey = "sk-fake-1";
+    const auth = Object.assign(new Error("API_ERROR"), { status: 401 });
+    plugin.showAutoTranslateError(auth);
+    assert.equal(plugin.toasts.length, 1);
+
+    // Every failure that is not terminal schedules a retry scan. The user then opens a channel where
+    // auto-translate is off, and the scan there cancels the runtime work.
+    plugin.autoTranslationRetryTimer = setTimeout(() => {}, 60000);
+    plugin.autoTranslationRetryAt = Date.now() + 60000;
+    t.after(() => clearTimeout(plugin.autoTranslationRetryTimer));
+    plugin.isAutoTranslateEnabled = () => false;
+    assert.equal(plugin.createAutoTranslationScanWork({}), null);
+    assert.equal(plugin.autoTranslationRetryTimer, null, "the runtime work is still cancelled");
+    plugin.isAutoTranslateEnabled = () => true;
+    // Back in the translated channel the same error is not announced again.
+    plugin.showAutoTranslateError(auth);
+    assert.equal(plugin.toasts.length, 1, "the episode did not end");
+
+    // A local server that answers the tiny health probe but still fails messages keeps its episode:
+    // only a real translation (or a passing connection test, or new settings) ends it.
+    plugin.settings.translation.provider = "sakuraLocal";
+    plugin.settings.translation.apiKey = "";
+    plugin.setApiRuntimeStatus = () => {};
+    plugin.queueScan = () => {};
+    const options = plugin.getAutoTranslationOptions();
+    const providerKey = options.providerKey;
+    const local = Object.assign(new Error("API_ERROR"), { status: 500, localProviderUnavailable: true, providerKey });
+    plugin.showAutoTranslateError(local);
+    assert.equal(plugin.toasts.length, 2);
+    plugin.fetchApiResponseText = async () => JSON.stringify({ choices: [{ message: { content: "OK" } }] });
+    plugin.startLocalProviderHealthProbe(providerKey, options);
+    await plugin.localProviderHealthChecks.get(providerKey);
+    assert.equal(plugin.localProviderHealthyKeys.has(providerKey), true, "the probe passed");
+    plugin.showAutoTranslateError(local);
+    assert.equal(plugin.toasts.length, 2, "the probe alone does not end the episode");
+});
+
 // --- display settings ---
 
 test("translation style and text size have defaults, are normalized and restyle existing lines", t => {
@@ -589,6 +646,65 @@ test("translation style and text size have defaults, are normalized and restyle 
     assert.match(getCssRule(".dait-translation-line.dait-translation-revealed.dait-translation-style-muted"), /color: var\(--dait-line-muted\)/);
     assert.match(getCssRule(".dait-translation-line.dait-translation-style-tag:not(.dait-translation-preview)::before"), /content: attr\(data-dait-tag\)/);
     assert.match(getCssRule(".dait-translation-line.dait-translation-scale-90:not(.dait-translation-preview)"), /font-size: 0\.9rem/);
+});
+
+test("resetting the settings restyles lines already on screen to the default style and text size", t => {
+    const { plugin, doc } = createChatPlugin(t);
+    plugin.settings.ui.translationStyle = "tag";
+    plugin.settings.ui.translationTextScale = 90;
+    const { messageNode, content } = createMessage(doc, "See you tomorrow");
+    // No cache key: a manual line, which the reset's queue invalidation keeps.
+    const line = plugin.renderTranslation(messageNode, content, "明天见", "", content.text);
+    assert.equal(line.dataset.daitMode, "manual");
+    assert.equal(line.classList.contains("dait-translation-style-tag"), true);
+    assert.equal(line.classList.contains("dait-translation-scale-90"), true);
+
+    assert.equal(plugin.resetSettingsToDefaults(), true);
+    assert.equal(plugin.settings.ui.translationStyle, "tint");
+    assert.equal(plugin.settings.ui.translationTextScale, 100);
+    assert.equal(line.isConnected, true, "a manual line survives the reset");
+    assert.equal(line.classList.contains("dait-translation-style-tint"), true, "the line follows the reset style");
+    assert.equal(line.classList.contains("dait-translation-style-tag"), false);
+    assert.equal(line.classList.contains("dait-translation-scale-90"), false, "the line follows the reset text size");
+    assert.equal(line.dataset.daitTag, undefined);
+});
+
+test("a new text size restyles every line in one scroll correction that keeps the visible chat in place", t => {
+    const { plugin, doc } = createChatPlugin(t);
+    const scroller = doc.body.appendChild(doc.createElement("div"));
+    const messages = [];
+    const lines = [];
+    for (let index = 0; index < 7; index++) {
+        const { messageNode, content } = createMessage(doc, `message ${index}`, `chat-messages-111111111111111111-30000000000000000${index}`);
+        scroller.appendChild(messageNode);
+        messages.push(messageNode);
+        // Messages 0-3 sit above the visible chat (3 only partly); 4 is the first one fully in view.
+        if (index !== 4) lines.push(plugin.renderTranslation(messageNode, content, `译文 ${index}`, "", content.text));
+    }
+    // A tiny layout: messages stacked in a scroller that shows its content at y=50..750; a line is 22px, 20px at 90%.
+    Object.assign(scroller, { scrollTop: 200, scrollHeight: 5000, clientHeight: 700, rect: { top: 50, bottom: 750, left: 0, right: 600, width: 600, height: 700 } });
+    const heightOf = message => 40 + message.querySelectorAll(".dait-translation-line")
+        .reduce((sum, line) => sum + (line.classList.contains("dait-translation-scale-90") ? 20 : 22), 0);
+    messages.forEach((message, index) => {
+        message.getBoundingClientRect = () => {
+            const top = 50 - scroller.scrollTop + messages.slice(0, index).reduce((sum, other) => sum + heightOf(other), 0);
+            return { top, bottom: top + heightOf(message), left: 0, right: 600, width: 600, height: heightOf(message) };
+        };
+    });
+    const anchorTop = messages[4].getBoundingClientRect().top;
+    assert.equal(anchorTop, 98);
+
+    const before = plugin.stableRenders;
+    plugin.setSetting("ui.translationTextScale", 90);
+    assert.ok(lines.every(line => line.classList.contains("dait-translation-scale-90")));
+    assert.equal(plugin.stableRenders, before + 1, "one scroll-stability snapshot for the whole restyle");
+    assert.equal(messages[4].getBoundingClientRect().top, anchorTop, "the first message in view stays where it was");
+    assert.equal(scroller.scrollTop, 192, "the four lines above it shrank by 2px each");
+
+    // A chat pinned to its newest message stays pinned.
+    Object.assign(scroller, { scrollTop: 4300 });
+    plugin.setSetting("ui.translationTextScale", 100);
+    assert.equal(scroller.scrollTop, 4300);
 });
 
 test("the Display section offers the style and text size selects", t => {
@@ -667,6 +783,62 @@ test("a translated line has a keyboard-operable toolbar that never takes layout 
     assert.equal(previewLine.querySelector(".dait-translation-actions"), null, "reply previews get no toolbar");
 });
 
+test("a short right-to-left translation gets its toolbar beside it, and the arrow keys follow the toolbar's direction", t => {
+    const { plugin, doc } = createChatPlugin(t, { targetLanguage: "阿拉伯语" });
+    const { messageNode, content } = createMessage(doc, "See you tomorrow");
+    const line = plugin.renderTranslation(messageNode, content, "أراك غدا", "cache-key", content.text);
+    const toolbar = line.querySelector(".dait-translation-actions");
+    const buttons = toolbar.querySelectorAll("button");
+    // Discord's chat is left to right: the short line sits at the left, next to the avatar gutter.
+    messageNode.rect = { left: 0, right: 600, top: 0, bottom: 40 };
+    toolbar.offsetWidth = 92;
+    line.rect = { left: 72, right: 136, top: 10, bottom: 32 };
+    line.dispatch("pointerenter");
+    assert.equal(toolbar.dataset.daitPlacement, "end", "the toolbar goes after the line, not over the text");
+
+    buttons[0].focus();
+    toolbar.dispatch("keydown", { key: "ArrowRight", target: buttons[0] });
+    assert.equal(doc.activeElement, buttons[1], "a left-to-right toolbar: ArrowRight moves right");
+
+    // On a right-to-left page the buttons run right to left, and so do the arrow keys.
+    messageNode.setAttribute("dir", "rtl");
+    toolbar.dispatch("keydown", { key: "ArrowRight", target: buttons[1] });
+    assert.equal(doc.activeElement, buttons[0]);
+    toolbar.dispatch("keydown", { key: "ArrowLeft", target: buttons[0] });
+    assert.equal(doc.activeElement, buttons[1]);
+    line.rect = { left: 464, right: 528, top: 10, bottom: 32 };
+    line.dispatch("pointerenter");
+    assert.equal(toolbar.dataset.daitPlacement, "end", "room is measured on the left");
+    line.rect = { left: 40, right: 528, top: 10, bottom: 32 };
+    line.dispatch("pointerenter");
+    assert.equal(toolbar.dataset.daitPlacement, "inside");
+});
+
+test("hiding a line from the keyboard moves focus to the message, not to the page", t => {
+    const { plugin, doc } = createChatPlugin(t);
+    // Discord: <li id="chat-messages-…"> (not focusable) > <div data-list-item-id="…" tabindex="-1"> (the focusable message).
+    const { messageNode, contents, content } = createMessage(doc, "See you tomorrow");
+    const article = doc.createElement("div");
+    article.setAttribute("data-list-item-id", "chat-messages___chat-messages-111111111111111111-222222222222222222");
+    article.setAttribute("tabindex", "-1");
+    messageNode.insertBefore(article, contents);
+    article.appendChild(contents);
+    const line = plugin.renderTranslation(messageNode, content, "明天见", "cache-key", content.text);
+    const hide = line.querySelector(".dait-translation-action-hide");
+    hide.focus();
+    hide.click();
+    assert.equal(line.classList.contains("dait-translation-dismissed"), true);
+    assert.equal(doc.activeElement, article, "focus lands on the focusable message element");
+
+    // Without a focusable message element, the message node itself is the fallback.
+    const other = createMessage(doc, "gg", "chat-messages-111111111111111111-444444444444444444");
+    const otherLine = plugin.renderTranslation(other.messageNode, other.content, "打得好", "cache-key-2", other.content.text);
+    const otherHide = otherLine.querySelector(".dait-translation-action-hide");
+    otherHide.focus();
+    otherHide.click();
+    assert.equal(doc.activeElement, other.messageNode);
+});
+
 test("hiding a line keeps it hidden for that message until the user translates it again", async t => {
     const { plugin, doc } = createChatPlugin(t);
     plugin.settings.ui.hideOriginalAfterTranslation = true;
@@ -734,6 +906,65 @@ test("retranslating skips the cache and renders the fresh result", async t => {
     await plugin.retranslateMessage(messageNode, content);
     assert.equal(requests, 1);
     assert.deepEqual(rendered, ["旧译文", "新译文"]);
+});
+
+test("a retranslation in flight is not drawn over by the cached translation it replaces", async t => {
+    const { plugin, doc } = createChatPlugin(t);
+    plugin.settings.translation.enabled = true;
+    plugin.settings.ui.autoTranslateMessages = true;
+    plugin.isAutoTranslateEnabled = () => true;
+    const { messageNode, content } = createMessage(doc, "Could you check the build logs from yesterday please");
+    const text = content.text;
+    plugin.resolveManualTranslationSource = (node, element) => ({ text: element.text, domText: element.text, source: "dom-content" });
+    plugin.isLowInformationRepeatedText = () => false;
+    // Layout checks: the message is in view.
+    plugin.isAutoTranslationCacheTargetDrawable = () => true;
+    plugin.isElementVisibleInViewport = () => true;
+
+    // The message shows an auto translation from the cache.
+    const candidate = { messageNode, content, text, domText: text, targetKind: "message" };
+    const autoOptions = plugin.withAutoTranslationCandidateIdentity(plugin.getAutoTranslationRequestOptionsForText(text, plugin.getAutoTranslationOptions()), candidate);
+    const autoKey = plugin.getTranslationCacheKey(text, autoOptions);
+    plugin.setTranslationCache(autoKey, "旧译文");
+    let line = plugin.renderTranslation(messageNode, content, "旧译文", autoKey, text);
+    assert.notEqual(line.dataset.daitMode, "manual");
+
+    // The user asks for a fresh translation; the model has not answered yet.
+    let answer;
+    plugin.runManualTranslationPlan = () => new Promise(resolve => { answer = resolve; });
+    const retranslating = plugin.retranslateMessage(messageNode, content);
+    line = plugin.getTranslationLine(content);
+    assert.equal(line.dataset.daitMode, "manual");
+    assert.equal(line.classList.contains("dait-translation-loading"), true);
+    const stillLoading = message => {
+        const current = plugin.getTranslationLine(content);
+        assert.equal(current.dataset.daitMode, "manual", message);
+        assert.equal(current.classList.contains("dait-translation-loading"), true, message);
+        assert.equal(current.textContent, plugin.t("translationLoading"), message);
+    };
+
+    // The cached-draw pass finds the old translation for this message and does not queue it.
+    const outcome = plugin.queueCachedDrawForCandidate(candidate, plugin.getAutoTranslationOptions());
+    assert.notEqual(outcome.status, "queued");
+    assert.equal(plugin.autoTranslationRenderQueue.length, 0);
+    // A cache render already queued before the click does not draw either.
+    assert.equal(plugin.renderAutoTranslationCacheTarget({ ...candidate, cacheKey: autoKey, requestOptions: autoOptions }, "旧译文", autoKey, autoOptions, { drawPass: true }), false);
+    stillLoading("the cached-draw pass leaves the retranslation alone");
+    // The regular scan neither draws the cache hit nor requests the message again.
+    plugin.isAutoTranslationTargetVisibleCached = () => true;
+    const decision = plugin.evaluateAutoTranslationCandidate(candidate, { requestOptions: plugin.getAutoTranslationOptions() });
+    assert.equal(decision.action, "skip");
+    assert.equal(decision.reasonCode, "manual-line-present");
+    plugin.completeAutoTranslationFromCache(messageNode, content, text, "旧译文", autoKey, true, autoOptions, null, null, text);
+    assert.equal(plugin.autoTranslationRenderQueue.length, 0, "no cache render is queued");
+    stillLoading("the scan leaves the retranslation alone");
+
+    // The fresh result replaces the loading line.
+    answer({ translated: "新译文", validation: { renderable: true, cacheable: true, quality: "good" } });
+    await retranslating;
+    line = plugin.getTranslationLine(content);
+    assert.equal(line.classList.contains("dait-translation-loading"), false);
+    assert.equal(plugin.translationLineTexts.get(line), "新译文");
 });
 
 // --- partial long-message results (contract with the queue branch) ---
