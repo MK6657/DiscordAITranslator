@@ -104,6 +104,72 @@ module.exports = `
     opacity: 0.55;
 }
 
+/* Prompt-template manager: readable sizes and one control height (UI-SPEC typography). */
+.dait-prompt-manager {
+    gap: 16px;
+}
+
+.dait-prompt-manager-header,
+.dait-prompt-editor {
+    gap: 6px;
+}
+
+.dait-prompt-manager-header > span,
+.dait-prompt-editor > span {
+    color: var(--dait-heading, var(--header-primary, #f2f3f5));
+    font-size: 15px;
+    font-weight: 500;
+    line-height: 1.4;
+}
+
+.dait-prompt-manager .dait-row-description {
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+.dait-prompt-manager .dait-prompt-tools {
+    gap: 8px;
+}
+
+.dait-prompt-manager .dait-prompt-tools input,
+.dait-prompt-manager .dait-prompt-tools select {
+    border-radius: 4px;
+    font-size: 14px;
+    font-weight: 400;
+    height: 32px;
+    line-height: 20px;
+    min-height: 32px;
+    padding: 5px 10px;
+}
+
+.dait-prompt-manager .dait-prompt-tools select {
+    background-position: right 8px center;
+    padding-right: 34px;
+}
+
+.dait-prompt-manager .dait-prompt-editor textarea {
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 400;
+    line-height: 1.5;
+    min-height: 160px;
+    padding: 8px 10px;
+}
+
+.dait-prompt-manager .dait-small-button {
+    border-radius: 4px;
+    font-size: 14px;
+    font-weight: 500;
+    height: 32px;
+    min-height: 32px;
+    padding: 0 14px;
+}
+
+.dait-prompt-manager .dait-prompt-actions {
+    gap: 8px;
+}
+
 .dait-prompt-preview-block {
     display: grid;
     gap: 6px;
@@ -114,15 +180,16 @@ module.exports = `
     color: var(--dait-text-muted, var(--dait-muted-readable, var(--text-muted, #b5bac1)));
     font-size: 13px;
     font-weight: 600;
+    line-height: 1.4;
 }
 
 .dait-prompt-preview {
     background: var(--dait-surface-2, var(--dait-card-soft, var(--background-secondary, #2b2d31)));
     border: 1px solid var(--dait-divider, var(--dait-border, var(--background-modifier-accent, #3f4147)));
-    border-radius: 8px;
+    border-radius: 4px;
     color: var(--dait-text-muted, var(--dait-muted-readable, var(--text-muted, #b5bac1)));
-    font-size: 13px;
-    line-height: 1.6;
+    font-size: 14px;
+    line-height: 1.5;
     max-height: 168px;
     min-width: 0;
     overflow: auto;
@@ -136,25 +203,28 @@ module.exports = `
     outline-offset: 2px;
 }
 
+/* Status caption right under the prompt, then its buttons at their natural width on one line. */
 .dait-prompt-editor-footer {
-    align-items: center;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px 16px;
-    justify-content: space-between;
+    display: grid;
+    gap: 8px;
     min-width: 0;
 }
 
 .dait-prompt-editor-footer .dait-prompt-actions {
     grid-column: auto;
-    justify-content: flex-end;
+    justify-content: flex-start;
+}
+
+.dait-prompt-manager .dait-prompt-actions .dait-small-button {
+    flex: 0 0 auto;
 }
 
 .dait-prompt-status {
     color: var(--dait-text-muted, var(--dait-muted-readable, var(--text-muted, #b5bac1)));
-    flex: 1 1 200px;
     font-size: 13px;
+    line-height: 1.4;
     min-width: 0;
+    overflow-wrap: anywhere;
 }
 
 .dait-prompt-tools.dait-prompt-save {

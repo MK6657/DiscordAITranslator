@@ -2938,9 +2938,12 @@ module.exports = class DiscordAITranslator {
             const matching = active && normalize(active.prompt) === normalize(prompt)
                 ? active
                 : this.getPromptTemplates(kind).find(template => normalize(template.prompt) === normalize(prompt)) || null;
+            // "Update current template" writes to the active template, so the status names it while it differs.
             status.textContent = matching
                 ? this.t("promptUsingTemplate", { code: matching.serial, name: matching.name })
-                : this.t("promptTemplateCustom");
+                : active && normalize(prompt)
+                    ? this.t("promptTemplateEdited", { code: active.serial, name: active.name })
+                    : this.t("promptTemplateCustom");
             update.disabled = !active || !normalize(prompt) || normalize(active.prompt) === normalize(prompt);
             update.title = active ? this.t("promptUpdateTitle", { code: active.serial, name: active.name }) : "";
         };
@@ -3043,9 +3046,16 @@ module.exports = class DiscordAITranslator {
         remove.addEventListener("click", async () => {
             const template = findTemplate(select.value);
             if (!template) return;
+            // Deleting the template in use makes the next one active and replaces the prompt with it; say so.
+            const fallback = template.id === this.settings[kind]?.activePromptTemplate
+                ? this.getPromptTemplates(kind).find(item => item.id !== template.id) || null
+                : null;
+            const label = this.getPromptTemplateLabel(template);
             const confirmed = await this.confirmAction({
                 title: this.t("promptDeleteConfirm"),
-                body: this.getPromptTemplateLabel(template),
+                body: fallback && normalize(fallback.prompt) !== normalize(getPromptValue())
+                    ? [label, this.t("promptDeleteActiveNote", { code: fallback.serial, name: fallback.name })]
+                    : label,
                 confirmText: this.t("promptDelete"),
                 danger: true
             });

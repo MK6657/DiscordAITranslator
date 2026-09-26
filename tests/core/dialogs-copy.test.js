@@ -685,6 +685,32 @@ test("Delete template asks first", async t => {
     assert.equal(ui.plugin.settings.translation.prompt, "prompt A");
 });
 
+test("deleting the template in use says which template the prompt switches to", async t => {
+    const ui = createPromptManagerFixture(t);
+    const asked = [];
+    ui.plugin.confirmAction = async options => { asked.push(options); return true; };
+    assert.equal(ui.select.value, "tpl-a");
+    await ui.remove.dispatch("click");
+    assert.deepEqual(asked[0].body, ["001 · Natural", ui.plugin.t("promptDeleteActiveNote", { code: "002", name: "Literal" })]);
+    assert.equal(ui.plugin.settings.translation.activePromptTemplate, "tpl-b");
+    assert.equal(ui.plugin.settings.translation.prompt, "prompt B");
+    assert.equal(ui.textarea.value, "prompt B");
+    assert.equal(ui.status.textContent, ui.plugin.t("promptUsingTemplate", { code: "002", name: "Literal" }));
+});
+
+test("the status names the template that Update would overwrite while the prompt differs from it", async t => {
+    const ui = createPromptManagerFixture(t);
+    assert.equal(ui.status.textContent, ui.plugin.t("promptUsingTemplate", { code: "001", name: "Natural" }));
+    ui.textarea.value = "prompt A, edited";
+    await ui.textarea.dispatch("input");
+    assert.equal(ui.status.textContent, ui.plugin.t("promptTemplateEdited", { code: "001", name: "Natural" }));
+    assert.equal(ui.update.disabled, false);
+    // Text that another template holds counts as that template.
+    ui.textarea.value = "prompt B";
+    await ui.textarea.dispatch("input");
+    assert.equal(ui.status.textContent, ui.plugin.t("promptUsingTemplate", { code: "002", name: "Literal" }));
+});
+
 // --- public bilingual "current flow" ----------------------------------------------------------------
 
 test("public bilingual current flow shows the service and language the bilingual message really uses", t => {
