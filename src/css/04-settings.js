@@ -224,7 +224,7 @@ module.exports = `.dait-settings {
     background: var(--dait-placeholder);
     content: "";
     height: 14px;
-    left: 11px;
+    left: 10px;
     -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='M20 20l-3.5-3.5'/%3E%3C/svg%3E") center / contain no-repeat;
     mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='M20 20l-3.5-3.5'/%3E%3C/svg%3E") center / contain no-repeat;
     pointer-events: none;
@@ -660,6 +660,11 @@ module.exports = `.dait-settings {
 .dait-small-button-link:hover:not(:disabled) {
     background: transparent;
     text-decoration: underline;
+}
+
+/* A text link at the end of a row: its text ends on the controls' right edge. */
+.dait-row-control .dait-small-button-link:last-child {
+    margin-right: -6px;
 }
 
 /* Rows of action buttons wrap and stay right-aligned. */

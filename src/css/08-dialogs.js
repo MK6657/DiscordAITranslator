@@ -50,9 +50,10 @@ module.exports = `
     font-weight: 400;
 }
 
+/* The raised surface stands out from Discord's modal background in both palettes. */
 .dait-dialog-check {
     align-items: center;
-    background: var(--dait-surface);
+    background: var(--dait-raised);
     border: 1px solid var(--dait-divider);
     border-radius: 8px;
     color: var(--dait-text);
@@ -79,7 +80,7 @@ module.exports = `
 }
 
 .dait-dialog-preview {
-    background: var(--dait-surface);
+    background: var(--dait-raised);
     border-left: 3px solid var(--dait-input-border);
     border-radius: 4px;
     color: var(--dait-text);

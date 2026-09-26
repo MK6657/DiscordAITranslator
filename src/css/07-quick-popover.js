@@ -253,8 +253,8 @@ module.exports = `
     column-gap: 16px;
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
-    min-height: 52px;
-    padding: 8px 0;
+    min-height: 48px;
+    padding: 7px 0;
 }
 
 .dait-qp-row + .dait-qp-row {
@@ -319,7 +319,7 @@ label.dait-qp-label {
     font-weight: 600;
     line-height: 1.3;
     margin: 0;
-    padding: 16px 0 4px;
+    padding: 12px 0 2px;
 }
 
 .dait-qp-switch {
