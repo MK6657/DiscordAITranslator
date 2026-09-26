@@ -567,3 +567,37 @@ test("the open quick panel follows its launcher when Discord moves it without a 
     t.mock.timers.tick(800);
     assert.equal(writes, 0);
 });
+
+// --- QP-6: Tab belongs to whatever has focus outside the panel ---
+
+test("Tab in Discord's composer is not taken by an open quick panel; from the page or the launcher it enters the panel", t => {
+    const { plugin, doc, launcher, composer } = createQuickPanelPlugin(t);
+    dispatch(doc, launcher, "click", { detail: 0 });
+    t.mock.timers.tick(1);
+    const popover = doc.querySelector(".dait-quick-popover");
+    const first = byClass(popover, "dait-qp-header-open-full");
+    const last = byClass(popover, "dait-qp-footer-open-full");
+    // Discord moves focus to the composer without a click (a notification opened a channel).
+    composer.focus();
+    let event = key(doc, "Tab");
+    assert.equal(event.defaultPrevented, false, "the composer's Tab (e.g. accepting an emoji) works");
+    assert.equal(doc.activeElement, composer);
+    event = key(doc, "Tab", { shiftKey: true });
+    assert.equal(event.defaultPrevented, false);
+    assert.equal(doc.activeElement, composer);
+    assert.equal(plugin.isQuickPopoverOpen(), true);
+
+    // From the page itself or from the launcher, Tab still leads into the panel.
+    doc.activeElement = doc.body;
+    event = key(doc, "Tab");
+    assert.equal(event.defaultPrevented, true);
+    assert.equal(doc.activeElement, first);
+    launcher.focus();
+    event = key(doc, "Tab", { shiftKey: true });
+    assert.equal(event.defaultPrevented, true);
+    assert.equal(doc.activeElement, last);
+    // Inside the panel it wraps as before.
+    event = key(doc, "Tab");
+    assert.equal(event.defaultPrevented, true);
+    assert.equal(doc.activeElement, first);
+});

@@ -735,8 +735,10 @@ class QuickPanel {
         this.root.classList?.remove?.(POINTER_OPENED_CLASS);
         const active = typeof document !== "undefined" ? document.activeElement : null;
         const focusInside = Boolean(active && this.root.contains?.(active));
+        // The panel is not modal: once Discord (or the user) has put focus somewhere else, Escape and Tab belong
+        // there (Tab accepts an emoji or a mention in the composer).
+        const focusElsewhere = Boolean(active && active !== document.body && !focusInside && !this.isLauncherElement(active));
         if (event.key === "Escape") {
-            const focusElsewhere = active && active !== document.body && !focusInside && !this.isLauncherElement(active);
             if (focusElsewhere) return;
             event.preventDefault?.();
             event.stopPropagation?.();
@@ -744,7 +746,7 @@ class QuickPanel {
             this.close("escape", { restoreFocus: true });
             return;
         }
-        if (event.key === "Tab") this.trapTab(event, focusInside ? active : null);
+        if (event.key === "Tab" && !focusElsewhere) this.trapTab(event, focusInside ? active : null);
     }
 
     trapTab(event, active) {
