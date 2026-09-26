@@ -1244,6 +1244,14 @@ class ProviderLayer {
             }
             return this.plugin.parseModelResponse(raw);
         }
+        catch (error) {
+            // Queued work orphaned by a settings change is aborted, but Google already received the
+            // request and counts its characters: so does the key's monthly usage.
+            if (request?.responseParser === "googleTranslate" && error?.requestSent && this.plugin.isRequestCancelled(error)) {
+                this.plugin.markGoogleTranslateKeyUsage(request.googleTranslate?.apiKey, request.googleTranslate?.charCount || 0);
+            }
+            throw error;
+        }
         finally {
             this.plugin.releaseGoogleTranslateRequestReservation(request);
         }
@@ -1346,6 +1354,9 @@ class ProviderLayer {
             if (callerSignal.aborted) controller.abort();
             else callerSignal.addEventListener?.("abort", abortFromCaller, { once: true });
         }
+        // Whether the request left the plugin: a service may bill a request it received, even when
+        // the answer is thrown away.
+        let sent = false;
         try {
             if (this.plugin.apiRequestsClosed) throw new DOMException("API requests are closed until the plugin starts", "AbortError");
             controller?.signal.throwIfAborted();
@@ -1364,6 +1375,7 @@ class ProviderLayer {
                     ? new URLSearchParams(request.body || {}).toString()
                     : JSON.stringify(request.body);
             }
+            sent = true;
             const response = await fetch(endpoint, fetchOptions);
 
             const raw = await response.text();
@@ -1388,7 +1400,8 @@ class ProviderLayer {
                 ? `API request timed out after ${Math.round(timeoutMs / 1000)}s`
                 : "Request cancelled", { cause: error }), {
                 name: timedOut ? "TimeoutError" : "AbortError",
-                code: timedOut ? "REQUEST_TIMEOUT" : "REQUEST_CANCELLED"
+                code: timedOut ? "REQUEST_TIMEOUT" : "REQUEST_CANCELLED",
+                requestSent: sent
             });
         }
         finally {

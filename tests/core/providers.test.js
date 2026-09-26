@@ -339,6 +339,35 @@ test("a Google key pool raises one attention toast, only when no key in the pool
     assert.equal(plugin.autoTranslationProviderNoticeAt.size, 0);
 });
 
+// X4: an orphaned request is aborted, but Google already received (and counts) its characters.
+test("an aborted Google request that was already sent still counts its characters", async t => {
+    const plugin = createGooglePoolPlugin("main|AIza-fake-main|450000");
+    const text = "привет мир это тест";
+    let fetchCalls = 0;
+    t.mock.method(globalThis, "fetch", (_url, options) => new Promise((_resolve, reject) => {
+        fetchCalls++;
+        options.signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true });
+    }));
+    const options = plugin.getAutoTranslationOptions();
+    const expectedChars = plugin.buildModelRequest("translation", text).request.googleTranslate.charCount;
+
+    const controller = new AbortController();
+    const running = plugin.runModelTask("translation", text, { configOverrides: options.configOverrides, mode: "auto", signal: controller.signal });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(fetchCalls, 1);
+    controller.abort();
+    await assert.rejects(running, error => plugin.isRequestCancelled(error));
+    assert.equal(plugin.settings.googleTranslate.keys[0].usedChars, expectedChars);
+    assert.equal(plugin.getGoogleTranslateReservedChars(plugin.settings.googleTranslate.keys[0]), 0, "the reservation is released");
+
+    // A request cancelled before it was sent costs nothing.
+    const early = new AbortController();
+    early.abort();
+    await assert.rejects(plugin.runModelTask("translation", "другой текст", { configOverrides: options.configOverrides, mode: "auto", signal: early.signal }), error => plugin.isRequestCancelled(error));
+    assert.equal(fetchCalls, 1);
+    assert.equal(plugin.settings.googleTranslate.keys[0].usedChars, expectedChars);
+});
+
 test("resetting Google stats and a successful API test clear a key's cooldown; the stats row shows it", async () => {
     const plugin = createDirectPlugin("googleCloud");
     plugin.showToast = () => {};
