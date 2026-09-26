@@ -926,8 +926,9 @@ class SettingsStore {
 
     // Restores the defaults. With keepCredentials (default) it keeps API keys and the other credential fields of
     // every provider profile (each key with the endpoint and model it was used with), the Google key pool with its
-    // usage counters and monthly limit, and the prompt templates. The UI language is kept unless keepLanguage is false. Applies the same runtime effects
-    // setSetting applies to each changed setting. Stable entry point for the reset dialog.
+    // usage counters and monthly limit, and the prompt templates. The UI language is kept unless keepLanguage is
+    // false. Applies the same runtime effects setSetting applies to each changed setting. Stable entry point for
+    // the reset dialog.
     resetSettingsToDefaults({ keepCredentials = true, keepLanguage = true } = {}) {
         const previous = this.plugin.settings && typeof this.plugin.settings === "object" ? this.plugin.settings : {};
         const next = this.plugin.clone(DEFAULT_SETTINGS);
