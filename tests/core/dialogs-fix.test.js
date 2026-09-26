@@ -313,8 +313,7 @@ test("stop() ends an open confirmation and clears the paused state", async t => 
         loadTranslationCache() {},
         injectStyles() {},
         patchMessageContextMenu() {},
-        startObserver() {},
-        showSettingsUpgradeNotices() {}
+        startObserver() {}
     });
     h.plugin.start();
     const pending = h.plugin.confirmAction({ title: "Clear?" });

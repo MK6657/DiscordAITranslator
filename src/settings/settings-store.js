@@ -459,16 +459,22 @@ class SettingsStore {
             this.plugin.settings.ui.channelAutoTranslatePolicies = {};
             changed = true;
         }
-        // In 0.3.x an 'enabled' channel rule behaved like 'inherit'; now it keeps the channel translating while the
-        // main switch is off. Rules stored by an older version are logged and announced once after start.
+        // In 0.3.x an 'enabled' channel rule behaved like 'inherit' (the main switch decided); now it keeps the
+        // channel translating while the main switch is off. Rules stored by an older version become 'inherit' once,
+        // so no channel starts sending messages to the service after the upgrade. The entry stays, so a rule stored
+        // under an old per-message key still shadows its channel's rule as it did in 0.3.x.
         const policiesVersion = DEFAULT_SETTINGS.ui.channelAutoTranslatePoliciesVersion;
         if (storedSettings && typeof storedSettings === "object" && !(Number(storedSettings.ui?.channelAutoTranslatePoliciesVersion) >= policiesVersion)) {
-            const allowListed = this.plugin.getChannelAutoTranslateAllowListCount();
-            if (allowListed > 0) {
-                this.pendingChannelAllowListNotice = allowListed;
+            const policies = this.plugin.settings.ui.channelAutoTranslatePolicies;
+            const converted = this.plugin.getChannelAutoTranslateAllowListCount(policies);
+            Object.entries(policies).forEach(([key, policy]) => {
+                if (!policy || typeof policy !== "object") return;
+                if (this.plugin.normalizeChannelAutoTranslatePolicyMode(policy.mode) === "enabled") policies[key] = { ...policy, mode: "inherit" };
+            });
+            if (converted > 0) {
                 try {
                     this.plugin.logDiagnostic("settings.channel-rules", "upgraded", {
-                        allowListed,
+                        converted,
                         autoTranslateMessages: Boolean(this.plugin.settings.ui.autoTranslateMessages)
                     });
                 }
@@ -548,22 +554,6 @@ class SettingsStore {
         if (this.settingsLoadBlockedNoticeShown) return false;
         this.settingsLoadBlockedNoticeShown = true;
         try { this.plugin.showToast(this.plugin.t("settingsLoadBlocked"), "error"); }
-        catch {}
-        return true;
-    }
-
-    // Shown by start() after the settings load that found them; each notice is shown once.
-    showSettingsUpgradeNotices() {
-        const allowListed = Number(this.pendingChannelAllowListNotice || 0);
-        this.pendingChannelAllowListNotice = 0;
-        if (allowListed <= 0) return false;
-        try {
-            this.plugin.showToast(this.plugin.t("channelAllowListUpgradeNotice", {
-                count: allowListed,
-                rule: this.plugin.t("channelRuleAlways"),
-                inherit: this.plugin.t("channelRuleFollow")
-            }), "info");
-        }
         catch {}
         return true;
     }

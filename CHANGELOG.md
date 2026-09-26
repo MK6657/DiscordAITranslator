@@ -58,7 +58,7 @@ Pre-release: offline, installer and artifact checks pass; live Discord acceptanc
 
 ### Automatic translation & retries
 
-- The channel rule "Always translate" now works as an allow-list: that channel is auto-translated even when the main auto-translate switch is off. "Never translate" always wins and "Follow main switch" follows the switch. If you upgrade with such channels, a one-time notice says how many there are and how to stop them.
+- The channel rule "Always translate" now works as an allow-list: that channel is auto-translated even when the main auto-translate switch is off. "Never translate" always wins and "Follow main switch" follows the switch. Rules saved by 0.3.0 keep working as they did there: a channel set to "Enable in this channel" (which followed the main switch in 0.3.0) becomes "Follow main switch", so no channel starts auto-translating after the upgrade.
 - The channel rule control always edits the channel it was opened for: if Discord switches channels while settings are open, it switches to the new channel instead of copying one channel's rule onto another.
 - A reply cut off at the length limit is retried once with a larger limit and a longer timeout. If it is cut off again, the message waits 2 minutes and then twice as long each time, up to 30 minutes, instead of being sent again every 4 seconds; a timeout of that retry no longer counts as the local service being down.
 - A batch request that times out or hits a network error no longer blocks those messages for 6 hours; they are retried with normal back-off. If a batch reply cannot be read or is cut off, each message is sent again on its own.
