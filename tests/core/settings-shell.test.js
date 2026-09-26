@@ -291,6 +291,7 @@ const tabPanels = panel => panel.querySelectorAll("[role=tabpanel]");
 const visibleTab = panel => tabPanels(panel).filter(tabpanel => !tabpanel.hidden).map(tabpanel => tabpanel.dataset.daitSettingsTabPanel);
 const rowOf = control => control.closest(".dait-settings-row");
 const descriptionOf = control => rowOf(control).querySelector(".dait-row-description")?.textContent ?? "";
+const allDisabled = control => control.querySelectorAll("input, button").every(node => node.disabled === true);
 
 // data-dait-path controls the v0.3.0 panel built for each provider setup (captured from f0cfa1e). Nothing may be lost.
 const V030_COMMON = [
@@ -583,7 +584,7 @@ test("dependent rows sit under their switch, disabled with the reason while it i
     assert.ok(rowOf(range).classList.contains("dait-settings-row-inactive"));
     assert.equal(limit.disabled, true);
     assert.equal(run.disabled, true);
-    assert.equal(order.disabled, true);
+    assert.equal(allDisabled(order), true);
     // The hotkey switch is on by default, so the recorder is usable.
     assert.equal(hotkey.disabled, false);
 
@@ -608,12 +609,66 @@ test("dependent rows sit under their switch, disabled with the reason while it i
 test("a locked row keeps its reason even when its parent switch turns on", t => {
     const { plugin, panel } = createShell(t, { translationProvider: "sakuraLocal" });
     const order = panel.querySelector("[data-dait-path='ui.providerFallbackOrder']");
-    assert.equal(order.disabled, true);
+    assert.equal(allDisabled(order), true);
     assert.equal(descriptionOf(order), plugin.t("localFallbackUnavailable"));
     plugin.settings.ui.providerFallbackEnabled = true;
     plugin.syncSettingsDependentRows(panel);
-    assert.equal(order.disabled, true);
+    assert.equal(allDisabled(order), true);
     assert.equal(descriptionOf(order), plugin.t("localFallbackUnavailable"));
+    plugin.setSetting("ui.providerFallbackOrder", "microsoft");
+    assert.equal(allDisabled(order), true, "a re-render keeps the lock");
+});
+
+test("fallback services are an ordered list: tick to use, arrows to reorder, no typed ids", t => {
+    const { plugin, panel, doc } = createShell(t, { tab: "advanced", ui: { providerFallbackEnabled: true, providerFallbackOrder: ["microsoft", "deepl"] } });
+    const list = panel.querySelector("[data-dait-path='ui.providerFallbackOrder']");
+    assert.equal(list.getAttribute("role"), "group");
+    assert.equal(list.getAttribute("aria-labelledby"), rowOf(list).querySelector(".dait-row-label").id);
+    const providers = () => list.querySelectorAll(".dait-order-item").map(item => item.dataset.daitProvider);
+    const ticked = () => list.querySelectorAll(".dait-order-item").filter(item => item.querySelector(".dait-order-include").checked).map(item => item.dataset.daitProvider);
+    const item = provider => list.querySelectorAll(".dait-order-item").find(node => node.dataset.daitProvider === provider);
+    const button = (provider, part) => item(provider).querySelectorAll(".dait-order-move").find(node => node.dataset.daitMove === part);
+    // Chosen services first in their order; local services are never offered.
+    assert.deepEqual(providers(), ["microsoft", "deepl", "deepseek", "openaiCompatible", "googleCloud", "baidu"]);
+    assert.deepEqual(ticked(), ["microsoft", "deepl"]);
+    assert.equal(providers().includes("sakuraLocal"), false);
+    assert.deepEqual(list.querySelectorAll(".dait-order-position").map(node => node.textContent), ["1", "2", "", "", "", ""]);
+    // The current translation service is marked.
+    assert.match(item("deepseek").querySelector(".dait-order-name").textContent, /当前服务/);
+    // Each tick box is labelled by the service name; arrows name the service too.
+    const include = item("baidu").querySelector(".dait-order-include");
+    assert.equal(item("baidu").querySelector(".dait-order-name").getAttribute("for"), include.id);
+    assert.equal(button("deepl", "up").getAttribute("aria-label"), "把 DeepL 上移");
+    // Edge arrows are disabled.
+    assert.equal(button("microsoft", "up").disabled, true);
+    assert.equal(button("deepl", "down").disabled, true);
+    assert.equal(button("baidu", "up").disabled, true, "unticked services have no position to move");
+
+    include.checked = true;
+    include.dispatch("change");
+    assert.deepEqual(plugin.settings.ui.providerFallbackOrder, ["microsoft", "deepl", "baidu"]);
+    assert.deepEqual(ticked(), ["microsoft", "deepl", "baidu"]);
+    assert.equal(doc.activeElement, item("baidu").querySelector(".dait-order-include"), "focus stays on the service");
+
+    button("baidu", "up").click();
+    assert.deepEqual(plugin.settings.ui.providerFallbackOrder, ["microsoft", "baidu", "deepl"]);
+    assert.equal(doc.activeElement, button("baidu", "up"));
+    button("microsoft", "down").click();
+    assert.deepEqual(plugin.settings.ui.providerFallbackOrder, ["baidu", "microsoft", "deepl"]);
+
+    const untick = item("microsoft").querySelector(".dait-order-include");
+    untick.checked = false;
+    untick.dispatch("change");
+    assert.deepEqual(plugin.settings.ui.providerFallbackOrder, ["baidu", "deepl"]);
+    // Nothing to commit on close: the list saves as it changes.
+    plugin.commitSettingsControls(panel);
+    assert.deepEqual(plugin.settings.ui.providerFallbackOrder, ["baidu", "deepl"]);
+    // Turning the switch off disables the whole list.
+    plugin.setSetting("ui.providerFallbackEnabled", false);
+    assert.equal(allDisabled(list), true);
+    plugin.setSetting("ui.providerFallbackEnabled", true);
+    assert.equal(button("baidu", "up").disabled, true, "edge arrows stay disabled after the switch comes back");
+    assert.equal(button("baidu", "down").disabled, false);
 });
 
 test("segmented controls: radiogroup of radios, arrow keys choose, saved through setSetting", t => {
@@ -656,6 +711,19 @@ test("segmented labels that do not fit the shared width make the row stacked", t
     assert.ok(rowOf(rule).classList.contains("dait-settings-row-stacked"));
     const position = panel.querySelector("[data-dait-path='ui.translationPosition']");
     assert.equal(rowOf(position).classList.contains("dait-settings-row-stacked"), false);
+});
+
+test("the model preset select follows the model field", t => {
+    const { plugin, panel } = createShell(t, { tab: "translate" });
+    const preset = panel.querySelector("[data-dait-model-preset=translation]");
+    const model = panel.querySelector("[data-dait-path='translation.model']");
+    assert.equal(preset.value, "deepseek-v4-flash");
+    model.value = "my-own-model";
+    model.dispatch("change");
+    assert.equal(plugin.settings.translation.model, "my-own-model");
+    assert.equal(preset.value, "", "custom");
+    plugin.setSetting("translation.model", "deepseek-v4-pro");
+    assert.equal(preset.value, "deepseek-v4-pro");
 });
 
 test("one select for the message Translate button maps onto injectMessageButtons + messageButtonVisibility", t => {

@@ -2284,21 +2284,114 @@ module.exports = class DiscordAITranslator {
         return this.createRow(this.t("historyBackfillRun"), controls, { ...rowOptions, description: this.t("historyBackfillRunDesc") });
     }
 
+    // The manual-translation fallback services as an ordered list: tick the services to use and move them with the
+    // arrow buttons (no typing of provider ids). Local services cannot be a fallback, so they are not listed.
     createProviderFallbackOrderRow(local) {
-        const textarea = document.createElement("textarea");
-        textarea.dataset.daitPath = "ui.providerFallbackOrder";
-        textarea.rows = 3;
-        textarea.value = this.formatProviderFallbackOrder(this.settings.ui?.providerFallbackOrder);
-        this.bindSettingsTextarea(textarea);
-        textarea.addEventListener("change", () => {
-            this.preserveSettingsScroll(textarea, () => this.setSetting("ui.providerFallbackOrder", textarea.value));
-        });
-        return this.createRow(this.t("providerFallbackOrder"), textarea, {
-            description: this.t("providerFallbackOrderDesc", { providers: PROVIDER_ORDER.join(", ") }),
+        const list = document.createElement("div");
+        list.className = "dait-order-list";
+        list.setAttribute("role", "group");
+        list.dataset.daitPath = "ui.providerFallbackOrder";
+        list.dataset.daitControl = "order-list";
+        this.renderProviderFallbackOrderList(list);
+        return this.createRow(this.t("providerFallbackOrder"), list, {
+            description: this.t("providerFallbackOrderListDesc"),
             disabledReason: local && this.t("localFallbackUnavailable"),
             dependsOn: { path: "ui.providerFallbackEnabled", label: this.t("providerFallbackEnabled") },
-            stacked: true
+            stacked: true,
+            ariaTarget: list
         });
+    }
+
+    getProviderFallbackCandidates() {
+        return PROVIDER_ORDER.filter(provider => !this.isLocalTranslationProvider(provider));
+    }
+
+    // Chosen services first, in their saved order, then the others.
+    renderProviderFallbackOrderList(list) {
+        if (!list) return;
+        const candidates = this.getProviderFallbackCandidates();
+        const order = this.parseProviderFallbackOrderText(this.settings.ui?.providerFallbackOrder).filter(provider => candidates.includes(provider));
+        const current = String(this.settings.translation?.provider || "");
+        const focusHint = list.__daitFocusHint || null;
+        list.__daitFocusHint = null;
+        [...(list.children || [])].forEach(child => child.remove?.());
+        list.textContent = "";
+        const save = (next, hint) => {
+            list.__daitFocusHint = hint;
+            this.setSetting("ui.providerFallbackOrder", next);
+        };
+        [...order, ...candidates.filter(provider => !order.includes(provider))].forEach(provider => {
+            const index = order.indexOf(provider);
+            const name = this.getProviderDisplayName(provider);
+            const item = document.createElement("div");
+            item.className = index >= 0 ? "dait-order-item dait-order-item-on" : "dait-order-item";
+            item.dataset.daitProvider = provider;
+
+            const position = document.createElement("span");
+            position.className = "dait-order-position";
+            position.setAttribute("aria-hidden", "true");
+            position.textContent = index >= 0 ? String(index + 1) : "";
+            item.appendChild(position);
+
+            const include = document.createElement("input");
+            include.type = "checkbox";
+            include.className = "dait-order-include";
+            include.id = this.createSettingsControlId();
+            include.checked = index >= 0;
+            include.addEventListener("change", () => {
+                const next = include.checked ? [...order, provider] : order.filter(item => item !== provider);
+                save(next, { provider, part: "include" });
+            });
+            item.appendChild(include);
+
+            const label = document.createElement("label");
+            label.className = "dait-order-name";
+            label.setAttribute("for", include.id);
+            label.textContent = name;
+            if (provider === current) {
+                const note = document.createElement("span");
+                note.className = "dait-order-note";
+                note.textContent = this.t("providerFallbackCurrent");
+                label.appendChild(note);
+            }
+            item.appendChild(label);
+
+            const move = (delta, part, labelKey) => {
+                const button = this.createSmallButton(delta < 0 ? "↑" : "↓", "outline");
+                button.className = `${button.className} dait-order-move`;
+                button.dataset.daitMove = part;
+                button.title = this.t(labelKey, { provider: name });
+                button.setAttribute("aria-label", this.t(labelKey, { provider: name }));
+                const target = index + delta;
+                button.disabled = index < 0 || target < 0 || target >= order.length;
+                button.addEventListener("click", () => {
+                    if (button.disabled || index < 0 || target < 0 || target >= order.length) return;
+                    const next = [...order];
+                    next.splice(index, 1);
+                    next.splice(target, 0, provider);
+                    save(next, { provider, part });
+                });
+                return button;
+            };
+            item.appendChild(move(-1, "up", "providerFallbackMoveUp"));
+            item.appendChild(move(1, "down", "providerFallbackMoveDown"));
+            list.appendChild(item);
+        });
+
+        // Re-rendered after a change: keep the row's locked/dependent state and the keyboard focus.
+        const row = list.closest?.(".dait-settings-row");
+        const parentPath = row?.dataset?.daitDependsOn;
+        if (row?.dataset?.daitLocked === "true" || (parentPath && !this.getSetting(parentPath))) {
+            this.getSettingsRowControls(list).forEach(node => { node.disabled = true; });
+        }
+        if (focusHint) {
+            const item = [...(list.children || [])].find(node => node.dataset?.daitProvider === focusHint.provider);
+            const target = focusHint.part === "include"
+                ? item?.querySelector?.(".dait-order-include")
+                : [...(item?.children || [])].find(node => node.dataset?.daitMove === focusHint.part && !node.disabled)
+                    || item?.querySelector?.(".dait-order-include");
+            this.focusSettingsElement(target);
+        }
     }
 
     createPublicBilingualSection() {
@@ -3228,6 +3321,8 @@ module.exports = class DiscordAITranslator {
 
     createDeepSeekModelRow(kind) {
         const select = document.createElement("select");
+        // The preset follows the model field (syncSettingControls), so the two never disagree.
+        select.dataset.daitModelPreset = kind;
         const current = this.settings[kind]?.model;
 
         const custom = document.createElement("option");
@@ -3255,6 +3350,7 @@ module.exports = class DiscordAITranslator {
 
     createLocalModelRow(kind) {
         const select = document.createElement("select");
+        select.dataset.daitModelPreset = kind;
         const current = this.settings[kind]?.model;
 
         const custom = document.createElement("option");
@@ -3385,6 +3481,11 @@ module.exports = class DiscordAITranslator {
         row.classList?.toggle?.("dait-settings-row-inactive", inactive || locked);
         if (locked) return;
         this.getSettingsRowControls(row.children?.[1] || row).forEach(node => { node.disabled = inactive; });
+        // An ordered list re-renders so its first/last arrow buttons stay disabled.
+        if (!inactive) {
+            const list = row.children?.[1]?.children?.[0];
+            if (list?.dataset?.daitControl === "order-list") this.renderProviderFallbackOrderList(list);
+        }
         const description = row.__daitDescription;
         if (!description) return;
         const text = inactive
@@ -3724,9 +3825,21 @@ module.exports = class DiscordAITranslator {
                 this.syncSegmentedControl(control, value);
                 return;
             }
+            if (control.dataset?.daitControl === "order-list") {
+                this.renderProviderFallbackOrderList(control);
+                return;
+            }
 
             control.value = value ?? "";
         });
+        // A model preset select shows the preset matching the model field, or "custom".
+        const modelKind = /^(polish|translation)\.model$/.exec(path)?.[1];
+        if (modelKind) {
+            document.querySelectorAll?.(`[data-dait-model-preset='${modelKind}']`)?.forEach(select => {
+                const options = [...(select.options || [])];
+                select.value = options.some(option => option.value && option.value === value) ? value : "";
+            });
+        }
         // The message-button select shows both stored settings; rows that depend on a switch follow it.
         if (path === "ui.injectMessageButtons" || path === "ui.messageButtonVisibility") {
             this.syncSettingControls("ui.messageButtonMode", this.getMessageButtonMode(), { includeActive: true });

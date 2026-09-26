@@ -831,6 +831,10 @@ Object.assign(I18N["zh-CN"], {
     providerFallbackEnabled: "\u542f\u7528\u624b\u52a8\u7ffb\u8bd1\u4e3b\u5907 provider",
     providerFallbackEnabledDesc: "\u9ed8\u8ba4\u5173\u95ed\u3002\u4ec5\u7528\u4e8e\u624b\u52a8\u7ffb\u8bd1\u548c\u516c\u5f00\u53cc\u8bed\u7684\u4e91 provider\uff1bSakura local \u4e0d\u4f1a\u81ea\u52a8\u5207\u5230\u4e91 provider\u3002",
     providerFallbackOrder: "\u5907\u7528 provider \u987a\u5e8f",
+    providerFallbackOrderListDesc: "\u52fe\u9009\u8981\u7528\u7684\u5907\u7528\u670d\u52a1\uff0c\u7528\u7bad\u5934\u8c03\u6574\u5148\u540e\u987a\u5e8f\u3002",
+    providerFallbackMoveUp: "\u628a {provider} \u4e0a\u79fb",
+    providerFallbackMoveDown: "\u628a {provider} \u4e0b\u79fb",
+    providerFallbackCurrent: "\uff08\u5f53\u524d\u670d\u52a1\uff09",
     providerFallbackOrderDesc: "\u7528\u9017\u53f7\u3001\u7a7a\u683c\u6216\u6362\u884c\u5206\u9694 provider id\u3002\u53ef\u7528\uff1a{providers}\u3002\u65e0\u6548\u9879\u4f1a\u5728\u4fdd\u5b58\u65f6\u8fc7\u6ee4\u3002"
 });
 
@@ -856,6 +860,10 @@ Object.assign(I18N.en, {
     providerFallbackEnabled: "Enable manual provider fallback",
     providerFallbackEnabledDesc: "Off by default. Applies only to manual translation and public bilingual cloud providers; Sakura local never falls back to cloud automatically.",
     providerFallbackOrder: "Fallback provider order",
+    providerFallbackOrderListDesc: "Tick the fallback services to use; the arrows set their order.",
+    providerFallbackMoveUp: "Move {provider} up",
+    providerFallbackMoveDown: "Move {provider} down",
+    providerFallbackCurrent: " (current service)",
     providerFallbackOrderDesc: "Separate provider ids with commas, spaces, or new lines. Available: {providers}. Invalid entries are filtered when saved."
 });
 

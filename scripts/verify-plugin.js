@@ -2136,6 +2136,18 @@ const getUiRow = (elements, path) => {
     return node;
 };
 const getUiRowDescription = (elements, path) => getUiRow(elements, path)?.children[0]?.children.find(child => child.className === "dait-row-description")?.textContent;
+// A form field is disabled itself; a composite control (the fallback order list) through every button and box in it.
+const isUiControlDisabled = element => {
+    const isField = node => ["INPUT", "SELECT", "TEXTAREA", "BUTTON"].includes(node.tagName);
+    if (isField(element)) return element.disabled === true;
+    const fields = [];
+    const visit = node => (node.children || []).forEach(child => {
+        if (isField(child)) fields.push(child);
+        visit(child);
+    });
+    visit(element);
+    return fields.length > 0 && fields.every(field => field.disabled === true);
+};
 assert.match(getUiRowDescription(uiCreatedElements, "ui.autoTranslateConcurrency"), /默认 4，范围 1-10/);
 ["ui.autoTranslatePrefetch", "ui.autoTranslateIntakeMode", "ui.providerFallbackEnabled"]
     .forEach(path => assert.notEqual(uiCreatedElements.find(element => element.dataset?.daitPath === path).disabled, true, path));
@@ -2145,14 +2157,18 @@ assert.match(getUiRowDescription(uiCreatedElements, "ui.autoTranslateConcurrency
     ["ui.historyBackfillLimit", "historyBackfillEnabled"],
     ["ui.providerFallbackOrder", "providerFallbackEnabled"]
 ].forEach(([path, parentKey]) => {
-    assert.equal(uiCreatedElements.find(element => element.dataset?.daitPath === path).disabled, true, path);
+    assert.equal(isUiControlDisabled(uiCreatedElements.find(element => element.dataset?.daitPath === path)), true, path);
     assert.equal(getUiRowDescription(uiCreatedElements, path), uiSectionPlugin.t("settingsRequiresParent", { parent: uiSectionPlugin.t(parentKey) }), path);
     assert.equal(fakeElementHasClass(getUiRow(uiCreatedElements, path), "dait-settings-row-dependent"), true, path);
 });
 uiSectionPlugin.settings.ui.providerFallbackEnabled = true;
 uiSectionPlugin.syncSettingsDependentRows(providerFallbackSection, "ui.providerFallbackEnabled");
-assert.equal(uiCreatedElements.find(element => element.dataset?.daitPath === "ui.providerFallbackOrder").disabled, false);
-assert.match(getUiRowDescription(uiCreatedElements, "ui.providerFallbackOrder"), /deepseek/);
+const providerFallbackOrderList = uiCreatedElements.find(element => element.dataset?.daitPath === "ui.providerFallbackOrder");
+// The order is an ordered list of the cloud services (no typed ids): a tick box and up/down buttons per service.
+assert.deepEqual(providerFallbackOrderList.children.map(item => item.dataset.daitProvider), ["deepseek", "openaiCompatible", "googleCloud", "microsoft", "deepl", "baidu"]);
+assert.equal(providerFallbackOrderList.children.every(item => item.children.some(child => child.className === "dait-order-include")), true);
+assert.equal(isUiControlDisabled(providerFallbackOrderList), false);
+assert.equal(getUiRowDescription(uiCreatedElements, "ui.providerFallbackOrder"), uiSectionPlugin.t("providerFallbackOrderListDesc"));
 uiSectionPlugin.settings.ui.providerFallbackEnabled = false;
 const localUiCreatedElements = [];
 global.document = { createElement: tag => createFakeElement(tag, localUiCreatedElements) };
@@ -2168,7 +2184,7 @@ localUiSectionPlugin.createProviderFallbackSection();
     ["ui.providerFallbackEnabled", "localFallbackUnavailable"],
     ["ui.providerFallbackOrder", "localFallbackUnavailable"]
 ].forEach(([path, reasonKey]) => {
-    assert.equal(localUiCreatedElements.find(element => element.dataset?.daitPath === path).disabled, true, path);
+    assert.equal(isUiControlDisabled(localUiCreatedElements.find(element => element.dataset?.daitPath === path)), true, path);
     assert.equal(getUiRowDescription(localUiCreatedElements, path), localUiSectionPlugin.t(reasonKey), path);
 });
 // Local providers can prefetch nearby messages like cloud providers.

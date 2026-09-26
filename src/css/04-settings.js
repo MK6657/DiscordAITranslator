@@ -679,6 +679,70 @@ module.exports = `.dait-settings {
     width: 100%;
 }
 
+/* Ordered list: the manual-translation fallback services, ticked and moved with arrow buttons. */
+.dait-order-list {
+    border: 1px solid var(--dait-divider);
+    border-radius: var(--dait-radius-card);
+    display: grid;
+    min-width: 0;
+}
+
+.dait-order-item {
+    align-items: center;
+    column-gap: var(--dait-space-2);
+    display: grid;
+    grid-template-columns: 20px auto minmax(0, 1fr) auto auto;
+    min-height: 44px;
+    padding: 6px 8px 6px 12px;
+}
+
+.dait-order-item + .dait-order-item {
+    border-top: 1px solid var(--dait-divider);
+}
+
+.dait-order-position {
+    color: var(--dait-text-muted);
+    font-size: var(--dait-font-caption);
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+}
+
+.dait-settings input.dait-order-include {
+    accent-color: var(--dait-brand);
+    cursor: pointer;
+    height: 16px;
+    margin: 0;
+    width: 16px;
+}
+
+.dait-order-name {
+    color: var(--dait-text);
+    cursor: pointer;
+    font-size: var(--dait-font-body);
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.dait-order-item:not(.dait-order-item-on) .dait-order-name {
+    color: var(--dait-text-muted);
+}
+
+.dait-order-note {
+    color: var(--dait-text-muted);
+    font-size: var(--dait-font-caption);
+}
+
+/* Only chosen services have a position to move. */
+.dait-order-item:not(.dait-order-item-on) .dait-order-move {
+    visibility: hidden;
+}
+
+.dait-small-button.dait-order-move {
+    font-size: var(--dait-font-label);
+    padding: 0;
+    width: var(--dait-control-h);
+}
+
 /* <details> for rarely changed options (more model parameters, optional API key). */
 .dait-settings-details {
     border-top: 1px solid var(--dait-divider);
