@@ -17118,6 +17118,7 @@ module.exports = class DiscordAITranslator {
     getLastApiTestResult(...args) { return this.providerLayer.getLastApiTestResult(...args); }
     recordApiTestResult(...args) { return this.providerLayer.recordApiTestResult(...args); }
     clearLastApiTestResult(...args) { return this.providerLayer.clearLastApiTestResult(...args); }
+    isApiTestRunning(...args) { return this.providerLayer.isApiTestRunning(...args); }
     getReportedResponseModel(...args) { return this.providerLayer.getReportedResponseModel(...args); }
     getApiTestModel(...args) { return this.providerLayer.getApiTestModel(...args); }
     getProviderFallbackOrder(...args) { return this.providerLayer.getProviderFallbackOrder(...args); }

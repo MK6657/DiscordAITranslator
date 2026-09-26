@@ -384,3 +384,80 @@ test("Enter or Space, and a press whose first events Discord swallowed, still to
     t.mock.timers.tick(1);
     assert.equal(plugin.isQuickPopoverOpen(), false);
 });
+
+// --- QP-3: "testing" means a test or probe is running ---
+
+const LOOPBACK_SAKURA = "http://127.0.0.1:8080/v1/chat/completions";
+const LAN_SAKURA = "http://192.168.1.10:8080/v1/chat/completions";
+
+function statusPlugin(t, options = {}) {
+    const context = createQuickPanelPlugin(t, { endpoint: LOOPBACK_SAKURA, ...options });
+    context.plugin.settings.translation.apiKey = "";
+    context.plugin.settings.ui.autoTranslateMessages = true;
+    context.plugin.settings.translation.apiStatus = { state: "success", message: "" };
+    context.options = () => context.plugin.getAutoTranslationOptions();
+    context.providerKey = () => context.plugin.getAutoTranslationProviderKey(context.options());
+    return context;
+}
+
+test("a health probe of a LAN http endpoint ends as a failed status the user has to fix, not as a test that never ends", async t => {
+    const { plugin, doc, launcher, options, providerKey } = statusPlugin(t, { endpoint: LAN_SAKURA });
+    plugin.startLocalProviderHealthProbe(providerKey(), options(), { reason: "test" });
+    assert.equal(plugin.getLauncherStatus().state, "busy", "busy while the probe runs");
+    await plugin.localProviderHealthChecks.get(providerKey());
+    assert.equal(plugin.localProviderHealthChecks.size, 0);
+    const api = plugin.getApiStatus("translation");
+    assert.equal(api.state, "failed", "the probe records its failure");
+    assert.equal(api.message, plugin.t("errorUnsafeEndpoint"));
+    const status = plugin.getLauncherStatus();
+    assert.equal(status.state, "needs-you");
+    assert.equal(status.title, "Sakura 本地 · 连接失败 · 需要处理：接口地址不可用");
+    assert.equal(status.testing, false);
+    // The panel's Test button is the way to see the error: it is not blocked.
+    dispatch(doc, launcher, "click", { detail: 0 });
+    t.mock.timers.tick(1);
+    const popover = doc.querySelector(".dait-quick-popover");
+    assert.equal(byClass(popover, "dait-qp-test").disabled, false);
+    assert.equal(launcher.dataset.daitStatus, "needs-you");
+});
+
+test("a saved 'testing' status with nothing running is not shown as a running test", t => {
+    const { plugin, doc, launcher } = statusPlugin(t);
+    plugin.settings.translation.apiStatus = { state: "testing", message: "" };
+    const status = plugin.getLauncherStatus();
+    assert.equal(status.testing, false);
+    assert.equal(status.state, "ok");
+    assert.equal(status.title, "Sakura 本地 · 未检测 · 本频道自动翻译中");
+    dispatch(doc, launcher, "click", { detail: 0 });
+    t.mock.timers.tick(1);
+    const popover = doc.querySelector(".dait-quick-popover");
+    assert.equal(byClass(popover, "dait-qp-test").disabled, false, "nothing runs, so the Test button works");
+    assert.equal(byClass(popover, "dait-qp-status-line").textContent, "Sakura 本地 · 未检测");
+});
+
+test("a connection test started in the full settings window shows as testing until it ends", async t => {
+    const { plugin, doc, launcher } = statusPlugin(t);
+    let fail = null;
+    plugin.fetchModelResponse = () => new Promise((resolve, reject) => { fail = reject; });
+    const statusNode = doc.createElement("span");
+    statusNode.dataset.daitKind = "translation";
+    const running = plugin.testApiConnection("translation", null, statusNode);
+    await Promise.resolve();
+    assert.equal(plugin.isApiTestRunning("translation"), true);
+    assert.equal(plugin.isApiTestRunning("polish"), false);
+    let status = plugin.getLauncherStatus();
+    assert.equal(status.state, "busy");
+    assert.equal(status.title, "Sakura 本地 · 检测中 · 正在测试连接…");
+    dispatch(doc, launcher, "click", { detail: 0 });
+    t.mock.timers.tick(1);
+    const popover = doc.querySelector(".dait-quick-popover");
+    assert.equal(byClass(popover, "dait-qp-test").disabled, true, "a second test waits for the first");
+    fail(Object.assign(new Error("fetch failed"), { cause: { code: "ECONNREFUSED" } }));
+    await running;
+    assert.equal(plugin.isApiTestRunning("translation"), false);
+    status = plugin.getLauncherStatus();
+    assert.equal(status.testing, false);
+    assert.equal(status.state, "needs-you");
+    t.mock.timers.tick(250);
+    assert.equal(byClass(popover, "dait-qp-test").disabled, false);
+});

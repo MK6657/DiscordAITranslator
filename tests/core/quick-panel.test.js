@@ -605,10 +605,13 @@ test("launcher status: ok, busy, waiting, needs-you and off each have their own 
     plugin.autoTranslationInFlightItems = 0;
     plugin.autoTranslationQueue = [];
 
+    // A connection test in flight (the saved "testing" status alone is not enough: see quick-fix.test.js).
     plugin.settings.translation.apiStatus = { state: "testing", message: "" };
+    plugin.providerLayer.runningApiTests.set("translation", 1);
     status = plugin.getLauncherStatus();
     assert.equal(status.state, "busy");
     assert.equal(status.title, "Sakura 本地 · 检测中 · 正在测试连接…");
+    plugin.providerLayer.runningApiTests.clear();
     plugin.settings.translation.apiStatus = { state: "success", message: "" };
 
     const now = Date.now();

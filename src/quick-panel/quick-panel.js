@@ -941,13 +941,18 @@ class QuickPanel {
         const failureActive = Boolean(failure && (failureType === "local-unavailable" || Number(failure.retryAt || 0) > now));
         const configError = this.getConfigError(providerKey);
         const probing = Boolean(providerKey && plugin.localProviderHealthChecks?.has?.(providerKey));
-        const testing = api.state === "testing" || probing || this.testRunning;
+        // Only work that is running counts: the saved "testing" status outlives a test or probe that was cut short.
+        let settingsTest = false;
+        try { settingsTest = Boolean(plugin.isApiTestRunning?.("translation")); }
+        catch { settingsTest = false; }
+        const testing = probing || this.testRunning || settingsTest;
+        const apiState = api.state === "testing" && !testing ? "untested" : api.state;
         const queue = plugin.getAutoTranslationQueueSnapshot?.() || {};
         const inFlight = Math.max(0, Number(queue.inFlightItems || queue.inFlight || 0) || 0);
         const queued = Math.max(0, Number(queue.queueLength || 0) || 0);
         const autoActive = Boolean(plugin.isAutoTranslateEnabled());
 
-        let connection = plugin.getApiStatusText(api.state);
+        let connection = plugin.getApiStatusText(apiState);
         if (!configured) connection = t("quickStatusNotConfigured");
         else if (testing) connection = plugin.getApiStatusText("testing");
         else if (failureActive && ATTENTION_FAILURE_TYPES.has(failureType)) connection = plugin.getApiStatusText("failed");

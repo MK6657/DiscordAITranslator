@@ -518,8 +518,10 @@ test("launcher status: an invalid or unsafe API URL needs the user until a test 
     assert.equal(plugin.getLauncherStatus().activity, "需要处理：接口地址不可用");
     // A running test shows as busy, not as the error.
     plugin.settings.translation.apiStatus = { state: "testing", message: "" };
+    plugin.providerLayer.runningApiTests.set("translation", 1);
     assert.equal(plugin.getLauncherStatus().state, "busy");
     // The test passes: the error is over.
+    plugin.providerLayer.runningApiTests.clear();
     plugin.setApiRuntimeStatus("translation", "success");
     assert.equal(plugin.getLauncherStatus().state, "ok");
 

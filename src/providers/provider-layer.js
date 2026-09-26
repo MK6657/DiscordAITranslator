@@ -34,6 +34,9 @@ class ProviderLayer {
         // The last connection test per task (in memory only): what the settings and the quick panel show next to
         // the status, e.g. "Hy-MT2 · 820 ms · just now".
         this.lastApiTestResults = new Map();
+        // Connection tests in flight per task (the saved "testing" status can outlive its test, e.g. after a
+        // settings change cut the test short).
+        this.runningApiTests = new Map();
     }
 
     getProviderDefaults(provider) {
@@ -819,6 +822,11 @@ class ProviderLayer {
                     error.providerKey = providerKey;
                 }
                 this.plugin.markAutoTranslationProviderFailure(requestOptions, error);
+                // Failures the provider cooldown does not record (an invalid or unsafe API URL) still end the
+                // "testing" status this probe set, with the reason.
+                if (this.plugin.getApiStatus("translation").state === "testing" && !this.plugin.isRequestCancelled(error)) {
+                    this.plugin.setApiRuntimeStatus("translation", "failed", this.plugin.t("apiStatusFailed"), this.plugin.formatError(error));
+                }
                 this.plugin.logDiagnostic("auto.provider.health", "failed", {
                     key: this.plugin.getTextFingerprint(providerKey),
                     reason: options.reason || "",
@@ -859,6 +867,10 @@ class ProviderLayer {
 
     clearLastApiTestResult(kind) {
         return this.lastApiTestResults.delete(kind);
+    }
+
+    isApiTestRunning(kind) {
+        return Number(this.runningApiTests.get(kind) || 0) > 0;
     }
 
     // The model named in a chat-completions reply ("model": "..."), shortened to its file name.
@@ -1654,6 +1666,7 @@ class ProviderLayer {
             message
         });
 
+        this.runningApiTests.set(kind, Number(this.runningApiTests.get(kind) || 0) + 1);
         try {
             testConfig = this.plugin.clone(this.plugin.getTaskConfig(kind));
             providerSnapshotKey = kind === "translation"
@@ -1712,7 +1725,14 @@ class ProviderLayer {
             this.plugin.showToast(this.plugin.t("apiTestFailed", { name: this.plugin.getTaskDisplayName(kind), error: message }), "error");
         }
         finally {
-            if (this.plugin.isLifecycleTokenCurrent(lifecycleToken)) this.plugin.setButtonBusy(button, false, this.plugin.t("apiTest"));
+            const running = Number(this.runningApiTests.get(kind) || 0) - 1;
+            if (running > 0) this.runningApiTests.set(kind, running);
+            else this.runningApiTests.delete(kind);
+            if (this.plugin.isLifecycleTokenCurrent(lifecycleToken)) {
+                this.plugin.setButtonBusy(button, false, this.plugin.t("apiTest"));
+                // A test cut short writes no result; the launcher still stops showing it as running.
+                this.plugin.requestLauncherStatusUpdate?.();
+            }
         }
     }
 
