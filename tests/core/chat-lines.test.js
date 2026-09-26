@@ -726,6 +726,31 @@ test("a translated line has a keyboard-operable toolbar that never takes layout 
     assert.equal(previewLine.querySelector(".dait-translation-actions"), null, "reply previews get no toolbar");
 });
 
+test("hiding a line from the keyboard moves focus to the message, not to the page", t => {
+    const { plugin, doc } = createChatPlugin(t);
+    // Discord: <li id="chat-messages-…"> (not focusable) > <div data-list-item-id="…" tabindex="-1"> (the focusable message).
+    const { messageNode, contents, content } = createMessage(doc, "See you tomorrow");
+    const article = doc.createElement("div");
+    article.setAttribute("data-list-item-id", "chat-messages___chat-messages-111111111111111111-222222222222222222");
+    article.setAttribute("tabindex", "-1");
+    messageNode.insertBefore(article, contents);
+    article.appendChild(contents);
+    const line = plugin.renderTranslation(messageNode, content, "明天见", "cache-key", content.text);
+    const hide = line.querySelector(".dait-translation-action-hide");
+    hide.focus();
+    hide.click();
+    assert.equal(line.classList.contains("dait-translation-dismissed"), true);
+    assert.equal(doc.activeElement, article, "focus lands on the focusable message element");
+
+    // Without a focusable message element, the message node itself is the fallback.
+    const other = createMessage(doc, "gg", "chat-messages-111111111111111111-444444444444444444");
+    const otherLine = plugin.renderTranslation(other.messageNode, other.content, "打得好", "cache-key-2", other.content.text);
+    const otherHide = otherLine.querySelector(".dait-translation-action-hide");
+    otherHide.focus();
+    otherHide.click();
+    assert.equal(doc.activeElement, other.messageNode);
+});
+
 test("hiding a line keeps it hidden for that message until the user translates it again", async t => {
     const { plugin, doc } = createChatPlugin(t);
     plugin.settings.ui.hideOriginalAfterTranslation = true;

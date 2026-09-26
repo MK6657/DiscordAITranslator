@@ -13134,7 +13134,12 @@ module.exports = class DiscordAITranslator {
             if (target) this.restoreTranslationSourceVisibility(target);
         });
         if (hadFocus) {
-            try { owner?.focus?.({ preventScroll: true }); }
+            // The focused button is gone. Discord's focusable message element is the inner
+            // [data-list-item-id] one; the outer list item is not focusable, so focus would drop to <body>.
+            const focusTarget = line.closest?.("[data-list-item-id][tabindex]")
+                || owner?.querySelector?.("[data-list-item-id][tabindex]")
+                || owner;
+            try { focusTarget?.focus?.({ preventScroll: true }); }
             catch {}
         }
         return true;
