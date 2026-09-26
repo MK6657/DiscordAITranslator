@@ -785,6 +785,29 @@ test("quick panel: the status note wraps (up to three lines) instead of being cu
     assert.match(segment, /padding: 4px;/);
 });
 
+// --- UI-11: one scrollbar mechanism, so the 8 px rounded thumb applies in Discord (Chromium) ---
+
+test("the settings scrollbars use the ::-webkit-scrollbar rules; the standard properties only apply where those do not exist", () => {
+    const scrollers = ["[data-dait-settings-modal=\"true\"]", ".dait-quick-settings-body", ".dait-settings-rail", ".dait-settings-content",
+        ".dait-settings-row textarea", ".dait-prompt-editor textarea", ".dait-prompt-preview", ".dait-polish-result-output"];
+    // Outside the @supports block no rule gives these elements scrollbar-width or scrollbar-color (in Chromium 121+ a
+    // non-auto value switches the ::-webkit-scrollbar rules off).
+    const supports = /@supports not selector\(::-webkit-scrollbar\) \{\n([\s\S]*?)\n\}\n/.exec(PLUGIN_CSS);
+    assert.ok(supports, "a fallback for engines without ::-webkit-scrollbar");
+    const outside = PLUGIN_CSS.replace(supports[0], "");
+    for (const match of outside.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+        const selectors = match[1].split(",").map(part => part.trim());
+        if (!/scrollbar-(width|color)/.test(match[2])) continue;
+        assert.deepEqual(selectors.filter(selector => scrollers.includes(selector)), [], match[0].slice(0, 200));
+    }
+    for (const selector of scrollers) {
+        assert.ok(supports[1].includes(selector), selector);
+        assert.ok(PLUGIN_CSS.includes(`${selector}::-webkit-scrollbar,`) || PLUGIN_CSS.includes(`${selector}::-webkit-scrollbar {`), selector);
+    }
+    assert.match(supports[1], /scrollbar-color: var\(--dait-scrollbar-thumb\) var\(--dait-scrollbar-track\);\n        scrollbar-width: thin;/);
+    assert.match(PLUGIN_CSS, /\.dait-polish-result-output::-webkit-scrollbar \{\n    height: 8px;\n    width: 8px;/);
+});
+
 test("settings window: a key that ends an IME composition does not close the window", t => {
     const { doc, isOpen } = openHotkeyRecorder(t);
     doc.dispatchEvent("keydown", { key: "Escape", isComposing: true });

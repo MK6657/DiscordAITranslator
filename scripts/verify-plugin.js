@@ -2855,7 +2855,8 @@ assert.match(injectedCss, /\.dait-settings \{[\s\S]*?height: calc\(min\(760px, 1
 assert.match(injectedCss, /\[data-dait-settings-modal="true"\] \{[\s\S]*?margin-left: auto !important;[\s\S]*?margin-right: auto !important;/);
 assert.match(injectedCss, /\[data-dait-settings-modal-root="true"\] \{[\s\S]*?margin-bottom: clamp\(16px, 4vh, 32px\) !important;[\s\S]*?margin-top: clamp\(16px, 4vh, 32px\) !important;/);
 assert.match(injectedCss, /\.dait-settings \{[\s\S]*?margin-left: auto;[\s\S]*?margin-right: auto;/);
-assert.match(injectedCss, /\[data-dait-settings-modal="true"\],[\s\S]*?\.dait-quick-settings-body,[\s\S]*?\.dait-settings-rail,[\s\S]*?\.dait-settings-content,[\s\S]*?\.dait-settings-row textarea[\s\S]*?scrollbar-width: thin;/);
+// Thin standard scrollbars only where ::-webkit-scrollbar does not exist: in Chromium they would switch off the 8 px rules.
+assert.match(injectedCss, /@supports not selector\(::-webkit-scrollbar\) \{\n    \[data-dait-settings-modal="true"\],[\s\S]*?\.dait-quick-settings-body,[\s\S]*?\.dait-settings-rail,[\s\S]*?\.dait-settings-content,[\s\S]*?\.dait-settings-row textarea[\s\S]*?scrollbar-width: thin;/);
 assert.match(injectedCss, /\.dait-prompt-editor textarea,[\s\S]*?\.dait-polish-result-output \{[\s\S]*?scrollbar-width: thin;/);
 assert.equal(injectedCss.includes(".dait-test-panel") || injectedCss.includes(".dait-test-output"), false);
 assert.match(settingsTokenBlock, /--dait-scrollbar-thumb: var\(--scrollbar-thin-thumb, rgba\(128, 132, 142, 0\.45\)\);/);

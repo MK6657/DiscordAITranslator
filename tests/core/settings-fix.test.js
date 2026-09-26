@@ -668,8 +668,8 @@ test("dead rules are gone: the test-mode panel scrollbars and the embedded heade
     assert.equal(PLUGIN_CSS.includes(".dait-test-panel"), false);
     assert.equal(PLUGIN_CSS.includes(".dait-test-output"), false);
     assert.equal(PLUGIN_CSS.includes(".dait-settings-header-embedded"), false);
-    // The scrollbars that remain keep their thin style.
-    assert.match(PLUGIN_CSS, /\.dait-prompt-editor textarea,\n\.dait-polish-result-output \{\n    scrollbar-color: var\(--dait-scrollbar-thumb\) var\(--dait-scrollbar-track\);\n    scrollbar-width: thin;/);
+    // The scrollbars that remain keep their thin style (the standard properties only where ::-webkit-scrollbar is missing).
+    assert.match(PLUGIN_CSS, /\.dait-prompt-editor textarea,\n    \.dait-prompt-preview,\n    \.dait-polish-result-output \{\n        scrollbar-color: var\(--dait-scrollbar-thumb\) var\(--dait-scrollbar-track\);\n        scrollbar-width: thin;/);
 });
 
 // --- W3-summary: one sentence under the diagnostic summary ---------------------------------------------
