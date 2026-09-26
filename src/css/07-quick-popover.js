@@ -481,6 +481,11 @@ label.dait-qp-label {
     outline-offset: -2px;
 }
 
+/* Opened with the mouse: no ring on the first control until the user presses a key. */
+.dait-quick-popover.dait-qp-pointer-opened :focus-visible {
+    outline: none;
+}
+
 /* Status shapes differ as well as colours: filled = ok, ring = busy, triangle = waiting, "!" = needs you,
    dash = off. */
 .dait-qp-dot {

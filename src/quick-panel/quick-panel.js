@@ -16,6 +16,7 @@ const ROUTE_CHECK_INTERVAL_MS = 800;
 const STATUS_REFRESH_THROTTLE_MS = 250;
 const STATUS_EXPIRY_SLACK_MS = 50;
 const LAUNCHER_SELECTOR = ".dait-quick-settings-button";
+const POINTER_OPENED_CLASS = "dait-qp-pointer-opened";
 const CHANNEL_RULES = ["inherit", "enabled", "disabled"];
 const TRANSLATION_POSITIONS = ["before", "after"];
 const LAUNCHER_STATUS_STATES = ["ok", "busy", "waiting", "needs-you", "off"];
@@ -65,12 +66,12 @@ class QuickPanel {
         return Boolean(this.root && this.plugin.isNodeConnected(this.root));
     }
 
-    toggle(launcher = null, source = "panel") {
+    toggle(launcher = null, source = "panel", options = {}) {
         if (this.isOpen()) {
             this.close("launcher", { restoreFocus: true });
             return null;
         }
-        return this.open(launcher, { source });
+        return this.open(launcher, { ...options, source });
     }
 
     open(launcher = null, options = {}) {
@@ -84,6 +85,10 @@ class QuickPanel {
             this.routeKey = this.plugin.getCurrentRouteKey();
             root = this.build();
             this.root = root;
+            // Focus still moves to the first control, but a mouse click on the launcher should not paint
+            // a focus ring there (Chromium shows one when focus comes from the composer); the first key
+            // press brings the rings back.
+            if (options.viaPointer) root.classList.add(POINTER_OPENED_CLASS);
             this.plugin.syncDiscordThemeClasses(root, anchor || document.body);
             document.body.appendChild(root);
             this.update();
@@ -507,7 +512,9 @@ class QuickPanel {
     // Writes only what differs, so an unchanged status touches nothing (and re-announces nothing).
     setText(node, text) {
         const value = String(text ?? "");
-        if (node && node.textContent !== value) node.textContent = value;
+        if (!node || node.textContent === value) return false;
+        node.textContent = value;
+        return true;
     }
 
     renderStatus(status) {
@@ -515,14 +522,19 @@ class QuickPanel {
         if (!this.root || !controls || !status) return;
         if (this.root.dataset.daitStatus !== status.state) this.root.dataset.daitStatus = status.state;
         if (controls.statusDot.dataset.daitStatus !== status.state) controls.statusDot.dataset.daitStatus = status.state;
-        this.setText(controls.statusLine, status.headline);
-        this.setText(controls.statusDetail, this.getStatusDetailText(status));
+        let resized = this.setText(controls.statusLine, status.headline);
+        resized = this.setText(controls.statusDetail, this.getStatusDetailText(status)) || resized;
         // The note is one line (a hint or the service's own error text); the tooltip holds all of it.
-        this.setText(controls.statusNote, status.note);
+        resized = this.setText(controls.statusNote, status.note) || resized;
         if (controls.statusNote.title !== (status.note || "")) controls.statusNote.title = status.note || "";
-        controls.statusNote.hidden = !status.note;
+        if (controls.statusNote.hidden !== !status.note) {
+            controls.statusNote.hidden = !status.note;
+            resized = true;
+        }
         if (!this.testRunning) controls.test.disabled = status.testing;
         this.syncCountdown(status);
+        // New text can change the panel's height; keep it above the launcher and inside the window.
+        if (resized) this.position();
     }
 
     getStatusDetailText(status, now = Date.now()) {
@@ -647,6 +659,7 @@ class QuickPanel {
 
     handleDocumentKeydown(event) {
         if (!this.isOpen() || !event) return;
+        this.root.classList?.remove?.(POINTER_OPENED_CLASS);
         const active = typeof document !== "undefined" ? document.activeElement : null;
         const focusInside = Boolean(active && this.root.contains?.(active));
         if (event.key === "Escape") {

@@ -5474,12 +5474,14 @@ module.exports = class DiscordAITranslator {
             || event?.currentTarget
             || event?.target
             || null;
+        // A click from Enter/Space has detail 0; pointer events and mouse clicks come from a pointer.
+        const viaPointer = String(event?.type || "").startsWith("pointer") || (event?.type === "click" && Number(event?.detail) > 0);
         if (this.quickSettingsOpenTimer) clearTimeout(this.quickSettingsOpenTimer);
         this.quickSettingsOpenTimer = setTimeout(() => {
             this.quickSettingsOpenTimer = null;
             if (!this.isStarted || !this.settings.ui?.showQuickSettingsPanelButton) return;
             // The launcher opens the compact quick panel; its "open full settings" leads to the full window.
-            this.toggleQuickPopover(launcher, variant);
+            this.toggleQuickPopover(launcher, variant, { viaPointer });
         }, 0);
     }
 

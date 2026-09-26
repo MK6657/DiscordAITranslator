@@ -316,6 +316,25 @@ test("the user-panel launcher opens the quick panel above itself instead of the 
     assert.equal(doc.activeElement, launcher);
 });
 
+test("opened with the mouse, the first control gets focus without a ring until a key is pressed", t => {
+    const { plugin, doc, launcher } = createQuickPanelPlugin(t);
+    dispatch(doc, launcher, "pointerdown");
+    t.mock.timers.tick(1);
+    const popover = doc.querySelector(".dait-quick-popover");
+    assert.equal(popover.classList.contains("dait-qp-pointer-opened"), true);
+    assert.equal(doc.activeElement, byClass(popover, "dait-qp-header-open-full"), "focus still moves to the first control");
+    key(doc, "Tab");
+    assert.equal(popover.classList.contains("dait-qp-pointer-opened"), false, "the first key press brings the focus ring back");
+    plugin.closeQuickPopover();
+
+    // Enter or Space on the launcher fires a click with detail 0: the ring shows at once.
+    t.mock.timers.tick(400);
+    dispatch(doc, launcher, "click", { detail: 0 });
+    t.mock.timers.tick(1);
+    assert.equal(doc.querySelector(".dait-quick-popover").classList.contains("dait-qp-pointer-opened"), false);
+    assert.match(PLUGIN_CSS, /\.dait-quick-popover\.dait-qp-pointer-opened :focus-visible \{\s*outline: none;/);
+});
+
 test("Escape closes the quick panel and returns focus to the launcher", t => {
     const { plugin, doc, launcher } = createQuickPanelPlugin(t);
     const popover = openByLauncher(t, doc, launcher);
@@ -642,10 +661,16 @@ test("the panel's status shows the activity and a separate one-line note, and an
     assert.equal(line.textContent, "Sakura 本地 · 连接正常");
     assert.equal(detail.textContent, "本频道自动翻译中");
     assert.equal(note.hidden, true);
+    assert.equal(popover.style.top, "322px");
+    // The note line makes the panel taller.
+    doc.layout = element => element.classList.contains("dait-quick-popover")
+        ? { top: 0, left: 0, width: 340, height: note.hidden ? 520 : 540, right: 340, bottom: note.hidden ? 520 : 540 }
+        : null;
 
     plugin.autoTranslationProviderFailures.set(providerKey(), { type: "local-unavailable", count: 1, retryAt: 0 });
     plugin.setApiRuntimeStatus("translation", "failed", "failed", "connect ECONNREFUSED 127.0.0.1:8080");
     t.mock.timers.tick(250);
+    assert.equal(popover.style.top, "302px", "a taller panel moves up instead of covering the launcher");
     assert.equal(popover.dataset.daitStatus, "needs-you");
     assert.equal(line.textContent, "Sakura 本地 · 连接失败");
     assert.equal(detail.textContent, "需要处理：本地服务没有响应");
