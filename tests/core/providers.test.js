@@ -198,6 +198,123 @@ test("Google per-minute limits are rate limits with a short cooldown; daily and 
     assert.ok(cooldownUntil > before && cooldownUntil <= Date.now() + 120000, String(cooldownUntil - before));
 });
 
+const GOOGLE_PER_MINUTE_BODY = { error: { code: 429, status: "RESOURCE_EXHAUSTED", message: "Quota exceeded for quota metric 'v2 and v3 general model characters' and limit 'v2 and v3 general model characters per minute per user' of service 'translate.googleapis.com'.", errors: [{ reason: "rateLimitExceeded" }] } };
+const GOOGLE_MONTHLY_BODY = { error: { code: 403, status: "RESOURCE_EXHAUSTED", message: "Quota exceeded for quota metric 'Characters per month'", errors: [{ reason: "quotaExceeded" }] } };
+
+function createGooglePoolPlugin(poolText, locale = "zh-CN") {
+    const plugin = new Plugin();
+    plugin.settings.ui.language = locale;
+    plugin.settings.ui.showAutoTranslateToasts = false;
+    plugin.settings.translation.provider = "googleCloud";
+    plugin.saveSettings = () => true;
+    plugin.setSetting("googleTranslate.keyPoolText", poolText, { save: false });
+    plugin.toasts = [];
+    plugin.showToast = (text, type) => plugin.toasts.push({ text, type });
+    return plugin;
+}
+
+// Sends one auto request through the real request path and lets it fail the way the queue would see it.
+async function failGoogleRequest(plugin, status, body) {
+    plugin.fetchApiResponseText = async (_endpoint, request) => {
+        const error = Object.assign(new Error("API_ERROR"), { status, retryAfterMs: 0 });
+        plugin.annotateGoogleTranslateApiError(error, JSON.stringify(body), request);
+        throw error;
+    };
+    const options = plugin.getAutoTranslationOptions();
+    let thrown = null;
+    try {
+        await plugin.runModelTask("translation", "hola amigos", { configOverrides: options.configOverrides, mode: "auto" });
+    }
+    catch (error) {
+        thrown = error;
+    }
+    assert.ok(thrown, "the request fails");
+    plugin.markAutoTranslationProviderFailure(options, thrown);
+    plugin.showAutoTranslateError(thrown);
+    return thrown;
+}
+
+// prov-2 / X1: a key that only waits out a per-minute limit is not "monthly quota exhausted".
+test("while the only Google key cools down after a rate limit, requests wait instead of reporting the monthly quota", async () => {
+    for (const locale of ["zh-CN", "en"]) {
+        const plugin = createGooglePoolPlugin("only|AIza-fake-only|450000", locale);
+        const limited = await failGoogleRequest(plugin, 429, GOOGLE_PER_MINUTE_BODY);
+        assert.equal(plugin.getAutoTranslationFailureType(limited), "rate-limit");
+        const cooldownUntil = plugin.settings.googleTranslate.keys[0].cooldownUntil;
+        assert.ok(cooldownUntil > Date.now());
+
+        let next = null;
+        try { plugin.buildModelRequest("translation", "second message"); }
+        catch (error) { next = error; }
+        assert.ok(next, "no key can take the request yet");
+        assert.equal(plugin.getAutoTranslationFailureType(next), "rate-limit", locale);
+        assert.equal(Boolean(next.googleTranslateQuotaExceeded), false);
+        assert.equal(next.providerKey, plugin.getGoogleTranslateProviderKey(), "the whole pool waits");
+        assert.ok(next.retryAfterMs > 0 && next.retryAfterMs <= cooldownUntil - Date.now() + 1000, String(next.retryAfterMs));
+        const monthly = plugin.t("googleTranslateQuotaExceeded");
+        assert.notEqual(plugin.formatError(next), monthly);
+        assert.match(plugin.formatError(next), locale === "en" ? /cooling down/ : /冷却/);
+
+        const presentation = plugin.getTranslationErrorPresentation(next);
+        assert.equal(presentation.action, "wait", JSON.stringify(presentation));
+        assert.match(presentation.message, locale === "en" ? /cooling down/ : /冷却/);
+
+        plugin.markAutoTranslationProviderFailure(plugin.getAutoTranslationOptions(), next);
+        plugin.showAutoTranslateError(next);
+        assert.deepEqual(plugin.toasts, [], "a short wait needs no attention toast");
+        assert.notEqual(plugin.getApiStatus("translation").state, "failed");
+        const gate = plugin.getAutoTranslationProviderFailure(plugin.getAutoTranslationOptions());
+        assert.ok(gate, "queued items wait for the pool");
+        assert.ok(gate.retryAt <= cooldownUntil + 1000, "no longer than the key's own cooldown");
+    }
+
+    // A key that is really over its monthly limit still reports the quota.
+    const full = createGooglePoolPlugin("full|AIza-fake-full|1000");
+    full.markGoogleTranslateKeyUsage("AIza-fake-full", 1000);
+    assert.throws(() => full.buildModelRequest("translation", "hello"), error => error.googleTranslateQuotaExceeded === true
+        && full.getAutoTranslationFailureType(error) === "quota");
+
+    // A key cooling until tomorrow (daily limit) says when it is back and points to the settings.
+    const daily = createGooglePoolPlugin("daily|AIza-fake-daily|450000");
+    daily.settings.googleTranslate.keys[0].cooldownUntil = Date.now() + 10 * 60 * 60 * 1000;
+    assert.throws(() => daily.buildModelRequest("translation", "hello"), error => {
+        const presentation = daily.getTranslationErrorPresentation(error);
+        return error.googleTranslateKeysCooling === true && presentation.action === "settings" && /冷却/.test(presentation.message);
+    });
+});
+
+// CL-4: the pool is one provider for the user: one notice per episode, and only when no key is left.
+test("a Google key pool raises one attention toast, only when no key in the pool can serve", async () => {
+    const plugin = createGooglePoolPlugin("one|AIza-fake-one|450000\ntwo|AIza-fake-two|450000\nthree|AIza-fake-three|450000");
+    const first = await failGoogleRequest(plugin, 403, GOOGLE_MONTHLY_BODY);
+    assert.equal(plugin.getAutoTranslationFailureType(first), "quota");
+    assert.deepEqual(plugin.toasts, [], "the pool rotates to the next key and keeps translating");
+    assert.notEqual(plugin.getApiStatus("translation").state, "failed");
+    assert.notEqual(plugin.getTranslationErrorPresentation(first).action, "settings");
+
+    await failGoogleRequest(plugin, 403, GOOGLE_MONTHLY_BODY);
+    assert.deepEqual(plugin.toasts, []);
+    const last = await failGoogleRequest(plugin, 403, GOOGLE_MONTHLY_BODY);
+    assert.equal(plugin.toasts.length, 1, JSON.stringify(plugin.toasts));
+    assert.match(plugin.toasts[0].text, /额度/);
+    assert.equal(plugin.getTranslationErrorPresentation(last).action, "settings");
+    assert.equal(plugin.getApiStatus("translation").state, "failed");
+
+    // Every key is cooling now; the next requests only wait and stay quiet.
+    let cooling = null;
+    try { plugin.buildModelRequest("translation", "hello"); }
+    catch (error) { cooling = error; }
+    plugin.markAutoTranslationProviderFailure(plugin.getAutoTranslationOptions(), cooling);
+    plugin.showAutoTranslateError(cooling);
+    assert.equal(plugin.toasts.length, 1);
+
+    // One success ends the pool's episode, whichever key it used.
+    plugin.settings.googleTranslate.keys = plugin.settings.googleTranslate.keys.map(key => ({ ...key, cooldownUntil: 0 }));
+    plugin.fetchApiResponseText = async () => JSON.stringify({ data: { translations: [{ translatedText: "hola" }] } });
+    await plugin.runModelTask("translation", "hello", { configOverrides: plugin.getAutoTranslationOptions().configOverrides, mode: "auto" });
+    assert.equal(plugin.autoTranslationProviderNoticeAt.size, 0);
+});
+
 test("resetting Google stats and a successful API test clear a key's cooldown; the stats row shows it", async () => {
     const plugin = createDirectPlugin("googleCloud");
     plugin.showToast = () => {};

@@ -693,7 +693,7 @@ class TranslationScheduler {
             plugin.discardAutoTranslationProviderWork(key, { retryMs: retryAfterMs, skipCacheKeys: options.skipCacheKeys });
             plugin.setApiRuntimeStatus("translation", "failed", plugin.t("apiStatusFailed"), plugin.formatError(error));
         }
-        else if (type === "quota" || type === "auth") {
+        else if ((type === "quota" || type === "auth") && !plugin.isGoogleTranslatePoolServing?.(error)) {
             plugin.setApiRuntimeStatus("translation", "failed", plugin.t("apiStatusFailed"), plugin.formatError(error));
         }
         plugin.notifyTranslationNeedsAttention?.(error, key);
@@ -12635,6 +12635,16 @@ module.exports = class DiscordAITranslator {
             };
         }
         const type = this.getAutoTranslationFailureType(error);
+        if (error?.googleTranslateKeysCooling) {
+            // Say when the pool is back. A key cooling for hours (daily limit, rejected key) is not a
+            // short wait: the settings can add a key or reset the cooldowns.
+            const until = Number(error.googleTranslateCooldownUntil || 0);
+            const waitMs = Math.max(0, until - Date.now());
+            const message = this.formatGoogleTranslateCooldownMessage(until).replace(/[。.]\s*$/, "");
+            return waitMs > AUTO_TRANSLATE_FAILURE_MAX_TTL
+                ? { action: "settings", reason: type, message }
+                : { action: "wait", reason: type, waitMs, message };
+        }
         if (type === "rate-limit") {
             const waitMs = this.getTranslationErrorWaitMs(error);
             return {
@@ -12701,7 +12711,9 @@ module.exports = class DiscordAITranslator {
         if (missing) return `config-${missing}`;
         if (Object.hasOwn(API_ENDPOINT_ERROR_MESSAGE_KEYS, error?.code)) return "endpoint";
         const type = this.getAutoTranslationFailureType(error);
-        return ["auth", "quota", "local-unavailable"].includes(type) ? type : "";
+        if (!["auth", "quota", "local-unavailable"].includes(type)) return "";
+        // One Google key failing is not the user's problem while another key keeps translating.
+        return this.isGoogleTranslatePoolServing(error) ? "" : type;
     }
 
     isTranslationAttentionError(error) {
@@ -12721,7 +12733,7 @@ module.exports = class DiscordAITranslator {
     // its settings change; each error type is announced once per episode, whatever the toast switch says.
     rememberTranslationAttentionNotice(error, providerKey = "", type = this.getTranslationAttentionType(error)) {
         if (!type) return false;
-        const key = String(providerKey || this.getTranslationAttentionProviderKey(error));
+        const key = this.getTranslationAttentionEpisodeKey(providerKey || this.getTranslationAttentionProviderKey(error));
         const notices = this.autoTranslationProviderNoticeAt;
         if (!notices?.set) return false;
         const episode = notices.get(key);
@@ -12742,7 +12754,13 @@ module.exports = class DiscordAITranslator {
 
     endTranslationAttentionEpisode(providerKey) {
         if (!providerKey || !this.autoTranslationProviderNoticeAt?.size) return false;
-        return this.autoTranslationProviderNoticeAt.delete(providerKey);
+        return this.autoTranslationProviderNoticeAt.delete(this.getTranslationAttentionEpisodeKey(providerKey));
+    }
+
+    // Google errors carry the key that failed; for the user the whole key pool is one provider.
+    getTranslationAttentionEpisodeKey(providerKey) {
+        const key = String(providerKey || "");
+        return key.startsWith("googleCloud\n---\n") ? this.getGoogleTranslateProviderKey() : key;
     }
 
     createTranslationErrorButton(labelKey, titleKey, run) {
@@ -15323,6 +15341,10 @@ module.exports = class DiscordAITranslator {
     reserveGoogleTranslateRequest(...args) { return this.providerLayer.reserveGoogleTranslateRequest(...args); }
     createGoogleTranslateQuotaError(...args) { return this.providerLayer.createGoogleTranslateQuotaError(...args); }
     createGoogleTranslateNoKeyError(...args) { return this.providerLayer.createGoogleTranslateNoKeyError(...args); }
+    getGoogleTranslateCoolingKeyReadyAt(...args) { return this.providerLayer.getGoogleTranslateCoolingKeyReadyAt(...args); }
+    createGoogleTranslateCooldownError(...args) { return this.providerLayer.createGoogleTranslateCooldownError(...args); }
+    formatGoogleTranslateCooldownMessage(...args) { return this.providerLayer.formatGoogleTranslateCooldownMessage(...args); }
+    isGoogleTranslatePoolServing(...args) { return this.providerLayer.isGoogleTranslatePoolServing(...args); }
     getGoogleTranslateQuotaRetryAfterMs(...args) { return this.providerLayer.getGoogleTranslateQuotaRetryAfterMs(...args); }
     getGoogleTranslateDailyQuotaRetryAfterMs(...args) { return this.providerLayer.getGoogleTranslateDailyQuotaRetryAfterMs(...args); }
     releaseGoogleTranslateRequestReservation(...args) { return this.providerLayer.releaseGoogleTranslateRequestReservation(...args); }

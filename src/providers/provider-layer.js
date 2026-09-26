@@ -379,6 +379,43 @@ class ProviderLayer {
         return error;
     }
 
+    // No key can take the request, but one with room this month only waits out a cooldown
+    // (a per-minute limit, a rejected request). Returns when the first of those comes back, or 0.
+    getGoogleTranslateCoolingKeyReadyAt(charCount = 1, options = {}) {
+        const now = Date.now();
+        const needed = Math.max(1, Math.round(Number(charCount) || 1));
+        const readyAt = this.plugin.getGoogleTranslateKeys()
+            .filter(key => key.enabled !== false
+                && Number(key.cooldownUntil || 0) > now
+                && Number(key.usedChars || 0) + (options.ignoreReservations ? 0 : this.plugin.getGoogleTranslateReservedChars(key)) + needed <= Number(key.monthlyLimit || GOOGLE_TRANSLATE_DEFAULT_MONTHLY_LIMIT))
+            .map(key => Number(key.cooldownUntil));
+        return readyAt.length ? Math.min(...readyAt) : 0;
+    }
+
+    // Every usable key is cooling down: the pool waits until the first one is back. This is a
+    // rate limit for the whole pool, not an exhausted quota.
+    createGoogleTranslateCooldownError(options = {}) {
+        const until = Math.max(Date.now() + 1000, Number(options.until) || 0);
+        const error = new Error(this.plugin.formatGoogleTranslateCooldownMessage(until));
+        error.googleTranslateKeysCooling = true;
+        error.googleTranslateCooldownUntil = until;
+        error.providerRateLimited = true;
+        error.providerKey = this.plugin.getGoogleTranslateProviderKey();
+        error.retryAfterMs = until - Date.now();
+        if (options.charCount !== undefined) error.googleTranslateCharCount = Math.max(0, Math.round(Number(options.charCount) || 0));
+        return error;
+    }
+
+    formatGoogleTranslateCooldownMessage(until) {
+        return this.plugin.t("googleTranslateKeysCooling", { time: this.plugin.formatDiagnosticSummaryTime(until) });
+    }
+
+    // A failure of one pool key needs the user only when no other key can take over.
+    isGoogleTranslatePoolServing(error) {
+        if (!error?.googleTranslateApiKey || error.googleTranslateKeysCooling) return false;
+        return Boolean(this.plugin.peekGoogleTranslateAvailableKey(1, { ignoreReservations: true }));
+    }
+
     createGoogleTranslateNoKeyError() {
         const error = new Error(this.plugin.t("googleTranslateNoKey"));
         error.googleTranslateNoKey = true;
@@ -1611,10 +1648,11 @@ class ProviderLayer {
             ignoreCooldown: Boolean(options.ignoreCooldown)
         });
         if (!key) {
-            const hasKeys = this.plugin.getGoogleTranslateKeys().length > 0;
-            throw hasKeys
-                ? this.plugin.createGoogleTranslateQuotaError({ charCount })
-                : this.plugin.createGoogleTranslateNoKeyError();
+            if (!this.plugin.getGoogleTranslateKeys().length) throw this.plugin.createGoogleTranslateNoKeyError();
+            const coolingReadyAt = this.plugin.getGoogleTranslateCoolingKeyReadyAt(charCount, { ignoreReservations: Boolean(options.ignoreReservations) });
+            throw coolingReadyAt
+                ? this.plugin.createGoogleTranslateCooldownError({ until: coolingReadyAt, charCount })
+                : this.plugin.createGoogleTranslateQuotaError({ charCount });
         }
         const reservation = options.reserve ? this.plugin.reserveGoogleTranslateKey(key, charCount) : null;
         const body = {
