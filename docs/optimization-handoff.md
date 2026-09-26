@@ -7,7 +7,7 @@
 **改了什么**（完整的用户可见改动见 [CHANGELOG.md](../CHANGELOG.md)，用户操作见 [使用说明](../使用说明.md)）
 
 - 设置界面重做：左下角 AI 按钮改为打开小的快捷面板（自动翻译、本频道规则、目标语言、显示选项、测试），按钮右下角有五种状态标记（形状 + 颜色）；完整设置改为最大 920×760 的窗口，六个标签页（概览、翻译消息、输入框工具、显示、高级、数据与诊断）加设置搜索；概览页有上手清单和服务状态卡片；Sakura 本地和 OpenAI 兼容可“检测模型”；“试译一句 / 试润色”取代测试模式；所有确认改用 BetterDiscord 对话框；界面文案中英文重写。
-- 频道规则：“总是翻译”变成白名单（总开关关闭时也自动翻译），“不翻译”总是优先；从 v0.3.0 升级时，如有“本频道启用”的频道，启动时提示一次数量。
+- 频道规则：“总是翻译”变成白名单（总开关关闭时也自动翻译），“不翻译”总是优先；从 v0.3.0 升级时，“本频道启用”转换为“跟随总开关”（与 0.3.0 行为一致），不会有频道自行开始自动翻译；0.3.0 的缓存译文升级后继续命中（含本地模型检测后和带 emoji 的消息）。
 - 恢复默认：移到“数据与诊断 → 危险操作”，对话框默认勾选“保留 API Key、Google Key 池和提示词模板”，界面语言不变；保留的 Key 连同它的接口地址和模型一起保留；恢复后所有效果立即生效。
 - 聊天里的行：“翻译中…”标记；错误行按原因给出“打开设置 / 测试连接 / 重试”或等待时间；需要用户处理的问题每个只提示一次；译文悬停工具栏（复制、不用缓存重新翻译、隐藏）；部分译文注明缺失段落；译文样式与字号；右到左语言。
 - 服务商：Google/微软/DeepL/百度的西班牙语、法语、越南语目标代码；DeepL 繁体中文；Google Key 改走请求头，分钟/日限额分别冷却，Key 池按 Key 指纹记账；百度错误码；DeepSeek 402；OpenAI 兼容 404/405；本地模型换模型后按实际模型写缓存。
@@ -41,7 +41,7 @@
 | 6 | Google / 百度 / DeepL 错误提示 | 用测试 Key 制造：Google 每分钟限流、无效或过期 Key；百度 IP 白名单（58000）、不支持的目标语言（58001）；DeepL 额度用完（456）、无效 Key（403）；DeepL 选繁体中文 | 错误行和一次性提示写明原因（百度带错误码）；Google 冷却的 Key 约 1 分钟后恢复，不误报“本月额度用完”，测试按钮按标签指出出错的 Key；DeepL 输出繁体 | 待验证 |
 | 7 | 本地模型检测 | Sakura 本地点“检测模型”；在服务端换一个模型；停掉服务端 | 列出服务端模型并标出“（已加载）”；换模型后按新模型重新翻译；停掉后已缓存的译文仍显示，错误行写出本地地址并提供“测试连接”；AI 按钮显示红色“!” | 待验证 |
 | 8 | 试译一句 / 试润色 | 在两张连接卡片里各输入一句并运行；空输入；换成错误的 Key 再试 | 显示结果和用时，不向 Discord 发送任何内容；空输入提示“先输入一句话。”；错误在卡片内显示 | 待验证 |
-| 9 | “总是翻译”白名单与升级提示 | 用含“本频道启用”频道的 v0.3.0 设置启动 v0.4.0；关闭总开关；把该频道改回“跟随总开关” | 启动时提示一次频道数量；总开关关闭时这些频道仍自动翻译，其他频道不翻；改回后停止；快捷面板说明文字与实际一致 | 待验证 |
+| 9 | 从 v0.3.0 升级：频道规则与缓存 | 用 v0.3.0 的设置和缓存启动 v0.4.0（含“本频道启用”频道）；关闭总开关；在已翻译过的频道回滚；再给一个频道选“总是翻译” | 升级后没有频道自行自动翻译；回滚时 0.3.0 缓存的译文立即显示、不重新请求（本地模型检测后也一样）；选“总是翻译”的频道在总开关关闭时仍自动翻译 | 待验证 |
 
 建议顺带检查：错误行的“打开设置 / 测试连接 / 重试”按钮、译文悬停工具栏和右键菜单、遮蔽译文的键盘展开、多行草稿和 @提及 的润色与公开双语写入、缓存和诊断数据文件的迁移（升级前先在仓库外备份 BetterDiscord 插件文件夹里的数据文件）。
 
@@ -197,6 +197,6 @@ Start from this private repository, not the old ZIP snapshots. v0.3.0 is the lat
 
 v0.4.0 rebuilds the settings window (six tabs, search, setup checklist, model detection, "Try a sentence"), adds a quick panel and a status badge on the AI button, turns the "Always translate" channel rule into an allow-list, reworks translation and error lines, tightens provider error handling and retries, fixes composer writes ("Ask before sending" now sends with Enter), splits the cache and diagnostics into their own data files, keeps keys on reset by default, and makes the installer refuse redirected AppData windows. It was built in three waves of parallel branches with two rounds of independent read-only review and repair branches. Cancellation-versus-timeout handling was already completed in v0.3.0 and is not pending work.
 
-Next: live acceptance of the exact v0.4.0 artifact on the actual Discord/BetterDiscord machine, using the checklist in the v0.4.0 section above (quick panel and badge, tabs and search, reset dialog, ask-before-send via Enter, hotkey recorder, Google/Baidu/DeepL messages, local model detection, "Try a sentence", the allow-list upgrade notice). Use a user-approved, isolated account/channel/provider. Protect existing data and credentials; obtain any required confirmation before real requests, costs, messages, installation, or deletion. Record actual environment, commit/hash, passes, failures, and uncovered scenarios in the host smoke record, which has an empty v0.4.0 table for this.
+Next: live acceptance of the exact v0.4.0 artifact on the actual Discord/BetterDiscord machine, using the checklist in the v0.4.0 section above (quick panel and badge, tabs and search, reset dialog, ask-before-send via Enter, hotkey recorder, Google/Baidu/DeepL messages, local model detection, "Try a sentence", keeping v0.3.0 cached translations and channel rules after the update). Use a user-approved, isolated account/channel/provider. Protect existing data and credentials; obtain any required confirmation before real requests, costs, messages, installation, or deletion. Record actual environment, commit/hash, passes, failures, and uncovered scenarios in the host smoke record, which has an empty v0.4.0 table for this.
 
 Optional later work includes memory-only caching, explicit data-cleanup controls, request/character accounting, focused module tests, and gradual state-machine/Discord-adapter extraction after host acceptance. These are candidates, not blanket authorization to implement everything. Submit scoped changes through a branch/PR, check CI before and after merging, and keep the release marked as a preview until host acceptance is complete.

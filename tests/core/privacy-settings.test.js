@@ -156,8 +156,8 @@ test("settings saved by v0.4.0 keep their 'Always translate' rules", t => {
 // --- PRIV-3: a Google key never shows as a key's label ------------------------------------------------------
 
 // Obvious fakes shaped like Google keys ("AIza" + 35 characters), so any check for key-like text sees them.
-const FAKE_KEY = "AIzaFAKE-test-key-not-real-000000000000";
-const FAKE_KEY_2 = "AIzaFAKE-test-key-not-real-222222222222";
+const FAKE_KEY = "AIza-fake-privacy-1";
+const FAKE_KEY_2 = "AIza-fake-privacy-2";
 const GOOGLE_KEY_INVALID_BODY = { error: { code: 400, message: "API key not valid. Please pass a valid API key.", status: "INVALID_ARGUMENT", details: [{ reason: "API_KEY_INVALID" }] } };
 
 function createGooglePoolPlugin(poolText, locale = "en") {

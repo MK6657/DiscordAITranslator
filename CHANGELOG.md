@@ -103,7 +103,8 @@ Pre-release: offline, installer and artifact checks pass; live Discord acceptanc
 Updating from 0.3.0 needs no manual steps. What changes for existing users:
 
 - On the first start, the translation cache moves out of the settings file into `DiscordAITranslator.cache.config.json`, and the diagnostics log into `DiscordAITranslator.diagnostics.config.json`, both next to the plugin. The old copy is deleted only after the new file is saved, so cached translations still show right after the update.
-- The cache limit ("Max cached messages") now counts translated messages instead of cache entries. 0.3.0 used about two entries per message, so the same number now holds about twice as many messages.
+- The cache limit ("Max cached messages") now counts translated messages instead of cache entries. 0.3.0 used about two entries per message, so the same number now holds about twice as many messages, and the cache file can be about twice as large (about 5 MB at 4000 messages).
+- Translations cached by 0.3.0 keep showing right away after the update and are not requested again, also after the plugin detects which model a local Sakura server runs and for messages that contain emoji. Messages that 0.3.0 read from Discord's message store (with mentions or markup) may be translated once more by cloud services; Sakura local is not affected.
 - Channel rules keep doing what they did in 0.3.0. "Inherit global" becomes "Follow main switch" and "Disable in this channel" becomes "Never translate". "Enable in this channel" also followed the main switch in 0.3.0, so it becomes "Follow main switch": no channel starts auto-translating after the update, and nothing is sent to a translation service while the main switch is off. To translate a channel even with the main switch off, choose "Always translate" for it.
 - "Reset to defaults" keeps your API keys, the Google key pool and prompt templates unless you untick that option. In 0.3.0 it erased them.
 
