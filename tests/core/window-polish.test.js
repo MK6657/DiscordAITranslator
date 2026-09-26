@@ -647,6 +647,7 @@ test("the open quick panel shows the test summary on its own line under the conn
     assert.equal(summary.hidden, false);
     assert.equal(summary.textContent, "Hy-MT2 · 820 ms");
     assert.equal(detail.textContent, "本频道自动翻译中");
-    assert.match(PLUGIN_CSS, /\.dait-qp-status-test \{[\s\S]*?font-size: 13px;[\s\S]*?white-space: nowrap;/);
+    // THEME-SPEC: body size, and a long model name wraps to a second line instead of an ellipsis.
+    assert.match(PLUGIN_CSS, /\.dait-qp-status-test \{[\s\S]*?font-size: var\(--dait-font-body\);[\s\S]*?-webkit-line-clamp: 2;[\s\S]*?overflow-wrap: anywhere;/);
     assert.match(PLUGIN_CSS, /\.dait-qp-status-test\[hidden\] \{\n    display: none;/);
 });

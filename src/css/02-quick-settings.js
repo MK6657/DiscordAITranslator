@@ -2,12 +2,11 @@
 
 // The plugin's own settings window (opened from the quick panel's "open full settings", the chat error lines and
 // the input menu): a moderate window (UI-SPEC "Sizes") that the tabbed settings panel fills. The panel brings the
-// one title bar (title, status, close); the window adds no header or footer. Colours come from the shared tokens
-// in 01-theme-tokens, which cover .dait-quick-settings-modal-root.
+// one title bar (title, status, close); the window adds no header or footer. Colours come from the panel palette
+// in 01-theme-tokens (data-dait-panel-theme on .dait-quick-settings-modal-root).
 module.exports = `.dait-quick-settings-modal-root {
-    --dait-quick-backdrop: rgba(0, 0, 0, 0.42);
     align-items: center;
-    background: var(--dait-quick-backdrop);
+    background: var(--dait-backdrop);
     color: var(--dait-text);
     display: flex;
     inset: 0;
@@ -17,13 +16,6 @@ module.exports = `.dait-quick-settings-modal-root {
     pointer-events: auto;
     position: fixed;
     z-index: 2147483000;
-}
-
-.theme-light.dait-quick-settings-modal-root,
-.theme-light .dait-quick-settings-modal-root,
-.dait-quick-settings-modal-root[data-dait-discord-theme="light"],
-[data-dait-discord-theme="light"] .dait-quick-settings-modal-root {
-    --dait-quick-backdrop: rgba(6, 6, 7, 0.34);
 }
 
 .dait-quick-settings-backdrop {
@@ -77,16 +69,16 @@ module.exports = `.dait-quick-settings-modal-root {
 
 .dait-quick-settings-error h3 {
     color: var(--dait-heading);
-    font-size: var(--dait-font-title);
-    font-weight: 700;
-    line-height: 1.25;
+    font-size: var(--dait-font-window);
+    font-weight: 600;
+    line-height: 1.3;
     margin: 0;
 }
 
 .dait-quick-settings-error p {
-    color: var(--dait-text-muted);
+    color: var(--dait-text);
     font-size: var(--dait-font-body);
-    line-height: 1.5;
+    line-height: var(--dait-line);
     margin: 0;
 }
 
@@ -96,10 +88,11 @@ module.exports = `.dait-quick-settings-modal-root {
     border-radius: var(--dait-radius-control);
     color: var(--dait-on-fill);
     cursor: pointer;
+    font-family: inherit;
     font-size: var(--dait-font-body);
     font-weight: 500;
     height: var(--dait-control-h);
-    line-height: 1;
+    line-height: var(--dait-line);
     padding: 0 14px;
 }
 

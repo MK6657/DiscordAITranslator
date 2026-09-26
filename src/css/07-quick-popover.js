@@ -1,9 +1,10 @@
 "use strict";
 
-// The user-panel launcher's quick panel (popover) and its status badge. Sizes follow the v0.4.0 UI spec:
-// 340 px wide, labels 14/500, descriptions 13, section caption 12/700, controls and buttons 32 px high.
+// The user-panel launcher's quick panel (popover) and its status badge. The popover is a plugin window: its colours
+// come from the panel palette (01-theme-tokens, data-dait-panel-theme on the popover) and it uses the one type scale
+// (body 15/1.55, title 18/600, section heading 16/600, version chip 13/500), 360 px wide, controls 36 px high.
+// The launcher's badge sits in Discord's user panel and keeps Discord's status colours.
 module.exports = `
-.dait-quick-popover,
 .dait-launcher-status {
     --dait-qp-ok: var(--status-positive, #23a55a);
     --dait-qp-warn: var(--status-warning, #f0b232);
@@ -13,64 +14,33 @@ module.exports = `
 }
 
 .dait-quick-popover {
-    --dait-qp-bg: var(--background-surface-high, var(--background-primary, #313338));
-    --dait-qp-surface: var(--background-secondary, #2b2d31);
-    --dait-qp-input-bg: var(--input-background, var(--background-tertiary, #1e1f22));
-    --dait-qp-divider: var(--border-subtle, var(--background-modifier-accent, #3f4147));
-    --dait-qp-text: var(--text-default, var(--text-normal, #dbdee1));
-    --dait-qp-heading: var(--text-strong, var(--header-primary, #f2f3f5));
-    --dait-qp-muted: var(--text-muted, #b5bac1);
-    --dait-qp-link: var(--text-link, #949cf7);
-    --dait-qp-danger-text: var(--text-danger, #fa777c);
-    --dait-qp-hover: var(--background-modifier-hover, rgba(78, 80, 88, 0.3));
-    --dait-qp-button-bg: var(--button-secondary-background, #4e5058);
-    --dait-qp-button-hover-bg: var(--button-secondary-background-hover, #6d6f78);
-    --dait-qp-button-text: var(--white-500, #ffffff);
-    --dait-qp-switch-off: var(--interactive-muted, #4e5058);
-    --dait-qp-switch-on: var(--status-positive-background, #248046);
-    --dait-qp-focus: var(--focus-primary, var(--brand-500, #5865f2));
-    --dait-qp-shadow: var(--elevation-high, 0 12px 32px rgba(0, 0, 0, 0.45));
-    --dait-qp-control-w: 168px;
-    background: var(--dait-qp-bg);
-    border: 1px solid var(--dait-qp-divider);
+    --dait-qp-ok: var(--dait-success-fill);
+    --dait-qp-warn: var(--dait-warning-fill);
+    --dait-qp-danger: var(--dait-danger-fill);
+    --dait-qp-off: var(--dait-placeholder);
+    --dait-qp-off-mark: var(--dait-placeholder);
+    --dait-qp-control-w: 180px;
+    background: var(--dait-bg);
+    border: 1px solid var(--dait-divider);
     border-radius: 8px;
-    box-shadow: var(--dait-qp-shadow);
+    box-shadow: var(--dait-shadow);
     box-sizing: border-box;
-    color: var(--dait-qp-text);
-    color-scheme: dark;
+    color: var(--dait-text);
     display: flex;
     flex-direction: column;
-    font-size: 14px;
+    font-size: var(--dait-font-body);
     font-weight: 400;
     left: 8px;
     letter-spacing: 0;
-    line-height: 1.4;
-    max-height: min(600px, calc(100vh - 96px));
+    line-height: var(--dait-line);
+    max-height: min(760px, calc(100vh - 64px));
     max-width: calc(100vw - 16px);
     overflow: hidden;
     position: fixed;
     text-align: start;
     top: 8px;
-    width: 340px;
+    width: 360px;
     z-index: 2147482000;
-}
-
-.dait-quick-popover[data-dait-discord-theme="light"] {
-    --dait-qp-bg: var(--background-surface-high, var(--background-primary, #ffffff));
-    --dait-qp-surface: var(--background-secondary, #f2f3f5);
-    --dait-qp-input-bg: var(--input-background, var(--background-tertiary, #e3e5e8));
-    --dait-qp-divider: var(--border-subtle, var(--background-modifier-accent, #d7dce7));
-    --dait-qp-text: var(--text-default, var(--text-normal, #313338));
-    --dait-qp-heading: var(--text-strong, var(--header-primary, #060607));
-    --dait-qp-muted: var(--text-muted, #5c5e66);
-    --dait-qp-link: var(--text-link, #2e5bd1);
-    --dait-qp-danger-text: var(--text-danger, #c4314b);
-    --dait-qp-hover: var(--background-modifier-hover, rgba(116, 127, 141, 0.16));
-    --dait-qp-button-bg: var(--button-secondary-background, #6d6f78);
-    --dait-qp-button-hover-bg: var(--button-secondary-background-hover, #4e5058);
-    --dait-qp-switch-off: var(--interactive-muted, #80848e);
-    --dait-qp-shadow: var(--elevation-high, 0 12px 32px rgba(24, 36, 61, 0.2));
-    color-scheme: light;
 }
 
 .dait-quick-popover *,
@@ -88,10 +58,10 @@ module.exports = `
 }
 
 .dait-qp-title {
-    color: var(--dait-qp-heading);
-    font-size: 16px;
-    font-weight: 700;
-    line-height: 1.25;
+    color: var(--dait-heading);
+    font-size: var(--dait-font-window);
+    font-weight: 600;
+    line-height: 1.3;
     margin: 0;
     min-width: 0;
     overflow: hidden;
@@ -100,11 +70,11 @@ module.exports = `
 }
 
 .dait-qp-chip {
-    background: var(--dait-qp-surface);
+    background: var(--dait-raised);
     border-radius: 999px;
-    color: var(--dait-qp-muted);
+    color: var(--dait-text);
     flex: 0 0 auto;
-    font-size: 12px;
+    font-size: var(--dait-font-small);
     font-weight: 500;
     line-height: 20px;
     padding: 0 8px;
@@ -115,14 +85,14 @@ module.exports = `
     background: transparent;
     border: 0;
     border-radius: 4px;
-    color: var(--dait-qp-muted);
+    color: var(--dait-text);
     cursor: pointer;
     display: inline-flex;
     flex: 0 0 auto;
-    height: 32px;
+    height: var(--dait-control-h);
     justify-content: center;
     padding: 0;
-    width: 32px;
+    width: var(--dait-control-h);
 }
 
 .dait-qp-header-open-full {
@@ -130,8 +100,8 @@ module.exports = `
 }
 
 .dait-qp-icon-button:hover {
-    background: var(--dait-qp-hover);
-    color: var(--dait-qp-heading);
+    background: var(--dait-raised);
+    color: var(--dait-heading);
 }
 
 .dait-qp-icon {
@@ -161,9 +131,11 @@ module.exports = `
     scrollbar-width: thin;
 }
 
+/* Status card: the dot, the service line and Test share the first line; the test result, what is happening now
+   and the note take the full width under them (the text column is not squeezed beside the button). */
 .dait-qp-status {
     align-items: center;
-    background: var(--dait-qp-surface);
+    background: var(--dait-surface);
     border-radius: 8px;
     column-gap: 12px;
     display: grid;
@@ -172,50 +144,68 @@ module.exports = `
     padding: 10px 12px;
 }
 
-/* The dot sits on the first text line (not the middle of a wrapped block). */
 .dait-qp-status > .dait-qp-dot {
-    align-self: start;
-    margin-top: 5px;
+    grid-column: 1;
+    grid-row: 1;
 }
 
 .dait-qp-status-text {
-    min-width: 0;
+    display: contents;
+}
+
+.dait-qp-status > .dait-qp-test {
+    grid-column: 3;
+    grid-row: 1;
 }
 
 .dait-qp-status-line {
-    color: var(--dait-qp-heading);
-    font-size: 14px;
-    font-weight: 500;
-    line-height: 1.4;
+    color: var(--dait-text);
+    font-size: var(--dait-font-body);
+    font-weight: 600;
+    grid-column: 2;
+    grid-row: 1;
+    line-height: var(--dait-line);
     margin: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-/* The last passed connection test: model and response time, e.g. "Hy-MT2 · 820 ms". */
+/* The last passed connection test: model and response time, e.g. "Hy-MT2 · 820 ms". A long model name wraps to a
+   second line instead of being cut off. */
 .dait-qp-status-test {
-    color: var(--dait-qp-muted);
-    font-size: 13px;
+    -webkit-box-orient: vertical;
+    color: var(--dait-text);
+    display: -webkit-box;
+    font-size: var(--dait-font-body);
     font-variant-numeric: tabular-nums;
-    line-height: 1.45;
+    grid-column: 2 / -1;
+    -webkit-line-clamp: 2;
+    line-height: var(--dait-line);
     margin: 2px 0 0;
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
 }
 
 .dait-qp-status-test[hidden] {
     display: none;
 }
 
+/* "model · 820 ms": each dot stays with the part before it and the time stays whole, so a wrap never starts a line
+   with a dot or splits "820 ms"; a long model name can still wrap. */
+.dait-qp-status-sep,
+.dait-qp-status-part {
+    white-space: nowrap;
+}
+
 .dait-qp-status-detail {
     -webkit-box-orient: vertical;
-    color: var(--dait-qp-muted);
+    color: var(--dait-text);
     display: -webkit-box;
-    font-size: 13px;
+    font-size: var(--dait-font-body);
+    grid-column: 2 / -1;
     -webkit-line-clamp: 2;
-    line-height: 1.45;
+    line-height: var(--dait-line);
     margin: 2px 0 0;
     overflow: hidden;
     overflow-wrap: anywhere;
@@ -225,11 +215,12 @@ module.exports = `
    cut to one line; three lines hold every message the plugin writes. */
 .dait-qp-status-note {
     -webkit-box-orient: vertical;
-    color: var(--dait-qp-muted);
+    color: var(--dait-text);
     display: -webkit-box;
-    font-size: 13px;
+    font-size: var(--dait-font-body);
+    grid-column: 2 / -1;
     -webkit-line-clamp: 3;
-    line-height: 1.45;
+    line-height: var(--dait-line);
     margin: 2px 0 0;
     overflow: hidden;
     overflow-wrap: anywhere;
@@ -240,38 +231,39 @@ module.exports = `
 }
 
 .dait-quick-popover[data-dait-status="needs-you"] .dait-qp-status-detail {
-    color: var(--dait-qp-danger-text);
+    color: var(--dait-danger);
 }
 
 .dait-qp-button {
     align-items: center;
-    border: 0;
+    border: 1px solid transparent;
     border-radius: 4px;
     cursor: pointer;
     display: inline-flex;
     font-family: inherit;
-    font-size: 14px;
+    font-size: var(--dait-font-body);
     font-weight: 500;
-    height: 32px;
+    height: var(--dait-control-h);
     justify-content: center;
-    line-height: 1;
+    line-height: var(--dait-line);
     min-width: 60px;
     padding: 0 14px;
     white-space: nowrap;
 }
 
 .dait-qp-button-secondary {
-    background: var(--dait-qp-button-bg);
-    color: var(--dait-qp-button-text);
+    background: var(--dait-raised);
+    border-color: var(--dait-input-border);
+    color: var(--dait-text);
 }
 
 .dait-qp-button-secondary:hover:not(:disabled) {
-    background: var(--dait-qp-button-hover-bg);
+    background: var(--dait-raised-hover);
 }
 
 .dait-qp-button:disabled {
     cursor: default;
-    opacity: 0.6;
+    opacity: 0.55;
 }
 
 .dait-qp-row {
@@ -280,11 +272,11 @@ module.exports = `
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     min-height: 48px;
-    padding: 8px 0;
+    padding: 7px 0;
 }
 
 .dait-qp-row + .dait-qp-row {
-    border-top: 1px solid var(--dait-qp-divider);
+    border-top: 1px solid var(--dait-divider);
 }
 
 .dait-qp-row-stacked {
@@ -296,12 +288,13 @@ module.exports = `
     min-width: 0;
 }
 
+/* Label and description share the body size and colour; the label's weight sets them apart. */
 .dait-qp-label {
-    color: var(--dait-qp-heading);
+    color: var(--dait-text);
     display: block;
-    font-size: 14px;
-    font-weight: 500;
-    line-height: 1.4;
+    font-size: var(--dait-font-body);
+    font-weight: 600;
+    line-height: var(--dait-line);
     margin: 0;
 }
 
@@ -317,7 +310,7 @@ label.dait-qp-label {
 }
 
 .dait-qp-channel-name {
-    color: var(--dait-qp-muted);
+    color: var(--dait-text);
     font-weight: 400;
     min-width: 0;
     overflow: hidden;
@@ -326,31 +319,31 @@ label.dait-qp-label {
 }
 
 .dait-qp-desc {
-    color: var(--dait-qp-muted);
-    font-size: 13px;
+    color: var(--dait-text);
+    font-size: var(--dait-font-body);
     font-weight: 400;
-    line-height: 1.45;
-    margin: 2px 0 0;
+    line-height: var(--dait-line);
+    margin: 0;
 }
 
 .dait-qp-row-stacked > .dait-qp-desc {
     margin: 0;
 }
 
+/* A section heading ("Display"): the group heading size. */
 .dait-qp-section {
-    color: var(--dait-qp-muted);
-    font-size: 12px;
-    font-weight: 700;
-    letter-spacing: 0.02em;
-    line-height: 1.4;
+    color: var(--dait-heading);
+    font-size: var(--dait-font-group);
+    font-weight: 600;
+    line-height: 1.3;
     margin: 0;
-    padding: 12px 0 0;
+    padding: 12px 0 2px;
 }
 
 .dait-qp-switch {
     -webkit-appearance: none;
     appearance: none;
-    background: var(--dait-qp-switch-off);
+    background: var(--dait-switch-off);
     border: 0;
     border-radius: 999px;
     cursor: pointer;
@@ -375,7 +368,7 @@ label.dait-qp-label {
 }
 
 .dait-qp-switch:checked {
-    background: var(--dait-qp-switch-on);
+    background: var(--dait-brand);
 }
 
 .dait-qp-switch:checked::before {
@@ -386,30 +379,51 @@ label.dait-qp-label {
     width: var(--dait-qp-control-w);
 }
 
+/* The same select as in the settings window: the palette's colours and its chevron. */
 .dait-qp-select {
-    background: var(--dait-qp-input-bg);
-    border: 1px solid var(--dait-qp-divider);
+    -webkit-appearance: none;
+    appearance: none;
+    background-color: var(--dait-input-bg);
+    background-image:
+        linear-gradient(45deg, transparent 50%, var(--dait-placeholder) 50%),
+        linear-gradient(135deg, var(--dait-placeholder) 50%, transparent 50%);
+    background-position:
+        calc(100% - 16px) 50%,
+        calc(100% - 11px) 50%;
+    background-repeat: no-repeat;
+    background-size: 5px 5px, 5px 5px;
+    border: 1px solid var(--dait-input-border);
     border-radius: 4px;
-    color: var(--dait-qp-text);
+    color: var(--dait-text);
     cursor: pointer;
     font-family: inherit;
-    font-size: 14px;
-    height: 32px;
+    font-size: var(--dait-font-body);
+    height: var(--dait-control-h);
     justify-self: end;
-    line-height: 1.2;
+    line-height: var(--dait-line);
     min-width: 0;
-    padding: 0 8px;
+    padding: 0 30px 0 10px;
+}
+
+.dait-qp-select:hover {
+    border-color: var(--dait-placeholder);
+}
+
+.dait-qp-select option {
+    background: var(--dait-input-bg);
+    color: var(--dait-text);
 }
 
 .dait-qp-segmented {
-    background: var(--dait-qp-input-bg);
+    background: var(--dait-input-bg);
+    border: 1px solid var(--dait-input-border);
     border-radius: 4px;
     display: grid;
     gap: 2px;
     grid-auto-columns: minmax(0, 1fr);
     grid-auto-flow: column;
     justify-self: stretch;
-    min-height: 32px;
+    min-height: var(--dait-control-h);
     padding: 2px;
 }
 
@@ -421,16 +435,16 @@ label.dait-qp-label {
     background: transparent;
     border: 0;
     border-radius: 3px;
-    color: var(--dait-qp-muted);
+    color: var(--dait-text);
     cursor: pointer;
     font-family: inherit;
-    font-size: 14px;
+    font-size: var(--dait-font-body);
     font-weight: 500;
-    line-height: 1.25;
-    min-height: 28px;
+    line-height: var(--dait-line);
+    min-height: 30px;
     min-width: 0;
     overflow: hidden;
-    padding: 4px;
+    padding: 0 4px;
     text-align: center;
     text-overflow: ellipsis;
     /* One line, like the other segments ("Follow main" fits in a third of the panel). */
@@ -438,14 +452,14 @@ label.dait-qp-label {
 }
 
 .dait-qp-segment:hover:not(:disabled):not([aria-checked="true"]) {
-    background: var(--dait-qp-hover);
-    color: var(--dait-qp-text);
+    background: var(--dait-raised);
+    color: var(--dait-text);
 }
 
-/* The chosen value reads at a glance in both themes: filled like a secondary button, white text. */
+/* The chosen value reads at a glance in both themes: filled with the accent, white text. */
 .dait-qp-segment[aria-checked="true"] {
-    background: var(--dait-qp-button-bg);
-    color: var(--dait-qp-button-text);
+    background: var(--dait-brand);
+    color: var(--dait-on-fill);
 }
 
 .dait-qp-segment:disabled {
@@ -453,13 +467,13 @@ label.dait-qp-label {
 }
 
 .dait-qp-segmented[aria-disabled="true"] {
-    opacity: 0.6;
+    opacity: 0.55;
 }
 
 .dait-qp-footer {
     align-items: center;
-    background: var(--dait-qp-surface);
-    border-top: 1px solid var(--dait-qp-divider);
+    background: var(--dait-surface);
+    border-top: 1px solid var(--dait-divider);
     display: flex;
     flex: 0 0 auto;
     gap: 8px;
@@ -471,12 +485,12 @@ label.dait-qp-label {
     background: transparent;
     border: 0;
     border-radius: 4px;
-    color: var(--dait-qp-link);
+    color: var(--dait-link);
     cursor: pointer;
     font-family: inherit;
-    font-size: 14px;
+    font-size: var(--dait-font-body);
     font-weight: 500;
-    height: 32px;
+    height: var(--dait-control-h);
     margin-left: -6px;
     padding: 0 6px;
 }
@@ -486,8 +500,8 @@ label.dait-qp-label {
 }
 
 .dait-qp-hint {
-    color: var(--dait-qp-muted);
-    font-size: 13px;
+    color: var(--dait-text);
+    font-size: var(--dait-font-body);
     white-space: nowrap;
 }
 
@@ -496,7 +510,7 @@ label.dait-qp-label {
 }
 
 .dait-quick-popover :focus-visible {
-    outline: 2px solid var(--dait-qp-focus);
+    outline: 2px solid var(--dait-focus);
     outline-offset: 2px;
 }
 

@@ -718,7 +718,11 @@ assert.ok(launcherQuickPopover);
 assert.equal(findByClass("dait-quick-settings-modal-root"), null);
 assert.equal(launcherQuickPopover.parentElement, quickSettingsBody);
 assert.equal(launcherQuickPopover.getAttribute("role"), "dialog");
-assert.equal(launcherQuickPopover.dataset.daitDiscordTheme, "light");
+// The quick panel is a plugin window: Discord's light theme gives it the light panel palette, and none of Discord's
+// variables are copied onto it (the launcher itself, inside Discord's user panel, still follows Discord).
+assert.equal(launcherQuickPopover.dataset.daitPanelTheme, "light");
+assert.equal(launcherQuickPopover.dataset.daitDiscordTheme, undefined);
+assert.equal(launcherQuickPopover.style.getPropertyValue("--text-normal"), "");
 assert.equal(panelQuickSettings.getAttribute("aria-expanded"), "true");
 assert.equal(fakeElementHasClass(panelQuickSettings, "dait-quick-settings-button-active"), true);
 assert.equal(findByClass("dait-qp-header-open-full").focused, true);
@@ -733,14 +737,16 @@ assert.ok(quickSettingsRoot);
 assert.equal(panelQuickSettings.getAttribute("aria-expanded"), "true");
 assert.equal(fakeElementHasClass(panelQuickSettings, "dait-quick-settings-button-active"), true);
 assert.equal(quickSettingsRoot.dataset.daitQuickSettingsSource, "quick-panel");
-assert.equal(fakeElementHasClass(quickSettingsRoot, "theme-light"), true);
-assert.equal(quickSettingsRoot.dataset.daitDiscordTheme, "light");
+assert.equal(quickSettingsRoot.dataset.daitPanelTheme, "light");
+assert.equal(fakeElementHasClass(quickSettingsRoot, "theme-light"), false);
+assert.equal(quickSettingsRoot.dataset.daitDiscordTheme, undefined);
 const quickSettingsDialog = findByClass("dait-quick-settings-dialog");
 assert.ok(quickSettingsDialog);
 assert.equal(quickSettingsDialog.parentElement, quickSettingsRoot);
 assert.equal(quickSettingsRoot.children.includes(quickSettingsDialog), true);
-assert.equal(fakeElementHasClass(quickSettingsDialog, "theme-light"), true);
-assert.equal(quickSettingsDialog.dataset.daitDiscordTheme, "light");
+// The window's frame, backdrop and body inherit the palette from the root.
+assert.equal(fakeElementHasClass(quickSettingsDialog, "theme-light"), false);
+assert.equal(quickSettingsDialog.dataset.daitDiscordTheme, undefined);
 const quickSettingsBackdrop = findByClass("dait-quick-settings-backdrop");
 const quickSettingsBodyNode = findByClass("dait-quick-settings-body");
 // v0.4.0: one title bar. The window has no header or footer of its own; the tabbed panel fills it and shows the
@@ -755,14 +761,14 @@ assert.ok(quickSettingsTitle);
 assert.ok(quickSettingsClose);
 assert.equal(findAllByClass("dait-settings-title").length, 1);
 assert.equal(findAllByClass("dait-settings-close").length, 1);
-assert.equal(fakeElementHasClass(quickSettingsBackdrop, "theme-light"), true);
-assert.equal(quickSettingsBackdrop.dataset.daitDiscordTheme, "light");
-assert.equal(fakeElementHasClass(quickSettingsBodyNode, "theme-light"), true);
-assert.equal(quickSettingsBodyNode.dataset.daitDiscordTheme, "light");
-assert.equal(quickSettingsRoot.style.getPropertyValue("--text-normal"), "#243040");
-assert.equal(quickSettingsDialog.style.getPropertyValue("--bg-base-primary"), "#fbfcff");
-assert.equal(quickSettingsBodyNode.style.getPropertyValue("--modal-footer-background"), "#eef1f6");
-assert.equal(quickSettingsBodyNode.style.getPropertyValue("--elevation-high"), "0 16px 40px rgba(24, 36, 61, 0.16)");
+assert.equal(quickSettingsBackdrop.dataset.daitDiscordTheme, undefined);
+assert.equal(quickSettingsBodyNode.dataset.daitDiscordTheme, undefined);
+// v0.4.0 theme follow-up: Discord's variables are no longer copied inline onto the window (mixing variables from
+// differently themed parts of Discord drew dark inputs on a light window); the panel palette is complete.
+assert.equal(quickSettingsRoot.style.getPropertyValue("--text-normal"), "");
+assert.equal(quickSettingsDialog.style.getPropertyValue("--bg-base-primary"), "");
+assert.equal(quickSettingsBodyNode.style.getPropertyValue("--modal-footer-background"), "");
+assert.equal(quickSettingsBodyNode.style.getPropertyValue("--elevation-high"), "");
 assert.equal(quickSettingsTitle.textContent, quickSettingsPlugin.t("settingsTitle"));
 assert.equal(quickSettingsDialog.getAttribute("aria-label"), quickSettingsPlugin.t("settingsTitle"));
 assert.equal(quickSettingsDialog.dataset.daitSettingsModal, undefined);
@@ -772,9 +778,9 @@ assert.equal(quickSettingsDialog.children.length, 1);
 assert.equal(quickSettingsDialog.children[0], quickSettingsBodyNode);
 const quickSettingsSettingsPanel = findByClass("dait-settings");
 assert.ok(quickSettingsSettingsPanel);
-assert.equal(fakeElementHasClass(quickSettingsSettingsPanel, "theme-light"), true);
-assert.equal(quickSettingsSettingsPanel.dataset.daitDiscordTheme, "light");
-assert.equal(quickSettingsSettingsPanel.style.getPropertyValue("--background-surface-high"), "#f1f3f8");
+assert.equal(quickSettingsSettingsPanel.dataset.daitPanelTheme, "light");
+assert.equal(quickSettingsSettingsPanel.dataset.daitDiscordTheme, undefined);
+assert.equal(quickSettingsSettingsPanel.style.getPropertyValue("--background-surface-high"), "");
 assert.ok(quickSettingsPlugin.quickSettingsDiagnosticLogs.some(entry => entry.action === "quick.settings.dom.attach" && entry.status === "success"));
 // Settings tabs: one page shown at a time; a click or the arrow keys switch pages and save the tab (UI-SPEC Q4).
 const settingsTabsPlugin = new Plugin();
@@ -927,8 +933,12 @@ global.document = { body: sizingBody, documentElement: { clientWidth: 1100 } };
 settingsSizingPlugin.applySettingsModalSizing(sizingPanel);
 assert.equal(sizingInner.dataset.daitSettingsModal, "true");
 assert.equal(sizingOuter.dataset.daitSettingsModalRoot, "true");
-assert.equal(sizingInner.dataset.daitDiscordTheme, "dark");
-assert.notEqual(sizingInner.style.getPropertyValue("--background-secondary"), undefined);
+// BetterDiscord's modal frame keeps Discord's colours: no theme marker and no copied Discord variables on it.
+assert.equal(sizingInner.dataset.daitDiscordTheme, undefined);
+assert.equal(sizingInner.dataset.daitPanelTheme, undefined);
+assert.equal(sizingInner.style.getPropertyValue("--background-secondary"), "");
+sizingInner.dataset.daitDiscordTheme = "dark";
+sizingInner.style.setProperty("--background-secondary", "#2b2d31");
 sizingPanel.isConnected = false;
 sizingPanel.parentElement = null;
 settingsSizingPlugin.cleanupSettingsModalSizing(sizingPanel);
@@ -1323,18 +1333,23 @@ themeProbeBody.appendChild(themeRefreshMessage);
 themeProbeBody.appendChild(themeRefreshWrapper);
 themeProbeBody.appendChild(themeRefreshWrapperRoot);
 themeProbePlugin.refreshDiscordThemeClasses();
+// The buttons that sit inside Discord's UI copy Discord's theme (here #app-mount's midnight)...
 assert.equal(fakeElementHasClass(themeRefreshButton, "theme-midnight"), true);
-assert.equal(fakeElementHasClass(themeRefreshSettings, "theme-midnight"), true);
-assert.equal(fakeElementHasClass(themeRefreshModal, "theme-midnight"), true);
-assert.equal(fakeElementHasClass(themeRefreshPanel, "theme-midnight"), true);
 assert.equal(fakeElementHasClass(themeRefreshRestore, "theme-midnight"), true);
 assert.equal(fakeElementHasClass(themeRefreshPolish, "theme-midnight"), true);
 assert.equal(fakeElementHasClass(themeRefreshBilingual, "theme-midnight"), true);
 assert.equal(fakeElementHasClass(themeRefreshMessage, "theme-midnight"), true);
-assert.equal(fakeElementHasClass(themeRefreshWrapper, "theme-midnight"), true);
-assert.equal(fakeElementHasClass(themeRefreshWrapperRoot, "theme-midnight"), true);
-assert.equal(themeRefreshWrapper.dataset.daitDiscordTheme, "midnight");
-assert.equal(themeRefreshWrapperRoot.dataset.daitDiscordTheme, "midnight");
+// ...while the plugin's own windows take the panel palette of the page theme (<body class="theme-light">), with no
+// Discord theme classes or markers, and BetterDiscord's modal frame is left to Discord.
+[themeRefreshSettings, themeRefreshModal, themeRefreshPanel].forEach(node => {
+    assert.equal(node.dataset.daitPanelTheme, "light");
+    assert.equal(fakeElementHasClass(node, "theme-midnight"), false);
+    assert.equal(node.dataset.daitDiscordTheme, undefined);
+});
+assert.equal(fakeElementHasClass(themeRefreshWrapper, "theme-midnight"), false);
+assert.equal(fakeElementHasClass(themeRefreshWrapperRoot, "theme-midnight"), false);
+assert.equal(themeRefreshWrapper.dataset.daitDiscordTheme, undefined);
+assert.equal(themeRefreshWrapperRoot.dataset.daitPanelTheme, undefined);
 themeProbeBody.className = "theme-midnight";
 assert.equal(themeProbePlugin.hasDiscordThemeMutation([{ type: "attributes", attributeName: "class", target: themeProbeBody }]), true);
 discordAppMount.className = "";
@@ -1347,16 +1362,15 @@ delete discordAppMount.dataset.theme;
 themeProbePlugin.refreshDiscordThemeClasses();
 assert.equal(fakeElementHasClass(themeRefreshButton, "theme-light"), false);
 assert.equal(fakeElementHasClass(themeRefreshButton, "theme-midnight"), true);
-assert.equal(fakeElementHasClass(themeRefreshSettings, "theme-light"), false);
-assert.equal(fakeElementHasClass(themeRefreshSettings, "theme-midnight"), true);
-assert.equal(fakeElementHasClass(themeRefreshModal, "theme-midnight"), true);
-assert.equal(fakeElementHasClass(themeRefreshPanel, "theme-midnight"), true);
 assert.equal(fakeElementHasClass(themeRefreshRestore, "theme-midnight"), true);
 assert.equal(fakeElementHasClass(themeRefreshPolish, "theme-midnight"), true);
 assert.equal(fakeElementHasClass(themeRefreshBilingual, "theme-midnight"), true);
 assert.equal(fakeElementHasClass(themeRefreshMessage, "theme-midnight"), true);
-assert.equal(fakeElementHasClass(themeRefreshWrapper, "theme-midnight"), true);
-assert.equal(fakeElementHasClass(themeRefreshWrapperRoot, "theme-midnight"), true);
+// Discord's page theme is midnight now: the open plugin windows switch to the dark palette in place.
+[themeRefreshSettings, themeRefreshModal, themeRefreshPanel].forEach(node => {
+    assert.equal(node.dataset.daitPanelTheme, "dark");
+    assert.equal(fakeElementHasClass(node, "theme-midnight"), false);
+});
 
 const quickThemeRoot = createFakeElement("div", themeProbeCreated);
 quickThemeRoot.className = "dait-quick-settings-modal-root";
@@ -1390,14 +1404,19 @@ const quickThemeNodes = [
     quickThemeDone,
     quickThemeSettings
 ];
-for (const themeClass of ["theme-light", "theme-dark", "theme-darker", "theme-midnight"]) {
+// Every Discord theme maps to one of the two panel palettes. The window root and the panel inside it carry it; the
+// frame's other nodes inherit it and get no Discord theme class of their own.
+quickThemeRoot.classList.remove("theme-light");
+for (const [themeClass, panelTheme] of [["theme-light", "light"], ["theme-dark", "dark"], ["theme-darker", "dark"], ["theme-midnight", "dark"]]) {
+    themeProbeBody.className = themeClass;
     discordAppMount.className = themeClass;
-    themeProbePlugin.syncQuickSettingsThemeTree(quickThemeRoot);
+    assert.equal(themeProbePlugin.syncQuickSettingsThemeTree(quickThemeRoot), panelTheme);
+    assert.equal(quickThemeRoot.dataset.daitPanelTheme, panelTheme);
+    assert.equal(quickThemeSettings.dataset.daitPanelTheme, panelTheme);
     for (const node of quickThemeNodes) {
-        assert.equal(fakeElementHasClass(node, themeClass), true);
-        assert.equal(node.dataset.daitDiscordTheme, themeClass.replace(/^theme-/, ""));
+        assert.equal(node.dataset.daitDiscordTheme, undefined);
         for (const otherThemeClass of ["theme-light", "theme-dark", "theme-darker", "theme-midnight"]) {
-            if (otherThemeClass !== themeClass) assert.equal(fakeElementHasClass(node, otherThemeClass), false);
+            assert.equal(fakeElementHasClass(node, otherThemeClass), false);
         }
     }
 }
@@ -1445,13 +1464,21 @@ global.document = {
 const themeVarsPlugin = new Plugin();
 const themeVarsRoot = createFakeElement("div", themeVarsCreated);
 themeVarsRoot.className = "dait-quick-settings-modal-root";
+// Mixed sources (a light page, a darker #app-mount, variables spread over several nodes) used to be copied onto the
+// window one variable at a time. Now the page theme picks one complete palette and nothing is copied.
 themeVarsPlugin.syncQuickSettingsThemeTree(themeVarsRoot);
-assert.equal(fakeElementHasClass(themeVarsRoot, "theme-darker"), true);
-assert.equal(themeVarsRoot.dataset.daitDiscordTheme, "darker");
-assert.equal(themeVarsRoot.style.getPropertyValue("--text-normal"), "#body-text");
-assert.equal(themeVarsRoot.style.getPropertyValue("--background-surface-high"), "#body-surface");
-assert.equal(themeVarsRoot.style.getPropertyValue("--modal-background"), "#body-modal");
-assert.equal(themeVarsRoot.style.getPropertyValue("--scrollbar-thin-thumb"), "rgba(1, 2, 3, 0.4)");
+assert.equal(themeVarsRoot.dataset.daitPanelTheme, "light");
+assert.equal(fakeElementHasClass(themeVarsRoot, "theme-darker"), false);
+assert.equal(themeVarsRoot.dataset.daitDiscordTheme, undefined);
+assert.equal(themeVarsRoot.style.getPropertyValue("--text-normal"), "");
+assert.equal(themeVarsRoot.style.getPropertyValue("--background-surface-high"), "");
+assert.equal(themeVarsRoot.style.getPropertyValue("--modal-background"), "");
+assert.equal(themeVarsRoot.style.getPropertyValue("--scrollbar-thin-thumb"), "");
+// The buttons inside Discord's UI still copy Discord's variables.
+const themeVarsButton = createFakeElement("button", themeVarsCreated);
+themeVarsButton.className = "dait-message-button";
+themeVarsPlugin.syncDiscordThemeClasses(themeVarsButton);
+assert.equal(themeVarsButton.style.getPropertyValue("--text-normal"), "#body-text");
 global.window = savedWindowForThemeVars;
 global.document = savedDocumentForThemeVars;
 
@@ -1493,13 +1520,13 @@ polishPanelPlugin.showPolishResultPanel(polishPanelTextbox, "polished text");
 const polishPanel = polishPanelBody.children[0];
 const polishPanelOutput = polishPanelCreated.find(element => element.className === "dait-polish-result-output");
 assert.equal(polishPanel.className, "dait-polish-result-panel");
-assert.equal(fakeElementHasClass(polishPanel, "theme-light"), true);
-assert.equal(polishPanel.dataset.daitDiscordTheme, "light");
+// A plugin window: the panel palette of the page theme, re-checked when the panel is placed again.
+assert.equal(polishPanel.dataset.daitPanelTheme, "light");
+assert.equal(polishPanel.dataset.daitDiscordTheme, undefined);
 polishPanelBody.className = "theme-midnight";
 polishPanelWindowListeners.get("resize")();
-assert.equal(fakeElementHasClass(polishPanel, "theme-light"), false);
-assert.equal(fakeElementHasClass(polishPanel, "theme-midnight"), true);
-assert.equal(polishPanel.dataset.daitDiscordTheme, "midnight");
+assert.equal(polishPanel.dataset.daitPanelTheme, "dark");
+assert.equal(fakeElementHasClass(polishPanel, "theme-midnight"), false);
 assert.equal(polishPanelOutput.tagName, "DIV");
 assert.equal(polishPanelOutput.textContent, "polished text");
 assert.equal(polishPanelTextboxBlurred, false);
@@ -2816,23 +2843,35 @@ assert.equal(domStyleRemoved, true);
 global.document = savedDocumentForStyleFallback;
 if (savedBdApiForStyles === undefined) delete global.BdApi;
 else global.BdApi = savedBdApiForStyles;
-// One token layer (UI-SPEC): tokens read Discord's variables with one fallback each; danger text is Discord's readable red.
-const settingsTokenBlock = injectedCss.match(/\.dait-settings,\n\.dait-quick-settings-modal-root,\n\[data-dait-settings-modal="true"\],\n\.dait-polish-result-panel \{([\s\S]*?)\n\}/)?.[1] || "";
-assert.match(settingsTokenBlock, /--dait-danger: var\(--text-danger, #fa777c\);/);
-assert.match(settingsTokenBlock, /--dait-text: var\(--text-default, var\(--text-normal, #dbdee1\)\);/);
-assert.match(settingsTokenBlock, /--dait-bg: var\(--background-base-low, var\(--background-primary, #313338\)\);/);
-assert.match(settingsTokenBlock, /--dait-brand: var\(--button-filled-brand-background, #4752c4\);/);
-assert.match(settingsTokenBlock, /--dait-control-w: 240px;/);
-assert.match(settingsTokenBlock, /--dait-font-label: 15px;[\s\S]*?--dait-font-body: 14px;[\s\S]*?--dait-font-chip: 12px;/);
-settingsTokenBlock.split("\n").filter(line => /^\s*--dait-[a-z0-9-]+: var\(/.test(line)).forEach(line => {
-    assert.ok((line.match(/#[0-9a-f]{3,8}\b|rgba?\(/gi) || []).length <= 1, line);
+// v0.4.0 theme follow-up (THEME-SPEC): the plugin's windows get one of two complete palettes from
+// data-dait-panel-theme; no token of these windows reads a Discord variable, so differently themed parts of Discord
+// cannot mix into them (the report: dark inputs and dark-grey text on a light window).
+const panelDarkBlock = injectedCss.match(/\[data-dait-panel-theme="dark"\],\n:is\([^)]*\):not\(\[data-dait-panel-theme\]\) \{([\s\S]*?)\n\}/)?.[1] || "";
+const panelLightBlock = injectedCss.match(/\n\[data-dait-panel-theme="light"\] \{([\s\S]*?)\n\}/)?.[1] || "";
+const panelSharedBlock = injectedCss.match(/\n\.dait-settings,\n\.dait-quick-settings-modal-root,\n\.dait-quick-popover,\n\.dait-polish-result-panel,\n\.dait-input-action-menu,\n\.dait-dialog \{([\s\S]*?)\n\}/)?.[1] || "";
+assert.match(panelDarkBlock, /--dait-bg: #2b2d31;[\s\S]*?--dait-rail: #232428;[\s\S]*?--dait-surface: #313338;[\s\S]*?--dait-input-bg: #1e1f22;[\s\S]*?--dait-text: #e3e5e8;[\s\S]*?--dait-heading: #f2f3f5;[\s\S]*?--dait-placeholder: #949ba4;[\s\S]*?--dait-brand: #4f5bd5;/);
+// Control edges reach 3:1 against the window surfaces (theme audit; the spec asked for #4e5058 / #c4c9ce).
+assert.match(panelDarkBlock, /--dait-input-border: #7a7e86;/);
+assert.match(panelDarkBlock, /color-scheme: dark;/);
+assert.match(panelLightBlock, /--dait-bg: #ffffff;[\s\S]*?--dait-rail: #f2f3f5;[\s\S]*?--dait-surface: #f6f7f8;[\s\S]*?--dait-input-bg: #ffffff;[\s\S]*?--dait-input-border: #868a91;[\s\S]*?--dait-text: #2e3035;[\s\S]*?--dait-heading: #1f2124;[\s\S]*?--dait-placeholder: #6d6f78;/);
+assert.match(panelLightBlock, /--dait-danger: #c42b2f;/);
+assert.match(panelLightBlock, /color-scheme: light;/);
+[panelDarkBlock, panelLightBlock, panelSharedBlock].forEach(block => {
+    assert.ok(block.length > 0);
+    assert.doesNotMatch(block, /var\(--(background|input|text|header|interactive|button|brand|status|border|focus|elevation|scrollbar)-/);
 });
-// v0.3.0 token names stay as aliases for the stylesheets that still use them.
-assert.match(settingsTokenBlock, /--dait-card: var\(--dait-bg\);[\s\S]*?--dait-border: var\(--dait-divider\);[\s\S]*?--dait-control: var\(--dait-input-bg\);[\s\S]*?--dait-muted-readable: var\(--dait-text-muted\);/);
-// No per-theme palette copies: each token is defined once.
-["--dait-card:", "--dait-text:", "--dait-heading:", "--dait-control:", "--dait-scrollbar-thumb:"].forEach(token => {
-    assert.equal(injectedCss.split(token).length - 1, 1, token);
+// One type scale: body 15 / 1.55, small 13, headings 16 / 18 / 20; 36 px controls; the shared control width stays.
+assert.match(panelSharedBlock, /--dait-font-window: 18px;[\s\S]*?--dait-font-page: 20px;[\s\S]*?--dait-font-group: 16px;[\s\S]*?--dait-font-body: 15px;[\s\S]*?--dait-font-small: 13px;[\s\S]*?--dait-line: 1\.55;/);
+assert.match(panelSharedBlock, /--dait-control-w: 240px;[\s\S]*?--dait-control-h: 36px;/);
+// The v0.3.0 alias tokens and the per-theme Discord blocks of these windows are gone.
+["--dait-card:", "--dait-muted-readable:", "--dait-disabled-text:", "--dait-text-muted:", "--dait-font-label:", "--dait-font-caption:", "--dait-font-chip:"].forEach(token => {
+    assert.equal(injectedCss.includes(token), false, token);
 });
+["--dait-text:", "--dait-heading:", "--dait-input-bg:", "--dait-bg:"].forEach(token => {
+    assert.equal(injectedCss.split(token).length - 1, 2, token + " once per palette");
+});
+assert.equal(/\.theme-light\.dait-(settings|quick-settings-modal-root|polish-result-panel|input-action-menu)/.test(injectedCss), false);
+assert.equal(/\.dait-(settings|quick-settings-modal-root|quick-popover|polish-result-panel|input-action-menu)\[data-dait-discord-theme/.test(injectedCss), false);
 // Chat error lines use Discord's readable danger text colour instead of the fixed brand red.
 assert.match(injectedCss, /--dait-line-danger: var\(--text-danger, #fa777c\)/);
 assert.match(injectedCss, /\.dait-translation-line\.dait-translation-error \{[\s\S]*?color: var\(--dait-line-danger\);/);
@@ -2840,12 +2879,8 @@ assert.equal(injectedCss.includes("opacity: 0.28"), false);
 assert.equal(injectedCss.includes("background: transparent;\n    border: 1px solid transparent"), false);
 assert.match(injectedCss, /@media \(prefers-reduced-motion: reduce\) \{\n    \.dait-settings,[\s\S]*?transition: none !important;/);
 assert.match(injectedCss, /\.dait-settings :focus-visible,[\s\S]*?outline: 2px solid var\(--dait-focus\);/);
-// Light theme only replaces fallbacks Discord may lack; it hard-codes no text colours.
-const settingsLightBlock = injectedCss.match(/\.theme-light\.dait-settings,[\s\S]*?\{([\s\S]*?)\n\}/)?.[1] || "";
-assert.match(settingsLightBlock, /color-scheme: light;/);
-assert.match(settingsLightBlock, /--dait-danger: var\(--text-danger, #c4323a\);/);
-assert.doesNotMatch(settingsLightBlock, /--dait-(text|heading|text-muted|label|muted-readable):/);
-assert.match(injectedCss, /\.dait-settings-row input:disabled,[\s\S]*?\.dait-prompt-tools select:disabled \{[\s\S]*?color: var\(--dait-disabled-text\);[\s\S]*?-webkit-text-fill-color: var\(--dait-disabled-text\);/);
+// Disabled controls fade as a whole (55 %) instead of turning a dim grey.
+assert.match(injectedCss, /\.dait-settings-row input:disabled,[\s\S]*?\.dait-prompt-tools select:disabled \{\n    cursor: not-allowed;\n    opacity: 0\.55;\n\}/);
 // BetterDiscord's modal becomes a moderate window: min(920px, 100vw - 48px) wide, min(760px, 100vh - 64px) high.
 const settingsModalBlock = injectedCss.match(/\[data-dait-settings-modal="true"\] \{([\s\S]*?)\n\}/)?.[1] || "";
 assert.match(settingsModalBlock, /max-height: min\(760px, calc\(100vh - 64px\)\) !important;/);
@@ -2859,7 +2894,8 @@ assert.match(injectedCss, /\.dait-settings \{[\s\S]*?margin-left: auto;[\s\S]*?m
 assert.match(injectedCss, /@supports not selector\(::-webkit-scrollbar\) \{\n    \[data-dait-settings-modal="true"\],[\s\S]*?\.dait-quick-settings-body,[\s\S]*?\.dait-settings-rail,[\s\S]*?\.dait-settings-content,[\s\S]*?\.dait-settings-row textarea[\s\S]*?scrollbar-width: thin;/);
 assert.match(injectedCss, /\.dait-prompt-editor textarea,[\s\S]*?\.dait-polish-result-output \{[\s\S]*?scrollbar-width: thin;/);
 assert.equal(injectedCss.includes(".dait-test-panel") || injectedCss.includes(".dait-test-output"), false);
-assert.match(settingsTokenBlock, /--dait-scrollbar-thumb: var\(--scrollbar-thin-thumb, rgba\(128, 132, 142, 0\.45\)\);/);
+assert.match(panelSharedBlock, /--dait-scrollbar-thumb: color-mix\(in srgb, var\(--dait-placeholder\) 55%, transparent\);/);
+assert.match(injectedCss, /\[data-dait-settings-modal="true"\] \{\n    --dait-scrollbar-thumb: rgba\(128, 132, 142, 0\.45\);/);
 assert.match(injectedCss, /\.dait-quick-settings-body::-webkit-scrollbar[\s\S]*?width: 8px;/);
 assert.match(injectedCss, /\.dait-settings-row textarea::-webkit-scrollbar[\s\S]*?width: 8px;/);
 assert.match(injectedCss, /\.dait-prompt-editor textarea::-webkit-scrollbar[\s\S]*?width: 8px;/);
@@ -2873,9 +2909,11 @@ assert.match(injectedCss, /\.dait-settings-body \{[\s\S]*?grid-template-columns:
 assert.match(injectedCss, /\.dait-settings-row \{[\s\S]*?column-gap: var\(--dait-space-5\);[\s\S]*?grid-template-columns: minmax\(0, 1fr\) auto;/);
 assert.match(injectedCss, /\.dait-row-control > select,\n\.dait-row-control > input:not\(\[type="checkbox"\]\),\n\.dait-row-control > \.dait-segmented,\n\.dait-row-control > \.dait-language-controls \{\n    width: var\(--dait-control-w\);/);
 assert.match(injectedCss, /\.dait-settings input\.dait-switch \{[\s\S]*?height: 24px;[\s\S]*?width: 40px;/);
-assert.match(injectedCss, /\.dait-segmented \{[\s\S]*?grid-auto-columns: minmax\(0, 1fr\);[\s\S]*?height: var\(--dait-control-h\);/);
-assert.match(injectedCss, /\.dait-row-label \{[\s\S]*?font-size: var\(--dait-font-label\);[\s\S]*?font-weight: 500;/);
-assert.match(injectedCss, /\.dait-row-description \{[\s\S]*?font-size: var\(--dait-font-body\);/);
+// Segmented options are as wide as their labels, the spare width shared out (theme audit).
+assert.match(injectedCss, /\.dait-segmented \{[\s\S]*?grid-auto-columns: auto;[\s\S]*?height: var\(--dait-control-h\);/);
+// Labels and descriptions: the same size and colour, the label at 600.
+assert.match(injectedCss, /\.dait-row-label \{\n    color: var\(--dait-text\);\n    font-size: var\(--dait-font-body\);\n    font-weight: 600;/);
+assert.match(injectedCss, /\.dait-row-description \{\n    color: var\(--dait-text\);\n    font-size: var\(--dait-font-body\);\n    font-weight: 400;/);
 assert.match(injectedCss, /\.dait-settings-rail \{[\s\S]*?overflow-y: auto;/);
 assert.match(injectedCss, /\.dait-settings-content \{[\s\S]*?min-height: 0;[\s\S]*?overflow-y: auto;/);
 assert.match(injectedCss, /\.dait-settings-tab\[aria-selected="true"\] \{/);
@@ -2888,8 +2926,8 @@ assert.match(quickDialogBlock, /height: min\(760px, calc\(100vh - 64px\)\);/);
 assert.match(quickDialogBlock, /background: var\(--dait-bg\);/);
 assert.match(quickDialogBlock, /overflow: hidden;/);
 assert.equal(injectedCss.includes("1280px"), false);
-assert.match(injectedCss, /\.dait-quick-settings-modal-root \{[\s\S]*?background: var\(--dait-quick-backdrop\);[\s\S]*?overflow: hidden;/);
-assert.match(injectedCss, /\.theme-light\.dait-quick-settings-modal-root,[\s\S]*?\.dait-quick-settings-modal-root\[data-dait-discord-theme="light"\][\s\S]*?--dait-quick-backdrop: rgba\(6, 6, 7, 0\.34\);/);
+assert.match(injectedCss, /\.dait-quick-settings-modal-root \{[\s\S]*?background: var\(--dait-backdrop\);[\s\S]*?overflow: hidden;/);
+assert.match(panelLightBlock, /--dait-backdrop: rgba\(0, 0, 0, 0\.36\);/);
 assert.equal(/\.theme-(dark|darker|midnight)\.dait-quick-settings-modal-root/.test(injectedCss), false);
 assert.equal(injectedCss.includes("--dait-quick-dialog-bg"), false);
 const quickBodyBlock = injectedCss.match(/\.dait-quick-settings-body \{([\s\S]*?)\n\}/)?.[1] || "";
@@ -2905,7 +2943,6 @@ assert.match(injectedCss, /\.dait-quick-settings-done \{[\s\S]*?background: var\
 });
 assert.equal(injectedCss.includes("@media (min-width: 760px)"), false);
 assert.equal(injectedCss.includes("100vw - 28px"), false);
-assert.match(injectedCss, /\.theme-light\.dait-quick-settings-modal-root,[\s\S]*?\.dait-polish-result-panel\[data-dait-discord-theme="light"\] \{[\s\S]*?color-scheme: light;/);
 assert.equal(injectedCss.includes(".dait-quick-settings-rail {"), false);
 assert.match(injectedCss, /\.dait-quick-settings-panel \{/);
 assert.match(injectedCss, /\.theme-light\.dait-quick-settings-button,[\s\S]*?\.theme-light \.dait-quick-settings-button,[\s\S]*?\[data-dait-discord-theme="light"\] \.dait-quick-settings-button \{/);
@@ -2936,7 +2973,6 @@ assert.match(injectedCss, /\[class\*="markup"\]:hover \.dait-message-button[\s\S
 assert.match(injectedCss, /\[id\^="chat-messages-"\]:hover \.dait-message-button[\s\S]*?pointer-events: auto;/);
 assert.match(injectedCss, /\.dait-translation-line \{[\s\S]*?overflow-anchor: none;/);
 assert.match(injectedCss, /\.dait-polish-result-panel \{/);
-assert.match(injectedCss, /\.theme-light\.dait-polish-result-panel,[\s\S]*?\.dait-polish-result-panel\[data-dait-discord-theme="light"\]/);
 // The polish result panel reads the shared tokens instead of four per-theme colour blocks.
 assert.match(injectedCss, /\.dait-polish-result-panel \{[\s\S]*?background: var\(--dait-surface\);[\s\S]*?border: 1px solid var\(--dait-divider\);[\s\S]*?box-shadow: var\(--dait-shadow\);[\s\S]*?color: var\(--dait-text\);/);
 assert.match(injectedCss, /\.dait-polish-result-output \{[\s\S]*?background: var\(--dait-input-bg\);[\s\S]*?color: var\(--dait-text\);/);

@@ -29,6 +29,7 @@ const { PLUGIN_VERSION } = require("./version");
 const { ProviderLayer } = require("./providers/provider-layer");
 const { SettingsStore } = require("./settings/settings-store");
 const { QuickPanel } = require("./quick-panel/quick-panel");
+const { PanelTheme } = require("./settings/panel-theme");
 const { convertDiscordMarkupToDisplayText, DISCORD_MARKUP_DISPLAY_TEXT_MEMO_MAX } = require("./intake/discord-markup");
 const { removeStandardEmoji, getEmojiNeutralTextLength } = require("./intake/emoji-text");
 
@@ -839,6 +840,7 @@ module.exports = class DiscordAITranslator {
         });
         this.composerWriter = new ComposerWriter(this);
         this.quickPanel = new QuickPanel(this);
+        this.panelTheme = new PanelTheme(this);
         this.settingsSchema = new SettingsSchema({
             tabs: SETTINGS_TABS_DEFINITION,
             providerCapabilities: PROVIDER_CAPABILITIES,
@@ -1058,6 +1060,7 @@ module.exports = class DiscordAITranslator {
             if (!this.translationCacheDirty) this.loadTranslationCache();
             else this.scheduleTranslationCachePersist();
             this.injectStyles();
+            this.panelTheme.startWatching();
             this.patchMessageContextMenu();
             this.startObserver();
             document.addEventListener("keydown", this.boundKeydown, true);
@@ -1091,6 +1094,7 @@ module.exports = class DiscordAITranslator {
         this.lifecycleToken++;
         if (this.observer) this.observer.disconnect();
         if (this.observerLifecycle) this.observerLifecycle.disconnect();
+        this.panelTheme.stopWatching();
         if (this.observerRebindTimer) clearTimeout(this.observerRebindTimer);
         if (this.observerRetryTimer) clearTimeout(this.observerRetryTimer);
         this.cancelHeavyPersistenceIdle("diagnostics");
@@ -1274,7 +1278,7 @@ module.exports = class DiscordAITranslator {
         if (quickSettings) panel.dataset.daitQuickSettings = "true";
         // The language it is built in: a language change rebuilds the panels that differ (refreshSettingsWindowsLocale).
         panel.dataset.daitLocale = this.getLocale();
-        this.syncDiscordThemeClasses(panel);
+        this.applyPanelTheme(panel);
 
         panel.appendChild(this.createSettingsHeader({ quickSettings }));
         panel.appendChild(this.createSettingsLayout(panel));
@@ -1732,13 +1736,21 @@ module.exports = class DiscordAITranslator {
         close.className = "dait-settings-close";
         close.title = this.t("settingsClose");
         close.setAttribute("aria-label", this.t("settingsClose"));
-        close.textContent = "×";
+        close.appendChild(this.createWindowIcon("close"));
         close.addEventListener("click", event => {
             event?.preventDefault?.();
             this.closeSettingsWindow(close);
         });
         header.appendChild(close);
         return header;
+    }
+
+    // An icon for an icon button in a plugin window (css/01-theme-tokens .dait-icon); the button carries the label.
+    createWindowIcon(name) {
+        const icon = document.createElement("span");
+        icon.className = `dait-icon dait-icon-${name}`;
+        icon.setAttribute("aria-hidden", "true");
+        return icon;
     }
 
     createSettingsHero(options = {}) {
@@ -1900,16 +1912,15 @@ module.exports = class DiscordAITranslator {
             if (viewportWidth && width >= viewportWidth - 1) break;
             if (!width || width <= desiredWidth + 80) {
                 if (current.dataset.daitSettingsModal !== "true") current.dataset.daitSettingsModal = "true";
-                this.applyDiscordThemeData(current, panel);
                 root = current;
                 markedNodes.push(current);
                 marked++;
             }
             current = current.parentElement;
         }
+        // BetterDiscord's modal frame keeps Discord's own colours; only the panel inside it carries the plugin palette.
         if (root) {
             if (root.dataset.daitSettingsModalRoot !== "true") root.dataset.daitSettingsModalRoot = "true";
-            this.applyDiscordThemeData(root, panel);
             if (!markedNodes.includes(root)) markedNodes.push(root);
         }
         const nextNodes = new Set(markedNodes);
@@ -2535,7 +2546,18 @@ module.exports = class DiscordAITranslator {
     }
 
     createDisplayTabContent() {
-        return [this.createDisplayBehaviorSection(), this.createDisplayNoticesSection()];
+        return [this.createDisplayWindowSection(), this.createDisplayBehaviorSection(), this.createDisplayNoticesSection()];
+    }
+
+    // The palette of the plugin's own windows (ui.panelTheme); changing it restyles every open window in place.
+    createDisplayWindowSection() {
+        const section = this.createSettingsGroup(this.t("settingsGroupWindows"), "windows");
+        section.appendChild(this.createSegmentedRow("ui.panelTheme", this.t("panelTheme"), [
+            ["auto", this.t("panelThemeAuto")],
+            ["light", this.t("panelThemeLight")],
+            ["dark", this.t("panelThemeDark")]
+        ], { description: this.t("panelThemeDesc") }));
+        return section;
     }
 
     createAdvancedTabContent() {
@@ -4349,14 +4371,16 @@ module.exports = class DiscordAITranslator {
         if (group?.dataset) group.dataset.daitValue = wanted;
     }
 
-    // Rough text width at the segmented control's 13 px font: CJK characters are 1em, other characters ~0.55em.
+    // Rough text width at the segmented control's 15 px font: CJK characters are 1em, other characters ~0.55em (a
+    // generous estimate). Options are as wide as their labels plus 6 px padding on each side (css/04 .dait-segmented),
+    // so the labels fit when together they need no more than the control width less its 1 px border, 2 px padding
+    // and the 2 px gaps between options.
     segmentedLabelsFit(labels, controlWidth = SETTINGS_CONTROL_WIDTH) {
         const count = labels.length || 1;
-        const available = (controlWidth - 4 - 2 * (count - 1)) / count - 10;
-        return labels.every(label => {
-            const width = [...String(label || "")].reduce((sum, char) => sum + (/[⺀-鿿豈-﫿＀-￯]/.test(char) ? 13 : 7.2), 0);
-            return width <= available;
-        });
+        const available = controlWidth - 6 - 2 * (count - 1);
+        const needed = labels.reduce((total, label) => total + 12
+            + [...String(label || "")].reduce((sum, char) => sum + (/[⺀-鿿豈-﫿＀-￯]/.test(char) ? 15 : 8.3), 0), 0);
+        return needed <= available;
     }
 
     getLanguageLabel(language) {
@@ -5184,7 +5208,9 @@ module.exports = class DiscordAITranslator {
                 prefetchRange: this.getAutoTranslatePrefetchRange(),
                 intakeMode: this.normalizeAutoTranslateIntakeMode(this.settings.ui?.autoTranslateIntakeMode),
                 // Channels that auto-translate even with the main switch off.
-                allowListedChannels: this.getChannelAutoTranslateAllowListCount()
+                allowListedChannels: this.getChannelAutoTranslateAllowListCount(),
+                // The palette the plugin's windows use now (ui.panelTheme "auto" resolved against Discord's theme).
+                panelTheme: this.resolvePanelTheme()
             },
             settings: sanitize(this.settings, "", DEFAULT_SETTINGS)
         };
@@ -7119,7 +7145,7 @@ module.exports = class DiscordAITranslator {
             root.className = "dait-quick-settings-modal-root";
             root.dataset.daitQuickSettingsSource = source;
             this.setQuickSettingsLauncherButton(launcher || this.quickSettingsPreviousFocus || null, true);
-            this.applyDiscordThemeData(root, launcher || document.body);
+            this.applyPanelTheme(root);
 
             const backdrop = document.createElement("div");
             backdrop.className = "dait-quick-settings-backdrop";
@@ -7368,27 +7394,29 @@ module.exports = class DiscordAITranslator {
         return themeClass;
     }
 
-    syncQuickSettingsThemeTree(root, anchor = null) {
+    // The launcher's settings window and the panel inside it take the current panel palette (the frame's children
+    // inherit it). Returns the theme applied.
+    syncQuickSettingsThemeTree(root) {
         if (!root) return "";
-        const themeSource = this.getDiscordThemeSource(anchor);
-        const themeClass = themeSource.themeClass || DISCORD_DEFAULT_THEME_CLASS;
-        const nodes = [
-            root,
-            this.findQuickSettingsDialog(root),
-            root.querySelector?.(".dait-quick-settings-backdrop"),
-            root.querySelector?.(".dait-quick-settings-body"),
-            root.querySelector?.(".dait-quick-settings-done"),
-            root.querySelector?.(".dait-quick-settings-error"),
-            ...(root.querySelectorAll?.(".dait-settings") || [])
-        ].filter(Boolean);
-        [...new Set(nodes)].forEach(node => {
-            if (!node?.classList) return;
-            DISCORD_THEME_CLASSES.forEach(theme => node.classList.remove?.(theme));
-            node.classList.add?.(themeClass);
-            if (node.dataset) node.dataset.daitDiscordTheme = themeClass.replace(/^theme-/, "");
-            this.copyDiscordThemeVariables(node, themeSource.node);
-        });
-        return themeClass;
+        const theme = this.resolvePanelTheme();
+        this.applyPanelTheme(root, theme);
+        (root.querySelectorAll?.(".dait-settings") || []).forEach(panel => this.applyPanelTheme(panel, theme));
+        return theme;
+    }
+
+    // ui.panelTheme resolved to "light" or "dark" (auto follows Discord, then the system theme).
+    resolvePanelTheme(setting) {
+        return this.panelTheme.resolve(setting === undefined ? this.panelTheme.getSetting() : setting);
+    }
+
+    // Marks a plugin window root (data-dait-panel-theme) so css/01-theme-tokens gives it the matching palette.
+    applyPanelTheme(node, theme = undefined) {
+        return this.panelTheme.apply(node, theme === undefined ? this.resolvePanelTheme() : theme);
+    }
+
+    // Restyles every open plugin window in place (setting, Discord theme or system theme changed).
+    refreshPanelThemes() {
+        return this.panelTheme.refresh();
     }
 
     applyDiscordThemeData(target, anchor = null) {
@@ -7400,18 +7428,16 @@ module.exports = class DiscordAITranslator {
         return themeClass;
     }
 
+    // Discord's theme changed: the buttons that sit inside Discord's UI copy its theme again, and the plugin's own
+    // windows take the matching panel palette.
     refreshDiscordThemeClasses() {
         if (typeof document === "undefined") return;
         this.discordThemeCacheEpoch++;
-        const selector = ".dait-settings, .dait-quick-settings-button, .dait-quick-settings-modal-root, .dait-polish-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-menu-button, .dait-input-action-menu, .dait-message-button, .dait-polish-result-panel, .dait-polish-restore-control, [data-dait-settings-modal='true'], [data-dait-settings-modal-root='true']";
+        const selector = ".dait-quick-settings-button, .dait-polish-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-menu-button, .dait-message-button, .dait-polish-restore-control";
         const queried = [...(document.querySelectorAll?.(selector) || [])];
-        [...new Set(queried)].forEach(node => {
-            if (this.elementHasClassName(node, "dait-quick-settings-modal-root")) this.syncQuickSettingsThemeTree(node);
-            else this.syncDiscordThemeClasses(node);
-        });
-        if (this.quickSettingsModalRoot) this.syncQuickSettingsThemeTree(this.quickSettingsModalRoot);
-        if (this.polishResultPanel) this.syncDiscordThemeClasses(this.polishResultPanel);
+        [...new Set(queried)].forEach(node => this.syncDiscordThemeClasses(node));
         if (this.polishRestoreControl) this.syncDiscordThemeClasses(this.polishRestoreControl);
+        this.refreshPanelThemes();
     }
 
     getDiscordThemeClass(anchor = null) {
@@ -8120,7 +8146,7 @@ module.exports = class DiscordAITranslator {
         menu.className = "dait-input-action-menu";
         menu.setAttribute("role", "menu");
         menu.setAttribute("aria-label", this.t("inputActionMenu"));
-        this.syncDiscordThemeClasses(menu, textbox || button || container || group);
+        this.applyPanelTheme(menu);
 
         const addItem = (label, title, action) => {
             const item = document.createElement("button");
@@ -8160,7 +8186,7 @@ module.exports = class DiscordAITranslator {
         this.inputActionMenu = menu;
         button?.setAttribute?.("aria-expanded", "true");
         const reposition = () => {
-            this.syncDiscordThemeClasses(menu, textbox || button || container || group);
+            this.applyPanelTheme(menu);
             this.positionInputActionMenu(menu, button || group);
         };
         const outsidePointerDown = event => {
@@ -12829,7 +12855,7 @@ module.exports = class DiscordAITranslator {
 
         const panel = document.createElement("div");
         panel.className = "dait-polish-result-panel";
-        this.syncDiscordThemeClasses(panel, textbox || options.sourceButton);
+        this.applyPanelTheme(panel);
         panel.setAttribute("role", "dialog");
         panel.setAttribute("aria-label", options.ariaLabel || options.title || this.t("polishResultTitle"));
 
@@ -12844,7 +12870,7 @@ module.exports = class DiscordAITranslator {
         const close = document.createElement("button");
         close.className = "dait-polish-result-icon";
         close.type = "button";
-        close.textContent = "×";
+        close.appendChild(this.createWindowIcon("close"));
         close.title = this.t("polishResultClose");
         close.setAttribute("aria-label", this.t("polishResultClose"));
         close.addEventListener("click", event => {
@@ -12910,7 +12936,7 @@ module.exports = class DiscordAITranslator {
         document.body.appendChild(panel);
         this.polishResultPanel = panel;
         const reposition = () => {
-            this.syncDiscordThemeClasses(panel, textbox || options.sourceButton);
+            this.applyPanelTheme(panel);
             this.positionPolishResultPanel(panel, textbox, options.sourceButton);
         };
         const outsidePointerDown = event => {
@@ -17099,10 +17125,36 @@ module.exports = class DiscordAITranslator {
             return [...paragraphs, preview].filter(Boolean).join("\n\n");
         }
         const h = React.createElement;
-        return h("div", { className: "dait-dialog" },
+        return h("div", { className: "dait-dialog", ...this.getDialogPanelThemeProps() },
             ...paragraphs.map((text, index) => h("p", { className: "dait-dialog-text", key: `p${index}` }, text)),
             preview ? h("div", { className: "dait-dialog-preview", key: "preview", tabIndex: 0 }, preview) : null
         );
+    }
+
+    // Dialog content sits inside Discord's modal, between Discord's own title and buttons: it takes the palette of
+    // that modal, whatever ui.panelTheme says, so the dialog is one piece and its text always reads. Until the
+    // content is in the page it goes by Discord's theme; once mounted (the ref) it goes by the modal's actual
+    // background, and PanelTheme.refresh() checks it again when Discord's theme changes. Without a Discord theme or
+    // a readable modal background it brings its own background in the current palette (css/08-dialogs).
+    getDialogPanelThemeProps() {
+        const discordTheme = this.panelTheme.getDiscordTheme();
+        const props = {
+            "data-dait-panel-theme": discordTheme || this.resolvePanelTheme(),
+            ref: node => this.syncDialogPanelTheme(node)
+        };
+        if (!discordTheme) props["data-dait-dialog-surface"] = "true";
+        return props;
+    }
+
+    syncDialogPanelTheme(node) {
+        if (!node) return "";
+        try {
+            return this.panelTheme.syncDialog(node);
+        }
+        catch (error) {
+            this.logDiagnostic?.("dialog.theme", "warn", { error: this.formatError?.(error) });
+            return "";
+        }
     }
 
     // Where a confirmation can show up: Discord's modal layer (role=dialog), BetterDiscord's modal root, and
@@ -17218,13 +17270,14 @@ module.exports = class DiscordAITranslator {
         const credentialsNote = this.t("resetDialogItemCredentialsNote");
         const keepLabel = this.t("resetKeepCredentials");
         const useState = typeof React.useState === "function" ? React.useState : null;
+        const themeProps = this.getDialogPanelThemeProps();
         const ResetDialogBody = () => {
             const [keep, setKeep] = useState ? useState(choice.keepCredentials) : [choice.keepCredentials, null];
             const onChange = event => {
                 choice.keepCredentials = Boolean(event?.target?.checked);
                 if (setKeep) setKeep(choice.keepCredentials);
             };
-            return h("div", { className: "dait-dialog" },
+            return h("div", { className: "dait-dialog", ...themeProps },
                 h("p", { className: "dait-dialog-text" }, lead),
                 h("ul", { className: "dait-dialog-list" },
                     ...items.map((text, index) => h("li", { key: `i${index}` }, text)),

@@ -704,15 +704,33 @@ test("segmented controls: radiogroup of radios, arrow keys choose, saved through
 
 test("segmented labels that do not fit the shared width make the row stacked", t => {
     const plugin = new Plugin();
+    // Options are as wide as their labels (15 px text, 6 px padding each side) and share the 240 px control, less its
+    // border, padding and gaps: "跟随总开关 / 总是翻译 / 不翻译" (about 216 px) and "跟随 Discord / 浅色 / 深色" fit and
+    // keep the right-hand column; "Above original / Below original" (about 256 px) does not, so that row stacks.
     assert.equal(plugin.segmentedLabelsFit(["跟随总开关", "总是翻译", "不翻译"]), true);
+    assert.equal(plugin.segmentedLabelsFit(["总是翻译", "不翻译", "跟随"]), true);
     assert.equal(plugin.segmentedLabelsFit(["在原文上方", "在原文下方"]), true);
-    assert.equal(plugin.segmentedLabelsFit(["Above original", "Below original"]), true);
+    assert.equal(plugin.segmentedLabelsFit(["跟随 Discord", "浅色", "深色"]), true);
+    assert.equal(plugin.segmentedLabelsFit(["Follow Discord", "Light", "Dark"]), true);
+    assert.equal(plugin.segmentedLabelsFit(["Above original", "Below original"]), false);
+    assert.equal(plugin.segmentedLabelsFit(["Above", "Below"]), true);
     assert.equal(plugin.segmentedLabelsFit(["Follow main switch", "Always translate", "Never translate"]), false);
-    const { panel } = createShell(t, { language: "en" });
+    const { panel, doc, win } = createShell(t, { language: "en" });
     const rule = panel.querySelector("[data-dait-path='ui.currentChannelAutoTranslatePolicy']");
     assert.ok(rowOf(rule).classList.contains("dait-settings-row-stacked"));
     const position = panel.querySelector("[data-dait-path='ui.translationPosition']");
-    assert.equal(rowOf(position).classList.contains("dait-settings-row-stacked"), false);
+    assert.equal(rowOf(position).classList.contains("dait-settings-row-stacked"), true);
+    assert.equal(rowOf(panel.querySelector("[data-dait-path='ui.panelTheme']")).classList.contains("dait-settings-row-stacked"), false);
+    const zh = createShell(t, { language: "zh-CN" }, { doc, win }).panel;
+    const zhPosition = zh.querySelector("[data-dait-path='ui.translationPosition']");
+    assert.equal(rowOf(zhPosition).classList.contains("dait-settings-row-stacked"), false);
+    // The window theme and the channel rule keep the shared right-hand column in Chinese (theme audit).
+    assert.equal(rowOf(zh.querySelector("[data-dait-path='ui.panelTheme']")).classList.contains("dait-settings-row-stacked"), false);
+    zh.querySelectorAll("[data-dait-path='ui.currentChannelAutoTranslatePolicy']").forEach(control => {
+        assert.equal(rowOf(control).classList.contains("dait-settings-row-stacked"), false);
+    });
+    // Options sized to their labels, the spare width shared out.
+    assert.match(PLUGIN_CSS, /\.dait-segmented \{[\s\S]*?grid-auto-columns: auto;[\s\S]*?grid-auto-flow: column;/);
 });
 
 test("the model preset select follows the model field", t => {
@@ -918,13 +936,16 @@ ${selector} {`);
     assert.match(rule(".dait-row-control"), /justify-content: flex-end;/);
     assert.match(rule(".dait-settings input.dait-switch"), /height: 24px;[\s\S]*width: 40px;/);
     assert.match(rule(".dait-segmented"), /height: var\(--dait-control-h\);/);
-    assert.match(PLUGIN_CSS, /--dait-control-h: 32px;/);
-    // Nothing in the settings stylesheet is smaller than 12 px.
+    // THEME-SPEC: 15 px text needs 36 px controls.
+    assert.match(PLUGIN_CSS, /--dait-control-h: 36px;/);
+    // Text sizes come from the one scale; the only pixel sizes left are icon glyphs ("!" marks, the × close button).
     const settingsCss = require("../../src/css/04-settings.js");
     const sizes = [...settingsCss.matchAll(/font-size: (\d+)px/g)].map(match => Number(match[1]));
-    assert.ok(sizes.length > 0);
     assert.ok(sizes.every(size => size >= 12), sizes.join(","));
-    assert.equal([...settingsCss.matchAll(/font-weight: (\d+)/g)].every(match => [400, 500, 600, 700].includes(Number(match[1]))), true);
+    const tokenSizes = [...settingsCss.matchAll(/font-size: var\((--dait-font-[a-z]+)\)/g)].map(match => match[1]);
+    assert.ok(tokenSizes.length > 20);
+    assert.ok(tokenSizes.every(name => ["--dait-font-body", "--dait-font-small", "--dait-font-group", "--dait-font-page", "--dait-font-window"].includes(name)), tokenSizes.join(","));
+    assert.equal([...settingsCss.matchAll(/font-weight: (\d+)/g)].every(match => [400, 500, 600].includes(Number(match[1]))), true);
     assert.match(PLUGIN_CSS, /\.dait-settings :focus-visible,[\s\S]*?outline: 2px solid var\(--dait-focus\);/);
     assert.match(PLUGIN_CSS, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.dait-settings \*,[\s\S]*?transition: none !important;/);
     // The window is moderate: at most 920 px wide and 760 px high.

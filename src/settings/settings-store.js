@@ -22,6 +22,7 @@ const {
     TRANSLATION_LINE_TEXT_SCALES
 } = require("../constants");
 const { normalizeSettingsTabId } = require("./settings-schema");
+const { normalizePanelTheme } = require("./panel-theme");
 
 // Provider fields a reset keeps: the secrets themselves, plus the region (Microsoft) and plan (DeepL) a key only works with.
 const RESET_KEPT_CREDENTIAL_FIELDS = ["apiKey", "appId", "secretKey", "region", "deeplPlan"];
@@ -552,6 +553,11 @@ class SettingsStore {
             this.plugin.settings.ui.translationTextScale = translationTextScale;
             changed = true;
         }
+        const panelTheme = normalizePanelTheme(this.plugin.settings.ui.panelTheme);
+        if (panelTheme !== this.plugin.settings.ui.panelTheme) {
+            this.plugin.settings.ui.panelTheme = panelTheme;
+            changed = true;
+        }
         if (changed) this.plugin.saveSettings();
     }
 
@@ -829,6 +835,9 @@ class SettingsStore {
         if (path === "ui.translationTextScale") {
             value = normalizeTranslationLineTextScale(value);
         }
+        if (path === "ui.panelTheme") {
+            value = normalizePanelTheme(value);
+        }
         let cursor = this.plugin.settings;
         for (let index = 0; index < parts.length - 1; index++) {
             cursor = cursor[parts[index]];
@@ -933,6 +942,10 @@ class SettingsStore {
         }
         if (TRANSLATION_LINE_DISPLAY_KEYS.some(key => path === `ui.${key}`)) {
             this.plugin.syncAllTranslationDisplaySettings();
+        }
+        // The open windows restyle in place; nothing is rebuilt.
+        if (path === "ui.panelTheme") {
+            this.plugin.refreshPanelThemes();
         }
         this.plugin.queueScan();
     }
@@ -1069,6 +1082,7 @@ class SettingsStore {
         if (prevUi.diagnosticsEnabled === true && ui.diagnosticsEnabled !== true) this.plugin.disableDiagnosticLogging();
         if (changed("hideOriginalAfterTranslation")) this.plugin.syncAllTranslationSourceVisibility();
         if (TRANSLATION_LINE_DISPLAY_KEYS.some(changed)) this.plugin.syncAllTranslationDisplaySettings();
+        if (changed("panelTheme")) this.plugin.refreshPanelThemes();
         this.plugin.queueScan();
     }
 

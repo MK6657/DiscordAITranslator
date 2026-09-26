@@ -644,9 +644,10 @@ function cssRule(selector) {
     return PLUGIN_CSS.match(new RegExp(`(?:^|\\n)${escaped} \\{([\\s\\S]*?)\\n\\}`))?.[1] || "";
 }
 
-test("polish result panel: readable title and buttons on the shared scale, a labelled × close button", t => {
+test("polish result panel: readable title and buttons on the shared scale, a labelled close icon button", t => {
     const title = cssRule(".dait-polish-result-title");
-    assert.match(title, /font-size: var\(--dait-font-label\);/);
+    // THEME-SPEC typography: the panel's title is a window title (18/600), like the quick panel's and the settings window's.
+    assert.match(title, /font-size: var\(--dait-font-window\);/);
     assert.match(title, /font-weight: 600;/);
     const action = cssRule(".dait-polish-result-action");
     assert.match(action, /font-family: inherit;/);
@@ -656,12 +657,16 @@ test("polish result panel: readable title and buttons on the shared scale, a lab
     assert.match(action, /border-radius: var\(--dait-radius-control\);/);
     const close = cssRule(".dait-polish-result-icon");
     assert.match(close, /font-family: inherit;/);
-    // Weights 400-700 only, nothing under 12 px, no hard-coded colours in the panel's rules.
+    // A 36 px icon button like the quick panel's; no text glyph with a size of its own.
+    assert.match(close, /height: var\(--dait-control-h\);/);
+    assert.match(close, /width: var\(--dait-control-h\);/);
+    assert.doesNotMatch(close, /font-size/);
+    // Weights 400-600 only, nothing under 12 px, no hard-coded colours in the panel's rules.
     const rules = PLUGIN_CSS.match(/\n\.dait-polish-result-[\w-]+(?:[.:][\w-]+(?:\([^)]*\))?)* \{[\s\S]*?\n\}/g) || [];
     assert.ok(rules.length >= 6);
     // The token definitions (custom properties with their fallbacks) are not declarations of the panel's rules.
     for (const rule of rules.map(text => text.replace(/^\s*--[^\n]*$/gm, ""))) {
-        for (const [, weight] of rule.matchAll(/font-weight: (\d+);/g)) assert.ok([400, 500, 600, 700].includes(Number(weight)), rule);
+        for (const [, weight] of rule.matchAll(/font-weight: (\d+);/g)) assert.ok([400, 500, 600].includes(Number(weight)), rule);
         for (const [, size] of rule.matchAll(/font-size: (\d+)px;/g)) assert.ok(Number(size) >= 12, rule);
         assert.equal(/#[0-9a-f]{3,8}\b|rgba?\(/i.test(rule), false, rule);
     }
@@ -671,7 +676,10 @@ test("polish result panel: readable title and buttons on the shared scale, a lab
     plugin.showPolishResultPanel(textbox, "polished text", { allowApply: true });
     const panel = doc.querySelector(".dait-polish-result-panel");
     const icon = panel.querySelector(".dait-polish-result-icon");
-    assert.equal(icon.textContent, "×");
+    assert.equal(icon.textContent, "", "no text glyph");
+    assert.equal(icon.children.length, 1);
+    assert.equal(icon.children[0].className, "dait-icon dait-icon-close");
+    assert.equal(icon.children[0].getAttribute("aria-hidden"), "true");
     assert.equal(icon.getAttribute("aria-label"), plugin.t("polishResultClose"));
     assert.equal(icon.title, plugin.t("polishResultClose"));
     plugin.removePolishResultPanel();
@@ -718,7 +726,12 @@ test("a service without its API key reads 'Not set up' everywhere: title bar, co
     }
     // The "needs you" mark: the same "!" as a failed connection.
     assert.match(PLUGIN_CSS, /\.dait-settings \.dait-api-status\.dait-api-status-failed,\n\.dait-settings \.dait-api-status\.dait-api-status-unconfigured \{\n    color: var\(--dait-danger\);/);
-    assert.match(PLUGIN_CSS, /\.dait-settings \.dait-api-status\.dait-api-status-failed::before,\n\.dait-settings \.dait-api-status\.dait-api-status-unconfigured::before \{[\s\S]*?content: "!";/);
+    // (drawn as a white bar and dot on the danger fill, not a text glyph).
+    const markRule = /\.dait-settings \.dait-api-status\.dait-api-status-failed::before,\n\.dait-settings \.dait-api-status\.dait-api-status-unconfigured::before \{([\s\S]*?)\n\}/.exec(PLUGIN_CSS)?.[1] || "";
+    assert.match(markRule, /linear-gradient\(var\(--dait-on-fill\), var\(--dait-on-fill\)\) 50% 3px \/ 2px 5px no-repeat,/);
+    assert.match(markRule, /var\(--dait-danger-fill\);/);
+    const needsRule = /\n\.dait-status-mark-needs::before \{([\s\S]*?)\n\}/.exec(PLUGIN_CSS)?.[1] || "";
+    assert.equal(needsRule.trim(), markRule.trim(), "the overview's needs-you mark is the same shape");
 });
 
 // --- UI-9: consistent wording ---
@@ -784,7 +797,7 @@ test("quick panel: the status note wraps (up to three lines) instead of being cu
     assert.match(PLUGIN_CSS, /\.dait-qp-status-note\[hidden\] \{\n    display: none;/);
     const segment = cssRule(".dait-qp-segment");
     assert.match(segment, /white-space: nowrap;/);
-    assert.match(segment, /padding: 4px;/);
+    assert.match(segment, /padding: 0 4px;/);
 });
 
 // --- UI-11: one scrollbar mechanism, so the 8 px rounded thumb applies in Discord (Chromium) ---

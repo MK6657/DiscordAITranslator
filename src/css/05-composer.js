@@ -270,13 +270,16 @@ module.exports = `.dait-polish-button,
     padding: 0 7px;
 }
 
+/* The composer's action menu is a plugin window: the panel palette (01-theme-tokens) and the body type size. */
 .dait-input-action-menu {
-    background: color-mix(in srgb, var(--background-floating, #111214) 96%, transparent);
-    border: 1px solid color-mix(in srgb, var(--background-modifier-accent, #4e5058) 82%, transparent);
-    border-radius: 8px;
-    box-shadow: var(--elevation-high, 0 10px 24px rgba(0, 0, 0, 0.28));
+    background: var(--dait-bg);
+    border: 1px solid var(--dait-divider);
+    border-radius: var(--dait-radius-card);
+    box-shadow: var(--dait-shadow);
+    color: var(--dait-text);
     display: grid;
-    gap: 3px;
+    gap: 2px;
+    min-width: 160px;
     padding: 6px;
     position: fixed;
     z-index: 10000;
@@ -286,49 +289,25 @@ module.exports = `.dait-polish-button,
     align-items: center;
     background: transparent;
     border: 0;
-    border-radius: 6px;
-    color: var(--interactive-normal, var(--text-normal, #dbdee1));
+    border-radius: var(--dait-radius-control);
+    color: var(--dait-text);
     cursor: pointer;
     display: flex;
-    font-size: 13px;
-    font-weight: 650;
+    font-family: inherit;
+    font-size: var(--dait-font-body);
+    font-weight: 500;
     justify-content: flex-start;
-    min-height: 32px;
-    padding: 0 10px;
+    line-height: var(--dait-line);
+    min-height: var(--dait-control-h);
+    padding: 0 12px;
     text-align: left;
     white-space: nowrap;
 }
 
 .dait-input-action-menu-item:hover,
 .dait-input-action-menu-item:focus-visible {
-    background: color-mix(in srgb, var(--brand-500, #5865f2) 18%, var(--background-modifier-hover, rgba(79, 84, 92, 0.18)));
-    color: var(--interactive-hover, var(--text-normal, #ffffff));
-    outline: none;
-}
-
-.theme-light.dait-input-action-menu,
-.theme-light .dait-input-action-menu,
-.dait-input-action-menu[data-dait-discord-theme="light"],
-[data-dait-discord-theme="light"] .dait-input-action-menu {
-    background: rgba(255, 255, 255, 0.98);
-    border-color: rgba(79, 84, 92, 0.2);
-    box-shadow: var(--elevation-high, 0 10px 24px rgba(0, 0, 0, 0.16));
-}
-
-.theme-light .dait-input-action-menu-item,
-.dait-input-action-menu[data-dait-discord-theme="light"] .dait-input-action-menu-item,
-[data-dait-discord-theme="light"] .dait-input-action-menu-item {
-    color: var(--interactive-normal, #4f5660);
-}
-
-.theme-light .dait-input-action-menu-item:hover,
-.theme-light .dait-input-action-menu-item:focus-visible,
-.dait-input-action-menu[data-dait-discord-theme="light"] .dait-input-action-menu-item:hover,
-.dait-input-action-menu[data-dait-discord-theme="light"] .dait-input-action-menu-item:focus-visible,
-[data-dait-discord-theme="light"] .dait-input-action-menu-item:hover,
-[data-dait-discord-theme="light"] .dait-input-action-menu-item:focus-visible {
-    background: rgba(88, 101, 242, 0.14);
-    color: var(--interactive-hover, #2e3338);
+    background: var(--dait-raised);
+    color: var(--dait-heading);
 }
 
 .dait-polish-restore-control {
@@ -378,7 +357,7 @@ module.exports = `.dait-polish-button,
     border-color: color-mix(in srgb, var(--brand-500, #5865f2) 62%, var(--background-modifier-accent, #4e5058));
 }
 
-/* Colours come from the shared tokens (01-theme-tokens), so every Discord theme is covered without per-theme copies. */
+/* Colours come from the panel palette (01-theme-tokens, data-dait-panel-theme on the panel). */
 .dait-polish-result-panel {
     background: var(--dait-surface);
     border: 1px solid var(--dait-divider);
@@ -387,7 +366,7 @@ module.exports = `.dait-polish-button,
     color: var(--dait-text);
     display: grid;
     gap: var(--dait-space-2);
-    max-height: min(34vh, 260px);
+    max-height: min(34vh, 280px);
     min-width: 240px;
     padding: var(--dait-space-3);
     position: fixed;
@@ -402,10 +381,11 @@ module.exports = `.dait-polish-button,
     min-width: 0;
 }
 
-/* The settings type scale: title 15/600, buttons 14/500 at 32 px, weights 400-700 only. */
+/* The windows' type scale: the window title (18/600) like the quick panel and the settings window, text and buttons
+   at the body size, 36 px buttons; close is a 36 px icon button with the shared close icon (01-theme-tokens). */
 .dait-polish-result-title {
     color: var(--dait-heading);
-    font-size: var(--dait-font-label);
+    font-size: var(--dait-font-window);
     font-weight: 600;
     line-height: 1.3;
     min-width: 0;
@@ -416,32 +396,31 @@ module.exports = `.dait-polish-button,
     background: transparent;
     border: 0;
     border-radius: var(--dait-radius-control);
-    color: var(--dait-text-muted);
+    color: var(--dait-text);
     cursor: pointer;
     display: inline-flex;
     flex: 0 0 auto;
     font-family: inherit;
-    font-size: 20px;
-    font-weight: 400;
-    height: 28px;
+    height: var(--dait-control-h);
     justify-content: center;
-    line-height: 1;
+    margin: -4px -6px -4px 0;
     padding: 0;
-    width: 28px;
+    width: var(--dait-control-h);
 }
 
 .dait-polish-result-icon:hover {
-    background: var(--dait-hover);
+    background: var(--dait-raised);
     color: var(--dait-heading);
 }
 
 .dait-polish-result-output {
     background: var(--dait-input-bg);
-    border: 1px solid var(--dait-divider);
+    border: 1px solid var(--dait-input-border);
     border-radius: var(--dait-radius-control);
     color: var(--dait-text);
     font: inherit;
-    line-height: 1.45;
+    font-size: var(--dait-font-body);
+    line-height: var(--dait-line);
     max-height: min(18vh, 150px);
     overflow: auto;
     padding: 8px 12px;
@@ -456,13 +435,13 @@ module.exports = `.dait-polish-button,
     justify-content: flex-end;
 }
 
-/* Like the settings buttons: grey secondary, brand-filled primary, white text on both. */
+/* Like the settings buttons: grey secondary, brand-filled primary with white text. */
 .dait-polish-result-action {
     align-items: center;
-    background: var(--dait-button-secondary);
-    border: 0;
+    background: var(--dait-raised);
+    border: 1px solid var(--dait-input-border);
     border-radius: var(--dait-radius-control);
-    color: var(--dait-on-fill);
+    color: var(--dait-text);
     cursor: pointer;
     display: inline-flex;
     font-family: inherit;
@@ -470,17 +449,19 @@ module.exports = `.dait-polish-button,
     font-weight: 500;
     height: var(--dait-control-h);
     justify-content: center;
-    line-height: 1;
+    line-height: var(--dait-line);
     padding: 0 14px;
     white-space: nowrap;
 }
 
 .dait-polish-result-action.primary {
     background: var(--dait-brand);
+    border-color: transparent;
+    color: var(--dait-on-fill);
 }
 
 .dait-polish-result-action:hover:not(:disabled) {
-    background: var(--dait-button-secondary-hover);
+    background: var(--dait-raised-hover);
 }
 
 .dait-polish-result-action.primary:hover:not(:disabled) {
@@ -489,7 +470,7 @@ module.exports = `.dait-polish-button,
 
 .dait-polish-result-action:disabled {
     cursor: not-allowed;
-    opacity: 0.5;
+    opacity: 0.55;
 }
 
 `;
