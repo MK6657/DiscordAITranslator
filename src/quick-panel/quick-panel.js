@@ -6,6 +6,7 @@
 
 const { LANGUAGE_PRESETS, API_ENDPOINT_ERROR_MESSAGE_KEYS } = require("../constants");
 const { PLUGIN_VERSION } = require("../version");
+const { getChannelRouteParts, getChannelRuleKey } = require("../auto-translation/channel-rule");
 
 const POPOVER_ID = "dait-quick-popover";
 const POPOVER_WIDTH_PX = 340;
@@ -542,8 +543,9 @@ class QuickPanel {
     }
 
     getChannelLabel(routeKey) {
-        const [guildId = "", channelId = ""] = String(routeKey || "").split(":");
-        if (!channelId) return this.plugin.t("quickPanelChannelNone");
+        // Discord's guild pages (Browse Channels, Members, ...) are not channels either.
+        if (!getChannelRuleKey(routeKey)) return this.plugin.t("quickPanelChannelNone");
+        const { guildId, channelId } = getChannelRouteParts(routeKey);
         let name = "";
         try {
             name = String(this.plugin.getDiscordNamedStore("ChannelStore")?.getChannel?.(channelId)?.name || "").trim();
@@ -557,11 +559,11 @@ class QuickPanel {
 
     getChannelRuleCaption(mode, hasChannel) {
         if (!hasChannel) return this.plugin.t("quickPanelRuleCaptionNoChannel");
+        // With channel translation off altogether nothing is auto-translated, whatever the rule or the main switch says.
+        if (this.plugin.settings?.translation?.enabled === false) return this.plugin.t("quickPanelRuleCaptionTranslationOff");
         if (mode === "enabled") return this.plugin.t("quickPanelRuleCaptionEnabled");
         if (mode === "disabled") return this.plugin.t("quickPanelRuleCaptionDisabled");
-        // With channel translation off altogether nothing is auto-translated, whatever the main switch says.
-        const on = this.plugin.settings?.translation?.enabled !== false && Boolean(this.plugin.settings?.ui?.autoTranslateMessages);
-        return this.plugin.t(on ? "quickPanelRuleCaptionInheritOn" : "quickPanelRuleCaptionInheritOff");
+        return this.plugin.t(this.plugin.settings?.ui?.autoTranslateMessages ? "quickPanelRuleCaptionInheritOn" : "quickPanelRuleCaptionInheritOff");
     }
 
     // Bound to the channel the panel was rendered for, even if Discord has navigated since.
@@ -598,7 +600,10 @@ class QuickPanel {
             controls.statusNote.hidden = !status.note;
             resized = true;
         }
-        if (!this.testRunning) controls.test.disabled = status.testing;
+        // While this panel's test runs, a panel built again in the meantime shows it too (the test only updates the
+        // button it started from); another test or probe in flight also keeps the button off.
+        controls.test.disabled = Boolean(status.testing || this.testRunning);
+        this.setText(controls.test, this.plugin.t(this.testRunning ? "apiTestBusy" : "apiTest"));
         this.syncCountdown(status);
         // New text can change the panel's height; keep it above the launcher and inside the window.
         if (resized) this.position();
@@ -658,11 +663,12 @@ class QuickPanel {
 
     // --- Position, keyboard and pointer ---
 
-    // While the launcher is briefly gone (a language switch re-creates it), the panel stays where it was anchored.
+    // While the launcher is briefly gone or not laid out (a language switch or Discord re-creates the user panel), the
+    // panel stays where it was anchored.
     getAnchorRect() {
         const launcher = this.plugin.isNodeConnected(this.launcher) ? this.launcher : null;
         const rect = launcher?.getBoundingClientRect?.();
-        if (!rect || (!rect.width && !rect.height)) return launcher ? null : this.lastAnchorRect;
+        if (!rect || (!rect.width && !rect.height)) return this.lastAnchorRect;
         this.lastAnchorRect = {
             left: Number(rect.left || 0),
             top: Number(rect.top || 0),
@@ -731,8 +737,10 @@ class QuickPanel {
         this.root.classList?.remove?.(POINTER_OPENED_CLASS);
         const active = typeof document !== "undefined" ? document.activeElement : null;
         const focusInside = Boolean(active && this.root.contains?.(active));
+        // The panel is not modal: once Discord (or the user) has put focus somewhere else, Escape and Tab belong
+        // there (Tab accepts an emoji or a mention in the composer).
+        const focusElsewhere = Boolean(active && active !== document.body && !focusInside && !this.isLauncherElement(active));
         if (event.key === "Escape") {
-            const focusElsewhere = active && active !== document.body && !focusInside && !this.isLauncherElement(active);
             if (focusElsewhere) return;
             event.preventDefault?.();
             event.stopPropagation?.();
@@ -740,7 +748,7 @@ class QuickPanel {
             this.close("escape", { restoreFocus: true });
             return;
         }
-        if (event.key === "Tab") this.trapTab(event, focusInside ? active : null);
+        if (event.key === "Tab" && !focusElsewhere) this.trapTab(event, focusInside ? active : null);
     }
 
     trapTab(event, active) {
@@ -805,8 +813,30 @@ class QuickPanel {
 
     startRouteWatch() {
         if (this.routeTimer) clearInterval(this.routeTimer);
-        this.routeTimer = setInterval(() => this.handleRouteChange(), ROUTE_CHECK_INTERVAL_MS);
+        this.routeTimer = setInterval(() => {
+            this.handleRouteChange();
+            this.followAnchor();
+        }, ROUTE_CHECK_INTERVAL_MS);
         this.routeTimer?.unref?.();
+    }
+
+    // Discord can move the user panel, and the launcher in it, without a window resize: the open panel follows on
+    // the route watch's tick. Nothing is written while the launcher stays put.
+    followAnchor() {
+        if (!this.isOpen()) return false;
+        if (!this.plugin.isNodeConnected(this.launcher)) {
+            const found = this.findLauncher();
+            if (!found) return false;
+            this.launcher = found;
+            this.setLauncherExpanded(found, true);
+        }
+        const rect = this.launcher.getBoundingClientRect?.();
+        if (!rect || (!rect.width && !rect.height)) return false;
+        const previous = this.lastAnchorRect;
+        const same = previous && ["left", "top", "width", "height"].every(side => Math.round(Number(rect[side] || 0)) === Math.round(previous[side]));
+        if (same) return false;
+        this.position();
+        return true;
     }
 
     stopTimers() {
@@ -941,13 +971,18 @@ class QuickPanel {
         const failureActive = Boolean(failure && (failureType === "local-unavailable" || Number(failure.retryAt || 0) > now));
         const configError = this.getConfigError(providerKey);
         const probing = Boolean(providerKey && plugin.localProviderHealthChecks?.has?.(providerKey));
-        const testing = api.state === "testing" || probing || this.testRunning;
+        // Only work that is running counts: the saved "testing" status outlives a test or probe that was cut short.
+        let settingsTest = false;
+        try { settingsTest = Boolean(plugin.isApiTestRunning?.("translation")); }
+        catch { settingsTest = false; }
+        const testing = probing || this.testRunning || settingsTest;
+        const apiState = api.state === "testing" && !testing ? "untested" : api.state;
         const queue = plugin.getAutoTranslationQueueSnapshot?.() || {};
         const inFlight = Math.max(0, Number(queue.inFlightItems || queue.inFlight || 0) || 0);
         const queued = Math.max(0, Number(queue.queueLength || 0) || 0);
         const autoActive = Boolean(plugin.isAutoTranslateEnabled());
 
-        let connection = plugin.getApiStatusText(api.state);
+        let connection = plugin.getApiStatusText(apiState);
         if (!configured) connection = t("quickStatusNotConfigured");
         else if (testing) connection = plugin.getApiStatusText("testing");
         else if (failureActive && ATTENTION_FAILURE_TYPES.has(failureType)) connection = plugin.getApiStatusText("failed");

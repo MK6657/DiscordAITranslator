@@ -34,6 +34,9 @@ class ProviderLayer {
         // The last connection test per task (in memory only): what the settings and the quick panel show next to
         // the status, e.g. "Hy-MT2 · 820 ms · just now".
         this.lastApiTestResults = new Map();
+        // Connection tests in flight per task (the saved "testing" status can outlive its test, e.g. after a
+        // settings change cut the test short).
+        this.runningApiTests = new Map();
     }
 
     getProviderDefaults(provider) {
@@ -817,8 +820,14 @@ class ProviderLayer {
                     error.localProviderUnavailable = true;
                     error.retryAfterMs = Math.max(Number(error.retryAfterMs || 0), LOCAL_PROVIDER_UNAVAILABLE_RETRY_MS);
                     error.providerKey = providerKey;
+                    error.localProviderEndpoint = error.localProviderEndpoint || String(endpoint || config.endpoint || "");
                 }
                 this.plugin.markAutoTranslationProviderFailure(requestOptions, error);
+                // Failures the provider cooldown does not record (an invalid or unsafe API URL) still end the
+                // "testing" status this probe set, with the reason.
+                if (this.plugin.getApiStatus("translation").state === "testing" && !this.plugin.isRequestCancelled(error)) {
+                    this.plugin.setApiRuntimeStatus("translation", "failed", this.plugin.t("apiStatusFailed"), this.plugin.formatError(error));
+                }
                 this.plugin.logDiagnostic("auto.provider.health", "failed", {
                     key: this.plugin.getTextFingerprint(providerKey),
                     reason: options.reason || "",
@@ -859,6 +868,10 @@ class ProviderLayer {
 
     clearLastApiTestResult(kind) {
         return this.lastApiTestResults.delete(kind);
+    }
+
+    isApiTestRunning(kind) {
+        return Number(this.runningApiTests.get(kind) || 0) > 0;
     }
 
     // The model named in a chat-completions reply ("model": "..."), shortened to its file name.
@@ -1244,8 +1257,10 @@ class ProviderLayer {
                     this.plugin.setApiRuntimeStatus("translation", "success", this.plugin.t("apiStatusSuccess"));
                 }
                 // A working request to the configured service clears an earlier "failed" status (e.g. after a
-                // top-up), so the launcher does not keep asking the user to fix it.
-                else if (requestStillCurrent && kind === "translation" && taskConfig?.provider === this.plugin.settings.translation?.provider
+                // top-up), so the launcher does not keep asking the user to fix it. Only a request built from the
+                // live translation settings counts (a current snapshot key means the same service, URL, model and
+                // key): a pinned profile, such as public bilingual on the polish key, says nothing about them.
+                else if (requestStillCurrent && providerSnapshotKey && kind === "translation" && taskConfig?.provider === this.plugin.settings.translation?.provider
                     && this.plugin.getApiStatus("translation").state === "failed") {
                     this.plugin.setApiRuntimeStatus("translation", "success", this.plugin.t("apiStatusSuccess"));
                 }
@@ -1379,6 +1394,8 @@ class ProviderLayer {
             error.localProviderUnavailable = true;
             error.retryAfterMs = Math.max(Number(error.retryAfterMs || 0), LOCAL_PROVIDER_UNAVAILABLE_RETRY_MS);
             error.providerKey = error.providerKey || this.plugin.getAutoTranslationProviderKey({ configOverrides: options.configOverrides });
+            // The address that did not answer, for the message: the settings may name another service by then.
+            error.localProviderEndpoint = error.localProviderEndpoint || String(endpoint || config?.endpoint || "");
         }
         return error;
     }
@@ -1654,6 +1671,7 @@ class ProviderLayer {
             message
         });
 
+        this.runningApiTests.set(kind, Number(this.runningApiTests.get(kind) || 0) + 1);
         try {
             testConfig = this.plugin.clone(this.plugin.getTaskConfig(kind));
             providerSnapshotKey = kind === "translation"
@@ -1712,7 +1730,14 @@ class ProviderLayer {
             this.plugin.showToast(this.plugin.t("apiTestFailed", { name: this.plugin.getTaskDisplayName(kind), error: message }), "error");
         }
         finally {
-            if (this.plugin.isLifecycleTokenCurrent(lifecycleToken)) this.plugin.setButtonBusy(button, false, this.plugin.t("apiTest"));
+            const running = Number(this.runningApiTests.get(kind) || 0) - 1;
+            if (running > 0) this.runningApiTests.set(kind, running);
+            else this.runningApiTests.delete(kind);
+            if (this.plugin.isLifecycleTokenCurrent(lifecycleToken)) {
+                this.plugin.setButtonBusy(button, false, this.plugin.t("apiTest"));
+                // A test cut short writes no result; the launcher still stops showing it as running.
+                this.plugin.requestLauncherStatusUpdate?.();
+            }
         }
     }
 
