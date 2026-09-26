@@ -853,6 +853,37 @@ test("reset does not bring back a key the user cleared from the active provider"
     assert.equal(plugin.hasUsableApiConfig("translation"), false);
 });
 
+// --- review 1: SD-5 / X7 (merged cache copies keep the detected local models) ----------------------
+
+test("merging the old and new cache copies keeps the detected local models", t => {
+    const now = Date.now();
+    const localKey = ["sakuraLocal", "http://127.0.0.1:8080/v1/chat/completions", "fp-1"].join("\n---\n");
+    const otherKey = ["sakuraLocal", "http://127.0.0.1:5000/v1/chat/completions", "fp-2"].join("\n---\n");
+    const current = cachePayload([{ key: "k-current", value: "current", c: now, t: now + 10, e: now + 40 * HOUR }]);
+    current.localModels = [{ key: localKey, model: "sakura-14b" }];
+    const legacy = cachePayload([{ key: "k-legacy", value: "legacy", c: now, t: now + 20, e: now + 40 * HOUR }]);
+    legacy.savedAt = current.savedAt;
+    // A copy that also names models: the newer copy's model wins for a server both name.
+    legacy.localModels = [{ key: localKey, model: "sakura-7b" }, { key: otherKey, model: "sakura-1.5b" }];
+    const bdApi = createFakeDataApi({
+        DiscordAITranslator: { translationCache: legacy },
+        "DiscordAITranslator.cache": { translationCache: current }
+    });
+    useGlobals(t, { BdApi: bdApi });
+    const plugin = quietPlugin();
+    assert.equal(plugin.migrateLegacyDataStoreKey("translationCache"), "merged");
+    assert.deepEqual(bdApi.files["DiscordAITranslator.cache"].translationCache.localModels, [
+        { key: localKey, model: "sakura-14b" },
+        { key: otherKey, model: "sakura-1.5b" }
+    ]);
+    plugin.loadTranslationCache();
+    assert.equal(plugin.localProviderDetectedModels.get(localKey)?.model, "sakura-14b");
+    assert.equal(plugin.localProviderDetectedModels.get(otherKey)?.model, "sakura-1.5b");
+    // A 0.3.0 copy has no list; the current one is kept as it is.
+    const merged = plugin.mergePersistedTranslationCachePayloads(current, cachePayload([]));
+    assert.deepEqual(merged.localModels, current.localModels);
+});
+
 test("start() still writes diagnostics a previous stop() could not save before it reloads the log", t => {
     const bdApi = createFakeDataApi({ DiscordAITranslator: { settings: { ui: { settingsVersion: 2, diagnosticsEnabled: true } } } });
     useGlobals(t, { BdApi: bdApi, window: { addEventListener() {}, removeEventListener() {} }, document: createFakeDocument() });

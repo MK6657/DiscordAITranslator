@@ -587,9 +587,25 @@ class TranslationCacheStore {
             savedAt: now,
             ttlHours: this.plugin.normalizeTranslationCacheTtlHours(current?.ttlHours ?? legacy?.ttlHours),
             maxEntries: Number(current?.maxEntries || legacy?.maxEntries || 0) || this.plugin.getTranslationCacheMaxEntries(),
+            // Local-model cache keys name the served model; without the list those lines stop matching.
+            localModels: this.mergePersistedLocalModels(current?.localModels, legacy?.localModels),
             strings,
             entries
         };
+    }
+
+    // One entry per local server, the current copy's model first; restoreLocalProviderDetectedModels reads 8.
+    mergePersistedLocalModels(current, legacy) {
+        const seen = new Set();
+        return [...(Array.isArray(current) ? current : []), ...(Array.isArray(legacy) ? legacy : [])]
+            .filter(item => {
+                const key = String(item?.key || "");
+                if (!key || !String(item?.model || "").trim() || seen.has(key)) return false;
+                seen.add(key);
+                return true;
+            })
+            .slice(0, 8)
+            .map(item => ({ key: String(item.key), model: String(item.model).trim() }));
     }
 
     decodePersistedTranslationCacheKey(entry, strings = []) {
