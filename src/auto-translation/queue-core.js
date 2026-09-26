@@ -32,6 +32,7 @@ const {
     AUTO_TRANSLATE_RECENT_RENDER_TTL_MS,
     AUTO_TRANSLATE_REQUEST_BATCH_SIZE,
     AUTO_TRANSLATE_REQUEST_TIMEOUT_MS,
+    AUTO_TRANSLATE_RETAIN_MAX_FAILURE_COUNT,
     AUTO_TRANSLATE_SCROLL_RENDER_PAUSE_MS,
     AUTO_TRANSLATE_SCROLL_STILL_MS,
     AUTO_TRANSLATE_TERMINAL_FAILURE_TTL,
@@ -760,12 +761,14 @@ class AutoTranslationQueueCore {
             && this.plugin.isAutoTranslationVisibleItem(item));
     }
 
-    shouldRetainAutoTranslationFailureItem(item, error) {
+    shouldRetainAutoTranslationFailureItem(item, error, failure = null) {
         if (!item?.cacheKey || item?.daitPrefetchRequest) return false;
         const type = this.plugin.getAutoTranslationFailureType(error);
         // A truncated output is not retained: it already had a retry with a larger limit, and
         // requeueing it every few seconds re-sent a full-length generation forever.
         if (!["local-unavailable", "timeout", "network", "server", "rate-limit"].includes(type)) return false;
+        // A message that keeps timing out stops holding a queue slot: its failure record paces it.
+        if (["timeout", "network"].includes(type) && Number(failure?.count || 0) >= AUTO_TRANSLATE_RETAIN_MAX_FAILURE_COUNT) return false;
         return this.plugin.shouldRetainAutoTranslationProviderBlockedItem(item);
     }
 
@@ -1974,7 +1977,7 @@ class AutoTranslationQueueCore {
             this.plugin.warnSanitized("Failed to render auto translation failure", renderError);
             const failure = this.plugin.createAutoTranslationFailure(item.cacheKey, error);
             let retained = false;
-            if (this.plugin.shouldRetainAutoTranslationFailureItem(item, error)) {
+            if (this.plugin.shouldRetainAutoTranslationFailureItem(item, error, failure)) {
                 retained = this.plugin.retainBlockedVisibleAutoTranslationItem(item, {
                     delayMs: failure.retryAfterMs,
                     allowActiveRequeue: true,
@@ -2077,7 +2080,7 @@ class AutoTranslationQueueCore {
         this.plugin.pruneAutoTranslationFailureMapSize();
         this.plugin.markAutoTextTranslationFailure(item, storageError, failure);
         const retainedKeys = new Set();
-        if (this.plugin.shouldRetainAutoTranslationFailureItem(item, error)) {
+        if (this.plugin.shouldRetainAutoTranslationFailureItem(item, error, failure)) {
             const retained = this.plugin.retainBlockedVisibleAutoTranslationItem(item, {
                 delayMs: failure.retryAfterMs,
                 allowActiveRequeue: true,

@@ -272,6 +272,88 @@ test("a long message stops sending chunks after a rate-limit, auth, quota, serve
     }
 });
 
+test("a timeout or network error on a later chunk keeps the finished chunks and returns them as a partial result", async () => {
+    for (const makeError of [timeoutError, () => new Error("fetch failed")]) {
+        const plugin = new Plugin();
+        plugin.splitLongAutoTranslationText = () => ["chunk one", "chunk two", "chunk three", "chunk four"];
+        const sent = [];
+        plugin.runAutoTranslationTaskWithOptions = async chunk => {
+            sent.push(chunk);
+            if (chunk === "chunk three") throw makeError();
+            return `${chunk} 已翻译`;
+        };
+        const taskOptions = {};
+        const merged = await plugin.runLongAutoTranslationTask("synthetic long source", plugin.getAutoTranslationOptions(), taskOptions);
+        assert.deepEqual(sent, ["chunk one", "chunk two", "chunk three"], "the chunks after the failing one are not sent");
+        assert.match(merged, /chunk one 已翻译/);
+        assert.match(merged, /chunk two 已翻译/);
+        assert.deepEqual(taskOptions.longTextPartialInfo, { missingSegments: [3, 4], totalSegments: 4 });
+    }
+});
+
+test("a rate limit on a later chunk still ends the whole long message", async () => {
+    const plugin = new Plugin();
+    plugin.splitLongAutoTranslationText = () => ["chunk one", "chunk two", "chunk three"];
+    const rateLimited = statusError(429);
+    plugin.runAutoTranslationTaskWithOptions = async chunk => {
+        if (chunk === "chunk two") throw rateLimited;
+        return `${chunk} 已翻译`;
+    };
+    await assert.rejects(plugin.runLongAutoTranslationTask("synthetic long source", plugin.getAutoTranslationOptions()), error => error === rateLimited);
+});
+
+test("a visible long message whose later chunk times out is drawn as partial once, not re-sent every cycle", async t => {
+    const plugin = createQueuePlugin(t);
+    const item = makeItem(plugin, "chunk-timeout", { text: SOURCE });
+    item.requestOptions = plugin.getAutoTranslationRequestOptionsForText(SOURCE, plugin.getAutoTranslationOptions());
+    item.cacheKey = plugin.getTranslationCacheKey(SOURCE, item.requestOptions);
+    startInFlight(plugin, [item]);
+    const [first, second] = SOURCE.split("\n");
+    plugin.splitLongAutoTranslationText = () => [first, second];
+    let calls = 0;
+    plugin.runAutoTranslationTaskWithOptions = async chunk => {
+        calls++;
+        if (chunk === second) throw timeoutError();
+        return TRANSLATED.split("\n")[0];
+    };
+    plugin.getElementText = () => SOURCE;
+    plugin.hasManualTranslationLine = () => false;
+    plugin.queueAutoTranslationRenderTask = task => task.run();
+    const rendered = [];
+    plugin.renderTranslation = (...args) => {
+        rendered.push(args);
+        return {};
+    };
+    await plugin.autoTranslateQueuedMessage(item);
+    assert.equal(calls, 2);
+    assert.equal(rendered.length, 1, "the finished chunk is drawn");
+    assert.deepEqual(rendered[0][5].partialInfo, { missingSegments: [2], totalSegments: 2 });
+    assert.equal(plugin.autoTranslationQueue.length, 0, "not retained for another full pass");
+    assert.equal(plugin.autoTranslationProviderFailures.size, 0, "one slow chunk does not cool down the provider");
+    assert.ok(plugin.getAutoTranslationPartialResult(item.cacheKey, SOURCE), "kept for redraw instead of a new request");
+});
+
+test("a visible item that keeps timing out stops holding a queue slot after a few retries", t => {
+    const plugin = createQueuePlugin(t);
+    const item = makeItem(plugin, "retain-cap");
+    const retainedCounts = [];
+    for (let round = 0; round < 5; round++) {
+        plugin.autoTranslationQueue = [];
+        plugin.autoTranslationQueuedKeys.clear();
+        plugin.autoTranslationProviderFailures.clear();
+        const recorded = plugin.autoTranslationFailures.get(item.cacheKey);
+        if (recorded) recorded.retryAt = Date.now() - 1;
+        plugin.getAutoTranslationFailure(item.cacheKey);
+        plugin.markAutoTranslationFailure(item, timeoutError());
+        retainedCounts.push(plugin.autoTranslationQueue.length);
+    }
+    assert.deepEqual(retainedCounts.slice(0, 2), [1, 1], "the first failures are retained and retried");
+    assert.equal(retainedCounts.at(-1), 0, "later failures wait on their failure record instead");
+    const failure = plugin.getAutoTranslationFailure(item.cacheKey);
+    assert.ok(failure && !failure.terminal, "still retried after its backoff");
+    assert.ok(failure.retryAfterMs >= 80000, `backoff ${failure.retryAfterMs}`);
+});
+
 // --- render-2: partial long results ---
 
 test("a long message with a failed chunk reports the missing parts and leaves shared options alone", async () => {

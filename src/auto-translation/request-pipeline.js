@@ -1218,6 +1218,17 @@ class AutoTranslationRequestPipeline {
         const chunkFailures = [];
         const sourceHash = this.plugin.getStrongTextFingerprint(text);
         let budgetError = null;
+        let stopError = null;
+        const hasFinishedChunk = () => translatedChunks.some(chunk => chunk && !this.plugin.hasLongAutoTranslationChunkFailurePlaceholder(chunk));
+        // The provider itself is failing (rate limit, auth, quota, server, timeout...): the remaining
+        // chunks would fail too, so no more are sent. A timeout or network error after some chunks
+        // succeeded keeps those as a partial result; otherwise the whole message fails now.
+        const stopOnChunkError = chunkError => {
+            if (!this.plugin.shouldStopLongAutoTranslationOnChunkError(chunkError)) return false;
+            if (!this.plugin.shouldKeepLongAutoTranslationChunksOnError(chunkError) || !hasFinishedChunk()) throw chunkError;
+            stopError = chunkError;
+            return true;
+        };
         for (let index = 0; index < chunks.length; index++) {
             if (typeof taskOptions.heartbeat === "function" && taskOptions.heartbeat() === false) {
                 throw this.plugin.createAutoTranslationStaleError("long-text-stale-before-chunk");
@@ -1229,12 +1240,10 @@ class AutoTranslationRequestPipeline {
             }
             catch (error) {
                 if (this.plugin.isAbandonedTranslationError(error)) throw error;
-                // The provider itself is failing (rate limit, auth, quota, server, timeout...): the
-                // remaining chunks would fail too, so the whole message fails now.
-                if (this.plugin.shouldStopLongAutoTranslationOnChunkError(error)) throw error;
+                stopOnChunkError(error);
                 if (this.plugin.isAutoTranslationRequestBudgetError(error)) budgetError = error;
                 let rescued = null;
-                if (taskOptions?.manualRescue && !budgetError) {
+                if (taskOptions?.manualRescue && !budgetError && !stopError) {
                     try {
                         rescued = await this.plugin.runLongAutoTranslationChunkManualRescue(chunks[index], chunkOptions, error, taskOptions, {
                             sourceHash,
@@ -1243,7 +1252,8 @@ class AutoTranslationRequestPipeline {
                         });
                     }
                     catch (rescueError) {
-                        if (this.plugin.isAbandonedTranslationError(rescueError) || this.plugin.shouldStopLongAutoTranslationOnChunkError(rescueError)) throw rescueError;
+                        if (this.plugin.isAbandonedTranslationError(rescueError)) throw rescueError;
+                        stopOnChunkError(rescueError);
                         if (this.plugin.isAutoTranslationRequestBudgetError(rescueError)) budgetError = rescueError;
                         rescued = { translated: "", error };
                     }
@@ -1275,10 +1285,11 @@ class AutoTranslationRequestPipeline {
                 throw this.plugin.createAutoTranslationStaleError("long-text-stale-after-chunk");
             }
             translatedChunks.push(String(translated || "").trim());
-            if (budgetError) {
-                // No requests are left for this click: the remaining chunks stay untranslated.
+            if (budgetError || stopError) {
+                // No requests are left for this click, or the provider stopped answering: the
+                // remaining chunks stay untranslated.
                 for (let rest = index + 1; rest < chunks.length; rest++) {
-                    chunkFailures.push({ index: rest, error: budgetError });
+                    chunkFailures.push({ index: rest, error: budgetError || stopError });
                     translatedChunks.push("");
                 }
                 break;
@@ -1947,6 +1958,12 @@ class AutoTranslationRequestPipeline {
     // long message would only fail too and make rate limits worse.
     shouldStopLongAutoTranslationOnChunkError(error) {
         return ["auth", "quota", "rate-limit", "server", "local-unavailable", "network", "timeout"].includes(this.plugin.getAutoTranslationFailureType(error));
+    }
+
+    // A timeout or network error can be specific to one chunk (a slow or looping generation), so
+    // the chunks that already succeeded are kept and drawn as a partial result.
+    shouldKeepLongAutoTranslationChunksOnError(error) {
+        return ["network", "timeout"].includes(this.plugin.getAutoTranslationFailureType(error));
     }
 
     shouldRunLocalAutoTranslationRepairRetry(reason, text, translated, options = this.plugin.getAutoTranslationOptions(), taskOptions = {}) {

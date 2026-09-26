@@ -15687,6 +15687,7 @@ module.exports = class DiscordAITranslator {
     splitOversizedLongAutoTranslationUnit(...args) { return this.autoRequestPipeline.splitOversizedLongAutoTranslationUnit(...args); }
     runLongAutoTranslationTask(...args) { return this.autoRequestPipeline.runLongAutoTranslationTask(...args); }
     shouldStopLongAutoTranslationOnChunkError(...args) { return this.autoRequestPipeline.shouldStopLongAutoTranslationOnChunkError(...args); }
+    shouldKeepLongAutoTranslationChunksOnError(...args) { return this.autoRequestPipeline.shouldKeepLongAutoTranslationChunksOnError(...args); }
     runLongAutoTranslationChunkManualRescue(...args) { return this.autoRequestPipeline.runLongAutoTranslationChunkManualRescue(...args); }
     runLongAutoTranslationSubchunkManualRescue(...args) { return this.autoRequestPipeline.runLongAutoTranslationSubchunkManualRescue(...args); }
     getLongTextChunkTranslationOptions(...args) { return this.autoRequestPipeline.getLongTextChunkTranslationOptions(...args); }
