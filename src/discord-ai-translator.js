@@ -680,7 +680,10 @@ class TranslationScheduler {
         if (previous && plugin.isAutoTranslationFailureExpired(previous)) plugin.autoTranslationProviderFailures.delete(key);
         const previousCount = previous && !plugin.isAutoTranslationFailureExpired(previous) ? Number(previous.count || 0) : 0;
         const count = Math.min(5, previousCount + 1);
-        const retryAfterMs = Math.max(itemFailure?.retryAfterMs || 0, plugin.getAutoTranslationRetryAfter(error, count));
+        // The cooldown blocks every message on this provider, so it grows only with provider-level
+        // evidence: the provider's own count, or a server hint (Retry-After) carried by the error.
+        // One message's growing failure count (itemFailure) backs off that message alone.
+        const retryAfterMs = plugin.getAutoTranslationRetryAfter(error, count);
         plugin.autoTranslationProviderFailures.set(key, {
             at: Date.now(),
             count,
@@ -8145,7 +8148,7 @@ module.exports = class DiscordAITranslator {
             // shown nor kept cached. The failure is recorded so the scan does not request the
             // same message again on every pass.
             this.deleteTranslationCacheCandidates(cacheKey, ...(options.deleteKeys || []));
-            this.markAutoTranslationUndrawableResult(cacheKey, "emoji-restore-failed");
+            this.markAutoTranslationUndrawableResult(cacheKey, "emoji-restore-failed", { text: target.text, requestOptions });
             this.logAutoTranslationMessageState(
                 "auto.message.state",
                 "render-skip",
@@ -8491,7 +8494,7 @@ module.exports = class DiscordAITranslator {
             // request the same message again.
             this.deleteTranslationCacheCandidates(renderCacheKey);
             if (item?.cacheKey && item.cacheKey !== renderCacheKey) this.deleteTranslationCacheCandidates(item.cacheKey);
-            this.markAutoTranslationUndrawableResult(renderCacheKey, "emoji-restore-failed");
+            this.markAutoTranslationUndrawableResult(renderCacheKey, "emoji-restore-failed", { text: item?.text || target.text, requestOptions: item?.requestOptions || requestOptions });
             if (item?.cacheKey && item.cacheKey !== renderCacheKey) this.markAutoTranslationUndrawableResult(item.cacheKey, "emoji-restore-failed");
             this.logAutoTranslationRenderSkip(item, target, "emoji-restore-failed");
             return false;
@@ -10039,14 +10042,18 @@ module.exports = class DiscordAITranslator {
         const text = sourceText ?? this.getElementText(content);
         // A partial line drawn from a kept partial result (a long message with a missing part)
         // would fail validation as a complete translation; removing it would only make the scan
-        // draw it again.
-        if (line.classList?.contains?.("dait-translation-partial") && this.getAutoTranslationPartialResult(cacheKey, text)) return false;
+        // draw it again. While it is shown, its kept result stays alive.
+        const partialLine = line.classList?.contains?.("dait-translation-partial") === true;
+        if (partialLine && this.touchAutoTranslationPartialResult(cacheKey, text)) return false;
+        // Once the kept result has expired, the line is still checked as the partial it is, so a
+        // line on screen (or hidden by the user) is not torn down and the message paid for again.
+        const validationOptions = partialLine ? { ...options, longTextPartial: true } : options;
         const validation = this.getAutoTranslationOutputValidationResult(
             text,
             renderedText,
             this.getAutoTranslationTargetLanguage(options),
-            this.getAutoTranslationOutputValidationOptions(text, renderedText, options),
-            options
+            this.getAutoTranslationOutputValidationOptions(text, renderedText, validationOptions),
+            validationOptions
         );
         if (validation.cacheable || (validation.renderable && this.isAcceptedNonCacheableCurrentTranslationLine(line, validation))) {
             this.rememberRecentAutoTranslationRender(cacheKey, text, options, {
@@ -11894,6 +11901,19 @@ module.exports = class DiscordAITranslator {
         return Boolean(error?.autoTranslationFinalInvalidOutput || error?.modelOutputTruncated);
     }
 
+    // True when a manual partial result leaves out a smaller share of the message than the kept
+    // one (or either share is unknown).
+    isManualPartialResultBetter(manualInfo, keptInfo) {
+        const missingShare = info => {
+            const total = Number(info?.totalSegments || 0);
+            return total > 0 && Array.isArray(info?.missingSegments) ? info.missingSegments.length / total : null;
+        };
+        const manualShare = missingShare(manualInfo);
+        const keptShare = missingShare(keptInfo);
+        if (manualShare === null || keptShare === null) return true;
+        return manualShare < keptShare;
+    }
+
     createManualRescueFailureError(reason = "invalid-output", validationQuality = "", attempts = []) {
         const error = this.createFinalInvalidAutoTranslationError(reason || "invalid-output", {
             terminal: false,
@@ -11913,7 +11933,7 @@ module.exports = class DiscordAITranslator {
         let lastValidation = null;
         let lastError = null;
         // One click may cause at most this many model requests across all attempts and chunks.
-        const requestBudget = this.createAutoTranslationRequestBudget();
+        const requestBudget = this.createAutoTranslationRequestBudget(this.getManualTranslationRequestBudgetLimit(plan.text, plan.requestOptions));
 
         for (let index = 0; index < attemptNames.length; index++) {
             const attemptName = attemptNames[index];
@@ -11977,6 +11997,32 @@ module.exports = class DiscordAITranslator {
         return this.renderTranslationError(plan.messageNode, plan.content, error, plan.cacheKey, plan.domText ?? plan.text);
     }
 
+    // What a finished translation line shows, so a failed Retranslate can draw it again.
+    getRestorableTranslationLineState(content) {
+        const line = this.getTranslationLine(content);
+        if (!line || line.classList?.contains?.("dait-translation-loading") || line.classList?.contains?.("dait-translation-error")) return null;
+        const text = String(this.translationLineTexts?.get?.(line) ?? this.getTranslationLineRenderedText(line) ?? "");
+        if (!text.trim()) return null;
+        return {
+            text,
+            partial: line.classList?.contains?.("dait-translation-partial") === true,
+            validationQuality: String(line.dataset?.daitValidationQuality || ""),
+            validationReason: String(line.dataset?.daitValidationReason || "")
+        };
+    }
+
+    restoreTranslationLineState(plan, state, keptAutoPartial = null) {
+        // A kept auto partial that was on screen also goes back into memory for redraw.
+        const partialInfo = state.partial && keptAutoPartial?.translated === state.text ? keptAutoPartial.partialInfo : null;
+        if (partialInfo) this.rememberAutoTranslationPartialResult(plan.autoCacheKey, plan.text, keptAutoPartial.translated, keptAutoPartial);
+        return this.renderTranslation(plan.messageNode, plan.content, state.text, plan.cacheKey, plan.domText ?? plan.text, {
+            partial: state.partial,
+            validationQuality: state.validationQuality,
+            validationReason: state.validationReason,
+            ...(partialInfo ? { partialInfo } : {})
+        });
+    }
+
     async translateMessage(messageNode, content, button, textOptions = null, translateOptions = {}) {
         if (!this.settings.translation.enabled) {
             this.showToast(this.t("translationDisabled"), "info");
@@ -12002,6 +12048,9 @@ module.exports = class DiscordAITranslator {
         const cacheKey = plan.cacheKey;
         const startedAt = plan.startedAt;
         const lifecycleToken = plan.lifecycleToken;
+        // Retranslate on a kept auto partial: that partial is drawn back unless the manual result
+        // leaves out fewer parts of the message.
+        const keptAutoPartial = this.getAutoTranslationPartialResult(plan.autoCacheKey, text);
         this.clearManualBlockingState(plan);
         this.logDiagnostic("manual.translate", "start", {
             ...this.getTranslationDiagnosticMeta("manual", {
@@ -12045,6 +12094,9 @@ module.exports = class DiscordAITranslator {
             }
         }
 
+        // Retranslate replaces a line the user was reading: keep what it showed in case the new
+        // request produces nothing usable.
+        const previousLineState = translateOptions?.bypassCache ? this.getRestorableTranslationLineState(content) : null;
         this.renderManualLoading(plan);
         this.setButtonBusy(button, true, this.t("translateBusy"));
         try {
@@ -12083,6 +12135,22 @@ module.exports = class DiscordAITranslator {
                         messageState: DIAGNOSTIC_MESSAGE_STATES.STALE,
                         reasonCode: DIAGNOSTIC_REASON_CODES.STALE_DOM
                     }),
+                    key: this.getTextFingerprint(cacheKey),
+                    ms: Date.now() - startedAt
+                });
+                return;
+            }
+            if (keptAutoPartial
+                && validation.quality === TRANSLATION_VALIDATION_QUALITIES.PARTIAL
+                && !this.isManualPartialResultBetter(resultRequestOptions.longTextPartialInfo, keptAutoPartial.partialInfo)) {
+                this.rememberAutoTranslationPartialResult(plan.autoCacheKey, text, keptAutoPartial.translated, keptAutoPartial);
+                this.renderTranslation(messageNode, content, keptAutoPartial.translated, cacheKey, plan.domText, {
+                    partial: true,
+                    validationQuality: keptAutoPartial.validationQuality || TRANSLATION_VALIDATION_QUALITIES.PARTIAL,
+                    validationReason: keptAutoPartial.validationReason || "",
+                    ...(keptAutoPartial.partialInfo ? { partialInfo: keptAutoPartial.partialInfo } : {})
+                });
+                this.logDiagnostic("manual.translate", "kept-auto-partial", {
                     key: this.getTextFingerprint(cacheKey),
                     ms: Date.now() - startedAt
                 });
@@ -12148,14 +12216,19 @@ module.exports = class DiscordAITranslator {
             // The manual toast below already tells the user; do not repeat it as an auto-translate notice.
             if (!silentManualFailure) this.rememberTranslationAttentionNotice(error, this.getTranslationAttentionProviderKey(error, requestOptions));
             if (!error?.autoTranslationFinalInvalidOutput) this.markAutoTranslationProviderFailure(requestOptions, error);
-            if (this.isManualTranslationSourceStillCurrent(plan)) {
+            // A failed Retranslate puts back the line the user was reading and says why.
+            const restorePreviousLine = silentManualFailure && Boolean(previousLineState) && this.isManualTranslationSourceStillCurrent(plan);
+            if (restorePreviousLine) {
+                this.restoreTranslationLineState(plan, previousLineState, keptAutoPartial);
+            }
+            else if (this.isManualTranslationSourceStillCurrent(plan)) {
                 if (silentManualFailure) this.removeTranslationNode(messageNode, content);
                 else this.renderManualFailure(plan, error);
             }
             else {
                 this.removeTranslationNode(messageNode, content);
             }
-            if (!silentManualFailure) this.showToast(this.formatError(error), "error");
+            if (!silentManualFailure || translateOptions?.bypassCache) this.showToast(this.formatError(error), "error");
         }
         finally {
             if (this.isLifecycleTokenCurrent(lifecycleToken) && this.isManualTranslationRequestCurrent(plan)) {
@@ -15635,6 +15708,7 @@ module.exports = class DiscordAITranslator {
     pruneRecentAutoTranslationRenders(...args) { return this.autoQueueCore.pruneRecentAutoTranslationRenders(...args); }
     rememberAutoTranslationPartialResult(...args) { return this.autoQueueCore.rememberAutoTranslationPartialResult(...args); }
     getAutoTranslationPartialResult(...args) { return this.autoQueueCore.getAutoTranslationPartialResult(...args); }
+    touchAutoTranslationPartialResult(...args) { return this.autoQueueCore.touchAutoTranslationPartialResult(...args); }
     clearAutoTranslationPartialResult(...args) { return this.autoQueueCore.clearAutoTranslationPartialResult(...args); }
     pruneAutoTranslationPartialResults(...args) { return this.autoQueueCore.pruneAutoTranslationPartialResults(...args); }
     getAutoTranslationAbortSignal(...args) { return this.autoQueueCore.getAutoTranslationAbortSignal(...args); }
@@ -15673,6 +15747,7 @@ module.exports = class DiscordAITranslator {
     markAutoTranslationProviderFailure(...args) { return this.autoQueueCore.markAutoTranslationProviderFailure(...args); }
     getAutoTranslationProviderFailure(...args) { return this.autoQueueCore.getAutoTranslationProviderFailure(...args); }
     isAutoTranslationProviderCoolingDown(...args) { return this.autoQueueCore.isAutoTranslationProviderCoolingDown(...args); }
+    getNextAutoTranslationFailureCount(...args) { return this.autoQueueCore.getNextAutoTranslationFailureCount(...args); }
     createAutoTranslationFailure(...args) { return this.autoQueueCore.createAutoTranslationFailure(...args); }
     rememberAutoTranslationFailureHistory(...args) { return this.autoQueueCore.rememberAutoTranslationFailureHistory(...args); }
     getAutoTranslationFailureHistoryCount(...args) { return this.autoQueueCore.getAutoTranslationFailureHistoryCount(...args); }
@@ -15728,6 +15803,7 @@ module.exports = class DiscordAITranslator {
     splitOversizedLongAutoTranslationUnit(...args) { return this.autoRequestPipeline.splitOversizedLongAutoTranslationUnit(...args); }
     runLongAutoTranslationTask(...args) { return this.autoRequestPipeline.runLongAutoTranslationTask(...args); }
     shouldStopLongAutoTranslationOnChunkError(...args) { return this.autoRequestPipeline.shouldStopLongAutoTranslationOnChunkError(...args); }
+    shouldKeepLongAutoTranslationChunksOnError(...args) { return this.autoRequestPipeline.shouldKeepLongAutoTranslationChunksOnError(...args); }
     runLongAutoTranslationChunkManualRescue(...args) { return this.autoRequestPipeline.runLongAutoTranslationChunkManualRescue(...args); }
     runLongAutoTranslationSubchunkManualRescue(...args) { return this.autoRequestPipeline.runLongAutoTranslationSubchunkManualRescue(...args); }
     getLongTextChunkTranslationOptions(...args) { return this.autoRequestPipeline.getLongTextChunkTranslationOptions(...args); }
@@ -15746,10 +15822,12 @@ module.exports = class DiscordAITranslator {
     runAutoTranslationTaskWithOptions(...args) { return this.autoRequestPipeline.runAutoTranslationTaskWithOptions(...args); }
     runTruncatedAutoTranslationRetry(...args) { return this.autoRequestPipeline.runTruncatedAutoTranslationRetry(...args); }
     createAutoTranslationRequestBudget(...args) { return this.autoRequestPipeline.createAutoTranslationRequestBudget(...args); }
+    getManualTranslationRequestBudgetLimit(...args) { return this.autoRequestPipeline.getManualTranslationRequestBudgetLimit(...args); }
     consumeAutoTranslationRequestBudget(...args) { return this.autoRequestPipeline.consumeAutoTranslationRequestBudget(...args); }
     isAutoTranslationRequestBudgetExhausted(...args) { return this.autoRequestPipeline.isAutoTranslationRequestBudgetExhausted(...args); }
     isAutoTranslationRequestBudgetError(...args) { return this.autoRequestPipeline.isAutoTranslationRequestBudgetError(...args); }
     shouldRunLocalAutoTranslationRepairRetry(...args) { return this.autoRequestPipeline.shouldRunLocalAutoTranslationRepairRetry(...args); }
+    getTruncatedAutoTranslationRetryTimeoutMs(...args) { return this.autoRequestPipeline.getTruncatedAutoTranslationRetryTimeoutMs(...args); }
     getAutoTranslationRequestTimeoutMs(...args) { return this.autoRequestPipeline.getAutoTranslationRequestTimeoutMs(...args); }
     createFinalInvalidAutoTranslationError(...args) { return this.autoRequestPipeline.createFinalInvalidAutoTranslationError(...args); }
     createAutoTranslationStaleError(...args) { return this.autoRequestPipeline.createAutoTranslationStaleError(...args); }

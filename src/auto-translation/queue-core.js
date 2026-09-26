@@ -32,6 +32,7 @@ const {
     AUTO_TRANSLATE_RECENT_RENDER_TTL_MS,
     AUTO_TRANSLATE_REQUEST_BATCH_SIZE,
     AUTO_TRANSLATE_REQUEST_TIMEOUT_MS,
+    AUTO_TRANSLATE_RETAIN_MAX_FAILURE_COUNT,
     AUTO_TRANSLATE_SCROLL_RENDER_PAUSE_MS,
     AUTO_TRANSLATE_SCROLL_STILL_MS,
     AUTO_TRANSLATE_TERMINAL_FAILURE_TTL,
@@ -760,12 +761,14 @@ class AutoTranslationQueueCore {
             && this.plugin.isAutoTranslationVisibleItem(item));
     }
 
-    shouldRetainAutoTranslationFailureItem(item, error) {
+    shouldRetainAutoTranslationFailureItem(item, error, failure = null) {
         if (!item?.cacheKey || item?.daitPrefetchRequest) return false;
         const type = this.plugin.getAutoTranslationFailureType(error);
         // A truncated output is not retained: it already had a retry with a larger limit, and
         // requeueing it every few seconds re-sent a full-length generation forever.
         if (!["local-unavailable", "timeout", "network", "server", "rate-limit"].includes(type)) return false;
+        // A message that keeps timing out stops holding a queue slot: its failure record paces it.
+        if (["timeout", "network"].includes(type) && Number(failure?.count || 0) >= AUTO_TRANSLATE_RETAIN_MAX_FAILURE_COUNT) return false;
         return this.plugin.shouldRetainAutoTranslationProviderBlockedItem(item);
     }
 
@@ -1719,6 +1722,17 @@ class AutoTranslationQueueCore {
         return entry;
     }
 
+    // A partial line that is still shown keeps its kept result alive (and last to be pruned), so a
+    // rebuilt message is redrawn from it instead of requested again.
+    touchAutoTranslationPartialResult(cacheKey, text, now = Date.now()) {
+        const entry = this.plugin.getAutoTranslationPartialResult(cacheKey, text, now);
+        if (!entry) return null;
+        entry.expiresAt = now + AUTO_TRANSLATE_PARTIAL_RESULT_TTL_MS;
+        this.plugin.autoTranslationPartialResults.delete(String(cacheKey));
+        this.plugin.autoTranslationPartialResults.set(String(cacheKey), entry);
+        return entry;
+    }
+
     clearAutoTranslationPartialResult(...cacheKeys) {
         if (!this.plugin.autoTranslationPartialResults?.size) return;
         cacheKeys.forEach(cacheKey => {
@@ -1974,7 +1988,7 @@ class AutoTranslationQueueCore {
             this.plugin.warnSanitized("Failed to render auto translation failure", renderError);
             const failure = this.plugin.createAutoTranslationFailure(item.cacheKey, error);
             let retained = false;
-            if (this.plugin.shouldRetainAutoTranslationFailureItem(item, error)) {
+            if (this.plugin.shouldRetainAutoTranslationFailureItem(item, error, failure)) {
                 retained = this.plugin.retainBlockedVisibleAutoTranslationItem(item, {
                     delayMs: failure.retryAfterMs,
                     allowActiveRequeue: true,
@@ -2077,7 +2091,7 @@ class AutoTranslationQueueCore {
         this.plugin.pruneAutoTranslationFailureMapSize();
         this.plugin.markAutoTextTranslationFailure(item, storageError, failure);
         const retainedKeys = new Set();
-        if (this.plugin.shouldRetainAutoTranslationFailureItem(item, error)) {
+        if (this.plugin.shouldRetainAutoTranslationFailureItem(item, error, failure)) {
             const retained = this.plugin.retainBlockedVisibleAutoTranslationItem(item, {
                 delayMs: failure.retryAfterMs,
                 allowActiveRequeue: true,
@@ -2101,9 +2115,17 @@ class AutoTranslationQueueCore {
 
     // A result that cannot be drawn (its emoji images cannot be restored) is recorded as a final
     // invalid output, so the scan does not request the same message again on every pass.
-    markAutoTranslationUndrawableResult(cacheKey, reason = "emoji-restore-failed") {
+    // The auto-text cache holds the same result under the text alone; it is dropped too, otherwise
+    // the scan would draw it again from there (clearing this failure) on every pass.
+    markAutoTranslationUndrawableResult(cacheKey, reason = "emoji-restore-failed", source = null) {
         const key = String(cacheKey || "");
         if (!key) return null;
+        if (source?.text && source?.requestOptions) {
+            this.plugin.deleteTranslationCacheCandidates(
+                this.plugin.getAutoTextTranslationCacheKey(source.text, source.requestOptions),
+                ...this.plugin.getAutoTextTranslationCacheAliases(source.text, source.requestOptions)
+            );
+        }
         const failure = this.plugin.createAutoTranslationFailure(key, this.plugin.createFinalInvalidAutoTranslationError(reason));
         this.plugin.autoTranslationFailures.set(key, failure);
         this.plugin.pruneAutoTranslationFailureMapSize();
@@ -2120,6 +2142,16 @@ class AutoTranslationQueueCore {
         storageError.autoTranslationWeakFailure = true;
         // Keep the truncated type so its growing backoff applies to prefetch too.
         if (error?.modelOutputTruncated) storageError.modelOutputTruncated = true;
+        if (["timeout", "network", "server"].includes(this.plugin.getAutoTranslationFailureType(error))) {
+            // A slow or failing provider is not a bad answer: the weak failure waits longer with each
+            // repeat instead of sending the same (billed) prefetch request again every few seconds.
+            const count = this.plugin.getNextAutoTranslationFailureCount(item.cacheKey);
+            storageError.retryAfterMs = Math.min(
+                AUTO_TRANSLATE_FAILURE_MAX_TTL,
+                Math.max(Number(error?.retryAfterMs || 0), AUTO_TRANSLATE_TRANSIENT_FAILURE_TTL * Math.pow(2, Math.max(0, count - 1)))
+            );
+            return storageError;
+        }
         storageError.retryAfterMs = Math.min(
             storageError.autoTranslationTerminalFailure ? AUTO_TRANSLATE_FINAL_INVALID_OUTPUT_FAILURE_TTL : AUTO_TRANSLATE_INVALID_OUTPUT_FAILURE_TTL,
             Math.max(1000, Number(error?.retryAfterMs || AUTO_TRANSLATE_INVALID_OUTPUT_FAILURE_TTL))
@@ -2164,11 +2196,17 @@ class AutoTranslationQueueCore {
         return this.plugin.translationScheduler.isProviderCoolingDown(requestOptions, now);
     }
 
-    createAutoTranslationFailure(cacheKey, error) {
+    // The count the next failure of this message gets: one more than its live record or its
+    // remembered history, capped.
+    getNextAutoTranslationFailureCount(cacheKey) {
         const previous = this.plugin.autoTranslationFailures.get(cacheKey);
         const previousCount = typeof previous === "object" ? Number(previous.count || 0) : 0;
         const historyCount = this.plugin.getAutoTranslationFailureHistoryCount(cacheKey);
-        const count = Math.min(5, Math.max(previousCount, historyCount) + 1);
+        return Math.min(5, Math.max(previousCount, historyCount) + 1);
+    }
+
+    createAutoTranslationFailure(cacheKey, error) {
+        const count = this.plugin.getNextAutoTranslationFailureCount(cacheKey);
         const retryAfterMs = this.plugin.getAutoTranslationRetryAfter(error, count);
         const now = Date.now();
         const terminal = Boolean(error?.autoTranslationTerminalFailure);

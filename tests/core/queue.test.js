@@ -98,6 +98,46 @@ test("strict retry off: a second truncation ends the task instead of looping", a
     assert.equal(calls, 2);
 });
 
+const LOCAL_ENDPOINT = "http://127.0.0.1:18080/v1/chat/completions";
+
+function useLocalProvider(plugin) {
+    Object.assign(plugin.settings.translation, { provider: "sakuraLocal", endpoint: LOCAL_ENDPOINT, apiKey: "", model: "local-model" });
+}
+
+test("strict retry off: the larger truncation retry gets a longer timeout, and its timeout stays a truncation, not a local outage", async t => {
+    const plugin = createQueuePlugin(t);
+    useLocalProvider(plugin);
+    plugin.settings.ui.autoTranslateStrictRetry = false;
+    const timeouts = [];
+    const maxTokens = [];
+    plugin.fetchApiResponseText = async (endpoint, request, timeoutMs) => {
+        if (/\/models$/.test(endpoint)) return JSON.stringify({ data: [{ id: "fake-model.gguf" }] });
+        timeouts.push(timeoutMs);
+        maxTokens.push(Number(request?.body?.max_tokens || 0));
+        // A looping model: cut off at max_tokens first, then too slow for the larger limit.
+        if (timeouts.length === 1) return JSON.stringify({ choices: [{ message: { content: "重复重复重复" }, finish_reason: "length" }] });
+        throw timeoutError();
+    };
+    const options = plugin.getAutoTranslationOptions();
+    let thrown = null;
+    await assert.rejects(plugin.runAutoTranslationTask("привет", options), error => {
+        thrown = error;
+        return true;
+    });
+    assert.equal(timeouts.length, 2);
+    assert.ok(maxTokens[1] > maxTokens[0]);
+    assert.ok(timeouts[1] > timeouts[0], `retry timeout ${timeouts[0]} -> ${timeouts[1]}`);
+    assert.ok(timeouts[1] >= Math.floor(timeouts[0] * maxTokens[1] / maxTokens[0]) || timeouts[1] >= 90000, "the timeout scales with max_tokens (capped)");
+    assert.ok(timeouts[1] <= 90000, "the raised timeout stays bounded");
+    assert.equal(Boolean(thrown.localProviderUnavailable), false, "a slow retry is not a local outage");
+    assert.equal(plugin.getAutoTranslationFailureType(thrown), "truncated");
+
+    const item = makeItem(plugin, "truncation-retry-timeout", { text: "привет", requestOptions: options });
+    plugin.markAutoTranslationFailure(item, thrown);
+    assert.equal(plugin.getAutoTranslationProviderFailure(options) || null, null, "no provider-wide cooldown");
+    assert.equal(plugin.getAutoTranslationFailure(item.cacheKey)?.type, "truncated");
+});
+
 test("a truncated visible message gets a failure record whose backoff grows instead of a 4 s requeue", t => {
     const plugin = createQueuePlugin(t);
     const item = makeItem(plugin, "truncated");
@@ -126,6 +166,34 @@ test("retained visible failures keep counting, so repeated timeouts back off", t
     plugin.markAutoTranslationFailure(item, timeoutError());
     const secondDelay = plugin.autoTranslationQueue[0].daitRequeueAfter - Date.now();
     assert.ok(secondDelay > firstDelay + 5000, `${firstDelay} -> ${secondDelay}`);
+});
+
+test("one message that keeps timing out does not grow the provider-wide cooldown", t => {
+    const plugin = createQueuePlugin(t);
+    const item = makeItem(plugin, "provider-escalation");
+    const providerCooldowns = [];
+    const itemFailureCounts = [];
+    for (let round = 0; round < 4; round++) {
+        plugin.autoTranslationQueue = [];
+        plugin.autoTranslationQueuedKeys.clear();
+        // The previous provider cooldown and the item's own delay have run out before it is sent again.
+        plugin.autoTranslationProviderFailures.forEach(failure => { failure.retryAt = Date.now() - 1; });
+        const recorded = plugin.autoTranslationFailures.get(item.cacheKey);
+        if (recorded) recorded.retryAt = Date.now() - 1;
+        plugin.getAutoTranslationFailure(item.cacheKey);
+        plugin.markAutoTranslationFailure(item, timeoutError());
+        const providerFailure = plugin.getAutoTranslationProviderFailure(item.requestOptions);
+        providerCooldowns.push(providerFailure.retryAfterMs);
+        itemFailureCounts.push(Math.max(plugin.getAutoTranslationFailureHistoryCount(item.cacheKey), Number(plugin.autoTranslationFailures.get(item.cacheKey)?.count || 0)));
+    }
+    assert.deepEqual(itemFailureCounts, [1, 2, 3, 4], "the item's own count keeps growing");
+    assert.deepEqual(providerCooldowns, [10000, 10000, 10000, 10000], "the provider cooldown follows the provider's own count");
+
+    // A server hint (Retry-After) still sets the provider cooldown.
+    const hinted = Object.assign(statusError(429), { retryAfterMs: 30000 });
+    plugin.autoTranslationProviderFailures.clear();
+    plugin.markAutoTranslationFailure(makeItem(plugin, "provider-hint"), hinted);
+    assert.equal(plugin.getAutoTranslationProviderFailure(item.requestOptions).retryAfterMs, 30000);
 });
 
 test("a truncated prefetch result keeps its truncated type and growing backoff", t => {
@@ -174,6 +242,39 @@ test("strict retry off: a network error on a prefetch batch records weak retryab
         assert.equal(failure.terminal, false);
         assert.ok(failure.retryAt > 0);
     });
+});
+
+test("repeated batch timeouts on prefetch items back off instead of retrying every 4 s", async t => {
+    const plugin = createQueuePlugin(t);
+    plugin.settings.ui.autoTranslateStrictRetry = false;
+    const items = ["a", "b"].map(name => makeItem(plugin, `prefetch-timeout-${name}`));
+    let calls = 0;
+    plugin.runModelTask = async () => {
+        calls++;
+        throw timeoutError();
+    };
+    const delays = [];
+    for (let round = 0; round < 4; round++) {
+        // The previous weak failure has run out and the scan sends the same prefetch batch again.
+        items.forEach(item => {
+            const recorded = plugin.autoTranslationFailures.get(item.cacheKey);
+            if (recorded) recorded.retryAt = Date.now() - 1;
+            plugin.getAutoTranslationFailure(item.cacheKey);
+            item.daitPrefetchRequest = true;
+        });
+        plugin.autoTranslationQueue = [];
+        plugin.autoTranslationQueuedKeys.clear();
+        startInFlight(plugin, items);
+        await plugin.autoTranslateQueuedBatch(items);
+        const failure = plugin.autoTranslationFailures.get(items[0].cacheKey);
+        assert.ok(failure && failure.weak && !failure.terminal, `round ${round + 1} records a weak failure`);
+        delays.push(failure.retryAfterMs);
+    }
+    assert.equal(calls, 4);
+    assert.ok(delays[0] >= 10000, `first delay ${delays[0]}`);
+    assert.ok(delays[3] > delays[0], `delays ${delays.join(", ")}`);
+    assert.ok(delays.every(delay => delay <= 120000));
+    assert.equal(plugin.autoTranslationProviderFailures.size, 0, "prefetch timeouts still do not cool down the provider");
 });
 
 test("strict retry off: an unparsable batch sends its messages again as single requests", async t => {
@@ -230,6 +331,88 @@ test("a long message stops sending chunks after a rate-limit, auth, quota, serve
         await assert.rejects(plugin.runLongAutoTranslationTask("synthetic long source", plugin.getAutoTranslationOptions()), thrown => thrown === error);
         assert.equal(calls, 1, `type ${plugin.getAutoTranslationFailureType(error)}`);
     }
+});
+
+test("a timeout or network error on a later chunk keeps the finished chunks and returns them as a partial result", async () => {
+    for (const makeError of [timeoutError, () => new Error("fetch failed")]) {
+        const plugin = new Plugin();
+        plugin.splitLongAutoTranslationText = () => ["chunk one", "chunk two", "chunk three", "chunk four"];
+        const sent = [];
+        plugin.runAutoTranslationTaskWithOptions = async chunk => {
+            sent.push(chunk);
+            if (chunk === "chunk three") throw makeError();
+            return `${chunk} 已翻译`;
+        };
+        const taskOptions = {};
+        const merged = await plugin.runLongAutoTranslationTask("synthetic long source", plugin.getAutoTranslationOptions(), taskOptions);
+        assert.deepEqual(sent, ["chunk one", "chunk two", "chunk three"], "the chunks after the failing one are not sent");
+        assert.match(merged, /chunk one 已翻译/);
+        assert.match(merged, /chunk two 已翻译/);
+        assert.deepEqual(taskOptions.longTextPartialInfo, { missingSegments: [3, 4], totalSegments: 4 });
+    }
+});
+
+test("a rate limit on a later chunk still ends the whole long message", async () => {
+    const plugin = new Plugin();
+    plugin.splitLongAutoTranslationText = () => ["chunk one", "chunk two", "chunk three"];
+    const rateLimited = statusError(429);
+    plugin.runAutoTranslationTaskWithOptions = async chunk => {
+        if (chunk === "chunk two") throw rateLimited;
+        return `${chunk} 已翻译`;
+    };
+    await assert.rejects(plugin.runLongAutoTranslationTask("synthetic long source", plugin.getAutoTranslationOptions()), error => error === rateLimited);
+});
+
+test("a visible long message whose later chunk times out is drawn as partial once, not re-sent every cycle", async t => {
+    const plugin = createQueuePlugin(t);
+    const item = makeItem(plugin, "chunk-timeout", { text: SOURCE });
+    item.requestOptions = plugin.getAutoTranslationRequestOptionsForText(SOURCE, plugin.getAutoTranslationOptions());
+    item.cacheKey = plugin.getTranslationCacheKey(SOURCE, item.requestOptions);
+    startInFlight(plugin, [item]);
+    const [first, second] = SOURCE.split("\n");
+    plugin.splitLongAutoTranslationText = () => [first, second];
+    let calls = 0;
+    plugin.runAutoTranslationTaskWithOptions = async chunk => {
+        calls++;
+        if (chunk === second) throw timeoutError();
+        return TRANSLATED.split("\n")[0];
+    };
+    plugin.getElementText = () => SOURCE;
+    plugin.hasManualTranslationLine = () => false;
+    plugin.queueAutoTranslationRenderTask = task => task.run();
+    const rendered = [];
+    plugin.renderTranslation = (...args) => {
+        rendered.push(args);
+        return {};
+    };
+    await plugin.autoTranslateQueuedMessage(item);
+    assert.equal(calls, 2);
+    assert.equal(rendered.length, 1, "the finished chunk is drawn");
+    assert.deepEqual(rendered[0][5].partialInfo, { missingSegments: [2], totalSegments: 2 });
+    assert.equal(plugin.autoTranslationQueue.length, 0, "not retained for another full pass");
+    assert.equal(plugin.autoTranslationProviderFailures.size, 0, "one slow chunk does not cool down the provider");
+    assert.ok(plugin.getAutoTranslationPartialResult(item.cacheKey, SOURCE), "kept for redraw instead of a new request");
+});
+
+test("a visible item that keeps timing out stops holding a queue slot after a few retries", t => {
+    const plugin = createQueuePlugin(t);
+    const item = makeItem(plugin, "retain-cap");
+    const retainedCounts = [];
+    for (let round = 0; round < 5; round++) {
+        plugin.autoTranslationQueue = [];
+        plugin.autoTranslationQueuedKeys.clear();
+        plugin.autoTranslationProviderFailures.clear();
+        const recorded = plugin.autoTranslationFailures.get(item.cacheKey);
+        if (recorded) recorded.retryAt = Date.now() - 1;
+        plugin.getAutoTranslationFailure(item.cacheKey);
+        plugin.markAutoTranslationFailure(item, timeoutError());
+        retainedCounts.push(plugin.autoTranslationQueue.length);
+    }
+    assert.deepEqual(retainedCounts.slice(0, 2), [1, 1], "the first failures are retained and retried");
+    assert.equal(retainedCounts.at(-1), 0, "later failures wait on their failure record instead");
+    const failure = plugin.getAutoTranslationFailure(item.cacheKey);
+    assert.ok(failure && !failure.terminal, "still retried after its backoff");
+    assert.ok(failure.retryAfterMs >= 80000, `backoff ${failure.retryAfterMs}`);
 });
 
 // --- render-2: partial long results ---
@@ -327,19 +510,57 @@ test("a drawn partial line is kept by the next scan instead of being removed and
     const options = plugin.getAutoTranslationRequestOptionsForText(source, plugin.getAutoTranslationOptions());
     const cacheKey = plugin.getTranslationCacheKey(source, options);
     let removed = false;
-    const makeLine = () => ({
+    const makeLine = (partialMark = true) => ({
         dataset: { daitMode: plugin.getTranslationCacheMode(cacheKey) },
-        classList: { contains: name => name === "dait-translation-partial" },
+        classList: { contains: name => partialMark && name === "dait-translation-partial" },
         querySelector: () => ({ textContent: partial }),
         remove: () => { removed = true; }
     });
     plugin.restoreTranslationSourceVisibility = () => {};
-    // Validated as a complete translation, the line would be removed ("undertranslated").
-    assert.equal(plugin.removeInvalidCurrentAutoTranslationLine(makeLine(), {}, source, cacheKey, [], options), true);
+    // Validated as a complete translation (a line without the partial mark), it would be removed ("undertranslated").
+    assert.equal(plugin.removeInvalidCurrentAutoTranslationLine(makeLine(false), {}, source, cacheKey, [], options), true);
     removed = false;
     plugin.rememberAutoTranslationPartialResult(cacheKey, source, partial, { validationQuality: "partial", partialInfo: { missingSegments: [2, 3], totalSegments: 3 } });
     assert.equal(plugin.removeInvalidCurrentAutoTranslationLine(makeLine(), {}, source, cacheKey, [], options), false);
     assert.equal(removed, false);
+});
+
+test("a partial line that stays on screen outlives its kept result instead of being torn down and requested again", () => {
+    const { AUTO_TRANSLATE_PARTIAL_RESULT_TTL_MS } = require("../../src/constants");
+    const plugin = new Plugin();
+    const source = [
+        "This is the first paragraph of a long message about the release plan for next week.",
+        "The second paragraph explains why the build failed yesterday afternoon on the main branch.",
+        "The third paragraph lists the people who will review the fix before Friday."
+    ].map(line => line.repeat(3)).join("\n");
+    const partial = "这是关于下周发布计划的长消息的第一段。".repeat(3);
+    const options = plugin.getAutoTranslationRequestOptionsForText(source, plugin.getAutoTranslationOptions());
+    const cacheKey = plugin.getTranslationCacheKey(source, options);
+    let removed = false;
+    const makeLine = (text = partial) => ({
+        dataset: { daitMode: plugin.getTranslationCacheMode(cacheKey) },
+        classList: { contains: name => name === "dait-translation-partial" },
+        querySelector: () => ({ textContent: text }),
+        remove: () => { removed = true; }
+    });
+    plugin.restoreTranslationSourceVisibility = () => {};
+    plugin.rememberAutoTranslationPartialResult(cacheKey, source, partial, { validationQuality: "partial", partialInfo: { missingSegments: [2, 3], totalSegments: 3 } });
+
+    // While the line is shown, each scan keeps its kept result alive for a redraw after a rebuild.
+    const entry = plugin.autoTranslationPartialResults.get(cacheKey);
+    entry.expiresAt = Date.now() + 1000;
+    assert.equal(plugin.removeInvalidCurrentAutoTranslationLine(makeLine(), {}, source, cacheKey, [], options), false);
+    assert.ok(plugin.getAutoTranslationPartialResult(cacheKey, source).expiresAt >= Date.now() + AUTO_TRANSLATE_PARTIAL_RESULT_TTL_MS - 5000, "kept result refreshed");
+
+    // Even once the kept result has expired, the partial line is not validated as a complete one.
+    plugin.autoTranslationPartialResults.get(cacheKey).expiresAt = Date.now() - 1;
+    assert.equal(plugin.removeInvalidCurrentAutoTranslationLine(makeLine(), {}, source, cacheKey, [], options), false);
+    assert.equal(removed, false, "the line stays");
+    assert.ok(plugin.getRecentAutoTranslationRender(cacheKey, source, options), "and blocks a new request");
+
+    // A partial line whose text is unusable is still removed.
+    assert.equal(plugin.removeInvalidCurrentAutoTranslationLine(makeLine(source), {}, source, cacheKey, [], options), true);
+    assert.equal(removed, true);
 });
 
 // --- render-5: emoji restore ---
@@ -399,6 +620,45 @@ test("a failed emoji restore is remembered so the message is not requested again
     assert.equal(plugin.getAutoTranslationFailure(cacheItem.cacheKey)?.invalidReason, "emoji-restore-failed");
 });
 
+test("an undrawable result is dropped from the text cache too, so the scan does not redraw it on every pass", t => {
+    const plugin = createQueuePlugin(t);
+    plugin.getMessageIdentity = () => "";
+    plugin.isAutoTranslationTargetVisibleCached = () => true;
+    plugin.hasCurrentTranslationLine = () => false;
+    plugin.getElementText = () => SOURCE;
+    plugin.hasManualTranslationLine = () => false;
+    plugin.isAutoTranslationCacheTargetDrawable = () => true;
+    plugin.queueAutoTranslationRenderTask = task => task.run();
+    let drawAttempts = 0;
+    plugin.renderTranslation = () => {
+        drawAttempts++;
+        return null; // the emoji images cannot be restored
+    };
+    const candidate = { messageNode: { isConnected: true }, content: { dataset: {}, isConnected: true }, text: SOURCE, targetKind: "message" };
+    const first = plugin.evaluateAutoTranslationCandidate(candidate, { context: {} });
+    assert.equal(first.action, "enqueue");
+    const item = { ...first.item, cacheKey: first.cacheKey, requestOptions: first.requestOptions };
+    const validation = plugin.getAutoTranslationOutputValidationResult(SOURCE, TRANSLATED, plugin.getAutoTranslationTargetLanguage(item.requestOptions), {}, item.requestOptions);
+
+    // A request result is cached (message and text cache) and its draw fails.
+    plugin.cacheAutoTranslationResultWithOptions(item.cacheKey, SOURCE, item.requestOptions, TRANSLATED);
+    assert.equal(plugin.renderAutoTranslationRequestTarget(item, item, TRANSLATED, validation), false);
+    const afterRequest = plugin.evaluateAutoTranslationCandidate(candidate, { context: {} });
+    assert.equal(afterRequest.action, "terminal-failed", `after a failed request draw: ${afterRequest.action} ${afterRequest.reasonCode || ""}`);
+
+    // A cached result drawn by the scan fails the same way.
+    plugin.clearAutoTranslationFailure(item.cacheKey, item.requestOptions);
+    plugin.cacheAutoTranslationResultWithOptions(item.cacheKey, SOURCE, item.requestOptions, TRANSLATED);
+    const hit = plugin.evaluateAutoTranslationCandidate(candidate, { context: {} });
+    assert.equal(hit.action, "render-cache");
+    plugin.applyAutoTranslationDecision(candidate, hit, {});
+    const attempts = drawAttempts;
+    const afterCacheDraw = plugin.evaluateAutoTranslationCandidate(candidate, { context: {} });
+    assert.equal(afterCacheDraw.action, "terminal-failed", `after a failed cache draw: ${afterCacheDraw.action} ${afterCacheDraw.reasonCode || ""}`);
+    plugin.applyAutoTranslationDecision(candidate, afterCacheDraw, {});
+    assert.equal(drawAttempts, attempts, "no further draw attempt");
+});
+
 // --- req-8: manual request budget ---
 
 function manualPlan(plugin, text) {
@@ -445,6 +705,155 @@ test("a manual long translation with a failed part returns its partial info with
     assert.deepEqual(result.requestOptions.longTextPartialInfo, { missingSegments: [2], totalSegments: 3 });
     assert.equal(plan.requestOptions.longTextPartialInfo, undefined, "the plan's shared options stay clean");
     assert.ok(calls <= 8);
+});
+
+test("a manual click on a long local message with many chunks translates every chunk", async () => {
+    const plugin = new Plugin();
+    useLocalProvider(plugin);
+    const text = "Synthetic long source. ".repeat(170);
+    const chunks = Array.from({ length: 12 }, (_value, index) => `part ${index + 1} of the synthetic source`);
+    plugin.splitLongAutoTranslationText = () => chunks;
+    plugin.getAutoTranslationInvalidOutputReason = () => "";
+    let calls = 0;
+    plugin.runModelTask = async () => {
+        calls++;
+        return "已翻译的一部分内容";
+    };
+    const plan = manualPlan(plugin, text);
+    const result = await plugin.runManualRescueTranslationPlan(plan);
+    assert.equal(result.validation.renderable, true);
+    assert.equal(result.requestOptions.longTextPartialInfo, undefined, "no chunk is left out");
+    assert.equal(calls, 12);
+});
+
+test("a manual chunk rescue leaves one request for every later chunk", async () => {
+    const plugin = new Plugin();
+    const text = "Synthetic long source. ".repeat(72);
+    const chunks = [
+        "first part of the source",
+        "The second part keeps repeating the same line. ".repeat(7).trim(),
+        "third part of the source",
+        "fourth part of the source",
+        "fifth part of the source"
+    ];
+    const originalSplit = plugin.splitLongAutoTranslationText.bind(plugin);
+    plugin.splitLongAutoTranslationText = (value, maxLength) => (value === text ? chunks : originalSplit(value, maxLength));
+    plugin.getAutoTranslationInvalidOutputReason = () => "";
+    let calls = 0;
+    plugin.runModelTask = async (_kind, input) => {
+        calls++;
+        // The whole pass and every piece of the hard chunk come back untranslated.
+        return input === text || String(input).includes("second") ? String(input) : "已翻译的一部分内容";
+    };
+    const result = await plugin.runManualRescueTranslationPlan(manualPlan(plugin, text));
+    assert.equal(result.validation.renderable, true);
+    assert.deepEqual(result.requestOptions.longTextPartialInfo, { missingSegments: [2], totalSegments: 5 }, `${calls} requests`);
+});
+
+test("the manual request budget grows with the chunks but stays bounded", async () => {
+    const { MANUAL_TRANSLATION_REQUEST_BUDGET_MAX } = require("../../src/constants");
+    const plugin = new Plugin();
+    const text = "Synthetic long source. ".repeat(170);
+    plugin.splitLongAutoTranslationText = () => Array.from({ length: 60 }, (_value, index) => `part ${index + 1} of the source`);
+    let calls = 0;
+    plugin.runModelTask = async (_kind, input) => {
+        calls++;
+        return String(input);
+    };
+    await assert.rejects(plugin.runManualRescueTranslationPlan(manualPlan(plugin, text)));
+    assert.ok(MANUAL_TRANSLATION_REQUEST_BUDGET_MAX >= 16 && MANUAL_TRANSLATION_REQUEST_BUDGET_MAX <= 32);
+    assert.ok(calls <= MANUAL_TRANSLATION_REQUEST_BUDGET_MAX, `${calls} requests`);
+});
+
+function manualTranslateFixture(t) {
+    const plugin = createQueuePlugin(t);
+    const messageNode = { isConnected: true };
+    const content = { dataset: {}, isConnected: true };
+    plugin.getElementText = () => SOURCE;
+    plugin.resolveManualTranslationSource = () => ({ text: SOURCE, domText: SOURCE, source: "dom-content" });
+    plugin.isLowInformationRepeatedText = () => false;
+    plugin.clearTranslationLineDismissal = () => {};
+    plugin.getMessageIdentity = () => "";
+    plugin.renderManualLoading = () => {};
+    plugin.setButtonBusy = () => {};
+    plugin.isManualTranslationRequestCurrent = () => true;
+    plugin.isManualTranslationConfigCurrent = () => true;
+    plugin.isManualTranslationSourceStillCurrent = () => true;
+    const rendered = [];
+    plugin.renderTranslation = (...args) => {
+        rendered.push(args);
+        return {};
+    };
+    const removed = [];
+    plugin.removeTranslationNode = (...args) => { removed.push(args); };
+    const toasts = [];
+    plugin.showToast = (...args) => { toasts.push(args); };
+    const autoOptions = plugin.withMessageIdentity(plugin.getAutoTranslationRequestOptionsForText(SOURCE, plugin.getAutoTranslationOptions()), messageNode, content, SOURCE);
+    const autoKey = plugin.getTranslationCacheKey(SOURCE, autoOptions);
+    return { plugin, messageNode, content, rendered, removed, toasts, autoKey };
+}
+
+function manualPartialResult(plugin, translated, partialInfo) {
+    return {
+        translated,
+        validation: { renderable: true, cacheable: false, quality: "partial", reasonCode: "long-text-partial" },
+        requestOptions: { ...plugin.getManualTranslationRequestOptions(), longTextPartial: true, longTextPartialInfo: partialInfo }
+    };
+}
+
+test("retranslating a kept auto partial keeps it unless the manual result misses fewer parts", async t => {
+    const { plugin, messageNode, content, rendered, autoKey } = manualTranslateFixture(t);
+    const kept = "第一部分。第四部分。第五部分。";
+    const keptInfo = { missingSegments: [2, 3], totalSegments: 5 };
+    plugin.rememberAutoTranslationPartialResult(autoKey, SOURCE, kept, { validationQuality: "partial", partialInfo: keptInfo });
+    plugin.runManualTranslationPlan = async () => manualPartialResult(plugin, "第一部分。第三部分。", { missingSegments: [2, 4, 5], totalSegments: 5 });
+    await plugin.retranslateMessage(messageNode, content);
+    assert.equal(rendered.length, 1);
+    assert.equal(rendered[0][2], kept, "the better kept partial stays");
+    assert.deepEqual(rendered[0][5].partialInfo, keptInfo);
+    assert.ok(plugin.getAutoTranslationPartialResult(autoKey, SOURCE), "and stays kept for redraw");
+
+    plugin.runManualTranslationPlan = async () => manualPartialResult(plugin, "第一部分。第二部分。第三部分。第四部分。", { missingSegments: [5], totalSegments: 5 });
+    await plugin.retranslateMessage(messageNode, content);
+    assert.equal(rendered.length, 2);
+    assert.equal(rendered[1][2], "第一部分。第二部分。第三部分。第四部分。", "a better manual result replaces it");
+    assert.deepEqual(rendered[1][5].partialInfo, { missingSegments: [5], totalSegments: 5 });
+});
+
+test("a failed Retranslate puts the line back and says so instead of removing it silently", async t => {
+    const { plugin, messageNode, content, rendered, removed, toasts } = manualTranslateFixture(t);
+    const previousLine = {
+        classList: { contains: () => false },
+        dataset: { daitValidationQuality: "good" },
+        querySelector: () => ({ textContent: "明天见" })
+    };
+    plugin.getTranslationLine = () => previousLine;
+    plugin.runManualTranslationPlan = async () => { throw plugin.createManualRescueFailureError("same-as-source"); };
+    await plugin.retranslateMessage(messageNode, content);
+    assert.equal(removed.length, 0, "the line the user was reading is not removed");
+    assert.equal(rendered.length, 1);
+    assert.equal(rendered[0][2], "明天见", "it is drawn again");
+    assert.equal(toasts.length, 1);
+    assert.equal(toasts[0][1], "error");
+    assert.equal(toasts[0][0], plugin.t("manualTranslateRescueFailed"));
+
+    // A kept auto partial line comes back with its note and stays kept for redraw.
+    const { plugin: partialPlugin, messageNode: node, content: element, rendered: drawn, autoKey } = manualTranslateFixture(t);
+    const kept = "第一部分。第四部分。第五部分。";
+    const keptInfo = { missingSegments: [2, 3], totalSegments: 5 };
+    partialPlugin.rememberAutoTranslationPartialResult(autoKey, SOURCE, kept, { validationQuality: "partial", partialInfo: keptInfo });
+    partialPlugin.getTranslationLine = () => ({
+        classList: { contains: name => name === "dait-translation-partial" },
+        dataset: { daitValidationQuality: "partial" },
+        querySelector: () => ({ textContent: kept })
+    });
+    partialPlugin.runManualTranslationPlan = async () => { throw partialPlugin.createManualRescueFailureError("same-as-source"); };
+    await partialPlugin.retranslateMessage(node, element);
+    assert.equal(drawn.length, 1);
+    assert.equal(drawn[0][2], kept);
+    assert.equal(drawn[0][5].partial, true);
+    assert.deepEqual(drawn[0][5].partialInfo, keptInfo);
+    assert.ok(partialPlugin.getAutoTranslationPartialResult(autoKey, SOURCE));
 });
 
 test("manual rescue stops at the first non-retryable provider error", async () => {
