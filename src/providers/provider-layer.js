@@ -1375,6 +1375,7 @@ class ProviderLayer {
                     this.plugin.annotateGoogleTranslateApiError(apiError, raw, request);
                 }
                 this.plugin.annotateTranslateProviderApiError(apiError, raw, request);
+                this.plugin.annotateChatCompletionApiError(apiError, raw, request);
                 throw apiError;
             }
 
@@ -1434,6 +1435,18 @@ class ProviderLayer {
             // cools like one and the message says the key is invalid.
             error.providerAuthFailed = true;
             error.googleTranslateKeyInvalid = true;
+        }
+        return error;
+    }
+
+    // OpenAI-compatible services answer a model name they do not know with 400 or 404 (DeepSeek:
+    // "Model Not Exist"); the message then points to the model setting, not to account permissions.
+    annotateChatCompletionApiError(error, raw = "", request = {}) {
+        if (!error || !Array.isArray(request?.body?.messages)) return error;
+        if (![400, 404, 422].includes(Number(error.status || 0))) return error;
+        const text = String(raw || "").slice(0, 4000);
+        if (/model_not_found|no such model|\b(?:unknown|invalid|unsupported) model\b|\bmodel\b[^.]{0,80}?\b(?:not exists?|does not exist|not found|is not (?:available|supported))\b/i.test(text)) {
+            error.providerModelNotFound = true;
         }
         return error;
     }

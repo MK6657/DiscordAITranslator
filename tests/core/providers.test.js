@@ -551,6 +551,42 @@ test("HTTP errors: 402 is quota; digits inside a body never decide the type", ()
     }
 });
 
+// prov-7: a wrong base URL or model name is not an account-permission problem.
+test("a 404 or an unknown model points to the endpoint and model, other 4xx keep the generic text", async t => {
+    for (const locale of ["zh-CN", "en"]) {
+        const plugin = new Plugin();
+        plugin.settings.ui.language = locale;
+        plugin.settings.translation.apiKey = "sk-fake-1";
+        const built = plugin.buildModelRequest("translation", "hello");
+        const send = async (status, body) => {
+            t.mock.method(globalThis, "fetch", async () => ({ ok: false, status, headers: { get: () => null }, text: async () => body }));
+            try {
+                await plugin.fetchApiResponseText(built.endpoint, built.request);
+            }
+            catch (error) {
+                return error;
+            }
+            finally {
+                globalThis.fetch.mock.restore();
+            }
+            throw new Error("the request did not fail");
+        };
+        const notFoundText = plugin.t("errorEndpointNotFound");
+        for (const [status, body] of [
+            [404, "{\"error\":{\"message\":\"Not Found\"}}"],
+            [405, "Method Not Allowed"],
+            [400, "{\"error\":{\"message\":\"Model Not Exist\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"invalid_request_error\"}}"],
+            [404, "{\"error\":{\"message\":\"The model `fake-model` does not exist or you do not have access to it.\",\"type\":\"invalid_request_error\",\"code\":\"model_not_found\"}}"]
+        ]) {
+            const text = plugin.formatError(await send(status, body));
+            assert.ok(text.startsWith(notFoundText), `${locale} ${status}: ${text}`);
+            assert.ok(text.includes(String(status)), text);
+        }
+        const other = plugin.formatError(await send(400, "{\"error\":{\"message\":\"This model's maximum context length is 8192 tokens\",\"type\":\"invalid_request_error\"}}"));
+        assert.ok(other.startsWith(plugin.t("errorProviderRequestRejected")), `${locale}: ${other}`);
+    }
+});
+
 test("the cache key follows the model the local server actually serves", () => {
     const plugin = new Plugin();
     Object.assign(plugin.settings.translation, { provider: "sakuraLocal", endpoint: LOCAL_ENDPOINT, apiKey: "", model: "local-model" });
@@ -724,7 +760,7 @@ test("user-facing errors are localized and never show internal codes", async t =
 });
 
 test("new strings exist in both locales", () => {
-    for (const key of ["errorOutputTruncated", "errorQuotaExceeded", "errorLanguageUnsupported", "errorIpNotAllowed", "errorProviderRequestRejected", "errorSaveFailed", "errorComposerWriteFailed", "clipboardUnavailable", "googleTranslateStatsCooldown", "googleTranslateKeysCooling", "googleTranslateKeyError"]) {
+    for (const key of ["errorOutputTruncated", "errorQuotaExceeded", "errorLanguageUnsupported", "errorIpNotAllowed", "errorProviderRequestRejected", "errorSaveFailed", "errorComposerWriteFailed", "clipboardUnavailable", "googleTranslateStatsCooldown", "googleTranslateKeysCooling", "googleTranslateKeyError", "errorEndpointNotFound"]) {
         assert.equal(typeof I18N["zh-CN"][key], "string", key);
         assert.equal(typeof I18N.en[key], "string", key);
     }

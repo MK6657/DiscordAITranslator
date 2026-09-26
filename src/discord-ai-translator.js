@@ -15215,7 +15215,9 @@ module.exports = class DiscordAITranslator {
         else if (this.isNetworkError(error)) message = this.t("errorNetwork");
         else if (error?.baiduApiError) message = this.t("errorProviderRequestRejected");
         else if (rawMessage === "API_ERROR") {
-            message = status >= 400 && status < 500 ? this.t("errorProviderRequestRejected") : status ? `API ${status}` : this.t("unknownError");
+            // A wrong base URL (404/405) or model name is fixed in the endpoint and model settings.
+            if (status === 404 || status === 405 || error?.providerModelNotFound) message = this.t("errorEndpointNotFound");
+            else message = status >= 400 && status < 500 ? this.t("errorProviderRequestRejected") : status ? `API ${status}` : this.t("unknownError");
         }
         else if (Object.hasOwn(internalMessageKeys, rawMessage)) message = this.t(internalMessageKeys[rawMessage]);
         // Any other ALL_CAPS code is internal; never show it to the user.
@@ -15399,6 +15401,7 @@ module.exports = class DiscordAITranslator {
     fetchApiResponseText(...args) { return this.providerLayer.fetchApiResponseText(...args); }
     abortActiveApiRequests(...args) { return this.providerLayer.abortActiveApiRequests(...args); }
     annotateGoogleTranslateApiError(...args) { return this.providerLayer.annotateGoogleTranslateApiError(...args); }
+    annotateChatCompletionApiError(...args) { return this.providerLayer.annotateChatCompletionApiError(...args); }
     getModelRequestKey(...args) { return this.providerLayer.getModelRequestKey(...args); }
     testApiConnection(...args) { return this.providerLayer.testApiConnection(...args); }
     buildConnectionTestRequest(...args) { return this.providerLayer.buildConnectionTestRequest(...args); }
