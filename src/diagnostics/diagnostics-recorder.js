@@ -441,12 +441,19 @@ class DiagnosticsRecorder {
 
     // Used once when the log moves to its own data file: keeps the entries of both copies (the old copy may
     // hold entries written by an older plugin version after a downgrade), oldest first, without duplicates.
+    // Nothing older than the newer copy's save time is taken from the older copy: a log cleared or turned off
+    // later (in either version) stays cleared.
     mergePersistedDiagnosticLogsPayloads(current, legacy) {
         const logsOf = payload => Array.isArray(payload) ? payload : Array.isArray(payload?.logs) ? payload.logs : null;
-        const currentLogs = logsOf(current);
-        const legacyLogs = logsOf(legacy);
+        let currentLogs = logsOf(current);
+        let legacyLogs = logsOf(legacy);
         if (!legacyLogs) return current;
         if (!currentLogs) return legacy;
+        const currentSavedAt = Number(current?.savedAt) || 0;
+        const legacySavedAt = Number(legacy?.savedAt) || 0;
+        const loggedSince = savedAt => entry => Math.max(Number(entry?.ts) || 0, Number(entry?.lastTs) || 0) >= savedAt;
+        if (legacySavedAt > currentSavedAt) currentLogs = currentLogs.filter(loggedSince(legacySavedAt));
+        else if (currentSavedAt > legacySavedAt) legacyLogs = legacyLogs.filter(loggedSince(currentSavedAt));
         const seen = new Set();
         const logs = [...legacyLogs, ...currentLogs]
             .filter(entry => entry && typeof entry === "object")
@@ -463,7 +470,9 @@ class DiagnosticsRecorder {
             version: 1,
             savedAt: Date.now(),
             maxEntries: DIAGNOSTICS_MAX_ENTRIES,
-            compressed: compressed(current?.compressed) + compressed(legacy?.compressed),
+            // The older copy's count belongs to entries it no longer contributes.
+            compressed: (legacySavedAt > currentSavedAt ? 0 : compressed(current?.compressed))
+                + (currentSavedAt > legacySavedAt ? 0 : compressed(legacy?.compressed)),
             logs
         };
     }

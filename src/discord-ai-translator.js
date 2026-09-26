@@ -1048,6 +1048,11 @@ module.exports = class DiscordAITranslator {
                 this.diagnosticCompressedCount = 0;
                 this.diagnosticLogsDirty = false;
                 this.diagnosticLogsDirtyAt = 0;
+                // Diagnostics are off: a log still on disk (such as one moved from an older version's settings
+                // file just now) is emptied, as turning diagnostics off does.
+                const storedDiagnostics = this.loadData(DIAGNOSTIC_DATA_KEY);
+                const storedLogs = Array.isArray(storedDiagnostics) ? storedDiagnostics : storedDiagnostics?.logs;
+                if (Array.isArray(storedLogs) && storedLogs.length) this.disableDiagnosticLogging();
             }
             if (this.translationCacheDirty) this.flushTranslationCache({ retryOnError: false });
             if (!this.translationCacheDirty) this.loadTranslationCache();
@@ -9737,7 +9742,8 @@ module.exports = class DiscordAITranslator {
                         sawInvalidTarget = true;
                         return;
                     }
-                    const renderCacheKey = identityUpgrade?.cacheKey || item.cacheKey;
+                    // The request may have detected the local model: the line carries the key the result is cached under.
+                    const renderCacheKey = identityUpgrade?.cacheKey || this.getServedModelTranslationCacheKey(item.cacheKey, item.requestOptions);
                     if (identityUpgrade?.cacheKey) upgradedCacheTargets.set(identityUpgrade.cacheKey, identityUpgrade);
                     cacheable = true;
                     if (this.hasManualTranslationLine(target.content, this.getAutoTranslationTargetDomText(target))) {
@@ -9782,6 +9788,8 @@ module.exports = class DiscordAITranslator {
                 partialInfo
             };
             this.rememberAutoTranslationPartialResult(item.cacheKey, item.text, translated, partialMeta);
+            const servedCacheKey = this.getServedModelTranslationCacheKey(item.cacheKey, item.requestOptions);
+            if (servedCacheKey !== item.cacheKey) this.rememberAutoTranslationPartialResult(servedCacheKey, item.text, translated, partialMeta);
             upgradedCacheTargets.forEach(upgrade => this.rememberAutoTranslationPartialResult(upgrade.cacheKey, item.text, translated, partialMeta));
         }
         if (this.isAutoTranslateEnabled()) {
@@ -9825,7 +9833,7 @@ module.exports = class DiscordAITranslator {
             this.logAutoTranslationRenderSkip(item, target, "identity-changed");
             return false;
         }
-        const renderCacheKey = identityUpgrade?.cacheKey || item.cacheKey;
+        const renderCacheKey = identityUpgrade?.cacheKey || this.getServedModelTranslationCacheKey(item.cacheKey, item.requestOptions);
         if (identityUpgrade?.cacheKey && validationResult.cacheable) this.cacheAutoTranslationResultWithOptions(identityUpgrade.cacheKey, item.text, identityUpgrade.requestOptions, translated);
         const domText = this.getAutoTranslationTargetDomText(target);
         if (this.hasManualTranslationLine(target.content, domText)) {
@@ -13578,11 +13586,14 @@ module.exports = class DiscordAITranslator {
                 return;
             }
             const usedProviderFallback = Boolean(resultRequestOptions.requestContext?.fallbackProvider);
+            // The request may have detected the local model: the result belongs under the served model's key,
+            // which the next lookup of this message builds.
+            const resultCacheKey = this.getServedModelTranslationCacheKey(cacheKey, requestOptions);
             if (validation.cacheable && !usedProviderFallback) {
-                this.setTranslationCache(cacheKey, translated);
+                this.setTranslationCache(resultCacheKey, translated);
                 this.syncManualTranslationToAutoCache(messageNode, content, text, translated, textOptions, plan.domText);
             }
-            this.renderTranslation(messageNode, content, translated, cacheKey, plan.domText, {
+            this.renderTranslation(messageNode, content, translated, resultCacheKey, plan.domText, {
                 partial: validation.quality === TRANSLATION_VALIDATION_QUALITIES.PARTIAL,
                 validationQuality: validation.quality,
                 validationReason: validation.reasonCode || "",
@@ -15242,9 +15253,15 @@ module.exports = class DiscordAITranslator {
             return "";
         }
 
-        const directText = this.extractElementTextWithoutClone(element, excludedSelectors);
+        // While the cache holds entries saved before 0.4.0, which read no standard emoji, the text as those
+        // versions read it is remembered for their lookups.
+        const emojiTrace = this.hasLegacyTranslationCacheEntries() ? { parts: null, emoji: new Set() } : null;
+        const directText = this.extractElementTextWithoutClone(element, excludedSelectors, emojiTrace);
         if (directText !== null) {
             const normalized = this.normalizeExtractedText(directText);
+            if (emojiTrace?.emoji.size) {
+                this.rememberPreEmojiSourceText(normalized, this.normalizeExtractedText(emojiTrace.parts.filter((part, index) => !emojiTrace.emoji.has(index)).join("")));
+            }
             this.setElementTextCacheValue(element, cacheKey, normalized);
             return normalized;
         }
@@ -15329,7 +15346,8 @@ module.exports = class DiscordAITranslator {
         return "";
     }
 
-    extractElementTextWithoutClone(element, excludedSelectors = []) {
+    // emojiTrace (optional): receives the parts and the indexes of the standard emoji among them.
+    extractElementTextWithoutClone(element, excludedSelectors = [], emojiTrace = null) {
         if (!element?.childNodes || typeof element.childNodes[Symbol.iterator] !== "function") return null;
         const blockedSelector = excludedSelectors.filter(Boolean).join(",");
         const blockTags = new Set(["ADDRESS", "ARTICLE", "ASIDE", "BLOCKQUOTE", "DIV", "FIGCAPTION", "FIGURE", "FOOTER", "H1", "H2", "H3", "H4", "H5", "H6", "HEADER", "LI", "MAIN", "NAV", "OL", "P", "PRE", "SECTION", "TABLE", "TR", "UL"]);
@@ -15360,6 +15378,7 @@ module.exports = class DiscordAITranslator {
             const tagName = String(node.tagName || node.nodeName || "").toUpperCase();
             if (tagName === "IMG") {
                 const alt = this.getExtractedImageAltText(node);
+                if (alt && emojiTrace && !/^:.+:$/.test(alt)) emojiTrace.emoji.add(parts.length);
                 if (alt) parts.push(` ${alt} `);
                 continue;
             }
@@ -15376,6 +15395,7 @@ module.exports = class DiscordAITranslator {
                 stack.push({ node: children[index], root: false });
             }
         }
+        if (emojiTrace) emojiTrace.parts = parts;
         return parts.join("");
     }
 
@@ -16725,7 +16745,7 @@ module.exports = class DiscordAITranslator {
     }
 
     getTranslationLineCacheAliases(text, options = {}) {
-        return this.getTranslationCacheAliases(text, options, { includePreMessageIdentity: false });
+        return this.getTranslationCacheAliases(text, options, { includePreMessageIdentity: false, includePlaceholderModel: true });
     }
 
     getAutoTextTranslationFailureKey(text, options = {}) {
@@ -17316,6 +17336,8 @@ module.exports = class DiscordAITranslator {
     getPreMessageIdentityTranslationCacheKey(...args) { return this.translationCacheStore.getPreMessageIdentityTranslationCacheKey(...args); }
     buildTranslationCacheKey(...args) { return this.translationCacheStore.buildTranslationCacheKey(...args); }
     getServedModelTranslationCacheKey(...args) { return this.translationCacheStore.getServedModelTranslationCacheKey(...args); }
+    hasLegacyTranslationCacheEntries(...args) { return this.translationCacheStore.hasLegacyTranslationCacheEntries(...args); }
+    rememberPreEmojiSourceText(...args) { return this.translationCacheStore.rememberPreEmojiSourceText(...args); }
     getCompactTranslationCacheConfigParts(...args) { return this.translationCacheStore.getCompactTranslationCacheConfigParts(...args); }
     getCacheConfigSnapshot(...args) { return this.translationCacheStore.getCacheConfigSnapshot(...args); }
     getTranslationCacheValueCached(...args) { return this.translationCacheStore.getTranslationCacheValueCached(...args); }
@@ -17487,6 +17509,7 @@ module.exports = class DiscordAITranslator {
     requeueAutoTranslationItem(...args) { return this.autoQueueCore.requeueAutoTranslationItem(...args); }
     enqueueAutoTranslationItem(...args) { return this.autoQueueCore.enqueueAutoTranslationItem(...args); }
     hasActiveAutoTranslationKey(...args) { return this.autoQueueCore.hasActiveAutoTranslationKey(...args); }
+    resolveActiveAutoTranslationKey(...args) { return this.autoQueueCore.resolveActiveAutoTranslationKey(...args); }
     pruneAutoTranslationActiveState(...args) { return this.autoQueueCore.pruneAutoTranslationActiveState(...args); }
     pruneAutoTranslationRenderPendingKeys(...args) { return this.autoQueueCore.pruneAutoTranslationRenderPendingKeys(...args); }
     getAutoTranslationRecentRenderKey(...args) { return this.autoQueueCore.getAutoTranslationRecentRenderKey(...args); }

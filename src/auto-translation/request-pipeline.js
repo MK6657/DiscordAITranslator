@@ -451,9 +451,12 @@ class AutoTranslationRequestPipeline {
             };
         }
 
-        const hasPendingTargets = this.plugin.autoTranslationPendingTargets.has(cacheKey);
-        const hasActiveKey = this.plugin.hasActiveAutoTranslationKey(cacheKey);
-        const hasInFlightKey = this.plugin.autoTranslationInFlightKeys.has(cacheKey);
+        // Work for this message may run under its key naming the local model known when it was queued.
+        const activeKey = this.plugin.resolveActiveAutoTranslationKey(cacheKey);
+        const workKey = activeKey || cacheKey;
+        const hasPendingTargets = this.plugin.autoTranslationPendingTargets.has(workKey);
+        const hasActiveKey = Boolean(activeKey);
+        const hasInFlightKey = this.plugin.autoTranslationInFlightKeys.has(workKey);
         if (hasPendingTargets && !hasActiveKey) {
             return {
                 action: "clear-stale-pending",
@@ -466,13 +469,13 @@ class AutoTranslationRequestPipeline {
             };
         }
         if (hasPendingTargets || hasActiveKey) {
-            const pendingTarget = { ...targetWithOptions, cacheKey };
+            const pendingTarget = { ...targetWithOptions, cacheKey: workKey };
             return {
                 action: "block",
                 status: "dedupe-active",
                 state: hasInFlightKey ? DIAGNOSTIC_MESSAGE_STATES.IN_FLIGHT : this.plugin.getAutoTranslationQueuedDiagnosticState(pendingTarget),
                 reasonCode: DIAGNOSTIC_REASON_CODES.DEDUPE_ACTIVE,
-                cacheKey,
+                cacheKey: workKey,
                 requestOptions: targetRequestOptions,
                 item: pendingTarget,
                 hasPendingTargets,
