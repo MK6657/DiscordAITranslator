@@ -275,3 +275,43 @@ test("downgrade to v0.3.0 and upgrade again: a cache cleared in v0.3.0 stays cle
     await upgraded.scanUntilIdle(PLAIN_MESSAGES.map(message => message.id));
     assert.deepEqual([...server.chatPhrases()].sort(), PLAIN_MESSAGES.map(message => message.phrase).sort());
 });
+
+// v0.4.0 logged a failed request, then the user went back to v0.3.0 and cleared the log or turned
+// diagnostics off there, which saved an empty log to the settings file.
+function downgradedDiagnosticsData({ enabled }) {
+    const now = Date.now();
+    const data = loadV030Data();
+    delete data.DiscordAITranslator.translationCache;
+    data.DiscordAITranslator.settings.ui.diagnosticsEnabled = enabled;
+    data.DiscordAITranslator.diagnosticLogs = { version: 1, savedAt: now - HOUR, maxEntries: 500, compressed: 0, logs: [] };
+    data["DiscordAITranslator.diagnostics"] = {
+        diagnosticLogs: {
+            version: 1,
+            savedAt: now - 2 * HOUR,
+            maxEntries: 500,
+            compressed: 0,
+            logs: [{ ts: now - 3 * HOUR, action: "model.request", status: "error", key: "", count: 1, meta: { type: "timeout" } }]
+        }
+    };
+    return data;
+}
+
+for (const enabled of [true, false]) {
+    test(`diagnostics cleared in v0.3.0 after a downgrade stay cleared when upgrading again (diagnostics ${enabled ? "on" : "off"})`, t => {
+        const { bdApi, plugin, quit } = openChat(t, { data: downgradedDiagnosticsData({ enabled }) });
+        assert.equal(bdApi.files.DiscordAITranslator.diagnosticLogs, undefined, "the old copy was merged and removed");
+        assert.equal(plugin.diagnosticLogs.some(entry => entry.action === "model.request"), false);
+        const stored = () => bdApi.files["DiscordAITranslator.diagnostics"]?.diagnosticLogs?.logs || [];
+        assert.equal(stored().some(entry => entry.action === "model.request"), false, "the cleared entry is not back on disk");
+        if (!enabled) assert.deepEqual(stored(), [], "with diagnostics off nothing stays on disk");
+        quit();
+        assert.equal(stored().some(entry => entry.action === "model.request"), false);
+    });
+}
+
+test("diagnostics turned off: a log left in the data file is emptied at start", t => {
+    const data = downgradedDiagnosticsData({ enabled: false });
+    delete data.DiscordAITranslator.diagnosticLogs;
+    const { bdApi } = openChat(t, { data });
+    assert.deepEqual(bdApi.files["DiscordAITranslator.diagnostics"].diagnosticLogs.logs, []);
+});

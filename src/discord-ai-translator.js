@@ -1048,6 +1048,11 @@ module.exports = class DiscordAITranslator {
                 this.diagnosticCompressedCount = 0;
                 this.diagnosticLogsDirty = false;
                 this.diagnosticLogsDirtyAt = 0;
+                // Diagnostics are off: a log still on disk (such as one moved from an older version's settings
+                // file just now) is emptied, as turning diagnostics off does.
+                const storedDiagnostics = this.loadData(DIAGNOSTIC_DATA_KEY);
+                const storedLogs = Array.isArray(storedDiagnostics) ? storedDiagnostics : storedDiagnostics?.logs;
+                if (Array.isArray(storedLogs) && storedLogs.length) this.disableDiagnosticLogging();
             }
             if (this.translationCacheDirty) this.flushTranslationCache({ retryOnError: false });
             if (!this.translationCacheDirty) this.loadTranslationCache();
