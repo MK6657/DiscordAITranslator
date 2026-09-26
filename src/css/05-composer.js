@@ -378,12 +378,13 @@ module.exports = `.dait-polish-button,
     border-color: color-mix(in srgb, var(--brand-500, #5865f2) 62%, var(--background-modifier-accent, #4e5058));
 }
 
+/* Colours come from the shared tokens (01-theme-tokens), so every Discord theme is covered without per-theme copies. */
 .dait-polish-result-panel {
-    background: color-mix(in srgb, var(--background-secondary, #2b2d31) 94%, #000000);
-    border: 1px solid color-mix(in srgb, var(--background-modifier-accent, #4e5058) 72%, transparent);
+    background: var(--dait-surface);
+    border: 1px solid var(--dait-divider);
     border-radius: 8px;
-    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.34);
-    color: var(--text-normal, #dbdee1);
+    box-shadow: var(--dait-shadow);
+    color: var(--dait-text);
     display: grid;
     gap: 7px;
     max-height: min(34vh, 260px);
@@ -391,44 +392,6 @@ module.exports = `.dait-polish-button,
     padding: 9px;
     position: fixed;
     z-index: 10000;
-}
-
-.theme-light.dait-polish-result-panel,
-.theme-light .dait-polish-result-panel,
-.dait-polish-result-panel[data-dait-discord-theme="light"],
-[data-dait-discord-theme="light"] .dait-polish-result-panel {
-    background: rgba(255, 255, 255, 0.98);
-    border-color: rgba(79, 84, 92, 0.22);
-    box-shadow: 0 12px 32px rgba(24, 36, 61, 0.16);
-    color: #242832;
-}
-
-.theme-dark.dait-polish-result-panel,
-.theme-dark .dait-polish-result-panel,
-.dait-polish-result-panel[data-dait-discord-theme="dark"],
-[data-dait-discord-theme="dark"] .dait-polish-result-panel {
-    background: color-mix(in srgb, var(--background-secondary, #2b2d31) 94%, #000000);
-    border-color: color-mix(in srgb, var(--background-modifier-accent, #4e5058) 72%, transparent);
-    color: var(--text-normal, #dbdee1);
-}
-
-.theme-darker.dait-polish-result-panel,
-.theme-darker .dait-polish-result-panel,
-.dait-polish-result-panel[data-dait-discord-theme="darker"],
-[data-dait-discord-theme="darker"] .dait-polish-result-panel {
-    background: var(--background-surface-high, var(--background-secondary, #1e1f22));
-    border-color: rgba(255, 255, 255, 0.09);
-    color: var(--text-normal, #dbdee1);
-}
-
-.theme-midnight.dait-polish-result-panel,
-.theme-midnight .dait-polish-result-panel,
-.dait-polish-result-panel[data-dait-discord-theme="midnight"],
-[data-dait-discord-theme="midnight"] .dait-polish-result-panel {
-    background: var(--background-surface-high, var(--background-secondary, #101114));
-    border-color: rgba(255, 255, 255, 0.08);
-    box-shadow: 0 16px 38px rgba(0, 0, 0, 0.48);
-    color: var(--text-normal, #f2f3f5);
 }
 
 .dait-polish-result-header {
@@ -469,10 +432,10 @@ module.exports = `.dait-polish-button,
 }
 
 .dait-polish-result-output {
-    background: color-mix(in srgb, var(--background-tertiary, #1e1f22) 86%, transparent);
-    border: 1px solid color-mix(in srgb, var(--background-modifier-accent, #4e5058) 70%, transparent);
+    background: var(--dait-input-bg);
+    border: 1px solid var(--dait-divider);
     border-radius: 7px;
-    color: var(--text-normal, #dbdee1);
+    color: var(--dait-text);
     font: inherit;
     line-height: 1.45;
     max-height: min(18vh, 150px);
@@ -480,24 +443,6 @@ module.exports = `.dait-polish-button,
     padding: 8px 10px;
     white-space: pre-wrap;
     word-break: break-word;
-}
-
-.theme-light .dait-polish-result-output,
-.dait-polish-result-panel[data-dait-discord-theme="light"] .dait-polish-result-output,
-[data-dait-discord-theme="light"] .dait-polish-result-output {
-    background: #f6f8fc;
-    border-color: rgba(79, 84, 92, 0.18);
-    color: #242832;
-}
-
-.theme-darker .dait-polish-result-output,
-.dait-polish-result-panel[data-dait-discord-theme="darker"] .dait-polish-result-output,
-[data-dait-discord-theme="darker"] .dait-polish-result-output,
-.theme-midnight .dait-polish-result-output,
-.dait-polish-result-panel[data-dait-discord-theme="midnight"] .dait-polish-result-output,
-[data-dait-discord-theme="midnight"] .dait-polish-result-output {
-    background: color-mix(in srgb, var(--background-tertiary, #111318) 88%, transparent);
-    border-color: rgba(255, 255, 255, 0.09);
 }
 
 .dait-polish-result-actions {

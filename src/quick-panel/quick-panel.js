@@ -4,7 +4,7 @@
 // launcher's status badge. The full settings window stays in openQuickSettingsPanel(); this module
 // only calls it. Everything here talks to the plugin through `this.plugin`.
 
-const { LANGUAGE_PRESETS } = require("../constants");
+const { LANGUAGE_PRESETS, API_ENDPOINT_ERROR_MESSAGE_KEYS } = require("../constants");
 const { PLUGIN_VERSION } = require("../version");
 
 const POPOVER_ID = "dait-quick-popover";
@@ -35,6 +35,12 @@ const ATTENTION_REASON_KEYS = {
     quota: "quickStatusReasonQuota",
     "local-unavailable": "quickStatusReasonLocal"
 };
+// Configuration errors seen on real requests (the provider cooldowns do not record them): an invalid or unsafe
+// API URL, and a URL or model the service does not know (HTTP 404/405, or a 400 naming an unknown model).
+const CONFIG_ERROR_REASON_KEYS = {
+    endpoint: "quickStatusReasonEndpoint",
+    "not-found": "quickStatusReasonNotFound"
+};
 const ICON_NAMES = { gear: "dait-qp-icon-gear", close: "dait-qp-icon-close" };
 
 class QuickPanel {
@@ -58,6 +64,8 @@ class QuickPanel {
         this.lastStatusSignature = "";
         this.statusRouteKey = "";
         this.launcherRef = null;
+        this.lastAnchorRect = null;
+        this.configError = null;
     }
 
     // --- Popover lifecycle ---
@@ -125,6 +133,7 @@ class QuickPanel {
         root.remove?.();
         this.root = null;
         this.controls = null;
+        this.lastAnchorRect = null;
         const launcher = this.launcher;
         this.launcher = null;
         this.setLauncherExpanded(launcher, false);
@@ -149,7 +158,52 @@ class QuickPanel {
         this.lastStatusSignature = "";
         this.statusRouteKey = "";
         this.launcherRef = null;
+        this.configError = null;
         this.testRunning = false;
+    }
+
+    // The interface language changed while the panel is open: build it again where it is (same channel, focus on
+    // the same control) instead of closing it.
+    rerender(reason = "rerender") {
+        if (!this.isOpen()) return false;
+        const previous = this.root;
+        const previousFocusables = this.controls?.focusables || [];
+        const active = typeof document !== "undefined" ? document.activeElement : null;
+        const focusInside = Boolean(active && (active === previous || previous.contains?.(active)));
+        const focusIndex = focusInside ? previousFocusables.indexOf(active) : -1;
+        let root = null;
+        try {
+            root = this.build();
+        }
+        catch (error) {
+            this.plugin.logQuickSettingsDiagnostic("popover.rerender", "error", {
+                reason,
+                errorName: error?.name || "",
+                errorText: this.plugin.formatError(error)
+            });
+            this.close(reason, { restoreFocus: false });
+            return false;
+        }
+        if (previous.classList?.contains?.(POINTER_OPENED_CLASS)) root.classList.add(POINTER_OPENED_CLASS);
+        this.plugin.syncDiscordThemeClasses(root, this.plugin.isNodeConnected(this.launcher) ? this.launcher : document.body);
+        // Start where the old panel was; position() then only moves it if the new text changes its height.
+        if (root.style && previous.style) {
+            root.style.left = previous.style.left;
+            root.style.top = previous.style.top;
+        }
+        if (previous.dataset?.daitPlacement) root.dataset.daitPlacement = previous.dataset.daitPlacement;
+        if (previous.parentElement?.insertBefore) previous.parentElement.insertBefore(root, previous);
+        else document.body.appendChild(root);
+        previous.remove?.();
+        this.root = root;
+        this.bindListeners();
+        this.update();
+        if (focusInside) {
+            const focusables = this.controls?.focusables || [];
+            this.focusElement(focusables[focusIndex] || this.getFocusableElements()[0] || root);
+        }
+        this.plugin.logQuickSettingsDiagnostic("popover.rerender", "ok", { reason });
+        return true;
     }
 
     removeStrayPopovers() {
@@ -593,17 +647,19 @@ class QuickPanel {
 
     // --- Position, keyboard and pointer ---
 
+    // While the launcher is briefly gone (a language switch re-creates it), the panel stays where it was anchored.
     getAnchorRect() {
         const launcher = this.plugin.isNodeConnected(this.launcher) ? this.launcher : null;
         const rect = launcher?.getBoundingClientRect?.();
-        if (!rect || (!rect.width && !rect.height)) return null;
-        return {
+        if (!rect || (!rect.width && !rect.height)) return launcher ? null : this.lastAnchorRect;
+        this.lastAnchorRect = {
             left: Number(rect.left || 0),
             top: Number(rect.top || 0),
             width: Number(rect.width || 0),
             height: Number(rect.height || 0),
             bottom: Number(rect.bottom ?? (Number(rect.top || 0) + Number(rect.height || 0)))
         };
+        return this.lastAnchorRect;
     }
 
     // Above the launcher when it fits (Discord's user panel sits at the bottom), else below; always clamped
@@ -777,6 +833,82 @@ class QuickPanel {
 
     // --- Launcher status ---
 
+    // "endpoint" for an invalid or unsafe API URL, "not-found" for a URL or model the service does not know,
+    // "" for everything else (those are handled by the provider cooldowns and the connection test).
+    getConfigErrorKind(error) {
+        if (!error || this.plugin.isRequestCancelled?.(error)) return "";
+        if (Object.hasOwn(API_ENDPOINT_ERROR_MESSAGE_KEYS, error.code)) return "endpoint";
+        const status = Number(error.status || 0);
+        if (error.providerModelNotFound || status === 404 || status === 405) return "not-found";
+        return "";
+    }
+
+    // Called for every failed translation request (automatic and manual). Only the user can fix these errors,
+    // so the launcher shows "needs you" until the settings change, a request or test succeeds, or the plugin stops.
+    // The toast rules are not touched: they stay with notifyTranslationNeedsAttention.
+    noteRequestFailure(requestOptions, error) {
+        const kind = this.getConfigErrorKind(error);
+        if (!kind) return false;
+        let providerKey = "";
+        try { providerKey = String(error?.providerKey || this.plugin.getAutoTranslationProviderKey(requestOptions) || ""); }
+        catch { providerKey = ""; }
+        if (!providerKey) return false;
+        let message = "";
+        try { message = String(this.plugin.formatError(error) || ""); }
+        catch { message = ""; }
+        this.configError = { kind, providerKey, message, at: Date.now() };
+        return true;
+    }
+
+    // A passed connection test or a working request to the service ends the configuration error.
+    noteApiStatus(kind, state) {
+        if (kind === "translation" && state === "success") this.clearConfigError();
+    }
+
+    watchRequestResult(kind, requestOptions, result) {
+        const record = this.configError;
+        if (kind !== "translation" || !record || typeof result?.then !== "function") return;
+        result.then(() => {
+            let providerKey = "";
+            try { providerKey = String(this.plugin.getAutoTranslationProviderKey(requestOptions) || ""); }
+            catch { providerKey = ""; }
+            if (this.configError === record && providerKey === record.providerKey) this.clearConfigError();
+        }, () => {});
+    }
+
+    clearConfigError() {
+        if (!this.configError) return false;
+        this.configError = null;
+        this.requestStatusUpdate();
+        return true;
+    }
+
+    // The recorded configuration error, while it belongs to the service and settings in use (a changed URL, model
+    // or key makes a new provider key, so the old error no longer shows).
+    getConfigError(providerKey) {
+        const record = this.configError;
+        if (!record || !providerKey || record.providerKey !== providerKey) return null;
+        return CONFIG_ERROR_REASON_KEYS[record.kind] ? record : null;
+    }
+
+    // Model and response time of the last passed connection test (plugin.getLastApiTestResult, when the provider
+    // layer offers it), while the saved status still says connected, i.e. nothing was changed since.
+    getLastTestSummary(api) {
+        if (api?.state !== "success") return "";
+        let result = null;
+        try { result = this.plugin.getLastApiTestResult?.("translation") || null; }
+        catch { result = null; }
+        if (!result || result.ok !== true) return "";
+        const parts = [];
+        const model = String(result.model || "").trim();
+        if (model) parts.push(model);
+        const latency = Number(result.latencyMs);
+        if (result.latencyMs !== null && result.latencyMs !== undefined && Number.isFinite(latency) && latency >= 0) {
+            parts.push(this.plugin.t("quickStatusLatency", { ms: String(Math.round(latency)) }));
+        }
+        return parts.join(" · ");
+    }
+
     // One of LAUNCHER_STATUS_STATES plus the texts shown on the launcher and in the panel. Reads state only
     // (no probes, no timers): translation API status, provider cooldowns, local health probes, the auto
     // queue and whether auto-translate runs in the current channel.
@@ -796,6 +928,7 @@ class QuickPanel {
         const failureType = String(failure?.type || "");
         // A local service stays "down" until a probe or request succeeds; other cooldowns end at retryAt.
         const failureActive = Boolean(failure && (failureType === "local-unavailable" || Number(failure.retryAt || 0) > now));
+        const configError = this.getConfigError(providerKey);
         const probing = Boolean(providerKey && plugin.localProviderHealthChecks?.has?.(providerKey));
         const testing = api.state === "testing" || probing || this.testRunning;
         const queue = plugin.getAutoTranslationQueueSnapshot?.() || {};
@@ -807,6 +940,7 @@ class QuickPanel {
         if (!configured) connection = t("quickStatusNotConfigured");
         else if (testing) connection = plugin.getApiStatusText("testing");
         else if (failureActive && ATTENTION_FAILURE_TYPES.has(failureType)) connection = plugin.getApiStatusText("failed");
+        else if (configError) connection = plugin.getApiStatusText("failed");
 
         let state = "ok";
         let activity = t("quickStatusActive");
@@ -827,6 +961,11 @@ class QuickPanel {
             state = "needs-you";
             reason = t(ATTENTION_REASON_KEYS[failureType]);
             message = api.state === "failed" ? api.message : "";
+        }
+        else if (configError && !testing) {
+            state = "needs-you";
+            reason = t(CONFIG_ERROR_REASON_KEYS[configError.kind]);
+            message = configError.message;
         }
         else if (api.state === "failed" && !testing) {
             state = "needs-you";
@@ -859,6 +998,8 @@ class QuickPanel {
         }
         const headline = [provider, connection].filter(Boolean).join(" · ");
         const title = [provider, connection, activity].filter(Boolean).join(" · ");
+        // The last passed connection test's model and response time, e.g. "Hy-MT2 · 820 ms · 本频道自动翻译中".
+        const testSummary = state === "needs-you" ? "" : this.getLastTestSummary(api);
         return {
             state,
             provider,
@@ -866,7 +1007,8 @@ class QuickPanel {
             activity,
             headline,
             // Panel lines: what is happening now, then an optional one-line note (hint or error text).
-            detail: activity,
+            detail: [testSummary, activity].filter(Boolean).join(" · "),
+            testSummary,
             note,
             reason,
             message,
@@ -951,6 +1093,8 @@ class QuickPanel {
         if (this.isOpen()) {
             this.launcher = button;
             this.setLauncherExpanded(button, true);
+            // Anchor to the new launcher once it is in the user panel.
+            this.scheduleUpdate();
         }
         return button;
     }

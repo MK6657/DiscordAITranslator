@@ -1,28 +1,29 @@
 "use strict";
 
+// The plugin's own settings window (opened from the quick panel's "open full settings", the chat error lines and
+// the input menu): a moderate window (UI-SPEC "Sizes") that the tabbed settings panel fills. The panel brings the
+// one title bar (title, status, close); the window adds no header or footer. Colours come from the shared tokens
+// in 01-theme-tokens, which cover .dait-quick-settings-modal-root.
 module.exports = `.dait-quick-settings-modal-root {
     --dait-quick-backdrop: rgba(0, 0, 0, 0.42);
-    --dait-quick-dialog-bg: var(--modal-background, var(--dait-card, var(--background-surface-high, var(--background-secondary, #313338))));
-    --dait-quick-footer-bg: var(--modal-footer-background, var(--dait-card-soft, var(--background-surface-higher, var(--background-secondary-alt, #2b2d31))));
-    --dait-quick-border: var(--dait-border, var(--border-subtle, var(--background-modifier-accent, rgba(255, 255, 255, 0.08))));
-    --dait-quick-shadow: var(--elevation-high, 0 18px 52px rgba(0, 0, 0, 0.38));
-    --dait-quick-text: var(--text-normal, var(--text-primary, #dbdee1));
-    --dait-quick-title: var(--header-primary, var(--text-normal, #f2f3f5));
-    --dait-quick-muted: var(--dait-muted-readable, var(--interactive-normal, var(--text-muted, #b5bac1)));
-    --dait-quick-hover: var(--dait-control-hover, var(--background-modifier-hover, rgba(255, 255, 255, 0.08)));
     align-items: center;
     background: var(--dait-quick-backdrop);
-    color-scheme: dark;
-    color: var(--dait-quick-text);
+    color: var(--dait-text);
     display: flex;
     inset: 0;
     isolation: isolate;
     justify-content: center;
     overflow: hidden;
-    padding: clamp(16px, 4vh, 32px);
     pointer-events: auto;
     position: fixed;
     z-index: 2147483000;
+}
+
+.theme-light.dait-quick-settings-modal-root,
+.theme-light .dait-quick-settings-modal-root,
+.dait-quick-settings-modal-root[data-dait-discord-theme="light"],
+[data-dait-discord-theme="light"] .dait-quick-settings-modal-root {
+    --dait-quick-backdrop: rgba(6, 6, 7, 0.34);
 }
 
 .dait-quick-settings-backdrop {
@@ -31,201 +32,79 @@ module.exports = `.dait-quick-settings-modal-root {
 }
 
 .dait-quick-settings-dialog {
-    background: var(--dait-quick-dialog-bg);
-    border: 1px solid var(--dait-quick-border);
-    border-radius: 8px;
-    box-shadow: var(--dait-quick-shadow);
-    color: var(--dait-quick-text);
-    display: grid;
-    grid-template-rows: auto minmax(0, 1fr) auto;
-    max-height: min(86vh, 860px);
-    max-width: min(1280px, calc(100vw - 32px));
-    min-height: min(520px, calc(100vh - 32px));
+    background: var(--dait-bg);
+    border: 1px solid var(--dait-divider);
+    border-radius: var(--dait-radius-card);
+    box-shadow: var(--dait-shadow);
+    color: var(--dait-text);
+    display: flex;
+    flex-direction: column;
+    height: min(760px, calc(100vh - 64px));
     overflow: hidden;
     position: relative;
-    width: min(1280px, calc(100vw - 32px));
+    width: min(920px, calc(100vw - 48px));
     z-index: 1;
 }
 
-.theme-light.dait-quick-settings-modal-root,
-.theme-light .dait-quick-settings-modal-root,
-.dait-quick-settings-modal-root[data-dait-discord-theme="light"],
-[data-dait-discord-theme="light"] .dait-quick-settings-modal-root {
-    --dait-quick-backdrop: rgba(6, 6, 7, 0.34);
-    --dait-quick-dialog-bg: var(--modal-background, var(--dait-card, var(--bg-base-primary, var(--background-primary, #ffffff))));
-    --dait-quick-footer-bg: var(--modal-footer-background, var(--dait-card-soft, var(--background-surface-high, var(--background-secondary, #f2f3f5))));
-    --dait-quick-border: var(--dait-border, var(--border-subtle, rgba(116, 127, 141, 0.22)));
-    --dait-quick-shadow: 0 18px 52px rgba(24, 36, 61, 0.18);
-    --dait-quick-text: #2e3338;
-    --dait-quick-title: #1f232b;
-    --dait-quick-muted: #5c6472;
-    --dait-quick-hover: var(--dait-control-hover, var(--background-modifier-hover, rgba(79, 84, 92, 0.1)));
-    color-scheme: light;
-}
-
-.theme-dark.dait-quick-settings-modal-root,
-.theme-dark .dait-quick-settings-modal-root,
-.dait-quick-settings-modal-root[data-dait-discord-theme="dark"],
-[data-dait-discord-theme="dark"] .dait-quick-settings-modal-root {
-    --dait-quick-backdrop: rgba(0, 0, 0, 0.42);
-    --dait-quick-dialog-bg: var(--modal-background, var(--dait-card, var(--background-surface-high, var(--background-secondary, #313338))));
-    --dait-quick-footer-bg: var(--modal-footer-background, var(--dait-card-soft, var(--background-surface-higher, var(--background-secondary-alt, #2b2d31))));
-    --dait-quick-border: var(--dait-border, var(--border-subtle, var(--background-modifier-accent, rgba(255, 255, 255, 0.08))));
-    --dait-quick-shadow: var(--elevation-high, 0 18px 52px rgba(0, 0, 0, 0.38));
-    --dait-quick-text: var(--text-normal, var(--text-primary, #dbdee1));
-    --dait-quick-title: var(--header-primary, var(--text-normal, #f2f3f5));
-    --dait-quick-muted: var(--dait-muted-readable, var(--interactive-normal, var(--text-muted, #b5bac1)));
-    --dait-quick-hover: var(--dait-control-hover, var(--background-modifier-hover, rgba(255, 255, 255, 0.08)));
-    color-scheme: dark;
-}
-
-.theme-darker.dait-quick-settings-modal-root,
-.theme-darker .dait-quick-settings-modal-root,
-.dait-quick-settings-modal-root[data-dait-discord-theme="darker"],
-[data-dait-discord-theme="darker"] .dait-quick-settings-modal-root {
-    --dait-quick-backdrop: rgba(0, 0, 0, 0.5);
-    --dait-quick-dialog-bg: var(--modal-background, var(--dait-card, var(--background-surface-high, var(--background-secondary, #1e1f22))));
-    --dait-quick-footer-bg: var(--modal-footer-background, var(--dait-card-soft, var(--background-surface-higher, var(--background-secondary-alt, #191b1f))));
-    --dait-quick-border: var(--dait-border, var(--border-subtle, rgba(255, 255, 255, 0.09)));
-    --dait-quick-shadow: 0 20px 54px rgba(0, 0, 0, 0.46);
-    --dait-quick-text: var(--text-normal, var(--text-primary, #dbdee1));
-    --dait-quick-title: var(--header-primary, var(--text-normal, #f2f3f5));
-    --dait-quick-muted: var(--dait-muted-readable, var(--interactive-normal, var(--text-muted, #b5bac1)));
-    --dait-quick-hover: var(--dait-control-hover, var(--background-modifier-hover, rgba(255, 255, 255, 0.07)));
-    color-scheme: dark;
-}
-
-.theme-midnight.dait-quick-settings-modal-root,
-.theme-midnight .dait-quick-settings-modal-root,
-.dait-quick-settings-modal-root[data-dait-discord-theme="midnight"],
-[data-dait-discord-theme="midnight"] .dait-quick-settings-modal-root {
-    --dait-quick-backdrop: rgba(0, 0, 0, 0.58);
-    --dait-quick-dialog-bg: var(--modal-background, var(--dait-card, var(--background-surface-high, var(--background-secondary, #101114))));
-    --dait-quick-footer-bg: var(--modal-footer-background, var(--dait-card-soft, var(--background-surface-higher, var(--background-secondary-alt, #0b0c10))));
-    --dait-quick-border: var(--dait-border, var(--border-subtle, rgba(255, 255, 255, 0.08)));
-    --dait-quick-shadow: 0 22px 56px rgba(0, 0, 0, 0.52);
-    --dait-quick-text: var(--text-normal, var(--text-primary, #f2f3f5));
-    --dait-quick-title: var(--header-primary, var(--text-normal, #ffffff));
-    --dait-quick-muted: var(--dait-muted-readable, var(--interactive-normal, var(--text-muted, #b8c0cc)));
-    --dait-quick-hover: var(--dait-control-hover, var(--background-modifier-hover, rgba(255, 255, 255, 0.06)));
-    color-scheme: dark;
-}
-
-.dait-quick-settings-header {
-    align-items: center;
-    border-bottom: 1px solid var(--dait-quick-border);
+.dait-quick-settings-body {
     display: flex;
-    flex: 0 0 auto;
-    gap: 16px;
-    justify-content: space-between;
-    min-height: 58px;
-    padding: 16px 18px 14px;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
+    overflow-y: auto;
 }
 
-.dait-quick-settings-title {
-    color: var(--dait-quick-title);
-    font-size: 20px;
+/* The panel fills the window; its own content pane scrolls, so the title bar and the tab rail stay put. */
+.dait-quick-settings-body > .dait-settings {
+    border-radius: 0;
+    flex: 1 1 auto;
+    height: auto;
+    min-height: 0;
+}
+
+.dait-quick-settings-error {
+    background: var(--dait-surface);
+    border: 1px solid var(--dait-danger);
+    border-radius: var(--dait-radius-card);
+    color: var(--dait-text);
+    display: grid;
+    gap: var(--dait-space-3);
+    justify-items: start;
+    margin: auto;
+    padding: var(--dait-space-5);
+    width: min(560px, calc(100% - 48px));
+}
+
+.dait-quick-settings-error h3 {
+    color: var(--dait-heading);
+    font-size: var(--dait-font-title);
     font-weight: 700;
-    letter-spacing: 0;
     line-height: 1.25;
     margin: 0;
 }
 
-.dait-quick-settings-body {
-    background: var(--dait-quick-dialog-bg);
-    color: var(--dait-quick-text);
-    min-height: 0;
-    overflow-y: auto;
-    padding: 22px 52px 26px;
-    scrollbar-gutter: stable;
-}
-
-.dait-quick-settings-body > .dait-settings {
-    margin: 0 auto;
-    max-width: 100%;
-    overflow: visible;
-    padding: 0;
-    width: min(1208px, 100%);
-}
-
-.dait-quick-settings-footer {
-    align-items: center;
-    background: var(--dait-quick-footer-bg);
-    border-top: 1px solid var(--dait-quick-border);
-    display: flex;
-    flex: 0 0 auto;
-    justify-content: flex-end;
-    min-height: 72px;
-    padding: 14px 18px;
+.dait-quick-settings-error p {
+    color: var(--dait-text-muted);
+    font-size: var(--dait-font-body);
+    line-height: 1.5;
+    margin: 0;
 }
 
 .dait-quick-settings-done {
-    background: var(--button-positive-background, var(--brand-500, #5865f2));
+    background: var(--dait-brand);
     border: 0;
-    border-radius: 6px;
-    color: var(--white-500, #ffffff);
+    border-radius: var(--dait-radius-control);
+    color: var(--dait-on-fill);
     cursor: pointer;
-    font-size: 14px;
-    font-weight: 700;
-    line-height: 1;
-    min-height: 38px;
-    min-width: 96px;
-    padding: 0 18px;
-}
-
-.dait-quick-settings-done:hover,
-.dait-quick-settings-done:focus-visible {
-    background: var(--button-positive-background-hover, var(--brand-560, #4752c4));
-}
-
-.dait-quick-settings-error {
-    background: var(--dait-quick-dialog-bg);
-    border: 1px solid var(--status-danger, #d83c3e);
-    border-radius: 8px;
-    box-shadow: var(--dait-shadow, 0 14px 34px rgba(0, 0, 0, 0.2));
-    color: var(--dait-quick-text);
-    display: grid;
-    gap: 10px;
-    margin: 0 auto;
-    max-width: 720px;
-    padding: 22px 24px;
-}
-
-.dait-quick-settings-error h3 {
-    color: var(--dait-quick-title);
-    font-size: 18px;
-    line-height: 1.3;
-    margin: 0;
-}
-
-.dait-quick-settings-error p {
-    color: var(--text-muted, #b5bac1);
-    font-size: 14px;
-    line-height: 1.45;
-    margin: 0;
-}
-
-.dait-quick-settings-close {
-    align-items: center;
-    background: transparent;
-    border: 0;
-    border-radius: 6px;
-    color: var(--dait-quick-muted);
-    cursor: pointer;
-    display: inline-flex;
-    flex: 0 0 auto;
-    font-size: 24px;
+    font-size: var(--dait-font-body);
     font-weight: 500;
-    height: 32px;
-    justify-content: center;
+    height: var(--dait-control-h);
     line-height: 1;
-    width: 32px;
+    padding: 0 14px;
 }
 
-.dait-quick-settings-close:hover,
-.dait-quick-settings-close:focus-visible {
-    background: var(--dait-quick-hover);
-    color: var(--interactive-hover, var(--dait-quick-title));
+.dait-quick-settings-done:hover {
+    background: var(--dait-brand-hover);
 }
 
 .dait-quick-settings-button {
@@ -346,13 +225,10 @@ module.exports = `.dait-quick-settings-modal-root {
     color: var(--dait-quick-button-hover-text);
 }
 
+/* The launcher's size and position come from 07-quick-popover; this keeps it from shrinking in the user panel. */
 .dait-quick-settings-panel {
     flex: 0 0 auto;
-    height: 28px;
     margin: 0 2px;
-    min-width: 28px;
-    padding: 0 7px;
-    position: static;
 }
 
 `;
