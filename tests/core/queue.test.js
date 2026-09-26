@@ -582,6 +582,45 @@ test("a failed emoji restore is remembered so the message is not requested again
     assert.equal(plugin.getAutoTranslationFailure(cacheItem.cacheKey)?.invalidReason, "emoji-restore-failed");
 });
 
+test("an undrawable result is dropped from the text cache too, so the scan does not redraw it on every pass", t => {
+    const plugin = createQueuePlugin(t);
+    plugin.getMessageIdentity = () => "";
+    plugin.isAutoTranslationTargetVisibleCached = () => true;
+    plugin.hasCurrentTranslationLine = () => false;
+    plugin.getElementText = () => SOURCE;
+    plugin.hasManualTranslationLine = () => false;
+    plugin.isAutoTranslationCacheTargetDrawable = () => true;
+    plugin.queueAutoTranslationRenderTask = task => task.run();
+    let drawAttempts = 0;
+    plugin.renderTranslation = () => {
+        drawAttempts++;
+        return null; // the emoji images cannot be restored
+    };
+    const candidate = { messageNode: { isConnected: true }, content: { dataset: {}, isConnected: true }, text: SOURCE, targetKind: "message" };
+    const first = plugin.evaluateAutoTranslationCandidate(candidate, { context: {} });
+    assert.equal(first.action, "enqueue");
+    const item = { ...first.item, cacheKey: first.cacheKey, requestOptions: first.requestOptions };
+    const validation = plugin.getAutoTranslationOutputValidationResult(SOURCE, TRANSLATED, plugin.getAutoTranslationTargetLanguage(item.requestOptions), {}, item.requestOptions);
+
+    // A request result is cached (message and text cache) and its draw fails.
+    plugin.cacheAutoTranslationResultWithOptions(item.cacheKey, SOURCE, item.requestOptions, TRANSLATED);
+    assert.equal(plugin.renderAutoTranslationRequestTarget(item, item, TRANSLATED, validation), false);
+    const afterRequest = plugin.evaluateAutoTranslationCandidate(candidate, { context: {} });
+    assert.equal(afterRequest.action, "terminal-failed", `after a failed request draw: ${afterRequest.action} ${afterRequest.reasonCode || ""}`);
+
+    // A cached result drawn by the scan fails the same way.
+    plugin.clearAutoTranslationFailure(item.cacheKey, item.requestOptions);
+    plugin.cacheAutoTranslationResultWithOptions(item.cacheKey, SOURCE, item.requestOptions, TRANSLATED);
+    const hit = plugin.evaluateAutoTranslationCandidate(candidate, { context: {} });
+    assert.equal(hit.action, "render-cache");
+    plugin.applyAutoTranslationDecision(candidate, hit, {});
+    const attempts = drawAttempts;
+    const afterCacheDraw = plugin.evaluateAutoTranslationCandidate(candidate, { context: {} });
+    assert.equal(afterCacheDraw.action, "terminal-failed", `after a failed cache draw: ${afterCacheDraw.action} ${afterCacheDraw.reasonCode || ""}`);
+    plugin.applyAutoTranslationDecision(candidate, afterCacheDraw, {});
+    assert.equal(drawAttempts, attempts, "no further draw attempt");
+});
+
 // --- req-8: manual request budget ---
 
 function manualPlan(plugin, text) {

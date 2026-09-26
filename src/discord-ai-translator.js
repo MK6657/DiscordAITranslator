@@ -8148,7 +8148,7 @@ module.exports = class DiscordAITranslator {
             // shown nor kept cached. The failure is recorded so the scan does not request the
             // same message again on every pass.
             this.deleteTranslationCacheCandidates(cacheKey, ...(options.deleteKeys || []));
-            this.markAutoTranslationUndrawableResult(cacheKey, "emoji-restore-failed");
+            this.markAutoTranslationUndrawableResult(cacheKey, "emoji-restore-failed", { text: target.text, requestOptions });
             this.logAutoTranslationMessageState(
                 "auto.message.state",
                 "render-skip",
@@ -8494,7 +8494,7 @@ module.exports = class DiscordAITranslator {
             // request the same message again.
             this.deleteTranslationCacheCandidates(renderCacheKey);
             if (item?.cacheKey && item.cacheKey !== renderCacheKey) this.deleteTranslationCacheCandidates(item.cacheKey);
-            this.markAutoTranslationUndrawableResult(renderCacheKey, "emoji-restore-failed");
+            this.markAutoTranslationUndrawableResult(renderCacheKey, "emoji-restore-failed", { text: item?.text || target.text, requestOptions: item?.requestOptions || requestOptions });
             if (item?.cacheKey && item.cacheKey !== renderCacheKey) this.markAutoTranslationUndrawableResult(item.cacheKey, "emoji-restore-failed");
             this.logAutoTranslationRenderSkip(item, target, "emoji-restore-failed");
             return false;

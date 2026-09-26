@@ -2104,9 +2104,17 @@ class AutoTranslationQueueCore {
 
     // A result that cannot be drawn (its emoji images cannot be restored) is recorded as a final
     // invalid output, so the scan does not request the same message again on every pass.
-    markAutoTranslationUndrawableResult(cacheKey, reason = "emoji-restore-failed") {
+    // The auto-text cache holds the same result under the text alone; it is dropped too, otherwise
+    // the scan would draw it again from there (clearing this failure) on every pass.
+    markAutoTranslationUndrawableResult(cacheKey, reason = "emoji-restore-failed", source = null) {
         const key = String(cacheKey || "");
         if (!key) return null;
+        if (source?.text && source?.requestOptions) {
+            this.plugin.deleteTranslationCacheCandidates(
+                this.plugin.getAutoTextTranslationCacheKey(source.text, source.requestOptions),
+                ...this.plugin.getAutoTextTranslationCacheAliases(source.text, source.requestOptions)
+            );
+        }
         const failure = this.plugin.createAutoTranslationFailure(key, this.plugin.createFinalInvalidAutoTranslationError(reason));
         this.plugin.autoTranslationFailures.set(key, failure);
         this.plugin.pruneAutoTranslationFailureMapSize();
