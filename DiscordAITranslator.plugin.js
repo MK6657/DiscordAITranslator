@@ -307,47 +307,28 @@ var require_theme_tokens = __commonJS({
     margin-top: clamp(16px, 4vh, 32px) !important;
 }
 
-/* One token layer for the settings window, the settings/quick modal shell and the polish result panel. Every token
-   reads Discord's own variables (so dark, light and custom themes follow Discord) with a single fallback. */
+/* The plugin's own windows: the settings panel (in BetterDiscord's modal and in the launcher's window), the
+   launcher's window frame, the quick panel, the polish result panel, the composer's action menu and the content of
+   the confirmation dialogs. Their colours come only from the two palettes below, picked by data-dait-panel-theme
+   (set by applyPanelTheme from ui.panelTheme; "auto" follows Discord's light or dark theme). Nothing here reads a
+   Discord colour variable, so a part of Discord themed differently from the page cannot mix into these windows.
+   Chat translation lines and the message/composer buttons live inside Discord's UI and keep Discord's colours. */
 .dait-settings,
 .dait-quick-settings-modal-root,
-[data-dait-settings-modal="true"],
-.dait-polish-result-panel {
-    --dait-bg: var(--background-base-low, var(--background-primary, #313338));
-    --dait-surface: var(--background-base-lower, var(--background-secondary, #2b2d31));
-    --dait-surface-2: var(--background-base-lowest, var(--background-tertiary, #1e1f22));
-    --dait-input-bg: var(--input-background, var(--background-tertiary, #1e1f22));
-    --dait-input-border: var(--input-border, color-mix(in srgb, var(--dait-text-muted) 28%, transparent));
-    --dait-divider: var(--border-subtle, var(--background-modifier-accent, #3f4147));
-    --dait-hover: var(--background-modifier-hover, rgba(78, 80, 88, 0.3));
-    --dait-selected: var(--background-modifier-selected, rgba(78, 80, 88, 0.6));
-    --dait-text: var(--text-default, var(--text-normal, #dbdee1));
-    --dait-text-muted: var(--header-secondary, var(--text-muted, #b5bac1));
-    --dait-heading: var(--text-strong, var(--header-primary, #f2f3f5));
-    --dait-brand: var(--button-filled-brand-background, #4752c4);
-    --dait-brand-hover: var(--button-filled-brand-background-hover, #3c45a5);
-    --dait-on-fill: #ffffff;
-    --dait-button-secondary: var(--button-secondary-background, #4e5058);
-    --dait-button-secondary-hover: var(--button-secondary-background-hover, #6d6f78);
-    --dait-positive-fill: var(--button-positive-background, #248046);
-    --dait-danger-fill: var(--button-danger-background, #da373c);
-    --dait-danger: var(--text-danger, #fa777c);
-    --dait-warning: var(--text-warning, #f0b232);
-    --dait-success: var(--text-positive, #4ec183);
-    --dait-focus: var(--focus-primary, #00a8fc);
-    --dait-link: var(--text-link, #00a8fc);
-    --dait-shadow: var(--elevation-high, 0 8px 24px rgba(0, 0, 0, 0.24));
-    --dait-scrollbar-thumb: var(--scrollbar-thin-thumb, rgba(128, 132, 142, 0.45));
-    --dait-scrollbar-thumb-hover: var(--scrollbar-auto-thumb, rgba(128, 132, 142, 0.7));
-    --dait-scrollbar-track: var(--scrollbar-thin-track, transparent);
-
-    /* Type scale (px), 4/8 spacing grid, radii and the shared control size. */
-    --dait-font-title: 20px;
-    --dait-font-heading: 16px;
-    --dait-font-label: 15px;
-    --dait-font-body: 14px;
-    --dait-font-caption: 13px;
-    --dait-font-chip: 12px;
+.dait-quick-popover,
+.dait-polish-result-panel,
+.dait-input-action-menu,
+.dait-dialog {
+    /* One type scale for every window: body 15/1.55 for everything that is not a heading; small 13 only for the
+       version chip, the search box's hint and status badges next to a title. Weights 400/500/600. */
+    --dait-font-window: 18px;
+    --dait-font-page: 20px;
+    --dait-font-group: 16px;
+    --dait-font-body: 15px;
+    --dait-font-small: 13px;
+    --dait-line: 1.55;
+    --dait-font-family: var(--font-primary, "gg sans", "Noto Sans", "Microsoft YaHei", "Helvetica Neue", Helvetica, Arial, sans-serif);
+    /* 4/8 spacing grid, radii and the shared control size. */
     --dait-space-1: 4px;
     --dait-space-2: 8px;
     --dait-space-3: 12px;
@@ -358,47 +339,87 @@ var require_theme_tokens = __commonJS({
     --dait-radius-card: 8px;
     --dait-radius-pill: 999px;
     --dait-control-w: 240px;
-    --dait-control-h: 32px;
-
-    /* v0.3.0 token names, kept as aliases for the stylesheets that still use them. */
-    --dait-accent: var(--brand-500, #5865f2);
-    --dait-card: var(--dait-bg);
-    --dait-card-raised: var(--dait-surface);
-    --dait-card-soft: var(--dait-surface-2);
-    --dait-border: var(--dait-divider);
-    --dait-border-strong: color-mix(in srgb, var(--dait-text-muted) 45%, var(--dait-divider));
-    --dait-control: var(--dait-input-bg);
-    --dait-control-hover: color-mix(in srgb, var(--dait-text) 6%, var(--dait-input-bg));
-    --dait-label: var(--dait-text);
-    --dait-muted-readable: var(--dait-text-muted);
-    --dait-disabled-text: color-mix(in srgb, var(--dait-text-muted) 72%, var(--dait-bg));
+    --dait-control-h: 36px;
+    /* Derived from the palette: hover of filled buttons, the switch track when off, scrollbars. */
+    --dait-brand-hover: color-mix(in srgb, var(--dait-brand) 86%, #000000);
+    --dait-raised-hover: color-mix(in srgb, var(--dait-raised) 88%, var(--dait-text));
+    --dait-switch-off: color-mix(in srgb, var(--dait-placeholder) 78%, var(--dait-bg));
+    --dait-scrollbar-thumb: color-mix(in srgb, var(--dait-placeholder) 55%, transparent);
+    --dait-scrollbar-thumb-hover: color-mix(in srgb, var(--dait-placeholder) 80%, transparent);
+    --dait-scrollbar-track: transparent;
     color: var(--dait-text);
+    font-family: var(--dait-font-family);
+    font-size: var(--dait-font-body);
+    font-weight: 400;
+    letter-spacing: 0;
+    line-height: var(--dait-line);
+}
+
+/* Dark palette (also the default for a window that has not been given a theme yet). */
+[data-dait-panel-theme="dark"],
+:is(.dait-settings, .dait-quick-settings-modal-root, .dait-quick-popover, .dait-polish-result-panel, .dait-input-action-menu, .dait-dialog):not([data-dait-panel-theme]) {
+    --dait-bg: #2b2d31;
+    --dait-rail: #232428;
+    --dait-surface: #313338;
+    --dait-raised: #383a40;
+    --dait-input-bg: #1e1f22;
+    /* Control edges (inputs, selects, segmented controls, secondary buttons) reach 3:1 against the window, rail and
+       card surfaces (WCAG 1.4.11); the spec's #4e5058 reached 1.6-1.9:1. */
+    --dait-input-border: #7a7e86;
+    --dait-divider: #3f4147;
+    --dait-text: #e3e5e8;
+    --dait-heading: #f2f3f5;
+    --dait-placeholder: #949ba4;
+    --dait-brand: #4f5bd5;
+    --dait-on-fill: #ffffff;
+    --dait-link: #a4abf8;
+    --dait-focus: #6f79e8;
+    --dait-success-fill: #3ba55d;
+    --dait-success: #6ccf8e;
+    --dait-warning-fill: #f0b232;
+    --dait-warning: #f5c55c;
+    --dait-danger-fill: #da373c;
+    --dait-danger: #ff8a8e;
+    --dait-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    --dait-backdrop: rgba(0, 0, 0, 0.5);
     color-scheme: dark;
 }
 
-/* Light theme: only the tokens whose Discord variable can be missing get a light fallback. */
-.theme-light.dait-settings,
-.theme-light .dait-settings,
-.dait-settings[data-dait-discord-theme="light"],
-[data-dait-discord-theme="light"] .dait-settings,
-.theme-light.dait-quick-settings-modal-root,
-.theme-light .dait-quick-settings-modal-root,
-.dait-quick-settings-modal-root[data-dait-discord-theme="light"],
-[data-dait-discord-theme="light"] .dait-quick-settings-modal-root,
-.theme-light [data-dait-settings-modal="true"],
-.theme-light[data-dait-settings-modal="true"],
-[data-dait-settings-modal="true"][data-dait-discord-theme="light"],
-.theme-light.dait-polish-result-panel,
-.theme-light .dait-polish-result-panel,
-.dait-polish-result-panel[data-dait-discord-theme="light"] {
-    --dait-danger: var(--text-danger, #c4323a);
-    --dait-warning: var(--text-warning, #9a5b00);
-    --dait-success: var(--text-positive, #1a7545);
-    --dait-link: var(--text-link, #006ce7);
-    --dait-hover: var(--background-modifier-hover, rgba(116, 124, 138, 0.14));
-    --dait-selected: var(--background-modifier-selected, rgba(116, 124, 138, 0.24));
-    --dait-shadow: var(--elevation-high, 0 8px 24px rgba(24, 36, 61, 0.14));
+/* Light palette. */
+[data-dait-panel-theme="light"] {
+    --dait-bg: #ffffff;
+    --dait-rail: #f2f3f5;
+    --dait-surface: #f6f7f8;
+    --dait-raised: #ebedef;
+    --dait-input-bg: #ffffff;
+    /* White inputs sit on the white window: their edge is the only thing that shows them, so it reaches 3:1 on the
+       window, rail and card surfaces (WCAG 1.4.11); the spec's #c4c9ce reached 1.5-1.7:1. */
+    --dait-input-border: #868a91;
+    --dait-divider: #e3e5e8;
+    --dait-text: #2e3035;
+    --dait-heading: #1f2124;
+    --dait-placeholder: #6d6f78;
+    --dait-brand: #4f5bd5;
+    --dait-on-fill: #ffffff;
+    --dait-link: #3c45a5;
+    --dait-focus: #4f5bd5;
+    --dait-success-fill: #248046;
+    --dait-success: #1a7f45;
+    --dait-warning-fill: #c7860d;
+    --dait-warning: #8a5a00;
+    --dait-danger-fill: #da373c;
+    --dait-danger: #c42b2f;
+    --dait-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+    --dait-backdrop: rgba(0, 0, 0, 0.36);
     color-scheme: light;
+}
+
+/* BetterDiscord's modal frame is Discord's own element: it keeps Discord's colours, and its scrollbar is a neutral
+   grey that reads on light and dark frames. */
+[data-dait-settings-modal="true"] {
+    --dait-scrollbar-thumb: rgba(128, 132, 142, 0.45);
+    --dait-scrollbar-thumb-hover: rgba(128, 132, 142, 0.7);
+    --dait-scrollbar-track: transparent;
 }
 
 .dait-settings *,
@@ -411,7 +432,11 @@ var require_theme_tokens = __commonJS({
 .dait-polish-result-panel,
 .dait-polish-result-panel *,
 .dait-polish-restore-control,
-.dait-message-button {
+.dait-message-button,
+.dait-input-action-menu,
+.dait-input-action-menu *,
+.dait-dialog,
+.dait-dialog * {
     box-sizing: border-box;
 }
 
@@ -493,10 +518,28 @@ var require_theme_tokens = __commonJS({
     background: transparent;
 }
 
+/* Icons in icon buttons (the settings window's and the polish panel's close): an SVG shape painted in the button's
+   text colour, 18 px like the quick panel's icons, instead of a text glyph outside the type scale. */
+.dait-icon {
+    background: currentColor;
+    display: block;
+    flex: 0 0 auto;
+    height: 18px;
+    -webkit-mask: var(--dait-icon-image) center / 18px 18px no-repeat;
+    mask: var(--dait-icon-image) center / 18px 18px no-repeat;
+    width: 18px;
+}
+
+.dait-icon-close {
+    --dait-icon-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M6 6l12 12M18 6L6 18'/%3E%3C/svg%3E");
+}
+
 /* One visible focus ring for every control in these surfaces. */
 .dait-settings :focus-visible,
 .dait-quick-settings-modal-root :focus-visible,
-.dait-polish-result-panel :focus-visible {
+.dait-polish-result-panel :focus-visible,
+.dait-input-action-menu :focus-visible,
+.dait-dialog :focus-visible {
     outline: 2px solid var(--dait-focus);
     outline-offset: 2px;
 }
@@ -507,7 +550,9 @@ var require_theme_tokens = __commonJS({
     .dait-quick-settings-modal-root,
     .dait-quick-settings-modal-root *,
     .dait-polish-result-panel,
-    .dait-polish-result-panel * {
+    .dait-polish-result-panel *,
+    .dait-input-action-menu,
+    .dait-input-action-menu * {
         animation-duration: 0.01ms !important;
         animation-iteration-count: 1 !important;
         scroll-behavior: auto !important;
@@ -524,9 +569,8 @@ var require_quick_settings = __commonJS({
   "src/css/02-quick-settings.js"(exports2, module2) {
     "use strict";
     module2.exports = `.dait-quick-settings-modal-root {
-    --dait-quick-backdrop: rgba(0, 0, 0, 0.42);
     align-items: center;
-    background: var(--dait-quick-backdrop);
+    background: var(--dait-backdrop);
     color: var(--dait-text);
     display: flex;
     inset: 0;
@@ -536,13 +580,6 @@ var require_quick_settings = __commonJS({
     pointer-events: auto;
     position: fixed;
     z-index: 2147483000;
-}
-
-.theme-light.dait-quick-settings-modal-root,
-.theme-light .dait-quick-settings-modal-root,
-.dait-quick-settings-modal-root[data-dait-discord-theme="light"],
-[data-dait-discord-theme="light"] .dait-quick-settings-modal-root {
-    --dait-quick-backdrop: rgba(6, 6, 7, 0.34);
 }
 
 .dait-quick-settings-backdrop {
@@ -596,16 +633,16 @@ var require_quick_settings = __commonJS({
 
 .dait-quick-settings-error h3 {
     color: var(--dait-heading);
-    font-size: var(--dait-font-title);
-    font-weight: 700;
-    line-height: 1.25;
+    font-size: var(--dait-font-window);
+    font-weight: 600;
+    line-height: 1.3;
     margin: 0;
 }
 
 .dait-quick-settings-error p {
-    color: var(--dait-text-muted);
+    color: var(--dait-text);
     font-size: var(--dait-font-body);
-    line-height: 1.5;
+    line-height: var(--dait-line);
     margin: 0;
 }
 
@@ -615,10 +652,11 @@ var require_quick_settings = __commonJS({
     border-radius: var(--dait-radius-control);
     color: var(--dait-on-fill);
     cursor: pointer;
+    font-family: inherit;
     font-size: var(--dait-font-body);
     font-weight: 500;
     height: var(--dait-control-h);
-    line-height: 1;
+    line-height: var(--dait-line);
     padding: 0 14px;
 }
 
@@ -838,7 +876,6 @@ var require_settings = __commonJS({
     module2.exports = `.dait-settings {
     --dait-rail-w: 184px;
     --dait-content-max: 680px;
-    --dait-switch-off: color-mix(in srgb, var(--dait-text-muted) 60%, var(--dait-surface-2));
     background: var(--dait-bg);
     border-radius: var(--dait-radius-card);
     color: var(--dait-text);
@@ -847,7 +884,7 @@ var require_settings = __commonJS({
     flex-direction: column;
     font-size: var(--dait-font-body);
     height: calc(min(760px, 100vh - 64px, var(--dait-host-max, 100vh)) - var(--dait-host-chrome, 140px));
-    line-height: 1.4;
+    line-height: var(--dait-line);
     margin-left: auto;
     margin-right: auto;
     /* At least 360 px, but never more than the host leaves: a taller panel would make the host scroll too. */
@@ -895,8 +932,8 @@ var require_settings = __commonJS({
     color: var(--dait-on-fill);
     display: flex;
     flex: 0 0 auto;
-    font-size: 13px;
-    font-weight: 700;
+    font-size: var(--dait-font-body);
+    font-weight: 600;
     height: 32px;
     justify-content: center;
     width: 32px;
@@ -904,9 +941,9 @@ var require_settings = __commonJS({
 
 .dait-settings-title {
     color: var(--dait-heading);
-    font-size: var(--dait-font-title);
-    font-weight: 700;
-    line-height: 1.25;
+    font-size: var(--dait-font-window);
+    font-weight: 600;
+    line-height: 1.3;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -914,23 +951,27 @@ var require_settings = __commonJS({
 }
 
 .dait-settings-version {
-    background: var(--dait-surface-2);
+    background: var(--dait-raised);
     border-radius: var(--dait-radius-pill);
     color: var(--dait-text);
     flex: 0 0 auto;
-    font-size: var(--dait-font-chip);
+    font-size: var(--dait-font-small);
     font-variant-numeric: tabular-nums;
     font-weight: 500;
     line-height: 1.5;
     padding: 1px 8px;
 }
 
+/* The translation status next to the window title: one size for the whole line, the status word at 500 and the
+   service at 400. */
 .dait-settings-header-status {
     align-items: center;
     color: var(--dait-text);
     display: inline-flex;
-    font-size: var(--dait-font-caption);
+    font-size: var(--dait-font-body);
+    font-weight: 400;
     gap: var(--dait-space-2);
+    line-height: var(--dait-line);
     margin-left: auto;
     min-width: 0;
 }
@@ -941,32 +982,31 @@ var require_settings = __commonJS({
 }
 
 .dait-settings-header-provider {
-    color: var(--dait-text-muted);
+    color: var(--dait-text);
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
+/* Close: a 36 px icon button with the shared close icon (01-theme-tokens), like the quick panel's. */
 .dait-settings-close {
     align-items: center;
     background: transparent;
     border: 0;
     border-radius: var(--dait-radius-control);
-    color: var(--dait-text-muted);
+    color: var(--dait-text);
     cursor: pointer;
     display: inline-flex;
     flex: 0 0 auto;
-    font-size: 24px;
-    font-weight: 400;
-    height: 36px;
+    height: var(--dait-control-h);
     justify-content: center;
-    line-height: 1;
-    width: 36px;
+    padding: 0;
+    width: var(--dait-control-h);
 }
 
 .dait-settings-close:hover {
-    background: var(--dait-hover);
+    background: var(--dait-raised);
     color: var(--dait-heading);
 }
 
@@ -976,14 +1016,15 @@ var require_settings = __commonJS({
     align-items: center;
     color: var(--dait-text);
     display: inline-flex;
-    font-size: var(--dait-font-caption);
+    font-size: var(--dait-font-body);
+    font-weight: 500;
     gap: 6px;
-    line-height: 1.3;
+    line-height: var(--dait-line);
     white-space: nowrap;
 }
 
 .dait-settings .dait-api-status::before {
-    background: var(--dait-text-muted);
+    background: var(--dait-placeholder);
     border-radius: 1px;
     content: "";
     flex: 0 0 auto;
@@ -993,13 +1034,13 @@ var require_settings = __commonJS({
 
 .dait-settings .dait-api-status.dait-api-status-testing::before {
     background: transparent;
-    border: 2px solid var(--dait-text-muted);
+    border: 2px solid var(--dait-placeholder);
     border-radius: var(--dait-radius-pill);
     height: 10px;
 }
 
 .dait-settings .dait-api-status.dait-api-status-success::before {
-    background: var(--dait-success);
+    background: var(--dait-success-fill);
     border-radius: var(--dait-radius-pill);
     height: 10px;
 }
@@ -1009,19 +1050,15 @@ var require_settings = __commonJS({
     color: var(--dait-danger);
 }
 
+/* The "!" is drawn (a bar and a dot), not a text glyph outside the type scale. */
 .dait-settings .dait-api-status.dait-api-status-failed::before,
 .dait-settings .dait-api-status.dait-api-status-unconfigured::before {
-    align-items: center;
-    background: var(--dait-danger-fill);
+    background:
+        linear-gradient(var(--dait-on-fill), var(--dait-on-fill)) 50% 3px / 2px 5px no-repeat,
+        linear-gradient(var(--dait-on-fill), var(--dait-on-fill)) 50% 9px / 2px 2px no-repeat,
+        var(--dait-danger-fill);
     border-radius: var(--dait-radius-pill);
-    color: var(--dait-on-fill);
-    content: "!";
-    display: inline-flex;
-    font-size: 12px;
-    font-weight: 700;
     height: 14px;
-    justify-content: center;
-    line-height: 1;
     width: 14px;
 }
 
@@ -1035,7 +1072,7 @@ var require_settings = __commonJS({
 }
 
 .dait-settings-rail {
-    background: var(--dait-surface);
+    background: var(--dait-rail);
     display: flex;
     flex-direction: column;
     gap: var(--dait-space-3);
@@ -1052,7 +1089,7 @@ var require_settings = __commonJS({
 }
 
 .dait-settings-search::before {
-    background: var(--dait-text-muted);
+    background: var(--dait-placeholder);
     content: "";
     height: 14px;
     left: 10px;
@@ -1060,13 +1097,20 @@ var require_settings = __commonJS({
     mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='M20 20l-3.5-3.5'/%3E%3C/svg%3E") center / contain no-repeat;
     pointer-events: none;
     position: absolute;
-    top: 9px;
+    top: calc(var(--dait-control-h) / 2 - 7px);
     width: 14px;
 }
 
 .dait-settings .dait-settings-search-input {
     padding-left: 32px;
+    padding-right: 8px;
     width: 100%;
+}
+
+/* The search box's hint: the small size, so it fits the rail in every language. */
+.dait-settings .dait-settings-search-input::placeholder {
+    font-size: var(--dait-font-small);
+    font-weight: 500;
 }
 
 .dait-settings-tabs {
@@ -1080,25 +1124,25 @@ var require_settings = __commonJS({
     background: transparent;
     border: 0;
     border-radius: var(--dait-radius-control);
-    color: var(--dait-text-muted);
+    color: var(--dait-text);
     cursor: pointer;
-    font-size: var(--dait-font-label);
+    font-size: var(--dait-font-body);
     font-weight: 500;
-    line-height: 1.3;
-    min-height: 36px;
+    line-height: var(--dait-line);
+    min-height: 38px;
     padding: 7px 10px;
     text-align: left;
     width: 100%;
 }
 
 .dait-settings-tab:hover {
-    background: var(--dait-hover);
+    background: var(--dait-raised);
     color: var(--dait-text);
 }
 
 .dait-settings-tab[aria-selected="true"] {
-    background: var(--dait-selected);
-    color: var(--dait-heading);
+    background: var(--dait-brand);
+    color: var(--dait-on-fill);
 }
 
 .dait-settings-content {
@@ -1116,9 +1160,9 @@ var require_settings = __commonJS({
 
 .dait-settings-page-title {
     color: var(--dait-heading);
-    font-size: var(--dait-font-title);
-    font-weight: 700;
-    line-height: 1.25;
+    font-size: var(--dait-font-page);
+    font-weight: 600;
+    line-height: 1.3;
 }
 
 /* Groups: a heading, an optional one-line note, then flat rows with 1 px dividers. */
@@ -1131,18 +1175,21 @@ var require_settings = __commonJS({
     margin-top: var(--dait-space-4);
 }
 
+/* A group heading has a rule under it, so it reads as the start of a section and not as one more row label. */
 .dait-settings-group-title {
+    border-bottom: 1px solid var(--dait-divider);
     color: var(--dait-heading);
-    font-size: var(--dait-font-heading);
-    font-weight: 700;
+    font-size: var(--dait-font-group);
+    font-weight: 600;
     line-height: 1.3;
     margin-bottom: var(--dait-space-2);
+    padding-bottom: var(--dait-space-2);
 }
 
 .dait-settings-group-note {
-    color: var(--dait-text-muted);
+    color: var(--dait-text);
     font-size: var(--dait-font-body);
-    line-height: 1.5;
+    line-height: var(--dait-line);
     margin-bottom: var(--dait-space-1);
 }
 
@@ -1169,19 +1216,20 @@ var require_settings = __commonJS({
     min-width: 0;
 }
 
+/* Label and description share the body size and colour; the label's weight sets them apart. */
 .dait-row-label {
-    color: var(--dait-heading);
-    font-size: var(--dait-font-label);
-    font-weight: 500;
-    line-height: 1.4;
+    color: var(--dait-text);
+    font-size: var(--dait-font-body);
+    font-weight: 600;
+    line-height: var(--dait-line);
     overflow-wrap: anywhere;
 }
 
 .dait-row-description {
-    color: var(--dait-text-muted);
+    color: var(--dait-text);
     font-size: var(--dait-font-body);
     font-weight: 400;
-    line-height: 1.5;
+    line-height: var(--dait-line);
     overflow-wrap: anywhere;
 }
 
@@ -1234,13 +1282,10 @@ var require_settings = __commonJS({
     width: 100%;
 }
 
-/* A dependent option sits right under its parent, indented, and is disabled while the parent is off. */
+/* A dependent option sits right under its parent, indented, and is disabled while the parent is off. Only its
+   controls fade (55 %, below); the label and the reason under it stay fully readable. */
 .dait-settings-row-dependent {
     padding-left: var(--dait-space-4);
-}
-
-.dait-settings-row-inactive .dait-row-label {
-    color: var(--dait-text-muted);
 }
 
 .dait-settings-row-found {
@@ -1256,7 +1301,7 @@ var require_settings = __commonJS({
     color: var(--dait-text);
     font-size: var(--dait-font-body);
     font-weight: 400;
-    line-height: 20px;
+    line-height: var(--dait-line);
     max-width: 100%;
     min-width: 0;
     outline: none;
@@ -1269,14 +1314,15 @@ var require_settings = __commonJS({
 
 .dait-settings input::placeholder,
 .dait-settings textarea::placeholder {
-    color: color-mix(in srgb, var(--dait-text-muted) 80%, transparent);
+    color: var(--dait-placeholder);
+    opacity: 1;
 }
 
 .dait-settings :where(select) {
     appearance: none;
     background-image:
-        linear-gradient(45deg, transparent 50%, var(--dait-text-muted) 50%),
-        linear-gradient(135deg, var(--dait-text-muted) 50%, transparent 50%);
+        linear-gradient(45deg, transparent 50%, var(--dait-placeholder) 50%),
+        linear-gradient(135deg, var(--dait-placeholder) 50%, transparent 50%);
     background-position:
         calc(100% - 16px) 50%,
         calc(100% - 11px) 50%;
@@ -1289,14 +1335,14 @@ var require_settings = __commonJS({
 
 .dait-settings select option,
 .dait-settings select optgroup {
-    background-color: var(--dait-surface);
+    background-color: var(--dait-input-bg);
     color: var(--dait-text);
 }
 
 .dait-settings :where(textarea) {
     font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
-    font-size: 13px;
-    line-height: 1.5;
+    font-size: var(--dait-font-body);
+    line-height: var(--dait-line);
     min-height: 96px;
     overflow-x: auto;
     padding: 8px 10px;
@@ -1307,24 +1353,22 @@ var require_settings = __commonJS({
 }
 
 .dait-settings :where(input:not([type="checkbox"]):not([type="radio"]), select, textarea):hover:not(:disabled) {
-    border-color: color-mix(in srgb, var(--dait-text-muted) 60%, transparent);
+    border-color: var(--dait-placeholder);
 }
 
 .dait-settings :where(input:not([type="checkbox"]):not([type="radio"]), select, textarea):focus {
     border-color: var(--dait-focus);
 }
 
+/* A disabled control keeps its colours and fades as a whole. */
 .dait-settings-row input:disabled,
 .dait-settings-row select:disabled,
 .dait-settings-row textarea:disabled,
 .dait-prompt-editor textarea:disabled,
 .dait-prompt-tools input:disabled,
 .dait-prompt-tools select:disabled {
-    background-color: color-mix(in srgb, var(--dait-input-bg) 60%, var(--dait-bg));
-    color: var(--dait-disabled-text);
     cursor: not-allowed;
-    opacity: 1;
-    -webkit-text-fill-color: var(--dait-disabled-text);
+    opacity: 0.55;
 }
 
 /* Switch: a native checkbox with role="switch", 40 x 24. */
@@ -1356,7 +1400,7 @@ var require_settings = __commonJS({
 }
 
 .dait-settings input.dait-switch:checked {
-    background: var(--dait-positive-fill);
+    background: var(--dait-brand);
 }
 
 .dait-settings input.dait-switch:checked::after {
@@ -1365,17 +1409,18 @@ var require_settings = __commonJS({
 
 .dait-settings input.dait-switch:disabled {
     cursor: not-allowed;
-    opacity: 0.45;
+    opacity: 0.55;
 }
 
-/* Segmented control: equal-width options filling the control width. */
+/* Segmented control: each option as wide as its label, the spare width shared out equally, so labels that fit
+   together keep the shared 240 px control width (segmentedLabelsFit decides when a row has to stack instead). */
 .dait-segmented {
     background: var(--dait-input-bg);
     border: 1px solid var(--dait-input-border);
     border-radius: var(--dait-radius-control);
     display: grid;
     gap: 2px;
-    grid-auto-columns: minmax(0, 1fr);
+    grid-auto-columns: auto;
     grid-auto-flow: column;
     height: var(--dait-control-h);
     padding: 2px;
@@ -1385,77 +1430,73 @@ var require_settings = __commonJS({
     background: transparent;
     border: 0;
     border-radius: 3px;
-    color: var(--dait-text-muted);
+    color: var(--dait-text);
     cursor: pointer;
-    font-size: var(--dait-font-caption);
+    font-family: inherit;
+    font-size: var(--dait-font-body);
     font-weight: 500;
-    line-height: 1;
+    line-height: var(--dait-line);
     min-width: 0;
     overflow: hidden;
-    padding: 0 5px;
+    padding: 0 6px;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
 .dait-segmented-option:hover:not(:disabled) {
-    background: var(--dait-hover);
+    background: var(--dait-raised);
     color: var(--dait-text);
 }
 
-.dait-segmented-option[aria-checked="true"] {
-    background: var(--dait-button-secondary);
+.dait-segmented-option[aria-checked="true"],
+.dait-segmented-option[aria-checked="true"]:hover:not(:disabled) {
+    background: var(--dait-brand);
     color: var(--dait-on-fill);
 }
 
 .dait-segmented-option:disabled {
     cursor: not-allowed;
-    opacity: 0.5;
+    opacity: 0.55;
 }
 
-/* Buttons: 32 px high, 14/500. Default is the grey secondary button. */
+/* Buttons: 36 px high, body size at 500. Default is the grey secondary button, the one style for every button that
+   is neither primary nor dangerous (buttons created as "outline" look the same). */
 .dait-small-button {
     align-items: center;
-    background: var(--dait-button-secondary);
-    border: 1px solid transparent;
+    background: var(--dait-raised);
+    border: 1px solid var(--dait-input-border);
     border-radius: var(--dait-radius-control);
-    color: var(--dait-on-fill);
+    color: var(--dait-text);
     cursor: pointer;
     display: inline-flex;
     flex: 0 0 auto;
+    font-family: inherit;
     font-size: var(--dait-font-body);
     font-weight: 500;
     height: var(--dait-control-h);
     justify-content: center;
-    line-height: 1;
+    line-height: var(--dait-line);
     padding: 0 14px;
     white-space: nowrap;
 }
 
 .dait-small-button:hover:not(:disabled) {
-    background: var(--dait-button-secondary-hover);
+    background: var(--dait-raised-hover);
 }
 
 .dait-small-button:disabled {
     cursor: not-allowed;
-    opacity: 0.5;
+    opacity: 0.55;
 }
 
 .dait-small-button-primary {
     background: var(--dait-brand);
+    border-color: transparent;
+    color: var(--dait-on-fill);
 }
 
 .dait-small-button-primary:hover:not(:disabled) {
     background: var(--dait-brand-hover);
-}
-
-.dait-small-button-outline {
-    background: transparent;
-    border-color: var(--dait-input-border);
-    color: var(--dait-text);
-}
-
-.dait-small-button-outline:hover:not(:disabled) {
-    background: var(--dait-hover);
 }
 
 .dait-small-button-danger {
@@ -1470,6 +1511,7 @@ var require_settings = __commonJS({
 
 .dait-small-button-link {
     background: transparent;
+    border-color: transparent;
     color: var(--dait-link);
     padding: 0 6px;
 }
@@ -1477,6 +1519,11 @@ var require_settings = __commonJS({
 .dait-small-button-link:hover:not(:disabled) {
     background: transparent;
     text-decoration: underline;
+}
+
+/* A text link at the end of a row: its text ends on the controls' right edge. */
+.dait-row-control .dait-small-button-link:last-child {
+    margin-right: -6px;
 }
 
 /* Rows of action buttons wrap and stay right-aligned. */
@@ -1529,8 +1576,8 @@ var require_settings = __commonJS({
 }
 
 .dait-order-position {
-    color: var(--dait-text-muted);
-    font-size: var(--dait-font-caption);
+    color: var(--dait-text);
+    font-size: var(--dait-font-body);
     font-variant-numeric: tabular-nums;
     text-align: center;
 }
@@ -1551,13 +1598,9 @@ var require_settings = __commonJS({
     overflow-wrap: anywhere;
 }
 
-.dait-order-item:not(.dait-order-item-on) .dait-order-name {
-    color: var(--dait-text-muted);
-}
-
 .dait-order-note {
-    color: var(--dait-text-muted);
-    font-size: var(--dait-font-caption);
+    color: var(--dait-text);
+    font-size: var(--dait-font-body);
 }
 
 /* Only chosen services have a position to move. */
@@ -1566,7 +1609,7 @@ var require_settings = __commonJS({
 }
 
 .dait-small-button.dait-order-move {
-    font-size: var(--dait-font-label);
+    font-size: var(--dait-font-body);
     padding: 0;
     width: var(--dait-control-h);
 }
@@ -1580,7 +1623,7 @@ var require_settings = __commonJS({
     color: var(--dait-text);
     cursor: pointer;
     font-size: var(--dait-font-body);
-    font-weight: 500;
+    font-weight: 600;
     padding: 12px 0;
 }
 
@@ -1601,39 +1644,54 @@ var require_settings = __commonJS({
     padding: 0 var(--dait-space-4);
 }
 
+/* Title, status word and Test share the first line; the last test's details ("Hy-MT2 · 820 ms · just now") or its
+   error take their own full-width line under them, at the body size, and wrap instead of being cut off. */
 .dait-provider-settings-header {
     align-items: center;
     border-bottom: 1px solid var(--dait-divider);
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--dait-space-2) var(--dait-space-3);
-    min-height: 56px;
+    column-gap: var(--dait-space-3);
+    display: grid;
+    grid-template-areas:
+        "title status test"
+        "detail detail detail";
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    min-height: 60px;
     min-width: 0;
     padding: 12px 0;
 }
 
 .dait-provider-settings-title {
     color: var(--dait-heading);
-    flex: 1 1 auto;
-    font-size: var(--dait-font-label);
+    font-size: var(--dait-font-group);
     font-weight: 600;
+    grid-area: title;
     line-height: 1.3;
     min-width: 0;
     overflow-wrap: anywhere;
 }
 
+/* The status badge, the details and Test are placed in the card header's grid. */
 .dait-provider-connection {
-    align-items: center;
-    display: inline-flex;
-    flex: 0 1 auto;
-    gap: var(--dait-space-2);
-    margin-left: auto;
-    max-width: 100%;
-    min-width: 0;
+    display: contents;
+}
+
+.dait-provider-connection > .dait-api-status {
+    grid-area: status;
+    justify-self: end;
 }
 
 .dait-provider-connection > .dait-small-button {
-    margin-left: var(--dait-space-1);
+    grid-area: test;
+}
+
+.dait-settings .dait-provider-connection > .dait-api-test-detail {
+    grid-area: detail;
+    margin-top: var(--dait-space-1);
+    white-space: normal;
+}
+
+.dait-settings .dait-provider-connection > .dait-api-test-detail::before {
+    content: none;
 }
 
 .dait-provider-settings-block > .dait-settings-details:last-child,
@@ -1643,7 +1701,7 @@ var require_settings = __commonJS({
 
 .dait-settings-subheading {
     color: var(--dait-heading);
-    font-size: var(--dait-font-body);
+    font-size: var(--dait-font-group);
     font-weight: 600;
     padding-top: var(--dait-space-3);
 }
@@ -1662,7 +1720,7 @@ var require_settings = __commonJS({
     border-radius: var(--dait-radius-control);
     color: var(--dait-text);
     font-size: var(--dait-font-body);
-    line-height: 1.5;
+    line-height: var(--dait-line);
     padding: 8px 12px;
 }
 
@@ -1681,9 +1739,9 @@ var require_settings = __commonJS({
 
 .dait-diagnostic-summary-title {
     color: var(--dait-text);
-    font-size: var(--dait-font-caption);
+    font-size: var(--dait-font-body);
     font-weight: 600;
-    line-height: 1.3;
+    line-height: var(--dait-line);
 }
 
 .dait-diagnostic-summary-chips {
@@ -1695,19 +1753,18 @@ var require_settings = __commonJS({
 
 .dait-diagnostic-chip,
 .dait-diagnostic-summary-empty {
-    background: var(--dait-surface-2);
+    background: var(--dait-raised);
     border-radius: var(--dait-radius-pill);
     color: var(--dait-text);
-    font-size: var(--dait-font-chip);
-    font-weight: 500;
-    line-height: 1.4;
+    font-size: var(--dait-font-body);
+    font-weight: 400;
+    line-height: var(--dait-line);
     max-width: 100%;
     overflow-wrap: anywhere;
-    padding: 2px 8px;
+    padding: 2px 10px;
 }
 
 .dait-diagnostic-summary-empty {
-    color: var(--dait-text-muted);
     justify-self: start;
 }
 
@@ -1743,15 +1800,18 @@ var require_settings = __commonJS({
 
 .dait-setup-title {
     color: var(--dait-heading);
-    font-size: var(--dait-font-heading);
-    font-weight: 700;
+    font-size: var(--dait-font-group);
+    font-weight: 600;
     line-height: 1.3;
 }
 
+/* The progress sentence: body text on its own line under the card title. */
 .dait-setup-progress {
-    color: var(--dait-text-muted);
-    font-size: var(--dait-font-caption);
-    line-height: 1.4;
+    color: var(--dait-text);
+    flex-basis: 100%;
+    font-size: var(--dait-font-body);
+    font-weight: 400;
+    line-height: var(--dait-line);
 }
 
 .dait-setup-list {
@@ -1766,7 +1826,7 @@ var require_settings = __commonJS({
     column-gap: var(--dait-space-3);
     display: grid;
     grid-template-areas: "icon label detail action";
-    grid-template-columns: 18px minmax(112px, 168px) minmax(0, 1fr) auto;
+    grid-template-columns: 18px minmax(112px, 184px) minmax(0, 1fr) auto;
     min-height: 44px;
     padding: 6px 0;
 }
@@ -1785,7 +1845,7 @@ var require_settings = __commonJS({
 }
 
 .dait-setup-item-done .dait-setup-icon {
-    background: var(--dait-success);
+    background: var(--dait-success-fill);
     border-radius: 0;
     -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6L9 17l-5-5'/%3E%3C/svg%3E") center / contain no-repeat;
     mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6L9 17l-5-5'/%3E%3C/svg%3E") center / contain no-repeat;
@@ -1793,14 +1853,14 @@ var require_settings = __commonJS({
 
 .dait-setup-item-todo .dait-setup-icon,
 .dait-setup-item-busy .dait-setup-icon {
-    border: 2px solid var(--dait-text-muted);
+    border: 2px solid var(--dait-placeholder);
     height: 16px;
     margin: 1px;
     width: 16px;
 }
 
 .dait-setup-item-busy .dait-setup-icon {
-    border-color: var(--dait-warning);
+    border-color: var(--dait-warning-fill);
     border-style: dashed;
 }
 
@@ -1809,20 +1869,16 @@ var require_settings = __commonJS({
 }
 
 .dait-setup-item-error .dait-setup-icon::after {
-    color: var(--dait-on-fill);
-    content: "!";
-    font-size: 12px;
-    font-weight: 700;
-    left: 0;
-    line-height: 18px;
+    background:
+        linear-gradient(var(--dait-on-fill), var(--dait-on-fill)) 50% 4px / 2px 6px no-repeat,
+        linear-gradient(var(--dait-on-fill), var(--dait-on-fill)) 50% 12px / 2px 2px no-repeat;
+    content: "";
+    inset: 0;
     position: absolute;
-    right: 0;
-    text-align: center;
-    top: 0;
 }
 
 .dait-setup-item-off .dait-setup-icon::after {
-    background: var(--dait-text-muted);
+    background: var(--dait-placeholder);
     border-radius: 1px;
     content: "";
     height: 2px;
@@ -1833,19 +1889,19 @@ var require_settings = __commonJS({
 }
 
 .dait-setup-label {
-    color: var(--dait-heading);
-    font-size: var(--dait-font-label);
-    font-weight: 500;
+    color: var(--dait-text);
+    font-size: var(--dait-font-body);
+    font-weight: 600;
     grid-area: label;
-    line-height: 1.4;
+    line-height: var(--dait-line);
     min-width: 0;
 }
 
 .dait-setup-detail {
-    color: var(--dait-text-muted);
+    color: var(--dait-text);
     font-size: var(--dait-font-body);
     grid-area: detail;
-    line-height: 1.5;
+    line-height: var(--dait-line);
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1888,8 +1944,8 @@ var require_settings = __commonJS({
 
 .dait-service-card-title {
     color: var(--dait-heading);
-    font-size: var(--dait-font-label);
-    font-weight: 500;
+    font-size: var(--dait-font-group);
+    font-weight: 600;
     line-height: 1.35;
     overflow-wrap: anywhere;
 }
@@ -1921,14 +1977,14 @@ var require_settings = __commonJS({
     align-items: center;
     color: var(--dait-text);
     display: inline-flex;
-    font-size: var(--dait-font-caption);
+    font-size: var(--dait-font-body);
     gap: 6px;
-    line-height: 1.3;
+    line-height: var(--dait-line);
     min-width: 0;
 }
 
 .dait-status-mark::before {
-    background: var(--dait-text-muted);
+    background: var(--dait-placeholder);
     border-radius: 1px;
     content: "";
     flex: 0 0 auto;
@@ -1941,25 +1997,21 @@ var require_settings = __commonJS({
 }
 
 .dait-status-mark-needs::before {
-    align-items: center;
-    background: var(--dait-danger-fill);
+    background:
+        linear-gradient(var(--dait-on-fill), var(--dait-on-fill)) 50% 3px / 2px 5px no-repeat,
+        linear-gradient(var(--dait-on-fill), var(--dait-on-fill)) 50% 9px / 2px 2px no-repeat,
+        var(--dait-danger-fill);
     border-radius: var(--dait-radius-pill);
-    color: var(--dait-on-fill);
-    content: "!";
-    display: inline-flex;
-    font-size: 12px;
-    font-weight: 700;
     height: 14px;
-    justify-content: center;
-    line-height: 1;
     width: 14px;
 }
 
 /* The last test's details after a status badge; hidden as soon as the badge shows another state. */
 .dait-settings .dait-api-test-detail {
-    color: var(--dait-text-muted);
-    font-size: var(--dait-font-caption);
-    line-height: 1.3;
+    color: var(--dait-text);
+    font-size: var(--dait-font-body);
+    font-weight: 400;
+    line-height: var(--dait-line);
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1976,28 +2028,9 @@ var require_settings = __commonJS({
     display: none;
 }
 
-.dait-provider-connection .dait-api-test-detail {
-    max-width: 260px;
-}
-
 /* An error is worth reading in full: it wraps instead of being cut off. */
 .dait-settings .dait-api-test-detail[data-dait-for="failed"] {
     white-space: normal;
-}
-
-.dait-provider-connection .dait-api-test-detail[data-dait-for="failed"] {
-    max-width: 300px;
-}
-
-/* With an error to read, the status takes its own full-width line under the card title. */
-.dait-provider-settings-header:has(.dait-api-status-failed + .dait-api-test-detail[data-dait-for="failed"]:not([hidden])) > .dait-provider-connection {
-    flex-basis: 100%;
-    margin-left: 0;
-}
-
-.dait-provider-settings-header:has(.dait-api-status-failed + .dait-api-test-detail[data-dait-for="failed"]:not([hidden])) .dait-api-test-detail {
-    flex: 1 1 auto;
-    max-width: none;
 }
 
 /* Model field (Sakura local, OpenAI-compatible): name + "Detect models", the picker below. */
@@ -2054,7 +2087,7 @@ var require_settings = __commonJS({
     color: var(--dait-text);
     font-size: var(--dait-font-body);
     grid-area: result;
-    line-height: 1.5;
+    line-height: var(--dait-line);
     margin: 2px 0 0;
     min-width: 0;
     overflow-wrap: anywhere;
@@ -2063,8 +2096,8 @@ var require_settings = __commonJS({
 }
 
 .dait-try-time {
-    color: var(--dait-text-muted);
-    font-size: var(--dait-font-caption);
+    color: var(--dait-text);
+    font-size: var(--dait-font-body);
     white-space: nowrap;
 }
 
@@ -2094,8 +2127,8 @@ var require_settings = __commonJS({
 
 .dait-prompt-manager-header > span {
     color: var(--dait-heading);
-    font-size: var(--dait-font-heading);
-    font-weight: 700;
+    font-size: var(--dait-font-group);
+    font-weight: 600;
     line-height: 1.3;
 }
 
@@ -2122,9 +2155,9 @@ var require_settings = __commonJS({
 }
 
 .dait-prompt-editor > span {
-    color: var(--dait-heading);
-    font-size: var(--dait-font-label);
-    font-weight: 500;
+    color: var(--dait-text);
+    font-size: var(--dait-font-body);
+    font-weight: 600;
 }
 
 .dait-prompt-editor textarea {
@@ -2133,8 +2166,8 @@ var require_settings = __commonJS({
 
 /* Search results replace the tab page while a query is typed. */
 .dait-settings-search-summary {
-    color: var(--dait-text-muted);
-    font-size: var(--dait-font-caption);
+    color: var(--dait-text);
+    font-size: var(--dait-font-body);
     margin-bottom: var(--dait-space-2);
 }
 
@@ -2167,31 +2200,35 @@ var require_settings = __commonJS({
 
 .dait-settings-search-result:hover,
 .dait-settings-search-result:focus-visible {
-    background: var(--dait-hover);
+    background: var(--dait-raised);
 }
 
 .dait-settings-search-result-label {
-    color: var(--dait-heading);
-    font-size: var(--dait-font-label);
-    font-weight: 500;
+    color: var(--dait-text);
+    font-size: var(--dait-font-body);
+    font-weight: 600;
     grid-area: label;
+    line-height: var(--dait-line);
     min-width: 0;
 }
 
+/* The tab a result is on, a chip next to its title: body text like the rest of the result. */
 .dait-settings-search-result-tab {
-    background: var(--dait-surface-2);
+    background: var(--dait-raised);
     border-radius: var(--dait-radius-pill);
     color: var(--dait-text);
-    font-size: var(--dait-font-chip);
-    font-weight: 500;
+    font-size: var(--dait-font-body);
+    font-weight: 400;
     grid-area: tab;
-    padding: 2px 8px;
+    line-height: var(--dait-line);
+    padding: 0 10px;
     white-space: nowrap;
 }
 
 .dait-settings-search-result-description {
-    color: var(--dait-text-muted);
+    color: var(--dait-text);
     font-size: var(--dait-font-body);
+    line-height: var(--dait-line);
     grid-area: desc;
     min-width: 0;
     overflow: hidden;
@@ -2199,9 +2236,24 @@ var require_settings = __commonJS({
     white-space: nowrap;
 }
 
-/* Danger zone at the end of the data tab. */
+/* Danger zone at the end of the data tab: the heading colour like every other heading, with the danger mark in
+   front (the same drawn "!" as a failed connection). */
 .dait-settings-danger-zone .dait-settings-group-title {
-    color: var(--dait-danger);
+    align-items: center;
+    display: flex;
+    gap: var(--dait-space-2);
+}
+
+.dait-settings-danger-zone .dait-settings-group-title::before {
+    background:
+        linear-gradient(var(--dait-on-fill), var(--dait-on-fill)) 50% 4px / 2px 6px no-repeat,
+        linear-gradient(var(--dait-on-fill), var(--dait-on-fill)) 50% 11px / 2px 2px no-repeat,
+        var(--dait-danger-fill);
+    border-radius: var(--dait-radius-pill);
+    content: "";
+    flex: 0 0 auto;
+    height: 16px;
+    width: 16px;
 }
 
 /* Narrower panel (BetterDiscord's own plugin-settings modal, small windows): the tab rail becomes a scrolling row
@@ -2566,13 +2618,16 @@ var require_composer = __commonJS({
     padding: 0 7px;
 }
 
+/* The composer's action menu is a plugin window: the panel palette (01-theme-tokens) and the body type size. */
 .dait-input-action-menu {
-    background: color-mix(in srgb, var(--background-floating, #111214) 96%, transparent);
-    border: 1px solid color-mix(in srgb, var(--background-modifier-accent, #4e5058) 82%, transparent);
-    border-radius: 8px;
-    box-shadow: var(--elevation-high, 0 10px 24px rgba(0, 0, 0, 0.28));
+    background: var(--dait-bg);
+    border: 1px solid var(--dait-divider);
+    border-radius: var(--dait-radius-card);
+    box-shadow: var(--dait-shadow);
+    color: var(--dait-text);
     display: grid;
-    gap: 3px;
+    gap: 2px;
+    min-width: 160px;
     padding: 6px;
     position: fixed;
     z-index: 10000;
@@ -2582,49 +2637,25 @@ var require_composer = __commonJS({
     align-items: center;
     background: transparent;
     border: 0;
-    border-radius: 6px;
-    color: var(--interactive-normal, var(--text-normal, #dbdee1));
+    border-radius: var(--dait-radius-control);
+    color: var(--dait-text);
     cursor: pointer;
     display: flex;
-    font-size: 13px;
-    font-weight: 650;
+    font-family: inherit;
+    font-size: var(--dait-font-body);
+    font-weight: 500;
     justify-content: flex-start;
-    min-height: 32px;
-    padding: 0 10px;
+    line-height: var(--dait-line);
+    min-height: var(--dait-control-h);
+    padding: 0 12px;
     text-align: left;
     white-space: nowrap;
 }
 
 .dait-input-action-menu-item:hover,
 .dait-input-action-menu-item:focus-visible {
-    background: color-mix(in srgb, var(--brand-500, #5865f2) 18%, var(--background-modifier-hover, rgba(79, 84, 92, 0.18)));
-    color: var(--interactive-hover, var(--text-normal, #ffffff));
-    outline: none;
-}
-
-.theme-light.dait-input-action-menu,
-.theme-light .dait-input-action-menu,
-.dait-input-action-menu[data-dait-discord-theme="light"],
-[data-dait-discord-theme="light"] .dait-input-action-menu {
-    background: rgba(255, 255, 255, 0.98);
-    border-color: rgba(79, 84, 92, 0.2);
-    box-shadow: var(--elevation-high, 0 10px 24px rgba(0, 0, 0, 0.16));
-}
-
-.theme-light .dait-input-action-menu-item,
-.dait-input-action-menu[data-dait-discord-theme="light"] .dait-input-action-menu-item,
-[data-dait-discord-theme="light"] .dait-input-action-menu-item {
-    color: var(--interactive-normal, #4f5660);
-}
-
-.theme-light .dait-input-action-menu-item:hover,
-.theme-light .dait-input-action-menu-item:focus-visible,
-.dait-input-action-menu[data-dait-discord-theme="light"] .dait-input-action-menu-item:hover,
-.dait-input-action-menu[data-dait-discord-theme="light"] .dait-input-action-menu-item:focus-visible,
-[data-dait-discord-theme="light"] .dait-input-action-menu-item:hover,
-[data-dait-discord-theme="light"] .dait-input-action-menu-item:focus-visible {
-    background: rgba(88, 101, 242, 0.14);
-    color: var(--interactive-hover, #2e3338);
+    background: var(--dait-raised);
+    color: var(--dait-heading);
 }
 
 .dait-polish-restore-control {
@@ -2674,7 +2705,7 @@ var require_composer = __commonJS({
     border-color: color-mix(in srgb, var(--brand-500, #5865f2) 62%, var(--background-modifier-accent, #4e5058));
 }
 
-/* Colours come from the shared tokens (01-theme-tokens), so every Discord theme is covered without per-theme copies. */
+/* Colours come from the panel palette (01-theme-tokens, data-dait-panel-theme on the panel). */
 .dait-polish-result-panel {
     background: var(--dait-surface);
     border: 1px solid var(--dait-divider);
@@ -2683,7 +2714,7 @@ var require_composer = __commonJS({
     color: var(--dait-text);
     display: grid;
     gap: var(--dait-space-2);
-    max-height: min(34vh, 260px);
+    max-height: min(34vh, 280px);
     min-width: 240px;
     padding: var(--dait-space-3);
     position: fixed;
@@ -2698,10 +2729,11 @@ var require_composer = __commonJS({
     min-width: 0;
 }
 
-/* The settings type scale: title 15/600, buttons 14/500 at 32 px, weights 400-700 only. */
+/* The windows' type scale: the window title (18/600) like the quick panel and the settings window, text and buttons
+   at the body size, 36 px buttons; close is a 36 px icon button with the shared close icon (01-theme-tokens). */
 .dait-polish-result-title {
     color: var(--dait-heading);
-    font-size: var(--dait-font-label);
+    font-size: var(--dait-font-window);
     font-weight: 600;
     line-height: 1.3;
     min-width: 0;
@@ -2712,32 +2744,31 @@ var require_composer = __commonJS({
     background: transparent;
     border: 0;
     border-radius: var(--dait-radius-control);
-    color: var(--dait-text-muted);
+    color: var(--dait-text);
     cursor: pointer;
     display: inline-flex;
     flex: 0 0 auto;
     font-family: inherit;
-    font-size: 20px;
-    font-weight: 400;
-    height: 28px;
+    height: var(--dait-control-h);
     justify-content: center;
-    line-height: 1;
+    margin: -4px -6px -4px 0;
     padding: 0;
-    width: 28px;
+    width: var(--dait-control-h);
 }
 
 .dait-polish-result-icon:hover {
-    background: var(--dait-hover);
+    background: var(--dait-raised);
     color: var(--dait-heading);
 }
 
 .dait-polish-result-output {
     background: var(--dait-input-bg);
-    border: 1px solid var(--dait-divider);
+    border: 1px solid var(--dait-input-border);
     border-radius: var(--dait-radius-control);
     color: var(--dait-text);
     font: inherit;
-    line-height: 1.45;
+    font-size: var(--dait-font-body);
+    line-height: var(--dait-line);
     max-height: min(18vh, 150px);
     overflow: auto;
     padding: 8px 12px;
@@ -2752,13 +2783,13 @@ var require_composer = __commonJS({
     justify-content: flex-end;
 }
 
-/* Like the settings buttons: grey secondary, brand-filled primary, white text on both. */
+/* Like the settings buttons: grey secondary, brand-filled primary with white text. */
 .dait-polish-result-action {
     align-items: center;
-    background: var(--dait-button-secondary);
-    border: 0;
+    background: var(--dait-raised);
+    border: 1px solid var(--dait-input-border);
     border-radius: var(--dait-radius-control);
-    color: var(--dait-on-fill);
+    color: var(--dait-text);
     cursor: pointer;
     display: inline-flex;
     font-family: inherit;
@@ -2766,17 +2797,19 @@ var require_composer = __commonJS({
     font-weight: 500;
     height: var(--dait-control-h);
     justify-content: center;
-    line-height: 1;
+    line-height: var(--dait-line);
     padding: 0 14px;
     white-space: nowrap;
 }
 
 .dait-polish-result-action.primary {
     background: var(--dait-brand);
+    border-color: transparent;
+    color: var(--dait-on-fill);
 }
 
 .dait-polish-result-action:hover:not(:disabled) {
-    background: var(--dait-button-secondary-hover);
+    background: var(--dait-raised-hover);
 }
 
 .dait-polish-result-action.primary:hover:not(:disabled) {
@@ -2785,7 +2818,7 @@ var require_composer = __commonJS({
 
 .dait-polish-result-action:disabled {
     cursor: not-allowed;
-    opacity: 0.5;
+    opacity: 0.55;
 }
 
 `;
@@ -3347,7 +3380,6 @@ var require_quick_popover = __commonJS({
   "src/css/07-quick-popover.js"(exports2, module2) {
     "use strict";
     module2.exports = `
-.dait-quick-popover,
 .dait-launcher-status {
     --dait-qp-ok: var(--status-positive, #23a55a);
     --dait-qp-warn: var(--status-warning, #f0b232);
@@ -3357,64 +3389,33 @@ var require_quick_popover = __commonJS({
 }
 
 .dait-quick-popover {
-    --dait-qp-bg: var(--background-surface-high, var(--background-primary, #313338));
-    --dait-qp-surface: var(--background-secondary, #2b2d31);
-    --dait-qp-input-bg: var(--input-background, var(--background-tertiary, #1e1f22));
-    --dait-qp-divider: var(--border-subtle, var(--background-modifier-accent, #3f4147));
-    --dait-qp-text: var(--text-default, var(--text-normal, #dbdee1));
-    --dait-qp-heading: var(--text-strong, var(--header-primary, #f2f3f5));
-    --dait-qp-muted: var(--text-muted, #b5bac1);
-    --dait-qp-link: var(--text-link, #949cf7);
-    --dait-qp-danger-text: var(--text-danger, #fa777c);
-    --dait-qp-hover: var(--background-modifier-hover, rgba(78, 80, 88, 0.3));
-    --dait-qp-button-bg: var(--button-secondary-background, #4e5058);
-    --dait-qp-button-hover-bg: var(--button-secondary-background-hover, #6d6f78);
-    --dait-qp-button-text: var(--white-500, #ffffff);
-    --dait-qp-switch-off: var(--interactive-muted, #4e5058);
-    --dait-qp-switch-on: var(--status-positive-background, #248046);
-    --dait-qp-focus: var(--focus-primary, var(--brand-500, #5865f2));
-    --dait-qp-shadow: var(--elevation-high, 0 12px 32px rgba(0, 0, 0, 0.45));
-    --dait-qp-control-w: 168px;
-    background: var(--dait-qp-bg);
-    border: 1px solid var(--dait-qp-divider);
+    --dait-qp-ok: var(--dait-success-fill);
+    --dait-qp-warn: var(--dait-warning-fill);
+    --dait-qp-danger: var(--dait-danger-fill);
+    --dait-qp-off: var(--dait-placeholder);
+    --dait-qp-off-mark: var(--dait-placeholder);
+    --dait-qp-control-w: 180px;
+    background: var(--dait-bg);
+    border: 1px solid var(--dait-divider);
     border-radius: 8px;
-    box-shadow: var(--dait-qp-shadow);
+    box-shadow: var(--dait-shadow);
     box-sizing: border-box;
-    color: var(--dait-qp-text);
-    color-scheme: dark;
+    color: var(--dait-text);
     display: flex;
     flex-direction: column;
-    font-size: 14px;
+    font-size: var(--dait-font-body);
     font-weight: 400;
     left: 8px;
     letter-spacing: 0;
-    line-height: 1.4;
-    max-height: min(600px, calc(100vh - 96px));
+    line-height: var(--dait-line);
+    max-height: min(760px, calc(100vh - 64px));
     max-width: calc(100vw - 16px);
     overflow: hidden;
     position: fixed;
     text-align: start;
     top: 8px;
-    width: 340px;
+    width: 360px;
     z-index: 2147482000;
-}
-
-.dait-quick-popover[data-dait-discord-theme="light"] {
-    --dait-qp-bg: var(--background-surface-high, var(--background-primary, #ffffff));
-    --dait-qp-surface: var(--background-secondary, #f2f3f5);
-    --dait-qp-input-bg: var(--input-background, var(--background-tertiary, #e3e5e8));
-    --dait-qp-divider: var(--border-subtle, var(--background-modifier-accent, #d7dce7));
-    --dait-qp-text: var(--text-default, var(--text-normal, #313338));
-    --dait-qp-heading: var(--text-strong, var(--header-primary, #060607));
-    --dait-qp-muted: var(--text-muted, #5c5e66);
-    --dait-qp-link: var(--text-link, #2e5bd1);
-    --dait-qp-danger-text: var(--text-danger, #c4314b);
-    --dait-qp-hover: var(--background-modifier-hover, rgba(116, 127, 141, 0.16));
-    --dait-qp-button-bg: var(--button-secondary-background, #6d6f78);
-    --dait-qp-button-hover-bg: var(--button-secondary-background-hover, #4e5058);
-    --dait-qp-switch-off: var(--interactive-muted, #80848e);
-    --dait-qp-shadow: var(--elevation-high, 0 12px 32px rgba(24, 36, 61, 0.2));
-    color-scheme: light;
 }
 
 .dait-quick-popover *,
@@ -3432,10 +3433,10 @@ var require_quick_popover = __commonJS({
 }
 
 .dait-qp-title {
-    color: var(--dait-qp-heading);
-    font-size: 16px;
-    font-weight: 700;
-    line-height: 1.25;
+    color: var(--dait-heading);
+    font-size: var(--dait-font-window);
+    font-weight: 600;
+    line-height: 1.3;
     margin: 0;
     min-width: 0;
     overflow: hidden;
@@ -3444,11 +3445,11 @@ var require_quick_popover = __commonJS({
 }
 
 .dait-qp-chip {
-    background: var(--dait-qp-surface);
+    background: var(--dait-raised);
     border-radius: 999px;
-    color: var(--dait-qp-muted);
+    color: var(--dait-text);
     flex: 0 0 auto;
-    font-size: 12px;
+    font-size: var(--dait-font-small);
     font-weight: 500;
     line-height: 20px;
     padding: 0 8px;
@@ -3459,14 +3460,14 @@ var require_quick_popover = __commonJS({
     background: transparent;
     border: 0;
     border-radius: 4px;
-    color: var(--dait-qp-muted);
+    color: var(--dait-text);
     cursor: pointer;
     display: inline-flex;
     flex: 0 0 auto;
-    height: 32px;
+    height: var(--dait-control-h);
     justify-content: center;
     padding: 0;
-    width: 32px;
+    width: var(--dait-control-h);
 }
 
 .dait-qp-header-open-full {
@@ -3474,8 +3475,8 @@ var require_quick_popover = __commonJS({
 }
 
 .dait-qp-icon-button:hover {
-    background: var(--dait-qp-hover);
-    color: var(--dait-qp-heading);
+    background: var(--dait-raised);
+    color: var(--dait-heading);
 }
 
 .dait-qp-icon {
@@ -3505,9 +3506,11 @@ var require_quick_popover = __commonJS({
     scrollbar-width: thin;
 }
 
+/* Status card: the dot, the service line and Test share the first line; the test result, what is happening now
+   and the note take the full width under them (the text column is not squeezed beside the button). */
 .dait-qp-status {
     align-items: center;
-    background: var(--dait-qp-surface);
+    background: var(--dait-surface);
     border-radius: 8px;
     column-gap: 12px;
     display: grid;
@@ -3516,50 +3519,68 @@ var require_quick_popover = __commonJS({
     padding: 10px 12px;
 }
 
-/* The dot sits on the first text line (not the middle of a wrapped block). */
 .dait-qp-status > .dait-qp-dot {
-    align-self: start;
-    margin-top: 5px;
+    grid-column: 1;
+    grid-row: 1;
 }
 
 .dait-qp-status-text {
-    min-width: 0;
+    display: contents;
+}
+
+.dait-qp-status > .dait-qp-test {
+    grid-column: 3;
+    grid-row: 1;
 }
 
 .dait-qp-status-line {
-    color: var(--dait-qp-heading);
-    font-size: 14px;
-    font-weight: 500;
-    line-height: 1.4;
+    color: var(--dait-text);
+    font-size: var(--dait-font-body);
+    font-weight: 600;
+    grid-column: 2;
+    grid-row: 1;
+    line-height: var(--dait-line);
     margin: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-/* The last passed connection test: model and response time, e.g. "Hy-MT2 · 820 ms". */
+/* The last passed connection test: model and response time, e.g. "Hy-MT2 · 820 ms". A long model name wraps to a
+   second line instead of being cut off. */
 .dait-qp-status-test {
-    color: var(--dait-qp-muted);
-    font-size: 13px;
+    -webkit-box-orient: vertical;
+    color: var(--dait-text);
+    display: -webkit-box;
+    font-size: var(--dait-font-body);
     font-variant-numeric: tabular-nums;
-    line-height: 1.45;
+    grid-column: 2 / -1;
+    -webkit-line-clamp: 2;
+    line-height: var(--dait-line);
     margin: 2px 0 0;
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
 }
 
 .dait-qp-status-test[hidden] {
     display: none;
 }
 
+/* "model · 820 ms": each dot stays with the part before it and the time stays whole, so a wrap never starts a line
+   with a dot or splits "820 ms"; a long model name can still wrap. */
+.dait-qp-status-sep,
+.dait-qp-status-part {
+    white-space: nowrap;
+}
+
 .dait-qp-status-detail {
     -webkit-box-orient: vertical;
-    color: var(--dait-qp-muted);
+    color: var(--dait-text);
     display: -webkit-box;
-    font-size: 13px;
+    font-size: var(--dait-font-body);
+    grid-column: 2 / -1;
     -webkit-line-clamp: 2;
-    line-height: 1.45;
+    line-height: var(--dait-line);
     margin: 2px 0 0;
     overflow: hidden;
     overflow-wrap: anywhere;
@@ -3569,11 +3590,12 @@ var require_quick_popover = __commonJS({
    cut to one line; three lines hold every message the plugin writes. */
 .dait-qp-status-note {
     -webkit-box-orient: vertical;
-    color: var(--dait-qp-muted);
+    color: var(--dait-text);
     display: -webkit-box;
-    font-size: 13px;
+    font-size: var(--dait-font-body);
+    grid-column: 2 / -1;
     -webkit-line-clamp: 3;
-    line-height: 1.45;
+    line-height: var(--dait-line);
     margin: 2px 0 0;
     overflow: hidden;
     overflow-wrap: anywhere;
@@ -3584,38 +3606,39 @@ var require_quick_popover = __commonJS({
 }
 
 .dait-quick-popover[data-dait-status="needs-you"] .dait-qp-status-detail {
-    color: var(--dait-qp-danger-text);
+    color: var(--dait-danger);
 }
 
 .dait-qp-button {
     align-items: center;
-    border: 0;
+    border: 1px solid transparent;
     border-radius: 4px;
     cursor: pointer;
     display: inline-flex;
     font-family: inherit;
-    font-size: 14px;
+    font-size: var(--dait-font-body);
     font-weight: 500;
-    height: 32px;
+    height: var(--dait-control-h);
     justify-content: center;
-    line-height: 1;
+    line-height: var(--dait-line);
     min-width: 60px;
     padding: 0 14px;
     white-space: nowrap;
 }
 
 .dait-qp-button-secondary {
-    background: var(--dait-qp-button-bg);
-    color: var(--dait-qp-button-text);
+    background: var(--dait-raised);
+    border-color: var(--dait-input-border);
+    color: var(--dait-text);
 }
 
 .dait-qp-button-secondary:hover:not(:disabled) {
-    background: var(--dait-qp-button-hover-bg);
+    background: var(--dait-raised-hover);
 }
 
 .dait-qp-button:disabled {
     cursor: default;
-    opacity: 0.6;
+    opacity: 0.55;
 }
 
 .dait-qp-row {
@@ -3624,11 +3647,11 @@ var require_quick_popover = __commonJS({
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     min-height: 48px;
-    padding: 8px 0;
+    padding: 7px 0;
 }
 
 .dait-qp-row + .dait-qp-row {
-    border-top: 1px solid var(--dait-qp-divider);
+    border-top: 1px solid var(--dait-divider);
 }
 
 .dait-qp-row-stacked {
@@ -3640,12 +3663,13 @@ var require_quick_popover = __commonJS({
     min-width: 0;
 }
 
+/* Label and description share the body size and colour; the label's weight sets them apart. */
 .dait-qp-label {
-    color: var(--dait-qp-heading);
+    color: var(--dait-text);
     display: block;
-    font-size: 14px;
-    font-weight: 500;
-    line-height: 1.4;
+    font-size: var(--dait-font-body);
+    font-weight: 600;
+    line-height: var(--dait-line);
     margin: 0;
 }
 
@@ -3661,7 +3685,7 @@ label.dait-qp-label {
 }
 
 .dait-qp-channel-name {
-    color: var(--dait-qp-muted);
+    color: var(--dait-text);
     font-weight: 400;
     min-width: 0;
     overflow: hidden;
@@ -3670,31 +3694,31 @@ label.dait-qp-label {
 }
 
 .dait-qp-desc {
-    color: var(--dait-qp-muted);
-    font-size: 13px;
+    color: var(--dait-text);
+    font-size: var(--dait-font-body);
     font-weight: 400;
-    line-height: 1.45;
-    margin: 2px 0 0;
+    line-height: var(--dait-line);
+    margin: 0;
 }
 
 .dait-qp-row-stacked > .dait-qp-desc {
     margin: 0;
 }
 
+/* A section heading ("Display"): the group heading size. */
 .dait-qp-section {
-    color: var(--dait-qp-muted);
-    font-size: 12px;
-    font-weight: 700;
-    letter-spacing: 0.02em;
-    line-height: 1.4;
+    color: var(--dait-heading);
+    font-size: var(--dait-font-group);
+    font-weight: 600;
+    line-height: 1.3;
     margin: 0;
-    padding: 12px 0 0;
+    padding: 12px 0 2px;
 }
 
 .dait-qp-switch {
     -webkit-appearance: none;
     appearance: none;
-    background: var(--dait-qp-switch-off);
+    background: var(--dait-switch-off);
     border: 0;
     border-radius: 999px;
     cursor: pointer;
@@ -3719,7 +3743,7 @@ label.dait-qp-label {
 }
 
 .dait-qp-switch:checked {
-    background: var(--dait-qp-switch-on);
+    background: var(--dait-brand);
 }
 
 .dait-qp-switch:checked::before {
@@ -3730,30 +3754,51 @@ label.dait-qp-label {
     width: var(--dait-qp-control-w);
 }
 
+/* The same select as in the settings window: the palette's colours and its chevron. */
 .dait-qp-select {
-    background: var(--dait-qp-input-bg);
-    border: 1px solid var(--dait-qp-divider);
+    -webkit-appearance: none;
+    appearance: none;
+    background-color: var(--dait-input-bg);
+    background-image:
+        linear-gradient(45deg, transparent 50%, var(--dait-placeholder) 50%),
+        linear-gradient(135deg, var(--dait-placeholder) 50%, transparent 50%);
+    background-position:
+        calc(100% - 16px) 50%,
+        calc(100% - 11px) 50%;
+    background-repeat: no-repeat;
+    background-size: 5px 5px, 5px 5px;
+    border: 1px solid var(--dait-input-border);
     border-radius: 4px;
-    color: var(--dait-qp-text);
+    color: var(--dait-text);
     cursor: pointer;
     font-family: inherit;
-    font-size: 14px;
-    height: 32px;
+    font-size: var(--dait-font-body);
+    height: var(--dait-control-h);
     justify-self: end;
-    line-height: 1.2;
+    line-height: var(--dait-line);
     min-width: 0;
-    padding: 0 8px;
+    padding: 0 30px 0 10px;
+}
+
+.dait-qp-select:hover {
+    border-color: var(--dait-placeholder);
+}
+
+.dait-qp-select option {
+    background: var(--dait-input-bg);
+    color: var(--dait-text);
 }
 
 .dait-qp-segmented {
-    background: var(--dait-qp-input-bg);
+    background: var(--dait-input-bg);
+    border: 1px solid var(--dait-input-border);
     border-radius: 4px;
     display: grid;
     gap: 2px;
     grid-auto-columns: minmax(0, 1fr);
     grid-auto-flow: column;
     justify-self: stretch;
-    min-height: 32px;
+    min-height: var(--dait-control-h);
     padding: 2px;
 }
 
@@ -3765,16 +3810,16 @@ label.dait-qp-label {
     background: transparent;
     border: 0;
     border-radius: 3px;
-    color: var(--dait-qp-muted);
+    color: var(--dait-text);
     cursor: pointer;
     font-family: inherit;
-    font-size: 14px;
+    font-size: var(--dait-font-body);
     font-weight: 500;
-    line-height: 1.25;
-    min-height: 28px;
+    line-height: var(--dait-line);
+    min-height: 30px;
     min-width: 0;
     overflow: hidden;
-    padding: 4px;
+    padding: 0 4px;
     text-align: center;
     text-overflow: ellipsis;
     /* One line, like the other segments ("Follow main" fits in a third of the panel). */
@@ -3782,14 +3827,14 @@ label.dait-qp-label {
 }
 
 .dait-qp-segment:hover:not(:disabled):not([aria-checked="true"]) {
-    background: var(--dait-qp-hover);
-    color: var(--dait-qp-text);
+    background: var(--dait-raised);
+    color: var(--dait-text);
 }
 
-/* The chosen value reads at a glance in both themes: filled like a secondary button, white text. */
+/* The chosen value reads at a glance in both themes: filled with the accent, white text. */
 .dait-qp-segment[aria-checked="true"] {
-    background: var(--dait-qp-button-bg);
-    color: var(--dait-qp-button-text);
+    background: var(--dait-brand);
+    color: var(--dait-on-fill);
 }
 
 .dait-qp-segment:disabled {
@@ -3797,13 +3842,13 @@ label.dait-qp-label {
 }
 
 .dait-qp-segmented[aria-disabled="true"] {
-    opacity: 0.6;
+    opacity: 0.55;
 }
 
 .dait-qp-footer {
     align-items: center;
-    background: var(--dait-qp-surface);
-    border-top: 1px solid var(--dait-qp-divider);
+    background: var(--dait-surface);
+    border-top: 1px solid var(--dait-divider);
     display: flex;
     flex: 0 0 auto;
     gap: 8px;
@@ -3815,12 +3860,12 @@ label.dait-qp-label {
     background: transparent;
     border: 0;
     border-radius: 4px;
-    color: var(--dait-qp-link);
+    color: var(--dait-link);
     cursor: pointer;
     font-family: inherit;
-    font-size: 14px;
+    font-size: var(--dait-font-body);
     font-weight: 500;
-    height: 32px;
+    height: var(--dait-control-h);
     margin-left: -6px;
     padding: 0 6px;
 }
@@ -3830,8 +3875,8 @@ label.dait-qp-label {
 }
 
 .dait-qp-hint {
-    color: var(--dait-qp-muted);
-    font-size: 13px;
+    color: var(--dait-text);
+    font-size: var(--dait-font-body);
     white-space: nowrap;
 }
 
@@ -3840,7 +3885,7 @@ label.dait-qp-label {
 }
 
 .dait-quick-popover :focus-visible {
-    outline: 2px solid var(--dait-qp-focus);
+    outline: 2px solid var(--dait-focus);
     outline-offset: 2px;
 }
 
@@ -3999,12 +4044,19 @@ var require_dialogs = __commonJS({
 }
 
 .dait-dialog {
-    color: var(--text-default, var(--text-normal, #dbdee1));
+    color: var(--dait-text);
     display: grid;
-    font-size: 15px;
+    font-size: var(--dait-font-body);
     gap: 12px;
-    line-height: 1.5;
+    line-height: var(--dait-line);
     min-width: 0;
+}
+
+.dait-dialog[data-dait-dialog-surface="true"] {
+    background: var(--dait-bg);
+    border: 1px solid var(--dait-divider);
+    border-radius: var(--dait-radius-card);
+    padding: 16px;
 }
 
 .dait-dialog-text {
@@ -4018,41 +4070,34 @@ var require_dialogs = __commonJS({
     padding-left: 20px;
 }
 
-.dait-dialog-list-conditional {
-    color: var(--text-muted, #b5bac1);
-}
-
 .dait-dialog-list-erased {
-    color: var(--text-danger, var(--text-feedback-critical, #f57f81));
+    color: var(--dait-danger);
     font-weight: 500;
 }
 
 .dait-dialog-note {
-    color: var(--text-muted, #b5bac1);
+    color: inherit;
     display: block;
-    font-size: 13px;
+    font-size: var(--dait-font-body);
     font-weight: 400;
 }
 
-.dait-dialog-list-erased .dait-dialog-note {
-    color: inherit;
-}
-
+/* The raised surface stands out from Discord's modal background in both palettes. */
 .dait-dialog-check {
     align-items: center;
-    background: var(--background-secondary, #2b2d31);
-    border: 1px solid var(--border-subtle, var(--background-modifier-accent, #3f4147));
+    background: var(--dait-raised);
+    border: 1px solid var(--dait-divider);
     border-radius: 8px;
-    color: var(--header-primary, var(--text-strong, #f2f3f5));
+    color: var(--dait-text);
     cursor: pointer;
     display: flex;
-    font-weight: 500;
+    font-weight: 600;
     gap: 10px;
     padding: 12px;
 }
 
 .dait-dialog-check input {
-    accent-color: var(--button-filled-brand-background, #4752c4);
+    accent-color: var(--dait-brand);
     cursor: pointer;
     flex: none;
     height: 18px;
@@ -4062,15 +4107,16 @@ var require_dialogs = __commonJS({
 
 .dait-dialog-check input:focus-visible,
 .dait-dialog-preview:focus-visible {
-    outline: 2px solid var(--focus-primary, var(--brand-500, #5865f2));
+    outline: 2px solid var(--dait-focus);
     outline-offset: 2px;
 }
 
 .dait-dialog-preview {
-    background: var(--background-secondary, #2b2d31);
-    border-left: 3px solid var(--background-modifier-accent, #4e5058);
+    background: var(--dait-raised);
+    border-left: 3px solid var(--dait-input-border);
     border-radius: 4px;
-    font-size: 14px;
+    color: var(--dait-text);
+    font-size: var(--dait-font-body);
     max-height: 220px;
     overflow: auto;
     overflow-wrap: anywhere;
@@ -4078,23 +4124,7 @@ var require_dialogs = __commonJS({
     white-space: pre-wrap;
 }
 
-.dait-small-button-primary {
-    background: var(--dait-brand, var(--button-filled-brand-background, #4752c4));
-    border-color: transparent;
-    color: #ffffff;
-}
-
-.dait-small-button-primary:hover {
-    background: var(--button-filled-brand-background-hover, #3c45a5);
-    border-color: transparent;
-}
-
-.dait-small-button:disabled {
-    cursor: not-allowed;
-    opacity: 0.55;
-}
-
-/* Prompt-template manager: readable sizes and one control height (UI-SPEC typography). */
+/* Prompt-template manager: the body size and one control height (UI-SPEC typography). */
 .dait-prompt-manager {
     gap: 16px;
 }
@@ -4106,15 +4136,15 @@ var require_dialogs = __commonJS({
 
 .dait-prompt-manager-header > span,
 .dait-prompt-editor > span {
-    color: var(--dait-heading, var(--header-primary, #f2f3f5));
-    font-size: 15px;
-    font-weight: 500;
-    line-height: 1.4;
+    color: var(--dait-text);
+    font-size: var(--dait-font-body);
+    font-weight: 600;
+    line-height: var(--dait-line);
 }
 
 .dait-prompt-manager .dait-row-description {
-    font-size: 14px;
-    line-height: 1.5;
+    font-size: var(--dait-font-body);
+    line-height: var(--dait-line);
 }
 
 .dait-prompt-manager .dait-prompt-tools {
@@ -4124,12 +4154,12 @@ var require_dialogs = __commonJS({
 .dait-prompt-manager .dait-prompt-tools input,
 .dait-prompt-manager .dait-prompt-tools select {
     border-radius: 4px;
-    font-size: 14px;
+    font-size: var(--dait-font-body);
     font-weight: 400;
-    height: 32px;
-    line-height: 20px;
-    min-height: 32px;
-    padding: 5px 10px;
+    height: var(--dait-control-h);
+    line-height: var(--dait-line);
+    min-height: var(--dait-control-h);
+    padding: 0 10px;
 }
 
 /* The chevron (two gradient layers) keeps the positions from the settings stylesheet. */
@@ -4140,19 +4170,19 @@ var require_dialogs = __commonJS({
 .dait-prompt-manager .dait-prompt-editor textarea {
     border-radius: 4px;
     font-family: inherit;
-    font-size: 14px;
+    font-size: var(--dait-font-body);
     font-weight: 400;
-    line-height: 1.5;
+    line-height: var(--dait-line);
     min-height: 160px;
     padding: 8px 10px;
 }
 
 .dait-prompt-manager .dait-small-button {
     border-radius: 4px;
-    font-size: 14px;
+    font-size: var(--dait-font-body);
     font-weight: 500;
-    height: 32px;
-    min-height: 32px;
+    height: var(--dait-control-h);
+    min-height: var(--dait-control-h);
     padding: 0 14px;
 }
 
@@ -4167,19 +4197,19 @@ var require_dialogs = __commonJS({
 }
 
 .dait-prompt-preview-label {
-    color: var(--dait-text-muted, var(--dait-muted-readable, var(--text-muted, #b5bac1)));
-    font-size: 13px;
+    color: var(--dait-text);
+    font-size: var(--dait-font-body);
     font-weight: 600;
-    line-height: 1.4;
+    line-height: var(--dait-line);
 }
 
 .dait-prompt-preview {
-    background: var(--dait-surface-2, var(--dait-card-soft, var(--background-secondary, #2b2d31)));
-    border: 1px solid var(--dait-divider, var(--dait-border, var(--background-modifier-accent, #3f4147)));
+    background: var(--dait-surface);
+    border: 1px solid var(--dait-divider);
     border-radius: 4px;
-    color: var(--dait-text-muted, var(--dait-muted-readable, var(--text-muted, #b5bac1)));
-    font-size: 14px;
-    line-height: 1.5;
+    color: var(--dait-text);
+    font-size: var(--dait-font-body);
+    line-height: var(--dait-line);
     max-height: 168px;
     min-width: 0;
     overflow: auto;
@@ -4189,7 +4219,7 @@ var require_dialogs = __commonJS({
 }
 
 .dait-prompt-preview:focus-visible {
-    outline: 2px solid var(--dait-brand, var(--focus-primary, var(--brand-500, #5865f2)));
+    outline: 2px solid var(--dait-focus);
     outline-offset: 2px;
 }
 
@@ -4210,9 +4240,9 @@ var require_dialogs = __commonJS({
 }
 
 .dait-prompt-status {
-    color: var(--dait-text-muted, var(--dait-muted-readable, var(--text-muted, #b5bac1)));
-    font-size: 13px;
-    line-height: 1.4;
+    color: var(--dait-text);
+    font-size: var(--dait-font-body);
+    line-height: var(--dait-line);
     min-width: 0;
     overflow-wrap: anywhere;
 }
@@ -4726,6 +4756,7 @@ var require_constants = __commonJS({
     var MESSAGE_BUTTON_VISIBILITY_HOVER = "hover";
     var TRANSLATION_LINE_STYLES = Object.freeze(["tint", "muted", "tag"]);
     var TRANSLATION_LINE_TEXT_SCALES = Object.freeze([100, 90]);
+    var PANEL_THEMES = Object.freeze(["auto", "light", "dark"]);
     var RTL_LANGUAGE_CODES = Object.freeze(["ar", "fa", "he", "iw", "ur", "ps", "yi", "dv", "ug", "ckb", "sd"]);
     var POLISH_REPOLISH_SOURCE_ORIGINAL = "original";
     var POLISH_REPOLISH_SOURCE_LAST_RESULT = "lastResult";
@@ -5061,6 +5092,8 @@ var require_constants = __commonJS({
         hideOriginalAfterTranslation: false,
         translationStyle: "tint",
         translationTextScale: 100,
+        // One of PANEL_THEMES: the colours of the settings window, the quick panel and the dialogs.
+        panelTheme: "auto",
         injectMessageContextMenu: true,
         enablePolishHotkey: true,
         polishHotkey: "Ctrl+Alt+P",
@@ -5174,6 +5207,7 @@ var require_constants = __commonJS({
       MESSAGE_BUTTON_VISIBILITY_HOVER,
       TRANSLATION_LINE_STYLES,
       TRANSLATION_LINE_TEXT_SCALES,
+      PANEL_THEMES,
       RTL_LANGUAGE_CODES,
       POLISH_REPOLISH_SOURCE_ORIGINAL,
       POLISH_REPOLISH_SOURCE_LAST_RESULT,
@@ -10456,7 +10490,9 @@ var require_diagnostics_recorder = __commonJS({
             historyBackfillEnabled: this.plugin.settings.ui?.historyBackfillEnabled,
             providerFallbackEnabled: this.plugin.settings.ui?.providerFallbackEnabled,
             providerFallbackOrder: this.plugin.getProviderFallbackOrder("translation"),
-            localProviderModel: this.plugin.getLocalProviderDetectedModelSnapshot(this.plugin.settings.translation)
+            localProviderModel: this.plugin.getLocalProviderDetectedModelSnapshot(this.plugin.settings.translation),
+            panelTheme: this.plugin.settings.ui?.panelTheme,
+            panelThemeResolved: this.plugin.resolvePanelTheme()
           },
           stats: {
             entries: this.plugin.diagnosticLogs.length,
@@ -14306,6 +14342,269 @@ var require_provider_layer = __commonJS({
   }
 });
 
+// src/settings/panel-theme.js
+var require_panel_theme = __commonJS({
+  "src/settings/panel-theme.js"(exports2, module2) {
+    "use strict";
+    var { DEFAULT_SETTINGS, PANEL_THEMES } = require_constants();
+    var PANEL_THEME_ATTRIBUTE = "data-dait-panel-theme";
+    var PANEL_THEME_ROOT_SELECTOR = [
+      ".dait-settings",
+      ".dait-quick-settings-modal-root",
+      ".dait-quick-popover",
+      ".dait-polish-result-panel",
+      ".dait-input-action-menu",
+      ".dait-dialog"
+    ].join(", ");
+    var DISCORD_THEME_CLASS_PANEL_THEMES = Object.freeze({
+      "theme-light": "light",
+      "theme-dark": "dark",
+      "theme-darker": "dark",
+      "theme-midnight": "dark",
+      "theme-onyx": "dark",
+      "theme-ash": "dark"
+    });
+    var WATCHED_ATTRIBUTES = ["class", "data-theme", "theme"];
+    var DIALOG_CLASS = "dait-dialog";
+    var DIALOG_SURFACE_ATTRIBUTE = "data-dait-dialog-surface";
+    var PALETTE_BODY_TEXT = Object.freeze({ light: [46, 48, 53], dark: [227, 229, 232] });
+    function normalizePanelTheme(value) {
+      const theme = String(value || "").trim().toLowerCase();
+      return PANEL_THEMES.includes(theme) ? theme : DEFAULT_SETTINGS.ui.panelTheme;
+    }
+    function parseComputedColor(value) {
+      const text = String(value || "").trim().toLowerCase();
+      if (!text || text === "transparent") return { rgb: [0, 0, 0], alpha: 0 };
+      let match = /^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)(?:\s*[,/]\s*([\d.]+%?))?\s*\)$/.exec(text);
+      if (match) {
+        const alpha = match[4] === void 0 ? 1 : match[4].endsWith("%") ? parseFloat(match[4]) / 100 : parseFloat(match[4]);
+        return { rgb: [match[1], match[2], match[3]].map(Number), alpha };
+      }
+      match = /^color\(srgb\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)(?:\s*\/\s*([\d.]+%?))?\s*\)$/.exec(text);
+      if (match) {
+        const alpha = match[4] === void 0 ? 1 : match[4].endsWith("%") ? parseFloat(match[4]) / 100 : parseFloat(match[4]);
+        return { rgb: [match[1], match[2], match[3]].map((channel) => Number(channel) * 255), alpha };
+      }
+      return null;
+    }
+    function relativeLuminance(rgb) {
+      const [r, g, b] = rgb.map((channel) => {
+        const value = Math.min(255, Math.max(0, channel)) / 255;
+        return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+      });
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    }
+    function contrastRatio(a, b) {
+      const [high, low] = [relativeLuminance(a), relativeLuminance(b)].sort((x, y) => y - x);
+      return (high + 0.05) / (low + 0.05);
+    }
+    var PanelTheme = class {
+      constructor(plugin) {
+        this.plugin = plugin;
+        this.observer = null;
+        this.mediaQuery = null;
+        this.mediaListener = null;
+        this.lastTheme = "";
+      }
+      getSetting() {
+        return normalizePanelTheme(this.plugin.settings?.ui?.panelTheme);
+      }
+      // "light" or "dark" for the plugin's windows right now.
+      resolve(setting = this.getSetting()) {
+        const choice = normalizePanelTheme(setting);
+        if (choice !== "auto") return choice;
+        return this.getDiscordTheme() || this.getSystemTheme();
+      }
+      // Discord's own theme as "light" / "dark", or "" when nothing on the page says.
+      getDiscordTheme() {
+        if (typeof document === "undefined") return "";
+        for (const node of [document.documentElement, document.body]) {
+          const theme = this.getNodeTheme(node);
+          if (theme) return theme;
+        }
+        let candidates = [];
+        try {
+          candidates = this.plugin.getDiscordThemeCandidates?.() || [];
+        } catch {
+          candidates = [];
+        }
+        for (const node of candidates) {
+          const explicit = this.plugin.getElementDiscordThemeExplicitClass?.(node);
+          if (explicit) return explicit === "theme-light" ? "light" : "dark";
+        }
+        for (const node of candidates) {
+          const theme = this.getNodeClassTheme(node);
+          if (theme) return theme;
+        }
+        return "";
+      }
+      getNodeTheme(node) {
+        if (!node) return "";
+        const explicit = this.plugin.getElementDiscordThemeExplicitClass?.(node);
+        if (explicit) return explicit === "theme-light" ? "light" : "dark";
+        return this.getNodeClassTheme(node);
+      }
+      // Only Discord's own theme class names count, so an unrelated class that contains "light" or "dark" does not.
+      getNodeClassTheme(node) {
+        if (!node) return "";
+        const className = typeof node.className === "string" ? node.className : String(node.className?.baseVal || "");
+        const names = new Set(className.split(/\s+/).filter(Boolean));
+        const hasClass = (name) => {
+          if (names.has(name)) return true;
+          try {
+            return Boolean(node.classList?.contains?.(name));
+          } catch {
+            return false;
+          }
+        };
+        const themes = Object.keys(DISCORD_THEME_CLASS_PANEL_THEMES).filter(hasClass).map((name) => DISCORD_THEME_CLASS_PANEL_THEMES[name]);
+        if (!themes.length) return "";
+        return themes.includes("dark") ? "dark" : "light";
+      }
+      getSystemTheme() {
+        try {
+          if (typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(prefers-color-scheme: light)")?.matches) {
+            return "light";
+          }
+        } catch {
+        }
+        return "dark";
+      }
+      // Marks one window root with the palette to use. Returns the theme applied.
+      apply(node, theme = this.resolve()) {
+        if (!node) return theme;
+        if (node.dataset) {
+          if (node.dataset.daitPanelTheme !== theme) node.dataset.daitPanelTheme = theme;
+        } else if (typeof node.setAttribute === "function" && node.getAttribute?.(PANEL_THEME_ATTRIBUTE) !== theme) {
+          node.setAttribute(PANEL_THEME_ATTRIBUTE, theme);
+        }
+        return theme;
+      }
+      // The palette that reads on the first opaque background behind node (Discord's modal around dialog content):
+      // { theme: "light" | "dark", readable: body text reaches 4.5:1 }, or null when no background can be read.
+      getBackdropTheme(node) {
+        const view = node?.ownerDocument?.defaultView || (typeof window !== "undefined" ? window : null);
+        if (typeof view?.getComputedStyle !== "function") return null;
+        for (let current = node?.parentElement; current; current = current.parentElement) {
+          let color = null;
+          try {
+            color = parseComputedColor(view.getComputedStyle(current)?.backgroundColor);
+          } catch {
+            return null;
+          }
+          if (!color || color.alpha < 0.5) continue;
+          const light = contrastRatio(PALETTE_BODY_TEXT.light, color.rgb);
+          const dark = contrastRatio(PALETTE_BODY_TEXT.dark, color.rgb);
+          return { theme: light >= dark ? "light" : "dark", readable: Math.max(light, dark) >= 4.5 };
+        }
+        return null;
+      }
+      // Dialog content takes the palette of the modal it sits in, so it matches Discord's title and buttons around it
+      // and stays readable whatever ui.panelTheme says. When the modal's background cannot be read (or neither palette
+      // reads on it) the content brings its own background in the current palette (css/08-dialogs).
+      syncDialog(node) {
+        if (!node) return "";
+        const backdrop = this.getBackdropTheme(node);
+        const theme = backdrop?.theme || this.resolve();
+        this.apply(node, theme);
+        const surface = !backdrop?.readable;
+        const current = node.getAttribute?.(DIALOG_SURFACE_ATTRIBUTE) === "true";
+        if (surface && !current) node.setAttribute?.(DIALOG_SURFACE_ATTRIBUTE, "true");
+        else if (!surface && current) node.removeAttribute?.(DIALOG_SURFACE_ATTRIBUTE);
+        return theme;
+      }
+      isDialog(node) {
+        try {
+          return Boolean(node?.classList?.contains?.(DIALOG_CLASS));
+        } catch {
+          return false;
+        }
+      }
+      // Every open plugin window takes the current palette (after a change of the setting, of Discord's theme or of
+      // the system theme); dialog content follows the modal it sits in. Returns the theme applied.
+      refresh() {
+        const theme = this.resolve();
+        this.lastTheme = theme;
+        if (typeof document === "undefined") return theme;
+        const roots = /* @__PURE__ */ new Set();
+        try {
+          document.querySelectorAll?.(PANEL_THEME_ROOT_SELECTOR)?.forEach((node) => roots.add(node));
+        } catch {
+        }
+        [
+          this.plugin.quickSettingsModalRoot,
+          this.plugin.quickPanel?.root,
+          this.plugin.polishResultPanel,
+          this.plugin.inputActionMenu
+        ].forEach((node) => {
+          if (node) roots.add(node);
+        });
+        roots.forEach((node) => {
+          if (this.isDialog(node)) this.syncDialog(node);
+          else this.apply(node, theme);
+        });
+        return theme;
+      }
+      // Discord switches its theme by changing the class (or data-theme) of <html> or <body>; the plugin's own
+      // Discord observer does not watch <html>. The system theme matters while "auto" finds no Discord theme. Open
+      // dialog content is checked on every such change: Discord's modal changes with Discord's theme even while an
+      // explicit light/dark choice keeps the plugin's windows as they are.
+      startWatching() {
+        this.stopWatching();
+        this.lastTheme = this.resolve();
+        const onChange = () => {
+          if (!this.plugin.isStarted) return;
+          this.refresh();
+        };
+        if (typeof MutationObserver === "function" && typeof document !== "undefined") {
+          try {
+            this.observer = new MutationObserver(onChange);
+            [document.documentElement, document.body].filter(Boolean).forEach((node) => {
+              this.observer.observe(node, { attributes: true, attributeFilter: WATCHED_ATTRIBUTES });
+            });
+          } catch {
+            this.observer = null;
+          }
+        }
+        try {
+          if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
+            const query = window.matchMedia("(prefers-color-scheme: light)");
+            if (query && typeof query.addEventListener === "function") {
+              query.addEventListener("change", onChange);
+              this.mediaQuery = query;
+              this.mediaListener = onChange;
+            }
+          }
+        } catch {
+          this.mediaQuery = null;
+          this.mediaListener = null;
+        }
+      }
+      stopWatching() {
+        try {
+          this.observer?.disconnect?.();
+        } catch {
+        }
+        this.observer = null;
+        try {
+          this.mediaQuery?.removeEventListener?.("change", this.mediaListener);
+        } catch {
+        }
+        this.mediaQuery = null;
+        this.mediaListener = null;
+      }
+    };
+    module2.exports = {
+      PanelTheme,
+      PANEL_THEME_ATTRIBUTE,
+      PANEL_THEME_ROOT_SELECTOR,
+      DIALOG_SURFACE_ATTRIBUTE,
+      normalizePanelTheme,
+      parseComputedColor
+    };
+  }
+});
+
 // src/settings/settings-store.js
 var require_settings_store = __commonJS({
   "src/settings/settings-store.js"(exports2, module2) {
@@ -14329,6 +14628,7 @@ var require_settings_store = __commonJS({
       TRANSLATION_LINE_TEXT_SCALES
     } = require_constants();
     var { normalizeSettingsTabId } = require_settings_schema();
+    var { normalizePanelTheme } = require_panel_theme();
     var RESET_KEPT_CREDENTIAL_FIELDS = ["apiKey", "appId", "secretKey", "region", "deeplPlan"];
     var RESET_SECRET_FIELDS = ["apiKey", "appId", "secretKey"];
     var RESET_KEPT_CONNECTION_FIELDS = ["endpoint", "model"];
@@ -14796,6 +15096,11 @@ var require_settings_store = __commonJS({
           this.plugin.settings.ui.translationTextScale = translationTextScale;
           changed = true;
         }
+        const panelTheme = normalizePanelTheme(this.plugin.settings.ui.panelTheme);
+        if (panelTheme !== this.plugin.settings.ui.panelTheme) {
+          this.plugin.settings.ui.panelTheme = panelTheme;
+          changed = true;
+        }
         if (changed) this.plugin.saveSettings();
       }
       // While the stored settings cannot be read, saves are blocked so the unreadable file is not overwritten.
@@ -15050,6 +15355,9 @@ var require_settings_store = __commonJS({
         if (path === "ui.translationTextScale") {
           value = normalizeTranslationLineTextScale(value);
         }
+        if (path === "ui.panelTheme") {
+          value = normalizePanelTheme(value);
+        }
         let cursor = this.plugin.settings;
         for (let index = 0; index < parts.length - 1; index++) {
           cursor = cursor[parts[index]];
@@ -15150,6 +15458,9 @@ var require_settings_store = __commonJS({
         }
         if (TRANSLATION_LINE_DISPLAY_KEYS.some((key) => path === `ui.${key}`)) {
           this.plugin.syncAllTranslationDisplaySettings();
+        }
+        if (path === "ui.panelTheme") {
+          this.plugin.refreshPanelThemes();
         }
         this.plugin.queueScan();
       }
@@ -15271,6 +15582,7 @@ var require_settings_store = __commonJS({
         if (prevUi.diagnosticsEnabled === true && ui.diagnosticsEnabled !== true) this.plugin.disableDiagnosticLogging();
         if (changed("hideOriginalAfterTranslation")) this.plugin.syncAllTranslationSourceVisibility();
         if (TRANSLATION_LINE_DISPLAY_KEYS.some(changed)) this.plugin.syncAllTranslationDisplaySettings();
+        if (changed("panelTheme")) this.plugin.refreshPanelThemes();
         this.plugin.queueScan();
       }
       syncAllSettingControls() {
@@ -15358,7 +15670,7 @@ var require_quick_panel = __commonJS({
     var { PLUGIN_VERSION } = require_version();
     var { getChannelRouteParts, getChannelRuleKey } = require_channel_rule();
     var POPOVER_ID = "dait-quick-popover";
-    var POPOVER_WIDTH_PX = 340;
+    var POPOVER_WIDTH_PX = 360;
     var ANCHOR_GAP_PX = 8;
     var VIEWPORT_MARGIN_PX = 8;
     var POPOVER_UPDATE_DELAY_MS = 16;
@@ -15436,7 +15748,7 @@ var require_quick_panel = __commonJS({
           root = this.build();
           this.root = root;
           if (options.viaPointer) root.classList.add(POINTER_OPENED_CLASS);
-          this.plugin.syncDiscordThemeClasses(root, anchor || document.body);
+          this.plugin.applyPanelTheme(root);
           document.body.appendChild(root);
           this.update();
           this.position();
@@ -15519,7 +15831,7 @@ var require_quick_panel = __commonJS({
         }
         if (previous.classList?.contains?.(POINTER_OPENED_CLASS)) root.classList.add(POINTER_OPENED_CLASS);
         root.dataset.daitRerendered = "true";
-        this.plugin.syncDiscordThemeClasses(root, this.plugin.isNodeConnected(this.launcher) ? this.launcher : document.body);
+        this.plugin.applyPanelTheme(root);
         if (root.style && previous.style) {
           root.style.left = previous.style.left;
           root.style.top = previous.style.top;
@@ -15882,6 +16194,21 @@ var require_quick_panel = __commonJS({
         node.textContent = value;
         return true;
       }
+      // "model · 820 ms" as parts: the dots and the time do not break (css/07 .dait-qp-status-part); the text reads
+      // the same as the summary.
+      setTestSummary(node, text) {
+        const value = String(text ?? "");
+        if (!node || node.textContent === value) return false;
+        node.textContent = "";
+        value.split(" · ").forEach((part, index) => {
+          if (index > 0) {
+            node.appendChild(this.createElement("span", "dait-qp-status-sep", " ·"));
+            node.appendChild(this.createElement("span", "dait-qp-status-gap", " "));
+          }
+          node.appendChild(this.createElement("span", index > 0 ? "dait-qp-status-part" : "dait-qp-status-model", part));
+        });
+        return true;
+      }
       renderStatus(status) {
         const controls = this.controls;
         if (!this.root || !controls || !status) return;
@@ -15889,7 +16216,7 @@ var require_quick_panel = __commonJS({
         if (controls.statusDot.dataset.daitStatus !== status.state) controls.statusDot.dataset.daitStatus = status.state;
         let resized = this.setText(controls.statusLine, status.headline);
         const testSummary = String(status.testSummary || "");
-        resized = this.setText(controls.statusTest, testSummary) || resized;
+        resized = this.setTestSummary(controls.statusTest, testSummary) || resized;
         if (controls.statusTest.hidden !== !testSummary) {
           controls.statusTest.hidden = !testSummary;
           resized = true;
@@ -16644,7 +16971,7 @@ var require_i18n = __commonJS({
         customLanguagePlaceholder: "例如：繁体中文、韩语、Brazilian Portuguese",
         customLanguageDesc: "自定义语言名会原样交给模型。",
         temperature: "创造性",
-        temperatureDesc: "越低越稳定；翻译建议 0.1-0.3，润色建议 0.3-0.7。",
+        temperatureDesc: "越低越稳定；翻译建议 0.1-⁠0.3，润色建议 0.3-⁠0.7。",
         maxTokens: "最大输出长度",
         maxTokensDesc: "单次回复的长度上限；长消息被截断时调高。",
         afterPolishing: "润色后动作",
@@ -16754,6 +17081,11 @@ var require_i18n = __commonJS({
         translationStyleTag: "带“译”标记",
         translationTextScale: "译文字号",
         translationTextScaleDesc: "相对聊天正文的大小。",
+        panelTheme: "窗口主题",
+        panelThemeDesc: "设置窗口、快捷面板和菜单的配色；确认对话框跟随 Discord。",
+        panelThemeAuto: "跟随 Discord",
+        panelThemeLight: "浅色",
+        panelThemeDark: "深色",
         translationTag: "译",
         showContextMenu: "在消息右键菜单显示翻译入口",
         showContextMenuDesc: "右键消息时显示“翻译”菜单项。",
@@ -16976,7 +17308,7 @@ var require_i18n = __commonJS({
         customLanguagePlaceholder: "Examples: Traditional Chinese, Korean, Brazilian Portuguese",
         customLanguageDesc: "Custom names go to the model as typed.",
         temperature: "Creativity",
-        temperatureDesc: "Lower is steadier: 0.1-0.3 for translation, 0.3-0.7 for polishing.",
+        temperatureDesc: "Lower is steadier: 0.1-⁠0.3 for translation, 0.3-⁠0.7 for polishing.",
         maxTokens: "Max output length",
         maxTokensDesc: "Longest reply the model may write; raise it if long messages get cut off.",
         afterPolishing: "After polishing",
@@ -17133,6 +17465,11 @@ var require_i18n = __commonJS({
         translationStyleTag: '"TR" tag',
         translationTextScale: "Translation text size",
         translationTextScaleDesc: "Relative to the chat text size.",
+        panelTheme: "Window theme",
+        panelThemeDesc: "Colors of the settings window, quick panel and menus; confirmation dialogs follow Discord.",
+        panelThemeAuto: "Follow Discord",
+        panelThemeLight: "Light",
+        panelThemeDark: "Dark",
         translationTag: "TR",
         hideOriginalAfterTranslation: "Hide original after translation",
         hideOriginalAfterTranslationDesc: "Shows the original as a gray bar until you hover or focus it; only you see this.",
@@ -17363,6 +17700,7 @@ var require_i18n = __commonJS({
       settingsGroupFallback: "手动翻译备用服务",
       settingsGroupTranslatedText: "译文显示",
       settingsGroupNotices: "提示与入口",
+      settingsGroupWindows: "窗口外观",
       settingsMoreModelParams: "更多模型参数",
       settingsApiKeyOptional: "API Key（可选）",
       settingsRequiresParent: "先开启“{parent}”",
@@ -17493,7 +17831,7 @@ var require_i18n = __commonJS({
       overviewSetupTest: "Test the connection",
       overviewSetupTestBlocked: "Set up the service first",
       overviewSetupTarget: "Target language",
-      overviewSetupAuto: "Turn on auto-translate",
+      overviewSetupAuto: "Turn on auto-⁠translate",
       overviewSetupAutoOn: "On",
       overviewSetupAutoOff: "Off: only the Translate button works",
       overviewSetupAutoChannel: "Main switch off; this channel always translates",
@@ -17515,6 +17853,7 @@ var require_i18n = __commonJS({
       settingsGroupFallback: "Manual translation fallback",
       settingsGroupTranslatedText: "Translated text",
       settingsGroupNotices: "Notices and shortcuts",
+      settingsGroupWindows: "Window appearance",
       settingsMoreModelParams: "More model parameters",
       settingsApiKeyOptional: "API key (optional)",
       settingsRequiresParent: 'Turn on "{parent}" first',
@@ -17593,7 +17932,7 @@ var require_i18n = __commonJS({
       quickStatusNotConfigured: "Not set up",
       quickStatusOffChannel: "Not auto-translating in this channel",
       quickStatusOffDisabled: "Channel translation is off",
-      quickStatusManualHint: "manual translation still works",
+      quickStatusManualHint: "Manual translation still works",
       inputActionMenu: "AI actions",
       inputActionOpenSettings: "Settings",
       restoreOriginalShort: "↶",
@@ -17719,6 +18058,7 @@ var require_discord_ai_translator = __commonJS({
     var { ProviderLayer } = require_provider_layer();
     var { SettingsStore } = require_settings_store();
     var { QuickPanel } = require_quick_panel();
+    var { PanelTheme } = require_panel_theme();
     var { convertDiscordMarkupToDisplayText, DISCORD_MARKUP_DISPLAY_TEXT_MEMO_MAX } = require_discord_markup();
     var { removeStandardEmoji, getEmojiNeutralTextLength } = require_emoji_text();
     var {
@@ -18441,6 +18781,7 @@ var require_discord_ai_translator = __commonJS({
         });
         this.composerWriter = new ComposerWriter(this);
         this.quickPanel = new QuickPanel(this);
+        this.panelTheme = new PanelTheme(this);
         this.settingsSchema = new SettingsSchema({
           tabs: SETTINGS_TABS_DEFINITION,
           providerCapabilities: PROVIDER_CAPABILITIES,
@@ -18649,6 +18990,7 @@ var require_discord_ai_translator = __commonJS({
           if (!this.translationCacheDirty) this.loadTranslationCache();
           else this.scheduleTranslationCachePersist();
           this.injectStyles();
+          this.panelTheme.startWatching();
           this.patchMessageContextMenu();
           this.startObserver();
           document.addEventListener("keydown", this.boundKeydown, true);
@@ -18681,6 +19023,7 @@ var require_discord_ai_translator = __commonJS({
         this.lifecycleToken++;
         if (this.observer) this.observer.disconnect();
         if (this.observerLifecycle) this.observerLifecycle.disconnect();
+        this.panelTheme.stopWatching();
         if (this.observerRebindTimer) clearTimeout(this.observerRebindTimer);
         if (this.observerRetryTimer) clearTimeout(this.observerRetryTimer);
         this.cancelHeavyPersistenceIdle("diagnostics");
@@ -18858,7 +19201,7 @@ var require_discord_ai_translator = __commonJS({
         panel.className = "dait-settings";
         if (quickSettings) panel.dataset.daitQuickSettings = "true";
         panel.dataset.daitLocale = this.getLocale();
-        this.syncDiscordThemeClasses(panel);
+        this.applyPanelTheme(panel);
         panel.appendChild(this.createSettingsHeader({ quickSettings }));
         panel.appendChild(this.createSettingsLayout(panel));
         if (!quickSettings) this.scheduleSettingsModalSizing(panel);
@@ -19266,13 +19609,20 @@ var require_discord_ai_translator = __commonJS({
         close.className = "dait-settings-close";
         close.title = this.t("settingsClose");
         close.setAttribute("aria-label", this.t("settingsClose"));
-        close.textContent = "×";
+        close.appendChild(this.createWindowIcon("close"));
         close.addEventListener("click", (event) => {
           event?.preventDefault?.();
           this.closeSettingsWindow(close);
         });
         header.appendChild(close);
         return header;
+      }
+      // An icon for an icon button in a plugin window (css/01-theme-tokens .dait-icon); the button carries the label.
+      createWindowIcon(name) {
+        const icon = document.createElement("span");
+        icon.className = `dait-icon dait-icon-${name}`;
+        icon.setAttribute("aria-hidden", "true");
+        return icon;
       }
       createSettingsHero(options = {}) {
         return this.createSettingsHeader(options);
@@ -19417,7 +19767,6 @@ var require_discord_ai_translator = __commonJS({
           if (viewportWidth && width >= viewportWidth - 1) break;
           if (!width || width <= desiredWidth + 80) {
             if (current.dataset.daitSettingsModal !== "true") current.dataset.daitSettingsModal = "true";
-            this.applyDiscordThemeData(current, panel);
             root = current;
             markedNodes.push(current);
             marked++;
@@ -19426,7 +19775,6 @@ var require_discord_ai_translator = __commonJS({
         }
         if (root) {
           if (root.dataset.daitSettingsModalRoot !== "true") root.dataset.daitSettingsModalRoot = "true";
-          this.applyDiscordThemeData(root, panel);
           if (!markedNodes.includes(root)) markedNodes.push(root);
         }
         const nextNodes = new Set(markedNodes);
@@ -19984,7 +20332,17 @@ var require_discord_ai_translator = __commonJS({
         ];
       }
       createDisplayTabContent() {
-        return [this.createDisplayBehaviorSection(), this.createDisplayNoticesSection()];
+        return [this.createDisplayWindowSection(), this.createDisplayBehaviorSection(), this.createDisplayNoticesSection()];
+      }
+      // The palette of the plugin's own windows (ui.panelTheme); changing it restyles every open window in place.
+      createDisplayWindowSection() {
+        const section = this.createSettingsGroup(this.t("settingsGroupWindows"), "windows");
+        section.appendChild(this.createSegmentedRow("ui.panelTheme", this.t("panelTheme"), [
+          ["auto", this.t("panelThemeAuto")],
+          ["light", this.t("panelThemeLight")],
+          ["dark", this.t("panelThemeDark")]
+        ], { description: this.t("panelThemeDesc") }));
+        return section;
       }
       createAdvancedTabContent() {
         const local = this.isLocalTranslationProvider(this.settings.translation);
@@ -21583,14 +21941,15 @@ var require_discord_ai_translator = __commonJS({
         });
         if (group?.dataset) group.dataset.daitValue = wanted;
       }
-      // Rough text width at the segmented control's 13 px font: CJK characters are 1em, other characters ~0.55em.
+      // Rough text width at the segmented control's 15 px font: CJK characters are 1em, other characters ~0.55em (a
+      // generous estimate). Options are as wide as their labels plus 6 px padding on each side (css/04 .dait-segmented),
+      // so the labels fit when together they need no more than the control width less its 1 px border, 2 px padding
+      // and the 2 px gaps between options.
       segmentedLabelsFit(labels, controlWidth = SETTINGS_CONTROL_WIDTH) {
         const count = labels.length || 1;
-        const available = (controlWidth - 4 - 2 * (count - 1)) / count - 10;
-        return labels.every((label) => {
-          const width = [...String(label || "")].reduce((sum, char) => sum + (/[⺀-鿿豈-﫿＀-￯]/.test(char) ? 13 : 7.2), 0);
-          return width <= available;
-        });
+        const available = controlWidth - 6 - 2 * (count - 1);
+        const needed = labels.reduce((total, label) => total + 12 + [...String(label || "")].reduce((sum, char) => sum + (/[⺀-鿿豈-﫿＀-￯]/.test(char) ? 15 : 8.3), 0), 0);
+        return needed <= available;
       }
       getLanguageLabel(language) {
         return this.getLocale() === "en" ? language.en : `${language.zh} - ${language.en}`;
@@ -22326,7 +22685,9 @@ var require_discord_ai_translator = __commonJS({
             prefetchRange: this.getAutoTranslatePrefetchRange(),
             intakeMode: this.normalizeAutoTranslateIntakeMode(this.settings.ui?.autoTranslateIntakeMode),
             // Channels that auto-translate even with the main switch off.
-            allowListedChannels: this.getChannelAutoTranslateAllowListCount()
+            allowListedChannels: this.getChannelAutoTranslateAllowListCount(),
+            // The palette the plugin's windows use now (ui.panelTheme "auto" resolved against Discord's theme).
+            panelTheme: this.resolvePanelTheme()
           },
           settings: sanitize(this.settings, "", DEFAULT_SETTINGS)
         };
@@ -24015,7 +24376,7 @@ var require_discord_ai_translator = __commonJS({
           root.className = "dait-quick-settings-modal-root";
           root.dataset.daitQuickSettingsSource = source;
           this.setQuickSettingsLauncherButton(launcher || this.quickSettingsPreviousFocus || null, true);
-          this.applyDiscordThemeData(root, launcher || document.body);
+          this.applyPanelTheme(root);
           const backdrop = document.createElement("div");
           backdrop.className = "dait-quick-settings-backdrop";
           root.appendChild(backdrop);
@@ -24238,27 +24599,26 @@ var require_discord_ai_translator = __commonJS({
         target.classList.add?.(themeClass);
         return themeClass;
       }
-      syncQuickSettingsThemeTree(root, anchor = null) {
+      // The launcher's settings window and the panel inside it take the current panel palette (the frame's children
+      // inherit it). Returns the theme applied.
+      syncQuickSettingsThemeTree(root) {
         if (!root) return "";
-        const themeSource = this.getDiscordThemeSource(anchor);
-        const themeClass = themeSource.themeClass || DISCORD_DEFAULT_THEME_CLASS;
-        const nodes = [
-          root,
-          this.findQuickSettingsDialog(root),
-          root.querySelector?.(".dait-quick-settings-backdrop"),
-          root.querySelector?.(".dait-quick-settings-body"),
-          root.querySelector?.(".dait-quick-settings-done"),
-          root.querySelector?.(".dait-quick-settings-error"),
-          ...root.querySelectorAll?.(".dait-settings") || []
-        ].filter(Boolean);
-        [...new Set(nodes)].forEach((node) => {
-          if (!node?.classList) return;
-          DISCORD_THEME_CLASSES.forEach((theme) => node.classList.remove?.(theme));
-          node.classList.add?.(themeClass);
-          if (node.dataset) node.dataset.daitDiscordTheme = themeClass.replace(/^theme-/, "");
-          this.copyDiscordThemeVariables(node, themeSource.node);
-        });
-        return themeClass;
+        const theme = this.resolvePanelTheme();
+        this.applyPanelTheme(root, theme);
+        (root.querySelectorAll?.(".dait-settings") || []).forEach((panel) => this.applyPanelTheme(panel, theme));
+        return theme;
+      }
+      // ui.panelTheme resolved to "light" or "dark" (auto follows Discord, then the system theme).
+      resolvePanelTheme(setting) {
+        return this.panelTheme.resolve(setting === void 0 ? this.panelTheme.getSetting() : setting);
+      }
+      // Marks a plugin window root (data-dait-panel-theme) so css/01-theme-tokens gives it the matching palette.
+      applyPanelTheme(node, theme = void 0) {
+        return this.panelTheme.apply(node, theme === void 0 ? this.resolvePanelTheme() : theme);
+      }
+      // Restyles every open plugin window in place (setting, Discord theme or system theme changed).
+      refreshPanelThemes() {
+        return this.panelTheme.refresh();
       }
       applyDiscordThemeData(target, anchor = null) {
         if (!target) return DISCORD_DEFAULT_THEME_CLASS;
@@ -24268,18 +24628,16 @@ var require_discord_ai_translator = __commonJS({
         this.copyDiscordThemeVariables(target, themeSource.node);
         return themeClass;
       }
+      // Discord's theme changed: the buttons that sit inside Discord's UI copy its theme again, and the plugin's own
+      // windows take the matching panel palette.
       refreshDiscordThemeClasses() {
         if (typeof document === "undefined") return;
         this.discordThemeCacheEpoch++;
-        const selector = ".dait-settings, .dait-quick-settings-button, .dait-quick-settings-modal-root, .dait-polish-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-menu-button, .dait-input-action-menu, .dait-message-button, .dait-polish-result-panel, .dait-polish-restore-control, [data-dait-settings-modal='true'], [data-dait-settings-modal-root='true']";
+        const selector = ".dait-quick-settings-button, .dait-polish-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-menu-button, .dait-message-button, .dait-polish-restore-control";
         const queried = [...document.querySelectorAll?.(selector) || []];
-        [...new Set(queried)].forEach((node) => {
-          if (this.elementHasClassName(node, "dait-quick-settings-modal-root")) this.syncQuickSettingsThemeTree(node);
-          else this.syncDiscordThemeClasses(node);
-        });
-        if (this.quickSettingsModalRoot) this.syncQuickSettingsThemeTree(this.quickSettingsModalRoot);
-        if (this.polishResultPanel) this.syncDiscordThemeClasses(this.polishResultPanel);
+        [...new Set(queried)].forEach((node) => this.syncDiscordThemeClasses(node));
         if (this.polishRestoreControl) this.syncDiscordThemeClasses(this.polishRestoreControl);
+        this.refreshPanelThemes();
       }
       getDiscordThemeClass(anchor = null) {
         return this.getDiscordThemeSource(anchor).themeClass || DISCORD_DEFAULT_THEME_CLASS;
@@ -24926,7 +25284,7 @@ var require_discord_ai_translator = __commonJS({
         menu.className = "dait-input-action-menu";
         menu.setAttribute("role", "menu");
         menu.setAttribute("aria-label", this.t("inputActionMenu"));
-        this.syncDiscordThemeClasses(menu, textbox || button || container || group);
+        this.applyPanelTheme(menu);
         const addItem = (label, title, action) => {
           const item = document.createElement("button");
           item.className = "dait-input-action-menu-item";
@@ -24963,7 +25321,7 @@ var require_discord_ai_translator = __commonJS({
         this.inputActionMenu = menu;
         button?.setAttribute?.("aria-expanded", "true");
         const reposition = () => {
-          this.syncDiscordThemeClasses(menu, textbox || button || container || group);
+          this.applyPanelTheme(menu);
           this.positionInputActionMenu(menu, button || group);
         };
         const outsidePointerDown = (event) => {
@@ -29334,7 +29692,7 @@ var require_discord_ai_translator = __commonJS({
         }
         const panel = document.createElement("div");
         panel.className = "dait-polish-result-panel";
-        this.syncDiscordThemeClasses(panel, textbox || options.sourceButton);
+        this.applyPanelTheme(panel);
         panel.setAttribute("role", "dialog");
         panel.setAttribute("aria-label", options.ariaLabel || options.title || this.t("polishResultTitle"));
         const header = document.createElement("div");
@@ -29346,7 +29704,7 @@ var require_discord_ai_translator = __commonJS({
         const close = document.createElement("button");
         close.className = "dait-polish-result-icon";
         close.type = "button";
-        close.textContent = "×";
+        close.appendChild(this.createWindowIcon("close"));
         close.title = this.t("polishResultClose");
         close.setAttribute("aria-label", this.t("polishResultClose"));
         close.addEventListener("click", (event) => {
@@ -29404,7 +29762,7 @@ var require_discord_ai_translator = __commonJS({
         document.body.appendChild(panel);
         this.polishResultPanel = panel;
         const reposition = () => {
-          this.syncDiscordThemeClasses(panel, textbox || options.sourceButton);
+          this.applyPanelTheme(panel);
           this.positionPolishResultPanel(panel, textbox, options.sourceButton);
         };
         const outsidePointerDown = (event) => {
@@ -33063,10 +33421,33 @@ ${raw}`;
         const h = React.createElement;
         return h(
           "div",
-          { className: "dait-dialog" },
+          { className: "dait-dialog", ...this.getDialogPanelThemeProps() },
           ...paragraphs.map((text, index) => h("p", { className: "dait-dialog-text", key: `p${index}` }, text)),
           preview ? h("div", { className: "dait-dialog-preview", key: "preview", tabIndex: 0 }, preview) : null
         );
+      }
+      // Dialog content sits inside Discord's modal, between Discord's own title and buttons: it takes the palette of
+      // that modal, whatever ui.panelTheme says, so the dialog is one piece and its text always reads. Until the
+      // content is in the page it goes by Discord's theme; once mounted (the ref) it goes by the modal's actual
+      // background, and PanelTheme.refresh() checks it again when Discord's theme changes. Without a Discord theme or
+      // a readable modal background it brings its own background in the current palette (css/08-dialogs).
+      getDialogPanelThemeProps() {
+        const discordTheme = this.panelTheme.getDiscordTheme();
+        const props = {
+          "data-dait-panel-theme": discordTheme || this.resolvePanelTheme(),
+          ref: (node) => this.syncDialogPanelTheme(node)
+        };
+        if (!discordTheme) props["data-dait-dialog-surface"] = "true";
+        return props;
+      }
+      syncDialogPanelTheme(node) {
+        if (!node) return "";
+        try {
+          return this.panelTheme.syncDialog(node);
+        } catch (error) {
+          this.logDiagnostic?.("dialog.theme", "warn", { error: this.formatError?.(error) });
+          return "";
+        }
       }
       // Where a confirmation can show up: Discord's modal layer (role=dialog), BetterDiscord's modal root, and
       // BetterDiscord's fallback modal (.bd-modal-wrapper, no role), used when Discord's modal API is missing or
@@ -33173,6 +33554,7 @@ ${raw}`;
         const credentialsNote = this.t("resetDialogItemCredentialsNote");
         const keepLabel = this.t("resetKeepCredentials");
         const useState = typeof React.useState === "function" ? React.useState : null;
+        const themeProps = this.getDialogPanelThemeProps();
         const ResetDialogBody = () => {
           const [keep, setKeep] = useState ? useState(choice.keepCredentials) : [choice.keepCredentials, null];
           const onChange = (event) => {
@@ -33181,7 +33563,7 @@ ${raw}`;
           };
           return h(
             "div",
-            { className: "dait-dialog" },
+            { className: "dait-dialog", ...themeProps },
             h("p", { className: "dait-dialog-text" }, lead),
             h(
               "ul",
