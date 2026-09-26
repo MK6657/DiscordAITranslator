@@ -152,3 +152,77 @@ test("settings saved by v0.4.0 keep their 'Always translate' rules", t => {
     assert.deepEqual(plugin.toasts.map(toast => toast.type), ["success"]);
     plugin.stop();
 });
+
+// --- PRIV-3: a Google key never shows as a key's label ------------------------------------------------------
+
+// Obvious fakes shaped like Google keys ("AIza" + 35 characters), so any check for key-like text sees them.
+const FAKE_KEY = "AIzaFAKE-test-key-not-real-000000000000";
+const FAKE_KEY_2 = "AIzaFAKE-test-key-not-real-222222222222";
+const GOOGLE_KEY_INVALID_BODY = { error: { code: 400, message: "API key not valid. Please pass a valid API key.", status: "INVALID_ARGUMENT", details: [{ reason: "API_KEY_INVALID" }] } };
+
+function createGooglePoolPlugin(poolText, locale = "en") {
+    const plugin = new Plugin();
+    plugin.settings.ui.language = locale;
+    plugin.settings.ui.showAutoTranslateToasts = false;
+    plugin.settings.translation.provider = "googleCloud";
+    plugin.saveSettings = () => true;
+    plugin.setSetting("googleTranslate.keyPoolText", poolText, { save: false });
+    plugin.toasts = [];
+    plugin.showToast = (text, type) => plugin.toasts.push({ text, type });
+    return plugin;
+}
+
+test("a Google pool line 'KEY|limit' is a key with its monthly limit and a generated label", () => {
+    const plugin = createGooglePoolPlugin(`${FAKE_KEY}|450000\n${FAKE_KEY_2}`);
+    const keys = plugin.settings.googleTranslate.keys;
+    assert.deepEqual(keys.map(key => [key.label, key.apiKey]), [["Google 1", FAKE_KEY], ["Google 2", FAKE_KEY_2]]);
+    assert.equal(keys[0].monthlyLimit, 450000);
+    const built = plugin.buildModelRequest("translation", "hola");
+    assert.equal(built.request.headers["X-Goog-Api-Key"], FAKE_KEY, "the key is sent, not the limit");
+
+    // The documented "Label|KEY|limit" and "Label|KEY" forms are unchanged.
+    plugin.setSetting("googleTranslate.keyPoolText", `main|${FAKE_KEY}|400000\nbackup|${FAKE_KEY_2}`, { save: false });
+    assert.deepEqual(plugin.settings.googleTranslate.keys.map(key => [key.label, key.apiKey]), [["main", FAKE_KEY], ["backup", FAKE_KEY_2]]);
+    assert.equal(plugin.settings.googleTranslate.keys[0].monthlyLimit, 400000);
+});
+
+test("a failing Google key is named by a label that is never the key, on every surface", async () => {
+    const cases = [
+        // [pool text, the label the error names]
+        [`${FAKE_KEY}|450000`, "Google 1"],
+        [`${FAKE_KEY}|${FAKE_KEY}|450000`, "Google 1"],
+        [`${FAKE_KEY_2}|${FAKE_KEY}|450000`, "Google 1"],
+        [`backup ${FAKE_KEY}|${FAKE_KEY}`, "Google 1"],
+        [`main|${FAKE_KEY_2}|450000\n${FAKE_KEY}|450000`, "Google 2"],
+        [`main|${FAKE_KEY}|450000`, "main"]
+    ];
+    for (const locale of ["zh-CN", "en"]) {
+        for (const [poolText, label] of cases) {
+            const plugin = createGooglePoolPlugin(poolText, locale);
+            const failing = plugin.settings.googleTranslate.keys.find(key => key.apiKey === FAKE_KEY);
+            assert.ok(failing, `${poolText}: the key is in the pool`);
+            plugin.settings.googleTranslate.keys.forEach(key => { if (key !== failing) key.cooldownUntil = Date.now() + 60 * 60 * 1000; });
+            plugin.fetchApiResponseText = async (_endpoint, request) => {
+                const error = Object.assign(new Error("API_ERROR"), { status: 400, retryAfterMs: 0 });
+                plugin.annotateGoogleTranslateApiError(error, JSON.stringify(GOOGLE_KEY_INVALID_BODY), request);
+                throw error;
+            };
+            await plugin.testApiConnection("translation", null, { dataset: { daitKind: "translation" } });
+            const failure = plugin.toasts.at(-1);
+            assert.equal(failure?.type, "error", JSON.stringify(plugin.toasts));
+            const surfaces = {
+                toast: failure.text,
+                status: plugin.getApiStatus("translation").message,
+                card: plugin.getLastApiTestResult("translation").message,
+                checklist: plugin.getApiTestSummaryText("translation"),
+                stats: plugin.getGoogleTranslateStatsText(),
+                keyError: plugin.settings.googleTranslate.keys.map(key => key.lastError).join(" ")
+            };
+            for (const [surface, text] of Object.entries(surfaces)) {
+                assert.equal(text.includes("AIza"), false, `${locale} ${poolText} ${surface}: ${text}`);
+            }
+            assert.ok(surfaces.toast.includes(label), `${locale} ${poolText}: ${surfaces.toast}`);
+            assert.ok(surfaces.status.includes(label), `${locale} ${poolText}: ${surfaces.status}`);
+        }
+    }
+});

@@ -28,6 +28,9 @@ const {
     SETTINGS_WRITE_DEBOUNCE_MS
 } = require("../constants");
 
+// Text shaped like a Google API key ("AIza" and at least 10 more key characters; real keys have 35).
+const GOOGLE_API_KEY_PATTERN = /AIza[0-9A-Za-z_-]{10,}/;
+
 class ProviderLayer {
     constructor(plugin) {
         this.plugin = plugin;
@@ -480,8 +483,25 @@ class ProviderLayer {
         const keyId = String(error?.googleTranslateKeyId || "");
         const apiKey = String(error?.googleTranslateApiKey || "");
         if (!keyId && !apiKey) return message;
-        const key = this.plugin.getGoogleTranslateKeys().find(item => (keyId && item.id === keyId) || (apiKey && item.apiKey === apiKey));
-        return key?.label ? this.plugin.t("googleTranslateKeyError", { label: key.label, error: message }) : message;
+        const keys = this.plugin.getGoogleTranslateKeys();
+        const key = keys.find(item => (keyId && item.id === keyId) || (apiKey && item.apiKey === apiKey));
+        if (!key) return message;
+        return this.plugin.t("googleTranslateKeyError", { label: this.plugin.getGoogleTranslateKeyDisplayLabel(key, keys), error: message });
+    }
+
+    // The name a pool key is shown by on screen (the error toast, the service card, the overview checklist, the
+    // status). A label that looks like a Google key or holds a key of the pool (a key typed into the label field)
+    // is replaced by the key's generated name, so a key never appears where others can see the screen.
+    getGoogleTranslateKeyDisplayLabel(key, keys = this.plugin.getGoogleTranslateKeys()) {
+        const index = keys.findIndex(item => item === key || (key?.id && item?.id === key.id));
+        const generated = `Google ${Math.max(0, index) + 1}`;
+        const label = String(key?.label || "").trim();
+        if (!label || GOOGLE_API_KEY_PATTERN.test(label)) return generated;
+        const holdsPoolKey = keys.some(item => {
+            const apiKey = String(item?.apiKey || "").trim();
+            return Boolean(apiKey) && (label === apiKey || (apiKey.length >= 8 && label.includes(apiKey)));
+        });
+        return holdsPoolKey ? generated : label;
     }
 
     // A failure of one pool key needs the user only when no other key can take over.
@@ -1050,10 +1070,16 @@ class ProviderLayer {
             .filter(Boolean)
             .map((line, index) => {
                 const parts = line.split(/[|\t]/).map(part => part.trim());
+                while (parts.length > 1 && !parts[parts.length - 1]) parts.pop();
                 let label = "";
                 let apiKey = "";
                 let monthlyLimit = "";
-                if (parts.length >= 2) {
+                // "KEY|limit" has no label: a whole number is never a Google key, so it is the monthly limit and
+                // the key gets a generated label instead of being shown as one.
+                if (parts.length === 2 && /^\d+$/.test(parts[1])) {
+                    [apiKey, monthlyLimit] = parts;
+                }
+                else if (parts.length >= 2) {
                     [label, apiKey, monthlyLimit = ""] = parts;
                 }
                 else {
