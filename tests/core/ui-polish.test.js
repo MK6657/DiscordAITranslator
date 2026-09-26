@@ -719,6 +719,56 @@ test("a service without its API key reads 'Not set up' everywhere: title bar, co
     assert.match(PLUGIN_CSS, /\.dait-settings \.dait-api-status\.dait-api-status-failed::before,\n\.dait-settings \.dait-api-status\.dait-api-status-unconfigured::before \{[\s\S]*?content: "!";/);
 });
 
+// --- UI-9: consistent wording ---
+
+test("English wording: 'hide original' in both places and sentence-case group headings", () => {
+    assert.equal(I18N.en.hideOriginalAfterTranslation, "Hide original after translation");
+    assert.equal(I18N.en.quickPanelHideOriginal, I18N.en.hideOriginalAfterTranslation);
+    assert.equal(I18N.en.polishTitle, "Input polishing");
+    assert.equal(I18N.en.translationTitle, "Channel translation");
+    assert.doesNotMatch(I18N.en.hideOriginalAfterTranslation, /mask/i, "mask means masking translations");
+});
+
+test("built-in prompt templates show a localised name in English; renamed and custom ones keep their name", t => {
+    const { plugin, doc } = createPlugin(t, { language: "en", tab: "translate" });
+    const templates = plugin.getPromptTemplates("translation");
+    const custom = { id: "translation-custom-fake", serial: "003", name: "My style", prompt: "Translate into {targetLanguage}." };
+    templates.push(custom);
+    const panel = plugin.getSettingsPanel({ quickSettings: true });
+    doc.body.appendChild(panel);
+    const manager = tabPanel(panel, "translate").querySelector(".dait-prompt-manager");
+    const options = manager.querySelector("select").querySelectorAll("option").map(option => option.textContent);
+    assert.deepEqual(options, ["001 · Natural", "002 · Literal", "003 · My style"]);
+    assert.ok(options.every(text => !/[一-鿿]/.test(text)), "no Chinese names in the English UI");
+    assert.ok(manager.textContent.includes(plugin.t("promptUsingTemplate", { code: "001", name: "Natural" })));
+    assert.equal(plugin.getPromptTemplateDisplayName(templates[0]), "Natural");
+    // A search for the English name finds the template.
+    assert.ok(plugin.getPromptTemplateSearchText(templates[1]).includes("literal"));
+    // A built-in template the user renamed keeps the new name.
+    assert.equal(plugin.getPromptTemplateDisplayName({ ...templates[0], name: "Casual" }), "Casual");
+    // The polish templates too.
+    assert.deepEqual(plugin.getPromptTemplates("polish").map(template => plugin.getPromptTemplateDisplayName(template)), ["Natural chat", "Polite and clear", "Short and direct"]);
+    // Toasts name it the same way.
+    plugin.applyPromptTemplate("translation", "translation-literal");
+    assert.equal(plugin.toasts.at(-1).message, plugin.t("promptApplied", { name: "Literal", code: "002" }));
+    plugin.settings.ui.language = "zh-CN";
+    assert.equal(plugin.getPromptTemplateLabel(templates[0]), "001 · 自然翻译");
+    assert.equal(plugin.getPromptTemplateDisplayName(templates[1]), "准确直译");
+    plugin.destroySettingsModalSizing(panel);
+});
+
+test("the bilingual flow line says whether polishing runs before the bilingual message, not whether polishing is on", t => {
+    const { plugin } = createPlugin(t);
+    plugin.settings.polish.enabled = true;
+    plugin.settings.ui.publicBilingualPolishBeforeTranslate = false;
+    plugin.settings.ui.publicBilingualAfterPolish = false;
+    assert.match(plugin.getPublicBilingualFlowText(), /^双语前润色：不润色；/);
+    plugin.settings.ui.language = "en";
+    assert.match(plugin.getPublicBilingualFlowText(), /^Polish before bilingual: no; /);
+    plugin.settings.ui.publicBilingualPolishBeforeTranslate = true;
+    assert.match(plugin.getPublicBilingualFlowText(), new RegExp(`^Polish before bilingual: ${plugin.getProviderDisplayName(plugin.settings.polish.provider)}; `));
+});
+
 test("settings window: a key that ends an IME composition does not close the window", t => {
     const { doc, isOpen } = openHotkeyRecorder(t);
     doc.dispatchEvent("keydown", { key: "Escape", isComposing: true });

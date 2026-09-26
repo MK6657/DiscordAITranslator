@@ -747,7 +747,7 @@ test("public bilingual current flow shows the service and language the bilingual
     assert.equal(plugin.getProviderDisplayName(plugin.getPublicBilingualBaseConfig().provider), deepseek);
 
     plugin.settings.ui.publicBilingualPolishBeforeTranslate = true;
-    assert.match(plugin.getPublicBilingualFlowText(), new RegExp(`^Polish: ${deepseek};`));
+    assert.match(plugin.getPublicBilingualFlowText(), new RegExp(`^Polish before bilingual: ${deepseek};`));
 
     // Without a usable polish service the translation service translates; the language still follows polish.
     plugin.settings.polish.apiKey = "";

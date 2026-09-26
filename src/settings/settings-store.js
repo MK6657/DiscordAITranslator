@@ -137,7 +137,7 @@ class SettingsStore {
         this.plugin.saveSettings();
         this.plugin.syncSettingControls(`${kind}.prompt`, template.prompt);
         if (kind === "translation") this.plugin.invalidateAutoTranslationQueue();
-        this.plugin.showToast(this.plugin.t("promptApplied", { name: template.name, code: template.serial }), "success");
+        this.plugin.showToast(this.plugin.t("promptApplied", { name: this.getTemplateDisplayName(template), code: template.serial }), "success");
     }
 
     savePromptTemplate(kind, name, prompt) {
@@ -164,7 +164,14 @@ class SettingsStore {
         this.plugin.settings[kind].activePromptTemplate = template.id;
         this.plugin.saveSettings();
         if (kind === "translation") this.plugin.invalidateAutoTranslationQueue();
-        this.plugin.showToast(this.plugin.t("promptUpdated", { name: template.name, code: template.serial }), "success");
+        this.plugin.showToast(this.plugin.t("promptUpdated", { name: this.getTemplateDisplayName(template), code: template.serial }), "success");
+    }
+
+    // A built-in template's name in the interface language (the plugin decides; plain name without it).
+    getTemplateDisplayName(template) {
+        return typeof this.plugin.getPromptTemplateDisplayName === "function"
+            ? this.plugin.getPromptTemplateDisplayName(template)
+            : template.name;
     }
 
     deletePromptTemplate(kind, templateId) {

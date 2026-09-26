@@ -3966,12 +3966,12 @@ module.exports = class DiscordAITranslator {
                 : this.getPromptTemplates(kind).find(template => normalize(template.prompt) === normalize(prompt)) || null;
             // "Update current template" writes to the active template, so the status names it while it differs.
             status.textContent = matching
-                ? this.t("promptUsingTemplate", { code: matching.serial, name: matching.name })
+                ? this.t("promptUsingTemplate", { code: matching.serial, name: this.getPromptTemplateDisplayName(matching) })
                 : active && normalize(prompt)
-                    ? this.t("promptTemplateEdited", { code: active.serial, name: active.name })
+                    ? this.t("promptTemplateEdited", { code: active.serial, name: this.getPromptTemplateDisplayName(active) })
                     : this.t("promptTemplateCustom");
             update.disabled = !active || !normalize(prompt) || normalize(active.prompt) === normalize(prompt);
-            update.title = active ? this.t("promptUpdateTitle", { code: active.serial, name: active.name }) : "";
+            update.title = active ? this.t("promptUpdateTitle", { code: active.serial, name: this.getPromptTemplateDisplayName(active) }) : "";
         };
 
         const syncPreview = () => {
@@ -4047,7 +4047,7 @@ module.exports = class DiscordAITranslator {
             if (normalize(current) !== normalize(template.prompt) && hasUnsavedEdits(current)) {
                 const confirmed = await this.confirmAction({
                     title: this.t("promptApplyUnsavedTitle"),
-                    body: this.t("promptApplyUnsavedConfirm", { code: template.serial, name: template.name }),
+                    body: this.t("promptApplyUnsavedConfirm", { code: template.serial, name: this.getPromptTemplateDisplayName(template) }),
                     confirmText: this.t("promptApply"),
                     danger: true
                 });
@@ -4085,7 +4085,7 @@ module.exports = class DiscordAITranslator {
             const confirmed = await this.confirmAction({
                 title: this.t("promptDeleteConfirm"),
                 body: fallback && normalize(fallback.prompt) !== normalize(getPromptValue())
-                    ? [label, this.t("promptDeleteActiveNote", { code: fallback.serial, name: fallback.name })]
+                    ? [label, this.t("promptDeleteActiveNote", { code: fallback.serial, name: this.getPromptTemplateDisplayName(fallback) })]
                     : label,
                 confirmText: this.t("promptDelete"),
                 danger: true
@@ -4364,14 +4364,32 @@ module.exports = class DiscordAITranslator {
     }
 
     getPromptTemplateLabel(template) {
-        return `${template.serial || "000"} · ${template.name || ""}`;
+        return `${template.serial || "000"} · ${this.getPromptTemplateDisplayName(template)}`;
+    }
+
+    // A built-in template keeps its stored (Chinese) name but is shown in the interface language, unless the user
+    // renamed it; the user's own templates show their name as typed.
+    getPromptTemplateDisplayName(template) {
+        const name = String(template?.name || "");
+        const keys = {
+            "polish-natural-chat": "promptTemplateNameNaturalChat",
+            "polish-polite": "promptTemplateNamePolite",
+            "polish-short": "promptTemplateNameShort",
+            "translation-natural": "promptTemplateNameNatural",
+            "translation-literal": "promptTemplateNameLiteral"
+        };
+        const key = keys[template?.id];
+        if (!key) return name;
+        const builtIn = [...DEFAULT_PROMPT_TEMPLATES.polish, ...DEFAULT_PROMPT_TEMPLATES.translation].find(item => item.id === template.id);
+        return !name || name === builtIn?.name ? this.t(key) : name;
     }
 
     getPromptTemplateSearchText(template) {
         return [
             template.serial,
             String(template.serial || "").replace(/^0+/, ""),
-            template.name
+            template.name,
+            this.getPromptTemplateDisplayName(template)
         ].filter(Boolean).join(" ").toLowerCase();
     }
 
