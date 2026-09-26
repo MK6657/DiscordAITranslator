@@ -2848,7 +2848,7 @@ const settingsLightBlock = injectedCss.match(/\.theme-light\.dait-settings,[\s\S
 assert.match(settingsLightBlock, /color-scheme: light;/);
 assert.match(settingsLightBlock, /--dait-danger: var\(--text-danger, #c4323a\);/);
 assert.doesNotMatch(settingsLightBlock, /--dait-(text|heading|text-muted|label|muted-readable):/);
-assert.match(injectedCss, /\.dait-settings-row input:disabled,[\s\S]*?\.dait-test-panel select:disabled[\s\S]*?color: var\(--dait-disabled-text\);[\s\S]*?-webkit-text-fill-color: var\(--dait-disabled-text\);/);
+assert.match(injectedCss, /\.dait-settings-row input:disabled,[\s\S]*?\.dait-prompt-tools select:disabled \{[\s\S]*?color: var\(--dait-disabled-text\);[\s\S]*?-webkit-text-fill-color: var\(--dait-disabled-text\);/);
 // BetterDiscord's modal becomes a moderate window: min(920px, 100vw - 48px) wide, min(760px, 100vh - 64px) high.
 const settingsModalBlock = injectedCss.match(/\[data-dait-settings-modal="true"\] \{([\s\S]*?)\n\}/)?.[1] || "";
 assert.match(settingsModalBlock, /max-height: min\(760px, calc\(100vh - 64px\)\) !important;/);

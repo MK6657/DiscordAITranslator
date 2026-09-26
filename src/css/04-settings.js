@@ -489,9 +489,7 @@ module.exports = `.dait-settings {
 .dait-settings-row textarea:disabled,
 .dait-prompt-editor textarea:disabled,
 .dait-prompt-tools input:disabled,
-.dait-prompt-tools select:disabled,
-.dait-test-panel textarea:disabled,
-.dait-test-panel select:disabled {
+.dait-prompt-tools select:disabled {
     background-color: color-mix(in srgb, var(--dait-input-bg) 60%, var(--dait-bg));
     color: var(--dait-disabled-text);
     cursor: not-allowed;
