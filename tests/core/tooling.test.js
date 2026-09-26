@@ -151,6 +151,21 @@ test("the critical-chain contract allows the v0.3.0 cached-draw pass and names l
     }
 });
 
+test("the critical-chain contract keeps the cleanup writes and says scroll corrections are skipped while moving", () => {
+    const contract = fs.readFileSync(path.join(root, "docs", "critical-chain-contracts.md"), "utf8");
+    // removeAutoTranslationNode removes stale automatic lines from disconnected, changed and reused
+    // targets and shows their source again; a contract that forbids every DOM write invites dropping that.
+    assert.doesNotMatch(contract, /never receive DOM writes/i);
+    assert.match(contract, /never receive new translation, loading, or failure lines/);
+    assert.match(contract, /stale automatic line/);
+    assert.match(contract, /source text it hid/);
+    assert.match(contract, /`removeAutoTranslationNode`/);
+    // getTranslationScrollSnapshot returns no snapshot while the chat moves, and nothing retries the correction.
+    assert.doesNotMatch(contract, /every scroll correction for translation lines wait/i);
+    assert.match(contract, /skipped, not deferred/);
+    assert.match(contract, /`getTranslationScrollSnapshot`/);
+});
+
 test(".gitignore keeps local tool state and browser profiles out without ignoring tracked files", t => {
     if (!isGitWorkTree()) {
         t.skip("git repository not available");
