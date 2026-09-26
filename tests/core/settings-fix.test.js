@@ -661,3 +661,13 @@ test("the panel's minimum height never pushes it past the space its host leaves 
     // With room to spare the floor is still 360 px.
     assert.equal(cssLength(minHeight, { vh: 900, chrome: 150, hostMax: 836 }), 360);
 });
+
+// --- W3-css: dead rules from before the tabbed window ------------------------------------------------
+
+test("dead rules are gone: the test-mode panel scrollbars and the embedded header", () => {
+    assert.equal(PLUGIN_CSS.includes(".dait-test-panel"), false);
+    assert.equal(PLUGIN_CSS.includes(".dait-test-output"), false);
+    assert.equal(PLUGIN_CSS.includes(".dait-settings-header-embedded"), false);
+    // The scrollbars that remain keep their thin style.
+    assert.match(PLUGIN_CSS, /\.dait-prompt-editor textarea,\n\.dait-polish-result-output \{\n    scrollbar-color: var\(--dait-scrollbar-thumb\) var\(--dait-scrollbar-track\);\n    scrollbar-width: thin;/);
+});

@@ -2854,16 +2854,15 @@ assert.match(injectedCss, /\[data-dait-settings-modal="true"\] \{[\s\S]*?margin-
 assert.match(injectedCss, /\[data-dait-settings-modal-root="true"\] \{[\s\S]*?margin-bottom: clamp\(16px, 4vh, 32px\) !important;[\s\S]*?margin-top: clamp\(16px, 4vh, 32px\) !important;/);
 assert.match(injectedCss, /\.dait-settings \{[\s\S]*?margin-left: auto;[\s\S]*?margin-right: auto;/);
 assert.match(injectedCss, /\[data-dait-settings-modal="true"\],[\s\S]*?\.dait-quick-settings-body,[\s\S]*?\.dait-settings-rail,[\s\S]*?\.dait-settings-content,[\s\S]*?\.dait-settings-row textarea[\s\S]*?scrollbar-width: thin;/);
-assert.match(injectedCss, /\.dait-prompt-editor textarea,[\s\S]*?\.dait-test-panel textarea,[\s\S]*?\.dait-test-output[\s\S]*?scrollbar-width: thin;/);
+assert.match(injectedCss, /\.dait-prompt-editor textarea,[\s\S]*?\.dait-polish-result-output \{[\s\S]*?scrollbar-width: thin;/);
+assert.equal(injectedCss.includes(".dait-test-panel") || injectedCss.includes(".dait-test-output"), false);
 assert.match(settingsTokenBlock, /--dait-scrollbar-thumb: var\(--scrollbar-thin-thumb, rgba\(128, 132, 142, 0\.45\)\);/);
 assert.match(injectedCss, /\.dait-quick-settings-body::-webkit-scrollbar[\s\S]*?width: 8px;/);
 assert.match(injectedCss, /\.dait-settings-row textarea::-webkit-scrollbar[\s\S]*?width: 8px;/);
 assert.match(injectedCss, /\.dait-prompt-editor textarea::-webkit-scrollbar[\s\S]*?width: 8px;/);
-assert.match(injectedCss, /\.dait-test-panel textarea::-webkit-scrollbar[\s\S]*?width: 8px;/);
 assert.match(injectedCss, /\.dait-quick-settings-body::-webkit-scrollbar-thumb[\s\S]*?background: var\(--dait-scrollbar-thumb\);/);
 assert.match(injectedCss, /\.dait-settings-row textarea::-webkit-scrollbar-thumb[\s\S]*?background: var\(--dait-scrollbar-thumb\);/);
 assert.match(injectedCss, /\.dait-prompt-editor textarea::-webkit-scrollbar-thumb[\s\S]*?background: var\(--dait-scrollbar-thumb\);/);
-assert.match(injectedCss, /\.dait-test-panel textarea::-webkit-scrollbar-thumb[\s\S]*?background: var\(--dait-scrollbar-thumb\);/);
 assert.match(injectedCss, /\[data-dait-settings-modal="true"\]::-webkit-scrollbar-track[\s\S]*?background: var\(--dait-scrollbar-track\);/);
 // Tab rail (184 px, with search) and a content pane that scrolls on its own; rows share one control width.
 assert.match(injectedCss, /\.dait-settings \{[\s\S]*?--dait-rail-w: 184px;[\s\S]*?--dait-content-max: 680px;/);

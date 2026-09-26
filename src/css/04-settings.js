@@ -56,11 +56,6 @@ module.exports = `.dait-settings {
     padding: 12px 12px 12px 20px;
 }
 
-.dait-settings-header-embedded {
-    min-height: 44px;
-    padding: 8px 16px;
-}
-
 .dait-settings-logo {
     align-items: center;
     background: var(--dait-brand);

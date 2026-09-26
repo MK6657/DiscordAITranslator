@@ -140,8 +140,6 @@ module.exports = `
 .dait-settings-content,
 .dait-settings-row textarea,
 .dait-prompt-editor textarea,
-.dait-test-panel textarea,
-.dait-test-output,
 .dait-polish-result-output {
     scrollbar-color: var(--dait-scrollbar-thumb) var(--dait-scrollbar-track);
     scrollbar-width: thin;
@@ -153,8 +151,6 @@ module.exports = `
 .dait-settings-content::-webkit-scrollbar,
 .dait-settings-row textarea::-webkit-scrollbar,
 .dait-prompt-editor textarea::-webkit-scrollbar,
-.dait-test-panel textarea::-webkit-scrollbar,
-.dait-test-output::-webkit-scrollbar,
 .dait-polish-result-output::-webkit-scrollbar {
     height: 8px;
     width: 8px;
@@ -166,8 +162,6 @@ module.exports = `
 .dait-settings-content::-webkit-scrollbar-track,
 .dait-settings-row textarea::-webkit-scrollbar-track,
 .dait-prompt-editor textarea::-webkit-scrollbar-track,
-.dait-test-panel textarea::-webkit-scrollbar-track,
-.dait-test-output::-webkit-scrollbar-track,
 .dait-polish-result-output::-webkit-scrollbar-track {
     background: var(--dait-scrollbar-track);
     border-radius: 999px;
@@ -179,8 +173,6 @@ module.exports = `
 .dait-settings-content::-webkit-scrollbar-thumb,
 .dait-settings-row textarea::-webkit-scrollbar-thumb,
 .dait-prompt-editor textarea::-webkit-scrollbar-thumb,
-.dait-test-panel textarea::-webkit-scrollbar-thumb,
-.dait-test-output::-webkit-scrollbar-thumb,
 .dait-polish-result-output::-webkit-scrollbar-thumb {
     background: var(--dait-scrollbar-thumb);
     border: 2px solid transparent;
@@ -194,8 +186,6 @@ module.exports = `
 .dait-settings-content::-webkit-scrollbar-thumb:hover,
 .dait-settings-row textarea::-webkit-scrollbar-thumb:hover,
 .dait-prompt-editor textarea::-webkit-scrollbar-thumb:hover,
-.dait-test-panel textarea::-webkit-scrollbar-thumb:hover,
-.dait-test-output::-webkit-scrollbar-thumb:hover,
 .dait-polish-result-output::-webkit-scrollbar-thumb:hover {
     background: var(--dait-scrollbar-thumb-hover);
     background-clip: padding-box;
@@ -207,8 +197,6 @@ module.exports = `
 .dait-settings-content::-webkit-scrollbar-corner,
 .dait-settings-row textarea::-webkit-scrollbar-corner,
 .dait-prompt-editor textarea::-webkit-scrollbar-corner,
-.dait-test-panel textarea::-webkit-scrollbar-corner,
-.dait-test-output::-webkit-scrollbar-corner,
 .dait-polish-result-output::-webkit-scrollbar-corner {
     background: transparent;
 }
