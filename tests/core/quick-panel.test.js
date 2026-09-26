@@ -515,6 +515,16 @@ test("the channel rule is bound to the channel the panel shows and follows route
     assert.equal(segmentButton(popover, "rule", "disabled").getAttribute("aria-checked"), "true");
     assert.equal(caption.textContent, "这个频道不自动翻译；手动翻译不受影响");
 
+    // "Follow main switch" says what really happens now.
+    click("inherit");
+    plugin.setSetting("ui.autoTranslateMessages", true);
+    t.mock.timers.tick(20);
+    assert.equal(caption.textContent, "现在：会自动翻译（跟随总开关）");
+    plugin.setSetting("translation.enabled", false);
+    t.mock.timers.tick(20);
+    assert.equal(caption.textContent, "现在：不自动翻译（跟随总开关）", "with translation off nothing is auto-translated");
+    plugin.setSetting("translation.enabled", true);
+
     // Without a channel the rule cannot be set.
     window.location.pathname = "/channels/@me";
     plugin.quickPanel.handleRouteChange();
