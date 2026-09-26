@@ -1069,7 +1069,6 @@ module.exports = class DiscordAITranslator {
             window.addEventListener("beforeunload", this.getPageHideHandler(), true);
             this.queueScan();
             this.showToast(this.t("pluginStarted", { version: PLUGIN_VERSION }), "success");
-            this.showSettingsUpgradeNotices();
             return true;
         }
         catch (error) {
@@ -17160,7 +17159,6 @@ module.exports = class DiscordAITranslator {
     flushSettings(...args) { return this.settingsStore.flushSettings(...args); }
     mergeSettings(...args) { return this.settingsStore.mergeSettings(...args); }
     ensureSettingsShape(...args) { return this.settingsStore.ensureSettingsShape(...args); }
-    showSettingsUpgradeNotices(...args) { return this.settingsStore.showSettingsUpgradeNotices(...args); }
     migrateDefaultTranslationPrompt(...args) { return this.settingsStore.migrateDefaultTranslationPrompt(...args); }
     isLegacyTranslationNaturalPrompt(...args) { return this.settingsStore.isLegacyTranslationNaturalPrompt(...args); }
     normalizePromptForMigration(...args) { return this.settingsStore.normalizePromptForMigration(...args); }
@@ -17218,6 +17216,7 @@ module.exports = class DiscordAITranslator {
     createGoogleTranslateCooldownError(...args) { return this.providerLayer.createGoogleTranslateCooldownError(...args); }
     formatGoogleTranslateCooldownMessage(...args) { return this.providerLayer.formatGoogleTranslateCooldownMessage(...args); }
     formatGoogleTranslateKeyError(...args) { return this.providerLayer.formatGoogleTranslateKeyError(...args); }
+    getGoogleTranslateKeyDisplayLabel(...args) { return this.providerLayer.getGoogleTranslateKeyDisplayLabel(...args); }
     isGoogleTranslatePoolServing(...args) { return this.providerLayer.isGoogleTranslatePoolServing(...args); }
     getGoogleTranslateQuotaRetryAfterMs(...args) { return this.providerLayer.getGoogleTranslateQuotaRetryAfterMs(...args); }
     getGoogleTranslateDailyQuotaRetryAfterMs(...args) { return this.providerLayer.getGoogleTranslateDailyQuotaRetryAfterMs(...args); }

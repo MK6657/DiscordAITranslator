@@ -722,7 +722,8 @@ const DEFAULT_SETTINGS = {
         autoTranslateConcurrency: AUTO_TRANSLATE_DEFAULT_CONCURRENCY,
         autoTranslateStrictRetry: false,
         channelAutoTranslatePolicies: {},
-        // 2: an 'enabled' rule allow-lists the channel even while autoTranslateMessages is off (v0.4.0).
+        // 2: an 'enabled' rule allow-lists the channel even while autoTranslateMessages is off (v0.4.0). Older
+        // 'enabled' rules followed the main switch and are loaded as 'inherit' (settings-store ensureSettingsShape).
         channelAutoTranslatePoliciesVersion: 2,
         historyBackfillEnabled: false,
         historyBackfillLimit: 20,

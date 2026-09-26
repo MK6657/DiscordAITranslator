@@ -58,7 +58,7 @@ Pre-release: offline, installer and artifact checks pass; live Discord acceptanc
 
 ### Automatic translation & retries
 
-- The channel rule "Always translate" now works as an allow-list: that channel is auto-translated even when the main auto-translate switch is off. "Never translate" always wins and "Follow main switch" follows the switch. If you upgrade with such channels, a one-time notice says how many there are and how to stop them.
+- The channel rule "Always translate" now works as an allow-list: that channel is auto-translated even when the main auto-translate switch is off. "Never translate" always wins and "Follow main switch" follows the switch. Rules saved by 0.3.0 keep working as they did there: a channel set to "Enable in this channel" (which followed the main switch in 0.3.0) becomes "Follow main switch", so no channel starts auto-translating after the upgrade.
 - The channel rule control always edits the channel it was opened for: if Discord switches channels while settings are open, it switches to the new channel instead of copying one channel's rule onto another.
 - A reply cut off at the length limit is retried once with a larger limit and a longer timeout. If it is cut off again, the message waits 2 minutes and then twice as long each time, up to 30 minutes, instead of being sent again every 4 seconds; a timeout of that retry no longer counts as the local service being down.
 - A batch request that times out or hits a network error no longer blocks those messages for 6 hours; they are retried with normal back-off. If a batch reply cannot be read or is cut off, each message is sent again on its own.
@@ -97,6 +97,22 @@ Pre-release: offline, installer and artifact checks pass; live Discord acceptanc
 - `npm run plugin:install` (and its dry run) now refuses to run from a terminal inside a packaged desktop app, whose AppData writes are redirected to that app's private copy. It explains that a normally started Discord would not see the install and exits with code 2 without changing anything. Add `-AllowRedirectedAppData` to install into the private copy on purpose.
 - Local agent state (`.claude/`) and browser profile folders are ignored by Git, and `npm run release:check` blocks a staged browser profile, force-added ignored files, nested repositories and nested `.claude`/`.agents` folders. The secret and private-path scan now reads exactly what Git would publish.
 - The critical-chain contract describes the v0.3.0 cached-draw pass, its stillness rule and its placement-aware scroll correction instead of forbidding every off-screen write.
+
+### Upgrade and downgrade notes
+
+Updating from 0.3.0 needs no manual steps. What changes for existing users:
+
+- On the first start, the translation cache moves out of the settings file into `DiscordAITranslator.cache.config.json`, and the diagnostics log into `DiscordAITranslator.diagnostics.config.json`, both next to the plugin. The old copy is deleted only after the new file is saved, so cached translations still show right after the update.
+- The cache limit ("Max cached messages") now counts translated messages instead of cache entries. 0.3.0 used about two entries per message, so the same number now holds about twice as many messages.
+- Channel rules keep doing what they did in 0.3.0. "Inherit global" becomes "Follow main switch" and "Disable in this channel" becomes "Never translate". "Enable in this channel" also followed the main switch in 0.3.0, so it becomes "Follow main switch": no channel starts auto-translating after the update, and nothing is sent to a translation service while the main switch is off. To translate a channel even with the main switch off, choose "Always translate" for it.
+- "Reset to defaults" keeps your API keys, the Google key pool and prompt templates unless you untick that option. In 0.3.0 it erased them.
+
+Going back to 0.3.0:
+
+- 0.3.0 starts normally and keeps all settings, API keys and the Google key pool. It ignores the options that are new in 0.4.0.
+- 0.3.0 reads the cache and the diagnostics log only from the settings file, so it starts with an empty cache and translates messages again, and starts a new log. It leaves the two new files alone.
+- 0.3.0 counts the cache limit in cache entries again, so the same number holds about half as many messages.
+- A channel set to "Always translate" acts as "Enable in this channel" in 0.3.0, so it follows the main switch there. After you update to 0.4.0 again, channel rules have their 0.4.0 meaning, so a channel you set to "Enable in this channel" while on 0.3.0 becomes "Always translate".
 
 ## 0.3.0 - 2026-09-25
 
