@@ -4,6 +4,100 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## 0.4.0 - 2026-09-26
+
+Pre-release: offline, installer and artifact checks pass; live Discord acceptance of the new settings window, quick panel and composer send path is pending.
+
+### Settings window & quick panel
+
+- The AI button next to Discord's user controls now opens a compact quick panel instead of the full settings window. It holds the auto-translate switch, this channel's rule, the target language, mask translations, hide original, translation position and a connection test, with "Open full settings" one click away. Each click opens or closes it once, however long the button is held; right and middle clicks do nothing. It stays next to the button when Discord moves the user panel, Esc closes it and returns focus, and Tab stays inside it only while focus is in the panel, so Tab in the message box still works.
+- The AI button shows a status badge that differs in shape as well as colour: green dot = working, amber ring = translating or testing, amber triangle = waiting out a rate limit or cooldown, red "!" = needs you (missing or rejected key, quota used up, local service down, failed test, unusable API URL, URL or model not found), grey dash = not auto-translating in this channel. Hover shows a summary such as "Sakura local · Connected · Auto-translating in this channel". "Testing" appears only while a test or local health check is actually running, and the quick panel shows the last passed test's model and response time.
+- The full settings window is now a moderate window (at most 920 × 760) with one title bar (title, version, live service status, close) and six tabs: Overview, Translate messages, Composer tools, Display, Advanced, and Data & diagnostics. Arrow keys and Home/End move between tabs, the last tab is remembered, and positions saved by older versions open the matching new tab.
+- A search box above the tabs finds any setting by name or description, shows which tab it is on, and jumps to it with Enter or a click; Esc clears the search.
+- Overview tab: a setup checklist (service, connection test, target language, auto-translate, this channel) with one-click Set up / Test / Turn on / Change buttons that hides once everything is done, plus status cards for message translation and composer polishing, each with a Test button.
+- The connection card shows the last test next to its status, for example "Connected · Hy-MT2 · 820 ms · just now"; a failed test shows its full error.
+- "Detect models" for Sakura local and OpenAI-compatible services lists the models the server reports, so you can pick one or keep "use the server's loaded model (local-model)". It only contacts the server when you click it.
+- "Try a sentence" (translation) and "Try polishing" (composer) sit inside the connection cards and show the result with the time it took. They replace the old test mode.
+- Help text and placeholders for endpoint, model and API key now fit the selected service, Sakura's key is marked optional, and the service list is split into AI models (also for polishing) and machine translation.
+- Rows are easier to read and line up, and options that depend on a switch sit under it and say "Turn on … first" while it is off. Clicking a row's title or description no longer presses its first button (it could clear the diagnostic logs, start a history backfill or download a snapshot).
+- The channel rule and translation position are segmented controls, the message Translate button is one choice (on hover / always / off), and manual-translation fallback services are ticked in a list and ordered with arrow buttons instead of typed as ids.
+- Confirmations use Discord-styled dialogs instead of browser pop-ups: clear translation cache, clear diagnostic logs (new), reset Google usage, delete template and "Ask before sending". A dialog always ends, also when BetterDiscord falls back to its basic modal, and turning the plugin off cancels any open confirmation.
+- Prompt templates: choosing a template only previews it, "Use template" applies it (and asks first if the prompt has unsaved edits), a new template is named in an inline field (saving inside Discord works again), and a status line says which template the prompt is based on, also after a change made in another open settings panel.
+- Changing the interface language keeps the settings window and the quick panel open and switches them to the new language in place, on the same tab.
+- Interface text was rewritten in both languages: one short sentence per description, the same words for the same things, positive switch labels, readable diagnostic summary labels and no internal codes. Hovering the shortcut button now says "Record shortcut".
+- Settings follow Discord's own dark, light and custom themes, with a visible keyboard focus ring and no animation when the system asks for reduced motion. Inside BetterDiscord's plugin-settings dialog the panel fits again, so its close button is no longer cut off and short windows get no second scrollbar.
+- On a screen without a channel (Home, the DM list, or server pages such as Browse Channels, Onboarding or Members) the channel rule is dimmed and says "Open a channel to set a rule for it". With channel translation switched off, the quick panel says the rule applies once it is on.
+
+### Translation lines
+
+- While a message is being translated, the chat shows a small "Translating…" chip instead of a blank bar. It stays on the same line inside reply previews and does not animate when the system asks for reduced motion.
+- Error lines under a message say what went wrong in plain words and offer the fix: "Open settings" for a missing or rejected key, endpoint, model, quota or unusable API URL; "Test connection" and "Retry" when the local service is down (the line names the local service's own address); the wait time when there are too many requests, turning into "Retry" when the wait is over; "Retry" for everything else.
+- Problems only you can fix (API key, endpoint, quota, local service down) show one notice per problem, even with failure pop-ups turned off. It comes back only after translation has worked again or the settings changed, not when you pass through a channel without auto-translate.
+- Hover over a translated line, or Tab to it, for a small toolbar to copy it, translate it again without the cache, or hide it. The same actions are in the message's right-click menu. A hidden line stays hidden until you translate that message again, and a Retranslate that produces nothing usable keeps the previous line and shows a message.
+- When part of a long message could not be translated, a note under the translation says which parts are missing and offers "Retranslate". Such a result is never saved as a complete translation, the original stays visible, and it is kept while on screen (and for 10 minutes after scrolling away) so it is not paid for again.
+- New display options: translation style (faint background, dimmer text, or a "译"/"TR" tag) and translation text size (100% or 90%). Changing style, size or position restyles lines already on screen in one step without moving the chat you are reading.
+- Masked translations can be revealed with Enter or Space as well as a click. With "hide original", the original shows while you hover the gray bar or reach the message with the keyboard, and clicking the translation's buttons or selecting its text works again. The gray bar is visible again; it had shrunk to a thin line.
+- Translated lines carry their language and text direction, so Arabic, Hebrew, Persian and other right-to-left targets read and align correctly; the toolbar does not cover short right-to-left lines and its arrow keys follow the visual order.
+- Messages with mentions, custom emoji or masked links are translated once and stay drawn, instead of being requested again and again without ever showing a translation. Manual translations no longer vanish on the next scroll or show raw `<@id>`/`**markdown**` text, and Retry on a failed manual translation works again.
+- Standard emoji stay in the translated text, a literally typed `:name:` next to a real custom emoji stays text, and a message whose emoji cannot be placed is no longer requested over and over. Links or words that mention translate, i18n, intl or DeepL are no longer dropped from the text.
+- With channel translation switched off, the per-message Translate buttons and the right-click item disappear; they return when it is switched back on.
+
+### Translation services
+
+- Google, Microsoft, DeepL and Baidu now translate into Spanish, French and Vietnamese, and the Test button checks the target language you actually use.
+- DeepL returns Traditional Chinese when Traditional Chinese is selected; simplified results cached earlier for that setting are no longer shown.
+- The Google API key is sent in a request header instead of the request URL.
+- Google key pool: a per-minute limit pauses a key for about a minute and a daily limit waits for Google's daily reset, instead of pausing until month end. When every key is only cooling down, requests wait and say when the first key is back, without reporting the monthly quota as used up. One notice covers the whole pool and appears only when no key is left. A mistyped or expired key is reported as invalid and pauses for 30 minutes. "Reset Google stats" and a passing Test bring a paused key back, the Test uses a key that is not cooling down and names a failing key by its label, and the usage line shows keys that are cooling down.
+- Google key pool: removing a key and pasting it back later keeps its monthly usage, and characters of requests cancelled after they were sent count toward that usage.
+- Baidu errors are recognised: blocked IP, service not enabled, unsupported target language, rejected parameters, too frequent and low balance. Translation pauses with a clear message that includes Baidu's error code, instead of retrying silently or saying the API key was rejected.
+- An empty DeepSeek balance (HTTP 402) is reported as a quota problem, and numbers inside error replies no longer trigger false quota errors.
+- OpenAI-compatible services: a 404/405 reply or an unknown model name reads "Endpoint or model not found. Check the API URL and the model name."
+- Local models: an empty or garbled answer to one message retries only that message instead of pausing automatic translation for a minute. After the server loads another model, messages are translated again with it, results are saved under the model that actually answered, and cached lines still show while the local server is offline.
+- A request that succeeds with a different key (public bilingual on the polish key, or a fallback service) no longer marks a broken translation key as connected.
+- Error messages are shown in plain words in both languages, for example a cut-off model reply or a failed bilingual write, instead of internal codes.
+
+### Automatic translation & retries
+
+- The channel rule "Always translate" now works as an allow-list: that channel is auto-translated even when the main auto-translate switch is off. "Never translate" always wins and "Follow main switch" follows the switch. If you upgrade with such channels, a one-time notice says how many there are and how to stop them.
+- The channel rule control always edits the channel it was opened for: if Discord switches channels while settings are open, it switches to the new channel instead of copying one channel's rule onto another.
+- A reply cut off at the length limit is retried once with a larger limit and a longer timeout. If it is cut off again, the message waits 2 minutes and then twice as long each time, up to 30 minutes, instead of being sent again every 4 seconds; a timeout of that retry no longer counts as the local service being down.
+- A batch request that times out or hits a network error no longer blocks those messages for 6 hours; they are retried with normal back-off. If a batch reply cannot be read or is cut off, each message is sent again on its own.
+- Long messages stop sending further parts as soon as the service reports a rate limit, a login or quota problem, a server error, a timeout or an unreachable local server. Parts already translated before a timeout are kept and shown as a partial translation.
+- One click on Translate sends at most 8 requests for a short message and up to 24 for a long one, and stops at the first error that retrying cannot fix. Rescuing one hard part no longer uses up the requests the later parts need.
+- A single message that keeps timing out no longer raises the cooldown for the whole service and stops holding a queue slot after three tries. Repeated timeouts or server errors while prefetching off-screen messages back off (10 s, doubling up to 2 minutes) instead of retrying every 4 seconds.
+- Changing translation settings cancels requests that are still running, so a local model is not kept busy with work whose result would be thrown away.
+- Short replies such as "thanks 🙏" or "ok 👍" (English target), and messages that are only a link or custom emoji plus an emoji, are skipped again instead of spending a request.
+- Discord message markup is converted to what the chat shows before it is sent; hidden spoilers, timestamps and unknown mentions are never sent from Discord's message store, and bot messages written with emoji shortcodes such as `:white_check_mark:` are translated from the text on screen.
+- Re-enabling the plugin reads messages edited while it was off, moving focus inside Discord no longer triggers full rescans, and a closed chat's message list is no longer kept in memory.
+
+### Message box tools
+
+- Polish and public bilingual keep line breaks: multi-line drafts are no longer glued together, and public bilingual messages no longer fail their own check and roll back.
+- Mentions, role and channel mentions, custom emoji, quoted lines and zero-width spaces in a draft are kept through Polish, public bilingual and Restore original, so an "@everyone" written with a zero-width space stays non-pinging.
+- A result that arrives while you type in another field, after you changed the draft, or after the channel changed is no longer dropped or forced into the message box. It opens in a panel with Copy and "Insert into input", and inserting it there counts as a normal write.
+- A failed write no longer undoes your new typing or several of your earlier edits, and can no longer leave the message box empty. If you start typing right after a result is inserted, it is not reported as "not inserted"; follow-up steps (bilingual after polish, ask before sending) are skipped instead.
+- "Ask before sending" shows the polished text in a Discord-styled dialog and, after you confirm, sends it with Enter in the message box. It no longer clicks a composer button, which on English Discord could open the "Send a gift" dialog, and nothing is sent if the draft or the message box changed while the dialog was open.
+- Public bilingual leaves code untouched, keeps the spoiler closed when the draft ends with a backslash or "|", and running it again produces a new translation instead of nesting the old one. Draft translations are no longer saved to disk, and the "Current flow" row shows the service and target language a bilingual message really uses.
+- Restore original disappears once the draft is back to the original.
+- Turning off polishing hides the Polish button and turns off its hotkey; turning off translation hides the Bilingual button. Both come back when the feature is turned on again. The polish hotkey shows progress, and busy buttons keep their short labels in narrow windows.
+- Hotkey recorder: click the shortcut button, then press a combination with Ctrl, Alt or Win (Shift is optional). Esc cancels, and recording stops when you close settings, click elsewhere or wait 10 seconds, so later typing is never captured. Shift+letter and copy/paste shortcuts are rejected, and an unusable hotkey saved by an older version is reset to Ctrl+Alt+P.
+
+### Data & reset
+
+- "Reset to defaults" moved to a Danger zone at the end of Data & diagnostics and opens a dialog that lists what returns to defaults. "Keep API keys, the Google key pool and prompt templates" is ticked by default (untick it to erase them too), and the interface language is kept. Each kept key stays with the endpoint and model it was used with, and a key you had cleared stays cleared.
+- After a reset, context menus, buttons, translation lines and diagnostics follow the new settings at once, without a restart. Open settings windows reopen on the tab they showed and keyboard focus returns to the Reset button.
+- The translation cache and the diagnostics log are saved in their own files (`DiscordAITranslator.cache.config.json` and `DiscordAITranslator.diagnostics.config.json`), so changing a setting no longer rewrites a multi-MB file. Existing data moves over on first start, nothing is deleted until the new file is saved, and earlier diagnostics entries are kept.
+- The cache limit counts messages, so 4000 means about 4000 translated messages, not about 2000, and cache hits no longer keep entries longer than the lifetime you chose. After a downgrade and re-upgrade, a cache you cleared stays cleared.
+- Pending translations, settings and Google usage are saved when Discord reloads or quits.
+- A damaged settings file no longer stops the plugin from starting; if the settings file cannot be read at all, a notice says that changes will not be saved.
+- Diagnostic exports and the settings snapshot show only the model file name, not the full local path, and include the number of "Always translate" channels. Clear logs, Copy and Export refresh the diagnostic summary at once.
+
+### Installer & tooling
+
+- `npm run plugin:install` (and its dry run) now refuses to run from a terminal inside a packaged desktop app, whose AppData writes are redirected to that app's private copy. It explains that a normally started Discord would not see the install and exits with code 2 without changing anything. Add `-AllowRedirectedAppData` to install into the private copy on purpose.
+- Local agent state (`.claude/`) and browser profile folders are ignored by Git, and `npm run release:check` blocks a staged browser profile, force-added ignored files, nested repositories and nested `.claude`/`.agents` folders. The secret and private-path scan now reads exactly what Git would publish.
+- The critical-chain contract describes the v0.3.0 cached-draw pass, its stillness rule and its placement-aware scroll correction instead of forbidding every off-screen write.
+
 ## 0.3.0 - 2026-09-25
 
 Pre-release: offline, installer and artifact checks pass; live Discord acceptance of the scrolling changes is pending.
