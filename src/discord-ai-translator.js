@@ -3922,6 +3922,11 @@ module.exports = class DiscordAITranslator {
 
         textarea.addEventListener("change", () => this.preserveSettingsScroll(textarea, () => this.setSetting(`${kind}.prompt`, textarea.value)));
         textarea.addEventListener("input", syncStatus);
+        // The prompt set from elsewhere (another open settings panel, a template applied or deleted there).
+        textarea.__daitAfterSync = () => {
+            syncStatus();
+            syncPreview();
+        };
         search.addEventListener("input", () => renderOptions());
         select.addEventListener("change", syncPreview);
         apply.addEventListener("click", async () => {
@@ -4481,6 +4486,8 @@ module.exports = class DiscordAITranslator {
             }
 
             control.value = value ?? "";
+            // A control that shows state derived from its value (the prompt manager's status) refreshes it.
+            if (typeof control.__daitAfterSync === "function") control.__daitAfterSync();
         });
         // A model preset select shows the preset matching the model field, or "custom".
         const modelKind = /^(polish|translation)\.model$/.exec(path)?.[1];

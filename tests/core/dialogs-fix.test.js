@@ -328,6 +328,129 @@ test("stop() ends an open confirmation and clears the paused state", async t => 
     h.plugin.stop();
 });
 
+// --- F6: the prompt manager follows a prompt changed somewhere else --------------------------------------
+
+// Just enough DOM for the prompt manager: elements, class and [data-dait-path] lookups, attributes,
+// listeners and select values.
+function createSettingsDocument() {
+    const elements = [];
+    const matches = (element, selector) => {
+        const path = /^\[data-dait-path(?:='([^']*)')?\]$/.exec(selector);
+        if (path) return typeof element.dataset.daitPath === "string" && (path[1] === undefined || element.dataset.daitPath === path[1]);
+        if (selector.startsWith(".")) return String(element.className || "").split(/\s+/).includes(selector.slice(1));
+        return false;
+    };
+    const descendants = (root, output = []) => {
+        for (const child of root.children) {
+            output.push(child);
+            descendants(child, output);
+        }
+        return output;
+    };
+    const createElement = tag => {
+        const element = {
+            tagName: String(tag).toUpperCase(),
+            children: [],
+            dataset: {},
+            attributes: {},
+            listeners: {},
+            style: {},
+            className: "",
+            isConnected: true,
+            classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
+            appendChild(child) {
+                this.children.push(child);
+                child.parentNode = this;
+                child.parentElement = this;
+                return child;
+            },
+            setAttribute(name, value) { this.attributes[name] = String(value); },
+            getAttribute(name) { return this.attributes[name]; },
+            removeAttribute(name) { delete this.attributes[name]; },
+            addEventListener(type, handler) { (this.listeners[type] ||= []).push(handler); },
+            removeEventListener() {},
+            dispatch(type, extra = {}) {
+                return Promise.all((this.listeners[type] || []).map(handler => handler({ type, target: this, preventDefault() {}, stopPropagation() {}, ...extra })));
+            },
+            querySelectorAll(selector) { return descendants(this).filter(node => matches(node, selector)); },
+            querySelector(selector) { return this.querySelectorAll(selector)[0] || null; },
+            closest() { return null; },
+            focus() { doc.activeElement = this; }
+        };
+        let text = "";
+        Object.defineProperty(element, "textContent", {
+            get() { return element.children.length ? element.children.map(child => child.textContent).join("") : text; },
+            set(next) {
+                element.children = [];
+                text = String(next ?? "");
+            }
+        });
+        if (element.tagName === "SELECT") {
+            Object.defineProperty(element, "value", {
+                get() { return (element.children.find(option => option.selected) || element.children[0])?.value ?? ""; },
+                set(next) { element.children.forEach(option => { option.selected = String(option.value) === String(next); }); }
+            });
+        }
+        elements.push(element);
+        return element;
+    };
+    const doc = {
+        elements,
+        activeElement: null,
+        body: null,
+        createElement,
+        addEventListener() {},
+        removeEventListener() {},
+        getElementById: () => null,
+        querySelectorAll(selector) { return elements.filter(node => matches(node, selector)); }
+    };
+    return doc;
+}
+
+function createPromptManagerUi(t) {
+    const doc = createSettingsDocument();
+    useGlobals(t, { document: doc });
+    const plugin = quietPlugin();
+    plugin.preserveSettingsScroll = (_anchor, action) => action();
+    plugin.settings.translation.promptTemplates = [
+        { id: "tpl-a", serial: "001", name: "Natural", prompt: "prompt A" },
+        { id: "tpl-b", serial: "002", name: "Literal", prompt: "prompt B" }
+    ];
+    plugin.settings.translation.activePromptTemplate = "tpl-a";
+    plugin.settings.translation.prompt = "prompt A";
+    const manager = plugin.createPromptManager("translation");
+    const all = manager.querySelectorAll.bind(manager);
+    return {
+        plugin,
+        textarea: all("[data-dait-path='translation.prompt']")[0],
+        status: all(".dait-prompt-status")[0],
+        previewLabel: all(".dait-prompt-preview-label")[0],
+        update: all(".dait-small-button").find(button => button.dataset.daitAction === "promptUpdate")
+    };
+}
+
+test("the prompt status and Update follow a prompt edited in another settings panel", t => {
+    const ui = createPromptManagerUi(t);
+    assert.equal(ui.status.textContent, ui.plugin.t("promptUsingTemplate", { code: "001", name: "Natural" }));
+    assert.equal(ui.update.disabled, true);
+    // The same prompt saved from the other panel (BetterDiscord's plugin settings or the settings window).
+    ui.plugin.setSetting("translation.prompt", "prompt A, tuned elsewhere");
+    assert.equal(ui.textarea.value, "prompt A, tuned elsewhere");
+    assert.equal(ui.status.textContent, ui.plugin.t("promptTemplateEdited", { code: "001", name: "Natural" }));
+    assert.equal(ui.update.disabled, false, "the tuned prompt can be stored in the template right away");
+});
+
+test("the prompt status and preview label follow a template applied in another settings panel", t => {
+    const ui = createPromptManagerUi(t);
+    assert.equal(ui.previewLabel.textContent, `${ui.plugin.t("promptPreview")} · ${ui.plugin.t("promptPreviewActive")}`);
+    ui.plugin.applyPromptTemplate("translation", "tpl-b");
+    assert.equal(ui.textarea.value, "prompt B");
+    assert.equal(ui.status.textContent, ui.plugin.t("promptUsingTemplate", { code: "002", name: "Literal" }));
+    assert.equal(ui.update.disabled, true);
+    // The previewed template (001) is no longer the one in use.
+    assert.equal(ui.previewLabel.textContent, ui.plugin.t("promptPreview"));
+});
+
 test("while a confirmation is open the settings window sits below BetterDiscord's fallback modal", () => {
     const css = require("../../src/css/08-dialogs.js");
     const rule = /\.dait-quick-settings-modal-root\[data-dait-confirm-open="true"\]\s*\{([^}]*)\}/.exec(css);
