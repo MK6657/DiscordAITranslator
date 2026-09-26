@@ -306,12 +306,14 @@ test("the settings window has one title bar: the panel's title, status and close
     assert.equal(dialog.getAttribute("aria-modal"), "true");
     assert.equal(dialog.getAttribute("aria-label"), plugin.t("settingsTitle"));
     ["dait-quick-settings-header", "dait-quick-settings-title", "dait-quick-settings-footer", "dait-quick-settings-done"].forEach(name => {
-        assert.equal(root.querySelector(`.${name}`), null, name);
+        assert.ok(!root.querySelector(`.${name}`), name);
     });
     const body = dialog.querySelector(".dait-quick-settings-body");
-    assert.deepEqual(dialog.children, [body], "the panel fills the window");
+    assert.equal(dialog.children.length, 1, "the panel fills the window");
+    assert.ok(dialog.children[0] === body);
     const panel = body.querySelector(".dait-settings");
-    assert.deepEqual(body.children, [panel]);
+    assert.equal(body.children.length, 1);
+    assert.ok(body.children[0] === panel);
     assert.equal(panel.dataset.daitQuickSettings, "true");
     const titles = root.querySelectorAll(".dait-settings-title");
     assert.equal(titles.length, 1);
@@ -319,9 +321,9 @@ test("the settings window has one title bar: the panel's title, status and close
     assert.ok(panel.querySelector(".dait-settings-header .dait-api-status"), "the live status sits in the same title bar");
     const closes = root.querySelectorAll(".dait-settings-close");
     assert.equal(closes.length, 1);
-    assert.equal(doc.activeElement, closes[0], "focus starts on the close button");
+    assert.ok(doc.activeElement === closes[0], "focus starts on the close button");
     closes[0].click();
-    assert.equal(doc.querySelector(".dait-quick-settings-modal-root"), null, "the panel's close button closes the window");
+    assert.ok(!doc.querySelector(".dait-quick-settings-modal-root"), "the panel's close button closes the window");
 });
 
 test("when the panel cannot be built, the error card carries the window's close button", t => {
@@ -332,9 +334,9 @@ test("when the panel cannot be built, the error card carries the window's close 
     assert.ok(card);
     const done = card.querySelector(".dait-quick-settings-done");
     assert.equal(done.textContent, plugin.t("quickSettingsDone"));
-    assert.equal(doc.activeElement, done);
+    assert.ok(doc.activeElement === done);
     done.click();
-    assert.equal(doc.querySelector(".dait-quick-settings-modal-root"), null);
+    assert.ok(!doc.querySelector(".dait-quick-settings-modal-root"));
 });
 
 test("the window is a moderate size the panel fills, with no per-theme palette copies", () => {
@@ -410,9 +412,9 @@ test("changing the interface language rebuilds the open settings window in place
     select.dispatch("change");
 
     assert.equal(plugin.settings.ui.language, "en");
-    assert.equal(doc.querySelector(".dait-quick-settings-modal-root"), root, "the window stays open");
+    assert.ok(doc.querySelector(".dait-quick-settings-modal-root") === root, "the window stays open");
     const next = root.querySelector(".dait-settings");
-    assert.notEqual(next, panel);
+    assert.ok(next && next !== panel);
     assert.equal(builds, 1, "rebuilt once, not again by the language select");
     assert.equal(doc.querySelectorAll(".dait-settings").length, 1);
     assert.equal(next.dataset.daitLocale, "en");
@@ -440,7 +442,7 @@ test("a settings panel in BetterDiscord's own modal also switches language in pl
     select.value = "en";
     select.dispatch("change");
     const next = host.querySelector(".dait-settings");
-    assert.notEqual(next, panel);
+    assert.ok(next && next !== panel);
     assert.equal(builds, 1);
     assert.equal(next.dataset.daitLocale, "en");
     assert.equal(next.dataset.daitQuickSettings, undefined);
@@ -467,17 +469,17 @@ test("changing the interface language re-renders the open quick panel in place",
     const popovers = doc.querySelectorAll(".dait-quick-popover");
     assert.equal(popovers.length, 1);
     const after = popovers[0];
-    assert.notEqual(after, before);
+    assert.ok(after !== before);
     assert.equal(before.isConnected, false);
     assert.equal(plugin.quickPanel.isOpen(), true, "still open");
     assert.equal(after.querySelector(".dait-qp-title").textContent, "AI Translator");
     assert.equal(after.querySelector(".dait-qp-footer-open-full").textContent, plugin.t("quickPanelOpenFull"));
     assert.deepEqual([after.style.left, after.style.top], position, "same place, although the launcher is being re-created");
-    assert.equal(doc.activeElement, after.querySelector(".dait-qp-select"), "focus stays on the same control");
+    assert.ok(doc.activeElement === after.querySelector(".dait-qp-select"), "focus stays on the same control");
 
     // Keyboard handling moved to the new panel: Escape closes it.
     plugin.quickPanel.handleDocumentKeydown({ key: "Escape", preventDefault() {}, stopPropagation() {}, stopImmediatePropagation() {} });
-    assert.equal(doc.querySelector(".dait-quick-popover"), null);
+    assert.ok(!doc.querySelector(".dait-quick-popover"));
 });
 
 // --- Launcher status ---

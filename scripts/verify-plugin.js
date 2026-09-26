@@ -768,7 +768,8 @@ assert.equal(quickSettingsDialog.getAttribute("aria-label"), quickSettingsPlugin
 assert.equal(quickSettingsDialog.dataset.daitSettingsModal, undefined);
 assert.equal(quickSettingsClose.focused, true);
 assert.equal(quickSettingsBodyNode.parentElement, quickSettingsDialog);
-assert.deepEqual(quickSettingsDialog.children, [quickSettingsBodyNode]);
+assert.equal(quickSettingsDialog.children.length, 1);
+assert.equal(quickSettingsDialog.children[0], quickSettingsBodyNode);
 const quickSettingsSettingsPanel = findByClass("dait-settings");
 assert.ok(quickSettingsSettingsPanel);
 assert.equal(fakeElementHasClass(quickSettingsSettingsPanel, "theme-light"), true);
