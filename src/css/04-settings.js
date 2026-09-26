@@ -139,7 +139,7 @@ module.exports = `.dait-settings {
 }
 
 /* Status: a 10 px mark plus text. The mark differs in shape as well as colour: dash = not tested,
-   ring = testing, filled = connected, "!" = needs you. */
+   ring = testing, filled = connected, "!" = needs you (failed, or not set up). */
 .dait-settings .dait-api-status {
     align-items: center;
     color: var(--dait-text);
@@ -172,11 +172,13 @@ module.exports = `.dait-settings {
     height: 10px;
 }
 
-.dait-settings .dait-api-status.dait-api-status-failed {
+.dait-settings .dait-api-status.dait-api-status-failed,
+.dait-settings .dait-api-status.dait-api-status-unconfigured {
     color: var(--dait-danger);
 }
 
-.dait-settings .dait-api-status.dait-api-status-failed::before {
+.dait-settings .dait-api-status.dait-api-status-failed::before,
+.dait-settings .dait-api-status.dait-api-status-unconfigured::before {
     align-items: center;
     background: var(--dait-danger-fill);
     border-radius: var(--dait-radius-pill);

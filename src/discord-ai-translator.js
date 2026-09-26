@@ -1104,6 +1104,7 @@ module.exports = class DiscordAITranslator {
         this.cancelQuickSettingsModalVerify();
         if (this.autoTranslationRetryTimer) clearTimeout(this.autoTranslationRetryTimer);
         this.cancelAutoTranslationRenderQueue();
+        this.clearTranslationErrorWaitTimers();
         if (this.settingsDirtyTimer) clearTimeout(this.settingsDirtyTimer);
         if (this.translationCacheDirtyTimer) clearTimeout(this.translationCacheDirtyTimer);
         if (this.googleTranslateRuntimeDirtyTimer) clearTimeout(this.googleTranslateRuntimeDirtyTimer);
@@ -1500,7 +1501,8 @@ module.exports = class DiscordAITranslator {
         return results;
     }
 
-    // Every searchable row with the tab it lives on. Group titles take part in matching but are not shown.
+    // Every searchable row with the tab it lives on. Group titles and the row's own button texts (Clear stats,
+    // Export JSON, Test) take part in matching but are not shown.
     getSettingsSearchEntries(state) {
         const entries = [];
         const visit = (node, tab, groupTitle) => {
@@ -1518,7 +1520,7 @@ module.exports = class DiscordAITranslator {
                             tabLabel: tab.label,
                             label,
                             description,
-                            haystack: `${label} ${description} ${nextGroup || ""} ${tab.label}`.toLocaleLowerCase()
+                            haystack: `${label} ${description} ${this.getSettingsSearchButtonText(child)} ${nextGroup || ""} ${tab.label}`.toLocaleLowerCase()
                         });
                     }
                 }
@@ -1527,6 +1529,25 @@ module.exports = class DiscordAITranslator {
         };
         (state?.tabs || []).forEach(tab => visit(tab.tabpanel, tab, ""));
         return entries;
+    }
+
+    // The texts of the buttons that belong to this row (not to a row nested in it).
+    getSettingsSearchButtonText(row) {
+        return [...(row?.querySelectorAll?.("button") || [])]
+            .filter(button => button.closest?.(".dait-settings-row, .dait-settings-search-target") === row)
+            .map(button => String(button.textContent || "").trim())
+            .filter(Boolean)
+            .join(" ");
+    }
+
+    // A Latin or numeric term matches at the start of a word ("reset" is not found in "preset"); other scripts,
+    // which do not separate words with spaces, match anywhere.
+    matchesSettingsSearchTerm(haystack, term) {
+        if (!/^[a-z0-9]/.test(term)) return haystack.includes(term);
+        for (let index = haystack.indexOf(term); index >= 0; index = haystack.indexOf(term, index + 1)) {
+            if (index === 0 || !/[a-z0-9]/.test(haystack[index - 1])) return true;
+        }
+        return false;
     }
 
     runSettingsSearch(state, rawQuery) {
@@ -1538,7 +1559,7 @@ module.exports = class DiscordAITranslator {
             return [];
         }
         const terms = query.split(/\s+/).filter(Boolean);
-        const entries = this.getSettingsSearchEntries(state).filter(entry => terms.every(term => entry.haystack.includes(term)));
+        const entries = this.getSettingsSearchEntries(state).filter(entry => terms.every(term => this.matchesSettingsSearchTerm(entry.haystack, term)));
         state.searchEntries = entries;
         // The results replace every tab page, so no tab is selected meanwhile; the current one stays reachable with Tab.
         state.tabs.forEach(tab => {
@@ -1638,9 +1659,17 @@ module.exports = class DiscordAITranslator {
 
     // Esc with a query clears the search instead of closing the window. The quick-settings window listens on the
     // document in the capture phase, so this listener sits one step earlier, on window, while the panel is open.
+    // Only a running plugin with the panel on the page binds it: a BetterDiscord settings panel left open across a
+    // plugin reload would otherwise keep the listener (and the panel) alive with nothing left to remove them.
     bindSettingsSearchEscape(state) {
         if (!state || state.searchEscapeListener || typeof window === "undefined" || typeof window.addEventListener !== "function") return;
+        if (!this.isStarted || (state.panel && state.panel.isConnected === false)) return;
         state.searchEscapeListener = event => {
+            // The panel left the page without its cleanup running: remove this listener (and the panel's others).
+            if (state.panel && state.panel.isConnected === false) {
+                this.cleanupSettingsPanelListeners(state.panel);
+                return;
+            }
             if (event?.key !== "Escape" || !(state.searchQuery || state.searchInput?.value)) return;
             const active = typeof document !== "undefined" ? document.activeElement : null;
             if (!active || !(active === state.searchInput || state.results?.contains?.(active))) return;
@@ -1732,11 +1761,30 @@ module.exports = class DiscordAITranslator {
     createApiStatusBadge(kind) {
         const status = document.createElement("span");
         const savedStatus = this.getApiStatus(kind);
-        status.className = `dait-api-status dait-api-status-${savedStatus.state}`;
         status.dataset.daitKind = kind;
-        status.textContent = this.getApiStatusText(savedStatus.state);
-        status.title = savedStatus.message || "";
+        this.renderApiStatusBadge(status, kind, savedStatus.state, this.getApiStatusText(savedStatus.state), savedStatus.message || "");
         return status;
+    }
+
+    // What a status badge shows: "Not set up" (with the "needs you" mark) while the service is missing a required
+    // field, the same name the quick panel and the overview cards use; otherwise the saved or live state. A test
+    // that is running still shows as testing.
+    getApiStatusBadgeState(kind, state = this.getApiStatus(kind).state) {
+        if (state === "testing" || !kind) return state;
+        let configured = true;
+        try { configured = Boolean(this.hasUsableApiConfig(kind)); }
+        catch { configured = true; }
+        return configured ? state : "unconfigured";
+    }
+
+    renderApiStatusBadge(badge, kind, state, text = this.getApiStatusText(state), title = "") {
+        if (!badge) return;
+        const shown = this.getApiStatusBadgeState(kind, state);
+        badge.className = `dait-api-status dait-api-status-${shown}`;
+        badge.textContent = shown === state ? text : this.getApiStatusText(shown);
+        badge.title = shown === state
+            ? title || ""
+            : this.t("overviewServiceMissing", { field: this.getSettingLabelForPath(this.getMissingServiceSettingPath(kind)) });
     }
 
     // The close button closes whichever window holds the panel: the plugin's own settings window, or
@@ -1847,6 +1895,9 @@ module.exports = class DiscordAITranslator {
         while (current && current !== document.body && marked < 5) {
             const rect = current.getBoundingClientRect?.();
             const width = Number(rect?.width || 0);
+            // A layer as wide as the window (BetterDiscord's .bd-modal-wrapper, Discord's modal layer) holds the modal;
+            // sizing it would shrink the real frame inside it to its content. The modal frame is the last node below it.
+            if (viewportWidth && width >= viewportWidth - 1) break;
             if (!width || width <= desiredWidth + 80) {
                 if (current.dataset.daitSettingsModal !== "true") current.dataset.daitSettingsModal = "true";
                 this.applyDiscordThemeData(current, panel);
@@ -2385,11 +2436,7 @@ module.exports = class DiscordAITranslator {
             details = [...(document.querySelectorAll?.(`.dait-api-test-detail[data-dait-kind='${kind}']`) || [])];
         }
         catch {}
-        badges.forEach(badge => {
-            badge.className = `dait-api-status dait-api-status-${status.state}`;
-            badge.textContent = this.getApiStatusText(status.state);
-            badge.title = status.message || "";
-        });
+        badges.forEach(badge => this.renderApiStatusBadge(badge, kind, status.state, this.getApiStatusText(status.state), status.message || ""));
         details.forEach(detail => this.syncApiTestDetail(detail, kind));
         this.refreshOverviewStatusSection();
     }
@@ -2517,7 +2564,11 @@ module.exports = class DiscordAITranslator {
         const ui = capabilities.ui || {};
         const providerSettings = this.createTaskProviderSettingsBlock(kind, ui);
         if (providerSettings) section.appendChild(providerSettings);
-        if (ui.sourceLanguage) section.appendChild(this.createLanguageRow(kind, "sourceLanguage", this.t("inputLanguage"), this.t("inputLanguageDesc"), { allowAuto: true }));
+        // Translation reads channel messages; polishing reads the user's draft.
+        if (ui.sourceLanguage) {
+            const sourceKey = kind === "polish" ? "inputLanguage" : "messageLanguage";
+            section.appendChild(this.createLanguageRow(kind, "sourceLanguage", this.t(sourceKey), this.t(`${sourceKey}Desc`), { allowAuto: true }));
+        }
         if (ui.targetLanguage) section.appendChild(this.createLanguageRow(kind, "targetLanguage", kind === "polish" ? this.t("outputLanguage") : this.t("targetLanguage"), kind === "polish" ? this.t("outputLanguageDesc") : this.t("targetLanguageDesc")));
 
         if (kind === "polish") {
@@ -2561,7 +2612,13 @@ module.exports = class DiscordAITranslator {
         title.textContent = `${this.t("providerSettingsTitle")} · ${this.getProviderDisplayName(provider)}`;
         title.title = this.t("providerSettingsDesc");
         header.appendChild(title);
-        if (ui.apiTest || ui.apiKey) header.appendChild(this.createProviderConnectionStatus(kind));
+        if (ui.apiTest || ui.apiKey) {
+            header.appendChild(this.createProviderConnectionStatus(kind));
+            // Search finds the card (and its Test button) by the card title or "Test".
+            header.className = `${header.className} dait-settings-search-target`;
+            header.dataset.daitSearchLabel = title.textContent;
+            header.dataset.daitSearchDescription = this.t("providerStatusDesc");
+        }
         block.appendChild(header);
 
         let hasRows = false;
@@ -3220,6 +3277,7 @@ module.exports = class DiscordAITranslator {
         section.appendChild(this.createSelectRow("ui.translationCacheTtlHours", this.t("translationCacheTtl"), TRANSLATION_CACHE_TTL_OPTIONS.map(value => [String(value), this.getTranslationCacheTtlLabel(value)]), { description: this.t("translationCacheTtlDesc") }));
         section.appendChild(this.createInputRow("ui.translationCacheMaxEntries", this.t("translationCacheMaxEntries"), "number", String(TRANSLATION_CACHE_DEFAULT_LIMIT), { min: String(TRANSLATION_CACHE_MIN_LIMIT), max: String(TRANSLATION_CACHE_MAX_LIMIT), step: "100" }, { description: this.t("translationCacheMaxEntriesDesc") }));
         section.appendChild(this.createTranslationCacheStatsRow());
+        section.appendChild(this.createTranslationCacheClearRow());
         return section;
     }
 
@@ -3229,6 +3287,7 @@ module.exports = class DiscordAITranslator {
         const section = this.createSettingsGroup(this.t("diagnosticsSettingsTitle"), "diagnostics");
         section.appendChild(this.createCheckboxRow("ui.diagnosticsEnabled", this.t("diagnosticLogs"), { description: this.t("diagnosticLogsDesc") }));
         section.appendChild(this.createDiagnosticLogsRow());
+        section.appendChild(this.createDiagnosticLogsClearRow());
         section.appendChild(this.createSettingsSnapshotRow());
         section.appendChild(this.createDiagnosticSummaryRow());
         return section;
@@ -3310,20 +3369,28 @@ module.exports = class DiscordAITranslator {
         return this.createRow(this.t("polishHotkey"), controls, { ...rowOptions, description: this.t("polishHotkeyDesc") });
     }
 
+    // The data tab gives every action a row of its own (a destructive one always), so a row never mixes unrelated
+    // buttons: the stats rows show the counts, the clear rows below them update those counts.
     createTranslationCacheStatsRow() {
         const controls = document.createElement("div");
         controls.className = "dait-cache-actions";
         const clearStats = this.createSmallButton(this.t("clearTranslationCacheStats"));
-        const clearCache = this.createSmallButton(this.t("clearTranslationCache"), "danger");
-        const refreshDescription = button => {
-            const row = button.closest(".dait-settings-row");
-            const description = row?.querySelector?.(".dait-row-description");
-            if (description) description.textContent = this.getTranslationCacheStatsText();
-        };
         clearStats.addEventListener("click", () => {
             this.clearTranslationCacheStats();
-            refreshDescription(clearStats);
+            this.refreshSettingsStatsRow(clearStats, "translation-cache");
         });
+        controls.appendChild(clearStats);
+        const row = this.createRow(this.t("translationCacheStats"), controls, {
+            description: this.getTranslationCacheStatsText()
+        });
+        row.dataset.daitStats = "translation-cache";
+        return row;
+    }
+
+    createTranslationCacheClearRow() {
+        const controls = document.createElement("div");
+        controls.className = "dait-cache-actions";
+        const clearCache = this.createSmallButton(this.t("clearTranslationCache"), "danger");
         clearCache.addEventListener("click", async () => {
             const confirmed = await this.confirmAction({
                 title: this.t("clearTranslationCache"),
@@ -3333,44 +3400,34 @@ module.exports = class DiscordAITranslator {
             });
             if (!confirmed) return;
             this.clearTranslationCache();
-            refreshDescription(clearCache);
+            this.refreshSettingsStatsRow(clearCache, "translation-cache");
         });
-        controls.appendChild(clearStats);
         controls.appendChild(clearCache);
-        return this.createRow(this.t("translationCacheStats"), controls, {
-            description: this.getTranslationCacheStatsText()
-        });
+        return this.createRow(this.t("clearTranslationCache"), controls, { description: this.t("clearTranslationCacheDesc") });
     }
 
+    // Writes the current counts into the stats row of the same group ("translation-cache" or "diagnostic-logs").
+    refreshSettingsStatsRow(source, kind) {
+        const scope = source?.closest?.(".dait-settings-group") || source?.closest?.(".dait-settings");
+        const row = scope?.querySelector?.(`[data-dait-stats='${kind}']`);
+        const description = row?.querySelector?.(".dait-row-description");
+        if (!description) return;
+        description.textContent = kind === "translation-cache" ? this.getTranslationCacheStatsText() : this.getDiagnosticLogsStatsText();
+    }
+
+    // Copy and export: one small group of related buttons, with the log counts as the row's description.
     createDiagnosticLogsRow() {
         const controls = document.createElement("div");
         controls.className = "dait-diagnostic-actions";
-        const clear = this.createSmallButton(this.t("clearDiagnosticLogs"));
         const copy = this.createSmallButton(this.t("copyDiagnosticLogs"));
         const exportJson = this.createSmallButton(this.t("exportDiagnosticJson"));
         const exportTxt = this.createSmallButton(this.t("exportDiagnosticTxt"));
-        const refreshDescription = button => {
-            const row = button.closest(".dait-settings-row");
-            const description = row?.querySelector?.(".dait-row-description");
-            if (description) description.textContent = this.getDiagnosticLogsStatsText();
-        };
         // The summary row sits in the same diagnostics group as this row.
         const refreshDiagnostics = button => {
-            refreshDescription(button);
+            this.refreshSettingsStatsRow(button, "diagnostic-logs");
             this.refreshDiagnosticSummary(button.closest(".dait-settings-group") || button.closest(".dait-settings"));
         };
 
-        clear.addEventListener("click", async () => {
-            const confirmed = await this.confirmAction({
-                title: this.t("clearDiagnosticLogs"),
-                body: this.t("clearDiagnosticLogsConfirm"),
-                confirmText: this.t("clearDiagnosticLogs"),
-                danger: true
-            });
-            if (!confirmed) return;
-            this.clearDiagnosticLogs();
-            refreshDiagnostics(clear);
-        });
         copy.addEventListener("click", async () => {
             await this.copyDiagnosticLogs();
             refreshDiagnostics(copy);
@@ -3384,13 +3441,34 @@ module.exports = class DiscordAITranslator {
             refreshDiagnostics(exportTxt);
         });
 
-        controls.appendChild(clear);
         controls.appendChild(copy);
         controls.appendChild(exportJson);
         controls.appendChild(exportTxt);
-        return this.createRow(this.t("diagnosticLogs"), controls, {
+        const row = this.createRow(this.t("exportDiagnosticLogs"), controls, {
             description: this.getDiagnosticLogsStatsText()
         });
+        row.dataset.daitStats = "diagnostic-logs";
+        return row;
+    }
+
+    createDiagnosticLogsClearRow() {
+        const controls = document.createElement("div");
+        controls.className = "dait-diagnostic-actions";
+        const clear = this.createSmallButton(this.t("clearDiagnosticLogs"), "danger");
+        clear.addEventListener("click", async () => {
+            const confirmed = await this.confirmAction({
+                title: this.t("clearDiagnosticLogs"),
+                body: this.t("clearDiagnosticLogsConfirm"),
+                confirmText: this.t("clearDiagnosticLogs"),
+                danger: true
+            });
+            if (!confirmed) return;
+            this.clearDiagnosticLogs();
+            this.refreshSettingsStatsRow(clear, "diagnostic-logs");
+            this.refreshDiagnosticSummary(clear.closest(".dait-settings-group") || clear.closest(".dait-settings"));
+        });
+        controls.appendChild(clear);
+        return this.createRow(this.t("clearDiagnosticLogs"), controls, { description: this.t("clearDiagnosticLogsDesc") });
     }
 
     createSettingsSnapshotRow() {
@@ -3901,12 +3979,12 @@ module.exports = class DiscordAITranslator {
                 : this.getPromptTemplates(kind).find(template => normalize(template.prompt) === normalize(prompt)) || null;
             // "Update current template" writes to the active template, so the status names it while it differs.
             status.textContent = matching
-                ? this.t("promptUsingTemplate", { code: matching.serial, name: matching.name })
+                ? this.t("promptUsingTemplate", { code: matching.serial, name: this.getPromptTemplateDisplayName(matching) })
                 : active && normalize(prompt)
-                    ? this.t("promptTemplateEdited", { code: active.serial, name: active.name })
+                    ? this.t("promptTemplateEdited", { code: active.serial, name: this.getPromptTemplateDisplayName(active) })
                     : this.t("promptTemplateCustom");
             update.disabled = !active || !normalize(prompt) || normalize(active.prompt) === normalize(prompt);
-            update.title = active ? this.t("promptUpdateTitle", { code: active.serial, name: active.name }) : "";
+            update.title = active ? this.t("promptUpdateTitle", { code: active.serial, name: this.getPromptTemplateDisplayName(active) }) : "";
         };
 
         const syncPreview = () => {
@@ -3982,7 +4060,7 @@ module.exports = class DiscordAITranslator {
             if (normalize(current) !== normalize(template.prompt) && hasUnsavedEdits(current)) {
                 const confirmed = await this.confirmAction({
                     title: this.t("promptApplyUnsavedTitle"),
-                    body: this.t("promptApplyUnsavedConfirm", { code: template.serial, name: template.name }),
+                    body: this.t("promptApplyUnsavedConfirm", { code: template.serial, name: this.getPromptTemplateDisplayName(template) }),
                     confirmText: this.t("promptApply"),
                     danger: true
                 });
@@ -4020,7 +4098,7 @@ module.exports = class DiscordAITranslator {
             const confirmed = await this.confirmAction({
                 title: this.t("promptDeleteConfirm"),
                 body: fallback && normalize(fallback.prompt) !== normalize(getPromptValue())
-                    ? [label, this.t("promptDeleteActiveNote", { code: fallback.serial, name: fallback.name })]
+                    ? [label, this.t("promptDeleteActiveNote", { code: fallback.serial, name: this.getPromptTemplateDisplayName(fallback) })]
                     : label,
                 confirmText: this.t("promptDelete"),
                 danger: true
@@ -4299,14 +4377,32 @@ module.exports = class DiscordAITranslator {
     }
 
     getPromptTemplateLabel(template) {
-        return `${template.serial || "000"} · ${template.name || ""}`;
+        return `${template.serial || "000"} · ${this.getPromptTemplateDisplayName(template)}`;
+    }
+
+    // A built-in template keeps its stored (Chinese) name but is shown in the interface language, unless the user
+    // renamed it; the user's own templates show their name as typed.
+    getPromptTemplateDisplayName(template) {
+        const name = String(template?.name || "");
+        const keys = {
+            "polish-natural-chat": "promptTemplateNameNaturalChat",
+            "polish-polite": "promptTemplateNamePolite",
+            "polish-short": "promptTemplateNameShort",
+            "translation-natural": "promptTemplateNameNatural",
+            "translation-literal": "promptTemplateNameLiteral"
+        };
+        const key = keys[template?.id];
+        if (!key) return name;
+        const builtIn = [...DEFAULT_PROMPT_TEMPLATES.polish, ...DEFAULT_PROMPT_TEMPLATES.translation].find(item => item.id === template.id);
+        return !name || name === builtIn?.name ? this.t(key) : name;
     }
 
     getPromptTemplateSearchText(template) {
         return [
             template.serial,
             String(template.serial || "").replace(/^0+/, ""),
-            template.name
+            template.name,
+            this.getPromptTemplateDisplayName(template)
         ].filter(Boolean).join(" ").toLowerCase();
     }
 
@@ -5215,7 +5311,8 @@ module.exports = class DiscordAITranslator {
             testing: "apiStatusTesting",
             success: "apiStatusSuccess",
             failed: "apiStatusFailed",
-            untested: "apiStatusUntested"
+            untested: "apiStatusUntested",
+            unconfigured: "quickStatusNotConfigured"
         }[state] || "apiStatusUntested";
         return this.t(key);
     }
@@ -7107,8 +7204,20 @@ module.exports = class DiscordAITranslator {
             document.removeEventListener?.("keydown", this.quickSettingsModalKeydown, true);
         }
         this.quickSettingsModalKeydown = event => {
+            // A key that ends an IME composition belongs to the input method.
+            if (event?.isComposing) return;
             // A BetterDiscord dialog opened from these settings handles its own Escape and Tab.
             if (this.isConfirmDialogOpen()) return;
+            // While the polishing hotkey is being recorded the recorder owns the keyboard; Escape only cancels it.
+            const recorder = this.hotkeyRecordCleanup ? this.hotkeyRecordButton : null;
+            if (recorder && dialog?.contains?.(recorder)) {
+                if (event.key === "Escape") {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    this.clearHotkeyRecording();
+                }
+                return;
+            }
             if (event.key === "Escape") {
                 event.preventDefault();
                 event.stopPropagation();
@@ -7206,11 +7315,17 @@ module.exports = class DiscordAITranslator {
             }
         };
         visit(root);
-        return [...new Set([...queried, ...fallback])].filter(element => this.isFocusableQuickSettingsElement(element));
+        return [...new Set([...queried, ...fallback])].filter(element => this.isFocusableQuickSettingsElement(element, root));
     }
 
-    isFocusableQuickSettingsElement(element) {
+    // Only controls the user can reach: not on a hidden tab page (or in another hidden part) and, where there is
+    // layout, rendered at all (a closed <details>, a display:none toolbar).
+    isFocusableQuickSettingsElement(element, root = null) {
         if (!element || element.disabled || element.hidden || element.removed) return false;
+        for (let node = element.parentElement; node && node !== root; node = node.parentElement) {
+            if (node.hidden === true) return false;
+        }
+        if (typeof element.getClientRects === "function" && element.isConnected && !element.getClientRects().length) return false;
         const tag = String(element.tagName || "").toLowerCase();
         if (["button", "input", "select", "textarea", "a"].includes(tag)) return true;
         const tabindex = element.getAttribute?.("tabindex");
@@ -12729,8 +12844,9 @@ module.exports = class DiscordAITranslator {
         const close = document.createElement("button");
         close.className = "dait-polish-result-icon";
         close.type = "button";
-        close.textContent = "x";
+        close.textContent = "×";
         close.title = this.t("polishResultClose");
+        close.setAttribute("aria-label", this.t("polishResultClose"));
         close.addEventListener("click", event => {
             event.preventDefault();
             event.stopPropagation();
@@ -14063,7 +14179,9 @@ module.exports = class DiscordAITranslator {
             line.appendChild(text);
             this.translationLineTexts?.set?.(line, String(translatedText ?? ""));
             if (!line.classList?.contains?.("dait-translation-preview")) {
-                line.appendChild(this.createTranslationLineActions(line, messageNode, content));
+                // The toolbar is built on first use (see ensureTranslationLineActions), so drawing a line, e.g. the
+                // cached lines on scroll-back, costs no more layout than a line without one.
+                line.appendChild(this.createTranslationLineActionsAnchor(messageNode, content));
                 const note = this.createTranslationPartialNote(line, messageNode, content, renderOptions?.partialInfo);
                 if (note) line.appendChild(note);
             }
@@ -14344,14 +14462,18 @@ module.exports = class DiscordAITranslator {
         });
     }
 
-    // A rate-limit line has no button while the wait lasts; afterwards it offers Retry.
+    // A rate-limit line has no button while the wait lasts; afterwards it offers Retry. One timer per line: a new
+    // wait, a re-render, removing the line and stop() clear it, so it never holds a gone line for up to two minutes.
     scheduleTranslationErrorWaitEnd(line, messageNode, content, waitMs) {
+        this.clearTranslationErrorWaitTimer(line);
         const delay = Number(waitMs || 0);
         if (!(delay > 0) || typeof setTimeout !== "function") return;
         const token = `${Date.now()}:${Math.random().toString(36).slice(2)}`;
         line.dataset.daitErrorToken = token;
         const lifecycleToken = this.getLifecycleToken();
         const timer = setTimeout(() => {
+            this.translationErrorWaitTimers?.delete?.(timer);
+            if (line.__daitWaitTimer === timer) line.__daitWaitTimer = null;
             if (!this.isLifecycleTokenCurrent(lifecycleToken) || !line.isConnected) return;
             if (line.dataset?.daitErrorToken !== token || line.dataset?.daitErrorAction !== "wait") return;
             const currentContent = this.getTranslationContentForLine(line) || content;
@@ -14363,6 +14485,22 @@ module.exports = class DiscordAITranslator {
             });
         }, Math.min(delay, AUTO_TRANSLATE_FAILURE_MAX_TTL) + 250);
         timer?.unref?.();
+        line.__daitWaitTimer = timer;
+        if (!this.translationErrorWaitTimers) this.translationErrorWaitTimers = new Set();
+        this.translationErrorWaitTimers.add(timer);
+    }
+
+    clearTranslationErrorWaitTimer(line) {
+        const timer = line?.__daitWaitTimer;
+        if (!timer) return;
+        clearTimeout(timer);
+        this.translationErrorWaitTimers?.delete?.(timer);
+        line.__daitWaitTimer = null;
+    }
+
+    clearTranslationErrorWaitTimers() {
+        (this.translationErrorWaitTimers || []).forEach(timer => clearTimeout(timer));
+        this.translationErrorWaitTimers?.clear?.();
     }
 
     openTranslationSettingsFromChat(source = null) {
@@ -14388,6 +14526,7 @@ module.exports = class DiscordAITranslator {
 
     resetTranslationLineState(line) {
         if (!line) return;
+        this.clearTranslationErrorWaitTimer(line);
         ["role", "aria-busy", "aria-label", "aria-expanded", "tabindex", "title", "lang", "dir"].forEach(name => line.removeAttribute?.(name));
         if (line.dataset) {
             delete line.dataset.daitErrorAction;
@@ -14475,6 +14614,35 @@ module.exports = class DiscordAITranslator {
         this.applyTranslationLineMaskState(line);
         this.syncTranslationSourceVisibility(line, content || this.getTranslationContentForLine(line));
         return true;
+    }
+
+    // Stands where the toolbar goes until the line is first hovered or focused: an empty span that keeps the
+    // toolbar's one tab stop, so keyboard users reach it too.
+    createTranslationLineActionsAnchor(messageNode, content) {
+        const anchor = document.createElement("span");
+        anchor.className = "dait-translation-actions-anchor";
+        anchor.setAttribute?.("tabindex", "0");
+        anchor.setAttribute?.("role", "toolbar");
+        anchor.setAttribute?.("aria-label", this.t("translationActionsLabel"));
+        anchor.__daitActionTarget = { messageNode, content };
+        return anchor;
+    }
+
+    // Builds the toolbar in place of the anchor on the line's first pointerenter or focusin; keyboard focus that
+    // landed on the anchor moves to the toolbar's first button.
+    ensureTranslationLineActions(line) {
+        const existing = line?.querySelector?.(":scope > .dait-translation-actions");
+        if (existing) return existing;
+        const anchor = line?.querySelector?.(":scope > .dait-translation-actions-anchor");
+        if (!anchor) return null;
+        const target = anchor.__daitActionTarget || {};
+        const content = target.content || this.getTranslationContentForLine(line);
+        const toolbar = this.createTranslationLineActions(line, target.messageNode || content?.closest?.(DISCORD_MESSAGE_NODE_SELECTOR) || null, content);
+        const focused = typeof document !== "undefined" && document.activeElement === anchor;
+        line.insertBefore(toolbar, anchor);
+        anchor.remove?.();
+        if (focused) toolbar.querySelector?.(".dait-translation-action")?.focus?.();
+        return toolbar;
     }
 
     createTranslationLineActions(line, messageNode, content) {
@@ -14882,8 +15050,14 @@ module.exports = class DiscordAITranslator {
                 event.stopPropagation();
                 this.withTranslationScrollStability(content, () => this.revealMaskedTranslationLine(line, content));
             });
-            line.addEventListener("pointerenter", () => this.placeTranslationLineActions(line));
-            line.addEventListener("focusin", () => this.placeTranslationLineActions(line));
+            line.addEventListener("pointerenter", () => {
+                this.ensureTranslationLineActions(line);
+                this.placeTranslationLineActions(line);
+            });
+            line.addEventListener("focusin", () => {
+                this.ensureTranslationLineActions(line);
+                this.placeTranslationLineActions(line);
+            });
             line.addEventListener("click", event => {
                 if (!line.classList.contains("dait-translation-masked")) return;
                 event.preventDefault();
@@ -14988,11 +15162,13 @@ module.exports = class DiscordAITranslator {
         if (content) {
             this.getTranslationLines(content).forEach(line => {
                 this.restoreTranslationSourceVisibility(content);
+                this.clearTranslationErrorWaitTimer(line);
                 line.remove();
             });
             const childLine = content.querySelector(":scope > .dait-translation-line");
             if (childLine) {
                 this.restoreTranslationSourceVisibility(content);
+                this.clearTranslationErrorWaitTimer(childLine);
                 childLine.remove();
             }
             return;
@@ -15001,6 +15177,7 @@ module.exports = class DiscordAITranslator {
         const line = messageNode.querySelector(".dait-translation-line");
         if (line) {
             this.restoreTranslationSourceVisibility(this.getTranslationContentForLine(line));
+            this.clearTranslationErrorWaitTimer(line);
             line.remove();
         }
     }

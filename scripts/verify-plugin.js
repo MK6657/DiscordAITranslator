@@ -2127,12 +2127,13 @@ uiSectionPlugin.requestExplicitHistoryBackfill = () => {
 uiSectionPlugin.showToast = () => {};
 historyBackfillButton.listeners.click({ preventDefault() {}, stopPropagation() {} });
 assert.equal(historyBackfillButtonCalled, true);
-const cacheStatsControls = uiCreatedElements.find(element => element.className === "dait-cache-actions");
-assert.ok(cacheStatsControls);
-assert.equal(cacheStatsControls.children.length, 2);
+// Every data-tab action has a row of its own: clear stats, then clear cache (destructive, alone in its row).
+const cacheActionControls = uiCreatedElements.filter(element => element.className === "dait-cache-actions");
+assert.deepEqual(cacheActionControls.map(element => element.children.length), [1, 1]);
+// Copy, export JSON and export TXT share one row; clearing the logs has a row of its own.
 const diagnosticControls = uiCreatedElements.find(element => element.className === "dait-diagnostic-actions");
 assert.ok(diagnosticControls);
-assert.equal(diagnosticControls.children.length, 4);
+assert.equal(diagnosticControls.children.length, 3);
 [translationControlsSection, autoTranslateSection, advancedSection, historyBackfillSection, providerFallbackSection, displaySection, displayNoticesSection, cacheSection, diagnosticsSection]
     .forEach(section => assert.ok(section.children.length > 0));
 // The description sits in the row's text column (div.dait-settings-row > div.dait-row-text > p.dait-row-description).
@@ -2854,7 +2855,8 @@ assert.match(injectedCss, /\.dait-settings \{[\s\S]*?height: calc\(min\(760px, 1
 assert.match(injectedCss, /\[data-dait-settings-modal="true"\] \{[\s\S]*?margin-left: auto !important;[\s\S]*?margin-right: auto !important;/);
 assert.match(injectedCss, /\[data-dait-settings-modal-root="true"\] \{[\s\S]*?margin-bottom: clamp\(16px, 4vh, 32px\) !important;[\s\S]*?margin-top: clamp\(16px, 4vh, 32px\) !important;/);
 assert.match(injectedCss, /\.dait-settings \{[\s\S]*?margin-left: auto;[\s\S]*?margin-right: auto;/);
-assert.match(injectedCss, /\[data-dait-settings-modal="true"\],[\s\S]*?\.dait-quick-settings-body,[\s\S]*?\.dait-settings-rail,[\s\S]*?\.dait-settings-content,[\s\S]*?\.dait-settings-row textarea[\s\S]*?scrollbar-width: thin;/);
+// Thin standard scrollbars only where ::-webkit-scrollbar does not exist: in Chromium they would switch off the 8 px rules.
+assert.match(injectedCss, /@supports not selector\(::-webkit-scrollbar\) \{\n    \[data-dait-settings-modal="true"\],[\s\S]*?\.dait-quick-settings-body,[\s\S]*?\.dait-settings-rail,[\s\S]*?\.dait-settings-content,[\s\S]*?\.dait-settings-row textarea[\s\S]*?scrollbar-width: thin;/);
 assert.match(injectedCss, /\.dait-prompt-editor textarea,[\s\S]*?\.dait-polish-result-output \{[\s\S]*?scrollbar-width: thin;/);
 assert.equal(injectedCss.includes(".dait-test-panel") || injectedCss.includes(".dait-test-output"), false);
 assert.match(settingsTokenBlock, /--dait-scrollbar-thumb: var\(--scrollbar-thin-thumb, rgba\(128, 132, 142, 0\.45\)\);/);
@@ -9132,12 +9134,14 @@ const savedDocumentForRenderWrapper = global.document;
 global.document = { createElement: tag => createFakeElement(tag) };
 renderTextWrapperPlugin.renderTranslation({}, {}, "wrapped translation", "cache-key", "source");
 global.document = savedDocumentForRenderWrapper;
-// The text span first, then the hover toolbar (copy / retranslate / hide), which adds no text.
+// The text span first, then the empty anchor of the hover toolbar (copy / retranslate / hide), which adds no text;
+// the toolbar itself is built on the line's first pointerenter or focusin.
 assert.equal(renderChildren.length, 2);
 assert.equal(renderChildren[0].className, "dait-translation-text");
 assert.equal(renderChildren[0].textContent, "wrapped translation");
-assert.equal(renderChildren[1].className, "dait-translation-actions");
-assert.equal(renderChildren[1].children.length, 3);
+assert.equal(renderChildren[1].className, "dait-translation-actions-anchor");
+assert.equal(renderChildren[1].children.length, 0);
+assert.equal(renderChildren[1].getAttribute("tabindex"), "0");
 
 const emojiRenderPlugin = new Plugin();
 const sourceEmoji = createFakeElement("img");

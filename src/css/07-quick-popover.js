@@ -221,14 +221,18 @@ module.exports = `
     overflow-wrap: anywhere;
 }
 
+/* The service's own error says what to fix ("Check the API URL and the model name"), so it wraps instead of being
+   cut to one line; three lines hold every message the plugin writes. */
 .dait-qp-status-note {
+    -webkit-box-orient: vertical;
     color: var(--dait-qp-muted);
+    display: -webkit-box;
     font-size: 13px;
+    -webkit-line-clamp: 3;
     line-height: 1.45;
     margin: 2px 0 0;
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
 }
 
 .dait-qp-status-note[hidden] {
@@ -425,9 +429,12 @@ label.dait-qp-label {
     line-height: 1.25;
     min-height: 28px;
     min-width: 0;
-    overflow-wrap: anywhere;
-    padding: 4px 8px;
+    overflow: hidden;
+    padding: 4px;
     text-align: center;
+    text-overflow: ellipsis;
+    /* One line, like the other segments ("Follow main" fits in a third of the panel). */
+    white-space: nowrap;
 }
 
 .dait-qp-segment:hover:not(:disabled):not([aria-checked="true"]) {

@@ -134,15 +134,21 @@ module.exports = `
     box-sizing: border-box;
 }
 
-[data-dait-settings-modal="true"],
-.dait-quick-settings-body,
-.dait-settings-rail,
-.dait-settings-content,
-.dait-settings-row textarea,
-.dait-prompt-editor textarea,
-.dait-polish-result-output {
-    scrollbar-color: var(--dait-scrollbar-thumb) var(--dait-scrollbar-track);
-    scrollbar-width: thin;
+/* Scrollbars: Chromium (Discord) draws them with the ::-webkit-scrollbar rules below, an 8 px rounded thumb without
+   arrow buttons. A non-auto scrollbar-width or scrollbar-color switches those rules off (Chromium 121+), so the
+   standard properties only apply where ::-webkit-scrollbar does not exist. */
+@supports not selector(::-webkit-scrollbar) {
+    [data-dait-settings-modal="true"],
+    .dait-quick-settings-body,
+    .dait-settings-rail,
+    .dait-settings-content,
+    .dait-settings-row textarea,
+    .dait-prompt-editor textarea,
+    .dait-prompt-preview,
+    .dait-polish-result-output {
+        scrollbar-color: var(--dait-scrollbar-thumb) var(--dait-scrollbar-track);
+        scrollbar-width: thin;
+    }
 }
 
 [data-dait-settings-modal="true"]::-webkit-scrollbar,
@@ -151,6 +157,7 @@ module.exports = `
 .dait-settings-content::-webkit-scrollbar,
 .dait-settings-row textarea::-webkit-scrollbar,
 .dait-prompt-editor textarea::-webkit-scrollbar,
+.dait-prompt-preview::-webkit-scrollbar,
 .dait-polish-result-output::-webkit-scrollbar {
     height: 8px;
     width: 8px;
@@ -162,6 +169,7 @@ module.exports = `
 .dait-settings-content::-webkit-scrollbar-track,
 .dait-settings-row textarea::-webkit-scrollbar-track,
 .dait-prompt-editor textarea::-webkit-scrollbar-track,
+.dait-prompt-preview::-webkit-scrollbar-track,
 .dait-polish-result-output::-webkit-scrollbar-track {
     background: var(--dait-scrollbar-track);
     border-radius: 999px;
@@ -173,6 +181,7 @@ module.exports = `
 .dait-settings-content::-webkit-scrollbar-thumb,
 .dait-settings-row textarea::-webkit-scrollbar-thumb,
 .dait-prompt-editor textarea::-webkit-scrollbar-thumb,
+.dait-prompt-preview::-webkit-scrollbar-thumb,
 .dait-polish-result-output::-webkit-scrollbar-thumb {
     background: var(--dait-scrollbar-thumb);
     border: 2px solid transparent;
@@ -186,6 +195,7 @@ module.exports = `
 .dait-settings-content::-webkit-scrollbar-thumb:hover,
 .dait-settings-row textarea::-webkit-scrollbar-thumb:hover,
 .dait-prompt-editor textarea::-webkit-scrollbar-thumb:hover,
+.dait-prompt-preview::-webkit-scrollbar-thumb:hover,
 .dait-polish-result-output::-webkit-scrollbar-thumb:hover {
     background: var(--dait-scrollbar-thumb-hover);
     background-clip: padding-box;
@@ -197,6 +207,7 @@ module.exports = `
 .dait-settings-content::-webkit-scrollbar-corner,
 .dait-settings-row textarea::-webkit-scrollbar-corner,
 .dait-prompt-editor textarea::-webkit-scrollbar-corner,
+.dait-prompt-preview::-webkit-scrollbar-corner,
 .dait-polish-result-output::-webkit-scrollbar-corner {
     background: transparent;
 }

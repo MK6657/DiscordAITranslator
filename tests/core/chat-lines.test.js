@@ -273,6 +273,7 @@ test("the translated text carries the target language and a direction; right-to-
     assert.equal(line.getAttribute("lang"), null);
     assert.equal(line.getAttribute("dir"), null);
     assert.equal(line.querySelector(".dait-translation-note").closest("[lang]"), null);
+    line.dispatch("pointerenter"); // the toolbar is built on first use
     assert.equal(line.querySelector(".dait-translation-actions").closest("[dir]"), null);
     // A right-to-left translation is a box of its own, so wrapped lines align right to left.
     assert.match(getCssRule('.dait-translation-line:not(.dait-translation-preview) > .dait-translation-text[dir="rtl"]'), /display: inline-block;/);
@@ -353,7 +354,8 @@ test("a masked translation is a keyboard button: Enter or Space reveals it", t =
     assert.equal(line.getAttribute("aria-label"), "显示被遮蔽的译文");
     assert.equal(content.dataset.daitSourceHidden, undefined, "the original stays while the translation is masked");
 
-    // Keys pressed on the toolbar buttons inside the line do not reveal it.
+    // Keys pressed on the toolbar buttons inside the line do not reveal it (the toolbar is built on first use).
+    line.dispatch("focusin");
     const copyButton = line.querySelector(".dait-translation-action-copy");
     copyButton.dispatch("keydown", { key: "Enter" });
     assert.equal(line.classList.contains("dait-translation-masked"), true);
@@ -726,6 +728,9 @@ test("a translated line has a keyboard-operable toolbar that never takes layout 
     const { plugin, doc } = createChatPlugin(t);
     const { messageNode, content } = createMessage(doc, "See you tomorrow");
     const line = plugin.renderTranslation(messageNode, content, "明天见", "cache-key", content.text);
+    // Built on the first hover or focus (a line is drawn without it).
+    assert.equal(line.querySelector(".dait-translation-actions"), null);
+    line.dispatch("pointerenter");
     const toolbar = line.querySelector(".dait-translation-actions");
     assert.equal(line.children[0].className, "dait-translation-text");
     assert.equal(toolbar.getAttribute("role"), "toolbar");
@@ -787,6 +792,7 @@ test("a short right-to-left translation gets its toolbar beside it, and the arro
     const { plugin, doc } = createChatPlugin(t, { targetLanguage: "阿拉伯语" });
     const { messageNode, content } = createMessage(doc, "See you tomorrow");
     const line = plugin.renderTranslation(messageNode, content, "أراك غدا", "cache-key", content.text);
+    line.dispatch("pointerenter");
     const toolbar = line.querySelector(".dait-translation-actions");
     const buttons = toolbar.querySelectorAll("button");
     // Discord's chat is left to right: the short line sits at the left, next to the avatar gutter.
@@ -824,6 +830,7 @@ test("hiding a line from the keyboard moves focus to the message, not to the pag
     messageNode.insertBefore(article, contents);
     article.appendChild(contents);
     const line = plugin.renderTranslation(messageNode, content, "明天见", "cache-key", content.text);
+    line.dispatch("focusin");
     const hide = line.querySelector(".dait-translation-action-hide");
     hide.focus();
     hide.click();
@@ -833,6 +840,7 @@ test("hiding a line from the keyboard moves focus to the message, not to the pag
     // Without a focusable message element, the message node itself is the fallback.
     const other = createMessage(doc, "gg", "chat-messages-111111111111111111-444444444444444444");
     const otherLine = plugin.renderTranslation(other.messageNode, other.content, "打得好", "cache-key-2", other.content.text);
+    otherLine.dispatch("focusin");
     const otherHide = otherLine.querySelector(".dait-translation-action-hide");
     otherHide.focus();
     otherHide.click();
@@ -846,6 +854,7 @@ test("hiding a line keeps it hidden for that message until the user translates i
     let line = plugin.renderTranslation(messageNode, content, "明天见", "cache-key", content.text);
     assert.equal(content.dataset.daitSourceHidden, "true");
     const before = plugin.stableRenders;
+    line.dispatch("pointerenter");
     line.querySelector(".dait-translation-action-hide").click();
     assert.equal(plugin.stableRenders, before + 1, "hiding goes through the scroll-stability wrapper");
     assert.equal(line.classList.contains("dait-translation-dismissed"), true);

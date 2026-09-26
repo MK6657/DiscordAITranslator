@@ -729,11 +729,20 @@ class ProviderLayer {
         return Boolean(endpoint && (!requiresModel || model) && this.plugin.getEffectiveRequestApiKey(config));
     }
 
-    setApiStatus(status, state, text, title = "", kind = status?.dataset?.daitKind) {
-        if (!status) return;
+    // Badges are drawn by renderApiStatusBadge, which shows "Not set up" while a required field is missing.
+    renderStatusBadge(status, kind, state, text, title) {
+        if (typeof this.plugin.renderApiStatusBadge === "function") {
+            this.plugin.renderApiStatusBadge(status, kind, state, text, title || "");
+            return;
+        }
         status.className = `dait-api-status dait-api-status-${state}`;
         status.textContent = text;
-        status.title = title;
+        status.title = title || "";
+    }
+
+    setApiStatus(status, state, text, title = "", kind = status?.dataset?.daitKind) {
+        if (!status) return;
+        this.renderStatusBadge(status, kind, state, text, title);
         if (kind && this.plugin.settings[kind]) {
             this.plugin.settings[kind].apiStatus = { state, message: title || "" };
             this.plugin.saveSettings({ debounce: true });
@@ -751,11 +760,7 @@ class ProviderLayer {
             this.plugin.scheduleOverviewStatusRefresh?.(`${kind}.apiStatus`);
         }
         if (typeof document === "undefined") return;
-        document.querySelectorAll(`.dait-api-status[data-dait-kind='${kind}']`).forEach(status => {
-            status.className = `dait-api-status dait-api-status-${state}`;
-            status.textContent = text;
-            status.title = title || "";
-        });
+        document.querySelectorAll(`.dait-api-status[data-dait-kind='${kind}']`).forEach(status => this.renderStatusBadge(status, kind, state, text, title));
     }
 
     markLocalProviderHealthy(providerKey) {

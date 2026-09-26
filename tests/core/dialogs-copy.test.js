@@ -365,8 +365,8 @@ test("destructive settings actions ask first: clear cache, clear logs, Google us
     plugin.resetGoogleTranslateUsageStats = () => done.push("google");
     plugin.refreshDiagnosticSummary = () => {};
 
-    const cacheButtons = plugin.createTranslationCacheStatsRow().querySelectorAll(".dait-small-button-danger");
-    const logButtons = plugin.createDiagnosticLogsRow().querySelectorAll(".dait-small-button");
+    const cacheButtons = plugin.createTranslationCacheClearRow().querySelectorAll(".dait-small-button-danger");
+    const logButtons = plugin.createDiagnosticLogsClearRow().querySelectorAll(".dait-small-button");
     const clearLogs = logButtons.find(button => button.textContent === plugin.t("clearDiagnosticLogs"));
     const googleReset = plugin.createGoogleTranslateStatsRow().querySelectorAll(".dait-small-button-danger")[0];
     for (const button of [cacheButtons[0], clearLogs, googleReset]) await button.dispatch("click");
@@ -747,7 +747,7 @@ test("public bilingual current flow shows the service and language the bilingual
     assert.equal(plugin.getProviderDisplayName(plugin.getPublicBilingualBaseConfig().provider), deepseek);
 
     plugin.settings.ui.publicBilingualPolishBeforeTranslate = true;
-    assert.match(plugin.getPublicBilingualFlowText(), new RegExp(`^Polish: ${deepseek};`));
+    assert.match(plugin.getPublicBilingualFlowText(), new RegExp(`^Polish before bilingual: ${deepseek};`));
 
     // Without a usable polish service the translation service translates; the language still follows polish.
     plugin.settings.polish.apiKey = "";
