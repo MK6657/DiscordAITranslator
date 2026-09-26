@@ -319,6 +319,8 @@ const V030_PATHS = {
 };
 // Settings that now share one control.
 const MERGED_PATHS = { "ui.injectMessageButtons": "ui.messageButtonMode", "ui.messageButtonVisibility": "ui.messageButtonMode" };
+// Replaced by something else: the test-mode switch by "Try a sentence" / "Try polishing" in the connection cards.
+const REPLACED_PATHS = new Set(["ui.testModeEnabled"]);
 
 test("every v0.3.0 setting still has a control in the tabbed window", t => {
     const env = installDom(t);
@@ -326,7 +328,7 @@ test("every v0.3.0 setting still has a control in the tabbed window", t => {
         const [translationProvider, polishProvider] = setup.split("/");
         const { panel } = createShell(t, { translationProvider, polishProvider }, env);
         const after = pathsIn(panel);
-        const expected = new Set(before.map(path => MERGED_PATHS[path] || path));
+        const expected = new Set(before.filter(path => !REPLACED_PATHS.has(path)).map(path => MERGED_PATHS[path] || path));
         const lost = [...expected].filter(path => !after.has(path));
         assert.deepEqual(lost, [], `${setup} lost ${lost.join(", ")}`);
         // Every control sits on exactly one visible-or-hidden tab page, inside a row or the prompt manager.
@@ -866,18 +868,12 @@ test("rebuilding the panel (provider or language change) keeps the tab, the scro
     plugin.destroySettingsModalSizing(third);
 });
 
-test("test mode tools appear under their switch without rebuilding the panel", t => {
-    const { plugin, panel } = createShell(t, { tab: "data" });
-    const toggle = panel.querySelector("[data-dait-path='ui.testModeEnabled']");
-    toggle.checked = true;
-    toggle.dispatch("change");
-    const slot = panel.querySelector(".dait-test-mode-slot");
-    assert.ok(slot.querySelector(".dait-test-mode-section"));
-    assert.equal(panel.isConnected, true);
-    toggle.checked = false;
-    toggle.dispatch("change");
-    assert.equal(slot.querySelector(".dait-test-mode-section"), null);
-    assert.equal(plugin.settings.ui.testModeEnabled, false);
+test("test mode is replaced by the try rows in the connection cards; an old test-mode setting shows nothing", t => {
+    const { plugin, panel } = createShell(t, { tab: "data", ui: { testModeEnabled: true } });
+    assert.equal(panel.querySelector("[data-dait-path='ui.testModeEnabled']"), null);
+    assert.equal(panel.querySelector(".dait-test-mode-slot"), null);
+    assert.equal(plugin.settings.ui.testModeEnabled, true, "still readable");
+    assert.equal(panel.querySelectorAll(".dait-provider-settings-block .dait-try-row").length, 2);
 });
 
 test("BetterDiscord's modal is widened to a moderate window, never 1280 px", t => {
