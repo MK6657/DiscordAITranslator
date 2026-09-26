@@ -4,21 +4,45 @@
 // Extracted from discord-ai-translator.js behind a facade: every cross-subsystem call
 // goes through this.plugin so the main class keeps its full (test-visible) surface.
 const {
+    CACHE_DATA_KEY,
+    CACHE_DATA_STORE,
     DATA_KEY,
     DEFAULT_PROMPT_TEMPLATES,
     DEFAULT_SETTINGS,
     DIAGNOSTIC_DATA_KEY,
+    DIAGNOSTIC_DATA_STORE,
     GOOGLE_TRANSLATE_DEFAULT_MONTHLY_LIMIT,
     LEGACY_TRANSLATION_NATURAL_PROMPTS,
     PLUGIN_NAME,
     POLISH_REPOLISH_SOURCE_LAST_RESULT,
     POLISH_REPOLISH_SOURCE_ORIGINAL,
-    SETTINGS_SECTION_GENERAL,
-    SETTINGS_SECTION_IDS,
-    SETTINGS_TABS,
     SETTINGS_WRITE_DEBOUNCE_MS,
-    TRANSLATION_CACHE_WRITE_DEBOUNCE_MS
+    TRANSLATION_CACHE_WRITE_DEBOUNCE_MS,
+    TRANSLATION_LINE_STYLES,
+    TRANSLATION_LINE_TEXT_SCALES
 } = require("../constants");
+const { normalizeSettingsTabId } = require("./settings-schema");
+const { normalizePanelTheme } = require("./panel-theme");
+
+// Provider fields a reset keeps: the secrets themselves, plus the region (Microsoft) and plan (DeepL) a key only works with.
+const RESET_KEPT_CREDENTIAL_FIELDS = ["apiKey", "appId", "secretKey", "region", "deeplPlan"];
+const RESET_SECRET_FIELDS = ["apiKey", "appId", "secretKey"];
+// A kept secret also keeps the endpoint and model it was used with, so a reset never sends it to another host
+// (a relay key to the provider's own API, for example).
+const RESET_KEPT_CONNECTION_FIELDS = ["endpoint", "model"];
+
+// ui settings that change how translation lines already on screen look; setSetting and a reset both restyle them.
+const TRANSLATION_LINE_DISPLAY_KEYS = ["maskTranslations", "translationPosition", "translationStyle", "translationTextScale"];
+
+function normalizeTranslationLineStyle(value) {
+    const style = String(value || "");
+    return TRANSLATION_LINE_STYLES.includes(style) ? style : DEFAULT_SETTINGS.ui.translationStyle;
+}
+
+function normalizeTranslationLineTextScale(value) {
+    const scale = Number(value);
+    return TRANSLATION_LINE_TEXT_SCALES.includes(scale) ? scale : DEFAULT_SETTINGS.ui.translationTextScale;
+}
 
 class SettingsStore {
     constructor(plugin) {
@@ -41,6 +65,7 @@ class SettingsStore {
         let changed = false;
         const used = new Set();
         templates.forEach(template => {
+            if (!template || typeof template !== "object") return;
             const serial = this.plugin.normalizePromptTemplateSerial(template.serial);
             if (serial && !used.has(serial)) {
                 template.serial = serial;
@@ -113,7 +138,7 @@ class SettingsStore {
         this.plugin.saveSettings();
         this.plugin.syncSettingControls(`${kind}.prompt`, template.prompt);
         if (kind === "translation") this.plugin.invalidateAutoTranslationQueue();
-        this.plugin.showToast(this.plugin.t("promptApplied", { name: template.name, code: template.serial }), "success");
+        this.plugin.showToast(this.plugin.t("promptApplied", { name: this.getTemplateDisplayName(template), code: template.serial }), "success");
     }
 
     savePromptTemplate(kind, name, prompt) {
@@ -140,7 +165,14 @@ class SettingsStore {
         this.plugin.settings[kind].activePromptTemplate = template.id;
         this.plugin.saveSettings();
         if (kind === "translation") this.plugin.invalidateAutoTranslationQueue();
-        this.plugin.showToast(this.plugin.t("promptUpdated", { name: template.name, code: template.serial }), "success");
+        this.plugin.showToast(this.plugin.t("promptUpdated", { name: this.getTemplateDisplayName(template), code: template.serial }), "success");
+    }
+
+    // A built-in template's name in the interface language (the plugin decides; plain name without it).
+    getTemplateDisplayName(template) {
+        return typeof this.plugin.getPromptTemplateDisplayName === "function"
+            ? this.plugin.getPromptTemplateDisplayName(template)
+            : template.name;
     }
 
     deletePromptTemplate(kind, templateId) {
@@ -170,9 +202,13 @@ class SettingsStore {
         const storedValue = this.plugin.loadData(DATA_KEY);
         if (this.plugin.dataLoadFailures.has(DATA_KEY)) {
             this.plugin.settingsLoadBlocked = true;
+            // Each failed load (plugin start) starts a new episode with one notice.
+            this.settingsLoadBlockedNoticeShown = false;
+            this.notifySettingsLoadBlocked();
             return false;
         }
         this.plugin.settingsLoadBlocked = false;
+        this.settingsLoadBlockedNoticeShown = false;
         if (wasBlocked) {
             if (this.plugin.settingsDirtyTimer) clearTimeout(this.plugin.settingsDirtyTimer);
             this.plugin.settingsDirtyTimer = null;
@@ -214,6 +250,15 @@ class SettingsStore {
             if (targetLanguage !== this.plugin.settings[kind].targetLanguage) {
                 this.plugin.settings[kind].targetLanguage = targetLanguage;
                 changed = true;
+            }
+            // Hand-edited or damaged data can hold null or string entries; keep only real template objects.
+            if (Array.isArray(this.plugin.settings[kind].promptTemplates)) {
+                const templates = this.plugin.settings[kind].promptTemplates;
+                const validTemplates = templates.filter(template => template && typeof template === "object" && !Array.isArray(template));
+                if (validTemplates.length !== templates.length) {
+                    this.plugin.settings[kind].promptTemplates = validTemplates;
+                    changed = true;
+                }
             }
             if (!Array.isArray(this.plugin.settings[kind].promptTemplates) || !this.plugin.settings[kind].promptTemplates.length) {
                 this.plugin.settings[kind].promptTemplates = this.plugin.clone(DEFAULT_PROMPT_TEMPLATES[kind] || []);
@@ -299,12 +344,18 @@ class SettingsStore {
             this.plugin.settings.googleTranslate.keyPoolText = normalizedGoogleKeys.keyPoolText;
             changed = true;
         }
-        if (!this.plugin.settings.ui || typeof this.plugin.settings.ui !== "object") {
+        if (JSON.stringify(normalizedGoogleKeys.usageById) !== JSON.stringify(this.plugin.settings.googleTranslate.usageById ?? null)) {
+            this.plugin.settings.googleTranslate.usageById = normalizedGoogleKeys.usageById;
+            changed = true;
+        }
+        if (!this.plugin.settings.ui || typeof this.plugin.settings.ui !== "object" || Array.isArray(this.plugin.settings.ui)) {
             this.plugin.settings.ui = this.plugin.clone(DEFAULT_SETTINGS.ui);
             changed = true;
         }
-        if (!SETTINGS_SECTION_IDS.includes(this.plugin.settings.ui.settingsActiveTab) && !SETTINGS_TABS.includes(this.plugin.settings.ui.settingsActiveTab)) {
-            this.plugin.settings.ui.settingsActiveTab = SETTINGS_SECTION_GENERAL;
+        // v0.3.0 saved one of ten scroll-spy sections; each maps onto the tab that now holds it.
+        const settingsActiveTab = normalizeSettingsTabId(this.plugin.settings.ui.settingsActiveTab);
+        if (settingsActiveTab !== this.plugin.settings.ui.settingsActiveTab) {
+            this.plugin.settings.ui.settingsActiveTab = settingsActiveTab;
             changed = true;
         }
         const rawUiSettingsVersion = storedSettings && typeof storedSettings === "object"
@@ -346,6 +397,12 @@ class SettingsStore {
         }
         if (typeof this.plugin.settings.ui.enablePolishHotkey !== "boolean") {
             this.plugin.settings.ui.enablePolishHotkey = DEFAULT_SETTINGS.ui.enablePolishHotkey;
+            changed = true;
+        }
+        // A shortcut the hotkey no longer accepts (Shift+letter saved by an older version, or an editing
+        // shortcut) would show in settings but never fire: use the default instead.
+        if (!this.plugin.isAllowedPolishHotkey(this.plugin.settings.ui.polishHotkey)) {
+            this.plugin.settings.ui.polishHotkey = DEFAULT_SETTINGS.ui.polishHotkey;
             changed = true;
         }
         if (!["polish", "translation"].includes(this.plugin.settings.ui.testModeKind)) {
@@ -410,6 +467,30 @@ class SettingsStore {
             this.plugin.settings.ui.channelAutoTranslatePolicies = {};
             changed = true;
         }
+        // In 0.3.x an 'enabled' channel rule behaved like 'inherit' (the main switch decided); now it keeps the
+        // channel translating while the main switch is off. Rules stored by an older version become 'inherit' once,
+        // so no channel starts sending messages to the service after the upgrade. The entry stays, so a rule stored
+        // under an old per-message key still shadows its channel's rule as it did in 0.3.x.
+        const policiesVersion = DEFAULT_SETTINGS.ui.channelAutoTranslatePoliciesVersion;
+        if (storedSettings && typeof storedSettings === "object" && !(Number(storedSettings.ui?.channelAutoTranslatePoliciesVersion) >= policiesVersion)) {
+            const policies = this.plugin.settings.ui.channelAutoTranslatePolicies;
+            const converted = this.plugin.getChannelAutoTranslateAllowListCount(policies);
+            Object.entries(policies).forEach(([key, policy]) => {
+                if (!policy || typeof policy !== "object") return;
+                if (this.plugin.normalizeChannelAutoTranslatePolicyMode(policy.mode) === "enabled") policies[key] = { ...policy, mode: "inherit" };
+            });
+            if (converted > 0) {
+                try {
+                    this.plugin.logDiagnostic("settings.channel-rules", "upgraded", {
+                        converted,
+                        autoTranslateMessages: Boolean(this.plugin.settings.ui.autoTranslateMessages)
+                    });
+                }
+                catch {}
+            }
+            this.plugin.settings.ui.channelAutoTranslatePoliciesVersion = policiesVersion;
+            changed = true;
+        }
         if (typeof this.plugin.settings.ui.historyBackfillEnabled !== "boolean") {
             this.plugin.settings.ui.historyBackfillEnabled = DEFAULT_SETTINGS.ui.historyBackfillEnabled;
             changed = true;
@@ -462,12 +543,38 @@ class SettingsStore {
             this.plugin.settings.ui.hideOriginalAfterTranslation = DEFAULT_SETTINGS.ui.hideOriginalAfterTranslation;
             changed = true;
         }
+        const translationStyle = normalizeTranslationLineStyle(this.plugin.settings.ui.translationStyle);
+        if (translationStyle !== this.plugin.settings.ui.translationStyle) {
+            this.plugin.settings.ui.translationStyle = translationStyle;
+            changed = true;
+        }
+        const translationTextScale = normalizeTranslationLineTextScale(this.plugin.settings.ui.translationTextScale);
+        if (translationTextScale !== this.plugin.settings.ui.translationTextScale) {
+            this.plugin.settings.ui.translationTextScale = translationTextScale;
+            changed = true;
+        }
+        const panelTheme = normalizePanelTheme(this.plugin.settings.ui.panelTheme);
+        if (panelTheme !== this.plugin.settings.ui.panelTheme) {
+            this.plugin.settings.ui.panelTheme = panelTheme;
+            changed = true;
+        }
         if (changed) this.plugin.saveSettings();
+    }
+
+    // While the stored settings cannot be read, saves are blocked so the unreadable file is not overwritten.
+    // Tell the user once per episode instead of silently dropping their changes.
+    notifySettingsLoadBlocked() {
+        if (this.settingsLoadBlockedNoticeShown) return false;
+        this.settingsLoadBlockedNoticeShown = true;
+        try { this.plugin.showToast(this.plugin.t("settingsLoadBlocked"), "error"); }
+        catch {}
+        return true;
     }
 
     saveSettings(options = {}) {
         if (this.plugin.settingsLoadBlocked) {
             this.plugin.settingsDirty = true;
+            this.notifySettingsLoadBlocked();
             return false;
         }
         if (options.debounce === true) {
@@ -510,27 +617,62 @@ class SettingsStore {
         return result;
     }
 
+    // BetterDiscord keeps one <name>.config.json per data name and rewrites the whole file on every save.
+    // Settings stay under PLUGIN_NAME; the large cache and the diagnostics log use their own names (persist-1).
+    getDataStoreName(key) {
+        if (key === CACHE_DATA_KEY) return CACHE_DATA_STORE;
+        if (key === DIAGNOSTIC_DATA_KEY) return DIAGNOSTIC_DATA_STORE;
+        return PLUGIN_NAME;
+    }
+
+    readDataStore(storeName, key) {
+        const bdApi = globalThis.BdApi;
+        if (!bdApi) return null;
+        if (bdApi.Data?.load) return bdApi.Data.load(storeName, key);
+        if (bdApi.loadData) return bdApi.loadData(storeName, key);
+        return null;
+    }
+
+    // Returns true or false; throws DATA_SAVE_UNAVAILABLE when BetterDiscord offers no save API.
+    writeDataStore(storeName, key, value) {
+        const bdApi = globalThis.BdApi;
+        if (bdApi?.Data?.save) return bdApi.Data.save(storeName, key, value) === false ? false : true;
+        if (bdApi?.saveData) return bdApi.saveData(storeName, key, value) === false ? false : true;
+        throw new Error("DATA_SAVE_UNAVAILABLE");
+    }
+
+    deleteDataStoreKey(storeName, key) {
+        const bdApi = globalThis.BdApi;
+        if (bdApi?.Data?.delete) return bdApi.Data.delete(storeName, key) === false ? false : true;
+        if (bdApi?.deleteData) return bdApi.deleteData(storeName, key) === false ? false : true;
+        // Older hosts without a delete API: an explicit null drops the payload just as well.
+        return this.writeDataStore(storeName, key, null);
+    }
+
     loadData(key) {
+        const bdApi = globalThis.BdApi;
+        if (!bdApi) return null;
+        if (!bdApi.Data?.load && !bdApi.loadData) return null;
+        const storeName = this.plugin.getDataStoreName(key);
+        let value = null;
         try {
-            const bdApi = globalThis.BdApi;
-            if (!bdApi) return null;
-            if (bdApi.Data?.load) {
-                const value = bdApi.Data.load(PLUGIN_NAME, key);
-                this.plugin.dataLoadFailures.delete(key);
-                return value;
-            }
-            if (bdApi.loadData) {
-                const value = bdApi.loadData(PLUGIN_NAME, key);
-                this.plugin.dataLoadFailures.delete(key);
-                return value;
-            }
-            return null;
+            value = this.readDataStore(storeName, key);
+            this.plugin.dataLoadFailures.delete(key);
         }
         catch (error) {
             this.plugin.dataLoadFailures.add(key);
             this.plugin.recordDataIoFailure("load", key, error);
-            return null;
+            value = null;
         }
+        if (storeName !== PLUGIN_NAME && (value === null || value === undefined)) {
+            // Until the one-time move has succeeded, the copy in the settings file is still the only one.
+            try {
+                const legacy = this.readDataStore(PLUGIN_NAME, key);
+                if (legacy !== null && legacy !== undefined) return legacy;
+            }
+            catch {}
+        }
+        return value;
     }
 
     saveData(key, value) {
@@ -540,11 +682,8 @@ class SettingsStore {
                 if (key !== DIAGNOSTIC_DATA_KEY) this.plugin.recordDataIoFailure("save", key, new Error("DATA_SAVE_UNAVAILABLE"));
                 return false;
             }
-            if (bdApi.Data?.save) {
-                return bdApi.Data.save(PLUGIN_NAME, key, value) === false ? false : true;
-            }
-            if (bdApi.saveData) {
-                return bdApi.saveData(PLUGIN_NAME, key, value) === false ? false : true;
+            if (bdApi.Data?.save || bdApi.saveData) {
+                return this.writeDataStore(this.plugin.getDataStoreName(key), key, value);
             }
             if (key !== DIAGNOSTIC_DATA_KEY) this.plugin.recordDataIoFailure("save", key, new Error("DATA_SAVE_UNAVAILABLE"));
             return false;
@@ -553,6 +692,66 @@ class SettingsStore {
             if (key !== DIAGNOSTIC_DATA_KEY) this.plugin.recordDataIoFailure("save", key, error);
             return false;
         }
+    }
+
+    // One-time move of the cache and diagnostics out of the settings file (v0.3.0 and older kept them there).
+    // The old copy is merged into the new file and deleted only after the new file was written, so a failed
+    // step keeps the old copy and simply retries on the next start. Returns a status per key.
+    migrateLegacyDataStores() {
+        const results = {};
+        [CACHE_DATA_KEY, DIAGNOSTIC_DATA_KEY].forEach(key => {
+            results[key] = this.plugin.migrateLegacyDataStoreKey(key);
+        });
+        return results;
+    }
+
+    migrateLegacyDataStoreKey(key) {
+        const storeName = this.plugin.getDataStoreName(key);
+        if (storeName === PLUGIN_NAME) return "not-separated";
+        let legacy;
+        try {
+            legacy = this.readDataStore(PLUGIN_NAME, key);
+        }
+        catch (error) {
+            this.plugin.recordDataIoFailure("load", `legacy:${key}`, error);
+            return "legacy-unreadable";
+        }
+        if (legacy === null || legacy === undefined) return "none";
+        let current;
+        try {
+            current = this.readDataStore(storeName, key);
+        }
+        catch (error) {
+            this.plugin.recordDataIoFailure("load", key, error);
+            return "store-unreadable";
+        }
+        const hasCurrent = current !== null && current !== undefined;
+        const payload = hasCurrent ? this.plugin.mergeLegacyDataPayload(key, current, legacy) : legacy;
+        try {
+            if (this.writeDataStore(storeName, key, payload) !== true) throw new Error("DATA_SAVE_FAILED");
+        }
+        catch (error) {
+            this.plugin.recordDataIoFailure("save", key, error);
+            return "save-failed";
+        }
+        try {
+            if (this.deleteDataStoreKey(PLUGIN_NAME, key) !== true) throw new Error("DATA_DELETE_FAILED");
+        }
+        catch (error) {
+            this.plugin.recordDataIoFailure("save", `legacy:${key}`, error);
+            return "delete-failed";
+        }
+        try {
+            this.plugin.logDiagnostic("data.migrate", "ok", { key, merged: hasCurrent });
+        }
+        catch {}
+        return hasCurrent ? "merged" : "migrated";
+    }
+
+    mergeLegacyDataPayload(key, current, legacy) {
+        if (key === CACHE_DATA_KEY) return this.plugin.mergePersistedTranslationCachePayloads(current, legacy);
+        if (key === DIAGNOSTIC_DATA_KEY) return this.plugin.mergePersistedDiagnosticLogsPayloads(current, legacy);
+        return current;
     }
 
     recordDataIoFailure(action, key, error) {
@@ -576,16 +775,25 @@ class SettingsStore {
         if (path === "ui.providerFallbackOrder") {
             return this.plugin.formatProviderFallbackOrder(this.plugin.settings.ui?.providerFallbackOrder);
         }
+        if (path === "ui.messageButtonMode") {
+            return this.plugin.getMessageButtonMode();
+        }
         return path.split(".").reduce((value, key) => value?.[key], this.plugin.settings);
     }
 
     setSetting(path, value, options = {}) {
         const parts = path.split(".");
         if (path === "ui.currentChannelAutoTranslatePolicy") {
-            return this.plugin.setCurrentChannelAutoTranslatePolicyMode(value, this.plugin.getCurrentRouteKey(), options);
+            // options.routeKey: the channel the control was built for (it may no longer be the current one).
+            const routeKey = options.routeKey !== undefined ? options.routeKey : this.plugin.getCurrentRouteKey();
+            return this.plugin.setCurrentChannelAutoTranslatePolicyMode(value, routeKey, options);
+        }
+        // One select for the message Translate button, stored as ui.injectMessageButtons + ui.messageButtonVisibility.
+        if (path === "ui.messageButtonMode") {
+            return this.plugin.setMessageButtonMode(value, options);
         }
         if (path === "ui.settingsActiveTab") {
-            value = SETTINGS_SECTION_IDS.includes(value) || SETTINGS_TABS.includes(value) ? value : SETTINGS_SECTION_GENERAL;
+            value = normalizeSettingsTabId(value);
         }
         if (path === "ui.messageButtonVisibility") {
             value = this.plugin.normalizeMessageButtonVisibility(value);
@@ -621,6 +829,15 @@ class SettingsStore {
         if (path === "translation.deeplPlan") {
             value = ["free", "pro"].includes(String(value || "")) ? String(value) : DEFAULT_SETTINGS.translation.deeplPlan;
         }
+        if (path === "ui.translationStyle") {
+            value = normalizeTranslationLineStyle(value);
+        }
+        if (path === "ui.translationTextScale") {
+            value = normalizeTranslationLineTextScale(value);
+        }
+        if (path === "ui.panelTheme") {
+            value = normalizePanelTheme(value);
+        }
         let cursor = this.plugin.settings;
         for (let index = 0; index < parts.length - 1; index++) {
             cursor = cursor[parts[index]];
@@ -639,6 +856,8 @@ class SettingsStore {
         cursor[leaf] = value;
         if (parts[0] === "googleTranslate") {
             if (path === "googleTranslate.keyPoolText" && !String(value || "").trim()) {
+                // Keep the removed keys' usage so pasting them back cannot reset it.
+                this.plugin.settings.googleTranslate.usageById = this.plugin.getGoogleTranslateUsageLedger(this.plugin.settings.googleTranslate);
                 this.plugin.settings.googleTranslate.keys = [];
                 this.plugin.settings.googleTranslate.keyPoolText = "";
             }
@@ -646,6 +865,7 @@ class SettingsStore {
                 const normalized = this.plugin.normalizeGoogleTranslateKeyPool(this.plugin.settings.googleTranslate);
                 this.plugin.settings.googleTranslate.keys = normalized.keys;
                 this.plugin.settings.googleTranslate.keyPoolText = normalized.keyPoolText;
+                this.plugin.settings.googleTranslate.usageById = normalized.usageById;
             }
         }
         if (path === "translation.provider") this.plugin.applyProviderIntakeMode(value);
@@ -659,7 +879,8 @@ class SettingsStore {
         if (this.plugin.shouldInvalidateAutoTranslationForSetting(path)) {
             this.plugin.invalidateAutoTranslationQueue();
         }
-        if (path === "ui.autoTranslateMessages" && value === false) {
+        // A channel whose rule is 'enabled' keeps translating after the main switch goes off.
+        if (path === "ui.autoTranslateMessages" && value === false && !this.plugin.isAutoTranslateEnabled()) {
             this.plugin.cancelAutoTranslationRuntimeWork("setting-disabled");
         }
         if (path === "ui.language") {
@@ -668,6 +889,9 @@ class SettingsStore {
         if (path === "ui.injectMessageContextMenu") {
             this.plugin.unpatchContextMenus();
             this.plugin.patchMessageContextMenu();
+        }
+        if (path === "translation.enabled") {
+            this.plugin.syncMessageTranslationEntryPoints();
         }
         if (path === "ui.messageButtonVisibility") {
             this.plugin.applyMessageButtonVisibilityToButtons();
@@ -688,6 +912,9 @@ class SettingsStore {
                 node.remove();
                 this.plugin.syncInputActionGroupState(group);
             });
+        }
+        if (path === "polish.enabled" || path === "translation.enabled") {
+            this.plugin.syncInputActionButtonsForSettings();
         }
         if (typeof document !== "undefined" && path === "ui.showQuickSettingsRailButton" && value === false) {
             document.querySelectorAll?.(".dait-quick-settings-rail")?.forEach(node => node.remove());
@@ -713,10 +940,160 @@ class SettingsStore {
         if (path === "ui.hideOriginalAfterTranslation") {
             this.plugin.syncAllTranslationSourceVisibility();
         }
-        if (path === "ui.maskTranslations" || path === "ui.translationPosition") {
+        if (TRANSLATION_LINE_DISPLAY_KEYS.some(key => path === `ui.${key}`)) {
             this.plugin.syncAllTranslationDisplaySettings();
         }
+        // The open windows restyle in place; nothing is rebuilt.
+        if (path === "ui.panelTheme") {
+            this.plugin.refreshPanelThemes();
+        }
         this.plugin.queueScan();
+    }
+
+    // Restores the defaults. With keepCredentials (default) it keeps API keys and the other credential fields of
+    // every provider profile (each key with the endpoint and model it was used with), the Google key pool with its
+    // usage counters and monthly limit, and the prompt templates. The UI language is kept unless keepLanguage is
+    // false. Applies the same runtime effects setSetting applies to each changed setting. Stable entry point for
+    // the reset dialog.
+    resetSettingsToDefaults({ keepCredentials = true, keepLanguage = true } = {}) {
+        const previous = this.plugin.settings && typeof this.plugin.settings === "object" ? this.plugin.settings : {};
+        const next = this.plugin.clone(DEFAULT_SETTINGS);
+        if (keepCredentials) this.carryOverResetCredentials(previous, next);
+        // The usage ledger holds key fingerprints, not keys. Keeping it means a key pasted back after a
+        // reset still counts this month's usage, which is what guards the free tier.
+        const usageById = previous.googleTranslate?.usageById;
+        if (usageById && typeof usageById === "object" && !Array.isArray(usageById)) {
+            next.googleTranslate.usageById = this.plugin.clone(usageById);
+        }
+        const language = previous.ui?.language;
+        if (keepLanguage && typeof language === "string" && language) next.ui.language = language;
+        this.plugin.settings = next;
+        this.plugin.ensureSettingsShape();
+        const saved = this.plugin.saveSettings();
+        this.plugin.applySettingsResetEffects(previous);
+        this.plugin.logDiagnostic("settings.reset", saved === false ? "not-saved" : "ok", { keepCredentials: Boolean(keepCredentials) });
+        return saved !== false;
+    }
+
+    carryOverResetCredentials(previous, next) {
+        const isObject = value => Boolean(value) && typeof value === "object" && !Array.isArray(value);
+        const isFilled = value => typeof value === "string" && Boolean(value.trim());
+        const pickCredentials = source => {
+            const picked = {};
+            RESET_KEPT_CREDENTIAL_FIELDS.forEach(field => {
+                if (isFilled(source?.[field])) picked[field] = source[field];
+            });
+            if (!RESET_SECRET_FIELDS.some(field => picked[field])) return picked;
+            // An empty or missing endpoint means the preset one, before and after the reset. An endpoint that
+            // cannot be read leaves no known host to pair the secret with, so the secret is dropped instead.
+            if (source.endpoint !== undefined && typeof source.endpoint !== "string") {
+                RESET_SECRET_FIELDS.forEach(field => delete picked[field]);
+                return picked;
+            }
+            RESET_KEPT_CONNECTION_FIELDS.forEach(field => {
+                if (isFilled(source[field])) picked[field] = source[field];
+            });
+            return picked;
+        };
+        ["polish", "translation"].forEach(kind => {
+            const before = previous[kind];
+            const after = next[kind];
+            if (!isObject(before) || !isObject(after)) return;
+            const profiles = {};
+            Object.entries(isObject(before.providerProfiles) ? before.providerProfiles : {}).forEach(([provider, profile]) => {
+                if (!isObject(profile)) return;
+                const kept = pickCredentials(profile);
+                if (Object.keys(kept).length) profiles[provider] = kept;
+            });
+            // The active provider's stored profile is only as new as the last switch away from it; its live
+            // fields are what the user sees, and a field cleared there stays cleared.
+            const activeProvider = String(before.provider || "").trim();
+            if (activeProvider) {
+                const live = pickCredentials(before);
+                if (Object.keys(live).length) profiles[activeProvider] = live;
+                else delete profiles[activeProvider];
+            }
+            after.providerProfiles = profiles;
+            const own = profiles[after.provider];
+            if (own) {
+                [...RESET_KEPT_CREDENTIAL_FIELDS, ...RESET_KEPT_CONNECTION_FIELDS].forEach(field => {
+                    if (own[field] !== undefined && Object.prototype.hasOwnProperty.call(after, field)) after[field] = own[field];
+                });
+            }
+            const templates = Array.isArray(before.promptTemplates)
+                ? before.promptTemplates.filter(isObject).map(template => this.plugin.clone(template))
+                : [];
+            if (templates.length) {
+                const ids = new Set(templates.map(template => template.id));
+                const missingDefaults = (DEFAULT_PROMPT_TEMPLATES[kind] || [])
+                    .filter(template => !ids.has(template.id))
+                    .map(template => this.plugin.clone(template));
+                after.promptTemplates = [...missingDefaults, ...templates];
+                // Keep the active template and the prompt in agreement when the default template was edited.
+                const active = after.promptTemplates.find(template => template.id === after.activePromptTemplate);
+                if (typeof active?.prompt === "string") after.prompt = active.prompt;
+            }
+        });
+        const google = previous.googleTranslate;
+        if (isObject(google)) {
+            if (Array.isArray(google.keys)) next.googleTranslate.keys = this.plugin.clone(google.keys);
+            if (typeof google.keyPoolText === "string") next.googleTranslate.keyPoolText = google.keyPoolText;
+            if (google.defaultMonthlyLimit !== undefined) next.googleTranslate.defaultMonthlyLimit = google.defaultMonthlyLimit;
+        }
+        return next;
+    }
+
+    // Open settings controls show the new values (so closing quick settings cannot commit the old ones back),
+    // then each runtime effect of a changed setting runs as setSetting would run it.
+    applySettingsResetEffects(previous = {}) {
+        const prevUi = previous?.ui && typeof previous.ui === "object" ? previous.ui : {};
+        const ui = this.plugin.settings.ui;
+        const changed = key => !Object.is(prevUi[key], ui[key]);
+        const turnedOff = key => ui[key] === false && prevUi[key] !== false;
+        this.plugin.syncAllSettingControls();
+        this.plugin.invalidateAutoTranslationQueue();
+        if (!this.plugin.isAutoTranslateEnabled()) this.plugin.cancelAutoTranslationRuntimeWork("settings-reset");
+        if (changed("language")) {
+            this.plugin.refreshLocalizedUi();
+        }
+        else if (changed("injectMessageContextMenu")) {
+            this.plugin.unpatchContextMenus();
+            this.plugin.patchMessageContextMenu();
+        }
+        if (changed("messageButtonVisibility")) this.plugin.applyMessageButtonVisibilityToButtons();
+        if (typeof document !== "undefined" && document.querySelectorAll) {
+            const removeNodes = (selector, inputGroup) => document.querySelectorAll(selector)?.forEach(node => {
+                const group = inputGroup ? node.closest?.(".dait-input-action-group") : null;
+                node.remove();
+                if (inputGroup) this.plugin.syncInputActionGroupState(group);
+            });
+            if (turnedOff("injectMessageButtons")) removeNodes(".dait-message-button", false);
+            if (turnedOff("injectInputButton")) removeNodes(".dait-polish-button", true);
+            if (turnedOff("publicBilingualInputButton")) removeNodes(".dait-public-bilingual-button", true);
+            if (turnedOff("showQuickSettingsRailButton")) removeNodes(".dait-quick-settings-rail", false);
+            if (turnedOff("showQuickSettingsPanelButton")) removeNodes(".dait-quick-settings-panel", false);
+        }
+        if (changed("translationCacheTtlHours")) this.plugin.clampTranslationCacheExpiryToCurrentTtl();
+        if (changed("translationCacheTtlHours") || changed("translationCacheMaxEntries")) {
+            this.plugin.pruneTranslationCache({ scanExpired: true });
+            this.plugin.scheduleTranslationCachePersist(TRANSLATION_CACHE_WRITE_DEBOUNCE_MS);
+        }
+        if (turnedOff("showAutoTranslateWarnings") || turnedOff("showAutoTranslateToasts")) this.plugin.hideAutoTranslationWarningLines();
+        if (prevUi.diagnosticsEnabled === true && ui.diagnosticsEnabled !== true) this.plugin.disableDiagnosticLogging();
+        if (changed("hideOriginalAfterTranslation")) this.plugin.syncAllTranslationSourceVisibility();
+        if (TRANSLATION_LINE_DISPLAY_KEYS.some(changed)) this.plugin.syncAllTranslationDisplaySettings();
+        if (changed("panelTheme")) this.plugin.refreshPanelThemes();
+        this.plugin.queueScan();
+    }
+
+    syncAllSettingControls() {
+        if (typeof document === "undefined" || !document.querySelectorAll) return;
+        const paths = new Set();
+        document.querySelectorAll("[data-dait-path]")?.forEach(control => {
+            const path = String(control?.dataset?.daitPath || "");
+            if (path) paths.add(path);
+        });
+        paths.forEach(path => this.plugin.syncSettingControls(path, this.plugin.getSetting(path), { includeActive: true }));
     }
 
     setTaskProvider(kind, provider) {

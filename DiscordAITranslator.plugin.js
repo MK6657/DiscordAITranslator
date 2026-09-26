@@ -1,7 +1,7 @@
 /**
  * @name DiscordAITranslator
  * @author /insert 始皇
- * @version 0.3.0
+ * @version 0.4.0
  * @description Discord AI 翻译/润色插件，支持输入润色和频道消息翻译。
  * @license MIT
  */
@@ -103,6 +103,18 @@ var require_composer_writer = __commonJS({
         this.plugin = plugin;
         this.activeWriteTokens = /* @__PURE__ */ new Map();
         this.writeTokenCounter = 0;
+        this.ownEditDepth = 0;
+      }
+      // Runs an edit the plugin makes itself. document.execCommand fires trusted "input" events, which
+      // must not read as the user typing and cancel the plugin's own write. The call is synchronous,
+      // so no real keystroke can arrive while it runs.
+      runOwnEdit(callback) {
+        this.ownEditDepth++;
+        try {
+          return callback();
+        } finally {
+          this.ownEditDepth--;
+        }
       }
       replaceTextSafely(textbox, text, options = {}) {
         if (options.writeToken && !this.isWriteTokenCurrent(options.writeToken)) {
@@ -163,10 +175,10 @@ var require_composer_writer = __commonJS({
         const textbox = token?.textbox;
         if (!textbox?.addEventListener) return null;
         const cancel = (event) => {
-          if (event?.isTrusted !== true) return;
+          if (event?.isTrusted !== true || this.ownEditDepth > 0) return;
           this.cancelWriteToken(token, "user-input");
         };
-        const events = ["beforeinput", "input", "paste", "drop", "compositionstart", "keydown"];
+        const events = ["beforeinput", "input", "paste", "cut", "drop", "compositionstart"];
         events.forEach((type) => textbox.addEventListener(type, cancel, true));
         return () => events.forEach((type) => textbox.removeEventListener?.(type, cancel, true));
       }
@@ -179,15 +191,61 @@ var require_composer_writer = __commonJS({
 var require_settings_schema = __commonJS({
   "src/settings/settings-schema.js"(exports2, module2) {
     "use strict";
+    var SETTINGS_TAB_OVERVIEW = "overview";
+    var SETTINGS_TAB_TRANSLATE = "translate";
+    var SETTINGS_TAB_COMPOSE = "compose";
+    var SETTINGS_TAB_APPEARANCE = "display";
+    var SETTINGS_TAB_ADVANCED = "advanced";
+    var SETTINGS_TAB_DATA = "data";
+    var SETTINGS_TAB_IDS = [
+      SETTINGS_TAB_OVERVIEW,
+      SETTINGS_TAB_TRANSLATE,
+      SETTINGS_TAB_COMPOSE,
+      SETTINGS_TAB_APPEARANCE,
+      SETTINGS_TAB_ADVANCED,
+      SETTINGS_TAB_DATA
+    ];
+    var SETTINGS_TABS_DEFINITION = [
+      { id: SETTINGS_TAB_OVERVIEW, labelKey: "settingsTabOverview" },
+      { id: SETTINGS_TAB_TRANSLATE, labelKey: "settingsTabTranslate" },
+      { id: SETTINGS_TAB_COMPOSE, labelKey: "settingsTabCompose" },
+      { id: SETTINGS_TAB_APPEARANCE, labelKey: "settingsTabAppearance" },
+      { id: SETTINGS_TAB_ADVANCED, labelKey: "settingsTabAdvanced" },
+      { id: SETTINGS_TAB_DATA, labelKey: "settingsTabData" }
+    ];
+    var LEGACY_SETTINGS_TAB_MAP = {
+      general: SETTINGS_TAB_OVERVIEW,
+      polish: SETTINGS_TAB_COMPOSE,
+      polishControls: SETTINGS_TAB_COMPOSE,
+      publicBilingual: SETTINGS_TAB_COMPOSE,
+      translation: SETTINGS_TAB_TRANSLATE,
+      translationControls: SETTINGS_TAB_TRANSLATE,
+      autoTranslate: SETTINGS_TAB_TRANSLATE,
+      display: SETTINGS_TAB_APPEARANCE,
+      cache: SETTINGS_TAB_DATA,
+      diagnostics: SETTINGS_TAB_DATA
+    };
+    var SETTINGS_WINDOW_MAX_WIDTH = 920;
+    var SETTINGS_CONTROL_WIDTH = 240;
+    var MESSAGE_BUTTON_MODE_OFF = "off";
+    function normalizeSettingsTabId(value) {
+      const id = String(value || "").trim();
+      if (SETTINGS_TAB_IDS.includes(id)) return id;
+      return Object.prototype.hasOwnProperty.call(LEGACY_SETTINGS_TAB_MAP, id) ? LEGACY_SETTINGS_TAB_MAP[id] : SETTINGS_TAB_OVERVIEW;
+    }
     var SettingsSchema = class {
       constructor(options = {}) {
-        this.sections = Array.isArray(options.sections) ? options.sections : [];
+        const sections = Array.isArray(options.sections) ? options.sections : options.tabs;
+        this.sections = Array.isArray(sections) ? sections : [];
         this.providerCapabilities = options.providerCapabilities || {};
         this.providerOrder = Array.isArray(options.providerOrder) ? options.providerOrder : [];
         this.defaultProvider = String(options.defaultProvider || "deepseek");
       }
       getSections() {
         return this.sections.map((section) => ({ ...section }));
+      }
+      getTabs() {
+        return this.getSections();
       }
       getProviderCapabilities(provider) {
         const key = String(provider || "").trim();
@@ -200,286 +258,168 @@ var require_settings_schema = __commonJS({
         return this.providerOrder.filter((provider) => this.isProviderAllowedForTask(kind, provider)).map((provider) => [provider, getLabel(provider)]);
       }
     };
-    module2.exports = { SettingsSchema };
+    module2.exports = {
+      SettingsSchema,
+      SETTINGS_TAB_OVERVIEW,
+      SETTINGS_TAB_TRANSLATE,
+      SETTINGS_TAB_COMPOSE,
+      SETTINGS_TAB_APPEARANCE,
+      SETTINGS_TAB_ADVANCED,
+      SETTINGS_TAB_DATA,
+      SETTINGS_TAB_IDS,
+      SETTINGS_TABS_DEFINITION,
+      LEGACY_SETTINGS_TAB_MAP,
+      SETTINGS_WINDOW_MAX_WIDTH,
+      SETTINGS_CONTROL_WIDTH,
+      MESSAGE_BUTTON_MODE_OFF,
+      normalizeSettingsTabId
+    };
   }
 });
 
-// src/styles.js
-var require_styles = __commonJS({
-  "src/styles.js"(exports2, module2) {
+// src/css/01-theme-tokens.js
+var require_theme_tokens = __commonJS({
+  "src/css/01-theme-tokens.js"(exports2, module2) {
     "use strict";
-    var PLUGIN_CSS = `
+    module2.exports = `
+/* BetterDiscord's plugin-settings modal, marked by applySettingsModalSizing: a moderate window, not a full-width sheet. */
 [data-dait-settings-modal="true"] {
     box-sizing: border-box !important;
     margin-left: auto !important;
     margin-right: auto !important;
-    max-height: min(84vh, 900px) !important;
-    max-width: min(1280px, calc(100vw - 72px)) !important;
-    width: min(1280px, calc(100vw - 72px)) !important;
+    max-height: min(760px, calc(100vh - 64px)) !important;
+    max-width: min(920px, calc(100vw - 48px)) !important;
+    width: min(920px, calc(100vw - 48px)) !important;
+}
+
+/* Only the outermost marked node (the modal frame) gets that width. The marked nodes inside it (the padded content
+   scroller, BetterDiscord's .bd-addon-settings-wrap) fill their parent, so the panel stays clear of the scroller's
+   padding and scrollbar. */
+[data-dait-settings-modal="true"] [data-dait-settings-modal="true"] {
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+    max-width: 100% !important;
+    width: auto !important;
 }
 
 [data-dait-settings-modal-root="true"] {
-    margin-bottom: clamp(18px, 4vh, 42px) !important;
-    margin-top: clamp(18px, 4vh, 42px) !important;
+    margin-bottom: clamp(16px, 4vh, 32px) !important;
+    margin-top: clamp(16px, 4vh, 32px) !important;
 }
 
+/* The plugin's own windows: the settings panel (in BetterDiscord's modal and in the launcher's window), the
+   launcher's window frame, the quick panel, the polish result panel, the composer's action menu and the content of
+   the confirmation dialogs. Their colours come only from the two palettes below, picked by data-dait-panel-theme
+   (set by applyPanelTheme from ui.panelTheme; "auto" follows Discord's light or dark theme). Nothing here reads a
+   Discord colour variable, so a part of Discord themed differently from the page cannot mix into these windows.
+   Chat translation lines and the message/composer buttons live inside Discord's UI and keep Discord's colours. */
+.dait-settings,
 .dait-quick-settings-modal-root,
-[data-dait-settings-modal="true"],
-.dait-polish-result-panel {
-    --dait-accent: var(--brand-500, #5865f2);
-    --dait-accent-hover: var(--brand-560, #4752c4);
-    --dait-success: #15a36d;
-    --dait-danger: #d83c3e;
-    --dait-focus: rgba(88, 101, 242, 0.3);
-    --dait-card: var(--bg-base-primary, var(--background-base-low, var(--background-primary, #252832)));
-    --dait-card-raised: var(--background-surface-high, var(--background-secondary, #2a2e3a));
-    --dait-card-soft: var(--bg-base-tertiary, var(--background-base-lower, var(--background-secondary-alt, var(--background-tertiary, #20232c))));
-    --dait-border: var(--border-subtle, var(--background-modifier-accent, #3d4352));
-    --dait-border-strong: color-mix(in srgb, var(--interactive-normal, #b9c1d0) 42%, var(--dait-border));
-    --dait-control: var(--input-background, var(--background-base-lowest, var(--background-secondary, #171a22)));
-    --dait-control-hover: color-mix(in srgb, var(--background-modifier-hover, #1d222c) 68%, var(--dait-control));
-    --dait-text: var(--text-normal, #dbdee1);
-    --dait-heading: var(--header-primary, #f2f3f5);
-    --dait-label: var(--header-secondary, #c7ccd6);
-    --dait-muted-readable: var(--header-secondary, var(--text-muted, #b9c1d0));
-    --dait-disabled-text: color-mix(in srgb, var(--dait-text) 54%, var(--dait-muted-readable));
-    --dait-shadow: 0 14px 34px rgba(0, 0, 0, 0.2);
+.dait-quick-popover,
+.dait-polish-result-panel,
+.dait-input-action-menu,
+.dait-dialog {
+    /* One type scale for every window: body 15/1.55 for everything that is not a heading; small 13 only for the
+       version chip, the search box's hint and status badges next to a title. Weights 400/500/600. */
+    --dait-font-window: 18px;
+    --dait-font-page: 20px;
+    --dait-font-group: 16px;
+    --dait-font-body: 15px;
+    --dait-font-small: 13px;
+    --dait-line: 1.55;
+    --dait-font-family: var(--font-primary, "gg sans", "Noto Sans", "Microsoft YaHei", "Helvetica Neue", Helvetica, Arial, sans-serif);
+    /* 4/8 spacing grid, radii and the shared control size. */
+    --dait-space-1: 4px;
+    --dait-space-2: 8px;
+    --dait-space-3: 12px;
+    --dait-space-4: 16px;
+    --dait-space-5: 24px;
+    --dait-space-6: 28px;
+    --dait-radius-control: 4px;
+    --dait-radius-card: 8px;
+    --dait-radius-pill: 999px;
+    --dait-control-w: 240px;
+    --dait-control-h: 36px;
+    /* Derived from the palette: hover of filled buttons, the switch track when off, scrollbars. */
+    --dait-brand-hover: color-mix(in srgb, var(--dait-brand) 86%, #000000);
+    --dait-raised-hover: color-mix(in srgb, var(--dait-raised) 88%, var(--dait-text));
+    --dait-switch-off: color-mix(in srgb, var(--dait-placeholder) 78%, var(--dait-bg));
+    --dait-scrollbar-thumb: color-mix(in srgb, var(--dait-placeholder) 55%, transparent);
+    --dait-scrollbar-thumb-hover: color-mix(in srgb, var(--dait-placeholder) 80%, transparent);
+    --dait-scrollbar-track: transparent;
     color: var(--dait-text);
+    font-family: var(--dait-font-family);
+    font-size: var(--dait-font-body);
+    font-weight: 400;
+    letter-spacing: 0;
+    line-height: var(--dait-line);
 }
 
-.theme-light.dait-quick-settings-modal-root,
-.theme-light .dait-quick-settings-modal-root,
-.dait-quick-settings-modal-root[data-dait-discord-theme="light"],
-[data-dait-discord-theme="light"] .dait-quick-settings-modal-root,
-.theme-light [data-dait-settings-modal="true"],
-.theme-light[data-dait-settings-modal="true"],
-[data-dait-settings-modal="true"][data-dait-discord-theme="light"],
-.theme-light.dait-polish-result-panel,
-.theme-light .dait-polish-result-panel,
-.dait-polish-result-panel[data-dait-discord-theme="light"] {
-    --dait-focus: rgba(88, 101, 242, 0.2);
-    --dait-card: var(--bg-base-primary, var(--background-base-low, var(--background-primary, #ffffff)));
-    --dait-card-raised: var(--background-surface-high, var(--background-secondary, #f2f3f5));
-    --dait-card-soft: var(--bg-base-tertiary, var(--background-base-lower, var(--background-secondary-alt, #ebedef)));
-    --dait-border: var(--border-subtle, var(--background-modifier-accent, #d7dce7));
-    --dait-border-strong: color-mix(in srgb, var(--interactive-normal, #4f5660) 42%, var(--dait-border));
-    --dait-control: var(--input-background, var(--background-base-lowest, var(--background-secondary, #f2f3f5)));
-    --dait-control-hover: color-mix(in srgb, var(--background-modifier-hover, #e3e5e8) 62%, #ffffff);
-    --dait-text: #2e3338;
-    --dait-heading: #1f232b;
-    --dait-label: #2f3745;
-    --dait-muted-readable: #5c6472;
-    --dait-disabled-text: #6f7785;
-    --dait-shadow: 0 14px 34px rgba(24, 36, 61, 0.12);
-    color: var(--dait-text);
+/* Dark palette (also the default for a window that has not been given a theme yet). */
+[data-dait-panel-theme="dark"],
+:is(.dait-settings, .dait-quick-settings-modal-root, .dait-quick-popover, .dait-polish-result-panel, .dait-input-action-menu, .dait-dialog):not([data-dait-panel-theme]) {
+    --dait-bg: #2b2d31;
+    --dait-rail: #232428;
+    --dait-surface: #313338;
+    --dait-raised: #383a40;
+    --dait-input-bg: #1e1f22;
+    /* Control edges (inputs, selects, segmented controls, secondary buttons) reach 3:1 against the window, rail and
+       card surfaces (WCAG 1.4.11); the spec's #4e5058 reached 1.6-1.9:1. */
+    --dait-input-border: #7a7e86;
+    --dait-divider: #3f4147;
+    --dait-text: #e3e5e8;
+    --dait-heading: #f2f3f5;
+    --dait-placeholder: #949ba4;
+    --dait-brand: #4f5bd5;
+    --dait-on-fill: #ffffff;
+    --dait-link: #a4abf8;
+    --dait-focus: #6f79e8;
+    --dait-success-fill: #3ba55d;
+    --dait-success: #6ccf8e;
+    --dait-warning-fill: #f0b232;
+    --dait-warning: #f5c55c;
+    --dait-danger-fill: #da373c;
+    --dait-danger: #ff8a8e;
+    --dait-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    --dait-backdrop: rgba(0, 0, 0, 0.5);
+    color-scheme: dark;
+}
+
+/* Light palette. */
+[data-dait-panel-theme="light"] {
+    --dait-bg: #ffffff;
+    --dait-rail: #f2f3f5;
+    --dait-surface: #f6f7f8;
+    --dait-raised: #ebedef;
+    --dait-input-bg: #ffffff;
+    /* White inputs sit on the white window: their edge is the only thing that shows them, so it reaches 3:1 on the
+       window, rail and card surfaces (WCAG 1.4.11); the spec's #c4c9ce reached 1.5-1.7:1. */
+    --dait-input-border: #868a91;
+    --dait-divider: #e3e5e8;
+    --dait-text: #2e3035;
+    --dait-heading: #1f2124;
+    --dait-placeholder: #6d6f78;
+    --dait-brand: #4f5bd5;
+    --dait-on-fill: #ffffff;
+    --dait-link: #3c45a5;
+    --dait-focus: #4f5bd5;
+    --dait-success-fill: #248046;
+    --dait-success: #1a7f45;
+    --dait-warning-fill: #c7860d;
+    --dait-warning: #8a5a00;
+    --dait-danger-fill: #da373c;
+    --dait-danger: #c42b2f;
+    --dait-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+    --dait-backdrop: rgba(0, 0, 0, 0.36);
     color-scheme: light;
 }
 
-.theme-dark.dait-quick-settings-modal-root,
-.theme-dark .dait-quick-settings-modal-root,
-.dait-quick-settings-modal-root[data-dait-discord-theme="dark"],
-[data-dait-discord-theme="dark"] .dait-quick-settings-modal-root,
-.theme-dark [data-dait-settings-modal="true"],
-.theme-dark[data-dait-settings-modal="true"],
-[data-dait-settings-modal="true"][data-dait-discord-theme="dark"],
-.theme-dark.dait-polish-result-panel,
-.theme-dark .dait-polish-result-panel,
-.dait-polish-result-panel[data-dait-discord-theme="dark"] {
-    --dait-card: var(--bg-base-primary, var(--background-base-low, var(--background-primary, #313338)));
-    --dait-card-raised: var(--background-surface-high, var(--background-secondary, #2b2d31));
-    --dait-card-soft: var(--bg-base-tertiary, var(--background-base-lower, var(--background-secondary-alt, var(--background-tertiary, #232428))));
-    --dait-border: var(--border-subtle, var(--background-modifier-accent, #3f4147));
-    --dait-border-strong: color-mix(in srgb, var(--interactive-normal, #b5bac1) 42%, var(--dait-border));
-    --dait-control: var(--input-background, var(--background-base-lowest, var(--background-secondary, #1e1f22)));
-    --dait-control-hover: color-mix(in srgb, var(--background-modifier-hover, #35373c) 68%, var(--dait-control));
-    --dait-text: var(--text-normal, #dbdee1);
-    --dait-heading: var(--header-primary, #f2f3f5);
-    --dait-label: var(--header-secondary, #c7ccd6);
-    --dait-muted-readable: var(--header-secondary, var(--text-muted, #b5bac1));
-    --dait-disabled-text: color-mix(in srgb, var(--dait-text) 54%, var(--dait-muted-readable));
-    --dait-shadow: var(--elevation-high, 0 16px 40px rgba(0, 0, 0, 0.32));
-    color: var(--dait-text);
-    color-scheme: dark;
-}
-
-.theme-darker.dait-quick-settings-modal-root,
-.theme-darker .dait-quick-settings-modal-root,
-.dait-quick-settings-modal-root[data-dait-discord-theme="darker"],
-[data-dait-discord-theme="darker"] .dait-quick-settings-modal-root,
-.theme-darker [data-dait-settings-modal="true"],
-.theme-darker[data-dait-settings-modal="true"],
-[data-dait-settings-modal="true"][data-dait-discord-theme="darker"],
-.theme-darker.dait-polish-result-panel,
-.theme-darker .dait-polish-result-panel,
-.dait-polish-result-panel[data-dait-discord-theme="darker"] {
-    --dait-card: var(--bg-base-primary, var(--background-base-low, var(--background-primary, #1f2128)));
-    --dait-card-raised: var(--background-surface-high, var(--background-secondary, #242733));
-    --dait-card-soft: var(--bg-base-tertiary, var(--background-base-lower, var(--background-secondary-alt, var(--background-tertiary, #181b22))));
-    --dait-border: var(--border-subtle, var(--background-modifier-accent, #343a47));
-    --dait-border-strong: color-mix(in srgb, var(--interactive-normal, #b2bac8) 42%, var(--dait-border));
-    --dait-control: var(--input-background, var(--background-base-lowest, var(--background-secondary, #111318)));
-    --dait-control-hover: color-mix(in srgb, var(--background-modifier-hover, #171a21) 68%, var(--dait-control));
-    --dait-text: var(--text-normal, #dbdee1);
-    --dait-heading: var(--header-primary, #f2f3f5);
-    --dait-label: var(--header-secondary, #c7ccd6);
-    --dait-muted-readable: var(--header-secondary, var(--text-muted, #b2bac8));
-    --dait-disabled-text: color-mix(in srgb, var(--dait-text) 54%, var(--dait-muted-readable));
-    --dait-shadow: 0 16px 36px rgba(0, 0, 0, 0.28);
-    color: var(--dait-text);
-    color-scheme: dark;
-}
-
-.theme-midnight.dait-quick-settings-modal-root,
-.theme-midnight .dait-quick-settings-modal-root,
-.dait-quick-settings-modal-root[data-dait-discord-theme="midnight"],
-[data-dait-discord-theme="midnight"] .dait-quick-settings-modal-root,
-.theme-midnight [data-dait-settings-modal="true"],
-.theme-midnight[data-dait-settings-modal="true"],
-[data-dait-settings-modal="true"][data-dait-discord-theme="midnight"],
-.theme-midnight.dait-polish-result-panel,
-.theme-midnight .dait-polish-result-panel,
-.dait-polish-result-panel[data-dait-discord-theme="midnight"] {
-    --dait-card: var(--bg-base-primary, var(--background-base-low, var(--background-primary, #15171d)));
-    --dait-card-raised: var(--background-surface-high, var(--background-secondary, #1a1d25));
-    --dait-card-soft: var(--bg-base-tertiary, var(--background-base-lower, var(--background-secondary-alt, var(--background-tertiary, #101218))));
-    --dait-border: var(--border-subtle, var(--background-modifier-accent, #2b303d));
-    --dait-border-strong: color-mix(in srgb, var(--interactive-normal, #aeb7c7) 42%, var(--dait-border));
-    --dait-control: var(--input-background, var(--background-base-lowest, var(--background-secondary, #0b0d12)));
-    --dait-control-hover: color-mix(in srgb, var(--background-modifier-hover, #10131a) 68%, var(--dait-control));
-    --dait-text: var(--text-normal, #f2f3f5);
-    --dait-heading: var(--header-primary, #ffffff);
-    --dait-label: var(--header-secondary, #d7ddea);
-    --dait-muted-readable: var(--header-secondary, var(--text-muted, #aeb7c7));
-    --dait-disabled-text: color-mix(in srgb, var(--dait-text) 54%, var(--dait-muted-readable));
-    --dait-shadow: 0 18px 42px rgba(0, 0, 0, 0.36);
-    color: var(--dait-text);
-    color-scheme: dark;
-}
-
-.dait-settings {
-    --dait-accent: var(--brand-500, #5865f2);
-    --dait-accent-hover: var(--brand-560, #4752c4);
-    --dait-success: #15a36d;
-    --dait-danger: #d83c3e;
-    --dait-focus: rgba(88, 101, 242, 0.3);
-    --dait-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='%23dbe1ee' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
-    --dait-card: var(--bg-base-primary, var(--background-base-low, var(--background-primary, #252832)));
-    --dait-card-raised: var(--background-surface-high, var(--background-secondary, #2a2e3a));
-    --dait-card-soft: var(--bg-base-tertiary, var(--background-base-lower, var(--background-secondary-alt, var(--background-tertiary, #20232c))));
-    --dait-border: var(--border-subtle, var(--background-modifier-accent, #3d4352));
-    --dait-border-strong: color-mix(in srgb, var(--interactive-normal, #b9c1d0) 42%, var(--dait-border));
-    --dait-control: var(--input-background, var(--background-base-lowest, var(--background-secondary, #171a22)));
-    --dait-control-hover: color-mix(in srgb, var(--background-modifier-hover, #1d222c) 68%, var(--dait-control));
-    --dait-text: var(--text-normal, #dbdee1);
-    --dait-heading: var(--header-primary, #f2f3f5);
-    --dait-label: var(--header-secondary, #c7ccd6);
-    --dait-muted-readable: var(--header-secondary, var(--text-muted, #b9c1d0));
-    --dait-disabled-text: color-mix(in srgb, var(--dait-text) 54%, var(--dait-muted-readable));
-    --dait-scrollbar-thumb: var(--scrollbar-thin-thumb, rgba(180, 186, 199, 0.28));
-    --dait-scrollbar-thumb-hover: var(--scrollbar-auto-thumb, rgba(204, 209, 220, 0.48));
-    --dait-scrollbar-track: var(--scrollbar-thin-track, transparent);
-    --dait-shadow: 0 14px 34px rgba(0, 0, 0, 0.2);
-    color: var(--dait-text);
-    display: grid;
-    gap: 14px;
-    max-width: 100%;
-    min-width: 0;
-    margin-left: auto;
-    margin-right: auto;
-    overflow: visible;
-    padding: 2px 2px 22px;
-    width: min(1208px, calc(100vw - 112px));
-}
-
-.theme-light.dait-settings,
-.theme-light .dait-settings,
-.dait-settings[data-dait-discord-theme="light"],
-[data-dait-discord-theme="light"] .dait-settings {
-    --dait-focus: rgba(88, 101, 242, 0.2);
-    --dait-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='%23232a38' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
-    --dait-card: var(--bg-base-primary, var(--background-base-low, var(--background-primary, #ffffff)));
-    --dait-card-raised: var(--background-surface-high, var(--background-secondary, #f2f3f5));
-    --dait-card-soft: var(--bg-base-tertiary, var(--background-base-lower, var(--background-secondary-alt, #ebedef)));
-    --dait-border: var(--border-subtle, var(--background-modifier-accent, #d7dce7));
-    --dait-border-strong: color-mix(in srgb, var(--interactive-normal, #4f5660) 42%, var(--dait-border));
-    --dait-control: var(--input-background, var(--background-base-lowest, var(--background-secondary, #f2f3f5)));
-    --dait-control-hover: color-mix(in srgb, var(--background-modifier-hover, #e3e5e8) 62%, #ffffff);
-    --dait-text: #2e3338;
-    --dait-heading: #1f232b;
-    --dait-label: #2f3745;
-    --dait-muted-readable: #5c6472;
-    --dait-disabled-text: #6f7785;
-    --dait-scrollbar-thumb: var(--scrollbar-thin-thumb, rgba(76, 86, 106, 0.3));
-    --dait-scrollbar-thumb-hover: var(--scrollbar-auto-thumb, rgba(76, 86, 106, 0.48));
-    --dait-scrollbar-track: var(--scrollbar-thin-track, transparent);
-    --dait-shadow: 0 14px 34px rgba(24, 36, 61, 0.12);
-    color: var(--dait-text);
-}
-
-.theme-dark.dait-settings,
-.theme-dark .dait-settings,
-.dait-settings[data-dait-discord-theme="dark"],
-[data-dait-discord-theme="dark"] .dait-settings {
-    --dait-card: var(--bg-base-primary, var(--background-base-low, var(--background-primary, #313338)));
-    --dait-card-raised: var(--background-surface-high, var(--background-secondary, #2b2d31));
-    --dait-card-soft: var(--bg-base-tertiary, var(--background-base-lower, var(--background-secondary-alt, var(--background-tertiary, #232428))));
-    --dait-border: var(--border-subtle, var(--background-modifier-accent, #3f4147));
-    --dait-border-strong: color-mix(in srgb, var(--interactive-normal, #b5bac1) 42%, var(--dait-border));
-    --dait-control: var(--input-background, var(--background-base-lowest, var(--background-secondary, #1e1f22)));
-    --dait-control-hover: color-mix(in srgb, var(--background-modifier-hover, #35373c) 68%, var(--dait-control));
-    --dait-text: var(--text-normal, #dbdee1);
-    --dait-heading: var(--header-primary, #f2f3f5);
-    --dait-label: var(--header-secondary, #c7ccd6);
-    --dait-muted-readable: var(--header-secondary, var(--text-muted, #b5bac1));
-    --dait-disabled-text: color-mix(in srgb, var(--dait-text) 54%, var(--dait-muted-readable));
-    --dait-shadow: var(--elevation-high, 0 16px 40px rgba(0, 0, 0, 0.32));
-    color: var(--dait-text);
-}
-
-.theme-darker.dait-settings,
-.theme-darker .dait-settings,
-.dait-settings[data-dait-discord-theme="darker"],
-[data-dait-discord-theme="darker"] .dait-settings {
-    --dait-card: var(--bg-base-primary, var(--background-base-low, var(--background-primary, #1f2128)));
-    --dait-card-raised: var(--background-surface-high, var(--background-secondary, #242733));
-    --dait-card-soft: var(--bg-base-tertiary, var(--background-base-lower, var(--background-secondary-alt, var(--background-tertiary, #181b22))));
-    --dait-border: var(--border-subtle, var(--background-modifier-accent, #343a47));
-    --dait-border-strong: color-mix(in srgb, var(--interactive-normal, #b2bac8) 42%, var(--dait-border));
-    --dait-control: var(--input-background, var(--background-base-lowest, var(--background-secondary, #111318)));
-    --dait-control-hover: color-mix(in srgb, var(--background-modifier-hover, #171a21) 68%, var(--dait-control));
-    --dait-text: var(--text-normal, #dbdee1);
-    --dait-heading: var(--header-primary, #f2f3f5);
-    --dait-label: var(--header-secondary, #c7ccd6);
-    --dait-muted-readable: var(--header-secondary, var(--text-muted, #b2bac8));
-    --dait-disabled-text: color-mix(in srgb, var(--dait-text) 54%, var(--dait-muted-readable));
-    --dait-scrollbar-thumb: var(--scrollbar-thin-thumb, rgba(176, 183, 196, 0.24));
-    --dait-scrollbar-thumb-hover: var(--scrollbar-auto-thumb, rgba(204, 210, 222, 0.42));
-    --dait-scrollbar-track: var(--scrollbar-thin-track, transparent);
-    --dait-shadow: 0 16px 36px rgba(0, 0, 0, 0.28);
-    color: var(--dait-text);
-}
-
-.theme-midnight.dait-settings,
-.theme-midnight .dait-settings,
-.dait-settings[data-dait-discord-theme="midnight"],
-[data-dait-discord-theme="midnight"] .dait-settings {
-    --dait-card: var(--bg-base-primary, var(--background-base-low, var(--background-primary, #15171d)));
-    --dait-card-raised: var(--background-surface-high, var(--background-secondary, #1a1d25));
-    --dait-card-soft: var(--bg-base-tertiary, var(--background-base-lower, var(--background-secondary-alt, var(--background-tertiary, #101218))));
-    --dait-border: var(--border-subtle, var(--background-modifier-accent, #2b303d));
-    --dait-border-strong: color-mix(in srgb, var(--interactive-normal, #aeb7c7) 42%, var(--dait-border));
-    --dait-control: var(--input-background, var(--background-base-lowest, var(--background-secondary, #0b0d12)));
-    --dait-control-hover: color-mix(in srgb, var(--background-modifier-hover, #10131a) 68%, var(--dait-control));
-    --dait-text: var(--text-normal, #f2f3f5);
-    --dait-heading: var(--header-primary, #ffffff);
-    --dait-label: var(--header-secondary, #d7ddea);
-    --dait-muted-readable: var(--header-secondary, var(--text-muted, #aeb7c7));
-    --dait-disabled-text: color-mix(in srgb, var(--dait-text) 54%, var(--dait-muted-readable));
-    --dait-scrollbar-thumb: var(--scrollbar-thin-thumb, rgba(175, 184, 200, 0.22));
-    --dait-scrollbar-thumb-hover: var(--scrollbar-auto-thumb, rgba(205, 212, 225, 0.38));
-    --dait-scrollbar-track: var(--scrollbar-thin-track, transparent);
-    --dait-shadow: 0 18px 42px rgba(0, 0, 0, 0.36);
-    color: var(--dait-text);
+/* BetterDiscord's modal frame is Discord's own element: it keeps Discord's colours, and its scrollbar is a neutral
+   grey that reads on light and dark frames. */
+[data-dait-settings-modal="true"] {
+    --dait-scrollbar-thumb: rgba(128, 132, 142, 0.45);
+    --dait-scrollbar-thumb-hover: rgba(128, 132, 142, 0.7);
+    --dait-scrollbar-track: transparent;
 }
 
 .dait-settings *,
@@ -492,115 +432,38 @@ var require_styles = __commonJS({
 .dait-polish-result-panel,
 .dait-polish-result-panel *,
 .dait-polish-restore-control,
-.dait-message-button {
+.dait-message-button,
+.dait-input-action-menu,
+.dait-input-action-menu *,
+.dait-dialog,
+.dait-dialog * {
     box-sizing: border-box;
 }
 
-[data-dait-settings-modal="true"],
-.dait-quick-settings-modal-root,
-.dait-quick-settings-body,
-.dait-polish-result-panel,
-.dait-settings {
-    --dait-scrollbar-thumb: var(--scrollbar-thin-thumb, rgba(180, 186, 199, 0.28));
-    --dait-scrollbar-thumb-hover: var(--scrollbar-auto-thumb, rgba(204, 209, 220, 0.48));
-    --dait-scrollbar-track: var(--scrollbar-thin-track, transparent);
-}
-
-.theme-light [data-dait-settings-modal="true"],
-.theme-light[data-dait-settings-modal="true"],
-[data-dait-settings-modal="true"][data-dait-discord-theme="light"],
-.theme-light.dait-quick-settings-modal-root,
-.theme-light .dait-quick-settings-modal-root,
-.dait-quick-settings-modal-root[data-dait-discord-theme="light"],
-[data-dait-discord-theme="light"] .dait-quick-settings-modal-root,
-.theme-light.dait-quick-settings-body,
-.theme-light .dait-quick-settings-body,
-.dait-quick-settings-body[data-dait-discord-theme="light"],
-[data-dait-discord-theme="light"] .dait-quick-settings-body,
-.theme-light.dait-polish-result-panel,
-.theme-light .dait-polish-result-panel,
-.dait-polish-result-panel[data-dait-discord-theme="light"] {
-    --dait-scrollbar-thumb: var(--scrollbar-thin-thumb, rgba(76, 86, 106, 0.3));
-    --dait-scrollbar-thumb-hover: var(--scrollbar-auto-thumb, rgba(76, 86, 106, 0.48));
-    --dait-scrollbar-track: var(--scrollbar-thin-track, transparent);
-}
-
-.theme-dark [data-dait-settings-modal="true"],
-.theme-dark[data-dait-settings-modal="true"],
-[data-dait-settings-modal="true"][data-dait-discord-theme="dark"],
-.theme-dark.dait-quick-settings-modal-root,
-.theme-dark .dait-quick-settings-modal-root,
-.dait-quick-settings-modal-root[data-dait-discord-theme="dark"],
-[data-dait-discord-theme="dark"] .dait-quick-settings-modal-root,
-.theme-dark.dait-quick-settings-body,
-.theme-dark .dait-quick-settings-body,
-.dait-quick-settings-body[data-dait-discord-theme="dark"],
-[data-dait-discord-theme="dark"] .dait-quick-settings-body,
-.theme-dark.dait-polish-result-panel,
-.theme-dark .dait-polish-result-panel,
-.dait-polish-result-panel[data-dait-discord-theme="dark"] {
-    --dait-scrollbar-thumb: var(--scrollbar-thin-thumb, rgba(180, 186, 199, 0.28));
-    --dait-scrollbar-thumb-hover: var(--scrollbar-auto-thumb, rgba(204, 209, 220, 0.48));
-    --dait-scrollbar-track: var(--scrollbar-thin-track, transparent);
-}
-
-.theme-darker [data-dait-settings-modal="true"],
-.theme-darker[data-dait-settings-modal="true"],
-[data-dait-settings-modal="true"][data-dait-discord-theme="darker"],
-.theme-darker.dait-quick-settings-modal-root,
-.theme-darker .dait-quick-settings-modal-root,
-.dait-quick-settings-modal-root[data-dait-discord-theme="darker"],
-[data-dait-discord-theme="darker"] .dait-quick-settings-modal-root,
-.theme-darker.dait-quick-settings-body,
-.theme-darker .dait-quick-settings-body,
-.dait-quick-settings-body[data-dait-discord-theme="darker"],
-[data-dait-discord-theme="darker"] .dait-quick-settings-body,
-.theme-darker.dait-polish-result-panel,
-.theme-darker .dait-polish-result-panel,
-.dait-polish-result-panel[data-dait-discord-theme="darker"] {
-    --dait-scrollbar-thumb: var(--scrollbar-thin-thumb, rgba(176, 183, 196, 0.24));
-    --dait-scrollbar-thumb-hover: var(--scrollbar-auto-thumb, rgba(204, 210, 222, 0.42));
-    --dait-scrollbar-track: var(--scrollbar-thin-track, transparent);
-}
-
-.theme-midnight [data-dait-settings-modal="true"],
-.theme-midnight[data-dait-settings-modal="true"],
-[data-dait-settings-modal="true"][data-dait-discord-theme="midnight"],
-.theme-midnight.dait-quick-settings-modal-root,
-.theme-midnight .dait-quick-settings-modal-root,
-.dait-quick-settings-modal-root[data-dait-discord-theme="midnight"],
-[data-dait-discord-theme="midnight"] .dait-quick-settings-modal-root,
-.theme-midnight.dait-quick-settings-body,
-.theme-midnight .dait-quick-settings-body,
-.dait-quick-settings-body[data-dait-discord-theme="midnight"],
-[data-dait-discord-theme="midnight"] .dait-quick-settings-body,
-.theme-midnight.dait-polish-result-panel,
-.theme-midnight .dait-polish-result-panel,
-.dait-polish-result-panel[data-dait-discord-theme="midnight"] {
-    --dait-scrollbar-thumb: var(--scrollbar-thin-thumb, rgba(175, 184, 200, 0.22));
-    --dait-scrollbar-thumb-hover: var(--scrollbar-auto-thumb, rgba(205, 212, 225, 0.38));
-    --dait-scrollbar-track: var(--scrollbar-thin-track, transparent);
-}
-
-[data-dait-settings-modal="true"],
-.dait-quick-settings-body,
-.dait-settings-sidebar,
-.dait-settings-row textarea,
-.dait-prompt-editor textarea,
-.dait-test-panel textarea,
-.dait-test-output,
-.dait-polish-result-output {
-    scrollbar-color: var(--dait-scrollbar-thumb) var(--dait-scrollbar-track);
-    scrollbar-width: thin;
+/* Scrollbars: Chromium (Discord) draws them with the ::-webkit-scrollbar rules below, an 8 px rounded thumb without
+   arrow buttons. A non-auto scrollbar-width or scrollbar-color switches those rules off (Chromium 121+), so the
+   standard properties only apply where ::-webkit-scrollbar does not exist. */
+@supports not selector(::-webkit-scrollbar) {
+    [data-dait-settings-modal="true"],
+    .dait-quick-settings-body,
+    .dait-settings-rail,
+    .dait-settings-content,
+    .dait-settings-row textarea,
+    .dait-prompt-editor textarea,
+    .dait-prompt-preview,
+    .dait-polish-result-output {
+        scrollbar-color: var(--dait-scrollbar-thumb) var(--dait-scrollbar-track);
+        scrollbar-width: thin;
+    }
 }
 
 [data-dait-settings-modal="true"]::-webkit-scrollbar,
 .dait-quick-settings-body::-webkit-scrollbar,
-.dait-settings-sidebar::-webkit-scrollbar,
+.dait-settings-rail::-webkit-scrollbar,
+.dait-settings-content::-webkit-scrollbar,
 .dait-settings-row textarea::-webkit-scrollbar,
 .dait-prompt-editor textarea::-webkit-scrollbar,
-.dait-test-panel textarea::-webkit-scrollbar,
-.dait-test-output::-webkit-scrollbar,
+.dait-prompt-preview::-webkit-scrollbar,
 .dait-polish-result-output::-webkit-scrollbar {
     height: 8px;
     width: 8px;
@@ -608,11 +471,11 @@ var require_styles = __commonJS({
 
 [data-dait-settings-modal="true"]::-webkit-scrollbar-track,
 .dait-quick-settings-body::-webkit-scrollbar-track,
-.dait-settings-sidebar::-webkit-scrollbar-track,
+.dait-settings-rail::-webkit-scrollbar-track,
+.dait-settings-content::-webkit-scrollbar-track,
 .dait-settings-row textarea::-webkit-scrollbar-track,
 .dait-prompt-editor textarea::-webkit-scrollbar-track,
-.dait-test-panel textarea::-webkit-scrollbar-track,
-.dait-test-output::-webkit-scrollbar-track,
+.dait-prompt-preview::-webkit-scrollbar-track,
 .dait-polish-result-output::-webkit-scrollbar-track {
     background: var(--dait-scrollbar-track);
     border-radius: 999px;
@@ -620,11 +483,11 @@ var require_styles = __commonJS({
 
 [data-dait-settings-modal="true"]::-webkit-scrollbar-thumb,
 .dait-quick-settings-body::-webkit-scrollbar-thumb,
-.dait-settings-sidebar::-webkit-scrollbar-thumb,
+.dait-settings-rail::-webkit-scrollbar-thumb,
+.dait-settings-content::-webkit-scrollbar-thumb,
 .dait-settings-row textarea::-webkit-scrollbar-thumb,
 .dait-prompt-editor textarea::-webkit-scrollbar-thumb,
-.dait-test-panel textarea::-webkit-scrollbar-thumb,
-.dait-test-output::-webkit-scrollbar-thumb,
+.dait-prompt-preview::-webkit-scrollbar-thumb,
 .dait-polish-result-output::-webkit-scrollbar-thumb {
     background: var(--dait-scrollbar-thumb);
     border: 2px solid transparent;
@@ -634,11 +497,11 @@ var require_styles = __commonJS({
 
 [data-dait-settings-modal="true"]::-webkit-scrollbar-thumb:hover,
 .dait-quick-settings-body::-webkit-scrollbar-thumb:hover,
-.dait-settings-sidebar::-webkit-scrollbar-thumb:hover,
+.dait-settings-rail::-webkit-scrollbar-thumb:hover,
+.dait-settings-content::-webkit-scrollbar-thumb:hover,
 .dait-settings-row textarea::-webkit-scrollbar-thumb:hover,
 .dait-prompt-editor textarea::-webkit-scrollbar-thumb:hover,
-.dait-test-panel textarea::-webkit-scrollbar-thumb:hover,
-.dait-test-output::-webkit-scrollbar-thumb:hover,
+.dait-prompt-preview::-webkit-scrollbar-thumb:hover,
 .dait-polish-result-output::-webkit-scrollbar-thumb:hover {
     background: var(--dait-scrollbar-thumb-hover);
     background-clip: padding-box;
@@ -646,35 +509,74 @@ var require_styles = __commonJS({
 
 [data-dait-settings-modal="true"]::-webkit-scrollbar-corner,
 .dait-quick-settings-body::-webkit-scrollbar-corner,
-.dait-settings-sidebar::-webkit-scrollbar-corner,
+.dait-settings-rail::-webkit-scrollbar-corner,
+.dait-settings-content::-webkit-scrollbar-corner,
 .dait-settings-row textarea::-webkit-scrollbar-corner,
 .dait-prompt-editor textarea::-webkit-scrollbar-corner,
-.dait-test-panel textarea::-webkit-scrollbar-corner,
-.dait-test-output::-webkit-scrollbar-corner,
+.dait-prompt-preview::-webkit-scrollbar-corner,
 .dait-polish-result-output::-webkit-scrollbar-corner {
     background: transparent;
 }
 
-.dait-quick-settings-modal-root {
-    --dait-quick-backdrop: rgba(0, 0, 0, 0.42);
-    --dait-quick-dialog-bg: var(--modal-background, var(--dait-card, var(--background-surface-high, var(--background-secondary, #313338))));
-    --dait-quick-footer-bg: var(--modal-footer-background, var(--dait-card-soft, var(--background-surface-higher, var(--background-secondary-alt, #2b2d31))));
-    --dait-quick-border: var(--dait-border, var(--border-subtle, var(--background-modifier-accent, rgba(255, 255, 255, 0.08))));
-    --dait-quick-shadow: var(--elevation-high, 0 18px 52px rgba(0, 0, 0, 0.38));
-    --dait-quick-text: var(--text-normal, var(--text-primary, #dbdee1));
-    --dait-quick-title: var(--header-primary, var(--text-normal, #f2f3f5));
-    --dait-quick-muted: var(--dait-muted-readable, var(--interactive-normal, var(--text-muted, #b5bac1)));
-    --dait-quick-hover: var(--dait-control-hover, var(--background-modifier-hover, rgba(255, 255, 255, 0.08)));
+/* Icons in icon buttons (the settings window's and the polish panel's close): an SVG shape painted in the button's
+   text colour, 18 px like the quick panel's icons, instead of a text glyph outside the type scale. */
+.dait-icon {
+    background: currentColor;
+    display: block;
+    flex: 0 0 auto;
+    height: 18px;
+    -webkit-mask: var(--dait-icon-image) center / 18px 18px no-repeat;
+    mask: var(--dait-icon-image) center / 18px 18px no-repeat;
+    width: 18px;
+}
+
+.dait-icon-close {
+    --dait-icon-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M6 6l12 12M18 6L6 18'/%3E%3C/svg%3E");
+}
+
+/* One visible focus ring for every control in these surfaces. */
+.dait-settings :focus-visible,
+.dait-quick-settings-modal-root :focus-visible,
+.dait-polish-result-panel :focus-visible,
+.dait-input-action-menu :focus-visible,
+.dait-dialog :focus-visible {
+    outline: 2px solid var(--dait-focus);
+    outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .dait-settings,
+    .dait-settings *,
+    .dait-quick-settings-modal-root,
+    .dait-quick-settings-modal-root *,
+    .dait-polish-result-panel,
+    .dait-polish-result-panel *,
+    .dait-input-action-menu,
+    .dait-input-action-menu * {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        scroll-behavior: auto !important;
+        transition: none !important;
+    }
+}
+
+`;
+  }
+});
+
+// src/css/02-quick-settings.js
+var require_quick_settings = __commonJS({
+  "src/css/02-quick-settings.js"(exports2, module2) {
+    "use strict";
+    module2.exports = `.dait-quick-settings-modal-root {
     align-items: center;
-    background: var(--dait-quick-backdrop);
-    color-scheme: dark;
-    color: var(--dait-quick-text);
+    background: var(--dait-backdrop);
+    color: var(--dait-text);
     display: flex;
     inset: 0;
     isolation: isolate;
     justify-content: center;
     overflow: hidden;
-    padding: clamp(16px, 4vh, 32px);
     pointer-events: auto;
     position: fixed;
     z-index: 2147483000;
@@ -686,201 +588,80 @@ var require_styles = __commonJS({
 }
 
 .dait-quick-settings-dialog {
-    background: var(--dait-quick-dialog-bg);
-    border: 1px solid var(--dait-quick-border);
-    border-radius: 8px;
-    box-shadow: var(--dait-quick-shadow);
-    color: var(--dait-quick-text);
-    display: grid;
-    grid-template-rows: auto minmax(0, 1fr) auto;
-    max-height: min(86vh, 860px);
-    max-width: min(1280px, calc(100vw - 32px));
-    min-height: min(520px, calc(100vh - 32px));
+    background: var(--dait-bg);
+    border: 1px solid var(--dait-divider);
+    border-radius: var(--dait-radius-card);
+    box-shadow: var(--dait-shadow);
+    color: var(--dait-text);
+    display: flex;
+    flex-direction: column;
+    height: min(760px, calc(100vh - 64px));
     overflow: hidden;
     position: relative;
-    width: min(1280px, calc(100vw - 32px));
+    width: min(920px, calc(100vw - 48px));
     z-index: 1;
 }
 
-.theme-light.dait-quick-settings-modal-root,
-.theme-light .dait-quick-settings-modal-root,
-.dait-quick-settings-modal-root[data-dait-discord-theme="light"],
-[data-dait-discord-theme="light"] .dait-quick-settings-modal-root {
-    --dait-quick-backdrop: rgba(6, 6, 7, 0.34);
-    --dait-quick-dialog-bg: var(--modal-background, var(--dait-card, var(--bg-base-primary, var(--background-primary, #ffffff))));
-    --dait-quick-footer-bg: var(--modal-footer-background, var(--dait-card-soft, var(--background-surface-high, var(--background-secondary, #f2f3f5))));
-    --dait-quick-border: var(--dait-border, var(--border-subtle, rgba(116, 127, 141, 0.22)));
-    --dait-quick-shadow: 0 18px 52px rgba(24, 36, 61, 0.18);
-    --dait-quick-text: #2e3338;
-    --dait-quick-title: #1f232b;
-    --dait-quick-muted: #5c6472;
-    --dait-quick-hover: var(--dait-control-hover, var(--background-modifier-hover, rgba(79, 84, 92, 0.1)));
-    color-scheme: light;
-}
-
-.theme-dark.dait-quick-settings-modal-root,
-.theme-dark .dait-quick-settings-modal-root,
-.dait-quick-settings-modal-root[data-dait-discord-theme="dark"],
-[data-dait-discord-theme="dark"] .dait-quick-settings-modal-root {
-    --dait-quick-backdrop: rgba(0, 0, 0, 0.42);
-    --dait-quick-dialog-bg: var(--modal-background, var(--dait-card, var(--background-surface-high, var(--background-secondary, #313338))));
-    --dait-quick-footer-bg: var(--modal-footer-background, var(--dait-card-soft, var(--background-surface-higher, var(--background-secondary-alt, #2b2d31))));
-    --dait-quick-border: var(--dait-border, var(--border-subtle, var(--background-modifier-accent, rgba(255, 255, 255, 0.08))));
-    --dait-quick-shadow: var(--elevation-high, 0 18px 52px rgba(0, 0, 0, 0.38));
-    --dait-quick-text: var(--text-normal, var(--text-primary, #dbdee1));
-    --dait-quick-title: var(--header-primary, var(--text-normal, #f2f3f5));
-    --dait-quick-muted: var(--dait-muted-readable, var(--interactive-normal, var(--text-muted, #b5bac1)));
-    --dait-quick-hover: var(--dait-control-hover, var(--background-modifier-hover, rgba(255, 255, 255, 0.08)));
-    color-scheme: dark;
-}
-
-.theme-darker.dait-quick-settings-modal-root,
-.theme-darker .dait-quick-settings-modal-root,
-.dait-quick-settings-modal-root[data-dait-discord-theme="darker"],
-[data-dait-discord-theme="darker"] .dait-quick-settings-modal-root {
-    --dait-quick-backdrop: rgba(0, 0, 0, 0.5);
-    --dait-quick-dialog-bg: var(--modal-background, var(--dait-card, var(--background-surface-high, var(--background-secondary, #1e1f22))));
-    --dait-quick-footer-bg: var(--modal-footer-background, var(--dait-card-soft, var(--background-surface-higher, var(--background-secondary-alt, #191b1f))));
-    --dait-quick-border: var(--dait-border, var(--border-subtle, rgba(255, 255, 255, 0.09)));
-    --dait-quick-shadow: 0 20px 54px rgba(0, 0, 0, 0.46);
-    --dait-quick-text: var(--text-normal, var(--text-primary, #dbdee1));
-    --dait-quick-title: var(--header-primary, var(--text-normal, #f2f3f5));
-    --dait-quick-muted: var(--dait-muted-readable, var(--interactive-normal, var(--text-muted, #b5bac1)));
-    --dait-quick-hover: var(--dait-control-hover, var(--background-modifier-hover, rgba(255, 255, 255, 0.07)));
-    color-scheme: dark;
-}
-
-.theme-midnight.dait-quick-settings-modal-root,
-.theme-midnight .dait-quick-settings-modal-root,
-.dait-quick-settings-modal-root[data-dait-discord-theme="midnight"],
-[data-dait-discord-theme="midnight"] .dait-quick-settings-modal-root {
-    --dait-quick-backdrop: rgba(0, 0, 0, 0.58);
-    --dait-quick-dialog-bg: var(--modal-background, var(--dait-card, var(--background-surface-high, var(--background-secondary, #101114))));
-    --dait-quick-footer-bg: var(--modal-footer-background, var(--dait-card-soft, var(--background-surface-higher, var(--background-secondary-alt, #0b0c10))));
-    --dait-quick-border: var(--dait-border, var(--border-subtle, rgba(255, 255, 255, 0.08)));
-    --dait-quick-shadow: 0 22px 56px rgba(0, 0, 0, 0.52);
-    --dait-quick-text: var(--text-normal, var(--text-primary, #f2f3f5));
-    --dait-quick-title: var(--header-primary, var(--text-normal, #ffffff));
-    --dait-quick-muted: var(--dait-muted-readable, var(--interactive-normal, var(--text-muted, #b8c0cc)));
-    --dait-quick-hover: var(--dait-control-hover, var(--background-modifier-hover, rgba(255, 255, 255, 0.06)));
-    color-scheme: dark;
-}
-
-.dait-quick-settings-header {
-    align-items: center;
-    border-bottom: 1px solid var(--dait-quick-border);
-    display: flex;
-    flex: 0 0 auto;
-    gap: 16px;
-    justify-content: space-between;
-    min-height: 58px;
-    padding: 16px 18px 14px;
-}
-
-.dait-quick-settings-title {
-    color: var(--dait-quick-title);
-    font-size: 20px;
-    font-weight: 700;
-    letter-spacing: 0;
-    line-height: 1.25;
-    margin: 0;
-}
-
 .dait-quick-settings-body {
-    background: var(--dait-quick-dialog-bg);
-    color: var(--dait-quick-text);
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
     min-height: 0;
     overflow-y: auto;
-    padding: 22px 52px 26px;
-    scrollbar-gutter: stable;
 }
 
+/* The panel fills the window; its own content pane scrolls, so the title bar and the tab rail stay put. */
 .dait-quick-settings-body > .dait-settings {
-    margin: 0 auto;
-    max-width: 100%;
-    overflow: visible;
-    padding: 0;
-    width: min(1208px, 100%);
-}
-
-.dait-quick-settings-footer {
-    align-items: center;
-    background: var(--dait-quick-footer-bg);
-    border-top: 1px solid var(--dait-quick-border);
-    display: flex;
-    flex: 0 0 auto;
-    justify-content: flex-end;
-    min-height: 72px;
-    padding: 14px 18px;
-}
-
-.dait-quick-settings-done {
-    background: var(--button-positive-background, var(--brand-500, #5865f2));
-    border: 0;
-    border-radius: 6px;
-    color: var(--white-500, #ffffff);
-    cursor: pointer;
-    font-size: 14px;
-    font-weight: 700;
-    line-height: 1;
-    min-height: 38px;
-    min-width: 96px;
-    padding: 0 18px;
-}
-
-.dait-quick-settings-done:hover,
-.dait-quick-settings-done:focus-visible {
-    background: var(--button-positive-background-hover, var(--brand-560, #4752c4));
+    border-radius: 0;
+    flex: 1 1 auto;
+    height: auto;
+    min-height: 0;
 }
 
 .dait-quick-settings-error {
-    background: var(--dait-quick-dialog-bg);
-    border: 1px solid var(--status-danger, #d83c3e);
-    border-radius: 8px;
-    box-shadow: var(--dait-shadow, 0 14px 34px rgba(0, 0, 0, 0.2));
-    color: var(--dait-quick-text);
+    background: var(--dait-surface);
+    border: 1px solid var(--dait-danger);
+    border-radius: var(--dait-radius-card);
+    color: var(--dait-text);
     display: grid;
-    gap: 10px;
-    margin: 0 auto;
-    max-width: 720px;
-    padding: 22px 24px;
+    gap: var(--dait-space-3);
+    justify-items: start;
+    margin: auto;
+    padding: var(--dait-space-5);
+    width: min(560px, calc(100% - 48px));
 }
 
 .dait-quick-settings-error h3 {
-    color: var(--dait-quick-title);
-    font-size: 18px;
+    color: var(--dait-heading);
+    font-size: var(--dait-font-window);
+    font-weight: 600;
     line-height: 1.3;
     margin: 0;
 }
 
 .dait-quick-settings-error p {
-    color: var(--text-muted, #b5bac1);
-    font-size: 14px;
-    line-height: 1.45;
+    color: var(--dait-text);
+    font-size: var(--dait-font-body);
+    line-height: var(--dait-line);
     margin: 0;
 }
 
-.dait-quick-settings-close {
-    align-items: center;
-    background: transparent;
+.dait-quick-settings-done {
+    background: var(--dait-brand);
     border: 0;
-    border-radius: 6px;
-    color: var(--dait-quick-muted);
+    border-radius: var(--dait-radius-control);
+    color: var(--dait-on-fill);
     cursor: pointer;
-    display: inline-flex;
-    flex: 0 0 auto;
-    font-size: 24px;
+    font-family: inherit;
+    font-size: var(--dait-font-body);
     font-weight: 500;
-    height: 32px;
-    justify-content: center;
-    line-height: 1;
-    width: 32px;
+    height: var(--dait-control-h);
+    line-height: var(--dait-line);
+    padding: 0 14px;
 }
 
-.dait-quick-settings-close:hover,
-.dait-quick-settings-close:focus-visible {
-    background: var(--dait-quick-hover);
-    color: var(--interactive-hover, var(--dait-quick-title));
+.dait-quick-settings-done:hover {
+    background: var(--dait-brand-hover);
 }
 
 .dait-quick-settings-button {
@@ -1001,35 +782,58 @@ var require_styles = __commonJS({
     color: var(--dait-quick-button-hover-text);
 }
 
+/* The launcher's size and position come from 07-quick-popover; this keeps it from shrinking in the user panel. */
 .dait-quick-settings-panel {
     flex: 0 0 auto;
-    height: 28px;
     margin: 0 2px;
-    min-width: 28px;
-    padding: 0 7px;
-    position: static;
 }
 
-.dait-translation-line {
-    --dait-danger: #d83c3e;
+`;
+  }
+});
+
+// src/css/03-chat-line-base.js
+var require_chat_line_base = __commonJS({
+  "src/css/03-chat-line-base.js"(exports2, module2) {
+    "use strict";
+    var KEYBOARD_FOCUS = ":focus-visible:not(.dait-translation-line, .dait-translation-line *)";
+    var SOURCE_MASKED = `[data-dait-source-hidden="true"]:not(:hover):not(:has(${KEYBOARD_FOCUS})):not(:is([id^="chat-messages-"], [data-list-item-id*="chat-messages"]):is(${KEYBOARD_FOCUS}, :has(${KEYBOARD_FOCUS})) *)`;
+    module2.exports = `.dait-translation-line {
+    --dait-line-text: var(--text-strong, var(--header-primary, #f2f3f5));
+    --dait-line-muted: var(--text-muted, #b5bac1);
+    --dait-line-danger: var(--text-danger, #fa777c);
+    --dait-line-danger-accent: var(--status-danger, #f23f43);
+    --dait-line-warning: var(--text-warning, #f0b232);
+    --dait-line-warning-accent: var(--status-warning, #f0b232);
+    --dait-line-tint: color-mix(in srgb, var(--dait-line-text) 8%, transparent);
+    --dait-line-chip: color-mix(in srgb, var(--dait-line-text) 10%, transparent);
+    --dait-line-hover: color-mix(in srgb, var(--dait-line-text) 12%, transparent);
+    --dait-line-border: color-mix(in srgb, var(--dait-line-text) 18%, transparent);
+    --dait-line-surface: var(--background-floating, var(--background-secondary, #2b2d31));
+    --dait-line-button: var(--button-secondary-background, #4e5058);
+    --dait-line-button-text: var(--white-500, #ffffff);
+    --dait-line-focus: var(--focus-primary, #00a8fc);
     --dait-chat-mask: rgba(106, 111, 123, 0.72);
     --dait-chat-mask-border: rgba(255, 255, 255, 0.1);
-    --dait-chat-revealed-bg: rgba(255, 255, 255, 0.08);
-    --dait-chat-revealed-text: #f2f3f5;
 }
 
 .theme-light .dait-translation-line {
+    --dait-line-text: var(--text-strong, var(--header-primary, #060607));
+    --dait-line-muted: var(--text-muted, #5c5e66);
+    --dait-line-danger: var(--text-danger, #c9252d);
+    --dait-line-warning: var(--text-warning, #8a5a00);
+    --dait-line-surface: var(--background-floating, #ffffff);
+    --dait-line-button: var(--button-secondary-background, #6d6f78);
     --dait-chat-mask: rgba(123, 130, 145, 0.48);
     --dait-chat-mask-border: rgba(48, 56, 70, 0.12);
-    --dait-chat-revealed-bg: rgba(30, 36, 50, 0.08);
-    --dait-chat-revealed-text: #1f232b;
 }
 
-[data-dait-source-hidden="true"] {
+${SOURCE_MASKED} {
     color: transparent !important;
     display: inline-block;
     font-size: 0 !important;
     line-height: 0 !important;
+    max-width: 100%;
     min-height: 0 !important;
     position: relative;
     text-shadow: none !important;
@@ -1037,24 +841,58 @@ var require_styles = __commonJS({
     vertical-align: baseline;
 }
 
-[data-dait-source-hidden="true"]::before {
+/* The bar is the masked element's only content, so its width must not depend on the element's
+   (shrink-to-fit) width, and its ch units need a real font size: the masked text has font-size 0. */
+${SOURCE_MASKED}::before {
     background: var(--dait-chat-mask, rgba(106, 111, 123, 0.72));
     border: 1px solid var(--dait-chat-mask-border, rgba(255, 255, 255, 0.1));
     border-radius: 3px;
+    box-sizing: border-box;
     content: "";
     display: block;
+    font-size: 1rem;
     height: calc(max(1, var(--dait-source-mask-lines, 1)) * 1.15rem);
-    max-width: min(100%, 42ch);
-    width: min(var(--dait-source-mask-width, 18ch), 100%);
+    max-width: 100%;
+    width: var(--dait-source-mask-width, 18ch);
 }
 
-[data-dait-source-hidden="true"] > :not(.dait-message-button):not(.dait-translation-line) {
+${SOURCE_MASKED} > :not(.dait-message-button):not(.dait-translation-line) {
     display: none !important;
 }
 
-[data-dait-source-hidden="true"] > .dait-message-button {
+${SOURCE_MASKED} > .dait-message-button {
     font-size: 12px;
     line-height: 1;
+}
+
+`;
+  }
+});
+
+// src/css/04-settings.js
+var require_settings = __commonJS({
+  "src/css/04-settings.js"(exports2, module2) {
+    "use strict";
+    module2.exports = `.dait-settings {
+    --dait-rail-w: 184px;
+    --dait-content-max: 680px;
+    background: var(--dait-bg);
+    border-radius: var(--dait-radius-card);
+    color: var(--dait-text);
+    container: dait-settings / inline-size;
+    display: flex;
+    flex-direction: column;
+    font-size: var(--dait-font-body);
+    height: calc(min(760px, 100vh - 64px, var(--dait-host-max, 100vh)) - var(--dait-host-chrome, 140px));
+    line-height: var(--dait-line);
+    margin-left: auto;
+    margin-right: auto;
+    /* At least 360 px, but never more than the host leaves: a taller panel would make the host scroll too. */
+    min-height: min(360px, calc(min(100vh - 64px, var(--dait-host-max, 100vh)) - var(--dait-host-chrome, 140px)));
+    min-width: 0;
+    overflow: hidden;
+    text-align: left;
+    width: 100%;
 }
 
 .dait-settings h2,
@@ -1063,539 +901,833 @@ var require_styles = __commonJS({
     margin: 0;
 }
 
-.dait-settings-hero {
-    align-items: center;
-    background: var(--dait-card-raised);
-    border: 1px solid var(--dait-border);
-    border-radius: 12px;
-    box-shadow: var(--dait-shadow);
-    display: grid;
-    gap: 14px;
-    grid-template-columns: 50px minmax(0, 1fr);
-    padding: 16px;
-    position: relative;
-    overflow: hidden;
+.dait-settings [hidden] {
+    display: none !important;
 }
 
-.dait-settings-hero::before {
-    background: linear-gradient(90deg, var(--dait-accent), var(--dait-success));
-    content: "";
-    height: 3px;
-    left: 0;
-    opacity: 0.86;
-    position: absolute;
-    right: 0;
-    top: 0;
-}
-
-.dait-settings-mark {
-    align-items: center;
-    background: linear-gradient(145deg, var(--dait-accent), var(--dait-success));
-    border-radius: 12px;
-    color: #ffffff;
-    display: flex;
-    font-size: 15px;
-    font-weight: 850;
-    height: 50px;
-    justify-content: center;
+.dait-settings button,
+.dait-settings input,
+.dait-settings select,
+.dait-settings textarea {
+    font-family: inherit;
     letter-spacing: 0;
-    width: 50px;
 }
 
-.dait-settings-copy {
-    display: grid;
-    gap: 8px;
-    min-width: 0;
-}
-
-.dait-settings-copy h2 {
-    color: var(--dait-heading);
-    font-size: 20px;
-    font-weight: 760;
-    line-height: 1.2;
-}
-
-.dait-note {
-    color: var(--dait-muted-readable);
-    font-size: 12px;
-    line-height: 1.55;
-}
-
-.dait-settings-chips {
+/* Header: logo, title, version, translation status, close. */
+.dait-settings-header {
+    align-items: center;
+    border-bottom: 1px solid var(--dait-divider);
     display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
+    flex: 0 0 auto;
+    gap: var(--dait-space-3);
+    min-height: 60px;
+    min-width: 0;
+    padding: 12px 12px 12px 20px;
 }
 
-.dait-settings-chips span {
-    background: var(--dait-card-soft);
-    border: 1px solid var(--dait-border);
-    border-radius: 999px;
+.dait-settings-logo {
+    align-items: center;
+    background: var(--dait-brand);
+    border-radius: var(--dait-radius-card);
+    color: var(--dait-on-fill);
+    display: flex;
+    flex: 0 0 auto;
+    font-size: var(--dait-font-body);
+    font-weight: 600;
+    height: 32px;
+    justify-content: center;
+    width: 32px;
+}
+
+.dait-settings-title {
+    color: var(--dait-heading);
+    font-size: var(--dait-font-window);
+    font-weight: 600;
+    line-height: 1.3;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dait-settings-version {
+    background: var(--dait-raised);
+    border-radius: var(--dait-radius-pill);
     color: var(--dait-text);
-    font-size: 12px;
-    font-weight: 650;
-    line-height: 1;
-    padding: 6px 8px;
-}
-
-.dait-settings-chips span.dait-settings-version {
-    border-color: var(--dait-accent, #5865f2);
-    color: var(--dait-accent, #5865f2);
+    flex: 0 0 auto;
+    font-size: var(--dait-font-small);
     font-variant-numeric: tabular-nums;
+    font-weight: 500;
+    line-height: 1.5;
+    padding: 1px 8px;
 }
 
-.dait-settings-layout {
-    align-items: start;
-    display: grid;
-    gap: 14px;
-    grid-template-columns: 220px minmax(0, 1fr);
+/* The translation status next to the window title: one size for the whole line, the status word at 500 and the
+   service at 400. */
+.dait-settings-header-status {
+    align-items: center;
+    color: var(--dait-text);
+    display: inline-flex;
+    font-size: var(--dait-font-body);
+    font-weight: 400;
+    gap: var(--dait-space-2);
+    line-height: var(--dait-line);
+    margin-left: auto;
     min-width: 0;
 }
 
-.dait-settings-sidebar {
-    background: var(--dait-card-soft);
-    border: 1px solid var(--dait-border);
-    border-radius: 10px;
+.dait-settings-header-provider::before {
+    content: "·";
+    margin-right: var(--dait-space-2);
+}
+
+.dait-settings-header-provider {
+    color: var(--dait-text);
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Close: a 36 px icon button with the shared close icon (01-theme-tokens), like the quick panel's. */
+.dait-settings-close {
+    align-items: center;
+    background: transparent;
+    border: 0;
+    border-radius: var(--dait-radius-control);
+    color: var(--dait-text);
+    cursor: pointer;
+    display: inline-flex;
+    flex: 0 0 auto;
+    height: var(--dait-control-h);
+    justify-content: center;
+    padding: 0;
+    width: var(--dait-control-h);
+}
+
+.dait-settings-close:hover {
+    background: var(--dait-raised);
+    color: var(--dait-heading);
+}
+
+/* Status: a 10 px mark plus text. The mark differs in shape as well as colour: dash = not tested,
+   ring = testing, filled = connected, "!" = needs you (failed, or not set up). */
+.dait-settings .dait-api-status {
+    align-items: center;
+    color: var(--dait-text);
+    display: inline-flex;
+    font-size: var(--dait-font-body);
+    font-weight: 500;
+    gap: 6px;
+    line-height: var(--dait-line);
+    white-space: nowrap;
+}
+
+.dait-settings .dait-api-status::before {
+    background: var(--dait-placeholder);
+    border-radius: 1px;
+    content: "";
+    flex: 0 0 auto;
+    height: 2px;
+    width: 10px;
+}
+
+.dait-settings .dait-api-status.dait-api-status-testing::before {
+    background: transparent;
+    border: 2px solid var(--dait-placeholder);
+    border-radius: var(--dait-radius-pill);
+    height: 10px;
+}
+
+.dait-settings .dait-api-status.dait-api-status-success::before {
+    background: var(--dait-success-fill);
+    border-radius: var(--dait-radius-pill);
+    height: 10px;
+}
+
+.dait-settings .dait-api-status.dait-api-status-failed,
+.dait-settings .dait-api-status.dait-api-status-unconfigured {
+    color: var(--dait-danger);
+}
+
+/* The "!" is drawn (a bar and a dot), not a text glyph outside the type scale. */
+.dait-settings .dait-api-status.dait-api-status-failed::before,
+.dait-settings .dait-api-status.dait-api-status-unconfigured::before {
+    background:
+        linear-gradient(var(--dait-on-fill), var(--dait-on-fill)) 50% 3px / 2px 5px no-repeat,
+        linear-gradient(var(--dait-on-fill), var(--dait-on-fill)) 50% 9px / 2px 2px no-repeat,
+        var(--dait-danger-fill);
+    border-radius: var(--dait-radius-pill);
+    height: 14px;
+    width: 14px;
+}
+
+/* Tab rail and content pane. */
+.dait-settings-body {
     display: grid;
-    gap: 10px;
-    max-height: min(72vh, 720px);
+    flex: 1 1 auto;
+    grid-template-columns: var(--dait-rail-w) minmax(0, 1fr);
+    min-height: 0;
+    min-width: 0;
+}
+
+.dait-settings-rail {
+    background: var(--dait-rail);
+    display: flex;
+    flex-direction: column;
+    gap: var(--dait-space-3);
+    min-height: 0;
     min-width: 0;
     overflow-y: auto;
     overscroll-behavior: contain;
-    padding: 8px;
-    position: sticky;
-    top: 12px;
-    z-index: 3;
+    padding: 16px 12px;
 }
 
-.dait-settings-nav-list {
-    display: grid;
-    gap: 6px;
-    min-width: 0;
+.dait-settings-search {
+    flex: 0 0 auto;
+    position: relative;
 }
 
-.dait-settings-nav-button {
-    align-items: center;
-    background: color-mix(in srgb, var(--dait-card-soft) 82%, var(--dait-card) 18%);
-    border: 1px solid color-mix(in srgb, var(--dait-border) 60%, transparent);
-    border-radius: 7px;
-    color: var(--dait-muted-readable);
-    cursor: pointer;
+.dait-settings-search::before {
+    background: var(--dait-placeholder);
+    content: "";
+    height: 14px;
+    left: 10px;
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='M20 20l-3.5-3.5'/%3E%3C/svg%3E") center / contain no-repeat;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='M20 20l-3.5-3.5'/%3E%3C/svg%3E") center / contain no-repeat;
+    pointer-events: none;
+    position: absolute;
+    top: calc(var(--dait-control-h) / 2 - 7px);
+    width: 14px;
+}
+
+.dait-settings .dait-settings-search-input {
+    padding-left: 32px;
+    padding-right: 8px;
+    width: 100%;
+}
+
+/* The search box's hint: the small size, so it fits the rail in every language. */
+.dait-settings .dait-settings-search-input::placeholder {
+    font-size: var(--dait-font-small);
+    font-weight: 500;
+}
+
+.dait-settings-tabs {
     display: flex;
-    font-size: 12px;
-    font-weight: 750;
-    justify-content: flex-start;
-    line-height: 1.25;
-    min-height: 38px;
-    overflow-wrap: anywhere;
-    padding: 9px 10px;
-    text-align: left;
-    transition: background 0.14s ease, border-color 0.14s ease, color 0.14s ease;
-    width: 100%;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
 }
 
-.dait-settings-nav-secondary {
+.dait-settings-tab {
     background: transparent;
-    border-color: transparent;
-    color: var(--dait-muted-readable);
-    font-size: 11px;
-    font-weight: 690;
-    min-height: 30px;
-    padding: 6px 9px 6px 22px;
-}
-
-.dait-settings-nav-button:hover {
-    background: var(--dait-control-hover);
-    border-color: var(--dait-border);
+    border: 0;
+    border-radius: var(--dait-radius-control);
     color: var(--dait-text);
-}
-
-.dait-settings-nav-active {
-    background: var(--dait-card);
-    border-color: var(--dait-border-strong);
-    color: var(--dait-heading);
-}
-
-.dait-settings-sidebar-reset {
-    background: transparent;
-    border: 1px solid color-mix(in srgb, var(--dait-danger) 60%, var(--dait-border));
-    border-radius: 8px;
-    color: var(--dait-danger);
     cursor: pointer;
-    font-size: 12px;
-    font-weight: 720;
-    line-height: 1.2;
-    margin-top: 6px;
-    min-height: 36px;
-    padding: 9px 10px;
+    font-size: var(--dait-font-body);
+    font-weight: 500;
+    line-height: var(--dait-line);
+    min-height: 38px;
+    padding: 7px 10px;
     text-align: left;
     width: 100%;
 }
 
-.dait-settings-sidebar-reset:hover {
-    background: color-mix(in srgb, var(--dait-danger) 12%, transparent);
-}
-
-.dait-settings-page {
-    display: grid;
-    gap: 14px;
-    min-width: 0;
-}
-
-.dait-settings-section {
-    background: var(--dait-card);
-    border: 1px solid var(--dait-border);
-    border-radius: 10px;
-    box-shadow: 0 10px 26px rgba(0, 0, 0, 0.12);
-    display: grid;
-    gap: 14px;
-    grid-template-columns: 1fr;
-    min-width: 0;
-    padding: 16px 18px;
-    scroll-margin-top: 22px;
-}
-
-.dait-settings-section-active {
-    border-color: color-mix(in srgb, var(--dait-accent) 34%, var(--dait-border));
-}
-
-.dait-provider-summary {
-    background: var(--dait-card-soft);
-    border: 1px solid var(--dait-border);
-    border-radius: 8px;
+.dait-settings-tab:hover {
+    background: var(--dait-raised);
     color: var(--dait-text);
-    font-size: 12px;
-    font-weight: 650;
-    line-height: 1.45;
-    padding: 10px 12px;
-    width: 100%;
 }
 
-.dait-provider-settings-block {
-    border-top: 1px solid var(--dait-border);
-    display: grid;
-    gap: 12px;
+.dait-settings-tab[aria-selected="true"] {
+    background: var(--dait-brand);
+    color: var(--dait-on-fill);
+}
+
+.dait-settings-content {
+    min-height: 0;
     min-width: 0;
-    padding-top: 4px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 24px 28px 32px;
 }
 
-.dait-provider-settings-header {
-    display: grid;
-    gap: 4px;
-    min-width: 0;
+.dait-settings-tabpanel,
+.dait-settings-search-results {
+    max-width: var(--dait-content-max);
 }
 
-.dait-provider-settings-title {
+.dait-settings-page-title {
     color: var(--dait-heading);
-    font-size: 13px;
-    font-weight: 760;
-    line-height: 1.25;
+    font-size: var(--dait-font-page);
+    font-weight: 600;
+    line-height: 1.3;
+}
+
+/* Groups: a heading, an optional one-line note, then flat rows with 1 px dividers. */
+.dait-settings-group {
+    margin-top: var(--dait-space-6);
     min-width: 0;
-    overflow-wrap: anywhere;
 }
 
-.dait-settings-section h3,
-.dait-settings-section > .dait-note {
-    grid-column: 1 / -1;
+.dait-settings-page-title + .dait-settings-group {
+    margin-top: var(--dait-space-4);
 }
 
-.dait-settings-section h3 {
+/* A group heading has a rule under it, so it reads as the start of a section and not as one more row label. */
+.dait-settings-group-title {
+    border-bottom: 1px solid var(--dait-divider);
     color: var(--dait-heading);
-    font-size: 15px;
-    font-weight: 760;
-    letter-spacing: 0;
-    line-height: 1.2;
+    font-size: var(--dait-font-group);
+    font-weight: 600;
+    line-height: 1.3;
+    margin-bottom: var(--dait-space-2);
+    padding-bottom: var(--dait-space-2);
 }
 
+.dait-settings-group-note {
+    color: var(--dait-text);
+    font-size: var(--dait-font-body);
+    line-height: var(--dait-line);
+    margin-bottom: var(--dait-space-1);
+}
+
+/* Rows. */
 .dait-settings-row {
-    background: var(--dait-card-raised);
-    border: 1px solid var(--dait-border);
-    border-radius: 10px;
-    display: grid;
-    gap: 8px;
-    min-width: 0;
-    overflow: visible;
-    padding: 13px;
-    transition: border-color 150ms ease, background 150ms ease, box-shadow 150ms ease;
-}
-
-.dait-settings-row:focus-within {
-    border-color: var(--dait-border-strong);
-    box-shadow: 0 0 0 2px var(--dait-focus);
-}
-
-.dait-settings-row-wide {
-    grid-column: 1 / -1;
-}
-
-.dait-settings-row-checkbox {
     align-items: center;
+    border-bottom: 1px solid var(--dait-divider);
+    column-gap: var(--dait-space-5);
+    display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-areas:
-        "label toggle"
-        "desc toggle";
-    column-gap: 14px;
-    min-height: 58px;
-}
-
-.dait-settings-row > span {
-    color: var(--dait-label);
-    font-size: 12px;
-    font-weight: 720;
-    letter-spacing: 0;
-    text-transform: none;
     min-width: 0;
-    overflow-wrap: anywhere;
-    word-break: normal;
+    padding: 12px 0;
+    transition: background-color 160ms ease, box-shadow 160ms ease;
 }
 
-.dait-settings-row-checkbox > span {
-    grid-area: label;
+.dait-settings-row:last-child {
+    border-bottom: 0;
+}
+
+.dait-row-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+/* Label and description share the body size and colour; the label's weight sets them apart. */
+.dait-row-label {
+    color: var(--dait-text);
+    font-size: var(--dait-font-body);
+    font-weight: 600;
+    line-height: var(--dait-line);
+    overflow-wrap: anywhere;
 }
 
 .dait-row-description {
-    color: var(--dait-muted-readable);
-    font-size: 12px;
-    line-height: 1.55;
-    margin: 0;
-    min-width: 0;
+    color: var(--dait-text);
+    font-size: var(--dait-font-body);
+    font-weight: 400;
+    line-height: var(--dait-line);
     overflow-wrap: anywhere;
 }
 
-.dait-settings-row-checkbox > .dait-row-description {
+.dait-row-control {
+    align-items: center;
+    display: flex;
+    gap: var(--dait-space-2);
+    justify-content: flex-end;
+    min-width: 0;
+}
+
+/* Every right-hand select, number/text input and segmented control has the same width. */
+.dait-row-control > select,
+.dait-row-control > input:not([type="checkbox"]),
+.dait-row-control > .dait-segmented,
+.dait-row-control > .dait-language-controls {
+    width: var(--dait-control-w);
+}
+
+/* Stacked field for long values: label, full-width control (6 px below), help under it. */
+.dait-settings-row-stacked {
+    align-items: stretch;
+    grid-template-areas:
+        "label"
+        "control"
+        "desc";
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 6px;
+}
+
+.dait-settings-row-stacked > .dait-row-text {
+    display: contents;
+}
+
+.dait-settings-row-stacked .dait-row-label {
+    grid-area: label;
+}
+
+.dait-settings-row-stacked .dait-row-description {
     grid-area: desc;
 }
 
-.dait-settings-row input[type='text'],
-.dait-settings-row input[type='password'],
-.dait-settings-row input[type='number'],
-.dait-settings-row select,
-.dait-settings-row textarea,
-.dait-prompt-editor textarea,
-.dait-prompt-tools input,
-.dait-prompt-tools select,
-.dait-test-panel textarea,
-.dait-test-panel select {
-    background-color: var(--dait-control);
-    border: 1px solid var(--dait-border);
-    border-radius: 8px;
-    color: var(--dait-text);
-    font-size: 13px;
-    font-weight: 560;
-    line-height: 20px;
-    min-height: 42px;
-    max-width: 100%;
-    min-width: 0;
-    outline: none;
-    padding: 10px 12px;
+.dait-settings-row-stacked > .dait-row-control {
+    grid-area: control;
+    justify-content: stretch;
+}
+
+.dait-settings-row-stacked > .dait-row-control > * {
+    flex: 1 1 auto;
     width: 100%;
 }
 
-.dait-settings-row select {
-    appearance: none;
-    background-image: var(--dait-arrow);
-    background-position: right 12px center;
-    background-repeat: no-repeat;
-    background-size: 18px 18px;
-    cursor: pointer;
-    padding-right: 42px;
+/* A dependent option sits right under its parent, indented, and is disabled while the parent is off. Only its
+   controls fade (55 %, below); the label and the reason under it stay fully readable. */
+.dait-settings-row-dependent {
+    padding-left: var(--dait-space-4);
 }
 
-.dait-prompt-tools select {
-    appearance: none;
-    background-image: var(--dait-arrow);
-    background-position: right 12px center;
-    background-repeat: no-repeat;
-    background-size: 18px 18px;
-    cursor: pointer;
-    padding-right: 42px;
+.dait-settings-row-found {
+    background: color-mix(in srgb, var(--dait-brand) 16%, transparent);
+    box-shadow: 0 0 0 6px color-mix(in srgb, var(--dait-brand) 16%, transparent);
 }
 
-.dait-test-panel select {
-    appearance: none;
-    background-image: var(--dait-arrow);
-    background-position: right 12px center;
-    background-repeat: no-repeat;
-    background-size: 18px 18px;
-    cursor: pointer;
-    padding-right: 42px;
-}
-
-.dait-settings-row input:hover,
-.dait-settings-row select:hover,
-.dait-settings-row textarea:hover,
-.dait-prompt-editor textarea:hover,
-.dait-prompt-tools input:hover,
-.dait-prompt-tools select:hover,
-.dait-test-panel textarea:hover,
-.dait-test-panel select:hover {
-    background-color: var(--dait-control-hover);
-    border-color: var(--interactive-normal, var(--dait-border-strong));
-}
-
-.dait-settings-row input:focus,
-.dait-settings-row select:focus,
-.dait-settings-row textarea:focus,
-.dait-prompt-editor textarea:focus,
-.dait-prompt-tools input:focus,
-.dait-prompt-tools select:focus,
-.dait-test-panel textarea:focus,
-.dait-test-panel select:focus {
-    border-color: var(--dait-accent);
-    box-shadow: 0 0 0 2px var(--dait-focus);
-}
-
-.dait-settings-row textarea {
-    font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
-    line-height: 1.45;
+/* Form controls. */
+.dait-settings :where(input:not([type="checkbox"]):not([type="radio"]), select, textarea) {
+    background-color: var(--dait-input-bg);
+    border: 1px solid var(--dait-input-border);
+    border-radius: var(--dait-radius-control);
+    color: var(--dait-text);
+    font-size: var(--dait-font-body);
+    font-weight: 400;
+    line-height: var(--dait-line);
     max-width: 100%;
-    min-height: 112px;
+    min-width: 0;
+    outline: none;
+}
+
+.dait-settings :where(input:not([type="checkbox"]):not([type="radio"]), select) {
+    height: var(--dait-control-h);
+    padding: 0 10px;
+}
+
+.dait-settings input::placeholder,
+.dait-settings textarea::placeholder {
+    color: var(--dait-placeholder);
+    opacity: 1;
+}
+
+.dait-settings :where(select) {
+    appearance: none;
+    background-image:
+        linear-gradient(45deg, transparent 50%, var(--dait-placeholder) 50%),
+        linear-gradient(135deg, var(--dait-placeholder) 50%, transparent 50%);
+    background-position:
+        calc(100% - 16px) 50%,
+        calc(100% - 11px) 50%;
+    background-repeat: no-repeat;
+    background-size: 5px 5px, 5px 5px;
+    cursor: pointer;
+    padding-right: 30px;
+    text-overflow: ellipsis;
+}
+
+.dait-settings select option,
+.dait-settings select optgroup {
+    background-color: var(--dait-input-bg);
+    color: var(--dait-text);
+}
+
+.dait-settings :where(textarea) {
+    font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+    font-size: var(--dait-font-body);
+    line-height: var(--dait-line);
+    min-height: 96px;
     overflow-x: auto;
+    padding: 8px 10px;
     resize: vertical;
     white-space: pre-wrap;
+    width: 100%;
     word-break: break-word;
 }
 
+.dait-settings :where(input:not([type="checkbox"]):not([type="radio"]), select, textarea):hover:not(:disabled) {
+    border-color: var(--dait-placeholder);
+}
+
+.dait-settings :where(input:not([type="checkbox"]):not([type="radio"]), select, textarea):focus {
+    border-color: var(--dait-focus);
+}
+
+/* A disabled control keeps its colours and fades as a whole. */
 .dait-settings-row input:disabled,
 .dait-settings-row select:disabled,
 .dait-settings-row textarea:disabled,
 .dait-prompt-editor textarea:disabled,
 .dait-prompt-tools input:disabled,
-.dait-prompt-tools select:disabled,
-.dait-test-panel textarea:disabled,
-.dait-test-panel select:disabled {
-    background-color: color-mix(in srgb, var(--dait-control) 76%, var(--dait-card) 24%);
-    border-color: var(--dait-border);
-    color: var(--dait-disabled-text);
+.dait-prompt-tools select:disabled {
     cursor: not-allowed;
-    opacity: 1;
-    -webkit-text-fill-color: var(--dait-disabled-text);
+    opacity: 0.55;
 }
 
-.dait-settings-row input[type='checkbox'] {
+/* Switch: a native checkbox with role="switch", 40 x 24. */
+.dait-settings input.dait-switch {
     appearance: none;
-    background: var(--dait-control);
-    border: 1px solid var(--dait-border-strong);
-    border-radius: 999px;
+    background: var(--dait-switch-off);
+    border: 0;
+    border-radius: var(--dait-radius-pill);
     cursor: pointer;
     flex: 0 0 auto;
-    grid-area: toggle;
     height: 24px;
-    justify-self: end;
+    margin: 0;
     position: relative;
-    transition: background 140ms ease, border-color 140ms ease;
-    width: 44px;
+    transition: background-color 140ms ease;
+    width: 40px;
 }
 
-.dait-settings-row input[type='checkbox']::after {
-    background: var(--text-muted, #b5bac1);
-    border-radius: 999px;
+.dait-settings input.dait-switch::after {
+    background: #ffffff;
+    border-radius: var(--dait-radius-pill);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.24);
     content: "";
     height: 18px;
-    left: 2px;
+    left: 3px;
     position: absolute;
-    top: 2px;
-    transition: left 140ms ease, background 140ms ease;
+    top: 3px;
+    transition: transform 140ms ease;
     width: 18px;
 }
 
-.dait-settings-row input[type='checkbox']:checked {
-    background: color-mix(in srgb, var(--dait-success) 28%, var(--dait-control));
-    border-color: var(--dait-success);
+.dait-settings input.dait-switch:checked {
+    background: var(--dait-brand);
 }
 
-.dait-settings-row input[type='checkbox']:checked::after {
-    background: var(--dait-success);
-    left: 22px;
+.dait-settings input.dait-switch:checked::after {
+    transform: translateX(16px);
 }
 
-.dait-language-controls {
+.dait-settings input.dait-switch:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+}
+
+/* Segmented control: each option as wide as its label, the spare width shared out equally, so labels that fit
+   together keep the shared 240 px control width (segmentedLabelsFit decides when a row has to stack instead). */
+.dait-segmented {
+    background: var(--dait-input-bg);
+    border: 1px solid var(--dait-input-border);
+    border-radius: var(--dait-radius-control);
     display: grid;
-    gap: 8px;
+    gap: 2px;
+    grid-auto-columns: auto;
+    grid-auto-flow: column;
+    height: var(--dait-control-h);
+    padding: 2px;
+}
+
+.dait-segmented-option {
+    background: transparent;
+    border: 0;
+    border-radius: 3px;
+    color: var(--dait-text);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: var(--dait-font-body);
+    font-weight: 500;
+    line-height: var(--dait-line);
     min-width: 0;
-}
-
-.dait-language-custom[hidden] {
-    display: none;
-}
-
-.dait-api-key-row {
-    align-items: start;
-    grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-areas:
-        "label status"
-        "desc status"
-        "control control";
-}
-
-.dait-api-key-row > .dait-row-label {
-    grid-area: label;
-}
-
-.dait-api-key-row > .dait-row-description {
-    grid-area: desc;
-}
-
-.dait-api-controls {
-    display: grid;
-    gap: 8px;
-    grid-area: control;
-    grid-template-columns: minmax(0, 1fr) max-content;
-    min-width: 0;
-}
-
-.dait-settings-row > .dait-api-status {
-    align-self: start;
-    border: 1px solid var(--dait-border);
-    border-radius: 999px;
-    color: var(--dait-muted-readable);
-    font-size: 11px;
-    font-weight: 760;
-    grid-area: status;
-    line-height: 1;
-    max-width: 120px;
     overflow: hidden;
-    padding: 5px 8px;
+    padding: 0 6px;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-.dait-settings-row > .dait-api-status-success {
-    background: color-mix(in srgb, var(--dait-success) 14%, transparent);
-    border-color: color-mix(in srgb, var(--dait-success) 62%, var(--dait-border));
-    color: var(--dait-success);
-}
-
-.dait-settings-row > .dait-api-status-failed {
-    background: color-mix(in srgb, var(--dait-danger) 12%, transparent);
-    border-color: color-mix(in srgb, var(--dait-danger) 62%, var(--dait-border));
-    color: var(--dait-danger);
-}
-
-.dait-settings-row > .dait-api-status-testing {
-    background: color-mix(in srgb, var(--dait-accent) 12%, transparent);
-    border-color: color-mix(in srgb, var(--dait-accent) 52%, var(--dait-border));
+.dait-segmented-option:hover:not(:disabled) {
+    background: var(--dait-raised);
     color: var(--dait-text);
 }
 
+.dait-segmented-option[aria-checked="true"],
+.dait-segmented-option[aria-checked="true"]:hover:not(:disabled) {
+    background: var(--dait-brand);
+    color: var(--dait-on-fill);
+}
+
+.dait-segmented-option:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+}
+
+/* Buttons: 36 px high, body size at 500. Default is the grey secondary button, the one style for every button that
+   is neither primary nor dangerous (buttons created as "outline" look the same). */
+.dait-small-button {
+    align-items: center;
+    background: var(--dait-raised);
+    border: 1px solid var(--dait-input-border);
+    border-radius: var(--dait-radius-control);
+    color: var(--dait-text);
+    cursor: pointer;
+    display: inline-flex;
+    flex: 0 0 auto;
+    font-family: inherit;
+    font-size: var(--dait-font-body);
+    font-weight: 500;
+    height: var(--dait-control-h);
+    justify-content: center;
+    line-height: var(--dait-line);
+    padding: 0 14px;
+    white-space: nowrap;
+}
+
+.dait-small-button:hover:not(:disabled) {
+    background: var(--dait-raised-hover);
+}
+
+.dait-small-button:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+}
+
+.dait-small-button-primary {
+    background: var(--dait-brand);
+    border-color: transparent;
+    color: var(--dait-on-fill);
+}
+
+.dait-small-button-primary:hover:not(:disabled) {
+    background: var(--dait-brand-hover);
+}
+
+.dait-small-button-danger {
+    background: transparent;
+    border-color: var(--dait-danger);
+    color: var(--dait-danger);
+}
+
+.dait-small-button-danger:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--dait-danger-fill) 14%, transparent);
+}
+
+.dait-small-button-link {
+    background: transparent;
+    border-color: transparent;
+    color: var(--dait-link);
+    padding: 0 6px;
+}
+
+.dait-small-button-link:hover:not(:disabled) {
+    background: transparent;
+    text-decoration: underline;
+}
+
+/* A text link at the end of a row: its text ends on the controls' right edge. */
+.dait-row-control .dait-small-button-link:last-child {
+    margin-right: -6px;
+}
+
+/* Rows of action buttons wrap and stay right-aligned. */
+.dait-cache-actions,
+.dait-diagnostic-actions,
+.dait-history-backfill-actions,
 .dait-hotkey-controls {
     display: flex;
     flex-wrap: wrap;
-    gap: 8px;
+    gap: var(--dait-space-2);
+    justify-content: flex-end;
     min-width: 0;
 }
 
-.dait-cache-actions,
-.dait-diagnostic-actions {
+.dait-hotkey-recorder {
+    font-variant-numeric: tabular-nums;
+    min-width: 120px;
+}
+
+.dait-language-controls {
     display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
+    flex-direction: column;
+    gap: 6px;
     min-width: 0;
 }
 
+.dait-language-controls > * {
+    width: 100%;
+}
+
+/* Ordered list: the manual-translation fallback services, ticked and moved with arrow buttons. */
+.dait-order-list {
+    border: 1px solid var(--dait-divider);
+    border-radius: var(--dait-radius-card);
+    display: grid;
+    min-width: 0;
+}
+
+.dait-order-item {
+    align-items: center;
+    column-gap: var(--dait-space-2);
+    display: grid;
+    grid-template-columns: 20px auto minmax(0, 1fr) auto auto;
+    min-height: 44px;
+    padding: 6px 8px 6px 12px;
+}
+
+.dait-order-item + .dait-order-item {
+    border-top: 1px solid var(--dait-divider);
+}
+
+.dait-order-position {
+    color: var(--dait-text);
+    font-size: var(--dait-font-body);
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+}
+
+.dait-settings input.dait-order-include {
+    accent-color: var(--dait-brand);
+    cursor: pointer;
+    height: 16px;
+    margin: 0;
+    width: 16px;
+}
+
+.dait-order-name {
+    color: var(--dait-text);
+    cursor: pointer;
+    font-size: var(--dait-font-body);
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.dait-order-note {
+    color: var(--dait-text);
+    font-size: var(--dait-font-body);
+}
+
+/* Only chosen services have a position to move. */
+.dait-order-item:not(.dait-order-item-on) .dait-order-move {
+    visibility: hidden;
+}
+
+.dait-small-button.dait-order-move {
+    font-size: var(--dait-font-body);
+    padding: 0;
+    width: var(--dait-control-h);
+}
+
+/* <details> for rarely changed options (more model parameters, optional API key). */
+.dait-settings-details {
+    border-top: 1px solid var(--dait-divider);
+}
+
+.dait-settings-details-summary {
+    color: var(--dait-text);
+    cursor: pointer;
+    font-size: var(--dait-font-body);
+    font-weight: 600;
+    padding: 12px 0;
+}
+
+.dait-settings-details-summary:hover {
+    color: var(--dait-heading);
+}
+
+.dait-settings-details[open] > .dait-settings-details-summary {
+    border-bottom: 1px solid var(--dait-divider);
+}
+
+/* Connection card: the only card on a page (UI-SPEC Q6). */
+.dait-provider-settings-block {
+    background: var(--dait-surface);
+    border-radius: var(--dait-radius-card);
+    margin: var(--dait-space-2) 0;
+    min-width: 0;
+    padding: 0 var(--dait-space-4);
+}
+
+/* Title, status word and Test share the first line; the last test's details ("Hy-MT2 · 820 ms · just now") or its
+   error take their own full-width line under them, at the body size, and wrap instead of being cut off. */
+.dait-provider-settings-header {
+    align-items: center;
+    border-bottom: 1px solid var(--dait-divider);
+    column-gap: var(--dait-space-3);
+    display: grid;
+    grid-template-areas:
+        "title status test"
+        "detail detail detail";
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    min-height: 60px;
+    min-width: 0;
+    padding: 12px 0;
+}
+
+.dait-provider-settings-title {
+    color: var(--dait-heading);
+    font-size: var(--dait-font-group);
+    font-weight: 600;
+    grid-area: title;
+    line-height: 1.3;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+/* The status badge, the details and Test are placed in the card header's grid. */
+.dait-provider-connection {
+    display: contents;
+}
+
+.dait-provider-connection > .dait-api-status {
+    grid-area: status;
+    justify-self: end;
+}
+
+.dait-provider-connection > .dait-small-button {
+    grid-area: test;
+}
+
+.dait-settings .dait-provider-connection > .dait-api-test-detail {
+    grid-area: detail;
+    margin-top: var(--dait-space-1);
+    white-space: normal;
+}
+
+.dait-settings .dait-provider-connection > .dait-api-test-detail::before {
+    content: none;
+}
+
+.dait-provider-settings-block > .dait-settings-details:last-child,
+.dait-provider-settings-block > .dait-settings-row:last-child {
+    border-bottom: 0;
+}
+
+.dait-settings-subheading {
+    color: var(--dait-heading);
+    font-size: var(--dait-font-group);
+    font-weight: 600;
+    padding-top: var(--dait-space-3);
+}
+
+.dait-google-settings {
+    border-bottom: 1px solid var(--dait-divider);
+    min-width: 0;
+}
+
+.dait-google-settings > .dait-settings-row:last-child {
+    border-bottom: 0;
+}
+
+.dait-provider-summary {
+    background: var(--dait-surface);
+    border-radius: var(--dait-radius-control);
+    color: var(--dait-text);
+    font-size: var(--dait-font-body);
+    line-height: var(--dait-line);
+    padding: 8px 12px;
+}
+
+/* Diagnostics summary. */
 .dait-diagnostic-summary {
     display: grid;
-    gap: 10px;
+    gap: var(--dait-space-3);
     min-width: 0;
 }
 
@@ -1606,10 +1738,10 @@ var require_styles = __commonJS({
 }
 
 .dait-diagnostic-summary-title {
-    color: var(--dait-label);
-    font-size: 11px;
-    font-weight: 760;
-    line-height: 1.25;
+    color: var(--dait-text);
+    font-size: var(--dait-font-body);
+    font-weight: 600;
+    line-height: var(--dait-line);
 }
 
 .dait-diagnostic-summary-chips {
@@ -1621,210 +1753,602 @@ var require_styles = __commonJS({
 
 .dait-diagnostic-chip,
 .dait-diagnostic-summary-empty {
-    background: color-mix(in srgb, var(--dait-control) 78%, transparent);
-    border: 1px solid var(--dait-border);
-    border-radius: 999px;
-    color: var(--dait-muted-readable);
-    font-size: 11px;
-    font-weight: 650;
-    line-height: 1.25;
+    background: var(--dait-raised);
+    border-radius: var(--dait-radius-pill);
+    color: var(--dait-text);
+    font-size: var(--dait-font-body);
+    font-weight: 400;
+    line-height: var(--dait-line);
     max-width: 100%;
     overflow-wrap: anywhere;
-    padding: 4px 8px;
+    padding: 2px 10px;
 }
 
 .dait-diagnostic-summary-empty {
     justify-self: start;
 }
 
-.dait-hotkey-recorder {
-    min-width: 136px;
+/* Text only screen readers get (the state words of the setup checklist). */
+.dait-settings .dait-visually-hidden {
+    border: 0;
+    clip: rect(0 0 0 0);
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    padding: 0;
+    position: absolute;
+    white-space: nowrap;
+    width: 1px;
 }
 
-.dait-test-mode-section {
-    border-color: color-mix(in srgb, var(--dait-accent) 30%, var(--dait-border));
-}
-
-.dait-test-panel {
+/* Overview: setup checklist (hidden once complete), then the two service status cards. */
+.dait-setup-card {
+    background: var(--dait-surface);
+    border-radius: var(--dait-radius-card);
     display: grid;
-    gap: 14px;
-    grid-column: 1 / -1;
-    min-width: 0;
+    gap: var(--dait-space-2);
+    margin-bottom: var(--dait-space-6);
+    padding: var(--dait-space-4);
 }
 
-.dait-test-toolbar {
+.dait-setup-head {
+    align-items: baseline;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--dait-space-1) var(--dait-space-3);
+}
+
+.dait-setup-title {
+    color: var(--dait-heading);
+    font-size: var(--dait-font-group);
+    font-weight: 600;
+    line-height: 1.3;
+}
+
+/* The progress sentence: body text on its own line under the card title. */
+.dait-setup-progress {
+    color: var(--dait-text);
+    flex-basis: 100%;
+    font-size: var(--dait-font-body);
+    font-weight: 400;
+    line-height: var(--dait-line);
+}
+
+.dait-setup-list {
+    display: grid;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.dait-setup-item {
     align-items: center;
+    column-gap: var(--dait-space-3);
     display: grid;
-    gap: 10px;
-    grid-template-columns: minmax(160px, 220px) minmax(0, 1fr);
+    grid-template-areas: "icon label detail action";
+    grid-template-columns: 18px minmax(112px, 184px) minmax(0, 1fr) auto;
+    min-height: 44px;
+    padding: 6px 0;
+}
+
+.dait-setup-item + .dait-setup-item {
+    border-top: 1px solid var(--dait-divider);
+}
+
+.dait-setup-icon {
+    border-radius: var(--dait-radius-pill);
+    box-sizing: border-box;
+    grid-area: icon;
+    height: 18px;
+    position: relative;
+    width: 18px;
+}
+
+.dait-setup-item-done .dait-setup-icon {
+    background: var(--dait-success-fill);
+    border-radius: 0;
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6L9 17l-5-5'/%3E%3C/svg%3E") center / contain no-repeat;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6L9 17l-5-5'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+.dait-setup-item-todo .dait-setup-icon,
+.dait-setup-item-busy .dait-setup-icon {
+    border: 2px solid var(--dait-placeholder);
+    height: 16px;
+    margin: 1px;
+    width: 16px;
+}
+
+.dait-setup-item-busy .dait-setup-icon {
+    border-color: var(--dait-warning-fill);
+    border-style: dashed;
+}
+
+.dait-setup-item-error .dait-setup-icon {
+    background: var(--dait-danger-fill);
+}
+
+.dait-setup-item-error .dait-setup-icon::after {
+    background:
+        linear-gradient(var(--dait-on-fill), var(--dait-on-fill)) 50% 4px / 2px 6px no-repeat,
+        linear-gradient(var(--dait-on-fill), var(--dait-on-fill)) 50% 12px / 2px 2px no-repeat;
+    content: "";
+    inset: 0;
+    position: absolute;
+}
+
+.dait-setup-item-off .dait-setup-icon::after {
+    background: var(--dait-placeholder);
+    border-radius: 1px;
+    content: "";
+    height: 2px;
+    left: 4px;
+    position: absolute;
+    right: 4px;
+    top: 8px;
+}
+
+.dait-setup-label {
+    color: var(--dait-text);
+    font-size: var(--dait-font-body);
+    font-weight: 600;
+    grid-area: label;
+    line-height: var(--dait-line);
     min-width: 0;
 }
 
-.dait-test-config {
-    color: var(--dait-muted-readable);
-    font-size: 12px;
-    font-weight: 650;
-    line-height: 1.45;
+.dait-setup-detail {
+    color: var(--dait-text);
+    font-size: var(--dait-font-body);
+    grid-area: detail;
+    line-height: var(--dait-line);
     min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dait-setup-item-error .dait-setup-detail {
+    color: var(--dait-danger);
+    white-space: normal;
+}
+
+.dait-setup-item > .dait-small-button {
+    grid-area: action;
+    justify-self: end;
+}
+
+.dait-service-cards {
+    display: grid;
+    gap: var(--dait-space-3);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin-bottom: var(--dait-space-2);
+}
+
+.dait-service-card {
+    align-items: center;
+    background: var(--dait-surface);
+    border-radius: var(--dait-radius-card);
+    display: flex;
+    gap: var(--dait-space-3);
+    min-width: 0;
+    padding: 14px var(--dait-space-4);
+}
+
+.dait-service-card-text {
+    display: grid;
+    flex: 1 1 auto;
+    gap: var(--dait-space-1);
+    min-width: 0;
+}
+
+.dait-service-card-title {
+    color: var(--dait-heading);
+    font-size: var(--dait-font-group);
+    font-weight: 600;
+    line-height: 1.35;
     overflow-wrap: anywhere;
 }
 
-.dait-test-block {
-    display: grid;
-    gap: 8px;
-    min-width: 0;
-}
-
-.dait-test-block-header {
+.dait-service-card-status {
     align-items: center;
     display: flex;
-    gap: 8px;
-    justify-content: space-between;
-    min-width: 0;
-}
-
-.dait-test-block-header > span {
-    color: var(--dait-label);
-    font-size: 12px;
-    font-weight: 760;
-}
-
-.dait-test-block-header-compact .dait-small-button {
-    min-height: 30px;
-    padding: 0 9px;
-}
-
-.dait-test-panel textarea {
-    font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
-    line-height: 1.5;
-    min-height: 118px;
-    resize: vertical;
-    white-space: pre-wrap;
-    word-break: break-word;
-}
-
-.dait-test-actions {
-    display: flex;
     flex-wrap: wrap;
-    gap: 8px;
+    gap: 2px 6px;
     min-width: 0;
 }
 
-.dait-test-output {
-    background: var(--dait-control);
-    border: 1px solid var(--dait-border);
-    border-radius: 8px;
+/* In a card the last test's details get their own line. */
+.dait-settings .dait-service-card .dait-api-test-detail {
+    flex-basis: 100%;
+    white-space: normal;
+}
+
+.dait-settings .dait-service-card .dait-api-test-detail::before {
+    content: none;
+}
+
+.dait-service-card > .dait-small-button {
+    flex: 0 0 auto;
+}
+
+/* Status without a connection to show: dash = off, "!" = needs you. */
+.dait-status-mark {
+    align-items: center;
     color: var(--dait-text);
-    font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
-    font-size: 13px;
-    line-height: 1.55;
-    margin: 0;
-    min-height: 118px;
-    overflow: auto;
-    padding: 12px;
-    white-space: pre-wrap;
-    word-break: break-word;
+    display: inline-flex;
+    font-size: var(--dait-font-body);
+    gap: 6px;
+    line-height: var(--dait-line);
+    min-width: 0;
 }
 
-.dait-prompt-manager {
-    background: transparent;
-    border: 0;
-    border-radius: 0;
-    display: grid;
-    gap: 10px;
-    grid-column: 1 / -1;
+.dait-status-mark::before {
+    background: var(--dait-placeholder);
+    border-radius: 1px;
+    content: "";
+    flex: 0 0 auto;
+    height: 2px;
+    width: 10px;
+}
+
+.dait-status-mark-needs {
+    color: var(--dait-danger);
+}
+
+.dait-status-mark-needs::before {
+    background:
+        linear-gradient(var(--dait-on-fill), var(--dait-on-fill)) 50% 3px / 2px 5px no-repeat,
+        linear-gradient(var(--dait-on-fill), var(--dait-on-fill)) 50% 9px / 2px 2px no-repeat,
+        var(--dait-danger-fill);
+    border-radius: var(--dait-radius-pill);
+    height: 14px;
+    width: 14px;
+}
+
+/* The last test's details after a status badge; hidden as soon as the badge shows another state. */
+.dait-settings .dait-api-test-detail {
+    color: var(--dait-text);
+    font-size: var(--dait-font-body);
+    font-weight: 400;
+    line-height: var(--dait-line);
     min-width: 0;
-    overflow: visible;
-    padding: 2px 0 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dait-settings .dait-api-test-detail::before {
+    content: "·";
+    margin-right: 6px;
+}
+
+.dait-settings .dait-api-status:not(.dait-api-status-success) + .dait-api-test-detail[data-dait-for="success"],
+.dait-settings .dait-api-status:not(.dait-api-status-failed) + .dait-api-test-detail[data-dait-for="failed"] {
+    display: none;
+}
+
+/* An error is worth reading in full: it wraps instead of being cut off. */
+.dait-settings .dait-api-test-detail[data-dait-for="failed"] {
+    white-space: normal;
+}
+
+/* Model field (Sakura local, OpenAI-compatible): name + "Detect models", the picker below. */
+.dait-model-field,
+.dait-try-field {
+    display: grid;
+    gap: 6px;
+    min-width: 0;
+}
+
+.dait-model-field-line,
+.dait-try-line {
+    align-items: center;
+    display: flex;
+    gap: var(--dait-space-2);
+    min-width: 0;
+}
+
+.dait-settings .dait-model-field-line > input,
+.dait-settings .dait-try-line > input {
+    flex: 1 1 auto;
+    min-width: 0;
+    width: auto;
+}
+
+.dait-settings .dait-model-picker {
+    width: 100%;
+}
+
+.dait-settings .dait-row-description.dait-row-description-error {
+    color: var(--dait-danger);
+}
+
+/* "Try a sentence" / "Try polishing": the result goes under the help text, with the time it took. */
+.dait-settings-row-stacked.dait-try-row {
+    grid-template-areas:
+        "label"
+        "control"
+        "desc"
+        "result";
+}
+
+.dait-settings-row-stacked.dait-try-row > .dait-row-control,
+.dait-settings-row-stacked.dait-try-row .dait-try-field {
+    display: contents;
+}
+
+.dait-try-row .dait-try-line {
+    grid-area: control;
+}
+
+.dait-try-result {
+    border-left: 3px solid var(--dait-divider);
+    color: var(--dait-text);
+    font-size: var(--dait-font-body);
+    grid-area: result;
+    line-height: var(--dait-line);
+    margin: 2px 0 0;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    padding: 2px 0 2px 10px;
+    white-space: pre-wrap;
+}
+
+.dait-try-time {
+    color: var(--dait-text);
+    font-size: var(--dait-font-body);
+    white-space: nowrap;
+}
+
+.dait-try-time::before {
+    content: " · ";
+}
+
+.dait-try-result-error {
+    border-left-color: var(--dait-danger);
+}
+
+.dait-try-result-error .dait-try-output {
+    color: var(--dait-danger);
+}
+
+/* Prompt templates and the prompt editor (their own group on the translate and composer tabs). */
+.dait-prompt-manager {
+    display: grid;
+    gap: var(--dait-space-3);
+    min-width: 0;
 }
 
 .dait-prompt-manager-header {
     display: grid;
-    gap: 5px;
+    gap: 2px;
 }
 
 .dait-prompt-manager-header > span {
-    color: var(--dait-label);
-    font-size: 12px;
-    font-weight: 760;
+    color: var(--dait-heading);
+    font-size: var(--dait-font-group);
+    font-weight: 600;
+    line-height: 1.3;
 }
 
 .dait-prompt-tools {
     align-items: center;
     display: grid;
-    gap: 8px;
-    grid-template-columns: minmax(120px, 0.8fr) minmax(190px, 1.2fr);
+    gap: var(--dait-space-2);
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
     min-width: 0;
 }
 
 .dait-prompt-actions {
     display: flex;
     flex-wrap: wrap;
-    gap: 6px;
+    gap: var(--dait-space-2);
     grid-column: 1 / -1;
     min-width: 0;
 }
 
 .dait-prompt-editor {
     display: grid;
-    gap: 8px;
+    gap: 6px;
     min-width: 0;
 }
 
 .dait-prompt-editor > span {
-    color: var(--dait-label);
-    font-size: 12px;
-    font-weight: 760;
+    color: var(--dait-text);
+    font-size: var(--dait-font-body);
+    font-weight: 600;
 }
 
 .dait-prompt-editor textarea {
-    font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
-    line-height: 1.45;
-    max-width: 100%;
-    min-height: 128px;
-    overflow-x: auto;
-    resize: vertical;
-    white-space: pre-wrap;
-    word-break: break-word;
+    min-height: 160px;
 }
 
-.dait-prompt-tools input,
-.dait-prompt-tools select {
+/* Search results replace the tab page while a query is typed. */
+.dait-settings-search-summary {
+    color: var(--dait-text);
+    font-size: var(--dait-font-body);
+    margin-bottom: var(--dait-space-2);
+}
+
+.dait-settings-search-list {
+    display: grid;
+    gap: 2px;
+    list-style: none;
+    margin: 0 -12px;
+    padding: 0;
+}
+
+.dait-settings-search-result {
+    align-items: center;
+    background: transparent;
+    border: 0;
+    border-radius: var(--dait-radius-control);
+    color: var(--dait-text);
+    column-gap: var(--dait-space-3);
+    cursor: pointer;
+    display: grid;
+    grid-template-areas:
+        "label tab"
+        "desc desc";
+    grid-template-columns: minmax(0, 1fr) auto;
+    padding: 10px 12px;
+    row-gap: 2px;
+    text-align: left;
+    width: 100%;
+}
+
+.dait-settings-search-result:hover,
+.dait-settings-search-result:focus-visible {
+    background: var(--dait-raised);
+}
+
+.dait-settings-search-result-label {
+    color: var(--dait-text);
+    font-size: var(--dait-font-body);
+    font-weight: 600;
+    grid-area: label;
+    line-height: var(--dait-line);
     min-width: 0;
 }
 
-.dait-prompt-actions .dait-small-button {
-    min-height: 36px;
-}
-
-.dait-small-button {
-    align-items: center;
-    background: var(--dait-control);
-    border: 1px solid var(--dait-border);
-    border-radius: 8px;
+/* The tab a result is on, a chip next to its title: body text like the rest of the result. */
+.dait-settings-search-result-tab {
+    background: var(--dait-raised);
+    border-radius: var(--dait-radius-pill);
     color: var(--dait-text);
-    cursor: pointer;
-    display: inline-flex;
-    font-size: 12px;
-    font-weight: 720;
-    justify-content: center;
-    line-height: 1.2;
-    min-height: 42px;
+    font-size: var(--dait-font-body);
+    font-weight: 400;
+    grid-area: tab;
+    line-height: var(--dait-line);
+    padding: 0 10px;
     white-space: nowrap;
-    padding: 0 11px;
 }
 
-.dait-small-button:hover {
-    background: var(--dait-control-hover);
-    border-color: var(--interactive-normal, var(--dait-border-strong));
+.dait-settings-search-result-description {
+    color: var(--dait-text);
+    font-size: var(--dait-font-body);
+    line-height: var(--dait-line);
+    grid-area: desc;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
-.dait-small-button-danger {
-    border-color: color-mix(in srgb, var(--dait-danger) 62%, var(--dait-border));
-    color: var(--dait-danger);
+/* Danger zone at the end of the data tab: the heading colour like every other heading, with the danger mark in
+   front (the same drawn "!" as a failed connection). */
+.dait-settings-danger-zone .dait-settings-group-title {
+    align-items: center;
+    display: flex;
+    gap: var(--dait-space-2);
 }
 
-.dait-polish-button,
+.dait-settings-danger-zone .dait-settings-group-title::before {
+    background:
+        linear-gradient(var(--dait-on-fill), var(--dait-on-fill)) 50% 4px / 2px 6px no-repeat,
+        linear-gradient(var(--dait-on-fill), var(--dait-on-fill)) 50% 11px / 2px 2px no-repeat,
+        var(--dait-danger-fill);
+    border-radius: var(--dait-radius-pill);
+    content: "";
+    flex: 0 0 auto;
+    height: 16px;
+    width: 16px;
+}
+
+/* Narrower panel (BetterDiscord's own plugin-settings modal, small windows): the tab rail becomes a scrolling row
+   under the search box, so the rows keep room for their text. */
+@container dait-settings (max-width: 760px) {
+    .dait-settings-header {
+        padding-left: 16px;
+    }
+
+    .dait-settings-logo {
+        display: none;
+    }
+
+    .dait-settings-body {
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-rows: auto minmax(0, 1fr);
+    }
+
+    .dait-settings-rail {
+        border-bottom: 1px solid var(--dait-divider);
+        gap: var(--dait-space-2);
+        overflow: visible;
+        padding: 12px 16px 8px;
+    }
+
+    .dait-settings-tabs {
+        flex-direction: row;
+        overflow-x: auto;
+        overscroll-behavior-x: contain;
+        padding-bottom: 4px;
+        scrollbar-width: thin;
+    }
+
+    .dait-settings-tab {
+        flex: 0 0 auto;
+        white-space: nowrap;
+        width: auto;
+    }
+
+    .dait-settings-content {
+        padding: 16px 16px 24px;
+    }
+}
+
+/* Narrow panel: rows put their control under the text (switches stay on the right). */
+@container dait-settings (max-width: 600px) {
+    .dait-settings-header-provider {
+        display: none;
+    }
+
+    .dait-settings-row:not(.dait-settings-row-switch) {
+        grid-template-columns: minmax(0, 1fr);
+        row-gap: 8px;
+    }
+
+    .dait-settings-row:not(.dait-settings-row-switch) > .dait-row-control {
+        justify-content: flex-start;
+    }
+
+    .dait-row-control > select,
+    .dait-row-control > input:not([type="checkbox"]),
+    .dait-row-control > .dait-segmented,
+    .dait-row-control > .dait-language-controls {
+        max-width: 100%;
+    }
+
+    .dait-prompt-tools {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .dait-setup-item {
+        grid-template-areas:
+            "icon label action"
+            ". detail action";
+        grid-template-columns: 18px minmax(0, 1fr) auto;
+        row-gap: 2px;
+    }
+
+    .dait-setup-detail {
+        white-space: normal;
+    }
+
+    .dait-service-cards {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+`;
+  }
+});
+
+// src/css/05-composer.js
+var require_composer = __commonJS({
+  "src/css/05-composer.js"(exports2, module2) {
+    "use strict";
+    module2.exports = `.dait-polish-button,
 .dait-public-bilingual-button,
 .dait-polish-restore-button,
 .dait-input-action-menu-button,
@@ -2094,13 +2618,16 @@ var require_styles = __commonJS({
     padding: 0 7px;
 }
 
+/* The composer's action menu is a plugin window: the panel palette (01-theme-tokens) and the body type size. */
 .dait-input-action-menu {
-    background: color-mix(in srgb, var(--background-floating, #111214) 96%, transparent);
-    border: 1px solid color-mix(in srgb, var(--background-modifier-accent, #4e5058) 82%, transparent);
-    border-radius: 8px;
-    box-shadow: var(--elevation-high, 0 10px 24px rgba(0, 0, 0, 0.28));
+    background: var(--dait-bg);
+    border: 1px solid var(--dait-divider);
+    border-radius: var(--dait-radius-card);
+    box-shadow: var(--dait-shadow);
+    color: var(--dait-text);
     display: grid;
-    gap: 3px;
+    gap: 2px;
+    min-width: 160px;
     padding: 6px;
     position: fixed;
     z-index: 10000;
@@ -2110,49 +2637,25 @@ var require_styles = __commonJS({
     align-items: center;
     background: transparent;
     border: 0;
-    border-radius: 6px;
-    color: var(--interactive-normal, var(--text-normal, #dbdee1));
+    border-radius: var(--dait-radius-control);
+    color: var(--dait-text);
     cursor: pointer;
     display: flex;
-    font-size: 13px;
-    font-weight: 650;
+    font-family: inherit;
+    font-size: var(--dait-font-body);
+    font-weight: 500;
     justify-content: flex-start;
-    min-height: 32px;
-    padding: 0 10px;
+    line-height: var(--dait-line);
+    min-height: var(--dait-control-h);
+    padding: 0 12px;
     text-align: left;
     white-space: nowrap;
 }
 
 .dait-input-action-menu-item:hover,
 .dait-input-action-menu-item:focus-visible {
-    background: color-mix(in srgb, var(--brand-500, #5865f2) 18%, var(--background-modifier-hover, rgba(79, 84, 92, 0.18)));
-    color: var(--interactive-hover, var(--text-normal, #ffffff));
-    outline: none;
-}
-
-.theme-light.dait-input-action-menu,
-.theme-light .dait-input-action-menu,
-.dait-input-action-menu[data-dait-discord-theme="light"],
-[data-dait-discord-theme="light"] .dait-input-action-menu {
-    background: rgba(255, 255, 255, 0.98);
-    border-color: rgba(79, 84, 92, 0.2);
-    box-shadow: var(--elevation-high, 0 10px 24px rgba(0, 0, 0, 0.16));
-}
-
-.theme-light .dait-input-action-menu-item,
-.dait-input-action-menu[data-dait-discord-theme="light"] .dait-input-action-menu-item,
-[data-dait-discord-theme="light"] .dait-input-action-menu-item {
-    color: var(--interactive-normal, #4f5660);
-}
-
-.theme-light .dait-input-action-menu-item:hover,
-.theme-light .dait-input-action-menu-item:focus-visible,
-.dait-input-action-menu[data-dait-discord-theme="light"] .dait-input-action-menu-item:hover,
-.dait-input-action-menu[data-dait-discord-theme="light"] .dait-input-action-menu-item:focus-visible,
-[data-dait-discord-theme="light"] .dait-input-action-menu-item:hover,
-[data-dait-discord-theme="light"] .dait-input-action-menu-item:focus-visible {
-    background: rgba(88, 101, 242, 0.14);
-    color: var(--interactive-hover, #2e3338);
+    background: var(--dait-raised);
+    color: var(--dait-heading);
 }
 
 .dait-polish-restore-control {
@@ -2202,57 +2705,20 @@ var require_styles = __commonJS({
     border-color: color-mix(in srgb, var(--brand-500, #5865f2) 62%, var(--background-modifier-accent, #4e5058));
 }
 
+/* Colours come from the panel palette (01-theme-tokens, data-dait-panel-theme on the panel). */
 .dait-polish-result-panel {
-    background: color-mix(in srgb, var(--background-secondary, #2b2d31) 94%, #000000);
-    border: 1px solid color-mix(in srgb, var(--background-modifier-accent, #4e5058) 72%, transparent);
+    background: var(--dait-surface);
+    border: 1px solid var(--dait-divider);
     border-radius: 8px;
-    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.34);
-    color: var(--text-normal, #dbdee1);
+    box-shadow: var(--dait-shadow);
+    color: var(--dait-text);
     display: grid;
-    gap: 7px;
-    max-height: min(34vh, 260px);
+    gap: var(--dait-space-2);
+    max-height: min(34vh, 280px);
     min-width: 240px;
-    padding: 9px;
+    padding: var(--dait-space-3);
     position: fixed;
     z-index: 10000;
-}
-
-.theme-light.dait-polish-result-panel,
-.theme-light .dait-polish-result-panel,
-.dait-polish-result-panel[data-dait-discord-theme="light"],
-[data-dait-discord-theme="light"] .dait-polish-result-panel {
-    background: rgba(255, 255, 255, 0.98);
-    border-color: rgba(79, 84, 92, 0.22);
-    box-shadow: 0 12px 32px rgba(24, 36, 61, 0.16);
-    color: #242832;
-}
-
-.theme-dark.dait-polish-result-panel,
-.theme-dark .dait-polish-result-panel,
-.dait-polish-result-panel[data-dait-discord-theme="dark"],
-[data-dait-discord-theme="dark"] .dait-polish-result-panel {
-    background: color-mix(in srgb, var(--background-secondary, #2b2d31) 94%, #000000);
-    border-color: color-mix(in srgb, var(--background-modifier-accent, #4e5058) 72%, transparent);
-    color: var(--text-normal, #dbdee1);
-}
-
-.theme-darker.dait-polish-result-panel,
-.theme-darker .dait-polish-result-panel,
-.dait-polish-result-panel[data-dait-discord-theme="darker"],
-[data-dait-discord-theme="darker"] .dait-polish-result-panel {
-    background: var(--background-surface-high, var(--background-secondary, #1e1f22));
-    border-color: rgba(255, 255, 255, 0.09);
-    color: var(--text-normal, #dbdee1);
-}
-
-.theme-midnight.dait-polish-result-panel,
-.theme-midnight .dait-polish-result-panel,
-.dait-polish-result-panel[data-dait-discord-theme="midnight"],
-[data-dait-discord-theme="midnight"] .dait-polish-result-panel {
-    background: var(--background-surface-high, var(--background-secondary, #101114));
-    border-color: rgba(255, 255, 255, 0.08);
-    box-shadow: 0 16px 38px rgba(0, 0, 0, 0.48);
-    color: var(--text-normal, #f2f3f5);
 }
 
 .dait-polish-result-header {
@@ -2263,11 +2729,13 @@ var require_styles = __commonJS({
     min-width: 0;
 }
 
+/* The windows' type scale: the window title (18/600) like the quick panel and the settings window, text and buttons
+   at the body size, 36 px buttons; close is a 36 px icon button with the shared close icon (01-theme-tokens). */
 .dait-polish-result-title {
-    color: var(--header-primary, currentColor);
-    font-size: 12px;
-    font-weight: 760;
-    line-height: 1.2;
+    color: var(--dait-heading);
+    font-size: var(--dait-font-window);
+    font-weight: 600;
+    line-height: 1.3;
     min-width: 0;
 }
 
@@ -2275,53 +2743,37 @@ var require_styles = __commonJS({
     align-items: center;
     background: transparent;
     border: 0;
-    border-radius: 5px;
-    color: var(--interactive-normal, #b5bac1);
+    border-radius: var(--dait-radius-control);
+    color: var(--dait-text);
     cursor: pointer;
     display: inline-flex;
-    font-size: 16px;
-    height: 24px;
+    flex: 0 0 auto;
+    font-family: inherit;
+    height: var(--dait-control-h);
     justify-content: center;
-    line-height: 1;
+    margin: -4px -6px -4px 0;
     padding: 0;
-    width: 24px;
+    width: var(--dait-control-h);
 }
 
 .dait-polish-result-icon:hover {
-    background: var(--background-modifier-hover, rgba(255, 255, 255, 0.08));
-    color: var(--interactive-hover, #ffffff);
+    background: var(--dait-raised);
+    color: var(--dait-heading);
 }
 
 .dait-polish-result-output {
-    background: color-mix(in srgb, var(--background-tertiary, #1e1f22) 86%, transparent);
-    border: 1px solid color-mix(in srgb, var(--background-modifier-accent, #4e5058) 70%, transparent);
-    border-radius: 7px;
-    color: var(--text-normal, #dbdee1);
+    background: var(--dait-input-bg);
+    border: 1px solid var(--dait-input-border);
+    border-radius: var(--dait-radius-control);
+    color: var(--dait-text);
     font: inherit;
-    line-height: 1.45;
+    font-size: var(--dait-font-body);
+    line-height: var(--dait-line);
     max-height: min(18vh, 150px);
     overflow: auto;
-    padding: 8px 10px;
+    padding: 8px 12px;
     white-space: pre-wrap;
     word-break: break-word;
-}
-
-.theme-light .dait-polish-result-output,
-.dait-polish-result-panel[data-dait-discord-theme="light"] .dait-polish-result-output,
-[data-dait-discord-theme="light"] .dait-polish-result-output {
-    background: #f6f8fc;
-    border-color: rgba(79, 84, 92, 0.18);
-    color: #242832;
-}
-
-.theme-darker .dait-polish-result-output,
-.dait-polish-result-panel[data-dait-discord-theme="darker"] .dait-polish-result-output,
-[data-dait-discord-theme="darker"] .dait-polish-result-output,
-.theme-midnight .dait-polish-result-output,
-.dait-polish-result-panel[data-dait-discord-theme="midnight"] .dait-polish-result-output,
-[data-dait-discord-theme="midnight"] .dait-polish-result-output {
-    background: color-mix(in srgb, var(--background-tertiary, #111318) 88%, transparent);
-    border-color: rgba(255, 255, 255, 0.09);
 }
 
 .dait-polish-result-actions {
@@ -2331,30 +2783,59 @@ var require_styles = __commonJS({
     justify-content: flex-end;
 }
 
+/* Like the settings buttons: grey secondary, brand-filled primary with white text. */
 .dait-polish-result-action {
-    background: var(--background-modifier-hover, rgba(255, 255, 255, 0.08));
-    border: 1px solid color-mix(in srgb, var(--background-modifier-accent, #4e5058) 70%, transparent);
-    border-radius: 6px;
-    color: var(--text-normal, #dbdee1);
+    align-items: center;
+    background: var(--dait-raised);
+    border: 1px solid var(--dait-input-border);
+    border-radius: var(--dait-radius-control);
+    color: var(--dait-text);
     cursor: pointer;
-    font-size: 12px;
-    font-weight: 720;
-    line-height: 1;
-    min-height: 30px;
-    padding: 7px 10px;
+    display: inline-flex;
+    font-family: inherit;
+    font-size: var(--dait-font-body);
+    font-weight: 500;
+    height: var(--dait-control-h);
+    justify-content: center;
+    line-height: var(--dait-line);
+    padding: 0 14px;
+    white-space: nowrap;
 }
 
 .dait-polish-result-action.primary {
-    background: var(--brand-500, #5865f2);
-    border-color: color-mix(in srgb, var(--brand-500, #5865f2) 72%, transparent);
-    color: #ffffff;
+    background: var(--dait-brand);
+    border-color: transparent;
+    color: var(--dait-on-fill);
 }
 
-.dait-polish-result-action:hover {
-    border-color: color-mix(in srgb, var(--brand-500, #5865f2) 52%, var(--background-modifier-accent, #4e5058));
+.dait-polish-result-action:hover:not(:disabled) {
+    background: var(--dait-raised-hover);
 }
 
-.dait-message-button {
+.dait-polish-result-action.primary:hover:not(:disabled) {
+    background: var(--dait-brand-hover);
+}
+
+.dait-polish-result-action:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+}
+
+`;
+  }
+});
+
+// src/css/06-messages-and-lines.js
+var require_messages_and_lines = __commonJS({
+  "src/css/06-messages-and-lines.js"(exports2, module2) {
+    "use strict";
+    var svgIcon = (body) => `url("data:image/svg+xml,${encodeURIComponent(`<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>${body}</svg>`)}")`;
+    var ICON_COPY = svgIcon("<rect x='9' y='9' width='12' height='12' rx='2'/><path d='M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1'/>");
+    var ICON_RETRANSLATE = svgIcon("<path d='M21 12a9 9 0 1 1-3-6.7L21 8'/><path d='M21 3v5h-5'/>");
+    var ICON_HIDE = svgIcon("<path d='M17.9 17.9A10 10 0 0 1 12 20c-7 0-10-8-10-8a18 18 0 0 1 5.1-5.9M9.9 4.2A9 9 0 0 1 12 4c7 0 10 8 10 8a18 18 0 0 1-2.2 3.2'/><path d='M1 1l22 22'/>");
+    var ICON_ALERT = svgIcon("<circle cx='12' cy='12' r='10'/><path d='M12 7v6'/><path d='M12 17h.01'/>");
+    var ICON_CLOCK = svgIcon("<circle cx='12' cy='12' r='10'/><path d='M12 6v6l4 2'/>");
+    module2.exports = `.dait-message-button {
     display: inline-flex;
     align-items: center;
     background: color-mix(in srgb, var(--background-modifier-hover, #747f8d) 32%, transparent);
@@ -2461,7 +2942,7 @@ var require_styles = __commonJS({
 }
 
 .dait-translation-line {
-    color: var(--text-normal);
+    color: var(--dait-line-text);
     display: block;
     font-size: 1rem;
     line-height: 1.375rem;
@@ -2471,20 +2952,69 @@ var require_styles = __commonJS({
     overflow-anchor: none;
     overflow-wrap: anywhere;
     position: relative;
-    text-align: left;
+    text-align: start;
     white-space: pre-wrap;
-    width: auto;
+    width: fit-content;
 }
 
 .dait-translation-line.dait-translation-revealed {
-    background: var(--dait-chat-revealed-bg);
-    border-radius: 3px;
+    background: var(--dait-line-tint);
+    border-radius: 4px;
     box-decoration-break: clone;
     -webkit-box-decoration-break: clone;
-    color: var(--dait-chat-revealed-text);
+    color: var(--dait-line-text);
     font-weight: inherit;
-    padding: 0 3px;
+    padding: 0 6px;
     user-select: text;
+}
+
+.dait-translation-line.dait-translation-revealed.dait-translation-style-muted,
+.dait-translation-line.dait-translation-revealed.dait-translation-style-tag {
+    background: transparent;
+    padding: 0;
+}
+
+.dait-translation-line.dait-translation-revealed.dait-translation-style-muted {
+    color: var(--dait-line-muted);
+}
+
+/* With a note under the text, the faint background marks only the translated text. */
+.dait-translation-line.dait-translation-revealed.dait-translation-style-tint:has(> .dait-translation-note) {
+    background: transparent;
+    padding: 0;
+}
+
+.dait-translation-line.dait-translation-revealed.dait-translation-style-tint:has(> .dait-translation-note) > .dait-translation-text {
+    background: var(--dait-line-tint);
+    border-radius: 4px;
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+    padding: 1px 6px;
+}
+
+.dait-translation-line.dait-translation-style-tag:not(.dait-translation-preview)::before {
+    background: var(--dait-line-chip);
+    border-radius: 3px;
+    color: var(--dait-line-text);
+    content: attr(data-dait-tag);
+    display: inline-block;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 16px;
+    margin-inline-end: 6px;
+    padding: 0 5px;
+    user-select: none;
+    vertical-align: 1px;
+}
+
+.dait-translation-line.dait-translation-scale-90:not(.dait-translation-preview) {
+    font-size: 0.9rem;
+    line-height: 1.25rem;
+    min-height: 1.25rem;
+}
+
+.dait-translation-line.dait-translation-dismissed {
+    display: none !important;
 }
 
 .dait-translation-line.dait-translation-preview {
@@ -2496,47 +3026,231 @@ var require_styles = __commonJS({
     max-inline-size: 100%;
     min-height: 1em;
     vertical-align: baseline;
+    width: auto;
 }
 
 .dait-translation-line.dait-translation-preview.dait-translation-revealed {
     padding: 0 2px;
 }
 
-.dait-translation-line.dait-translation-error {
+.dait-translation-actions {
     align-items: center;
-    background: color-mix(in srgb, var(--dait-danger, #d83c3e) 12%, transparent);
-    border: 1px solid color-mix(in srgb, var(--dait-danger, #d83c3e) 34%, transparent);
-    border-radius: 5px;
-    color: var(--dait-danger, #d83c3e);
+    background: var(--dait-line-surface);
+    border: 1px solid var(--dait-line-border);
+    border-radius: 6px;
+    box-shadow: var(--shadow-low, 0 2px 8px rgba(0, 0, 0, 0.24));
+    box-sizing: border-box;
     display: inline-flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    max-width: 100%;
-    min-width: 0;
-    padding: 3px 6px;
-    user-select: text;
+    gap: 2px;
+    height: 28px;
+    inset-inline-start: calc(100% + 6px);
+    line-height: 0;
+    opacity: 0;
+    padding: 1px;
+    pointer-events: none;
+    position: absolute;
+    top: -3px;
+    user-select: none;
+    white-space: nowrap;
+    z-index: 2;
 }
 
-.dait-translation-error-message {
+.dait-translation-actions::before {
+    content: "";
+    inset-block: 0;
+    inset-inline-start: -8px;
+    position: absolute;
+    width: 8px;
+}
+
+.dait-translation-actions[data-dait-placement="inside"] {
+    bottom: -3px;
+    inset-inline-end: 0;
+    inset-inline-start: auto;
+    top: auto;
+}
+
+.dait-translation-actions[data-dait-placement="inside"]::before {
+    content: none;
+}
+
+.dait-translation-line.dait-translation-revealed:hover > .dait-translation-actions,
+.dait-translation-line.dait-translation-revealed:focus-within > .dait-translation-actions {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.dait-translation-line.dait-translation-masked > .dait-translation-actions,
+.dait-translation-line.dait-translation-masked > .dait-translation-actions-anchor,
+.dait-translation-line.dait-translation-preview > .dait-translation-actions {
+    display: none;
+}
+
+.dait-translation-action {
+    align-items: center;
+    background: transparent;
+    border: 0;
+    border-radius: 4px;
+    box-sizing: border-box;
+    color: var(--dait-line-muted);
+    cursor: pointer;
+    display: inline-flex;
+    height: 24px;
+    justify-content: center;
+    margin: 0;
+    padding: 0;
+    width: 28px;
+}
+
+.dait-translation-action::before {
+    background-color: currentColor;
+    content: "";
+    height: 16px;
+    -webkit-mask: var(--dait-icon) center / 16px 16px no-repeat;
+    mask: var(--dait-icon) center / 16px 16px no-repeat;
+    width: 16px;
+}
+
+.dait-translation-action-copy {
+    --dait-icon: ${ICON_COPY};
+}
+
+.dait-translation-action-retranslate {
+    --dait-icon: ${ICON_RETRANSLATE};
+}
+
+.dait-translation-action-hide {
+    --dait-icon: ${ICON_HIDE};
+}
+
+.dait-translation-action:hover {
+    background: var(--dait-line-hover);
+    color: var(--dait-line-text);
+}
+
+.dait-translation-line.dait-translation-error {
+    align-items: center;
+    background: color-mix(in srgb, var(--dait-line-danger-accent) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--dait-line-danger-accent) 45%, transparent);
+    border-radius: 6px;
+    color: var(--dait-line-danger);
+    column-gap: 8px;
+    display: flex;
+    flex-wrap: wrap;
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+    min-height: 1.75rem;
+    padding: 1px 4px 1px 8px;
+    row-gap: 2px;
+    user-select: text;
+    white-space: normal;
+}
+
+.dait-translation-line.dait-translation-error[data-dait-error-action="wait"] {
+    background: color-mix(in srgb, var(--dait-line-warning-accent) 12%, transparent);
+    border-color: color-mix(in srgb, var(--dait-line-warning-accent) 45%, transparent);
+    color: var(--dait-line-warning);
+}
+
+.dait-translation-error-message,
+.dait-translation-note-message {
+    align-items: center;
+    display: inline-flex;
+    gap: 6px;
     min-width: 0;
     overflow-wrap: anywhere;
 }
 
-.dait-translation-retry {
-    background: transparent;
-    border: 1px solid color-mix(in srgb, var(--dait-danger, #d83c3e) 42%, transparent);
-    border-radius: 5px;
-    color: var(--dait-danger, #d83c3e);
-    cursor: pointer;
-    font-size: 12px;
-    font-weight: 720;
-    line-height: 1;
-    padding: 3px 7px;
+.dait-translation-error-message::before,
+.dait-translation-note-message::before {
+    background-color: currentColor;
+    content: "";
+    flex: 0 0 16px;
+    height: 16px;
+    -webkit-mask: var(--dait-icon, ${ICON_ALERT}) center / 16px 16px no-repeat;
+    mask: var(--dait-icon, ${ICON_ALERT}) center / 16px 16px no-repeat;
+    width: 16px;
 }
 
-.dait-translation-retry:hover,
-.dait-translation-retry:focus-visible {
-    background: color-mix(in srgb, var(--dait-danger, #d83c3e) 14%, transparent);
+.dait-translation-line.dait-translation-error[data-dait-error-action="wait"] > .dait-translation-error-message {
+    --dait-icon: ${ICON_CLOCK};
+}
+
+.dait-translation-error-button,
+.dait-translation-retry,
+.dait-translation-note-button {
+    align-items: center;
+    border-radius: 4px;
+    box-sizing: border-box;
+    cursor: pointer;
+    display: inline-flex;
+    font-family: inherit;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    height: 24px;
+    line-height: 1;
+    margin: 0;
+    padding: 0 10px;
+    white-space: nowrap;
+}
+
+.dait-translation-error-button,
+.dait-translation-note-button {
+    background: var(--dait-line-button);
+    border: 0;
+    color: var(--dait-line-button-text);
+}
+
+.dait-translation-error-button:hover,
+.dait-translation-note-button:hover {
+    filter: brightness(1.15);
+}
+
+.dait-translation-error-button:disabled {
+    cursor: default;
+    opacity: 0.72;
+}
+
+.dait-translation-retry {
+    background: transparent;
+    border: 1px solid var(--dait-line-border);
+    color: var(--dait-line-text);
+}
+
+.dait-translation-retry:hover {
+    background: var(--dait-line-hover);
+}
+
+.dait-translation-action:focus-visible,
+.dait-translation-error-button:focus-visible,
+.dait-translation-retry:focus-visible,
+.dait-translation-note-button:focus-visible,
+.dait-translation-line.dait-translation-masked:focus-visible {
+    outline: 2px solid var(--dait-line-focus);
+    outline-offset: 1px;
+}
+
+.dait-translation-note {
+    align-items: center;
+    background: color-mix(in srgb, var(--dait-line-warning-accent) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--dait-line-warning-accent) 45%, transparent);
+    border-radius: 6px;
+    box-sizing: border-box;
+    color: var(--dait-line-warning);
+    column-gap: 8px;
+    display: flex;
+    flex-wrap: wrap;
+    font-size: 0.875rem;
+    font-weight: 400;
+    line-height: 1.25rem;
+    margin: 4px 0 2px;
+    max-width: 100%;
+    min-height: 1.75rem;
+    padding: 1px 4px 1px 8px;
+    row-gap: 2px;
+    user-select: text;
+    white-space: normal;
+    width: fit-content;
 }
 
 .dait-translation-line.dait-translation-masked {
@@ -2554,6 +3268,13 @@ var require_styles = __commonJS({
 .dait-translation-text {
     display: inline;
     position: relative;
+}
+
+/* A right-to-left translation in a left-to-right chat: as a box of its own, its wrapped lines align right
+   to left. Reply previews stay one inline run inside Discord's one-line reply bar. */
+.dait-translation-line:not(.dait-translation-preview) > .dait-translation-text[dir="rtl"] {
+    display: inline-block;
+    max-inline-size: 100%;
 }
 
 .dait-translation-emoji {
@@ -2577,19 +3298,6 @@ var require_styles = __commonJS({
     opacity: 0;
 }
 
-.dait-translation-line.dait-translation-loading {
-    background: var(--dait-chat-mask);
-    border: 1px solid var(--dait-chat-mask-border);
-    border-radius: 3px;
-    display: block;
-    height: 1.25rem;
-    opacity: 0.86;
-}
-
-.dait-translation-line.dait-translation-preview.dait-translation-loading {
-    height: 1em;
-}
-
 .dait-translation-line.dait-translation-masked .dait-translation-text::before {
     background: var(--dait-chat-mask);
     border: 1px solid var(--dait-chat-mask-border);
@@ -2604,19 +3312,46 @@ var require_styles = __commonJS({
 }
 
 .dait-translation-line.dait-translation-loading {
-    color: transparent;
-    max-width: 164px;
+    background: var(--dait-line-chip);
+    border-radius: 4px;
+    color: var(--dait-line-muted);
+    font-size: 0.8125rem;
+    height: 1.375rem;
+    line-height: 1.375rem;
+    max-width: 100%;
+    min-width: 7.5rem;
+    overflow: hidden;
+    padding: 0 10px;
     position: relative;
-    width: min(48%, 164px);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dait-translation-line.dait-translation-preview.dait-translation-loading {
+    display: inline-block;
+    font-size: 12px;
+    height: auto;
+    line-height: inherit;
+    max-width: min(40%, 12rem);
+    min-height: 0;
+    min-width: 0;
+    padding: 0 6px;
+    vertical-align: baseline;
 }
 
 .dait-translation-line.dait-translation-loading::after {
-    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.16), transparent);
+    background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--dait-line-text) 10%, transparent), transparent);
     content: "";
     inset: 0;
+    pointer-events: none;
     position: absolute;
     transform: translateX(-100%);
-    animation: dait-loading-sheen 1.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+    .dait-translation-line.dait-translation-loading::after {
+        animation: dait-loading-sheen 1.6s ease-in-out infinite;
+    }
 }
 
 @keyframes dait-loading-sheen {
@@ -2625,161 +3360,925 @@ var require_styles = __commonJS({
     }
 }
 
+/* Narrow windows: the prompt tools and the test toolbar stack. The settings window itself adapts to its own width
+   with the container queries in 04-settings. */
 @media (max-width: 860px) {
-    [data-dait-settings-modal="true"] {
-        max-width: calc(100vw - 28px) !important;
-        width: calc(100vw - 28px) !important;
-    }
-
-    .dait-quick-settings-modal-root {
-        padding: 14px;
-    }
-
-    .dait-quick-settings-dialog {
-        max-height: calc(100vh - 28px);
-        min-height: min(520px, calc(100vh - 28px));
-    }
-
-    .dait-quick-settings-header {
-        min-height: 54px;
-        padding: 13px 14px 12px;
-    }
-
-    .dait-quick-settings-title {
-        font-size: 18px;
-    }
-
-    .dait-quick-settings-body {
-        padding: 14px;
-    }
-
-    .dait-quick-settings-footer {
-        min-height: 62px;
-        padding: 12px 14px;
-    }
-
-    .dait-settings {
-        width: 100%;
-    }
-
-    .dait-settings-hero {
-        grid-template-columns: 44px minmax(0, 1fr);
-    }
-
-    .dait-settings-layout {
-        grid-template-columns: 1fr;
-    }
-
-    .dait-settings-sidebar {
-        align-items: center;
-        display: flex;
-        gap: 8px;
-        max-height: none;
-        overflow-x: auto;
-        overflow-y: hidden;
-        position: sticky;
-        top: 0;
-    }
-
-    .dait-settings-nav-list {
-        display: flex;
-        flex: 1 1 auto;
-        gap: 6px;
-        min-width: max-content;
-    }
-
-    .dait-settings-nav-button {
-        justify-content: center;
-        min-width: max-content;
-        padding-left: 11px;
-        padding-right: 11px;
-        text-align: center;
-        width: auto;
-    }
-
-    .dait-settings-nav-secondary {
-        padding-left: 11px;
-    }
-
-    .dait-settings-sidebar-reset {
-        flex: 0 0 auto;
-        margin-top: 0;
-        min-width: max-content;
-        width: auto;
-    }
-
-    .dait-settings-section {
-        scroll-margin-top: 78px;
-    }
-
-    .dait-settings-mark {
-        height: 44px;
-        width: 44px;
-    }
-
     .dait-prompt-tools {
         grid-template-columns: 1fr;
-    }
-
-    .dait-prompt-actions .dait-small-button {
-        flex: 1 1 120px;
     }
 
     .dait-test-toolbar {
         grid-template-columns: 1fr;
     }
+}
+`;
+  }
+});
 
-    .dait-api-key-row {
-        grid-template-columns: 1fr;
-        grid-template-areas:
-            "label"
-            "desc"
-            "status"
-            "control";
+// src/css/07-quick-popover.js
+var require_quick_popover = __commonJS({
+  "src/css/07-quick-popover.js"(exports2, module2) {
+    "use strict";
+    module2.exports = `
+.dait-launcher-status {
+    --dait-qp-ok: var(--status-positive, #23a55a);
+    --dait-qp-warn: var(--status-warning, #f0b232);
+    --dait-qp-danger: var(--status-danger, #da373c);
+    --dait-qp-off: var(--interactive-muted, #80848e);
+    --dait-qp-off-mark: var(--interactive-normal, #b5bac1);
+}
+
+.dait-quick-popover {
+    --dait-qp-ok: var(--dait-success-fill);
+    --dait-qp-warn: var(--dait-warning-fill);
+    --dait-qp-danger: var(--dait-danger-fill);
+    --dait-qp-off: var(--dait-placeholder);
+    --dait-qp-off-mark: var(--dait-placeholder);
+    --dait-qp-control-w: 180px;
+    background: var(--dait-bg);
+    border: 1px solid var(--dait-divider);
+    border-radius: 8px;
+    box-shadow: var(--dait-shadow);
+    box-sizing: border-box;
+    color: var(--dait-text);
+    display: flex;
+    flex-direction: column;
+    font-size: var(--dait-font-body);
+    font-weight: 400;
+    left: 8px;
+    letter-spacing: 0;
+    line-height: var(--dait-line);
+    max-height: min(760px, calc(100vh - 64px));
+    max-width: calc(100vw - 16px);
+    overflow: hidden;
+    position: fixed;
+    text-align: start;
+    top: 8px;
+    width: 360px;
+    z-index: 2147482000;
+}
+
+.dait-quick-popover *,
+.dait-quick-popover *::before,
+.dait-quick-popover *::after {
+    box-sizing: border-box;
+}
+
+.dait-qp-header {
+    align-items: center;
+    display: flex;
+    flex: 0 0 auto;
+    gap: 8px;
+    padding: 12px 8px 8px 16px;
+}
+
+.dait-qp-title {
+    color: var(--dait-heading);
+    font-size: var(--dait-font-window);
+    font-weight: 600;
+    line-height: 1.3;
+    margin: 0;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dait-qp-chip {
+    background: var(--dait-raised);
+    border-radius: 999px;
+    color: var(--dait-text);
+    flex: 0 0 auto;
+    font-size: var(--dait-font-small);
+    font-weight: 500;
+    line-height: 20px;
+    padding: 0 8px;
+}
+
+.dait-qp-icon-button {
+    align-items: center;
+    background: transparent;
+    border: 0;
+    border-radius: 4px;
+    color: var(--dait-text);
+    cursor: pointer;
+    display: inline-flex;
+    flex: 0 0 auto;
+    height: var(--dait-control-h);
+    justify-content: center;
+    padding: 0;
+    width: var(--dait-control-h);
+}
+
+.dait-qp-header-open-full {
+    margin-left: auto;
+}
+
+.dait-qp-icon-button:hover {
+    background: var(--dait-raised);
+    color: var(--dait-heading);
+}
+
+.dait-qp-icon {
+    background: currentColor;
+    display: block;
+    height: 18px;
+    -webkit-mask: var(--dait-qp-icon-image) center / 18px 18px no-repeat;
+    mask: var(--dait-qp-icon-image) center / 18px 18px no-repeat;
+    width: 18px;
+}
+
+.dait-qp-icon-gear {
+    --dait-qp-icon-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='3'/%3E%3Cpath d='M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z'/%3E%3C/svg%3E");
+}
+
+.dait-qp-icon-close {
+    --dait-qp-icon-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M6 6l12 12M18 6L6 18'/%3E%3C/svg%3E");
+}
+
+.dait-qp-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 4px 16px 12px;
+    scrollbar-width: thin;
+}
+
+/* Status card: the dot, the service line and Test share the first line; the test result, what is happening now
+   and the note take the full width under them (the text column is not squeezed beside the button). */
+.dait-qp-status {
+    align-items: center;
+    background: var(--dait-surface);
+    border-radius: 8px;
+    column-gap: 12px;
+    display: grid;
+    grid-template-columns: 10px minmax(0, 1fr) auto;
+    margin: 0 0 4px;
+    padding: 10px 12px;
+}
+
+.dait-qp-status > .dait-qp-dot {
+    grid-column: 1;
+    grid-row: 1;
+}
+
+.dait-qp-status-text {
+    display: contents;
+}
+
+.dait-qp-status > .dait-qp-test {
+    grid-column: 3;
+    grid-row: 1;
+}
+
+.dait-qp-status-line {
+    color: var(--dait-text);
+    font-size: var(--dait-font-body);
+    font-weight: 600;
+    grid-column: 2;
+    grid-row: 1;
+    line-height: var(--dait-line);
+    margin: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* The last passed connection test: model and response time, e.g. "Hy-MT2 · 820 ms". A long model name wraps to a
+   second line instead of being cut off. */
+.dait-qp-status-test {
+    -webkit-box-orient: vertical;
+    color: var(--dait-text);
+    display: -webkit-box;
+    font-size: var(--dait-font-body);
+    font-variant-numeric: tabular-nums;
+    grid-column: 2 / -1;
+    -webkit-line-clamp: 2;
+    line-height: var(--dait-line);
+    margin: 2px 0 0;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+}
+
+.dait-qp-status-test[hidden] {
+    display: none;
+}
+
+/* "model · 820 ms": each dot stays with the part before it and the time stays whole, so a wrap never starts a line
+   with a dot or splits "820 ms"; a long model name can still wrap. */
+.dait-qp-status-sep,
+.dait-qp-status-part {
+    white-space: nowrap;
+}
+
+.dait-qp-status-detail {
+    -webkit-box-orient: vertical;
+    color: var(--dait-text);
+    display: -webkit-box;
+    font-size: var(--dait-font-body);
+    grid-column: 2 / -1;
+    -webkit-line-clamp: 2;
+    line-height: var(--dait-line);
+    margin: 2px 0 0;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+}
+
+/* The service's own error says what to fix ("Check the API URL and the model name"), so it wraps instead of being
+   cut to one line; three lines hold every message the plugin writes. */
+.dait-qp-status-note {
+    -webkit-box-orient: vertical;
+    color: var(--dait-text);
+    display: -webkit-box;
+    font-size: var(--dait-font-body);
+    grid-column: 2 / -1;
+    -webkit-line-clamp: 3;
+    line-height: var(--dait-line);
+    margin: 2px 0 0;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+}
+
+.dait-qp-status-note[hidden] {
+    display: none;
+}
+
+.dait-quick-popover[data-dait-status="needs-you"] .dait-qp-status-detail {
+    color: var(--dait-danger);
+}
+
+.dait-qp-button {
+    align-items: center;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    cursor: pointer;
+    display: inline-flex;
+    font-family: inherit;
+    font-size: var(--dait-font-body);
+    font-weight: 500;
+    height: var(--dait-control-h);
+    justify-content: center;
+    line-height: var(--dait-line);
+    min-width: 60px;
+    padding: 0 14px;
+    white-space: nowrap;
+}
+
+.dait-qp-button-secondary {
+    background: var(--dait-raised);
+    border-color: var(--dait-input-border);
+    color: var(--dait-text);
+}
+
+.dait-qp-button-secondary:hover:not(:disabled) {
+    background: var(--dait-raised-hover);
+}
+
+.dait-qp-button:disabled {
+    cursor: default;
+    opacity: 0.55;
+}
+
+.dait-qp-row {
+    align-items: center;
+    column-gap: 16px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    min-height: 48px;
+    padding: 7px 0;
+}
+
+.dait-qp-row + .dait-qp-row {
+    border-top: 1px solid var(--dait-divider);
+}
+
+.dait-qp-row-stacked {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 8px;
+}
+
+.dait-qp-row-text {
+    min-width: 0;
+}
+
+/* Label and description share the body size and colour; the label's weight sets them apart. */
+.dait-qp-label {
+    color: var(--dait-text);
+    display: block;
+    font-size: var(--dait-font-body);
+    font-weight: 600;
+    line-height: var(--dait-line);
+    margin: 0;
+}
+
+label.dait-qp-label {
+    cursor: pointer;
+}
+
+.dait-qp-channel-label {
+    align-items: baseline;
+    display: flex;
+    gap: 6px;
+    min-width: 0;
+}
+
+.dait-qp-channel-name {
+    color: var(--dait-text);
+    font-weight: 400;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dait-qp-desc {
+    color: var(--dait-text);
+    font-size: var(--dait-font-body);
+    font-weight: 400;
+    line-height: var(--dait-line);
+    margin: 0;
+}
+
+.dait-qp-row-stacked > .dait-qp-desc {
+    margin: 0;
+}
+
+/* A section heading ("Display"): the group heading size. */
+.dait-qp-section {
+    color: var(--dait-heading);
+    font-size: var(--dait-font-group);
+    font-weight: 600;
+    line-height: 1.3;
+    margin: 0;
+    padding: 12px 0 2px;
+}
+
+.dait-qp-switch {
+    -webkit-appearance: none;
+    appearance: none;
+    background: var(--dait-switch-off);
+    border: 0;
+    border-radius: 999px;
+    cursor: pointer;
+    flex: 0 0 auto;
+    height: 24px;
+    justify-self: end;
+    margin: 0;
+    position: relative;
+    width: 40px;
+}
+
+.dait-qp-switch::before {
+    background: #ffffff;
+    border-radius: 999px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+    content: "";
+    height: 18px;
+    left: 3px;
+    position: absolute;
+    top: 3px;
+    width: 18px;
+}
+
+.dait-qp-switch:checked {
+    background: var(--dait-brand);
+}
+
+.dait-qp-switch:checked::before {
+    transform: translateX(16px);
+}
+
+.dait-qp-control {
+    width: var(--dait-qp-control-w);
+}
+
+/* The same select as in the settings window: the palette's colours and its chevron. */
+.dait-qp-select {
+    -webkit-appearance: none;
+    appearance: none;
+    background-color: var(--dait-input-bg);
+    background-image:
+        linear-gradient(45deg, transparent 50%, var(--dait-placeholder) 50%),
+        linear-gradient(135deg, var(--dait-placeholder) 50%, transparent 50%);
+    background-position:
+        calc(100% - 16px) 50%,
+        calc(100% - 11px) 50%;
+    background-repeat: no-repeat;
+    background-size: 5px 5px, 5px 5px;
+    border: 1px solid var(--dait-input-border);
+    border-radius: 4px;
+    color: var(--dait-text);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: var(--dait-font-body);
+    height: var(--dait-control-h);
+    justify-self: end;
+    line-height: var(--dait-line);
+    min-width: 0;
+    padding: 0 30px 0 10px;
+}
+
+.dait-qp-select:hover {
+    border-color: var(--dait-placeholder);
+}
+
+.dait-qp-select option {
+    background: var(--dait-input-bg);
+    color: var(--dait-text);
+}
+
+.dait-qp-segmented {
+    background: var(--dait-input-bg);
+    border: 1px solid var(--dait-input-border);
+    border-radius: 4px;
+    display: grid;
+    gap: 2px;
+    grid-auto-columns: minmax(0, 1fr);
+    grid-auto-flow: column;
+    justify-self: stretch;
+    min-height: var(--dait-control-h);
+    padding: 2px;
+}
+
+.dait-qp-row:not(.dait-qp-row-stacked) > .dait-qp-segmented {
+    justify-self: end;
+}
+
+.dait-qp-segment {
+    background: transparent;
+    border: 0;
+    border-radius: 3px;
+    color: var(--dait-text);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: var(--dait-font-body);
+    font-weight: 500;
+    line-height: var(--dait-line);
+    min-height: 30px;
+    min-width: 0;
+    overflow: hidden;
+    padding: 0 4px;
+    text-align: center;
+    text-overflow: ellipsis;
+    /* One line, like the other segments ("Follow main" fits in a third of the panel). */
+    white-space: nowrap;
+}
+
+.dait-qp-segment:hover:not(:disabled):not([aria-checked="true"]) {
+    background: var(--dait-raised);
+    color: var(--dait-text);
+}
+
+/* The chosen value reads at a glance in both themes: filled with the accent, white text. */
+.dait-qp-segment[aria-checked="true"] {
+    background: var(--dait-brand);
+    color: var(--dait-on-fill);
+}
+
+.dait-qp-segment:disabled {
+    cursor: default;
+}
+
+.dait-qp-segmented[aria-disabled="true"] {
+    opacity: 0.55;
+}
+
+.dait-qp-footer {
+    align-items: center;
+    background: var(--dait-surface);
+    border-top: 1px solid var(--dait-divider);
+    display: flex;
+    flex: 0 0 auto;
+    gap: 8px;
+    justify-content: space-between;
+    padding: 8px 16px;
+}
+
+.dait-qp-link {
+    background: transparent;
+    border: 0;
+    border-radius: 4px;
+    color: var(--dait-link);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: var(--dait-font-body);
+    font-weight: 500;
+    height: var(--dait-control-h);
+    margin-left: -6px;
+    padding: 0 6px;
+}
+
+.dait-qp-link:hover {
+    text-decoration: underline;
+}
+
+.dait-qp-hint {
+    color: var(--dait-text);
+    font-size: var(--dait-font-body);
+    white-space: nowrap;
+}
+
+.dait-quick-popover :focus {
+    outline: none;
+}
+
+.dait-quick-popover :focus-visible {
+    outline: 2px solid var(--dait-focus);
+    outline-offset: 2px;
+}
+
+.dait-quick-popover .dait-qp-segment:focus-visible {
+    outline-offset: -2px;
+}
+
+/* Opened with the mouse: no ring on the first control until the user presses a key. */
+.dait-quick-popover.dait-qp-pointer-opened :focus-visible {
+    outline: none;
+}
+
+/* Status shapes differ as well as colours: filled = ok, ring = busy, triangle = waiting, "!" = needs you,
+   dash = off. */
+.dait-qp-dot {
+    border-radius: 999px;
+    display: block;
+    flex: 0 0 auto;
+    height: 10px;
+    position: relative;
+    width: 10px;
+}
+
+.dait-qp-dot[data-dait-status="ok"] {
+    background: var(--dait-qp-ok);
+}
+
+.dait-qp-dot[data-dait-status="busy"] {
+    border: 2px solid var(--dait-qp-warn);
+}
+
+.dait-qp-dot[data-dait-status="waiting"] {
+    background: var(--dait-qp-warn);
+    border-radius: 1px;
+    clip-path: polygon(50% 0, 100% 100%, 0 100%);
+}
+
+.dait-qp-dot[data-dait-status="needs-you"] {
+    background: var(--dait-qp-danger);
+}
+
+.dait-qp-dot[data-dait-status="needs-you"]::after {
+    background:
+        linear-gradient(#ffffff, #ffffff) center top / 2px 4px no-repeat,
+        linear-gradient(#ffffff, #ffffff) center bottom / 2px 1.5px no-repeat;
+    bottom: 2px;
+    content: "";
+    left: 3px;
+    position: absolute;
+    right: 3px;
+    top: 2px;
+}
+
+.dait-qp-dot[data-dait-status="off"] {
+    border: 1.5px solid var(--dait-qp-off);
+}
+
+.dait-qp-dot[data-dait-status="off"]::after {
+    background: var(--dait-qp-off-mark);
+    border-radius: 1px;
+    content: "";
+    height: 1.5px;
+    left: 1.5px;
+    position: absolute;
+    right: 1.5px;
+    top: calc(50% - 0.75px);
+}
+
+/* The launcher: same size as Discord's user-panel buttons, with the status badge on its corner. */
+.dait-quick-settings-panel {
+    font-size: 12px;
+    font-weight: 700;
+    height: 32px;
+    min-width: 32px;
+    padding: 0 8px;
+    position: relative;
+}
+
+.dait-quick-settings-panel:focus-visible {
+    outline: 2px solid var(--focus-primary, var(--brand-500, #5865f2));
+    outline-offset: 2px;
+}
+
+.dait-launcher-status {
+    align-items: center;
+    background: var(--background-secondary-alt, #232428);
+    border-radius: 999px;
+    bottom: -3px;
+    display: flex;
+    height: 14px;
+    justify-content: center;
+    pointer-events: none;
+    position: absolute;
+    right: -3px;
+    width: 14px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+    .dait-quick-popover {
+        animation: dait-qp-enter 0.12s ease-out;
     }
 
-    .dait-settings-row > .dait-api-status {
-        justify-self: start;
+    .dait-quick-popover[data-dait-placement="bottom"] {
+        animation-name: dait-qp-enter-below;
     }
 
-    .dait-api-controls {
-        grid-template-columns: 1fr;
+    /* Rebuilt in place (a language switch): it is already open, so it does not slide in again. */
+    .dait-quick-popover[data-dait-rerendered="true"] {
+        animation: none;
+    }
+
+    .dait-qp-switch,
+    .dait-qp-segment,
+    .dait-qp-icon-button {
+        transition: background-color 0.15s ease, color 0.15s ease;
+    }
+
+    .dait-qp-switch::before {
+        transition: transform 0.15s ease;
     }
 }
 
-@media (min-width: 760px) {
-    .dait-section-polish,
-    .dait-section-translation,
-    .dait-section-polish-controls,
-    .dait-section-translation-controls,
-    .dait-section-auto-translate,
-    .dait-section-public-bilingual,
-    .dait-section-display,
-    .dait-section-cache,
-    .dait-section-diagnostics {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
+@keyframes dait-qp-enter {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: none; }
+}
+
+@keyframes dait-qp-enter-below {
+    from { opacity: 0; transform: translateY(-4px); }
+    to { opacity: 1; transform: none; }
+}
+
+@media (forced-colors: active) {
+    .dait-qp-switch,
+    .dait-qp-segmented,
+    .dait-qp-dot {
+        border: 1px solid CanvasText;
     }
 
-    .dait-section-polish h3,
-    .dait-section-translation h3,
-    .dait-section-polish-controls h3,
-    .dait-section-translation-controls h3,
-    .dait-section-auto-translate h3,
-    .dait-section-public-bilingual h3,
-    .dait-section-display h3,
-    .dait-section-cache h3,
-    .dait-section-diagnostics h3,
-    .dait-section-polish > .dait-note,
-    .dait-section-translation > .dait-note,
-    .dait-section-public-bilingual > .dait-note,
-    .dait-section-polish .dait-prompt-manager,
-    .dait-section-translation .dait-prompt-manager,
-    .dait-section-translation .dait-google-settings,
-    .dait-section-public-bilingual .dait-settings-row-wide {
-        grid-column: 1 / -1;
+    .dait-qp-segment[aria-checked="true"] {
+        outline: 2px solid Highlight;
     }
 }
 `;
+  }
+});
+
+// src/css/08-dialogs.js
+var require_dialogs = __commonJS({
+  "src/css/08-dialogs.js"(exports2, module2) {
+    "use strict";
+    module2.exports = `
+/* Below Discord's layers and BetterDiscord's fallback modal (.bd-modal-wrapper, z-index 1000, earlier in the document). */
+.dait-quick-settings-modal-root[data-dait-confirm-open="true"] {
+    z-index: 999;
+}
+
+.dait-dialog {
+    color: var(--dait-text);
+    display: grid;
+    font-size: var(--dait-font-body);
+    gap: 12px;
+    line-height: var(--dait-line);
+    min-width: 0;
+}
+
+.dait-dialog[data-dait-dialog-surface="true"] {
+    background: var(--dait-bg);
+    border: 1px solid var(--dait-divider);
+    border-radius: var(--dait-radius-card);
+    padding: 16px;
+}
+
+.dait-dialog-text {
+    margin: 0;
+}
+
+.dait-dialog-list {
+    display: grid;
+    gap: 4px;
+    margin: 0;
+    padding-left: 20px;
+}
+
+.dait-dialog-list-erased {
+    color: var(--dait-danger);
+    font-weight: 500;
+}
+
+.dait-dialog-note {
+    color: inherit;
+    display: block;
+    font-size: var(--dait-font-body);
+    font-weight: 400;
+}
+
+/* The raised surface stands out from Discord's modal background in both palettes. */
+.dait-dialog-check {
+    align-items: center;
+    background: var(--dait-raised);
+    border: 1px solid var(--dait-divider);
+    border-radius: 8px;
+    color: var(--dait-text);
+    cursor: pointer;
+    display: flex;
+    font-weight: 600;
+    gap: 10px;
+    padding: 12px;
+}
+
+.dait-dialog-check input {
+    accent-color: var(--dait-brand);
+    cursor: pointer;
+    flex: none;
+    height: 18px;
+    margin: 0;
+    width: 18px;
+}
+
+.dait-dialog-check input:focus-visible,
+.dait-dialog-preview:focus-visible {
+    outline: 2px solid var(--dait-focus);
+    outline-offset: 2px;
+}
+
+.dait-dialog-preview {
+    background: var(--dait-raised);
+    border-left: 3px solid var(--dait-input-border);
+    border-radius: 4px;
+    color: var(--dait-text);
+    font-size: var(--dait-font-body);
+    max-height: 220px;
+    overflow: auto;
+    overflow-wrap: anywhere;
+    padding: 10px 12px;
+    white-space: pre-wrap;
+}
+
+/* Prompt-template manager: the body size and one control height (UI-SPEC typography). */
+.dait-prompt-manager {
+    gap: 16px;
+}
+
+.dait-prompt-manager-header,
+.dait-prompt-editor {
+    gap: 6px;
+}
+
+.dait-prompt-manager-header > span,
+.dait-prompt-editor > span {
+    color: var(--dait-text);
+    font-size: var(--dait-font-body);
+    font-weight: 600;
+    line-height: var(--dait-line);
+}
+
+.dait-prompt-manager .dait-row-description {
+    font-size: var(--dait-font-body);
+    line-height: var(--dait-line);
+}
+
+.dait-prompt-manager .dait-prompt-tools {
+    gap: 8px;
+}
+
+.dait-prompt-manager .dait-prompt-tools input,
+.dait-prompt-manager .dait-prompt-tools select {
+    border-radius: 4px;
+    font-size: var(--dait-font-body);
+    font-weight: 400;
+    height: var(--dait-control-h);
+    line-height: var(--dait-line);
+    min-height: var(--dait-control-h);
+    padding: 0 10px;
+}
+
+/* The chevron (two gradient layers) keeps the positions from the settings stylesheet. */
+.dait-prompt-manager .dait-prompt-tools select {
+    padding-right: 34px;
+}
+
+.dait-prompt-manager .dait-prompt-editor textarea {
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: var(--dait-font-body);
+    font-weight: 400;
+    line-height: var(--dait-line);
+    min-height: 160px;
+    padding: 8px 10px;
+}
+
+.dait-prompt-manager .dait-small-button {
+    border-radius: 4px;
+    font-size: var(--dait-font-body);
+    font-weight: 500;
+    height: var(--dait-control-h);
+    min-height: var(--dait-control-h);
+    padding: 0 14px;
+}
+
+.dait-prompt-manager .dait-prompt-actions {
+    gap: 8px;
+}
+
+.dait-prompt-preview-block {
+    display: grid;
+    gap: 6px;
+    min-width: 0;
+}
+
+.dait-prompt-preview-label {
+    color: var(--dait-text);
+    font-size: var(--dait-font-body);
+    font-weight: 600;
+    line-height: var(--dait-line);
+}
+
+.dait-prompt-preview {
+    background: var(--dait-surface);
+    border: 1px solid var(--dait-divider);
+    border-radius: 4px;
+    color: var(--dait-text);
+    font-size: var(--dait-font-body);
+    line-height: var(--dait-line);
+    max-height: 168px;
+    min-width: 0;
+    overflow: auto;
+    overflow-wrap: anywhere;
+    padding: 10px 12px;
+    white-space: pre-wrap;
+}
+
+.dait-prompt-preview:focus-visible {
+    outline: 2px solid var(--dait-focus);
+    outline-offset: 2px;
+}
+
+/* Status caption right under the prompt, then its buttons at their natural width on one line. */
+.dait-prompt-editor-footer {
+    display: grid;
+    gap: 8px;
+    min-width: 0;
+}
+
+.dait-prompt-editor-footer .dait-prompt-actions {
+    grid-column: auto;
+    justify-content: flex-start;
+}
+
+.dait-prompt-manager .dait-prompt-actions .dait-small-button {
+    flex: 0 0 auto;
+}
+
+.dait-prompt-status {
+    color: var(--dait-text);
+    font-size: var(--dait-font-body);
+    line-height: var(--dait-line);
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.dait-prompt-tools.dait-prompt-save {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.dait-prompt-tools.dait-prompt-save input {
+    flex: 1 1 220px;
+    width: auto;
+}
+
+.dait-prompt-tools.dait-prompt-save .dait-small-button {
+    flex: none;
+}
+`;
+  }
+});
+
+// src/styles.js
+var require_styles = __commonJS({
+  "src/styles.js"(exports2, module2) {
+    "use strict";
+    var PLUGIN_CSS = [
+      require_theme_tokens(),
+      require_quick_settings(),
+      require_chat_line_base(),
+      require_settings(),
+      require_composer(),
+      require_messages_and_lines(),
+      require_quick_popover(),
+      require_dialogs()
+    ].join("");
     module2.exports = { PLUGIN_CSS };
   }
 });
@@ -2882,6 +4381,8 @@ var require_constants = __commonJS({
     var DATA_KEY = "settings";
     var CACHE_DATA_KEY = "translationCache";
     var DIAGNOSTIC_DATA_KEY = "diagnosticLogs";
+    var CACHE_DATA_STORE = `${PLUGIN_NAME}.cache`;
+    var DIAGNOSTIC_DATA_STORE = `${PLUGIN_NAME}.diagnostics`;
     var STYLE_ID = "discord-ai-translator-style";
     var DISCORD_THEME_CLASSES = ["theme-light", "theme-midnight", "theme-darker", "theme-dark"];
     var DISCORD_DEFAULT_THEME_CLASS = "theme-dark";
@@ -3024,39 +4525,6 @@ var require_constants = __commonJS({
         autoTranslateRequestBatchSize: 1
       }
     };
-    var SETTINGS_TAB_POLISH = "polish";
-    var SETTINGS_TAB_TRANSLATION = "translation";
-    var SETTINGS_TAB_PUBLIC_BILINGUAL = "publicBilingual";
-    var SETTINGS_TAB_DISPLAY = "display";
-    var SETTINGS_TAB_DEFAULT = SETTINGS_TAB_POLISH;
-    var SETTINGS_TABS = [
-      SETTINGS_TAB_POLISH,
-      SETTINGS_TAB_TRANSLATION,
-      SETTINGS_TAB_PUBLIC_BILINGUAL,
-      SETTINGS_TAB_DISPLAY
-    ];
-    var SETTINGS_SECTION_GENERAL = "general";
-    var SETTINGS_SECTION_POLISH = "polish";
-    var SETTINGS_SECTION_POLISH_CONTROLS = "polishControls";
-    var SETTINGS_SECTION_TRANSLATION = "translation";
-    var SETTINGS_SECTION_TRANSLATION_CONTROLS = "translationControls";
-    var SETTINGS_SECTION_AUTO_TRANSLATE = "autoTranslate";
-    var SETTINGS_SECTION_PUBLIC_BILINGUAL = "publicBilingual";
-    var SETTINGS_SECTION_DISPLAY = "display";
-    var SETTINGS_SECTION_CACHE = "cache";
-    var SETTINGS_SECTION_DIAGNOSTICS = "diagnostics";
-    var SETTINGS_SECTION_IDS = [
-      SETTINGS_SECTION_GENERAL,
-      SETTINGS_SECTION_POLISH,
-      SETTINGS_SECTION_POLISH_CONTROLS,
-      SETTINGS_SECTION_TRANSLATION,
-      SETTINGS_SECTION_TRANSLATION_CONTROLS,
-      SETTINGS_SECTION_AUTO_TRANSLATE,
-      SETTINGS_SECTION_PUBLIC_BILINGUAL,
-      SETTINGS_SECTION_DISPLAY,
-      SETTINGS_SECTION_CACHE,
-      SETTINGS_SECTION_DIAGNOSTICS
-    ];
     var PROVIDER_ORDER = ["deepseek", "openaiCompatible", "sakuraLocal", "googleCloud", "microsoft", "deepl", "baidu"];
     var PROVIDER_PROFILE_FIELDS = ["apiKey", "endpoint", "model", "enableThinking", "region", "deeplPlan", "appId", "secretKey"];
     var PROVIDER_CAPABILITIES = {
@@ -3217,10 +4685,13 @@ var require_constants = __commonJS({
     var AUTO_TRANSLATE_FAILURE_HISTORY_TTL = 10 * 60 * 1e3;
     var AUTO_TRANSLATE_FAILURE_HISTORY_LIMIT = 2e3;
     var AUTO_TRANSLATE_INLINE_FAILURE_AFTER_COUNT = 3;
+    var AUTO_TRANSLATE_RETAIN_MAX_FAILURE_COUNT = 3;
     var AUTO_TRANSLATE_INVALID_OUTPUT_FAILURE_TTL = 4e3;
     var AUTO_TRANSLATE_FINAL_INVALID_OUTPUT_FAILURE_TTL = 2 * 60 * 1e3;
     var AUTO_TRANSLATE_TRANSIENT_FAILURE_TTL = 1e4;
     var AUTO_TRANSLATE_PROVIDER_FAILURE_TTL = 6e4;
+    var AUTO_TRANSLATE_TRUNCATED_FAILURE_TTL = 2 * 60 * 1e3;
+    var AUTO_TRANSLATE_TRUNCATED_FAILURE_MAX_TTL = 30 * 60 * 1e3;
     var LOCAL_PROVIDER_UNAVAILABLE_RETRY_MS = 6e4;
     var LOCAL_PROVIDER_HEALTH_RETRY_MS = 5e3;
     var LOCAL_PROVIDER_AUTO_MODEL_VALUE = "local-model";
@@ -3244,6 +4715,9 @@ var require_constants = __commonJS({
     var AUTO_TRANSLATE_LONG_TEXT_TIMEOUT_MAX_MS = 9e4;
     var AUTO_TRANSLATE_CLOUD_LONG_TEXT_TIMEOUT_MAX_MS = 45e3;
     var MANUAL_LONG_TEXT_WHOLE_PASS_MAX_LENGTH = 1800;
+    var MANUAL_TRANSLATION_REQUEST_BUDGET = 8;
+    var MANUAL_TRANSLATION_RESCUE_REQUEST_ALLOWANCE = 4;
+    var MANUAL_TRANSLATION_REQUEST_BUDGET_MAX = 24;
     var MODEL_REQUEST_TIMEOUT_MS = 45e3;
     var API_TEST_REQUEST_TIMEOUT_MS = 15e3;
     var API_ENDPOINT_ERROR_MESSAGE_KEYS = Object.freeze({
@@ -3280,6 +4754,10 @@ var require_constants = __commonJS({
     var INCREMENTAL_MESSAGE_WORK_MAX_PER_SLICE = 1;
     var MESSAGE_BUTTON_VISIBILITY_ALWAYS = "always";
     var MESSAGE_BUTTON_VISIBILITY_HOVER = "hover";
+    var TRANSLATION_LINE_STYLES = Object.freeze(["tint", "muted", "tag"]);
+    var TRANSLATION_LINE_TEXT_SCALES = Object.freeze([100, 90]);
+    var PANEL_THEMES = Object.freeze(["auto", "light", "dark"]);
+    var RTL_LANGUAGE_CODES = Object.freeze(["ar", "fa", "he", "iw", "ur", "ps", "yi", "dv", "ug", "ckb", "sd"]);
     var POLISH_REPOLISH_SOURCE_ORIGINAL = "original";
     var POLISH_REPOLISH_SOURCE_LAST_RESULT = "lastResult";
     var TRANSLATION_CACHE_DEFAULT_TTL_HOURS = 48;
@@ -3297,6 +4775,8 @@ var require_constants = __commonJS({
     var AUTO_TRANSLATE_PRECHECK_SKIP_MAX = 2e3;
     var AUTO_TRANSLATE_RECENT_RENDER_TTL_MS = 60 * 1e3;
     var AUTO_TRANSLATE_RECENT_RENDER_MAX = 1200;
+    var AUTO_TRANSLATE_PARTIAL_RESULT_TTL_MS = 10 * 60 * 1e3;
+    var AUTO_TRANSLATE_PARTIAL_RESULT_MAX = 300;
     var AUTO_TRANSLATE_LAST_DECISION_MAX = 600;
     var AUTO_TRANSLATE_INTAKE_MODES = ["auto", "dom", "bdfdb"];
     var STORE_MESSAGE_ID_NEGATIVE_LOOKUP_TTL_MS = 3e3;
@@ -3568,12 +5048,15 @@ var require_constants = __commonJS({
       googleTranslate: {
         keyPoolText: "",
         keys: [],
+        // This month's usage per key fingerprint, kept after a key's line is removed.
+        usageById: {},
         defaultMonthlyLimit: GOOGLE_TRANSLATE_DEFAULT_MONTHLY_LIMIT,
         allowPrefetch: true
       },
       ui: {
         settingsVersion: 2,
-        settingsActiveTab: SETTINGS_SECTION_GENERAL,
+        // One of the settings tabs in src/settings/settings-schema.js.
+        settingsActiveTab: "overview",
         language: "zh-CN",
         showQuickSettingsRailButton: false,
         showQuickSettingsPanelButton: true,
@@ -3591,6 +5074,9 @@ var require_constants = __commonJS({
         autoTranslateConcurrency: AUTO_TRANSLATE_DEFAULT_CONCURRENCY,
         autoTranslateStrictRetry: false,
         channelAutoTranslatePolicies: {},
+        // 2: an 'enabled' rule allow-lists the channel even while autoTranslateMessages is off (v0.4.0). Older
+        // 'enabled' rules followed the main switch and are loaded as 'inherit' (settings-store ensureSettingsShape).
+        channelAutoTranslatePoliciesVersion: 2,
         historyBackfillEnabled: false,
         historyBackfillLimit: 20,
         providerFallbackEnabled: false,
@@ -3604,6 +5090,10 @@ var require_constants = __commonJS({
         translationPosition: "before",
         maskTranslations: false,
         hideOriginalAfterTranslation: false,
+        translationStyle: "tint",
+        translationTextScale: 100,
+        // One of PANEL_THEMES: the colours of the settings window, the quick panel and the dialogs.
+        panelTheme: "auto",
         injectMessageContextMenu: true,
         enablePolishHotkey: true,
         polishHotkey: "Ctrl+Alt+P",
@@ -3616,6 +5106,8 @@ var require_constants = __commonJS({
       DATA_KEY,
       CACHE_DATA_KEY,
       DIAGNOSTIC_DATA_KEY,
+      CACHE_DATA_STORE,
+      DIAGNOSTIC_DATA_STORE,
       STYLE_ID,
       DISCORD_THEME_CLASSES,
       DISCORD_DEFAULT_THEME_CLASS,
@@ -3627,23 +5119,6 @@ var require_constants = __commonJS({
       DISCORD_MEDIA_MUTATION_SELECTOR,
       DISCORD_THEME_VARIABLES,
       PROVIDER_DEFAULTS,
-      SETTINGS_TAB_POLISH,
-      SETTINGS_TAB_TRANSLATION,
-      SETTINGS_TAB_PUBLIC_BILINGUAL,
-      SETTINGS_TAB_DISPLAY,
-      SETTINGS_TAB_DEFAULT,
-      SETTINGS_TABS,
-      SETTINGS_SECTION_GENERAL,
-      SETTINGS_SECTION_POLISH,
-      SETTINGS_SECTION_POLISH_CONTROLS,
-      SETTINGS_SECTION_TRANSLATION,
-      SETTINGS_SECTION_TRANSLATION_CONTROLS,
-      SETTINGS_SECTION_AUTO_TRANSLATE,
-      SETTINGS_SECTION_PUBLIC_BILINGUAL,
-      SETTINGS_SECTION_DISPLAY,
-      SETTINGS_SECTION_CACHE,
-      SETTINGS_SECTION_DIAGNOSTICS,
-      SETTINGS_SECTION_IDS,
       PROVIDER_ORDER,
       PROVIDER_PROFILE_FIELDS,
       PROVIDER_CAPABILITIES,
@@ -3664,10 +5139,13 @@ var require_constants = __commonJS({
       AUTO_TRANSLATE_FAILURE_HISTORY_TTL,
       AUTO_TRANSLATE_FAILURE_HISTORY_LIMIT,
       AUTO_TRANSLATE_INLINE_FAILURE_AFTER_COUNT,
+      AUTO_TRANSLATE_RETAIN_MAX_FAILURE_COUNT,
       AUTO_TRANSLATE_INVALID_OUTPUT_FAILURE_TTL,
       AUTO_TRANSLATE_FINAL_INVALID_OUTPUT_FAILURE_TTL,
       AUTO_TRANSLATE_TRANSIENT_FAILURE_TTL,
       AUTO_TRANSLATE_PROVIDER_FAILURE_TTL,
+      AUTO_TRANSLATE_TRUNCATED_FAILURE_TTL,
+      AUTO_TRANSLATE_TRUNCATED_FAILURE_MAX_TTL,
       LOCAL_PROVIDER_UNAVAILABLE_RETRY_MS,
       LOCAL_PROVIDER_HEALTH_RETRY_MS,
       LOCAL_PROVIDER_AUTO_MODEL_VALUE,
@@ -3691,6 +5169,9 @@ var require_constants = __commonJS({
       AUTO_TRANSLATE_LONG_TEXT_TIMEOUT_MAX_MS,
       AUTO_TRANSLATE_CLOUD_LONG_TEXT_TIMEOUT_MAX_MS,
       MANUAL_LONG_TEXT_WHOLE_PASS_MAX_LENGTH,
+      MANUAL_TRANSLATION_REQUEST_BUDGET,
+      MANUAL_TRANSLATION_RESCUE_REQUEST_ALLOWANCE,
+      MANUAL_TRANSLATION_REQUEST_BUDGET_MAX,
       MODEL_REQUEST_TIMEOUT_MS,
       API_TEST_REQUEST_TIMEOUT_MS,
       API_ENDPOINT_ERROR_MESSAGE_KEYS,
@@ -3724,6 +5205,10 @@ var require_constants = __commonJS({
       INCREMENTAL_MESSAGE_WORK_MAX_PER_SLICE,
       MESSAGE_BUTTON_VISIBILITY_ALWAYS,
       MESSAGE_BUTTON_VISIBILITY_HOVER,
+      TRANSLATION_LINE_STYLES,
+      TRANSLATION_LINE_TEXT_SCALES,
+      PANEL_THEMES,
+      RTL_LANGUAGE_CODES,
       POLISH_REPOLISH_SOURCE_ORIGINAL,
       POLISH_REPOLISH_SOURCE_LAST_RESULT,
       TRANSLATION_CACHE_DEFAULT_TTL_HOURS,
@@ -3741,6 +5226,8 @@ var require_constants = __commonJS({
       AUTO_TRANSLATE_PRECHECK_SKIP_MAX,
       AUTO_TRANSLATE_RECENT_RENDER_TTL_MS,
       AUTO_TRANSLATE_RECENT_RENDER_MAX,
+      AUTO_TRANSLATE_PARTIAL_RESULT_TTL_MS,
+      AUTO_TRANSLATE_PARTIAL_RESULT_MAX,
       AUTO_TRANSLATE_LAST_DECISION_MAX,
       AUTO_TRANSLATE_INTAKE_MODES,
       STORE_MESSAGE_ID_NEGATIVE_LOOKUP_TTL_MS,
@@ -3775,6 +5262,33 @@ var require_constants = __commonJS({
   }
 });
 
+// src/intake/emoji-text.js
+var require_emoji_text = __commonJS({
+  "src/intake/emoji-text.js"(exports2, module2) {
+    "use strict";
+    var EMOJI_PICTOGRAPH_SOURCE = "\\p{Extended_Pictographic}[\\u{FE0E}\\u{FE0F}]?\\p{Emoji_Modifier}?[\\u{E0020}-\\u{E007F}]*";
+    var STANDARD_EMOJI_SOURCE = [
+      "[0-9#*]\\u{FE0F}?\\u{20E3}",
+      "\\p{Regional_Indicator}{1,2}",
+      `${EMOJI_PICTOGRAPH_SOURCE}(?:\\u{200D}${EMOJI_PICTOGRAPH_SOURCE})*`,
+      "[\\u{FE0E}\\u{FE0F}\\u{20E3}\\p{Emoji_Modifier}]"
+    ].join("|");
+    var STANDARD_EMOJI_PATTERN = new RegExp(STANDARD_EMOJI_SOURCE, "gu");
+    var STANDARD_EMOJI_ONLY_PATTERN = new RegExp(`^(?:${STANDARD_EMOJI_SOURCE})+$`, "u");
+    var EMOJI_SHORTCODE_PATTERN = /:[A-Za-z0-9_~+-]{1,64}:/g;
+    function removeStandardEmoji(text) {
+      return String(text || "").replace(STANDARD_EMOJI_PATTERN, " ");
+    }
+    function isStandardEmojiText(text) {
+      return STANDARD_EMOJI_ONLY_PATTERN.test(String(text || ""));
+    }
+    function getEmojiNeutralTextLength(text) {
+      return String(text || "").replace(EMOJI_SHORTCODE_PATTERN, "e").replace(STANDARD_EMOJI_PATTERN, "e").length;
+    }
+    module2.exports = { removeStandardEmoji, isStandardEmojiText, getEmojiNeutralTextLength };
+  }
+});
+
 // src/auto-translation/request-pipeline.js
 var require_request_pipeline = __commonJS({
   "src/auto-translation/request-pipeline.js"(exports2, module2) {
@@ -3803,9 +5317,13 @@ var require_request_pipeline = __commonJS({
       DIAGNOSTIC_REASON_CODES,
       LOCAL_PROVIDER_HEALTH_RETRY_MS,
       MANUAL_LONG_TEXT_WHOLE_PASS_MAX_LENGTH,
+      MANUAL_TRANSLATION_REQUEST_BUDGET,
+      MANUAL_TRANSLATION_REQUEST_BUDGET_MAX,
+      MANUAL_TRANSLATION_RESCUE_REQUEST_ALLOWANCE,
       MODEL_REQUEST_TIMEOUT_MS,
       TRANSLATION_VALIDATION_QUALITIES
     } = require_constants();
+    var { removeStandardEmoji } = require_emoji_text();
     var AutoTranslationRequestPipeline = class {
       constructor(plugin) {
         this.plugin = plugin;
@@ -4057,12 +5575,23 @@ var require_request_pipeline = __commonJS({
         const cacheAliases = this.plugin.getTranslationCacheAliases(text, targetRequestOptions);
         const lineCacheAliases = this.plugin.getTranslationLineCacheAliases(text, targetRequestOptions);
         const canRenderCacheHit = targetVisible && !scanState.renderPaused && !scanState.layoutUnstable;
-        if (this.plugin.hasCurrentTranslationLine(target.content, cacheKey, text, lineCacheAliases, targetRequestOptions)) {
+        if (this.plugin.hasCurrentTranslationLine(target.content, cacheKey, this.plugin.getAutoTranslationTargetDomText(target), lineCacheAliases, targetRequestOptions, text)) {
           return {
             action: "skip",
             status: "skipped",
             state: DIAGNOSTIC_MESSAGE_STATES.SKIPPED,
             reasonCode: DIAGNOSTIC_REASON_CODES.CURRENT_TRANSLATION_PRESENT,
+            cacheKey,
+            requestOptions: targetRequestOptions,
+            counts: { eligible: 1, skippedCurrent: 1 }
+          };
+        }
+        if (this.plugin.isManualTranslationInFlight(target.content, this.plugin.getAutoTranslationTargetDomText(target))) {
+          return {
+            action: "skip",
+            status: "skipped",
+            state: DIAGNOSTIC_MESSAGE_STATES.SKIPPED,
+            reasonCode: DIAGNOSTIC_REASON_CODES.MANUAL_LINE_PRESENT,
             cacheKey,
             requestOptions: targetRequestOptions,
             counts: { eligible: 1, skippedCurrent: 1 }
@@ -4132,6 +5661,27 @@ var require_request_pipeline = __commonJS({
             };
           }
         }
+        const partialResult = this.plugin.getAutoTranslationPartialResult(cacheKey, text, now);
+        if (partialResult && !this.plugin.hasActiveAutoTranslationKey(cacheKey)) {
+          return {
+            action: "render-cache",
+            status: "cache-hit",
+            state: DIAGNOSTIC_MESSAGE_STATES.CACHE_HIT,
+            reasonCode: DIAGNOSTIC_REASON_CODES.CACHE_HIT,
+            cacheKey,
+            requestOptions: targetRequestOptions,
+            cachedTranslation: partialResult.translated,
+            renderMeta: {
+              partial: true,
+              validationQuality: partialResult.validationQuality,
+              validationReason: partialResult.validationReason,
+              partialInfo: partialResult.partialInfo
+            },
+            canRender: canRenderCacheHit,
+            counts: { eligible: 1, cacheHits: 1 },
+            extra: { partialResult: true, canRender: canRenderCacheHit, targetVisible }
+          };
+        }
         const recentRender = this.plugin.getRecentAutoTranslationRender(cacheKey, text, targetRequestOptions, now);
         if (recentRender) {
           return {
@@ -4149,9 +5699,11 @@ var require_request_pipeline = __commonJS({
             }
           };
         }
-        const hasPendingTargets = this.plugin.autoTranslationPendingTargets.has(cacheKey);
-        const hasActiveKey = this.plugin.hasActiveAutoTranslationKey(cacheKey);
-        const hasInFlightKey = this.plugin.autoTranslationInFlightKeys.has(cacheKey);
+        const activeKey = this.plugin.resolveActiveAutoTranslationKey(cacheKey);
+        const workKey = activeKey || cacheKey;
+        const hasPendingTargets = this.plugin.autoTranslationPendingTargets.has(workKey);
+        const hasActiveKey = Boolean(activeKey);
+        const hasInFlightKey = this.plugin.autoTranslationInFlightKeys.has(workKey);
         if (hasPendingTargets && !hasActiveKey) {
           return {
             action: "clear-stale-pending",
@@ -4164,13 +5716,13 @@ var require_request_pipeline = __commonJS({
           };
         }
         if (hasPendingTargets || hasActiveKey) {
-          const pendingTarget = { ...targetWithOptions, cacheKey };
+          const pendingTarget = { ...targetWithOptions, cacheKey: workKey };
           return {
             action: "block",
             status: "dedupe-active",
             state: hasInFlightKey ? DIAGNOSTIC_MESSAGE_STATES.IN_FLIGHT : this.plugin.getAutoTranslationQueuedDiagnosticState(pendingTarget),
             reasonCode: DIAGNOSTIC_REASON_CODES.DEDUPE_ACTIVE,
-            cacheKey,
+            cacheKey: workKey,
             requestOptions: targetRequestOptions,
             item: pendingTarget,
             hasPendingTargets,
@@ -4313,7 +5865,9 @@ var require_request_pipeline = __commonJS({
             decision.cacheKey,
             decision.canRender,
             decision.requestOptions,
-            candidate.textOptions
+            candidate.textOptions,
+            decision.renderMeta || null,
+            candidate.domText
           );
           return;
         }
@@ -4415,7 +5969,7 @@ var require_request_pipeline = __commonJS({
       isLongAutoTranslationItem(item) {
         return this.plugin.translationScheduler.isLongItem(item);
       }
-      async runAutoTranslationFallbackItems(pending) {
+      async runAutoTranslationFallbackItems(pending, taskOptions = {}) {
         const queue = this.plugin.takeAutoTranslationFallbackQueue(pending);
         if (queue.length) this.plugin.logDiagnostic("auto.fallback", "start", { count: queue.length, pending: pending.size });
         for (const item of queue) {
@@ -4437,7 +5991,7 @@ var require_request_pipeline = __commonJS({
               DIAGNOSTIC_MESSAGE_STATES.RETRYING,
               DIAGNOSTIC_REASON_CODES.RETRYING
             );
-            translated = await this.plugin.runAutoTranslationStrictFallbackTask(item.text, item.requestOptions);
+            translated = await this.plugin.runAutoTranslationStrictFallbackTask(item.text, item.requestOptions, { signal: taskOptions?.signal });
           } catch (error) {
             if (!this.plugin.isAutoTranslationWorkCurrent(item)) {
               pending.delete(item);
@@ -4511,7 +6065,7 @@ var require_request_pipeline = __commonJS({
         }
         return queue;
       }
-      async runAutoTranslationBatchRetryItems(pending) {
+      async runAutoTranslationBatchRetryItems(pending, taskOptions = {}) {
         const items = [...pending].filter((item) => this.plugin.isAutoTranslationWorkCurrent(item));
         if (!items.length) return;
         if (this.plugin.isAutoTranslationProviderCoolingDown(items[0]?.requestOptions)) return;
@@ -4525,7 +6079,7 @@ var require_request_pipeline = __commonJS({
             DIAGNOSTIC_MESSAGE_STATES.RETRYING,
             DIAGNOSTIC_REASON_CODES.RETRYING
           ));
-          const translations = await this.plugin.runAutoTranslationBatchTask(items.map((item) => item.text), items[0]?.requestOptions, { retry: true });
+          const translations = await this.plugin.runAutoTranslationBatchTask(items.map((item) => item.text), items[0]?.requestOptions, { retry: true, signal: taskOptions?.signal });
           if (!items.some((item) => this.plugin.isAutoTranslationWorkCurrent(item))) {
             items.forEach((item) => pending.delete(item));
             return;
@@ -4855,11 +6409,24 @@ var require_request_pipeline = __commonJS({
       }
       async runLongAutoTranslationTask(text, options = this.plugin.getAutoTranslationOptions(), taskOptions = {}) {
         const longOptions = options?.mode === "long-text" ? options : this.plugin.getLongTextTranslationOptions(options, text);
+        delete taskOptions.longTextPartial;
+        delete taskOptions.longTextFailedChunks;
+        delete taskOptions.longTextSuccessfulChunks;
+        delete taskOptions.longTextPartialInfo;
         const chunks = this.plugin.splitLongAutoTranslationText(text, this.plugin.getLongAutoTranslationChunkLength(longOptions));
         if (chunks.length <= 1) return this.plugin.runAutoTranslationTaskWithOptions(text, longOptions, taskOptions);
         const translatedChunks = [];
         const chunkFailures = [];
         const sourceHash = this.plugin.getStrongTextFingerprint(text);
+        let budgetError = null;
+        let stopError = null;
+        const hasFinishedChunk = () => translatedChunks.some((chunk) => chunk && !this.plugin.hasLongAutoTranslationChunkFailurePlaceholder(chunk));
+        const stopOnChunkError = (chunkError) => {
+          if (!this.plugin.shouldStopLongAutoTranslationOnChunkError(chunkError)) return false;
+          if (!this.plugin.shouldKeepLongAutoTranslationChunksOnError(chunkError) || !hasFinishedChunk()) throw chunkError;
+          stopError = chunkError;
+          return true;
+        };
         for (let index = 0; index < chunks.length; index++) {
           if (typeof taskOptions.heartbeat === "function" && taskOptions.heartbeat() === false) {
             throw this.plugin.createAutoTranslationStaleError("long-text-stale-before-chunk");
@@ -4870,11 +6437,27 @@ var require_request_pipeline = __commonJS({
             translated = await this.plugin.runAutoTranslationTaskWithOptions(chunks[index], chunkOptions, taskOptions);
           } catch (error) {
             if (this.plugin.isAbandonedTranslationError(error)) throw error;
-            const rescued = taskOptions?.manualRescue ? await this.plugin.runLongAutoTranslationChunkManualRescue(chunks[index], chunkOptions, error, taskOptions, {
-              sourceHash,
-              chunkIndex: index,
-              chunkTotal: chunks.length
-            }) : null;
+            stopOnChunkError(error);
+            if (this.plugin.isAutoTranslationRequestBudgetError(error)) budgetError = error;
+            let rescued = null;
+            if (taskOptions?.manualRescue && !budgetError && !stopError) {
+              const requestBudget = taskOptions.requestBudget;
+              if (requestBudget) requestBudget.reserved = chunks.length - index - 1;
+              try {
+                rescued = await this.plugin.runLongAutoTranslationChunkManualRescue(chunks[index], chunkOptions, error, taskOptions, {
+                  sourceHash,
+                  chunkIndex: index,
+                  chunkTotal: chunks.length
+                });
+              } catch (rescueError) {
+                if (this.plugin.isAbandonedTranslationError(rescueError)) throw rescueError;
+                stopOnChunkError(rescueError);
+                if (this.plugin.isAutoTranslationRequestBudgetError(rescueError) && !rescueError.requestBudgetReserved) budgetError = rescueError;
+                rescued = { translated: "", error };
+              } finally {
+                if (requestBudget) requestBudget.reserved = 0;
+              }
+            }
             if (rescued?.translated) {
               translated = rescued.translated;
               if (rescued.validation?.quality === TRANSLATION_VALIDATION_QUALITIES.PARTIAL) {
@@ -4901,6 +6484,13 @@ var require_request_pipeline = __commonJS({
             throw this.plugin.createAutoTranslationStaleError("long-text-stale-after-chunk");
           }
           translatedChunks.push(String(translated || "").trim());
+          if (budgetError || stopError) {
+            for (let rest = index + 1; rest < chunks.length; rest++) {
+              chunkFailures.push({ index: rest, error: budgetError || stopError });
+              translatedChunks.push("");
+            }
+            break;
+          }
         }
         const successfulChunks = translatedChunks.filter((chunk) => chunk && !this.plugin.hasLongAutoTranslationChunkFailurePlaceholder(chunk));
         if (!successfulChunks.length) {
@@ -4910,12 +6500,13 @@ var require_request_pipeline = __commonJS({
         if (chunkFailures.length) {
           const firstFailure = chunkFailures[0]?.error;
           const successRatio = successfulChunks.length / Math.max(1, chunks.length);
-          longOptions.longTextPartial = true;
-          longOptions.longTextFailedChunks = chunkFailures.length;
-          longOptions.longTextSuccessfulChunks = successfulChunks.length;
           taskOptions.longTextPartial = true;
           taskOptions.longTextFailedChunks = chunkFailures.length;
           taskOptions.longTextSuccessfulChunks = successfulChunks.length;
+          taskOptions.longTextPartialInfo = {
+            missingSegments: [...new Set(chunkFailures.map((failure) => failure.index + 1))].sort((left, right) => left - right),
+            totalSegments: chunks.length
+          };
           this.plugin.logDiagnostic("auto.long-text", successRatio >= 0.6 ? "partial" : "low-partial", {
             sourceHash,
             chunkTotal: chunks.length,
@@ -4995,6 +6586,7 @@ var require_request_pipeline = __commonJS({
               invalidReason: error?.autoTranslationInvalidReason || "",
               validationQuality: error?.autoTranslationValidationQuality || ""
             });
+            if (!this.plugin.isManualRescueRetryableError(error)) throw error;
           }
         }
         const subchunkRescue = await this.plugin.runLongAutoTranslationSubchunkManualRescue(chunkText, chunkOptions, taskOptions, meta);
@@ -5054,6 +6646,7 @@ var require_request_pipeline = __commonJS({
               invalidReason: error?.autoTranslationInvalidReason || "",
               validationQuality: error?.autoTranslationValidationQuality || ""
             });
+            if (!this.plugin.isManualRescueRetryableError(error)) throw error;
           }
         }
         const merged = translatedParts.filter(Boolean).join("\n\n").trim();
@@ -5110,7 +6703,7 @@ var require_request_pipeline = __commonJS({
           configOverrides
         };
       }
-      async runAutoTranslationModelAttempt(text, options = this.plugin.getAutoTranslationOptions()) {
+      async runAutoTranslationModelAttempt(text, options = this.plugin.getAutoTranslationOptions(), taskOptions = {}) {
         const timeoutMs = this.plugin.getAutoTranslationRequestTimeoutMs(options, text);
         const translated = await this.plugin.runModelTask("translation", text, {
           configOverrides: options.configOverrides,
@@ -5118,7 +6711,9 @@ var require_request_pipeline = __commonJS({
           mode: options.mode || "auto",
           requestContext: options.requestContext,
           longTextChunk: Boolean(options.longTextChunk),
-          longTextSourceLength: Number(options.longTextSourceLength || String(text || "").length) || 0
+          longTextSourceLength: Number(options.longTextSourceLength || String(text || "").length) || 0,
+          ...options.truncationRetry ? { truncationRetry: true } : {},
+          ...taskOptions?.signal ? { signal: taskOptions.signal } : {}
         });
         return this.plugin.sanitizeAutoTranslationOutput(text, translated, this.plugin.getAutoTranslationTargetLanguage(options), this.plugin.getAutoTranslationOutputValidationOptions(text, translated, options));
       }
@@ -5196,17 +6791,17 @@ var require_request_pipeline = __commonJS({
             shouldRepair: true
           };
         }
+        const partialLongText = Boolean(options?.partialLongText || requestOptions?.longTextPartial);
         if (policy === "trust-provider") {
           return {
             ...base,
-            quality: TRANSLATION_VALIDATION_QUALITIES.GOOD,
-            reasonCode: invalidReason,
+            quality: partialLongText ? TRANSLATION_VALIDATION_QUALITIES.PARTIAL : TRANSLATION_VALIDATION_QUALITIES.GOOD,
+            reasonCode: partialLongText ? invalidReason || "long-text-partial" : invalidReason,
             renderable: true,
-            cacheable: true,
+            cacheable: !partialLongText,
             shouldRepair: false
           };
         }
-        const partialLongText = Boolean(options?.partialLongText || requestOptions?.longTextPartial);
         if (partialLongText && !invalidReason) {
           return {
             ...base,
@@ -5369,12 +6964,14 @@ var require_request_pipeline = __commonJS({
         let firstInvalidReason = "";
         let firstValidation = null;
         try {
-          translated = await this.plugin.runAutoTranslationModelAttempt(text, options);
+          this.plugin.consumeAutoTranslationRequestBudget(taskOptions);
+          translated = await this.plugin.runAutoTranslationModelAttempt(text, options, taskOptions);
           const firstValidationOptions = this.plugin.getAutoTranslationOutputValidationOptions(text, translated, options);
           firstValidation = this.plugin.getAutoTranslationOutputValidationResult(text, translated, this.plugin.getAutoTranslationTargetLanguage(options), firstValidationOptions, options);
           firstInvalidReason = firstValidation.reasonCode || "";
         } catch (error) {
-          if (!error?.modelOutputTruncated || taskOptions.retryInvalidOutput === false || !this.plugin.isAutoTranslationStrictRetryEnabled()) throw error;
+          if (!error?.modelOutputTruncated || taskOptions.retryInvalidOutput === false) throw error;
+          if (!this.plugin.isAutoTranslationStrictRetryEnabled()) return this.plugin.runTruncatedAutoTranslationRetry(text, options, taskOptions, error);
           firstInvalidReason = "truncated";
         }
         if (firstValidation?.renderable) {
@@ -5393,7 +6990,8 @@ var require_request_pipeline = __commonJS({
         if (this.plugin.shouldRunLocalAutoTranslationRepairRetry(firstInvalidReason, text, translated, options, taskOptions)) {
           let repairOptions = this.plugin.getAutoTranslationFinalFallbackOptions(text, options);
           if (firstInvalidReason === "truncated") repairOptions = this.plugin.withRaisedAutoTranslationMaxTokens(repairOptions, text, 1.8);
-          const repaired = await this.plugin.runAutoTranslationModelAttempt(text, repairOptions);
+          this.plugin.consumeAutoTranslationRequestBudget(taskOptions);
+          const repaired = await this.plugin.runAutoTranslationModelAttempt(text, repairOptions, taskOptions);
           const repairValidationOptions = this.plugin.getAutoTranslationOutputValidationOptions(text, repaired, repairOptions);
           const repairValidation = this.plugin.getAutoTranslationOutputValidationResult(text, repaired, this.plugin.getAutoTranslationTargetLanguage(repairOptions), repairValidationOptions, repairOptions);
           const repairInvalidReason = repairValidation.reasonCode || "";
@@ -5406,7 +7004,8 @@ var require_request_pipeline = __commonJS({
         let retried = "";
         let retryInvalidReason = "";
         try {
-          retried = await this.plugin.runAutoTranslationModelAttempt(text, retryOptions);
+          this.plugin.consumeAutoTranslationRequestBudget(taskOptions);
+          retried = await this.plugin.runAutoTranslationModelAttempt(text, retryOptions, taskOptions);
           const retryValidationOptions = this.plugin.getAutoTranslationOutputValidationOptions(text, retried, retryOptions);
           const retryValidation = this.plugin.getAutoTranslationOutputValidationResult(text, retried, this.plugin.getAutoTranslationTargetLanguage(retryOptions), retryValidationOptions, retryOptions);
           retryInvalidReason = retryValidation.reasonCode || "";
@@ -5417,12 +7016,95 @@ var require_request_pipeline = __commonJS({
         }
         let lastChanceOptions = this.plugin.getAutoTranslationFinalFallbackOptions(text, options);
         if (retryInvalidReason === "truncated" || firstInvalidReason === "truncated") lastChanceOptions = this.plugin.withRaisedAutoTranslationMaxTokens(lastChanceOptions, text, 2.2);
-        const finalText = await this.plugin.runAutoTranslationModelAttempt(text, lastChanceOptions);
+        this.plugin.consumeAutoTranslationRequestBudget(taskOptions);
+        const finalText = await this.plugin.runAutoTranslationModelAttempt(text, lastChanceOptions, taskOptions);
         const finalValidationOptions = this.plugin.getAutoTranslationOutputValidationOptions(text, finalText, lastChanceOptions);
         const finalValidation = this.plugin.getAutoTranslationOutputValidationResult(text, finalText, this.plugin.getAutoTranslationTargetLanguage(lastChanceOptions), finalValidationOptions, lastChanceOptions);
         const finalInvalidReason = finalValidation.reasonCode || "";
         if (finalValidation.renderable) return finalText;
         throw this.plugin.createFinalInvalidAutoTranslationError(finalInvalidReason);
+      }
+      // With strict retry off, a cut-off output still gets one retry with a larger max_tokens. If
+      // that is cut off too, its truncation error ends the task and the failure layer backs off.
+      // The retry may generate more tokens, so its timeout grows with max_tokens (bounded). A
+      // looping model that is still too slow for it ends as the first truncation, never as a
+      // timeout that would mark a healthy local service unavailable.
+      async runTruncatedAutoTranslationRetry(text, options = this.plugin.getAutoTranslationOptions(), taskOptions = {}, truncatedError = null) {
+        const raisedOptions = {
+          ...this.plugin.withRaisedAutoTranslationMaxTokens(options, text, 1.8),
+          truncationRetry: true
+        };
+        raisedOptions.requestTimeoutMs = this.plugin.getTruncatedAutoTranslationRetryTimeoutMs(options, raisedOptions, text);
+        this.plugin.logDiagnostic("auto.truncated", "retry", {
+          sourceHash: this.plugin.getStrongTextFingerprint(text),
+          mode: options?.mode || "auto",
+          maxTokens: Number(raisedOptions?.configOverrides?.maxTokens || 0),
+          timeoutMs: raisedOptions.requestTimeoutMs
+        });
+        this.plugin.consumeAutoTranslationRequestBudget(taskOptions);
+        let retried = "";
+        try {
+          retried = await this.plugin.runAutoTranslationModelAttempt(text, raisedOptions, taskOptions);
+        } catch (error) {
+          if (truncatedError && !this.plugin.isAbandonedTranslationError(error) && this.plugin.isTimeoutError(error)) {
+            truncatedError.truncationRetryTimedOut = true;
+            throw truncatedError;
+          }
+          throw error;
+        }
+        const validation = this.plugin.getAutoTranslationOutputValidationResult(
+          text,
+          retried,
+          this.plugin.getAutoTranslationTargetLanguage(raisedOptions),
+          this.plugin.getAutoTranslationOutputValidationOptions(text, retried, raisedOptions),
+          raisedOptions
+        );
+        if (validation.renderable) return retried;
+        throw this.plugin.createFinalInvalidAutoTranslationError(validation.reasonCode || "invalid-output", { validationQuality: validation.quality });
+      }
+      // A per-click budget of model requests (manual translation). Every attempt, rescue and chunk
+      // request takes one; when none are left the attempt fails without sending anything.
+      createAutoTranslationRequestBudget(limit = MANUAL_TRANSLATION_REQUEST_BUDGET) {
+        return { limit: Math.max(1, Math.floor(Number(limit) || MANUAL_TRANSLATION_REQUEST_BUDGET)), used: 0, reserved: 0 };
+      }
+      // A long message needs one request per chunk (plus the whole pass), so its click budget grows
+      // with the chunk count, with a small rescue allowance on top, and stays bounded.
+      getManualTranslationRequestBudgetLimit(text = "", requestOptions = this.plugin.getManualTranslationRequestOptions()) {
+        if (!this.plugin.isLongAutoTranslationText(text)) return MANUAL_TRANSLATION_REQUEST_BUDGET;
+        const longOptions = requestOptions?.mode === "long-text" ? requestOptions : this.plugin.getLongTextTranslationOptions(requestOptions, text);
+        const chunkCount = this.plugin.splitLongAutoTranslationText(text, this.plugin.getLongAutoTranslationChunkLength(longOptions)).length;
+        const wholePass = String(text || "").length <= MANUAL_LONG_TEXT_WHOLE_PASS_MAX_LENGTH ? 1 : 0;
+        const planned = chunkCount + wholePass + MANUAL_TRANSLATION_RESCUE_REQUEST_ALLOWANCE;
+        return Math.min(MANUAL_TRANSLATION_REQUEST_BUDGET_MAX, Math.max(MANUAL_TRANSLATION_REQUEST_BUDGET, planned));
+      }
+      consumeAutoTranslationRequestBudget(taskOptions = {}) {
+        const budget = taskOptions?.requestBudget;
+        if (!budget) return;
+        if (this.plugin.isAutoTranslationRequestBudgetExhausted(budget)) {
+          const error = new Error("REQUEST_BUDGET_EXHAUSTED");
+          error.code = "REQUEST_BUDGET_EXHAUSTED";
+          error.autoTranslationRequestBudgetExhausted = true;
+          error.requestBudgetLimit = budget.limit;
+          error.requestBudgetReserved = Number(budget.used || 0) < Number(budget.limit || 0);
+          throw error;
+        }
+        budget.used++;
+      }
+      isAutoTranslationRequestBudgetExhausted(budget) {
+        return Boolean(budget && Number(budget.used || 0) >= Number(budget.limit || 0) - Math.max(0, Number(budget.reserved || 0)));
+      }
+      isAutoTranslationRequestBudgetError(error) {
+        return Boolean(error?.autoTranslationRequestBudgetExhausted);
+      }
+      // Errors that say the provider (not this chunk) is failing: sending the remaining chunks of a
+      // long message would only fail too and make rate limits worse.
+      shouldStopLongAutoTranslationOnChunkError(error) {
+        return ["auth", "quota", "rate-limit", "server", "local-unavailable", "network", "timeout"].includes(this.plugin.getAutoTranslationFailureType(error));
+      }
+      // A timeout or network error can be specific to one chunk (a slow or looping generation), so
+      // the chunks that already succeeded are kept and drawn as a partial result.
+      shouldKeepLongAutoTranslationChunksOnError(error) {
+        return ["network", "timeout"].includes(this.plugin.getAutoTranslationFailureType(error));
       }
       shouldRunLocalAutoTranslationRepairRetry(reason, text, translated, options = this.plugin.getAutoTranslationOptions(), taskOptions = {}) {
         if (taskOptions.retryInvalidOutput === false) return false;
@@ -5447,7 +7129,21 @@ var require_request_pipeline = __commonJS({
         if (!retryable.has(String(reason || ""))) return false;
         return String(translated || "").trim().length > 0;
       }
+      // The truncation retry's timeout: the normal one scaled by how much max_tokens grew, capped at
+      // the long-text maximum (and never shorter than the normal timeout).
+      getTruncatedAutoTranslationRetryTimeoutMs(options, raisedOptions, text = "") {
+        const baseTimeoutMs = this.plugin.getAutoTranslationRequestTimeoutMs(options, text);
+        const currentMaxTokens = this.plugin.normalizeRequestNumber(
+          this.plugin.getEffectiveTaskConfig("translation", options?.configOverrides).maxTokens,
+          DEFAULT_SETTINGS.translation.maxTokens,
+          { min: 1, integer: true }
+        );
+        const raisedMaxTokens = Number(raisedOptions?.configOverrides?.maxTokens || 0) || currentMaxTokens;
+        const scaled = Math.ceil(baseTimeoutMs * Math.max(1, raisedMaxTokens / currentMaxTokens));
+        return Math.max(baseTimeoutMs, Math.min(AUTO_TRANSLATE_LONG_TEXT_TIMEOUT_MAX_MS, scaled));
+      }
       getAutoTranslationRequestTimeoutMs(options = this.plugin.getAutoTranslationOptions(), text = "") {
+        if (Number(options?.requestTimeoutMs) > 0) return Number(options.requestTimeoutMs);
         const config = this.plugin.getEffectiveTaskConfig("translation", options?.configOverrides);
         const longLength = Math.max(String(text || "").length, Number(options?.longTextSourceLength || 0) || 0);
         if (options?.mode === "long-text" || options?.longTextChunk || longLength >= AUTO_TRANSLATE_FORCE_SINGLE_TEXT_LENGTH) {
@@ -5478,14 +7174,15 @@ var require_request_pipeline = __commonJS({
       isAbandonedTranslationError(error) {
         return Boolean(error?.autoTranslationStale) || this.plugin.isRequestCancelled(error);
       }
-      async runAutoTranslationStrictFallbackTask(text, options = this.plugin.getAutoTranslationOptions()) {
+      async runAutoTranslationStrictFallbackTask(text, options = this.plugin.getAutoTranslationOptions(), taskOptions = {}) {
         const strictOptions = this.plugin.getAutoTranslationRetryOptions(text, "", options);
+        const signalOptions = taskOptions?.signal ? { signal: taskOptions.signal } : {};
         try {
-          return await this.plugin.runAutoTranslationTask(text, strictOptions, { retryInvalidOutput: false });
+          return await this.plugin.runAutoTranslationTask(text, strictOptions, { retryInvalidOutput: false, ...signalOptions });
         } catch (error) {
           if (!error?.autoTranslationFinalInvalidOutput) throw error;
           const lastChanceOptions = this.plugin.getAutoTranslationFinalFallbackOptions(text, options);
-          const translated = await this.plugin.runAutoTranslationModelAttempt(text, lastChanceOptions);
+          const translated = await this.plugin.runAutoTranslationModelAttempt(text, lastChanceOptions, signalOptions);
           const finalInvalidReason = this.plugin.getAutoTranslationInvalidOutputReason(
             text,
             translated,
@@ -5501,7 +7198,7 @@ var require_request_pipeline = __commonJS({
           throw this.plugin.createAutoBatchParseError("Long text is handled by LongTextStrategy");
         }
         if (this.plugin.isDirectTranslateProvider(this.plugin.getEffectiveTaskConfig("translation", options?.configOverrides))) {
-          return this.plugin.runDirectTranslationBatchTask(texts, options);
+          return this.plugin.runDirectTranslationBatchTask(texts, options, taskOptions);
         }
         const batch = texts.map((text, index) => ({
           id: String(index + 1).padStart(3, "0"),
@@ -5511,7 +7208,8 @@ var require_request_pipeline = __commonJS({
         const output = await this.plugin.runModelTask("translation", JSON.stringify(batch), {
           configOverrides: batchOptions.configOverrides,
           timeoutMs: this.plugin.getAutoTranslationRequestTimeoutMs(batchOptions),
-          mode: batchOptions.mode || "auto-batch"
+          mode: batchOptions.mode || "auto-batch",
+          ...taskOptions?.signal ? { signal: taskOptions.signal } : {}
         });
         const rows = this.plugin.parseAutoTranslationBatchOutput(output);
         const byId = /* @__PURE__ */ new Map();
@@ -5703,6 +7401,7 @@ var require_request_pipeline = __commonJS({
           model: this.plugin.settings.translation.model,
           sourceLanguage: AUTO_LANGUAGE_VALUE,
           targetLanguage,
+          targetLanguageCode: this.plugin.getTargetLanguageCode(this.plugin.settings.translation.targetLanguage),
           temperature: 0,
           maxTokens: this.plugin.settings.translation.maxTokens,
           enableThinking: false,
@@ -5725,7 +7424,10 @@ var require_request_pipeline = __commonJS({
           deeplPlan: config.deeplPlan,
           appId: config.appId,
           secretKey: config.secretKey,
-          maxTokens: config.maxTokens
+          maxTokens: config.maxTokens,
+          // Builders replace targetLanguage with the LLM instruction; direct translation
+          // APIs read this raw code instead.
+          targetLanguageCode: this.plugin.getTargetLanguageCode(this.plugin.getAutoTranslationTargetLanguage(options || {}))
         };
       }
       getAutoTranslationTargetInstruction(language) {
@@ -5946,7 +7648,11 @@ var require_request_pipeline = __commonJS({
         return reason;
       }
       computeAutoTranslationPrecheckSkipReason(text, targetLanguage = this.plugin.settings.translation.targetLanguage) {
-        const value = String(text || "").trim();
+        const source = String(text || "").trim();
+        if (source.length < 2) return "too-short";
+        if (!this.plugin.hasLetters(source)) return "no-letters";
+        const withoutEmoji = removeStandardEmoji(source);
+        const value = withoutEmoji === source ? source : this.plugin.normalizeExtractedText(withoutEmoji);
         if (value.length < 2) return "too-short";
         if (!this.plugin.hasLetters(value)) return "no-letters";
         if (this.plugin.isAutoTranslationLinkOnlyText(value)) return "link-only";
@@ -6072,6 +7778,7 @@ var require_request_pipeline = __commonJS({
             ...raised.configOverrides,
             sourceLanguage: AUTO_LANGUAGE_VALUE,
             targetLanguage: this.plugin.getAutoTranslationTargetInstruction(this.plugin.getAutoTranslationTargetLanguage(raised)),
+            targetLanguageCode: this.plugin.getTargetLanguageCode(this.plugin.getAutoTranslationTargetLanguage(raised)),
             temperature: 0,
             enableThinking: false,
             promptPolicyVersion: this.plugin.getPromptPolicyVersion("longText"),
@@ -6122,6 +7829,9 @@ var require_request_pipeline = __commonJS({
           return translated;
         } catch (error) {
           if (this.plugin.isAbandonedTranslationError(error)) throw error;
+          if (this.plugin.isAutoTranslationRequestBudgetError(error) || this.plugin.shouldStopLongAutoTranslationOnChunkError(error) && !this.plugin.isTimeoutError(error)) {
+            throw error;
+          }
           this.plugin.logDiagnostic("manual.long-text.whole-pass", "failed", {
             ...this.plugin.getTranslationDiagnosticMeta("manual", {
               requestOptions: wholeOptions,
@@ -6153,11 +7863,46 @@ var require_request_pipeline = __commonJS({
       withAutoTranslationCandidateIdentity(options, candidate = {}) {
         return {
           ...options,
-          messageIdentity: candidate.messageIdentity || this.plugin.getMessageIdentity(candidate.messageNode, candidate.content, candidate.text || "")
+          messageIdentity: candidate.messageIdentity || this.plugin.getMessageIdentity(candidate.messageNode, candidate.content, this.plugin.getAutoTranslationTargetDomText(candidate))
         };
       }
     };
     module2.exports = { AutoTranslationRequestPipeline };
+  }
+});
+
+// src/auto-translation/channel-rule.js
+var require_channel_rule = __commonJS({
+  "src/auto-translation/channel-rule.js"(exports2, module2) {
+    "use strict";
+    var DISCORD_GUILD_PAGE_SEGMENTS = /* @__PURE__ */ new Set([
+      "channel-browser",
+      "customize-community",
+      "onboarding",
+      "member-safety",
+      "role-subscriptions",
+      "shop"
+    ]);
+    function getChannelRouteParts(routeKey) {
+      const [guildId = "", channelId = ""] = String(routeKey || "").split(":");
+      return { guildId, channelId };
+    }
+    function isChannelRouteSegment(segment) {
+      const value = String(segment || "");
+      if (!value) return false;
+      if (/^\d+$/.test(value)) return true;
+      return !value.startsWith("@") && !DISCORD_GUILD_PAGE_SEGMENTS.has(value.toLowerCase());
+    }
+    function getChannelRuleKey(routeKey) {
+      const { guildId, channelId } = getChannelRouteParts(routeKey);
+      return isChannelRouteSegment(channelId) ? `${guildId}:${channelId}` : "";
+    }
+    module2.exports = {
+      DISCORD_GUILD_PAGE_SEGMENTS,
+      getChannelRouteParts,
+      getChannelRuleKey,
+      isChannelRouteSegment
+    };
   }
 });
 
@@ -6184,6 +7929,8 @@ var require_queue_core = __commonJS({
       AUTO_TRANSLATE_MAX_CONCURRENCY,
       AUTO_TRANSLATE_MIN_BATCH_SIZE,
       AUTO_TRANSLATE_MIN_CONCURRENCY,
+      AUTO_TRANSLATE_PARTIAL_RESULT_MAX,
+      AUTO_TRANSLATE_PARTIAL_RESULT_TTL_MS,
       AUTO_TRANSLATE_PREFETCH_RANGES,
       AUTO_TRANSLATE_PROVIDER_FAILURE_TTL,
       AUTO_TRANSLATE_PROVIDER_REQUEST_BATCH_MAX,
@@ -6192,10 +7939,13 @@ var require_queue_core = __commonJS({
       AUTO_TRANSLATE_RECENT_RENDER_TTL_MS,
       AUTO_TRANSLATE_REQUEST_BATCH_SIZE,
       AUTO_TRANSLATE_REQUEST_TIMEOUT_MS,
+      AUTO_TRANSLATE_RETAIN_MAX_FAILURE_COUNT,
       AUTO_TRANSLATE_SCROLL_RENDER_PAUSE_MS,
       AUTO_TRANSLATE_SCROLL_STILL_MS,
       AUTO_TRANSLATE_TERMINAL_FAILURE_TTL,
       AUTO_TRANSLATE_TRANSIENT_FAILURE_TTL,
+      AUTO_TRANSLATE_TRUNCATED_FAILURE_MAX_TTL,
+      AUTO_TRANSLATE_TRUNCATED_FAILURE_TTL,
       AUTO_TRANSLATE_VIEWPORT_JUMP_COOLDOWN_MS,
       AUTO_TRANSLATE_VIEWPORT_JUMP_SETTLE_MS,
       AUTO_TRANSLATE_VIEWPORT_SETTLE_MS,
@@ -6208,6 +7958,7 @@ var require_queue_core = __commonJS({
       LOCAL_PROVIDER_HEALTH_RETRY_MS,
       LOCAL_PROVIDER_UNAVAILABLE_RETRY_MS
     } = require_constants();
+    var { getChannelRuleKey } = require_channel_rule();
     var AutoTranslationQueueCore = class {
       constructor(plugin) {
         this.plugin = plugin;
@@ -6242,6 +7993,8 @@ var require_queue_core = __commonJS({
         this.plugin.autoTranslationQueue = [];
         this.plugin.autoTranslationQueuedKeys.clear();
         if (!options.preserveVersion) {
+          this.plugin.abortAutoTranslationRequests("invalidated");
+          this.plugin.autoTranslationPartialResults?.clear?.();
           this.plugin.autoTranslationInFlight = 0;
           this.plugin.autoTranslationInFlightKeys.clear();
           this.plugin.autoTranslationVisibleLongInFlightKeys.clear();
@@ -6256,7 +8009,7 @@ var require_queue_core = __commonJS({
         if (!options.preserveFailures) {
           this.plugin.autoTranslationFailures.clear();
           this.plugin.autoTranslationProviderFailures.clear();
-          this.plugin.autoTranslationProviderNoticeAt.clear();
+          if (!options.preserveNotices) this.plugin.autoTranslationProviderNoticeAt.clear();
         }
         if (this.plugin.autoTranslationRetryTimer && !options.preserveFailures && !options.preserveRetry) {
           clearTimeout(this.plugin.autoTranslationRetryTimer);
@@ -6845,10 +8598,11 @@ var require_queue_core = __commonJS({
       shouldRetainAutoTranslationProviderBlockedItem(item) {
         return Boolean(item?.cacheKey && this.plugin.isAutoTranslationRequestCurrent(item?.requestOptions) && this.plugin.isAutoTranslationVisibleItem(item));
       }
-      shouldRetainAutoTranslationFailureItem(item, error) {
+      shouldRetainAutoTranslationFailureItem(item, error, failure = null) {
         if (!item?.cacheKey || item?.daitPrefetchRequest) return false;
         const type = this.plugin.getAutoTranslationFailureType(error);
-        if (!["local-unavailable", "timeout", "network", "server", "rate-limit", "truncated"].includes(type)) return false;
+        if (!["local-unavailable", "timeout", "network", "server", "rate-limit"].includes(type)) return false;
+        if (["timeout", "network"].includes(type) && Number(failure?.count || 0) >= AUTO_TRANSLATE_RETAIN_MAX_FAILURE_COUNT) return false;
         return this.plugin.shouldRetainAutoTranslationProviderBlockedItem(item);
       }
       getAutoTranslationProviderBlockedRetryMs(providerFailure = null, localProviderHealthBlocked = false, now = Date.now()) {
@@ -7070,18 +8824,15 @@ var require_queue_core = __commonJS({
       isAutoTranslationTargetReady(target, cacheKey = target?.cacheKey) {
         if (!target?.messageNode?.isConnected || !target?.content?.isConnected) return false;
         if (!this.plugin.isAutoTranslationTargetIdentityCurrent(target)) return false;
-        if (this.plugin.hasCurrentTranslationLine(target.content, cacheKey, target.text, this.plugin.getTranslationLineCacheAliases(target.text, target.requestOptions || {}))) return false;
+        const domText = this.plugin.getAutoTranslationTargetDomText(target);
+        if (this.plugin.hasCurrentTranslationLine(target.content, cacheKey, domText, this.plugin.getTranslationLineCacheAliases(target.text, target.requestOptions || {}), null, target.text)) return false;
         const messageInRange = this.plugin.isAutoTranslationTargetInScanRange(target.messageNode);
         const contentInRange = this.plugin.isAutoTranslationTargetInScanRange(target.content);
         if (!target.daitHistoryRequest) {
           if (!messageInRange && !contentInRange) return false;
           if (!contentInRange && !this.plugin.isAutoTranslationContentInsideMessage(target)) return false;
         }
-        const currentText = this.plugin.getElementText(target.content, target.textOptions);
-        if (currentText === target.text) return true;
-        if (target.sourceTextKind === "store-full" && this.plugin.isManualTranslationSourceCompatible(target.text, currentText)) return true;
-        if (target.domText && currentText === target.domText && this.plugin.isManualTranslationSourceCompatible(target.text, target.domText)) return true;
-        return false;
+        return this.plugin.isAutoTranslationTargetDomTextCurrent(target);
       }
       getAutoTranslateConcurrency() {
         if (!this.plugin.isAutoTranslateEnabled()) return 0;
@@ -7094,8 +8845,10 @@ var require_queue_core = __commonJS({
       isAutoTranslationPrefetchConfigured() {
         return Boolean(this.plugin.settings.ui?.autoTranslatePrefetch);
       }
+      // Channel rule (v0.4.0): 'enabled' is an allow-list that works even while the main
+      // auto-translate switch is off, 'disabled' always wins, 'inherit' follows the main switch.
       isAutoTranslateEnabled() {
-        return Boolean(this.plugin.isStarted && this.plugin.settings?.translation?.enabled && this.plugin.settings?.ui?.autoTranslateMessages && this.plugin.isCurrentChannelAutoTranslateAllowed());
+        return Boolean(this.plugin.isStarted && this.plugin.settings?.translation?.enabled && this.plugin.isCurrentChannelAutoTranslateAllowed());
       }
       cancelAutoTranslationRuntimeWork(reason = "disabled") {
         const hasRetryTimer = Boolean(this.plugin.autoTranslationRetryTimer);
@@ -7103,7 +8856,7 @@ var require_queue_core = __commonJS({
           this.plugin.autoTranslationQueue?.length || this.plugin.autoTranslationQueuedKeys?.size || this.plugin.autoTranslationPendingTargets?.size || this.plugin.autoTranslationInFlightKeys?.size || this.plugin.autoTranslationInFlightItems || this.plugin.autoTranslationRenderQueue?.length
         );
         if (!hasRetryTimer && !hasWork) return false;
-        this.plugin.invalidateAutoTranslationQueue();
+        this.plugin.invalidateAutoTranslationQueue({ preserveNotices: true });
         this.plugin.logDiagnostic("auto.queue.cancel", "ok", { reason });
         return true;
       }
@@ -7148,18 +8901,16 @@ var require_queue_core = __commonJS({
       getCurrentChannelAutoTranslatePolicyMode(routeKey = this.plugin.getCurrentRouteKey()) {
         return this.plugin.normalizeChannelAutoTranslatePolicyMode(this.plugin.getCurrentChannelAutoTranslatePolicy(routeKey)?.mode);
       }
+      // "" on a screen that is not a channel (channel-rule.js decides): such a screen gets no rule.
       getChannelAutoTranslatePolicyStorageKey(routeKey = this.plugin.getCurrentRouteKey()) {
-        const parts = String(routeKey || "").split(":");
-        const guildId = parts[0] || "";
-        const channelId = parts[1] || "";
-        if (!channelId) return "";
-        return `${guildId}:${channelId}`;
+        return getChannelRuleKey(routeKey);
       }
       setCurrentChannelAutoTranslatePolicyMode(mode, routeKey = this.plugin.getCurrentRouteKey(), options = {}) {
         const normalized = this.plugin.normalizeChannelAutoTranslatePolicyMode(mode);
         const key = this.plugin.getChannelAutoTranslatePolicyStorageKey(routeKey);
+        const syncOptions = { includeActive: true, routeKey };
         if (!key) {
-          this.plugin.syncSettingControls("ui.currentChannelAutoTranslatePolicy", "inherit", { includeActive: true });
+          this.plugin.syncSettingControls("ui.currentChannelAutoTranslatePolicy", "inherit", syncOptions);
           return false;
         }
         if (!this.plugin.settings.ui.channelAutoTranslatePolicies || typeof this.plugin.settings.ui.channelAutoTranslatePolicies !== "object" || Array.isArray(this.plugin.settings.ui.channelAutoTranslatePolicies)) {
@@ -7172,7 +8923,7 @@ var require_queue_core = __commonJS({
         if (normalized === "inherit") delete policies[key];
         else policies[key] = { mode: normalized };
         if (previous === normalized) {
-          this.plugin.syncSettingControls("ui.currentChannelAutoTranslatePolicy", normalized, { includeActive: true });
+          this.plugin.syncSettingControls("ui.currentChannelAutoTranslatePolicy", normalized, syncOptions);
           if (options.save === "immediate" || options.forceSave === true) this.plugin.saveSettings({ retryOnError: options.retryOnError });
           else if (options.save === "debounce") this.plugin.saveSettings({ debounce: true, delayMs: options.delayMs });
           return false;
@@ -7180,9 +8931,9 @@ var require_queue_core = __commonJS({
         if (options.save === false) {
         } else if (options.save === "immediate") this.plugin.saveSettings({ retryOnError: options.retryOnError });
         else this.plugin.saveSettings({ debounce: true, delayMs: options.delayMs });
-        this.plugin.syncSettingControls("ui.currentChannelAutoTranslatePolicy", normalized, { includeActive: true });
+        this.plugin.syncSettingControls("ui.currentChannelAutoTranslatePolicy", normalized, syncOptions);
         this.plugin.invalidateAutoTranslationQueue();
-        if (normalized === "disabled") this.plugin.cancelAutoTranslationRuntimeWork("channel-policy-disabled");
+        if (!this.plugin.isAutoTranslateEnabled()) this.plugin.cancelAutoTranslationRuntimeWork("channel-policy-disabled");
         this.plugin.logDiagnostic("auto.channel-policy", "updated", {
           ...this.plugin.getDiagnosticBaseMeta("auto", "settings", normalized === "disabled" ? "channel-disabled" : "channel-policy"),
           routeKeyHash: this.plugin.getDiagnosticRouteKeyHash(routeKey),
@@ -7205,9 +8956,58 @@ var require_queue_core = __commonJS({
           enabled: mode === "enabled" ? true : mode === "disabled" ? false : void 0
         };
       }
+      // Quick settings can stay open across a channel switch (a notification click or a keybind) while scans are
+      // held, so a "current channel" rule control would keep showing and editing the channel it was built for.
+      // Each control bound to another channel is rebuilt, row and all, for the channel open now; on a screen with
+      // no channel there is nothing to set a rule for, so the rebuilt control is disabled. Returns the rows rebuilt.
+      refreshChannelRuleControls(routeKey = this.plugin.getCurrentRouteKey()) {
+        const path = "ui.currentChannelAutoTranslatePolicy";
+        const selector = `[data-dait-path='${path}']`;
+        let controls = [];
+        try {
+          if (typeof document !== "undefined" && typeof document.querySelectorAll === "function") controls = [...document.querySelectorAll(selector)];
+        } catch {
+        }
+        const channel = this.plugin.getChannelAutoTranslatePolicyStorageKey(routeKey);
+        let rebuilt = 0;
+        controls.forEach((control) => {
+          const bound = control?.dataset?.daitRouteKey;
+          if (typeof bound !== "string") return;
+          const boundChannel = this.plugin.getChannelAutoTranslatePolicyStorageKey(bound);
+          if (boundChannel === channel && (channel || this.plugin.isChannelRuleControlDisabled(control))) return;
+          const row = this.plugin.createCurrentChannelPolicyRow();
+          const fresh = row?.dataset?.daitPath === path ? row : row?.querySelectorAll?.(selector)?.[0];
+          if (!fresh) return;
+          let depth = 0;
+          for (let node = fresh; node && node !== row; node = node.parentNode) depth++;
+          let oldRow = control;
+          for (let step = 0; step < depth && oldRow; step++) oldRow = oldRow.parentNode;
+          const rowClass = (node) => String(node?.className || "").trim().split(/\s+/)[0];
+          if (oldRow && oldRow.tagName === row.tagName && rowClass(oldRow) === rowClass(row) && typeof oldRow.replaceWith === "function") {
+            oldRow.replaceWith(row);
+          } else if (typeof control.replaceWith === "function") control.replaceWith(fresh);
+          else return;
+          rebuilt++;
+        });
+        return rebuilt;
+      }
+      // Channels whose rule is 'enabled': they auto-translate even while the main switch is off.
+      getChannelAutoTranslateAllowListCount(policies = this.plugin.settings.ui?.channelAutoTranslatePolicies) {
+        if (!policies || typeof policies !== "object" || Array.isArray(policies)) return 0;
+        const channels = /* @__PURE__ */ new Set();
+        Object.entries(policies).forEach(([key, policy]) => {
+          if (!policy || typeof policy !== "object") return;
+          if (this.plugin.normalizeChannelAutoTranslatePolicyMode(policy.mode) !== "enabled") return;
+          const channel = this.plugin.getChannelAutoTranslatePolicyStorageKey(key);
+          if (channel) channels.add(channel);
+        });
+        return channels.size;
+      }
       isCurrentChannelAutoTranslateAllowed(routeKey = this.plugin.getCurrentRouteKey()) {
         const policy = this.plugin.getCurrentChannelAutoTranslatePolicy(routeKey);
-        return policy.enabled !== false;
+        if (policy.mode === "enabled") return true;
+        if (policy.mode === "disabled") return false;
+        return Boolean(this.plugin.settings?.ui?.autoTranslateMessages);
       }
       isAutoTranslationRequestCurrent(requestOptions) {
         const versionCurrent = Number(requestOptions?.version ?? this.plugin.autoTranslationConfigVersion) === this.plugin.autoTranslationConfigVersion;
@@ -7238,9 +9038,11 @@ var require_queue_core = __commonJS({
         const startedAt = Date.now();
         try {
           if (this.plugin.isAutoTranslationWorkCurrent(item)) this.plugin.renderPendingAutoTranslationLoadingSafely(item);
-          const translated = await this.plugin.runAutoTranslationTask(item.text, item.requestOptions, {
-            heartbeat: () => this.plugin.heartbeatAutoTranslationInFlightItem(item)
-          });
+          const taskOptions = {
+            heartbeat: () => this.plugin.heartbeatAutoTranslationInFlightItem(item),
+            signal: this.plugin.getAutoTranslationAbortSignal()
+          };
+          const translated = await this.plugin.runAutoTranslationTask(item.text, item.requestOptions, taskOptions);
           if (this.plugin.isAutoTranslationWorkCurrent(item)) {
             this.plugin.logDiagnostic("auto.message", "success", {
               ...this.plugin.getAutoTranslationDiagnosticMeta(item, DIAGNOSTIC_MESSAGE_STATES.VALIDATING, DIAGNOSTIC_REASON_CODES.OUTPUT_RECEIVED),
@@ -7257,7 +9059,7 @@ var require_queue_core = __commonJS({
               DIAGNOSTIC_REASON_CODES.OUTPUT_RECEIVED,
               { ms: Date.now() - startedAt }
             );
-            this.plugin.renderAutoTranslationResultSafely(item, translated);
+            this.plugin.renderAutoTranslationResultSafely(item, translated, taskOptions.longTextPartialInfo ? { partialInfo: taskOptions.longTextPartialInfo } : void 0);
           }
         } catch (error) {
           if (this.plugin.isAutoTranslationWorkCurrent(item)) {
@@ -7300,12 +9102,15 @@ var require_queue_core = __commonJS({
             if (this.plugin.isAutoTranslationWorkCurrent(item)) this.plugin.renderPendingAutoTranslationLoadingSafely(item);
           });
           let translations = [];
+          let requestError = null;
+          const taskOptions = { signal: this.plugin.getAutoTranslationAbortSignal() };
           try {
-            translations = await this.plugin.runAutoTranslationBatchTask(items.map((item) => item.text), items[0]?.requestOptions);
+            translations = await this.plugin.runAutoTranslationBatchTask(items.map((item) => item.text), items[0]?.requestOptions, taskOptions);
           } catch (error) {
             if (!items.some((item) => this.plugin.isAutoTranslationWorkCurrent(item))) {
               pending.clear();
             } else if (this.plugin.shouldFallbackAutoTranslationBatchRequestError(error)) {
+              requestError = error;
               this.plugin.logDiagnostic("auto.batch", "fallback", {
                 type: this.plugin.getAutoTranslationFailureType(error),
                 batchSize: items.length,
@@ -7379,7 +9184,9 @@ var require_queue_core = __commonJS({
               ms: Date.now() - startedAt
             });
           }
-          if (pending.size && !this.plugin.isAutoTranslationStrictRetryEnabled()) {
+          if (pending.size && requestError && !translations.length && !this.plugin.isAutoTranslationStrictRetryEnabled()) {
+            this.plugin.settleFailedAutoTranslationBatchRequest(pending, requestError);
+          } else if (pending.size && !this.plugin.isAutoTranslationStrictRetryEnabled()) {
             pending.forEach((item) => {
               if (this.plugin.isAutoTranslationWorkCurrent(item)) {
                 this.plugin.logAutoTranslationMessageState(
@@ -7395,8 +9202,8 @@ var require_queue_core = __commonJS({
               pending.delete(item);
             });
           } else {
-            await this.plugin.runAutoTranslationBatchRetryItems(pending);
-            await this.plugin.runAutoTranslationFallbackItems(pending);
+            await this.plugin.runAutoTranslationBatchRetryItems(pending, taskOptions);
+            await this.plugin.runAutoTranslationFallbackItems(pending, taskOptions);
           }
           pending.forEach((item) => {
             if (this.plugin.isAutoTranslationWorkCurrent(item)) this.plugin.clearPendingAutoTranslationItemSafely(item);
@@ -7429,6 +9236,43 @@ var require_queue_core = __commonJS({
             this.plugin.queueScan();
           }
         }
+      }
+      // A batch request that failed as a whole says nothing about each message's output, so it must
+      // not end as a final invalid-output failure. An unusable batch reply (unreadable, empty or cut
+      // off) is sent again as single requests; a request error (timeout, network, client error) gets
+      // that error's own backoff, with the provider marked once for the whole batch.
+      settleFailedAutoTranslationBatchRequest(pending, error) {
+        const current = [...pending].filter((item) => this.plugin.isAutoTranslationWorkCurrent(item));
+        const formatError = this.plugin.isAutoTranslationBatchFormatError(error);
+        this.plugin.logDiagnostic("auto.batch", formatError ? "single-fallback" : "request-failed", {
+          type: this.plugin.getAutoTranslationFailureType(error),
+          batchSize: pending.size,
+          current: current.length
+        });
+        if (!formatError && current.length && this.plugin.shouldMarkAutoTranslationProviderFailureForItem(current[0], error)) {
+          this.plugin.markAutoTranslationProviderFailure(current[0]?.requestOptions, error);
+        }
+        current.forEach((item) => {
+          pending.delete(item);
+          if (formatError) {
+            item.daitSingleRequest = true;
+            this.plugin.requeueAutoTranslationItem(item, { allowActiveRequeue: true, preserveLoading: true });
+            return;
+          }
+          this.plugin.logAutoTranslationMessageState(
+            "auto.message.state",
+            "failed",
+            item,
+            DIAGNOSTIC_MESSAGE_STATES.FAILED,
+            DIAGNOSTIC_REASON_CODES.FAILURE,
+            { type: this.plugin.getAutoTranslationFailureType(error), batchRequestFailed: true }
+          );
+          this.plugin.markAutoTranslationFailureSafely(item, error, { markProvider: false });
+        });
+      }
+      isAutoTranslationBatchFormatError(error) {
+        if (this.plugin.isAutoBatchFallbackError(error) || error?.modelOutputTruncated) return true;
+        return this.plugin.getAutoTranslationFailureType(error) === "invalid-output";
       }
       requeueAutoTranslationItem(item, options = {}) {
         if (!item?.cacheKey) return;
@@ -7507,7 +9351,41 @@ var require_queue_core = __commonJS({
       }
       hasActiveAutoTranslationKey(cacheKey) {
         this.plugin.pruneAutoTranslationActiveState();
-        return Boolean(cacheKey && (this.plugin.autoTranslationQueuedKeys.has(cacheKey) || this.plugin.autoTranslationInFlightKeys.has(cacheKey) || this.plugin.autoTranslationRenderPendingKeys?.has?.(cacheKey)));
+        return Boolean(this.findActiveAutoTranslationKey(cacheKey));
+      }
+      // The key this message's work is queued, in flight or waiting to render under: the key itself or, for a
+      // local server whose model is detected, the same key naming the model known when the work was queued.
+      // (Work queued before the first detection is keyed with the "local-model" placeholder, and a scan after
+      // it keys the same message with the served model.) "" when there is no such work.
+      resolveActiveAutoTranslationKey(cacheKey) {
+        this.plugin.pruneAutoTranslationActiveState();
+        return this.findActiveAutoTranslationKey(cacheKey);
+      }
+      findActiveAutoTranslationKey(cacheKey) {
+        if (!cacheKey) return "";
+        const activeSets = [
+          this.plugin.autoTranslationQueuedKeys,
+          this.plugin.autoTranslationInFlightKeys,
+          this.plugin.autoTranslationRenderPendingKeys
+        ].filter((keys) => keys?.size);
+        if (activeSets.some((keys) => keys.has(cacheKey))) return cacheKey;
+        if (!activeSets.length) return "";
+        if (!this.plugin.shouldAutoDetectLocalProviderModel(this.plugin.getEffectiveTaskConfig("translation"), DEFAULT_SETTINGS.translation || {})) return "";
+        const wanted = this.getModelAgnosticAutoTranslationKey(cacheKey);
+        if (!wanted) return "";
+        for (const keys of activeSets) {
+          for (const key of keys) {
+            if (key !== cacheKey && this.getModelAgnosticAutoTranslationKey(key) === wanted) return key;
+          }
+        }
+        return "";
+      }
+      getModelAgnosticAutoTranslationKey(cacheKey) {
+        const parts = String(cacheKey || "").split("\n---\n");
+        const index = parts.findIndex((part, position) => position > 0 && part.startsWith("model:") && parts[position - 1].startsWith("endpoint:"));
+        if (index < 0) return "";
+        parts[index] = "model:";
+        return parts.join("\n---\n");
       }
       pruneAutoTranslationActiveState(now = Date.now()) {
         this.plugin.pruneAutoTranslationRenderPendingKeys();
@@ -7609,6 +9487,88 @@ var require_queue_core = __commonJS({
         while (this.plugin.autoTranslationRecentRenders.size > AUTO_TRANSLATE_RECENT_RENDER_MAX) {
           this.plugin.autoTranslationRecentRenders.delete(this.plugin.autoTranslationRecentRenders.keys().next().value);
         }
+      }
+      // Partial results (for example a long message with a failed chunk) must not enter the
+      // persistent cache, but are kept here briefly so a rebuilt or prefetched message is redrawn
+      // instead of requested again. A complete cached result replaces them.
+      rememberAutoTranslationPartialResult(cacheKey, text, translated, meta = {}) {
+        const key = String(cacheKey || "");
+        const value = String(translated || "").trim();
+        if (!key || !value) return;
+        if (!this.plugin.autoTranslationPartialResults?.set) this.plugin.autoTranslationPartialResults = /* @__PURE__ */ new Map();
+        const now = Date.now();
+        const partialInfo = meta.partialInfo && typeof meta.partialInfo === "object" ? {
+          missingSegments: Array.isArray(meta.partialInfo.missingSegments) ? [...meta.partialInfo.missingSegments] : [],
+          totalSegments: Number(meta.partialInfo.totalSegments || 0) || 0
+        } : null;
+        this.plugin.autoTranslationPartialResults.delete(key);
+        this.plugin.autoTranslationPartialResults.set(key, {
+          sourceSig: this.plugin.getStrongTextFingerprint(text),
+          translated: value,
+          partialInfo,
+          validationQuality: String(meta.validationQuality || ""),
+          validationReason: String(meta.validationReason || ""),
+          at: now,
+          expiresAt: now + AUTO_TRANSLATE_PARTIAL_RESULT_TTL_MS
+        });
+        this.plugin.pruneAutoTranslationPartialResults(now);
+      }
+      getAutoTranslationPartialResult(cacheKey, text, now = Date.now()) {
+        const key = String(cacheKey || "");
+        const entry = key ? this.plugin.autoTranslationPartialResults?.get?.(key) : null;
+        if (!entry) return null;
+        if (Number(entry.expiresAt || 0) <= now || entry.sourceSig !== this.plugin.getStrongTextFingerprint(text)) {
+          this.plugin.autoTranslationPartialResults.delete(key);
+          return null;
+        }
+        return entry;
+      }
+      // A partial line that is still shown keeps its kept result alive (and last to be pruned), so a
+      // rebuilt message is redrawn from it instead of requested again.
+      touchAutoTranslationPartialResult(cacheKey, text, now = Date.now()) {
+        const entry = this.plugin.getAutoTranslationPartialResult(cacheKey, text, now);
+        if (!entry) return null;
+        entry.expiresAt = now + AUTO_TRANSLATE_PARTIAL_RESULT_TTL_MS;
+        this.plugin.autoTranslationPartialResults.delete(String(cacheKey));
+        this.plugin.autoTranslationPartialResults.set(String(cacheKey), entry);
+        return entry;
+      }
+      clearAutoTranslationPartialResult(...cacheKeys) {
+        if (!this.plugin.autoTranslationPartialResults?.size) return;
+        cacheKeys.forEach((cacheKey) => {
+          if (cacheKey) this.plugin.autoTranslationPartialResults.delete(String(cacheKey));
+        });
+      }
+      pruneAutoTranslationPartialResults(now = Date.now()) {
+        const results = this.plugin.autoTranslationPartialResults;
+        if (!results?.size) return;
+        for (const [key, entry] of [...results.entries()]) {
+          if (Number(entry?.expiresAt || 0) <= now) results.delete(key);
+        }
+        while (results.size > AUTO_TRANSLATE_PARTIAL_RESULT_MAX) {
+          results.delete(results.keys().next().value);
+        }
+      }
+      // Every request made for queued auto-translation work carries this signal. A full invalidation
+      // orphans that work and aborts the signal; work started afterwards gets a fresh one.
+      getAutoTranslationAbortSignal() {
+        if (typeof AbortController === "undefined") return void 0;
+        if (!this.plugin.autoTranslationAbortController || this.plugin.autoTranslationAbortController.signal.aborted) {
+          this.plugin.autoTranslationAbortController = new AbortController();
+        }
+        return this.plugin.autoTranslationAbortController.signal;
+      }
+      abortAutoTranslationRequests(reason = "invalidated") {
+        const controller = this.plugin.autoTranslationAbortController;
+        this.plugin.autoTranslationAbortController = null;
+        if (!controller || controller.signal.aborted) return false;
+        const inFlight = Number(this.plugin.autoTranslationInFlight || 0);
+        try {
+          controller.abort();
+        } catch {
+        }
+        if (inFlight) this.plugin.logDiagnostic("auto.queue.abort", "ok", { reason, inFlight });
+        return true;
       }
       createAutoTranslationInFlightToken(cacheKey = "") {
         this.plugin.autoTranslationInFlightTokenCounter++;
@@ -7716,7 +9676,8 @@ var require_queue_core = __commonJS({
           });
           return;
         }
-        this.plugin.setTranslationCache(cacheKey, translated);
+        this.plugin.setTranslationCache(this.plugin.getServedModelTranslationCacheKey(cacheKey, requestOptions), translated);
+        this.plugin.clearAutoTranslationPartialResult(cacheKey);
         if (this.plugin.shouldStoreAutoTextTranslationCache(text, requestOptions, translated)) {
           this.plugin.setAutoTextTranslationCache(text, requestOptions, translated);
         } else {
@@ -7740,14 +9701,14 @@ var require_queue_core = __commonJS({
       hasCacheableAutoTranslationTarget(item) {
         return this.plugin.getAutoTranslationPendingTargets(item).some((target) => {
           if (!target?.messageNode?.isConnected || !target?.content?.isConnected) return false;
-          if (this.plugin.getElementText(target.content, target.textOptions) !== target.text) return false;
+          if (!this.plugin.isAutoTranslationTargetDomTextCurrent(target)) return false;
           return this.plugin.isAutoTranslationTargetIdentityCurrent(target, item) || Boolean(this.plugin.getAutoTranslationTargetIdentityUpgrade(target, item));
         });
       }
       hasInvalidAutoTranslationTarget(item) {
         return this.plugin.getAutoTranslationPendingTargets(item).some((target) => {
           if (!target?.messageNode?.isConnected || !target?.content?.isConnected) return false;
-          if (this.plugin.getElementText(target.content, target.textOptions) !== target.text) return true;
+          if (!this.plugin.isAutoTranslationTargetDomTextCurrent(target)) return false;
           return !this.plugin.isAutoTranslationTargetIdentityCurrent(target, item) && !this.plugin.getAutoTranslationTargetIdentityUpgrade(target, item);
         });
       }
@@ -7769,7 +9730,8 @@ var require_queue_core = __commonJS({
         const requestOptions = target?.requestOptions || item?.requestOptions || {};
         const expected = this.plugin.normalizeTranslationMessageIdentity(requestOptions.messageIdentity);
         if (!expected || !text) return null;
-        const current = this.plugin.normalizeTranslationMessageIdentity(this.plugin.getMessageIdentity(target.messageNode, target.content, text));
+        const domText = this.plugin.getAutoTranslationTargetDomText(target.text ? target : item);
+        const current = this.plugin.normalizeTranslationMessageIdentity(this.plugin.getMessageIdentity(target.messageNode, target.content, domText));
         if (!current || current === expected || !this.plugin.isSafeTranslationIdentityUpgrade(expected, current, target)) return null;
         const upgradedOptions = { ...requestOptions, messageIdentity: current };
         return {
@@ -7782,7 +9744,7 @@ var require_queue_core = __commonJS({
         const requestOptions = target?.requestOptions || item?.requestOptions || {};
         const expected = this.plugin.normalizeTranslationMessageIdentity(requestOptions.messageIdentity);
         if (!expected) return true;
-        const current = this.plugin.normalizeTranslationMessageIdentity(this.plugin.getMessageIdentity(target.messageNode, target.content, target.text));
+        const current = this.plugin.normalizeTranslationMessageIdentity(this.plugin.getMessageIdentity(target.messageNode, target.content, this.plugin.getAutoTranslationTargetDomText(target)));
         return current === expected;
       }
       markAutoTranslationFailureSafely(item, error, options = {}) {
@@ -7793,7 +9755,7 @@ var require_queue_core = __commonJS({
           this.plugin.warnSanitized("Failed to render auto translation failure", renderError);
           const failure = this.plugin.createAutoTranslationFailure(item.cacheKey, error);
           let retained = false;
-          if (this.plugin.shouldRetainAutoTranslationFailureItem(item, error)) {
+          if (this.plugin.shouldRetainAutoTranslationFailureItem(item, error, failure)) {
             retained = this.plugin.retainBlockedVisibleAutoTranslationItem(item, {
               delayMs: failure.retryAfterMs,
               allowActiveRequeue: true,
@@ -7804,6 +9766,8 @@ var require_queue_core = __commonJS({
             this.plugin.autoTranslationFailures.set(item.cacheKey, failure);
             this.plugin.pruneAutoTranslationFailureMapSize();
             this.plugin.markAutoTextTranslationFailure(item, error, failure);
+          } else {
+            this.plugin.rememberAutoTranslationFailureHistory(item.cacheKey, failure);
           }
           if (options.markProvider !== false) {
             const retainedKeys = retained && item?.cacheKey ? /* @__PURE__ */ new Set([item.cacheKey]) : /* @__PURE__ */ new Set();
@@ -7886,7 +9850,7 @@ var require_queue_core = __commonJS({
         this.plugin.pruneAutoTranslationFailureMapSize();
         this.plugin.markAutoTextTranslationFailure(item, storageError, failure);
         const retainedKeys = /* @__PURE__ */ new Set();
-        if (this.plugin.shouldRetainAutoTranslationFailureItem(item, error)) {
+        if (this.plugin.shouldRetainAutoTranslationFailureItem(item, error, failure)) {
           const retained = this.plugin.retainBlockedVisibleAutoTranslationItem(item, {
             delayMs: failure.retryAfterMs,
             allowActiveRequeue: true,
@@ -7895,12 +9859,32 @@ var require_queue_core = __commonJS({
           if (retained && item?.cacheKey) retainedKeys.add(item.cacheKey);
         }
         if (item?.cacheKey && retainedKeys.has(item.cacheKey)) {
+          this.plugin.rememberAutoTranslationFailureHistory(item.cacheKey, failure);
           this.plugin.autoTranslationFailures.delete(item.cacheKey);
           this.plugin.clearAutoTextTranslationFailure(item.text, item.requestOptions);
         }
         if (this.plugin.shouldMarkAutoTranslationProviderFailureForItem(item, error, options)) this.plugin.markAutoTranslationProviderFailure(item.requestOptions, error, failure, { skipCacheKeys: retainedKeys });
         if (!failure.terminal) this.plugin.scheduleAutoTranslationRetryScan(failure.retryAfterMs);
         if (!storageError?.autoTranslationWeakFailure) this.plugin.showAutoTranslateError(error);
+      }
+      // A result that cannot be drawn (its emoji images cannot be restored) is recorded as a final
+      // invalid output, so the scan does not request the same message again on every pass.
+      // The auto-text cache holds the same result under the text alone; it is dropped too, otherwise
+      // the scan would draw it again from there (clearing this failure) on every pass.
+      markAutoTranslationUndrawableResult(cacheKey, reason = "emoji-restore-failed", source = null) {
+        const key = String(cacheKey || "");
+        if (!key) return null;
+        if (source?.text && source?.requestOptions) {
+          this.plugin.deleteTranslationCacheCandidates(
+            this.plugin.getAutoTextTranslationCacheKey(source.text, source.requestOptions),
+            ...this.plugin.getAutoTextTranslationCacheAliases(source.text, source.requestOptions)
+          );
+        }
+        const failure = this.plugin.createAutoTranslationFailure(key, this.plugin.createFinalInvalidAutoTranslationError(reason));
+        this.plugin.autoTranslationFailures.set(key, failure);
+        this.plugin.pruneAutoTranslationFailureMapSize();
+        this.plugin.clearAutoTranslationPartialResult(key);
+        return failure;
       }
       getAutoTranslationStorageErrorForItem(item, error) {
         if (!item?.daitPrefetchRequest || !this.plugin.isWeakAutoTranslationPrefetchFailure(error)) return error;
@@ -7909,6 +9893,15 @@ var require_queue_core = __commonJS({
         storageError.autoTranslationTerminalFailure = Boolean(error?.autoTranslationTerminalFailure);
         storageError.autoTranslationInvalidReason = error?.autoTranslationInvalidReason || this.plugin.getAutoTranslationFailureType(error) || "invalid-output";
         storageError.autoTranslationWeakFailure = true;
+        if (error?.modelOutputTruncated) storageError.modelOutputTruncated = true;
+        if (["timeout", "network", "server"].includes(this.plugin.getAutoTranslationFailureType(error))) {
+          const count = this.plugin.getNextAutoTranslationFailureCount(item.cacheKey);
+          storageError.retryAfterMs = Math.min(
+            AUTO_TRANSLATE_FAILURE_MAX_TTL,
+            Math.max(Number(error?.retryAfterMs || 0), AUTO_TRANSLATE_TRANSIENT_FAILURE_TTL * Math.pow(2, Math.max(0, count - 1)))
+          );
+          return storageError;
+        }
         storageError.retryAfterMs = Math.min(
           storageError.autoTranslationTerminalFailure ? AUTO_TRANSLATE_FINAL_INVALID_OUTPUT_FAILURE_TTL : AUTO_TRANSLATE_INVALID_OUTPUT_FAILURE_TTL,
           Math.max(1e3, Number(error?.retryAfterMs || AUTO_TRANSLATE_INVALID_OUTPUT_FAILURE_TTL))
@@ -7944,11 +9937,16 @@ var require_queue_core = __commonJS({
       isAutoTranslationProviderCoolingDown(requestOptions = this.plugin.getAutoTranslationOptions(), now = Date.now()) {
         return this.plugin.translationScheduler.isProviderCoolingDown(requestOptions, now);
       }
-      createAutoTranslationFailure(cacheKey, error) {
+      // The count the next failure of this message gets: one more than its live record or its
+      // remembered history, capped.
+      getNextAutoTranslationFailureCount(cacheKey) {
         const previous = this.plugin.autoTranslationFailures.get(cacheKey);
         const previousCount = typeof previous === "object" ? Number(previous.count || 0) : 0;
         const historyCount = this.plugin.getAutoTranslationFailureHistoryCount(cacheKey);
-        const count = Math.min(5, Math.max(previousCount, historyCount) + 1);
+        return Math.min(5, Math.max(previousCount, historyCount) + 1);
+      }
+      createAutoTranslationFailure(cacheKey, error) {
+        const count = this.plugin.getNextAutoTranslationFailureCount(cacheKey);
         const retryAfterMs = this.plugin.getAutoTranslationRetryAfter(error, count);
         const now = Date.now();
         const terminal = Boolean(error?.autoTranslationTerminalFailure);
@@ -8033,8 +10031,11 @@ var require_queue_core = __commonJS({
         return failure || null;
       }
       getAutoTranslationRetryAfter(error, count = 1) {
-        if (Number(error?.retryAfterMs) > 0) return Math.min(AUTO_TRANSLATE_FAILURE_MAX_TTL, Number(error.retryAfterMs));
         const type = this.plugin.getAutoTranslationFailureType(error);
+        if (type === "truncated") {
+          return Math.min(AUTO_TRANSLATE_TRUNCATED_FAILURE_MAX_TTL, AUTO_TRANSLATE_TRUNCATED_FAILURE_TTL * Math.pow(2, Math.max(0, count - 1)));
+        }
+        if (Number(error?.retryAfterMs) > 0) return Math.min(AUTO_TRANSLATE_FAILURE_MAX_TTL, Number(error.retryAfterMs));
         if (type === "local-unavailable") return LOCAL_PROVIDER_UNAVAILABLE_RETRY_MS;
         if (["quota", "rate-limit", "server", "parse"].includes(type)) {
           return Math.min(AUTO_TRANSLATE_FAILURE_MAX_TTL, AUTO_TRANSLATE_PROVIDER_FAILURE_TTL * Math.pow(2, Math.max(0, count - 1)));
@@ -8062,6 +10063,7 @@ var require_queue_core = __commonJS({
         if (error?.googleTranslateQuotaExceeded) return "quota";
         if (error?.googleTranslateNoKey) return "auth";
         if (status === 401 || status === 403) return "auth";
+        if (status === 402) return "quota";
         if (status === 429) return "rate-limit";
         if (status >= 500) return "server";
         if (this.plugin.isTimeoutError(error)) return "timeout";
@@ -8146,7 +10148,7 @@ var require_queue_core = __commonJS({
 // package.json
 var require_package = __commonJS({
   "package.json"(exports2, module2) {
-    module2.exports = { version: "0.3.0" };
+    module2.exports = { version: "0.4.0" };
   }
 });
 
@@ -8477,17 +10479,20 @@ var require_diagnostics_recorder = __commonJS({
           },
           settings: {
             provider: this.plugin.settings.translation?.provider,
-            model: this.plugin.settings.translation?.model,
+            model: this.plugin.getDiagnosticModelLabel(this.plugin.settings.translation?.model),
             targetLanguage: this.plugin.settings.translation?.targetLanguage,
             autoTranslateMessages: this.plugin.settings.ui?.autoTranslateMessages,
             autoTranslatePrefetch: this.plugin.settings.ui?.autoTranslatePrefetch,
             autoTranslateIntakeMode: this.plugin.settings.ui?.autoTranslateIntakeMode,
             autoTranslateConcurrency: this.plugin.settings.ui?.autoTranslateConcurrency,
             channelPolicy: this.plugin.getCurrentChannelAutoTranslatePolicy(),
+            allowListedChannels: this.plugin.getChannelAutoTranslateAllowListCount(),
             historyBackfillEnabled: this.plugin.settings.ui?.historyBackfillEnabled,
             providerFallbackEnabled: this.plugin.settings.ui?.providerFallbackEnabled,
             providerFallbackOrder: this.plugin.getProviderFallbackOrder("translation"),
-            localProviderModel: this.plugin.getLocalProviderDetectedModelSnapshot(this.plugin.settings.translation)
+            localProviderModel: this.plugin.getLocalProviderDetectedModelSnapshot(this.plugin.settings.translation),
+            panelTheme: this.plugin.settings.ui?.panelTheme,
+            panelThemeResolved: this.plugin.resolvePanelTheme()
           },
           stats: {
             entries: this.plugin.diagnosticLogs.length,
@@ -8514,18 +10519,25 @@ var require_diagnostics_recorder = __commonJS({
           })
         };
       }
-      loadDiagnosticLogs() {
+      // options.keepLogged: the entries in memory were logged during start() before the stored log was loaded
+      // (settings load, data move, a failed read). They are added after the stored entries instead of being
+      // dropped, and the stored entries are never replaced by them on disk.
+      loadDiagnosticLogs(options = {}) {
+        const logged = options.keepLogged && Array.isArray(this.plugin.diagnosticLogs) ? this.plugin.diagnosticLogs : [];
+        const loggedCompressed = options.keepLogged ? Math.max(0, Number(this.plugin.diagnosticCompressedCount || 0) || 0) : 0;
         const payload = this.plugin.loadData(DIAGNOSTIC_DATA_KEY);
         const logs = Array.isArray(payload) ? payload : payload?.logs;
         if (!Array.isArray(logs)) {
-          this.plugin.diagnosticLogs = [];
-          this.plugin.diagnosticCompressedCount = 0;
+          this.plugin.diagnosticLogs = logged.slice(-DIAGNOSTICS_MAX_ENTRIES);
+          this.plugin.diagnosticCompressedCount = loggedCompressed;
           return;
         }
-        this.plugin.diagnosticLogs = logs.map((entry) => this.plugin.normalizePersistedDiagnosticEntry(entry)).filter(Boolean).slice(-DIAGNOSTICS_MAX_ENTRIES);
-        this.plugin.diagnosticCompressedCount = Math.max(0, Number(payload?.compressed || 0) || 0);
+        const stored = logs.map((entry) => this.plugin.normalizePersistedDiagnosticEntry(entry)).filter(Boolean);
+        this.plugin.diagnosticLogs = [...stored, ...logged].slice(-DIAGNOSTICS_MAX_ENTRIES);
+        this.plugin.diagnosticCompressedCount = Math.max(0, Number(payload?.compressed || 0) || 0) + loggedCompressed;
         this.plugin.diagnosticLogsDirty = false;
         this.plugin.diagnosticLogsDirtyAt = 0;
+        if (logged.length) this.plugin.scheduleDiagnosticLogsPersist();
       }
       createPersistedDiagnosticLogsPayload() {
         return {
@@ -8546,6 +10558,38 @@ var require_diagnostics_recorder = __commonJS({
             if (Number.isFinite(Number(entry.ms))) compact.ms = Number(entry.ms);
             return compact;
           })
+        };
+      }
+      // Used once when the log moves to its own data file: keeps the entries of both copies (the old copy may
+      // hold entries written by an older plugin version after a downgrade), oldest first, without duplicates.
+      // Nothing older than the newer copy's save time is taken from the older copy: a log cleared or turned off
+      // later (in either version) stays cleared.
+      mergePersistedDiagnosticLogsPayloads(current, legacy) {
+        const logsOf = (payload) => Array.isArray(payload) ? payload : Array.isArray(payload?.logs) ? payload.logs : null;
+        let currentLogs = logsOf(current);
+        let legacyLogs = logsOf(legacy);
+        if (!legacyLogs) return current;
+        if (!currentLogs) return legacy;
+        const currentSavedAt = Number(current?.savedAt) || 0;
+        const legacySavedAt = Number(legacy?.savedAt) || 0;
+        const loggedSince = (savedAt) => (entry) => Math.max(Number(entry?.ts) || 0, Number(entry?.lastTs) || 0) >= savedAt;
+        if (legacySavedAt > currentSavedAt) currentLogs = currentLogs.filter(loggedSince(legacySavedAt));
+        else if (currentSavedAt > legacySavedAt) legacyLogs = legacyLogs.filter(loggedSince(currentSavedAt));
+        const seen = /* @__PURE__ */ new Set();
+        const logs = [...legacyLogs, ...currentLogs].filter((entry) => entry && typeof entry === "object").filter((entry) => {
+          const id = JSON.stringify([entry.ts, entry.lastTs, entry.action, entry.status, entry.key, entry.count]);
+          if (seen.has(id)) return false;
+          seen.add(id);
+          return true;
+        }).sort((left, right) => (Number(left.ts) || 0) - (Number(right.ts) || 0)).slice(-DIAGNOSTICS_MAX_ENTRIES);
+        const compressed = (count) => Math.max(0, Number(count || 0) || 0);
+        return {
+          version: 1,
+          savedAt: Date.now(),
+          maxEntries: DIAGNOSTICS_MAX_ENTRIES,
+          // The older copy's count belongs to entries it no longer contributes.
+          compressed: (legacySavedAt > currentSavedAt ? 0 : compressed(current?.compressed)) + (currentSavedAt > legacySavedAt ? 0 : compressed(legacy?.compressed)),
+          logs
         };
       }
       scheduleDiagnosticLogsPersist(delayMs = DIAGNOSTICS_WRITE_DEBOUNCE_MS, options = {}) {
@@ -8674,6 +10718,231 @@ var require_diagnostics_recorder = __commonJS({
       }
     };
     module2.exports = { DiagnosticsRecorder };
+  }
+});
+
+// src/diagnostics/diagnostic-labels.js
+var require_diagnostic_labels = __commonJS({
+  "src/diagnostics/diagnostic-labels.js"(exports2, module2) {
+    "use strict";
+    var DIAGNOSTIC_CODE_LABELS = {
+      "zh-CN": {
+        // Reason codes
+        "discovered": "发现消息",
+        "not-eligible-language": "不需要翻译的语言",
+        "prefetch-disabled": "预翻译已关闭",
+        "layout-unstable-prefetch": "页面未稳定，暂缓预翻译",
+        "google-prefetch-disabled": "Google 不用于预翻译",
+        "current-translation-present": "已有译文",
+        "recent-render-present": "刚刚画过",
+        "cache-hit": "缓存命中",
+        "text-cache-hit": "文本缓存命中",
+        "invalid-cache": "缓存无效",
+        "dedupe-active": "同一条正在翻译",
+        "terminal-failure": "多次失败后停止",
+        "retry-cooldown": "等待重试",
+        "api-work-blocked": "请求被暂停",
+        "config-missing": "缺少配置",
+        "batch-limit": "批次已满",
+        "queue-limit": "队列已满",
+        "enqueued": "进入队列",
+        "requeued": "重新排队",
+        "provider-cooldown": "服务冷却中",
+        "local-provider-health": "检查本地服务",
+        "prefetch-slot": "预翻译名额已满",
+        "request-started": "请求开始",
+        "output-received": "收到结果",
+        "output-invalid": "结果不合格",
+        "retrying": "重试中",
+        "rendered": "已显示",
+        "render-deferred": "稍后显示",
+        "render-disconnected": "消息已离开页面",
+        "render-text-changed": "原文已改变",
+        "render-identity-changed": "消息已变化",
+        "render-request-stale": "请求已过时",
+        "render-outside-viewport": "不在屏幕内",
+        "manual-line-present": "已有手动译文",
+        "failure": "失败",
+        "stale-dom": "页面已变化",
+        "local-unavailable": "本地服务不可用",
+        "request-success": "请求成功",
+        "request-error": "请求出错",
+        "request-dedupe": "合并相同请求",
+        "missing-api": "缺少 API 配置",
+        "missing-config": "缺少配置",
+        "cache-set": "写入缓存",
+        "cache-miss": "缓存未命中",
+        "cache-expired": "缓存过期",
+        "cache-delete": "删除缓存",
+        "cache-persist": "保存缓存",
+        "cache-persist-error": "保存缓存出错",
+        "auto-disabled": "自动翻译已关闭",
+        "route-change": "切换了频道",
+        "cooldown-expired": "冷却结束",
+        "viewport-settling": "等待页面稳定",
+        "write-cancelled": "写入已取消",
+        "write-failed": "写入失败",
+        "disabled": "已关闭",
+        "empty": "空内容",
+        // Message states
+        "skipped": "跳过",
+        "cacheHit": "缓存命中",
+        "queuedVisible": "排队（屏幕内）",
+        "queuedPrefetch": "排队（预翻译）",
+        "queuedLongText": "排队（长消息）",
+        "inFlight": "翻译中",
+        "validating": "检查结果",
+        "cached": "已缓存",
+        "failed": "失败",
+        "stale": "已过时",
+        "cancelled": "已取消",
+        // Queues
+        "manual": "手动",
+        "visible": "屏幕内",
+        "longText": "长消息",
+        "prefetch": "预翻译",
+        "history": "历史补翻",
+        "queueLength": "排队",
+        "inFlightItems": "进行中的消息",
+        "prefetchInFlight": "预翻译进行中",
+        "pendingTargets": "等待显示",
+        // Flows
+        "auto": "自动翻译",
+        "cache": "缓存",
+        "model": "模型请求",
+        "polish": "润色",
+        "public-bilingual": "公开双语",
+        "quick-settings": "快捷设置",
+        // Failure classes
+        "source-incomplete": "原文不完整",
+        "whole-pass-failed": "整段翻译失败",
+        "chunk-failed": "分段失败",
+        "subchunk-failed": "小段失败",
+        "validator-rejected": "结果被拒绝",
+        "render-blocked": "无法显示",
+        "cache-identity-mismatch": "缓存对不上",
+        "provider-output-bad": "服务返回异常",
+        // Failure layers and flow stages
+        "source": "读取原文",
+        "plan": "拆分",
+        "queue": "排队",
+        "request": "请求",
+        "output": "结果",
+        "validation": "检查",
+        "render": "显示"
+      },
+      en: {
+        // Reason codes
+        "discovered": "Found",
+        "not-eligible-language": "Language not translated",
+        "prefetch-disabled": "Prefetch off",
+        "layout-unstable-prefetch": "Prefetch waits for page",
+        "google-prefetch-disabled": "Google skips prefetch",
+        "current-translation-present": "Already translated",
+        "recent-render-present": "Just drawn",
+        "cache-hit": "Cache hit",
+        "text-cache-hit": "Text cache hit",
+        "invalid-cache": "Cache invalid",
+        "dedupe-active": "Already translating",
+        "terminal-failure": "Stopped after failures",
+        "retry-cooldown": "Waiting to retry",
+        "api-work-blocked": "Requests paused",
+        "config-missing": "Settings missing",
+        "batch-limit": "Batch full",
+        "queue-limit": "Queue full",
+        "enqueued": "Queued",
+        "requeued": "Queued again",
+        "provider-cooldown": "Service cooling down",
+        "local-provider-health": "Checking local server",
+        "prefetch-slot": "Prefetch slots full",
+        "request-started": "Request started",
+        "output-received": "Result received",
+        "output-invalid": "Result rejected",
+        "retrying": "Retrying",
+        "rendered": "Shown",
+        "render-deferred": "Shown later",
+        "render-disconnected": "Message left the page",
+        "render-text-changed": "Original changed",
+        "render-identity-changed": "Message changed",
+        "render-request-stale": "Request outdated",
+        "render-outside-viewport": "Off screen",
+        "manual-line-present": "Manual translation shown",
+        "failure": "Failed",
+        "stale-dom": "Page changed",
+        "local-unavailable": "Local server unavailable",
+        "request-success": "Request OK",
+        "request-error": "Request error",
+        "request-dedupe": "Same request merged",
+        "missing-api": "API settings missing",
+        "missing-config": "Settings missing",
+        "cache-set": "Cached",
+        "cache-miss": "Cache miss",
+        "cache-expired": "Cache expired",
+        "cache-delete": "Cache deleted",
+        "cache-persist": "Cache saved",
+        "cache-persist-error": "Cache save error",
+        "auto-disabled": "Auto-translate off",
+        "route-change": "Channel changed",
+        "cooldown-expired": "Cooldown over",
+        "viewport-settling": "Page settling",
+        "write-cancelled": "Write cancelled",
+        "write-failed": "Write failed",
+        "disabled": "Off",
+        "empty": "Empty",
+        // Message states
+        "skipped": "Skipped",
+        "cacheHit": "Cache hit",
+        "queuedVisible": "Queued (on screen)",
+        "queuedPrefetch": "Queued (prefetch)",
+        "queuedLongText": "Queued (long message)",
+        "inFlight": "Translating",
+        "validating": "Checking result",
+        "cached": "Cached",
+        "failed": "Failed",
+        "stale": "Outdated",
+        "cancelled": "Cancelled",
+        // Queues
+        "manual": "Manual",
+        "visible": "On screen",
+        "longText": "Long messages",
+        "prefetch": "Prefetch",
+        "history": "History backfill",
+        "queueLength": "Queued",
+        "inFlightItems": "Messages in progress",
+        "prefetchInFlight": "Prefetch in progress",
+        "pendingTargets": "Waiting to show",
+        // Flows
+        "auto": "Auto-translate",
+        "cache": "Cache",
+        "model": "Model requests",
+        "polish": "Polish",
+        "public-bilingual": "Public bilingual",
+        "quick-settings": "Quick settings",
+        // Failure classes
+        "source-incomplete": "Original incomplete",
+        "whole-pass-failed": "Whole message failed",
+        "chunk-failed": "Part failed",
+        "subchunk-failed": "Small part failed",
+        "validator-rejected": "Result rejected",
+        "render-blocked": "Could not show",
+        "cache-identity-mismatch": "Cache mismatch",
+        "provider-output-bad": "Bad service output",
+        // Failure layers and flow stages
+        "source": "Reading original",
+        "plan": "Splitting",
+        "queue": "Queue",
+        "request": "Request",
+        "output": "Result",
+        "validation": "Checking",
+        "render": "Showing"
+      }
+    };
+    function getDiagnosticCodeLabel(code, locale = "zh-CN") {
+      const value = String(code ?? "");
+      const table = DIAGNOSTIC_CODE_LABELS[locale] || DIAGNOSTIC_CODE_LABELS.en;
+      return Object.prototype.hasOwnProperty.call(table, value) ? table[value] : value;
+    }
+    module2.exports = { DIAGNOSTIC_CODE_LABELS, getDiagnosticCodeLabel };
   }
 });
 
@@ -9088,9 +11357,186 @@ var require_translation_cache_store = __commonJS({
       TRANSLATION_CACHE_TTL_OPTIONS,
       TRANSLATION_CACHE_WRITE_DEBOUNCE_MS
     } = require_constants();
+    var { removeStandardEmoji } = require_emoji_text();
+    var TRANSLATION_CACHE_MAX_KEYS_PER_MESSAGE = 4;
+    var TRANSLATION_CACHE_KEY_SCHEMA = 2;
+    var TRANSLATION_CACHE_PRE_EMOJI_TEXT_MAX = 2e3;
     var TranslationCacheStore = class {
       constructor(plugin) {
         this.plugin = plugin;
+        this.valueRefs = null;
+        this.valueRefsCache = null;
+        this.valueRefsSize = -1;
+        this.legacyKeys = /* @__PURE__ */ new Set();
+        this.preEmojiSourceTexts = /* @__PURE__ */ new Map();
+      }
+      getTranslationCacheValueRefs() {
+        const cache = this.plugin.translationCache;
+        if (this.hasCurrentTranslationCacheValueRefs()) return this.valueRefs;
+        const refs = /* @__PURE__ */ new Map();
+        for (const value of cache.values()) refs.set(value, (refs.get(value) || 0) + 1);
+        this.valueRefs = refs;
+        this.valueRefsCache = cache;
+        this.valueRefsSize = cache.size;
+        return refs;
+      }
+      hasCurrentTranslationCacheValueRefs() {
+        const cache = this.plugin.translationCache;
+        return Boolean(this.valueRefs) && this.valueRefsCache === cache && this.valueRefsSize === cache.size;
+      }
+      invalidateTranslationCacheValueRefs() {
+        this.valueRefs = null;
+        this.valueRefsCache = null;
+        this.valueRefsSize = -1;
+      }
+      releaseTranslationCacheValueRef(value) {
+        const count = (this.valueRefs.get(value) || 0) - 1;
+        if (count > 0) this.valueRefs.set(value, count);
+        else this.valueRefs.delete(value);
+      }
+      // Map writes that keep the value counts current (when they have been built).
+      setTranslationCacheEntry(key, value) {
+        const cache = this.plugin.translationCache;
+        const tracked = this.hasCurrentTranslationCacheValueRefs();
+        if (cache.has(key)) {
+          if (tracked) this.releaseTranslationCacheValueRef(cache.get(key));
+          cache.delete(key);
+        }
+        cache.set(key, value);
+        this.legacyKeys.delete(key);
+        if (tracked) {
+          this.valueRefs.set(value, (this.valueRefs.get(value) || 0) + 1);
+          this.valueRefsSize = cache.size;
+        }
+      }
+      deleteTranslationCacheEntry(key) {
+        const cache = this.plugin.translationCache;
+        this.legacyKeys.delete(key);
+        if (!cache.has(key)) return false;
+        const tracked = this.hasCurrentTranslationCacheValueRefs();
+        if (tracked) this.releaseTranslationCacheValueRef(cache.get(key));
+        cache.delete(key);
+        if (tracked) this.valueRefsSize = cache.size;
+        return true;
+      }
+      // --- Entries saved before 0.4.0 -------------------------------------------------------------------------
+      isPreKeySchemaTranslationCachePayload(payload) {
+        if (Array.isArray(payload)) return true;
+        if (!payload || typeof payload !== "object") return false;
+        return !(Number(payload.keySchema) >= TRANSLATION_CACHE_KEY_SCHEMA);
+      }
+      hasLegacyTranslationCacheEntries() {
+        return this.legacyKeys.size > 0;
+      }
+      // Called by text extraction while old entries remain: the same message text read without the standard
+      // emoji images, which is what versions before 0.4.0 keyed it by.
+      rememberPreEmojiSourceText(text, preEmojiText) {
+        if (!this.legacyKeys.size) return;
+        const value = String(text || "");
+        const previous = String(preEmojiText || "");
+        if (!value || value === previous) return;
+        this.preEmojiSourceTexts.delete(value);
+        this.preEmojiSourceTexts.set(value, previous);
+        while (this.preEmojiSourceTexts.size > TRANSLATION_CACHE_PRE_EMOJI_TEXT_MAX) {
+          this.preEmojiSourceTexts.delete(this.preEmojiSourceTexts.keys().next().value);
+        }
+      }
+      getPreEmojiSourceText(text) {
+        const value = String(text || "");
+        if (removeStandardEmoji(value) === value) return "";
+        const traced = this.preEmojiSourceTexts.get(value);
+        const previous = traced ?? this.plugin.normalizeExtractedText(removeStandardEmoji(value));
+        return previous && previous !== value ? previous : "";
+      }
+      // The message identity ends with the hash of the text it was built from.
+      getPreEmojiMessageIdentity(identity, text, preEmojiText) {
+        const value = this.plugin.normalizeTranslationMessageIdentity(identity);
+        const suffix = `:${this.plugin.getTextFingerprint(text)}`;
+        if (!value || !value.endsWith(suffix)) return value;
+        return `${value.slice(0, -suffix.length)}:${this.plugin.getTextFingerprint(preEmojiText)}`;
+      }
+      // Whether cache keys name a detected model in place of the configured "local-model" placeholder (true),
+      // still wait for the detection (false), or never name a detected model (null).
+      getTranslationCacheServedModelState(options = {}) {
+        const config = this.plugin.getEffectiveTaskConfig("translation", options.configOverrides);
+        const defaults = DEFAULT_SETTINGS.translation || {};
+        if (!this.plugin.shouldAutoDetectLocalProviderModel(config, defaults)) return null;
+        return Boolean(this.plugin.getCachedLocalProviderDetectedModel(config, { defaultConfig: defaults }));
+      }
+      isServedModelInTranslationCacheKeys(options = {}) {
+        return this.getTranslationCacheServedModelState(options) === true;
+      }
+      // The key as it was before the served model was detected (or before 0.4.0): the model part names the
+      // configured placeholder. "" when keys name no detected model.
+      getPlaceholderModelTranslationCacheKey(text, options = {}, servedModelState = this.getTranslationCacheServedModelState(options)) {
+        if (servedModelState !== true) return "";
+        return this.plugin.buildTranslationCacheKey(text, options, this.plugin.getStrongTextFingerprint(text), { legacyModel: true });
+      }
+      // Keys an entry saved before 0.4.0 has for this text and options, when they differ from the current key.
+      // Only keys of such entries that are still cached are returned.
+      getLegacyCompatTranslationCacheKeys(text, options = {}, primaryKey = "", servedModelState = this.getTranslationCacheServedModelState(options)) {
+        if (!this.legacyKeys.size) return [];
+        const candidates = [this.getPlaceholderModelTranslationCacheKey(text, options, servedModelState)];
+        const preEmojiText = this.getPreEmojiSourceText(text);
+        if (preEmojiText) {
+          const preEmojiOptions = options.messageIdentity ? { ...options, messageIdentity: this.getPreEmojiMessageIdentity(options.messageIdentity, text, preEmojiText) } : options;
+          candidates.push(this.plugin.buildTranslationCacheKey(preEmojiText, preEmojiOptions, this.plugin.getStrongTextFingerprint(preEmojiText), { legacyModel: true }));
+        }
+        return [...new Set(candidates)].filter((key) => key && key !== primaryKey && this.legacyKeys.has(key) && this.plugin.translationCache.has(key));
+      }
+      // Moves the old entries of this text and options to the current key, keeping their times, so every lookup
+      // (and the saved cache) finds them there. Before the served model is detected the current key still names
+      // the placeholder, so a moved entry stays an old one and moves again once the model is known.
+      adoptLegacyTranslationCacheEntries(text, options = {}, primaryKey = "") {
+        if (!this.legacyKeys.size || !primaryKey) return 0;
+        const servedModelState = this.getTranslationCacheServedModelState(options);
+        const stillPlaceholder = servedModelState === false;
+        if (!stillPlaceholder) this.legacyKeys.delete(primaryKey);
+        const found = this.getLegacyCompatTranslationCacheKeys(text, options, primaryKey, servedModelState);
+        if (!found.length) {
+          if (!this.legacyKeys.size) this.preEmojiSourceTexts.clear();
+          return 0;
+        }
+        const cache = this.plugin.translationCache;
+        const metaByKey = this.plugin.translationCacheMeta;
+        const now = Date.now();
+        let adopted = 0;
+        for (const key of found) {
+          const meta = metaByKey.get(key) || {};
+          if (!cache.has(primaryKey) && !this.plugin.isTranslationCacheEntryExpired(meta, now)) {
+            this.setTranslationCacheEntry(primaryKey, cache.get(key));
+            metaByKey.set(primaryKey, {
+              createdAt: Number(meta.createdAt || now),
+              touchedAt: Number(meta.touchedAt || now),
+              expiresAt: this.plugin.getTranslationCacheEntryExpiresAt(meta, now),
+              volatile: Boolean(meta.volatile || this.plugin.isVolatileTranslationCacheKey(primaryKey))
+            });
+            if (stillPlaceholder) this.legacyKeys.add(primaryKey);
+            adopted++;
+          }
+          this.deleteTranslationCacheEntry(key);
+          metaByKey.delete(key);
+        }
+        if (!this.legacyKeys.size) this.preEmojiSourceTexts.clear();
+        this.plugin.clearTranslationCacheNegativeLookups();
+        this.plugin.scheduleTranslationCachePersist(TRANSLATION_CACHE_WRITE_DEBOUNCE_MS);
+        this.plugin.logDiagnostic("cache.lookup", "legacy-adopted", {
+          ...this.plugin.getDiagnosticBaseMeta("cache", this.getTranslationCacheMode(primaryKey), "cache-legacy-adopted"),
+          cacheHash: this.plugin.getTextFingerprint(primaryKey),
+          adopted,
+          remaining: this.legacyKeys.size
+        });
+        return adopted;
+      }
+      pruneLegacyTranslationCacheKeys() {
+        if (!this.legacyKeys.size) return;
+        for (const key of [...this.legacyKeys]) {
+          if (!this.plugin.translationCache.has(key)) this.legacyKeys.delete(key);
+        }
+        if (!this.legacyKeys.size) this.preEmojiSourceTexts.clear();
+      }
+      getTranslationCacheMessageCount() {
+        return this.getTranslationCacheValueRefs().size;
       }
       normalizeTranslationCacheTtlHours(value) {
         const number = Number(value);
@@ -9124,6 +11570,7 @@ var require_translation_cache_store = __commonJS({
         return this.plugin.translationScheduler.isAutoCacheMode(mode);
       }
       isVolatileTranslationCacheKey(cacheKey) {
+        if (String(this.getTranslationCacheMode(cacheKey)).startsWith("public-bilingual")) return true;
         return this.plugin.isVolatileTranslationIdentity(this.plugin.getTranslationIdentityFromCacheKey(cacheKey));
       }
       getTranslationCacheKey(text, options = {}) {
@@ -9152,6 +11599,10 @@ var require_translation_cache_store = __commonJS({
             this.plugin.getPreMessageIdentityTranslationCacheKey(text, options, legacyTextHash, { fullConfig: true })
           );
         }
+        if (aliasOptions.includePlaceholderModel && this.plugin.localProviderModelFirstDetected) {
+          aliases.push(this.getPlaceholderModelTranslationCacheKey(text, options));
+        }
+        this.adoptLegacyTranslationCacheEntries(text, options, primaryKey);
         return [...new Set(aliases.filter((key) => key && key !== primaryKey))];
       }
       getAutoTextTranslationCacheOptions(options = {}) {
@@ -9185,8 +11636,13 @@ var require_translation_cache_store = __commonJS({
       getPreMessageIdentityTranslationCacheKey(text, options = {}, sourceTextHash = this.plugin.getStrongTextFingerprint(text), cacheOptions = {}) {
         return this.plugin.buildTranslationCacheKey(text, options, sourceTextHash, { ...cacheOptions, omitMessageIdentity: true });
       }
+      // cacheOptions.legacyModel: keep the configured model (the "local-model" placeholder) instead of the model
+      // the local server was detected to serve, as keys saved before the detection (or before 0.4.0) do.
       buildTranslationCacheKey(text, options = {}, sourceTextHash = this.plugin.getStrongTextFingerprint(text), cacheOptions = {}) {
-        const config = this.plugin.getCacheConfigSnapshot("translation", this.plugin.getEffectiveTaskConfig("translation", options.configOverrides));
+        const config = this.plugin.getCacheConfigSnapshot("translation", this.plugin.getEffectiveTaskConfig("translation", options.configOverrides), {
+          servedModel: true,
+          legacyModel: Boolean(cacheOptions.legacyModel)
+        });
         config.promptPolicyVersion = this.plugin.getPromptPolicyCacheVersion("translation", options, config);
         const messageIdentity = this.plugin.normalizeTranslationMessageIdentity(options.messageIdentity) || `text:${sourceTextHash}`;
         const configParts = cacheOptions.fullConfig ? [
@@ -9212,6 +11668,22 @@ var require_translation_cache_store = __commonJS({
           sourceTextHash
         ].join("\n---\n");
       }
+      // A queued item's key names the local model detected when it was queued, but the request
+      // re-detects the model first. Its result belongs under the model that answered, so the model
+      // part of the key is swapped for the currently served one; everything else stays.
+      getServedModelTranslationCacheKey(cacheKey, options = {}) {
+        const key = String(cacheKey || "");
+        const config = this.plugin.getEffectiveTaskConfig("translation", options.configOverrides);
+        if (!key || !this.plugin.shouldAutoDetectLocalProviderModel(config, DEFAULT_SETTINGS.translation || {})) return key;
+        const parts = key.split("\n---\n");
+        const index = parts.findIndex((part, position) => position > 0 && part.startsWith("model:") && parts[position - 1].startsWith("endpoint:"));
+        if (index < 0) return key;
+        const servedModel = this.plugin.getCacheConfigSnapshot("translation", config, { servedModel: true }).model;
+        const servedPart = `model:${this.plugin.getStrongTextFingerprint(servedModel)}`;
+        if (parts[index] === servedPart) return key;
+        parts[index] = servedPart;
+        return parts.join("\n---\n");
+      }
       getCompactTranslationCacheConfigParts(config) {
         return [
           `provider:${this.plugin.getStrongTextFingerprint(config.provider)}`,
@@ -9229,7 +11701,11 @@ var require_translation_cache_store = __commonJS({
           `prompt:${this.plugin.getStrongTextFingerprint(config.prompt)}`
         ];
       }
-      getCacheConfigSnapshot(kind, config) {
+      // options.servedModel: for cache keys, name the model the local server actually serves
+      // when the setting is the "local-model" placeholder, so swapping the loaded model stops
+      // matching the old model's translations. Provider keys leave it out on purpose: health
+      // and cooldowns belong to the server, not to the model it has loaded.
+      getCacheConfigSnapshot(kind, config, options = {}) {
         const defaults = DEFAULT_SETTINGS[kind] || {};
         const provider = String(config.provider || defaults.provider || "").trim();
         const snapshot = {
@@ -9264,6 +11740,13 @@ var require_translation_cache_store = __commonJS({
           snapshot.prompt = "";
           if (provider === "deepl") {
             snapshot.endpoint = this.plugin.normalizeDeepLPlan(config.deeplPlan) === "pro" ? PROVIDER_DEFAULTS.deepl.endpoint.replace("api-free.deepl.com", "api.deepl.com") : PROVIDER_DEFAULTS.deepl.endpoint;
+          }
+        }
+        if (options.servedModel) {
+          if (provider === "deepl" && this.plugin.getDeepLLanguageCode(config.targetLanguageCode || config.targetLanguage) === "ZH-HANT") {
+            snapshot.model = "zh-hant";
+          } else if (!options.legacyModel && this.plugin.shouldAutoDetectLocalProviderModel(config, defaults)) {
+            snapshot.model = this.plugin.getCachedLocalProviderDetectedModel(config, { defaultConfig: defaults }) || snapshot.model;
           }
         }
         return snapshot;
@@ -9322,7 +11805,7 @@ var require_translation_cache_store = __commonJS({
           if (!this.plugin.translationCache.has(hitKey)) continue;
           const meta = this.plugin.translationCacheMeta.get(hitKey) || {};
           if (this.plugin.isTranslationCacheEntryExpired(meta)) {
-            this.plugin.translationCache.delete(hitKey);
+            this.deleteTranslationCacheEntry(hitKey);
             this.plugin.translationCacheMeta.delete(hitKey);
             this.plugin.scheduleTranslationCachePersist();
             this.plugin.logDiagnostic("cache.lookup", "expired", {
@@ -9357,8 +11840,7 @@ var require_translation_cache_store = __commonJS({
         const now = Date.now();
         const sourceMeta = this.plugin.translationCacheMeta.get(sourceKey) || {};
         const value = this.plugin.translationCache.get(sourceKey);
-        if (this.plugin.translationCache.has(targetKey)) this.plugin.translationCache.delete(targetKey);
-        this.plugin.translationCache.set(targetKey, value);
+        this.setTranslationCacheEntry(targetKey, value);
         this.plugin.translationCacheMeta.set(targetKey, {
           createdAt: Number(sourceMeta.createdAt || now),
           touchedAt: now,
@@ -9373,8 +11855,7 @@ var require_translation_cache_store = __commonJS({
         if (!key) return;
         const now = Date.now();
         const previous = this.plugin.translationCacheMeta.get(key);
-        if (this.plugin.translationCache.has(key)) this.plugin.translationCache.delete(key);
-        this.plugin.translationCache.set(key, String(value || ""));
+        this.setTranslationCacheEntry(key, String(value || ""));
         this.plugin.translationCacheMeta.set(key, {
           createdAt: Number(previous?.createdAt || now),
           touchedAt: now,
@@ -9396,7 +11877,7 @@ var require_translation_cache_store = __commonJS({
         const uniqueKeys = [...new Set(keys.filter(Boolean))];
         let removed = 0;
         uniqueKeys.forEach((key) => {
-          if (this.plugin.translationCache.delete(key)) removed++;
+          if (this.deleteTranslationCacheEntry(key)) removed++;
           if (this.plugin.translationCacheMeta.delete(key) && !this.plugin.translationCache.has(key)) removed++;
         });
         if (!removed) return false;
@@ -9416,7 +11897,7 @@ var require_translation_cache_store = __commonJS({
         const meta = this.plugin.translationCacheMeta.get(key) || {};
         const now = Date.now();
         const currentExpiresAt = this.plugin.getTranslationCacheEntryExpiresAt(meta, now);
-        const nextExpiresAt = options.extendExpiry ? Math.max(currentExpiresAt, now + TRANSLATION_CACHE_HIT_EXTEND_MS) : currentExpiresAt;
+        const nextExpiresAt = options.extendExpiry ? Math.max(currentExpiresAt, now + Math.min(TRANSLATION_CACHE_HIT_EXTEND_MS, this.plugin.getTranslationCacheTtlMs())) : currentExpiresAt;
         this.plugin.translationCacheMeta.set(key, {
           createdAt: Number(meta.createdAt || now),
           touchedAt: now,
@@ -9433,8 +11914,12 @@ var require_translation_cache_store = __commonJS({
       loadTranslationCache() {
         this.plugin.translationCache.clear();
         this.plugin.translationCacheMeta.clear();
+        this.invalidateTranslationCacheValueRefs();
         this.plugin.clearTranslationCacheNegativeLookups();
+        this.legacyKeys.clear();
+        this.preEmojiSourceTexts.clear();
         const payload = this.plugin.loadData(CACHE_DATA_KEY);
+        this.plugin.restoreLocalProviderDetectedModels(payload?.localModels);
         const entries = Array.isArray(payload) ? payload : payload?.entries;
         if (!Array.isArray(entries)) {
           this.plugin.persistentTranslationCacheCount = 0;
@@ -9443,6 +11928,7 @@ var require_translation_cache_store = __commonJS({
         const now = Date.now();
         const storedTtlMs = this.plugin.normalizeTranslationCacheTtlHours(payload?.ttlHours) * 60 * 60 * 1e3;
         const persistedStrings = Array.isArray(payload?.strings) ? payload.strings.map((value) => String(value || "")) : [];
+        const savedBeforeKeySchema = this.isPreKeySchemaTranslationCachePayload(payload);
         let restoredEntries = 0;
         for (const entry of entries) {
           const key = this.plugin.decodePersistedTranslationCacheKey(entry, persistedStrings);
@@ -9458,11 +11944,97 @@ var require_translation_cache_store = __commonJS({
           if (this.plugin.isTranslationCacheEntryExpired(meta, now)) continue;
           this.plugin.translationCache.set(key, value);
           this.plugin.translationCacheMeta.set(key, meta);
+          if (savedBeforeKeySchema || entry?.l) this.legacyKeys.add(key);
           restoredEntries++;
         }
+        const clamped = this.plugin.clampTranslationCacheExpiryToCurrentTtl(now);
         this.plugin.pruneTranslationCache({ scanExpired: true });
-        this.plugin.persistentTranslationCacheCount = this.plugin.translationCache.size;
-        if (this.plugin.translationCache.size !== entries.length || restoredEntries !== entries.length || payload?.version !== 3) this.plugin.scheduleTranslationCachePersist();
+        this.plugin.persistentTranslationCacheCount = this.plugin.getTranslationCacheMessageCount();
+        if (clamped || this.plugin.translationCache.size !== entries.length || restoredEntries !== entries.length || payload?.version !== 3) this.plugin.scheduleTranslationCachePersist();
+      }
+      // Used once when the cache moves to its own data file (and after a downgrade left an old copy behind):
+      // keeps the keys of both payloads that are not older than the newer copy, the more recently used copy of a
+      // key wins, oldest first (LRU order).
+      mergePersistedTranslationCachePayloads(current, legacy) {
+        const now = Date.now();
+        const decode = (payload) => {
+          const entries2 = Array.isArray(payload) ? payload : payload?.entries;
+          if (!Array.isArray(entries2)) return null;
+          const strings2 = Array.isArray(payload?.strings) ? payload.strings.map((value) => String(value || "")) : [];
+          const ttlMs = this.plugin.normalizeTranslationCacheTtlHours(payload?.ttlHours) * 60 * 60 * 1e3;
+          const savedBeforeKeySchema = this.isPreKeySchemaTranslationCachePayload(payload);
+          return entries2.map((entry) => {
+            const key = this.plugin.decodePersistedTranslationCacheKey(entry, strings2);
+            const value = this.plugin.decodePersistedTranslationCacheValue(entry, strings2);
+            if (!key || !value) return null;
+            const createdAt = Number(entry?.createdAt ?? entry?.c ?? now);
+            return {
+              key,
+              value,
+              createdAt,
+              touchedAt: Number(entry?.touchedAt ?? entry?.lastUsedAt ?? entry?.t ?? createdAt),
+              expiresAt: Number(entry?.expiresAt ?? entry?.e ?? createdAt + ttlMs),
+              legacy: savedBeforeKeySchema || Boolean(entry?.l)
+            };
+          }).filter(Boolean);
+        };
+        let currentEntries = decode(current);
+        let legacyEntries = decode(legacy);
+        if (!legacyEntries) return current;
+        if (!currentEntries) return legacy;
+        const currentSavedAt = Number(current?.savedAt) || 0;
+        const legacySavedAt = Number(legacy?.savedAt) || 0;
+        if (legacySavedAt > currentSavedAt) {
+          const legacySawCurrent = !this.isPreKeySchemaTranslationCachePayload(legacy);
+          if (!legacyEntries.length || legacySawCurrent) currentEntries = currentEntries.filter((item) => item.touchedAt >= legacySavedAt);
+        } else if (currentSavedAt > legacySavedAt) legacyEntries = legacyEntries.filter((item) => item.touchedAt >= currentSavedAt);
+        const byKey = /* @__PURE__ */ new Map();
+        [...legacyEntries, ...currentEntries].forEach((item) => {
+          const existing = byKey.get(item.key);
+          if (!existing || item.touchedAt >= existing.touchedAt) byKey.set(item.key, item);
+        });
+        const strings = [];
+        const stringIndexes = /* @__PURE__ */ new Map();
+        const encodeString = (value) => {
+          const text = String(value || "");
+          if (!stringIndexes.has(text)) {
+            stringIndexes.set(text, strings.length);
+            strings.push(text);
+          }
+          return stringIndexes.get(text);
+        };
+        const entries = [...byKey.values()].sort((left, right) => left.touchedAt - right.touchedAt).map((item) => {
+          const entry = {
+            k: item.key.split("\n---\n").map(encodeString),
+            v: encodeString(item.value),
+            c: item.createdAt,
+            t: item.touchedAt,
+            e: item.expiresAt
+          };
+          if (item.legacy) entry.l = 1;
+          return entry;
+        });
+        return {
+          version: 3,
+          keySchema: TRANSLATION_CACHE_KEY_SCHEMA,
+          savedAt: now,
+          ttlHours: this.plugin.normalizeTranslationCacheTtlHours(current?.ttlHours ?? legacy?.ttlHours),
+          maxEntries: Number(current?.maxEntries || legacy?.maxEntries || 0) || this.plugin.getTranslationCacheMaxEntries(),
+          // Local-model cache keys name the served model; without the list those lines stop matching.
+          localModels: this.mergePersistedLocalModels(current?.localModels, legacy?.localModels),
+          strings,
+          entries
+        };
+      }
+      // One entry per local server, the current copy's model first; restoreLocalProviderDetectedModels reads 8.
+      mergePersistedLocalModels(current, legacy) {
+        const seen = /* @__PURE__ */ new Set();
+        return [...Array.isArray(current) ? current : [], ...Array.isArray(legacy) ? legacy : []].filter((item) => {
+          const key = String(item?.key || "");
+          if (!key || !String(item?.model || "").trim() || seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        }).slice(0, 8).map((item) => ({ key: String(item.key), model: String(item.model).trim() }));
       }
       decodePersistedTranslationCacheKey(entry, strings = []) {
         const direct = String(entry?.key || "");
@@ -9501,19 +12073,24 @@ var require_translation_cache_store = __commonJS({
           return !meta.volatile && !this.plugin.isVolatileTranslationCacheKey(key);
         }).map(([key, value]) => {
           const meta = this.plugin.translationCacheMeta.get(key) || {};
-          return {
+          const entry = {
             k: encodeKey(key),
             v: encodeValue(value),
             c: Number(meta.createdAt || Date.now()),
             t: Number(meta.touchedAt || Date.now()),
             e: this.plugin.getTranslationCacheEntryExpiresAt(meta)
           };
+          if (this.legacyKeys.has(key)) entry.l = 1;
+          return entry;
         });
         return {
           version: 3,
+          keySchema: TRANSLATION_CACHE_KEY_SCHEMA,
           savedAt: Date.now(),
           ttlHours: this.plugin.normalizeTranslationCacheTtlHours(this.plugin.settings.ui?.translationCacheTtlHours),
           maxEntries: this.plugin.getTranslationCacheMaxEntries(),
+          // Cache keys of local models name the served model; see getCacheConfigSnapshot.
+          localModels: this.plugin.getPersistableLocalProviderDetectedModels(),
           strings,
           entries
         };
@@ -9548,7 +12125,7 @@ var require_translation_cache_store = __commonJS({
         try {
           const payload = this.plugin.createPersistedTranslationCachePayload();
           if (this.plugin.saveData(CACHE_DATA_KEY, payload) !== true) throw new Error("DATA_SAVE_FAILED");
-          this.plugin.persistentTranslationCacheCount = payload.entries.length;
+          this.plugin.persistentTranslationCacheCount = new Set(payload.entries.map((entry) => entry.v)).size;
           this.plugin.translationCacheDirty = false;
           this.plugin.translationCacheTouchDirtyCount = 0;
           this.plugin.translationCachePersistenceDeferredSince = 0;
@@ -9577,6 +12154,7 @@ var require_translation_cache_store = __commonJS({
         const previousPersistentCount = this.plugin.persistentTranslationCacheCount;
         const previousDirty = this.plugin.translationCacheDirty;
         const previousDirtyAt = this.plugin.translationCacheDirtyAt;
+        const previousLegacyKeys = this.legacyKeys;
         if (this.plugin.translationCacheDirtyTimer) {
           clearTimeout(this.plugin.translationCacheDirtyTimer);
           this.plugin.translationCacheDirtyTimer = null;
@@ -9585,6 +12163,9 @@ var require_translation_cache_store = __commonJS({
         this.plugin.translationCacheDirty = false;
         this.plugin.translationCache.clear();
         this.plugin.translationCacheMeta.clear();
+        this.legacyKeys = /* @__PURE__ */ new Set();
+        this.preEmojiSourceTexts.clear();
+        this.invalidateTranslationCacheValueRefs();
         this.plugin.clearTranslationCacheNegativeLookups();
         this.plugin.translationCacheStats = { hits: 0, misses: 0 };
         this.plugin.persistentTranslationCacheCount = 0;
@@ -9595,6 +12176,7 @@ var require_translation_cache_store = __commonJS({
         } catch (error) {
           this.plugin.translationCache = previousCache;
           this.plugin.translationCacheMeta = previousMeta;
+          this.legacyKeys = previousLegacyKeys;
           this.plugin.translationCacheStats = previousStats;
           this.plugin.persistentTranslationCacheCount = previousPersistentCount;
           this.plugin.translationCacheDirty = previousDirty;
@@ -9633,6 +12215,7 @@ var require_translation_cache_store = __commonJS({
         const scanExpired = options.scanExpired !== false;
         let removed = false;
         if (scanExpired) {
+          this.invalidateTranslationCacheValueRefs();
           for (const [key, meta] of this.plugin.translationCacheMeta) {
             if (this.plugin.isTranslationCacheEntryExpired(meta, now)) {
               this.plugin.translationCache.delete(key);
@@ -9640,10 +12223,14 @@ var require_translation_cache_store = __commonJS({
               removed = true;
             }
           }
+          this.pruneLegacyTranslationCacheKeys();
         }
-        while (this.plugin.translationCache.size > this.plugin.getTranslationCacheMaxEntries()) {
-          const oldestKey = this.plugin.translationCache.keys().next().value;
-          this.plugin.translationCache.delete(oldestKey);
+        const cache = this.plugin.translationCache;
+        const maxMessages = this.plugin.getTranslationCacheMaxEntries();
+        const maxKeys = maxMessages * TRANSLATION_CACHE_MAX_KEYS_PER_MESSAGE;
+        while (cache.size > maxKeys || cache.size > maxMessages && this.getTranslationCacheValueRefs().size > maxMessages) {
+          const oldestKey = cache.keys().next().value;
+          this.deleteTranslationCacheEntry(oldestKey);
           this.plugin.translationCacheMeta.delete(oldestKey);
           removed = true;
         }
@@ -9681,6 +12268,7 @@ var require_provider_layer = __commonJS({
       AUTO_LANGUAGE_VALUE,
       AUTO_TRANSLATE_FAILURE_MAX_TTL,
       AUTO_TRANSLATE_INVALID_OUTPUT_FAILURE_TTL,
+      AUTO_TRANSLATE_PROVIDER_FAILURE_TTL,
       AUTO_TRANSLATE_VIEWPORT_STABLE_RESCAN_MS,
       DEFAULT_SETTINGS,
       DIAGNOSTIC_REASON_CODES,
@@ -9699,9 +12287,12 @@ var require_provider_layer = __commonJS({
       PROVIDER_ORDER,
       SETTINGS_WRITE_DEBOUNCE_MS
     } = require_constants();
+    var GOOGLE_API_KEY_PATTERN = /AIza[0-9A-Za-z_-]{10,}/;
     var ProviderLayer = class {
       constructor(plugin) {
         this.plugin = plugin;
+        this.lastApiTestResults = /* @__PURE__ */ new Map();
+        this.runningApiTests = /* @__PURE__ */ new Map();
       }
       getProviderDefaults(provider) {
         return PROVIDER_DEFAULTS[String(provider || "").trim()] || null;
@@ -9768,13 +12359,33 @@ var require_provider_layer = __commonJS({
         const key = this.plugin.getLocalProviderModelDetectionCacheKey(config, options.defaultConfig);
         if (!key || !normalized) return "";
         const now = Date.now();
+        const previousModel = String(this.plugin.localProviderDetectedModels.get(key)?.model || "");
         this.plugin.localProviderDetectedModels.set(key, {
           model: normalized,
           detectedAt: now,
           expiresAt: now + Math.max(1e3, Number(options.ttlMs || LOCAL_PROVIDER_MODEL_DETECTION_TTL_MS) || LOCAL_PROVIDER_MODEL_DETECTION_TTL_MS),
           retryAt: 0
         });
+        if (previousModel !== normalized) {
+          if (!previousModel) this.plugin.localProviderModelFirstDetected = true;
+          this.plugin.scheduleTranslationCachePersist();
+          this.plugin.cachedDrawMemo?.clear?.();
+        }
         return normalized;
+      }
+      getPersistableLocalProviderDetectedModels() {
+        return [...this.plugin.localProviderDetectedModels?.entries?.() || []].filter(([key, entry]) => key && String(entry?.model || "").trim()).sort((left, right) => Number(right[1].detectedAt || 0) - Number(left[1].detectedAt || 0)).slice(0, 8).map(([key, entry]) => ({ key, model: String(entry.model).trim() }));
+      }
+      // Restores the last served model per local server after a restart, so cached lines keep
+      // their keys (and draw) before the server answers again; the next request re-detects.
+      restoreLocalProviderDetectedModels(list) {
+        if (!Array.isArray(list)) return;
+        list.slice(0, 8).forEach((item) => {
+          const key = String(item?.key || "");
+          const model = this.plugin.normalizeLocalProviderModelId(item?.model);
+          if (!key || !model || this.plugin.localProviderDetectedModels.get(key)?.model) return;
+          this.plugin.localProviderDetectedModels.set(key, { model, detectedAt: 0, expiresAt: 0, retryAt: 0 });
+        });
       }
       getEffectiveChatCompletionModel(kind, config = {}, defaultConfig = DEFAULT_SETTINGS[kind] || {}) {
         const providerDefault = PROVIDER_DEFAULTS[config.provider] || {};
@@ -9869,7 +12480,9 @@ var require_provider_layer = __commonJS({
           return `${clean || "http://127.0.0.1:8080/v1"}/models`;
         }
       }
-      parseLocalProviderModelsResponse(raw) {
+      // The model the server serves: the first .gguf id, else the first id. With { all: true }, every id the server
+      // lists, in its order (for the settings' "Detect models" picker).
+      parseLocalProviderModelsResponse(raw, options = {}) {
         const data = typeof raw === "string" ? this.plugin.parseApiJson(raw) : raw;
         const candidates = [];
         const addModel = (value) => {
@@ -9896,7 +12509,56 @@ var require_provider_layer = __commonJS({
         add(data?.models);
         add(data?.items);
         if (!candidates.length) add(data);
+        if (options?.all) return candidates;
         return candidates.find((model) => /\.gguf(?:$|[?#])/i.test(model)) || candidates[0] || "";
+      }
+      // "Detect models" in the settings: lists the models a Sakura local or OpenAI-compatible server reports. It runs
+      // only on that explicit click (automatic detection stays limited to loopback servers). For a local server whose
+      // model is left on local-model, the loaded model also refreshes the detection cache.
+      async detectProviderModels(kind, options = {}) {
+        const config = this.plugin.clone(this.plugin.getTaskConfig(kind));
+        const defaultConfig = DEFAULT_SETTINGS[kind] || {};
+        if (!this.plugin.isModelDetectionProvider(config.provider)) {
+          const error = new Error(this.plugin.t("modelDetectUnsupported"));
+          error.code = "MODEL_DETECTION_UNSUPPORTED";
+          throw error;
+        }
+        const endpoint = this.plugin.getEffectiveChatCompletionEndpoint(config, defaultConfig);
+        const modelsEndpoint = this.plugin.getLocalProviderModelsEndpoint(endpoint);
+        const local = this.plugin.isLocalTranslationProvider(config);
+        const timeoutMs = Math.max(1e3, Number(options.timeoutMs || (local ? LOCAL_PROVIDER_MODEL_DETECTION_TIMEOUT_MS : API_TEST_REQUEST_TIMEOUT_MS)) || API_TEST_REQUEST_TIMEOUT_MS);
+        const startedAt = Date.now();
+        try {
+          const raw = await this.plugin.fetchApiResponseText(modelsEndpoint, {
+            method: "GET",
+            provider: config.provider,
+            headers: this.plugin.getRequestHeaders(config, this.plugin.getEffectiveRequestApiKey(config))
+          }, timeoutMs);
+          const models = this.plugin.parseLocalProviderModelsResponse(raw, { all: true });
+          const loaded = local ? this.plugin.parseLocalProviderModelsResponse(raw) : "";
+          if (loaded && this.plugin.shouldAutoDetectLocalProviderModel(config, defaultConfig)) {
+            this.plugin.setCachedLocalProviderDetectedModel(config, loaded, { defaultConfig });
+          }
+          this.plugin.logDiagnostic("provider.models.detect", "success", {
+            kind,
+            provider: config.provider,
+            count: models.length,
+            ms: Date.now() - startedAt
+          });
+          return { models, loaded };
+        } catch (error) {
+          this.plugin.logDiagnostic("provider.models.detect", "failed", {
+            kind,
+            provider: config.provider,
+            failureType: this.plugin.getAutoTranslationFailureType(error),
+            status: Number(error?.status || 0),
+            ms: Date.now() - startedAt
+          });
+          throw error;
+        }
+      }
+      isModelDetectionProvider(provider) {
+        return ["sakuraLocal", "openaiCompatible"].includes(String(provider || ""));
       }
       normalizeLocalProviderModelId(value) {
         const text = String(value || "").trim();
@@ -9921,6 +12583,7 @@ var require_provider_layer = __commonJS({
         const normalized = this.plugin.normalizeGoogleTranslateKeyPool(this.plugin.settings.googleTranslate || {});
         this.plugin.settings.googleTranslate.keys = normalized.keys;
         this.plugin.settings.googleTranslate.keyPoolText = normalized.keyPoolText;
+        this.plugin.settings.googleTranslate.usageById = normalized.usageById;
         return normalized.keys;
       }
       countGoogleTranslateChars(texts) {
@@ -9934,7 +12597,7 @@ var require_provider_layer = __commonJS({
         const now = Date.now();
         const keys = this.plugin.getGoogleTranslateKeys();
         const needed = Math.max(1, Math.round(Number(charCount) || 1));
-        const available = keys.find((key) => key.enabled !== false && Number(key.cooldownUntil || 0) <= now && Number(key.usedChars || 0) + (options.ignoreReservations ? 0 : this.plugin.getGoogleTranslateReservedChars(key)) + needed <= Number(key.monthlyLimit || GOOGLE_TRANSLATE_DEFAULT_MONTHLY_LIMIT));
+        const available = keys.find((key) => key.enabled !== false && (options.ignoreCooldown || Number(key.cooldownUntil || 0) <= now) && Number(key.usedChars || 0) + (options.ignoreReservations ? 0 : this.plugin.getGoogleTranslateReservedChars(key)) + needed <= Number(key.monthlyLimit || GOOGLE_TRANSLATE_DEFAULT_MONTHLY_LIMIT));
         if (available || options.persist === false) return available || null;
         this.plugin.saveGoogleTranslateRuntimeState();
         return null;
@@ -9980,6 +12643,60 @@ var require_provider_layer = __commonJS({
         if (options.charCount !== void 0) error.googleTranslateCharCount = Math.max(0, Math.round(Number(options.charCount) || 0));
         return error;
       }
+      // No key can take the request, but one with room this month only waits out a cooldown
+      // (a per-minute limit, a rejected request). Returns when the first of those comes back, or 0.
+      getGoogleTranslateCoolingKeyReadyAt(charCount = 1, options = {}) {
+        const now = Date.now();
+        const needed = Math.max(1, Math.round(Number(charCount) || 1));
+        const readyAt = this.plugin.getGoogleTranslateKeys().filter((key) => key.enabled !== false && Number(key.cooldownUntil || 0) > now && Number(key.usedChars || 0) + (options.ignoreReservations ? 0 : this.plugin.getGoogleTranslateReservedChars(key)) + needed <= Number(key.monthlyLimit || GOOGLE_TRANSLATE_DEFAULT_MONTHLY_LIMIT)).map((key) => Number(key.cooldownUntil));
+        return readyAt.length ? Math.min(...readyAt) : 0;
+      }
+      // Every usable key is cooling down: the pool waits until the first one is back. This is a
+      // rate limit for the whole pool, not an exhausted quota.
+      createGoogleTranslateCooldownError(options = {}) {
+        const until = Math.max(Date.now() + 1e3, Number(options.until) || 0);
+        const error = new Error(this.plugin.formatGoogleTranslateCooldownMessage(until));
+        error.googleTranslateKeysCooling = true;
+        error.googleTranslateCooldownUntil = until;
+        error.providerRateLimited = true;
+        error.providerKey = this.plugin.getGoogleTranslateProviderKey();
+        error.retryAfterMs = until - Date.now();
+        if (options.charCount !== void 0) error.googleTranslateCharCount = Math.max(0, Math.round(Number(options.charCount) || 0));
+        return error;
+      }
+      formatGoogleTranslateCooldownMessage(until) {
+        return this.plugin.t("googleTranslateKeysCooling", { time: this.plugin.formatDiagnosticSummaryTime(until) });
+      }
+      // Names the pool key a Google error came from (by its label, never the key itself).
+      formatGoogleTranslateKeyError(error, options = {}) {
+        const message = this.plugin.formatError(error, options);
+        const keyId = String(error?.googleTranslateKeyId || "");
+        const apiKey = String(error?.googleTranslateApiKey || "");
+        if (!keyId && !apiKey) return message;
+        const keys = this.plugin.getGoogleTranslateKeys();
+        const key = keys.find((item) => keyId && item.id === keyId || apiKey && item.apiKey === apiKey);
+        if (!key) return message;
+        return this.plugin.t("googleTranslateKeyError", { label: this.plugin.getGoogleTranslateKeyDisplayLabel(key, keys), error: message });
+      }
+      // The name a pool key is shown by on screen (the error toast, the service card, the overview checklist, the
+      // status). A label that looks like a Google key or holds a key of the pool (a key typed into the label field)
+      // is replaced by the key's generated name, so a key never appears where others can see the screen.
+      getGoogleTranslateKeyDisplayLabel(key, keys = this.plugin.getGoogleTranslateKeys()) {
+        const index = keys.findIndex((item) => item === key || key?.id && item?.id === key.id);
+        const generated = `Google ${Math.max(0, index) + 1}`;
+        const label = String(key?.label || "").trim();
+        if (!label || GOOGLE_API_KEY_PATTERN.test(label)) return generated;
+        const holdsPoolKey = keys.some((item) => {
+          const apiKey = String(item?.apiKey || "").trim();
+          return Boolean(apiKey) && (label === apiKey || apiKey.length >= 8 && label.includes(apiKey));
+        });
+        return holdsPoolKey ? generated : label;
+      }
+      // A failure of one pool key needs the user only when no other key can take over.
+      isGoogleTranslatePoolServing(error) {
+        if (!error?.googleTranslateApiKey || error.googleTranslateKeysCooling) return false;
+        return Boolean(this.plugin.peekGoogleTranslateAvailableKey(1, { ignoreReservations: true }));
+      }
       createGoogleTranslateNoKeyError() {
         const error = new Error(this.plugin.t("googleTranslateNoKey"));
         error.googleTranslateNoKey = true;
@@ -9999,12 +12716,15 @@ var require_provider_layer = __commonJS({
       getGoogleTranslateUsageSummary() {
         const keys = this.plugin.getGoogleTranslateKeys();
         const now = Date.now();
+        const coolingUntil = keys.filter((key) => key.enabled !== false && Number(key.cooldownUntil || 0) > now).map((key) => Number(key.cooldownUntil));
         return {
           monthKey: this.plugin.getCurrentMonthKey(),
           total: keys.length,
           available: keys.filter((key) => key.enabled !== false && Number(key.cooldownUntil || 0) <= now && Number(key.usedChars || 0) + this.plugin.getGoogleTranslateReservedChars(key) < Number(key.monthlyLimit || 0)).length,
           used: keys.reduce((sum, key) => sum + Math.max(0, Number(key.usedChars || 0) || 0), 0),
-          limit: keys.reduce((sum, key) => sum + Math.max(0, Number(key.monthlyLimit || 0) || 0), 0)
+          limit: keys.reduce((sum, key) => sum + Math.max(0, Number(key.monthlyLimit || 0) || 0), 0),
+          coolingDown: coolingUntil.length,
+          nextCooldownEndsAt: coolingUntil.length ? Math.min(...coolingUntil) : 0
         };
       }
       saveGoogleTranslateRuntimeState() {
@@ -10031,6 +12751,7 @@ var require_provider_layer = __commonJS({
         const normalized = this.plugin.normalizeGoogleTranslateKeyPool(this.plugin.settings.googleTranslate || {});
         this.plugin.settings.googleTranslate.keys = normalized.keys;
         this.plugin.settings.googleTranslate.keyPoolText = normalized.keyPoolText;
+        this.plugin.settings.googleTranslate.usageById = normalized.usageById;
         if (this.plugin.saveSettings() === true) {
           this.plugin.googleTranslateRuntimeDirty = false;
           return true;
@@ -10044,12 +12765,15 @@ var require_provider_layer = __commonJS({
         this.plugin.settings.googleTranslate.keys = this.plugin.getGoogleTranslateKeys().map((key) => ({
           ...key,
           usedChars: 0,
-          monthKey
+          monthKey,
+          cooldownUntil: 0,
+          lastError: ""
         }));
+        this.plugin.settings.googleTranslate.usageById = {};
         this.plugin.saveGoogleTranslateRuntimeState();
         this.plugin.showToast(this.plugin.t("googleTranslateStatsReset"), "success");
       }
-      markGoogleTranslateKeyUsage(apiKey, charCount) {
+      markGoogleTranslateKeyUsage(apiKey, charCount, options = {}) {
         const keyHash = this.plugin.getTextFingerprint(String(apiKey || "").trim());
         const monthKey = this.plugin.getCurrentMonthKey();
         const usedDelta = Math.max(0, Math.round(Number(charCount) || 0));
@@ -10059,10 +12783,17 @@ var require_provider_layer = __commonJS({
             ...key,
             monthKey,
             usedChars: Math.max(0, Number(key.usedChars || 0) || 0) + usedDelta,
+            // A passing API test brings a cooling key back right away.
+            ...options.clearCooldown ? { cooldownUntil: 0 } : {},
             lastError: ""
           };
         });
         this.plugin.settings.googleTranslate.keys = keys;
+        const usageById = this.plugin.settings.googleTranslate.usageById || {};
+        keys.forEach((key) => {
+          if (key.id && key.usedChars > 0) usageById[key.id] = { monthKey, usedChars: key.usedChars };
+        });
+        this.plugin.settings.googleTranslate.usageById = usageById;
         this.plugin.saveGoogleTranslateRuntimeState();
       }
       markGoogleTranslateKeyFailure(apiKey, error, options = {}) {
@@ -10111,9 +12842,16 @@ var require_provider_layer = __commonJS({
         if (preset?.code) return preset.code === "zh" ? "zh-CN" : preset.code;
         const value = String(language || "").trim();
         if (/^[a-z]{2,3}(-[A-Za-z0-9]+)?$/.test(value)) return value;
-        const embedded = value.match(/\b([a-z]{2,3}(?:-[A-Za-z0-9]+)?)\b/);
+        const explicit = value.match(/[(,]\s*([a-z]{2,3}(?:-[A-Za-z0-9]+)?)\s*\)/);
+        const embedded = explicit || value.match(/(?<![\p{L}\p{N}_-])([a-z]{2,3}(?:-[A-Za-z0-9]+)?)(?![\p{L}\p{N}_-])/u);
         if (embedded?.[1]) return embedded[1] === "zh" ? "zh-CN" : embedded[1];
         return value;
+      }
+      // The raw target of a request for direct translation APIs, resolved from the user's
+      // language setting rather than from the LLM instruction text.
+      getTargetLanguageCode(language) {
+        if (!language || language === AUTO_LANGUAGE_VALUE) return "";
+        return this.plugin.getGoogleLanguageCode(language);
       }
       getEffectiveRequestApiKey(config) {
         if (config?.provider === "googleCloud") {
@@ -10155,11 +12893,19 @@ var require_provider_layer = __commonJS({
         const requiresModel = this.plugin.isChatCompletionProvider(config);
         return Boolean(endpoint && (!requiresModel || model) && this.plugin.getEffectiveRequestApiKey(config));
       }
-      setApiStatus(status, state, text, title = "", kind = status?.dataset?.daitKind) {
-        if (!status) return;
+      // Badges are drawn by renderApiStatusBadge, which shows "Not set up" while a required field is missing.
+      renderStatusBadge(status, kind, state, text, title) {
+        if (typeof this.plugin.renderApiStatusBadge === "function") {
+          this.plugin.renderApiStatusBadge(status, kind, state, text, title || "");
+          return;
+        }
         status.className = `dait-api-status dait-api-status-${state}`;
         status.textContent = text;
-        status.title = title;
+        status.title = title || "";
+      }
+      setApiStatus(status, state, text, title = "", kind = status?.dataset?.daitKind) {
+        if (!status) return;
+        this.renderStatusBadge(status, kind, state, text, title);
         if (kind && this.plugin.settings[kind]) {
           this.plugin.settings[kind].apiStatus = { state, message: title || "" };
           this.plugin.saveSettings({ debounce: true });
@@ -10172,13 +12918,10 @@ var require_provider_layer = __commonJS({
         if (previous.state !== next.state || previous.message !== next.message) {
           this.plugin.settings[kind].apiStatus = next;
           this.plugin.saveSettings({ debounce: true, delayMs: SETTINGS_WRITE_DEBOUNCE_MS });
+          this.plugin.scheduleOverviewStatusRefresh?.(`${kind}.apiStatus`);
         }
         if (typeof document === "undefined") return;
-        document.querySelectorAll(`.dait-api-status[data-dait-kind='${kind}']`).forEach((status) => {
-          status.className = `dait-api-status dait-api-status-${state}`;
-          status.textContent = text;
-          status.title = title || "";
-        });
+        document.querySelectorAll(`.dait-api-status[data-dait-kind='${kind}']`).forEach((status) => this.renderStatusBadge(status, kind, state, text, title));
       }
       markLocalProviderHealthy(providerKey) {
         if (!providerKey) return;
@@ -10241,7 +12984,6 @@ var require_provider_layer = __commonJS({
               });
             }
             this.plugin.autoTranslationProviderFailures.delete(providerKey);
-            this.plugin.autoTranslationProviderNoticeAt.delete(providerKey);
             this.plugin.markLocalProviderHealthy(providerKey);
             this.plugin.setApiRuntimeStatus("translation", "success", this.plugin.t("apiStatusSuccess"));
             this.plugin.logDiagnostic("auto.provider.health", "success", {
@@ -10257,8 +12999,12 @@ var require_provider_layer = __commonJS({
               error.localProviderUnavailable = true;
               error.retryAfterMs = Math.max(Number(error.retryAfterMs || 0), LOCAL_PROVIDER_UNAVAILABLE_RETRY_MS);
               error.providerKey = providerKey;
+              error.localProviderEndpoint = error.localProviderEndpoint || String(endpoint || config.endpoint || "");
             }
             this.plugin.markAutoTranslationProviderFailure(requestOptions, error);
+            if (this.plugin.getApiStatus("translation").state === "testing" && !this.plugin.isRequestCancelled(error)) {
+              this.plugin.setApiRuntimeStatus("translation", "failed", this.plugin.t("apiStatusFailed"), this.plugin.formatError(error));
+            }
             this.plugin.logDiagnostic("auto.provider.health", "failed", {
               key: this.plugin.getTextFingerprint(providerKey),
               reason: options.reason || "",
@@ -10273,7 +13019,49 @@ var require_provider_layer = __commonJS({
         })();
         this.plugin.localProviderHealthChecks.set(providerKey, promise);
       }
+      // { ok, model, latencyMs, at, message } of the last connection test of this task, or null when none ran since
+      // the service settings last changed. model is the model the server reported (Sakura local, OpenAI-compatible),
+      // else the configured one; "" for machine-translation services. latencyMs is the test request's round trip.
+      getLastApiTestResult(kind) {
+        const result = this.lastApiTestResults.get(kind);
+        return result ? { ...result } : null;
+      }
+      recordApiTestResult(kind, result = {}) {
+        if (!kind) return null;
+        const latency = Number(result.latencyMs);
+        const entry = {
+          ok: Boolean(result.ok),
+          model: String(result.model || ""),
+          latencyMs: Number.isFinite(latency) && latency >= 0 ? Math.round(latency) : null,
+          at: Number(result.at) || Date.now(),
+          message: String(result.message || "")
+        };
+        this.lastApiTestResults.set(kind, entry);
+        return { ...entry };
+      }
+      clearLastApiTestResult(kind) {
+        return this.lastApiTestResults.delete(kind);
+      }
+      isApiTestRunning(kind) {
+        return Number(this.runningApiTests.get(kind) || 0) > 0;
+      }
+      // The model named in a chat-completions reply ("model": "..."), shortened to its file name.
+      getReportedResponseModel(raw) {
+        try {
+          const data = typeof raw === "string" ? this.plugin.parseApiJson(raw) : raw;
+          const model = typeof data?.model === "string" ? data.model.trim() : "";
+          return model ? this.plugin.getDiagnosticModelLabel(model) : "";
+        } catch {
+          return "";
+        }
+      }
+      getApiTestModel(config = {}, request = {}, reportedModel = "") {
+        if (this.plugin.isDirectTranslateProvider(config)) return "";
+        if (reportedModel && (this.plugin.isLocalTranslationProvider(config) || config?.provider === "openaiCompatible")) return reportedModel;
+        return this.plugin.getDiagnosticModelLabel(String(request?.body?.model || config?.model || ""));
+      }
       resetApiStatus(kind, options = {}) {
+        this.plugin.clearLastApiTestResult?.(kind);
         if (this.plugin.settings[kind]) {
           this.plugin.settings[kind].apiStatus = { state: "untested", message: "" };
           if (options.save === "debounce") this.plugin.saveSettings({ debounce: true });
@@ -10413,10 +13201,13 @@ var require_provider_layer = __commonJS({
         const existingByKey = new Map((existingKeys || []).map((entry) => [String(entry?.apiKey || "").trim(), entry]));
         return String(text || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line, index) => {
           const parts = line.split(/[|\t]/).map((part) => part.trim());
+          while (parts.length > 1 && !parts[parts.length - 1]) parts.pop();
           let label = "";
           let apiKey = "";
           let monthlyLimit = "";
-          if (parts.length >= 2) {
+          if (parts.length === 2 && /^\d+$/.test(parts[1])) {
+            [apiKey, monthlyLimit] = parts;
+          } else if (parts.length >= 2) {
             [label, apiKey, monthlyLimit = ""] = parts;
           } else {
             apiKey = parts[0];
@@ -10437,30 +13228,60 @@ var require_provider_layer = __commonJS({
         const defaultLimit = this.plugin.normalizeGoogleTranslateMonthlyLimit(settings.defaultMonthlyLimit, GOOGLE_TRANSLATE_DEFAULT_MONTHLY_LIMIT);
         const hasKeyPoolText = Object.prototype.hasOwnProperty.call(settings || {}, "keyPoolText");
         const source = hasKeyPoolText ? this.plugin.parseGoogleTranslateKeyPoolText(settings.keyPoolText, settings.keys) : Array.isArray(settings.keys) ? settings.keys : [];
+        const usageById = this.plugin.getGoogleTranslateUsageLedger(settings, currentMonth);
         const seen = /* @__PURE__ */ new Set();
         const keys = [];
         source.forEach((entry, index) => {
           const apiKey = String(entry?.apiKey || "").trim();
           if (!apiKey || seen.has(apiKey)) return;
           seen.add(apiKey);
+          const id = this.plugin.getTextFingerprint(apiKey);
           const monthKey = /^\d{4}-\d{2}$/.test(String(entry?.monthKey || "")) ? String(entry.monthKey) : currentMonth;
           const sameMonth = monthKey === currentMonth;
+          const usedChars = sameMonth ? Math.max(0, Math.round(Number(entry?.usedChars || 0) || 0)) : 0;
           keys.push({
-            id: this.plugin.getTextFingerprint(apiKey),
+            id,
             label: String(entry?.label || `Google ${index + 1}`).trim() || `Google ${index + 1}`,
             apiKey,
             enabled: entry?.enabled !== false,
             monthlyLimit: this.plugin.normalizeGoogleTranslateMonthlyLimit(entry?.monthlyLimit, defaultLimit),
-            usedChars: sameMonth ? Math.max(0, Math.round(Number(entry?.usedChars || 0) || 0)) : 0,
+            // A key pasted back after its line was removed keeps this month's usage.
+            usedChars: Math.max(usedChars, Number(usageById[id]?.usedChars || 0)),
             monthKey: currentMonth,
             cooldownUntil: Math.max(0, Math.round(Number(entry?.cooldownUntil || 0) || 0)),
             lastError: String(entry?.lastError || "").slice(0, 160)
           });
         });
+        keys.forEach((key) => {
+          if (key.usedChars > 0) usageById[key.id] = { monthKey: currentMonth, usedChars: key.usedChars };
+        });
         return {
           keys,
-          keyPoolText: this.plugin.formatGoogleTranslateKeyPoolText(keys)
+          keyPoolText: this.plugin.formatGoogleTranslateKeyPoolText(keys),
+          usageById
         };
+      }
+      // This month's usage per key fingerprint (never the key itself). It outlives the key's
+      // line in the pool, so removing a key and pasting it back cannot reset its usage.
+      getGoogleTranslateUsageLedger(settings = this.plugin.settings.googleTranslate || {}, currentMonth = this.plugin.getCurrentMonthKey()) {
+        const ledger = {};
+        const remember = (id, value) => {
+          const usedChars = Math.max(0, Math.round(Number(value) || 0));
+          if (!id || !usedChars || Number(ledger[id]?.usedChars || 0) >= usedChars) return;
+          ledger[id] = { monthKey: currentMonth, usedChars };
+        };
+        const stored = settings?.usageById;
+        if (stored && typeof stored === "object" && !Array.isArray(stored)) {
+          Object.entries(stored).forEach(([id, record]) => {
+            if (/^[a-z0-9]{1,16}$/.test(id) && record?.monthKey === currentMonth) remember(id, record.usedChars);
+          });
+        }
+        (Array.isArray(settings?.keys) ? settings.keys : []).forEach((entry) => {
+          const apiKey = String(entry?.apiKey || "").trim();
+          const monthKey = /^\d{4}-\d{2}$/.test(String(entry?.monthKey || "")) ? String(entry.monthKey) : currentMonth;
+          if (apiKey && monthKey === currentMonth) remember(this.plugin.getTextFingerprint(apiKey), entry?.usedChars);
+        });
+        return ledger;
       }
       getAutoTranslationProviderKey(requestOptions = this.plugin.getAutoTranslationOptions()) {
         if (requestOptions?.providerKey) return requestOptions.providerKey;
@@ -10555,12 +13376,18 @@ var require_provider_layer = __commonJS({
         promise = this.plugin.fetchModelResponse(endpoint, request, options.timeoutMs || MODEL_REQUEST_TIMEOUT_MS, {
           googleTranslateAsArray: Boolean(options.googleTranslateAsArray),
           translateAsArray: Boolean(options.translateAsArray || options.googleTranslateAsArray),
-          lifecycleToken
+          lifecycleToken,
+          signal: options.signal
         }).then((result) => {
           const requestStillCurrent = this.plugin.isLifecycleTokenCurrent(lifecycleToken) && (!providerSnapshotKey || this.plugin.isAutoTranslationProviderSnapshotCurrent(providerSnapshotKey, { configOverrides: taskConfig }));
           if (requestStillCurrent && providerSnapshotKey && kind === "translation" && this.plugin.isLocalTranslationProvider(taskConfig)) {
             this.plugin.markLocalProviderHealthy(providerSnapshotKey);
             this.plugin.setApiRuntimeStatus("translation", "success", this.plugin.t("apiStatusSuccess"));
+          } else if (requestStillCurrent && providerSnapshotKey && kind === "translation" && taskConfig?.provider === this.plugin.settings.translation?.provider && this.plugin.getApiStatus("translation").state === "failed") {
+            this.plugin.setApiRuntimeStatus("translation", "success", this.plugin.t("apiStatusSuccess"));
+          }
+          if (requestStillCurrent && kind === "translation" && this.plugin.autoTranslationProviderNoticeAt?.size) {
+            this.plugin.endTranslationAttentionEpisode?.(providerSnapshotKey || this.plugin.getAutoTranslationProviderKey({ configOverrides: taskConfig }));
           }
           if (requestStillCurrent) {
             this.plugin.logDiagnostic("model.request", "success", {
@@ -10626,13 +13453,21 @@ var require_provider_layer = __commonJS({
       }
       async fetchModelResponse(endpoint, request, timeoutMs = MODEL_REQUEST_TIMEOUT_MS, options = {}) {
         try {
-          const raw = await this.plugin.fetchApiResponseText(endpoint, request, timeoutMs);
+          const raw = await this.plugin.fetchApiResponseText(endpoint, request, timeoutMs, options.signal ? { signal: options.signal } : void 0);
+          if (typeof options.onRawResponse === "function") {
+            try {
+              options.onRawResponse(raw);
+            } catch {
+            }
+          }
           if (request?.responseParser === "googleTranslate") {
             const result = this.plugin.parseGoogleTranslateResponse(raw, request?.googleTranslate?.expectedCount || 1, {
               asArray: Boolean(options.googleTranslateAsArray || options.translateAsArray),
               restoreMaps: request?.googleTranslate?.restoreMaps
             });
-            this.plugin.markGoogleTranslateKeyUsage(request.googleTranslate?.apiKey, request.googleTranslate?.charCount || 0);
+            this.plugin.markGoogleTranslateKeyUsage(request.googleTranslate?.apiKey, request.googleTranslate?.charCount || 0, {
+              clearCooldown: Boolean(options.connectionTest)
+            });
             this.plugin.markGoogleTranslateProviderSuccess(request);
             return result;
           }
@@ -10653,6 +13488,11 @@ var require_provider_layer = __commonJS({
             });
           }
           return this.plugin.parseModelResponse(raw);
+        } catch (error) {
+          if (request?.responseParser === "googleTranslate" && error?.requestSent && this.plugin.isRequestCancelled(error)) {
+            this.plugin.markGoogleTranslateKeyUsage(request.googleTranslate?.apiKey, request.googleTranslate?.charCount || 0);
+          }
+          throw error;
         } finally {
           this.plugin.releaseGoogleTranslateRequestReservation(request);
         }
@@ -10663,6 +13503,7 @@ var require_provider_layer = __commonJS({
           error.localProviderUnavailable = true;
           error.retryAfterMs = Math.max(Number(error.retryAfterMs || 0), LOCAL_PROVIDER_UNAVAILABLE_RETRY_MS);
           error.providerKey = error.providerKey || this.plugin.getAutoTranslationProviderKey({ configOverrides: options.configOverrides });
+          error.localProviderEndpoint = error.localProviderEndpoint || String(endpoint || config?.endpoint || "");
         }
         return error;
       }
@@ -10670,10 +13511,9 @@ var require_provider_layer = __commonJS({
         if (error?.localProviderUnavailable) return true;
         if (!this.plugin.isLocalTranslationProvider(config) || !this.plugin.isLoopbackEndpoint(endpoint || config?.endpoint)) return false;
         const status = Number(error?.status || 0);
-        if (this.plugin.isTimeoutError(error)) return !this.plugin.isLongAutoTranslationRequestOptions(options);
+        if (this.plugin.isTimeoutError(error)) return !options?.truncationRetry && !this.plugin.isLongAutoTranslationRequestOptions(options);
         if (this.plugin.isNetworkError(error)) return true;
-        if (status >= 500) return true;
-        return this.plugin.isLocalProviderEmptyResponseError(error) || this.plugin.isLocalProviderInvalidResponseError(error);
+        return status >= 500;
       }
       isLoopbackEndpoint(endpoint) {
         const value = String(endpoint || "").trim();
@@ -10725,13 +13565,21 @@ var require_provider_layer = __commonJS({
         const message = String(error?.message || "");
         return message === this.plugin.t("invalidJson") || /invalid json|unexpected token|not valid json/i.test(message);
       }
-      async fetchApiResponseText(endpoint, request, timeoutMs = MODEL_REQUEST_TIMEOUT_MS) {
+      async fetchApiResponseText(endpoint, request, timeoutMs = MODEL_REQUEST_TIMEOUT_MS, callerOptions = {}) {
         this.plugin.assertSafeRequestEndpoint(endpoint);
         const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
         if (controller) this.plugin.activeApiControllers.add(controller);
         const timeout = controller ? setTimeout(() => controller.abort(new DOMException("API request timed out", "TimeoutError")), timeoutMs) : null;
+        const callerSignal = callerOptions?.signal || null;
+        const abortFromCaller = () => controller?.abort();
+        if (callerSignal && controller) {
+          if (callerSignal.aborted) controller.abort();
+          else callerSignal.addEventListener?.("abort", abortFromCaller, { once: true });
+        }
+        let sent = false;
         try {
           if (this.plugin.apiRequestsClosed) throw new DOMException("API requests are closed until the plugin starts", "AbortError");
+          controller?.signal.throwIfAborted();
           const method = String(request?.method || "POST").trim().toUpperCase() || "POST";
           const fetchOptions = {
             method,
@@ -10745,6 +13593,7 @@ var require_provider_layer = __commonJS({
           if (method !== "GET" && method !== "HEAD") {
             fetchOptions.body = request?.bodyEncoding === "form" ? new URLSearchParams(request.body || {}).toString() : JSON.stringify(request.body);
           }
+          sent = true;
           const response = await fetch(endpoint, fetchOptions);
           const raw = await response.text();
           controller?.signal.throwIfAborted();
@@ -10754,6 +13603,7 @@ var require_provider_layer = __commonJS({
               this.plugin.annotateGoogleTranslateApiError(apiError, raw, request);
             }
             this.plugin.annotateTranslateProviderApiError(apiError, raw, request);
+            this.plugin.annotateChatCompletionApiError(apiError, raw, request);
             throw apiError;
           }
           return raw;
@@ -10762,11 +13612,13 @@ var require_provider_layer = __commonJS({
           const timedOut = controller?.signal.reason?.name === "TimeoutError";
           throw Object.assign(new Error(timedOut ? `API request timed out after ${Math.round(timeoutMs / 1e3)}s` : "Request cancelled", { cause: error }), {
             name: timedOut ? "TimeoutError" : "AbortError",
-            code: timedOut ? "REQUEST_TIMEOUT" : "REQUEST_CANCELLED"
+            code: timedOut ? "REQUEST_TIMEOUT" : "REQUEST_CANCELLED",
+            requestSent: sent
           });
         } finally {
           if (timeout) clearTimeout(timeout);
           if (controller) this.plugin.activeApiControllers.delete(controller);
+          if (callerSignal) callerSignal.removeEventListener?.("abort", abortFromCaller);
         }
       }
       abortActiveApiRequests() {
@@ -10784,12 +13636,53 @@ var require_provider_layer = __commonJS({
         error.providerKey = request.providerKey || this.plugin.getGoogleTranslateProviderKey();
         error.googleTranslateApiKey = request.googleTranslate?.apiKey || "";
         error.googleTranslateKeyId = request.googleTranslate?.keyId || "";
-        const signal = `${Number(error.status || 0)} ${String(raw || "").slice(0, 4e3)}`;
-        if (/RESOURCE_EXHAUSTED|quota|limit exceeded|daily limit|monthly limit|rateLimitExceeded|userRateLimitExceeded/i.test(signal)) {
+        const status = Number(error.status || 0);
+        const text = String(raw || "").slice(0, 4e3);
+        const dailyLimit = /dailyLimitExceeded|daily limit|per\s*day\b/i.test(text);
+        const shortWindowLimit = /userRateLimitExceeded|rateLimitExceeded|per\s*(?:minute|second|100\s*seconds)\b/i.test(text);
+        if (!dailyLimit && (shortWindowLimit || status === 429)) {
+          error.providerRateLimited = true;
+          error.retryAfterMs = Number(error.retryAfterMs || 0) > 0 ? Number(error.retryAfterMs) : AUTO_TRANSLATE_PROVIDER_FAILURE_TTL;
+        } else if (dailyLimit) {
+          error.googleTranslateQuotaExceeded = true;
+          error.retryAfterMs = Math.max(Number(error.retryAfterMs || 0), this.plugin.getGoogleTranslateDailyQuotaRetryAfterMs());
+        } else if (/RESOURCE_EXHAUSTED|quota|limit exceeded|monthly limit/i.test(text)) {
           error.googleTranslateQuotaExceeded = true;
           error.retryAfterMs = Math.max(Number(error.retryAfterMs || 0), this.plugin.getGoogleTranslateQuotaRetryAfterMs());
+        } else if (/API_KEY_INVALID|API_KEY_EXPIRED|API key not valid|API key expired|PERMISSION_DENIED/i.test(text)) {
+          error.providerAuthFailed = true;
+          error.googleTranslateKeyInvalid = true;
         }
         return error;
+      }
+      // OpenAI-compatible services answer a model name they do not know with 400 or 404 (DeepSeek:
+      // "Model Not Exist"); the message then points to the model setting, not to account permissions.
+      annotateChatCompletionApiError(error, raw = "", request = {}) {
+        if (!error || !Array.isArray(request?.body?.messages)) return error;
+        if (![400, 404, 422].includes(Number(error.status || 0))) return error;
+        const text = String(raw || "").slice(0, 4e3);
+        if (/model_not_found|no such model|\b(?:unknown|invalid|unsupported) model\b|\bmodel\b[^.]{0,80}?\b(?:not exists?|does not exist|not found|is not (?:available|supported))\b/i.test(text)) {
+          error.providerModelNotFound = true;
+        }
+        return error;
+      }
+      // Google resets daily quota at midnight Pacific Time.
+      getGoogleTranslateDailyQuotaRetryAfterMs(now = Date.now()) {
+        const day = 24 * 60 * 60 * 1e3;
+        try {
+          const parts = new Intl.DateTimeFormat("en-US", {
+            timeZone: "America/Los_Angeles",
+            hourCycle: "h23",
+            hour: "2-digit",
+            minute: "2-digit",
+            second: "2-digit"
+          }).formatToParts(new Date(now));
+          const part = (type) => Number(parts.find((item) => item.type === type)?.value || 0);
+          const elapsedMs = (part("hour") % 24 * 3600 + part("minute") * 60 + part("second")) * 1e3;
+          return Math.max(AUTO_TRANSLATE_FAILURE_MAX_TTL, day - elapsedMs + 5 * 60 * 1e3);
+        } catch {
+          return day;
+        }
       }
       getModelRequestKey(endpoint, request, input) {
         const body = request?.body || {};
@@ -10826,6 +13719,16 @@ var require_provider_layer = __commonJS({
         let endpoint = "";
         let providerSnapshotKey = "";
         let testConfig = null;
+        let testRequest = null;
+        let requestStartedAt = 0;
+        let reportedModel = "";
+        const record = (ok, message = "") => this.plugin.recordApiTestResult?.(kind, {
+          ok,
+          model: this.plugin.getApiTestModel(testConfig || this.plugin.getTaskConfig(kind), testRequest, reportedModel),
+          latencyMs: requestStartedAt ? Date.now() - requestStartedAt : null,
+          message
+        });
+        this.runningApiTests.set(kind, Number(this.runningApiTests.get(kind) || 0) + 1);
         try {
           testConfig = this.plugin.clone(this.plugin.getTaskConfig(kind));
           providerSnapshotKey = kind === "translation" ? this.plugin.getAutoTranslationProviderKey({ configOverrides: testConfig }) : "";
@@ -10834,10 +13737,19 @@ var require_provider_layer = __commonJS({
           }
           const test = this.plugin.buildConnectionTestRequest(kind);
           endpoint = test.endpoint;
-          await this.plugin.fetchModelResponse(test.endpoint, test.request, API_TEST_REQUEST_TIMEOUT_MS, { lifecycleToken });
+          testRequest = test.request;
+          requestStartedAt = Date.now();
+          await this.plugin.fetchModelResponse(test.endpoint, test.request, API_TEST_REQUEST_TIMEOUT_MS, {
+            lifecycleToken,
+            connectionTest: true,
+            onRawResponse: (raw) => {
+              reportedModel = this.plugin.getReportedResponseModel(raw);
+            }
+          });
           if (!this.plugin.isLifecycleTokenCurrent(lifecycleToken) || kind === "translation" && !this.plugin.isAutoTranslationProviderSnapshotCurrent(providerSnapshotKey, { configOverrides: testConfig })) return;
           this.plugin.clearAutoTranslationProviderFailureForCurrentConfig(kind);
           if (kind === "translation" && this.plugin.isLocalTranslationProvider(testConfig)) this.plugin.markLocalProviderHealthy(providerSnapshotKey);
+          record(true);
           this.plugin.setApiStatus(status, "success", this.plugin.t("apiStatusSuccess"));
           if (kind === "translation") this.plugin.queueScan();
           this.plugin.showToast(this.plugin.t("apiTestSuccess", { name: this.plugin.getTaskDisplayName(kind) }), "success");
@@ -10855,6 +13767,7 @@ var require_provider_layer = __commonJS({
               this.plugin.markLocalProviderHealthy(providerSnapshotKey);
               this.plugin.queueScan();
             }
+            record(true);
             this.plugin.setApiStatus(status, "success", this.plugin.t("apiStatusSuccess"));
             this.plugin.showToast(this.plugin.t("apiTestSuccess", { name: this.plugin.getTaskDisplayName(kind) }), "success");
             return;
@@ -10865,31 +13778,35 @@ var require_provider_layer = __commonJS({
             if (error?.googleTranslateApiKey) this.plugin.markGoogleTranslateKeyFailure(error.googleTranslateApiKey, error);
             if (error.localProviderUnavailable) this.plugin.markAutoTranslationProviderFailure(this.plugin.getAutoTranslationOptions(), error);
           }
-          const message = this.plugin.formatError(error);
+          const message = this.plugin.formatGoogleTranslateKeyError(error);
+          record(false, message);
           this.plugin.setApiStatus(status, "failed", this.plugin.t("apiStatusFailed"), message);
           this.plugin.showToast(this.plugin.t("apiTestFailed", { name: this.plugin.getTaskDisplayName(kind), error: message }), "error");
         } finally {
-          if (this.plugin.isLifecycleTokenCurrent(lifecycleToken)) this.plugin.setButtonBusy(button, false, this.plugin.t("apiTest"));
+          const running = Number(this.runningApiTests.get(kind) || 0) - 1;
+          if (running > 0) this.runningApiTests.set(kind, running);
+          else this.runningApiTests.delete(kind);
+          if (this.plugin.isLifecycleTokenCurrent(lifecycleToken)) {
+            this.plugin.setButtonBusy(button, false, this.plugin.t("apiTest"));
+            this.plugin.requestLauncherStatusUpdate?.();
+          }
         }
       }
       buildConnectionTestRequest(kind) {
-        const { config, endpoint, apiKey, model } = this.plugin.getApiConfig(kind);
-        if (this.plugin.isDirectTranslateProvider(config)) {
+        const taskConfig = this.plugin.getTaskConfig(kind);
+        if (this.plugin.isDirectTranslateProvider(taskConfig)) {
+          const targetLanguage = taskConfig.targetLanguage || this.plugin.settings.translation?.targetLanguage;
           return this.plugin.buildModelRequest("translation", "hello", {
             configOverrides: {
-              ...config,
+              ...taskConfig,
               sourceLanguage: AUTO_LANGUAGE_VALUE,
-              targetLanguage: "en"
-            }
+              targetLanguage,
+              targetLanguageCode: this.plugin.getTargetLanguageCode(targetLanguage)
+            },
+            ignoreGoogleTranslateCooldown: true
           });
         }
-        if (this.plugin.isGoogleTranslateProvider(config)) {
-          return this.plugin.buildGoogleTranslateRequest("hello", {
-            ...config,
-            sourceLanguage: AUTO_LANGUAGE_VALUE,
-            targetLanguage: "en"
-          });
-        }
+        const { config, endpoint, apiKey, model } = this.plugin.getApiConfig(kind);
         const body = this.plugin.applyProviderBodyOptions(config, {
           model,
           messages: [
@@ -10917,6 +13834,7 @@ var require_provider_layer = __commonJS({
           if (kind !== "translation") throw new Error(this.plugin.t("translationDisabled"));
           return this.plugin.buildGoogleTranslateRequest(input, effectiveConfig, {
             ignoreReservations: Boolean(options.deferGoogleTranslateReservation),
+            ignoreCooldown: Boolean(options.ignoreGoogleTranslateCooldown),
             reserve: Boolean(options.reserveGoogleTranslateQuota)
           });
         }
@@ -10970,13 +13888,15 @@ var require_provider_layer = __commonJS({
         const protectedTexts = protectedPayloads.map((payload) => payload.text);
         const charCount = this.plugin.countGoogleTranslateChars(protectedTexts);
         const endpoint = String(PROVIDER_DEFAULTS.googleCloud.endpoint).trim();
-        const target = this.plugin.getGoogleLanguageCode(config.targetLanguage);
+        const target = this.plugin.getGoogleLanguageCode(config.targetLanguageCode || config.targetLanguage);
         if (!target || target === AUTO_LANGUAGE_VALUE) throw new Error(this.plugin.t("targetLanguageDesc"));
         const source = this.plugin.getGoogleLanguageCode(config.sourceLanguage, { source: true });
-        const key = this.plugin.selectGoogleTranslateKey(charCount, { ignoreReservations: Boolean(options.ignoreReservations) });
+        const selectOptions = { ignoreReservations: Boolean(options.ignoreReservations) };
+        const key = options.ignoreCooldown ? this.plugin.selectGoogleTranslateKey(charCount, { ...selectOptions, persist: false }) || this.plugin.selectGoogleTranslateKey(charCount, { ...selectOptions, ignoreCooldown: true }) : this.plugin.selectGoogleTranslateKey(charCount, selectOptions);
         if (!key) {
-          const hasKeys = this.plugin.getGoogleTranslateKeys().length > 0;
-          throw hasKeys ? this.plugin.createGoogleTranslateQuotaError({ charCount }) : this.plugin.createGoogleTranslateNoKeyError();
+          if (!this.plugin.getGoogleTranslateKeys().length) throw this.plugin.createGoogleTranslateNoKeyError();
+          const coolingReadyAt = this.plugin.getGoogleTranslateCoolingKeyReadyAt(charCount, { ignoreReservations: Boolean(options.ignoreReservations) });
+          throw coolingReadyAt ? this.plugin.createGoogleTranslateCooldownError({ until: coolingReadyAt, charCount }) : this.plugin.createGoogleTranslateQuotaError({ charCount });
         }
         const reservation = options.reserve ? this.plugin.reserveGoogleTranslateKey(key, charCount) : null;
         const body = {
@@ -10986,13 +13906,15 @@ var require_provider_layer = __commonJS({
         };
         if (source) body.source = source;
         return {
-          endpoint: this.plugin.appendQueryParam(endpoint, "key", key.apiKey),
+          // The key goes in a header so it never shows up in logged or wrapped request URLs.
+          endpoint,
           request: {
             provider: "googleCloud",
             providerKey: this.plugin.getGoogleTranslateProviderKey(key),
             responseParser: "googleTranslate",
             headers: {
-              "Content-Type": "application/json"
+              "Content-Type": "application/json",
+              "X-Goog-Api-Key": key.apiKey
             },
             body,
             googleTranslate: {
@@ -11012,7 +13934,7 @@ var require_provider_layer = __commonJS({
         const apiKey = this.plugin.getEffectiveRequestApiKey(config);
         if (!endpoint) throw new Error(this.plugin.t("endpointMissing"));
         if (!apiKey) throw new Error(this.plugin.t("apiKeyMissingTranslation"));
-        const target = this.plugin.getMicrosoftLanguageCode(config.targetLanguage);
+        const target = this.plugin.getMicrosoftLanguageCode(config.targetLanguageCode || config.targetLanguage);
         if (!target || target === AUTO_LANGUAGE_VALUE) throw new Error(this.plugin.t("targetLanguageDesc"));
         const source = this.plugin.getMicrosoftLanguageCode(config.sourceLanguage, { source: true });
         const params = new URLSearchParams({ "api-version": "3.0", to: target });
@@ -11038,7 +13960,7 @@ var require_provider_layer = __commonJS({
         const apiKey = this.plugin.getEffectiveRequestApiKey(config);
         if (!endpoint) throw new Error(this.plugin.t("endpointMissing"));
         if (!apiKey) throw new Error(this.plugin.t("apiKeyMissingTranslation"));
-        const target = this.plugin.getDeepLLanguageCode(config.targetLanguage);
+        const target = this.plugin.getDeepLLanguageCode(config.targetLanguageCode || config.targetLanguage);
         if (!target || target === AUTO_LANGUAGE_VALUE) throw new Error(this.plugin.t("targetLanguageDesc"));
         const source = this.plugin.getDeepLLanguageCode(config.sourceLanguage, { source: true });
         const body = {
@@ -11067,7 +13989,7 @@ var require_provider_layer = __commonJS({
         const secretKey = String(config.secretKey || "").trim();
         if (!endpoint) throw new Error(this.plugin.t("endpointMissing"));
         if (!appId || !secretKey) throw new Error(this.plugin.t("apiKeyMissingTranslation"));
-        const target = this.plugin.getBaiduLanguageCode(config.targetLanguage);
+        const target = this.plugin.getBaiduLanguageCode(config.targetLanguageCode || config.targetLanguage);
         if (!target || target === AUTO_LANGUAGE_VALUE) throw new Error(this.plugin.t("targetLanguageDesc"));
         const source = this.plugin.getBaiduLanguageCode(config.sourceLanguage, { source: true }) || "auto";
         const lineGroups = texts.map((text) => {
@@ -11117,7 +14039,10 @@ var require_provider_layer = __commonJS({
         const code = this.plugin.getGoogleLanguageCode(language, options);
         if (options.source && (!code || code === AUTO_LANGUAGE_VALUE)) return "";
         const upper = String(code || "").replace("_", "-").toUpperCase();
-        if (upper === "ZH-CN" || upper === "ZH-TW" || upper === "ZH-HANS" || upper === "ZH-HANT") return "ZH";
+        if (upper === "ZH-CN" || upper === "ZH-TW" || upper === "ZH-HANS" || upper === "ZH-HANT") {
+          if (options.source) return "ZH";
+          return upper === "ZH-TW" || upper === "ZH-HANT" ? "ZH-HANT" : "ZH-HANS";
+        }
         if (upper === "EN") return "EN";
         if (upper === "PT") return "PT";
         return upper;
@@ -11309,7 +14234,7 @@ var require_provider_layer = __commonJS({
       }
       parseBaiduTranslateResponse(raw, expectedCount = 1, options = {}) {
         const data = this.plugin.parseProviderJson(raw, "baidu");
-        if (data?.error_code) {
+        if (data?.error_code && String(data.error_code) !== "52000") {
           throw this.plugin.createBaiduTranslateError(data);
         }
         const results = data?.trans_result;
@@ -11362,10 +14287,27 @@ var require_provider_layer = __commonJS({
         const error = new Error(message);
         error.baiduApiError = true;
         error.baiduErrorCode = code;
-        if (["52003", "54001"].includes(code)) error.providerAuthFailed = true;
-        if (["54003"].includes(code)) error.providerRateLimited = true;
-        if (["54004", "54005"].includes(code)) error.providerQuotaExceeded = true;
-        if (["52001", "52002"].includes(code)) error.providerServerError = true;
+        if (["52003", "54001", "58002", "90107"].includes(code)) error.providerAuthFailed = true;
+        else if (code === "58000") {
+          error.providerAuthFailed = true;
+          error.providerIpRejected = true;
+        } else if (["54000", "58001"].includes(code)) {
+          error.providerAuthFailed = true;
+          error.providerRequestRejected = true;
+          if (code === "58001") error.providerLanguageUnsupported = true;
+        } else if (code === "54003") error.providerRateLimited = true;
+        else if (code === "54005") {
+          error.providerRateLimited = true;
+          error.retryAfterMs = 3e3;
+        } else if (code === "54004") error.providerQuotaExceeded = true;
+        else if (code === "20003") {
+          error.providerRequestRejected = true;
+          error.autoTranslationTerminalFailure = true;
+        } else if (["52001", "52002"].includes(code)) error.providerServerError = true;
+        else {
+          error.providerServerError = true;
+          error.providerRequestRejected = true;
+        }
         return error;
       }
       decodeHtmlEntities(text) {
@@ -11400,26 +14342,305 @@ var require_provider_layer = __commonJS({
   }
 });
 
+// src/settings/panel-theme.js
+var require_panel_theme = __commonJS({
+  "src/settings/panel-theme.js"(exports2, module2) {
+    "use strict";
+    var { DEFAULT_SETTINGS, PANEL_THEMES } = require_constants();
+    var PANEL_THEME_ATTRIBUTE = "data-dait-panel-theme";
+    var PANEL_THEME_ROOT_SELECTOR = [
+      ".dait-settings",
+      ".dait-quick-settings-modal-root",
+      ".dait-quick-popover",
+      ".dait-polish-result-panel",
+      ".dait-input-action-menu",
+      ".dait-dialog"
+    ].join(", ");
+    var DISCORD_THEME_CLASS_PANEL_THEMES = Object.freeze({
+      "theme-light": "light",
+      "theme-dark": "dark",
+      "theme-darker": "dark",
+      "theme-midnight": "dark",
+      "theme-onyx": "dark",
+      "theme-ash": "dark"
+    });
+    var WATCHED_ATTRIBUTES = ["class", "data-theme", "theme"];
+    var DIALOG_CLASS = "dait-dialog";
+    var DIALOG_SURFACE_ATTRIBUTE = "data-dait-dialog-surface";
+    var PALETTE_BODY_TEXT = Object.freeze({ light: [46, 48, 53], dark: [227, 229, 232] });
+    function normalizePanelTheme(value) {
+      const theme = String(value || "").trim().toLowerCase();
+      return PANEL_THEMES.includes(theme) ? theme : DEFAULT_SETTINGS.ui.panelTheme;
+    }
+    function parseComputedColor(value) {
+      const text = String(value || "").trim().toLowerCase();
+      if (!text || text === "transparent") return { rgb: [0, 0, 0], alpha: 0 };
+      let match = /^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)(?:\s*[,/]\s*([\d.]+%?))?\s*\)$/.exec(text);
+      if (match) {
+        const alpha = match[4] === void 0 ? 1 : match[4].endsWith("%") ? parseFloat(match[4]) / 100 : parseFloat(match[4]);
+        return { rgb: [match[1], match[2], match[3]].map(Number), alpha };
+      }
+      match = /^color\(srgb\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)(?:\s*\/\s*([\d.]+%?))?\s*\)$/.exec(text);
+      if (match) {
+        const alpha = match[4] === void 0 ? 1 : match[4].endsWith("%") ? parseFloat(match[4]) / 100 : parseFloat(match[4]);
+        return { rgb: [match[1], match[2], match[3]].map((channel) => Number(channel) * 255), alpha };
+      }
+      return null;
+    }
+    function relativeLuminance(rgb) {
+      const [r, g, b] = rgb.map((channel) => {
+        const value = Math.min(255, Math.max(0, channel)) / 255;
+        return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+      });
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    }
+    function contrastRatio(a, b) {
+      const [high, low] = [relativeLuminance(a), relativeLuminance(b)].sort((x, y) => y - x);
+      return (high + 0.05) / (low + 0.05);
+    }
+    var PanelTheme = class {
+      constructor(plugin) {
+        this.plugin = plugin;
+        this.observer = null;
+        this.mediaQuery = null;
+        this.mediaListener = null;
+        this.lastTheme = "";
+      }
+      getSetting() {
+        return normalizePanelTheme(this.plugin.settings?.ui?.panelTheme);
+      }
+      // "light" or "dark" for the plugin's windows right now.
+      resolve(setting = this.getSetting()) {
+        const choice = normalizePanelTheme(setting);
+        if (choice !== "auto") return choice;
+        return this.getDiscordTheme() || this.getSystemTheme();
+      }
+      // Discord's own theme as "light" / "dark", or "" when nothing on the page says.
+      getDiscordTheme() {
+        if (typeof document === "undefined") return "";
+        for (const node of [document.documentElement, document.body]) {
+          const theme = this.getNodeTheme(node);
+          if (theme) return theme;
+        }
+        let candidates = [];
+        try {
+          candidates = this.plugin.getDiscordThemeCandidates?.() || [];
+        } catch {
+          candidates = [];
+        }
+        for (const node of candidates) {
+          const explicit = this.plugin.getElementDiscordThemeExplicitClass?.(node);
+          if (explicit) return explicit === "theme-light" ? "light" : "dark";
+        }
+        for (const node of candidates) {
+          const theme = this.getNodeClassTheme(node);
+          if (theme) return theme;
+        }
+        return "";
+      }
+      getNodeTheme(node) {
+        if (!node) return "";
+        const explicit = this.plugin.getElementDiscordThemeExplicitClass?.(node);
+        if (explicit) return explicit === "theme-light" ? "light" : "dark";
+        return this.getNodeClassTheme(node);
+      }
+      // Only Discord's own theme class names count, so an unrelated class that contains "light" or "dark" does not.
+      getNodeClassTheme(node) {
+        if (!node) return "";
+        const className = typeof node.className === "string" ? node.className : String(node.className?.baseVal || "");
+        const names = new Set(className.split(/\s+/).filter(Boolean));
+        const hasClass = (name) => {
+          if (names.has(name)) return true;
+          try {
+            return Boolean(node.classList?.contains?.(name));
+          } catch {
+            return false;
+          }
+        };
+        const themes = Object.keys(DISCORD_THEME_CLASS_PANEL_THEMES).filter(hasClass).map((name) => DISCORD_THEME_CLASS_PANEL_THEMES[name]);
+        if (!themes.length) return "";
+        return themes.includes("dark") ? "dark" : "light";
+      }
+      getSystemTheme() {
+        try {
+          if (typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(prefers-color-scheme: light)")?.matches) {
+            return "light";
+          }
+        } catch {
+        }
+        return "dark";
+      }
+      // Marks one window root with the palette to use. Returns the theme applied.
+      apply(node, theme = this.resolve()) {
+        if (!node) return theme;
+        if (node.dataset) {
+          if (node.dataset.daitPanelTheme !== theme) node.dataset.daitPanelTheme = theme;
+        } else if (typeof node.setAttribute === "function" && node.getAttribute?.(PANEL_THEME_ATTRIBUTE) !== theme) {
+          node.setAttribute(PANEL_THEME_ATTRIBUTE, theme);
+        }
+        return theme;
+      }
+      // The palette that reads on the first opaque background behind node (Discord's modal around dialog content):
+      // { theme: "light" | "dark", readable: body text reaches 4.5:1 }, or null when no background can be read.
+      getBackdropTheme(node) {
+        const view = node?.ownerDocument?.defaultView || (typeof window !== "undefined" ? window : null);
+        if (typeof view?.getComputedStyle !== "function") return null;
+        for (let current = node?.parentElement; current; current = current.parentElement) {
+          let color = null;
+          try {
+            color = parseComputedColor(view.getComputedStyle(current)?.backgroundColor);
+          } catch {
+            return null;
+          }
+          if (!color || color.alpha < 0.5) continue;
+          const light = contrastRatio(PALETTE_BODY_TEXT.light, color.rgb);
+          const dark = contrastRatio(PALETTE_BODY_TEXT.dark, color.rgb);
+          return { theme: light >= dark ? "light" : "dark", readable: Math.max(light, dark) >= 4.5 };
+        }
+        return null;
+      }
+      // Dialog content takes the palette of the modal it sits in, so it matches Discord's title and buttons around it
+      // and stays readable whatever ui.panelTheme says. When the modal's background cannot be read (or neither palette
+      // reads on it) the content brings its own background in the current palette (css/08-dialogs).
+      syncDialog(node) {
+        if (!node) return "";
+        const backdrop = this.getBackdropTheme(node);
+        const theme = backdrop?.theme || this.resolve();
+        this.apply(node, theme);
+        const surface = !backdrop?.readable;
+        const current = node.getAttribute?.(DIALOG_SURFACE_ATTRIBUTE) === "true";
+        if (surface && !current) node.setAttribute?.(DIALOG_SURFACE_ATTRIBUTE, "true");
+        else if (!surface && current) node.removeAttribute?.(DIALOG_SURFACE_ATTRIBUTE);
+        return theme;
+      }
+      isDialog(node) {
+        try {
+          return Boolean(node?.classList?.contains?.(DIALOG_CLASS));
+        } catch {
+          return false;
+        }
+      }
+      // Every open plugin window takes the current palette (after a change of the setting, of Discord's theme or of
+      // the system theme); dialog content follows the modal it sits in. Returns the theme applied.
+      refresh() {
+        const theme = this.resolve();
+        this.lastTheme = theme;
+        if (typeof document === "undefined") return theme;
+        const roots = /* @__PURE__ */ new Set();
+        try {
+          document.querySelectorAll?.(PANEL_THEME_ROOT_SELECTOR)?.forEach((node) => roots.add(node));
+        } catch {
+        }
+        [
+          this.plugin.quickSettingsModalRoot,
+          this.plugin.quickPanel?.root,
+          this.plugin.polishResultPanel,
+          this.plugin.inputActionMenu
+        ].forEach((node) => {
+          if (node) roots.add(node);
+        });
+        roots.forEach((node) => {
+          if (this.isDialog(node)) this.syncDialog(node);
+          else this.apply(node, theme);
+        });
+        return theme;
+      }
+      // Discord switches its theme by changing the class (or data-theme) of <html> or <body>; the plugin's own
+      // Discord observer does not watch <html>. The system theme matters while "auto" finds no Discord theme. Open
+      // dialog content is checked on every such change: Discord's modal changes with Discord's theme even while an
+      // explicit light/dark choice keeps the plugin's windows as they are.
+      startWatching() {
+        this.stopWatching();
+        this.lastTheme = this.resolve();
+        const onChange = () => {
+          if (!this.plugin.isStarted) return;
+          this.refresh();
+        };
+        if (typeof MutationObserver === "function" && typeof document !== "undefined") {
+          try {
+            this.observer = new MutationObserver(onChange);
+            [document.documentElement, document.body].filter(Boolean).forEach((node) => {
+              this.observer.observe(node, { attributes: true, attributeFilter: WATCHED_ATTRIBUTES });
+            });
+          } catch {
+            this.observer = null;
+          }
+        }
+        try {
+          if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
+            const query = window.matchMedia("(prefers-color-scheme: light)");
+            if (query && typeof query.addEventListener === "function") {
+              query.addEventListener("change", onChange);
+              this.mediaQuery = query;
+              this.mediaListener = onChange;
+            }
+          }
+        } catch {
+          this.mediaQuery = null;
+          this.mediaListener = null;
+        }
+      }
+      stopWatching() {
+        try {
+          this.observer?.disconnect?.();
+        } catch {
+        }
+        this.observer = null;
+        try {
+          this.mediaQuery?.removeEventListener?.("change", this.mediaListener);
+        } catch {
+        }
+        this.mediaQuery = null;
+        this.mediaListener = null;
+      }
+    };
+    module2.exports = {
+      PanelTheme,
+      PANEL_THEME_ATTRIBUTE,
+      PANEL_THEME_ROOT_SELECTOR,
+      DIALOG_SURFACE_ATTRIBUTE,
+      normalizePanelTheme,
+      parseComputedColor
+    };
+  }
+});
+
 // src/settings/settings-store.js
 var require_settings_store = __commonJS({
   "src/settings/settings-store.js"(exports2, module2) {
     "use strict";
     var {
+      CACHE_DATA_KEY,
+      CACHE_DATA_STORE,
       DATA_KEY,
       DEFAULT_PROMPT_TEMPLATES,
       DEFAULT_SETTINGS,
       DIAGNOSTIC_DATA_KEY,
+      DIAGNOSTIC_DATA_STORE,
       GOOGLE_TRANSLATE_DEFAULT_MONTHLY_LIMIT,
       LEGACY_TRANSLATION_NATURAL_PROMPTS,
       PLUGIN_NAME,
       POLISH_REPOLISH_SOURCE_LAST_RESULT,
       POLISH_REPOLISH_SOURCE_ORIGINAL,
-      SETTINGS_SECTION_GENERAL,
-      SETTINGS_SECTION_IDS,
-      SETTINGS_TABS,
       SETTINGS_WRITE_DEBOUNCE_MS,
-      TRANSLATION_CACHE_WRITE_DEBOUNCE_MS
+      TRANSLATION_CACHE_WRITE_DEBOUNCE_MS,
+      TRANSLATION_LINE_STYLES,
+      TRANSLATION_LINE_TEXT_SCALES
     } = require_constants();
+    var { normalizeSettingsTabId } = require_settings_schema();
+    var { normalizePanelTheme } = require_panel_theme();
+    var RESET_KEPT_CREDENTIAL_FIELDS = ["apiKey", "appId", "secretKey", "region", "deeplPlan"];
+    var RESET_SECRET_FIELDS = ["apiKey", "appId", "secretKey"];
+    var RESET_KEPT_CONNECTION_FIELDS = ["endpoint", "model"];
+    var TRANSLATION_LINE_DISPLAY_KEYS = ["maskTranslations", "translationPosition", "translationStyle", "translationTextScale"];
+    function normalizeTranslationLineStyle(value) {
+      const style = String(value || "");
+      return TRANSLATION_LINE_STYLES.includes(style) ? style : DEFAULT_SETTINGS.ui.translationStyle;
+    }
+    function normalizeTranslationLineTextScale(value) {
+      const scale = Number(value);
+      return TRANSLATION_LINE_TEXT_SCALES.includes(scale) ? scale : DEFAULT_SETTINGS.ui.translationTextScale;
+    }
     var SettingsStore = class {
       constructor(plugin) {
         this.plugin = plugin;
@@ -11438,6 +14659,7 @@ var require_settings_store = __commonJS({
         let changed = false;
         const used = /* @__PURE__ */ new Set();
         templates.forEach((template) => {
+          if (!template || typeof template !== "object") return;
           const serial = this.plugin.normalizePromptTemplateSerial(template.serial);
           if (serial && !used.has(serial)) {
             template.serial = serial;
@@ -11491,7 +14713,7 @@ var require_settings_store = __commonJS({
         this.plugin.saveSettings();
         this.plugin.syncSettingControls(`${kind}.prompt`, template.prompt);
         if (kind === "translation") this.plugin.invalidateAutoTranslationQueue();
-        this.plugin.showToast(this.plugin.t("promptApplied", { name: template.name, code: template.serial }), "success");
+        this.plugin.showToast(this.plugin.t("promptApplied", { name: this.getTemplateDisplayName(template), code: template.serial }), "success");
       }
       savePromptTemplate(kind, name, prompt) {
         const templates = this.plugin.getPromptTemplates(kind);
@@ -11514,7 +14736,11 @@ var require_settings_store = __commonJS({
         this.plugin.settings[kind].activePromptTemplate = template.id;
         this.plugin.saveSettings();
         if (kind === "translation") this.plugin.invalidateAutoTranslationQueue();
-        this.plugin.showToast(this.plugin.t("promptUpdated", { name: template.name, code: template.serial }), "success");
+        this.plugin.showToast(this.plugin.t("promptUpdated", { name: this.getTemplateDisplayName(template), code: template.serial }), "success");
+      }
+      // A built-in template's name in the interface language (the plugin decides; plain name without it).
+      getTemplateDisplayName(template) {
+        return typeof this.plugin.getPromptTemplateDisplayName === "function" ? this.plugin.getPromptTemplateDisplayName(template) : template.name;
       }
       deletePromptTemplate(kind, templateId) {
         const templates = this.plugin.getPromptTemplates(kind);
@@ -11539,9 +14765,12 @@ var require_settings_store = __commonJS({
         const storedValue = this.plugin.loadData(DATA_KEY);
         if (this.plugin.dataLoadFailures.has(DATA_KEY)) {
           this.plugin.settingsLoadBlocked = true;
+          this.settingsLoadBlockedNoticeShown = false;
+          this.notifySettingsLoadBlocked();
           return false;
         }
         this.plugin.settingsLoadBlocked = false;
+        this.settingsLoadBlockedNoticeShown = false;
         if (wasBlocked) {
           if (this.plugin.settingsDirtyTimer) clearTimeout(this.plugin.settingsDirtyTimer);
           this.plugin.settingsDirtyTimer = null;
@@ -11582,6 +14811,14 @@ var require_settings_store = __commonJS({
           if (targetLanguage !== this.plugin.settings[kind].targetLanguage) {
             this.plugin.settings[kind].targetLanguage = targetLanguage;
             changed = true;
+          }
+          if (Array.isArray(this.plugin.settings[kind].promptTemplates)) {
+            const templates = this.plugin.settings[kind].promptTemplates;
+            const validTemplates = templates.filter((template) => template && typeof template === "object" && !Array.isArray(template));
+            if (validTemplates.length !== templates.length) {
+              this.plugin.settings[kind].promptTemplates = validTemplates;
+              changed = true;
+            }
           }
           if (!Array.isArray(this.plugin.settings[kind].promptTemplates) || !this.plugin.settings[kind].promptTemplates.length) {
             this.plugin.settings[kind].promptTemplates = this.plugin.clone(DEFAULT_PROMPT_TEMPLATES[kind] || []);
@@ -11660,12 +14897,17 @@ var require_settings_store = __commonJS({
           this.plugin.settings.googleTranslate.keyPoolText = normalizedGoogleKeys.keyPoolText;
           changed = true;
         }
-        if (!this.plugin.settings.ui || typeof this.plugin.settings.ui !== "object") {
+        if (JSON.stringify(normalizedGoogleKeys.usageById) !== JSON.stringify(this.plugin.settings.googleTranslate.usageById ?? null)) {
+          this.plugin.settings.googleTranslate.usageById = normalizedGoogleKeys.usageById;
+          changed = true;
+        }
+        if (!this.plugin.settings.ui || typeof this.plugin.settings.ui !== "object" || Array.isArray(this.plugin.settings.ui)) {
           this.plugin.settings.ui = this.plugin.clone(DEFAULT_SETTINGS.ui);
           changed = true;
         }
-        if (!SETTINGS_SECTION_IDS.includes(this.plugin.settings.ui.settingsActiveTab) && !SETTINGS_TABS.includes(this.plugin.settings.ui.settingsActiveTab)) {
-          this.plugin.settings.ui.settingsActiveTab = SETTINGS_SECTION_GENERAL;
+        const settingsActiveTab = normalizeSettingsTabId(this.plugin.settings.ui.settingsActiveTab);
+        if (settingsActiveTab !== this.plugin.settings.ui.settingsActiveTab) {
+          this.plugin.settings.ui.settingsActiveTab = settingsActiveTab;
           changed = true;
         }
         const rawUiSettingsVersion = storedSettings && typeof storedSettings === "object" ? Number(storedSettings.ui?.settingsVersion || 0) : Number(this.plugin.settings.ui.settingsVersion || 0);
@@ -11704,6 +14946,10 @@ var require_settings_store = __commonJS({
         }
         if (typeof this.plugin.settings.ui.enablePolishHotkey !== "boolean") {
           this.plugin.settings.ui.enablePolishHotkey = DEFAULT_SETTINGS.ui.enablePolishHotkey;
+          changed = true;
+        }
+        if (!this.plugin.isAllowedPolishHotkey(this.plugin.settings.ui.polishHotkey)) {
+          this.plugin.settings.ui.polishHotkey = DEFAULT_SETTINGS.ui.polishHotkey;
           changed = true;
         }
         if (!["polish", "translation"].includes(this.plugin.settings.ui.testModeKind)) {
@@ -11768,6 +15014,26 @@ var require_settings_store = __commonJS({
           this.plugin.settings.ui.channelAutoTranslatePolicies = {};
           changed = true;
         }
+        const policiesVersion = DEFAULT_SETTINGS.ui.channelAutoTranslatePoliciesVersion;
+        if (storedSettings && typeof storedSettings === "object" && !(Number(storedSettings.ui?.channelAutoTranslatePoliciesVersion) >= policiesVersion)) {
+          const policies = this.plugin.settings.ui.channelAutoTranslatePolicies;
+          const converted = this.plugin.getChannelAutoTranslateAllowListCount(policies);
+          Object.entries(policies).forEach(([key, policy]) => {
+            if (!policy || typeof policy !== "object") return;
+            if (this.plugin.normalizeChannelAutoTranslatePolicyMode(policy.mode) === "enabled") policies[key] = { ...policy, mode: "inherit" };
+          });
+          if (converted > 0) {
+            try {
+              this.plugin.logDiagnostic("settings.channel-rules", "upgraded", {
+                converted,
+                autoTranslateMessages: Boolean(this.plugin.settings.ui.autoTranslateMessages)
+              });
+            } catch {
+            }
+          }
+          this.plugin.settings.ui.channelAutoTranslatePoliciesVersion = policiesVersion;
+          changed = true;
+        }
         if (typeof this.plugin.settings.ui.historyBackfillEnabled !== "boolean") {
           this.plugin.settings.ui.historyBackfillEnabled = DEFAULT_SETTINGS.ui.historyBackfillEnabled;
           changed = true;
@@ -11820,11 +15086,38 @@ var require_settings_store = __commonJS({
           this.plugin.settings.ui.hideOriginalAfterTranslation = DEFAULT_SETTINGS.ui.hideOriginalAfterTranslation;
           changed = true;
         }
+        const translationStyle = normalizeTranslationLineStyle(this.plugin.settings.ui.translationStyle);
+        if (translationStyle !== this.plugin.settings.ui.translationStyle) {
+          this.plugin.settings.ui.translationStyle = translationStyle;
+          changed = true;
+        }
+        const translationTextScale = normalizeTranslationLineTextScale(this.plugin.settings.ui.translationTextScale);
+        if (translationTextScale !== this.plugin.settings.ui.translationTextScale) {
+          this.plugin.settings.ui.translationTextScale = translationTextScale;
+          changed = true;
+        }
+        const panelTheme = normalizePanelTheme(this.plugin.settings.ui.panelTheme);
+        if (panelTheme !== this.plugin.settings.ui.panelTheme) {
+          this.plugin.settings.ui.panelTheme = panelTheme;
+          changed = true;
+        }
         if (changed) this.plugin.saveSettings();
+      }
+      // While the stored settings cannot be read, saves are blocked so the unreadable file is not overwritten.
+      // Tell the user once per episode instead of silently dropping their changes.
+      notifySettingsLoadBlocked() {
+        if (this.settingsLoadBlockedNoticeShown) return false;
+        this.settingsLoadBlockedNoticeShown = true;
+        try {
+          this.plugin.showToast(this.plugin.t("settingsLoadBlocked"), "error");
+        } catch {
+        }
+        return true;
       }
       saveSettings(options = {}) {
         if (this.plugin.settingsLoadBlocked) {
           this.plugin.settingsDirty = true;
+          this.notifySettingsLoadBlocked();
           return false;
         }
         if (options.debounce === true) {
@@ -11865,26 +15158,55 @@ var require_settings_store = __commonJS({
         if (options.retryOnError !== false) this.plugin.scheduleSettingsPersist(SETTINGS_WRITE_DEBOUNCE_MS);
         return result;
       }
+      // BetterDiscord keeps one <name>.config.json per data name and rewrites the whole file on every save.
+      // Settings stay under PLUGIN_NAME; the large cache and the diagnostics log use their own names (persist-1).
+      getDataStoreName(key) {
+        if (key === CACHE_DATA_KEY) return CACHE_DATA_STORE;
+        if (key === DIAGNOSTIC_DATA_KEY) return DIAGNOSTIC_DATA_STORE;
+        return PLUGIN_NAME;
+      }
+      readDataStore(storeName, key) {
+        const bdApi = globalThis.BdApi;
+        if (!bdApi) return null;
+        if (bdApi.Data?.load) return bdApi.Data.load(storeName, key);
+        if (bdApi.loadData) return bdApi.loadData(storeName, key);
+        return null;
+      }
+      // Returns true or false; throws DATA_SAVE_UNAVAILABLE when BetterDiscord offers no save API.
+      writeDataStore(storeName, key, value) {
+        const bdApi = globalThis.BdApi;
+        if (bdApi?.Data?.save) return bdApi.Data.save(storeName, key, value) === false ? false : true;
+        if (bdApi?.saveData) return bdApi.saveData(storeName, key, value) === false ? false : true;
+        throw new Error("DATA_SAVE_UNAVAILABLE");
+      }
+      deleteDataStoreKey(storeName, key) {
+        const bdApi = globalThis.BdApi;
+        if (bdApi?.Data?.delete) return bdApi.Data.delete(storeName, key) === false ? false : true;
+        if (bdApi?.deleteData) return bdApi.deleteData(storeName, key) === false ? false : true;
+        return this.writeDataStore(storeName, key, null);
+      }
       loadData(key) {
+        const bdApi = globalThis.BdApi;
+        if (!bdApi) return null;
+        if (!bdApi.Data?.load && !bdApi.loadData) return null;
+        const storeName = this.plugin.getDataStoreName(key);
+        let value = null;
         try {
-          const bdApi = globalThis.BdApi;
-          if (!bdApi) return null;
-          if (bdApi.Data?.load) {
-            const value = bdApi.Data.load(PLUGIN_NAME, key);
-            this.plugin.dataLoadFailures.delete(key);
-            return value;
-          }
-          if (bdApi.loadData) {
-            const value = bdApi.loadData(PLUGIN_NAME, key);
-            this.plugin.dataLoadFailures.delete(key);
-            return value;
-          }
-          return null;
+          value = this.readDataStore(storeName, key);
+          this.plugin.dataLoadFailures.delete(key);
         } catch (error) {
           this.plugin.dataLoadFailures.add(key);
           this.plugin.recordDataIoFailure("load", key, error);
-          return null;
+          value = null;
         }
+        if (storeName !== PLUGIN_NAME && (value === null || value === void 0)) {
+          try {
+            const legacy = this.readDataStore(PLUGIN_NAME, key);
+            if (legacy !== null && legacy !== void 0) return legacy;
+          } catch {
+          }
+        }
+        return value;
       }
       saveData(key, value) {
         try {
@@ -11893,11 +15215,8 @@ var require_settings_store = __commonJS({
             if (key !== DIAGNOSTIC_DATA_KEY) this.plugin.recordDataIoFailure("save", key, new Error("DATA_SAVE_UNAVAILABLE"));
             return false;
           }
-          if (bdApi.Data?.save) {
-            return bdApi.Data.save(PLUGIN_NAME, key, value) === false ? false : true;
-          }
-          if (bdApi.saveData) {
-            return bdApi.saveData(PLUGIN_NAME, key, value) === false ? false : true;
+          if (bdApi.Data?.save || bdApi.saveData) {
+            return this.writeDataStore(this.plugin.getDataStoreName(key), key, value);
           }
           if (key !== DIAGNOSTIC_DATA_KEY) this.plugin.recordDataIoFailure("save", key, new Error("DATA_SAVE_UNAVAILABLE"));
           return false;
@@ -11905,6 +15224,59 @@ var require_settings_store = __commonJS({
           if (key !== DIAGNOSTIC_DATA_KEY) this.plugin.recordDataIoFailure("save", key, error);
           return false;
         }
+      }
+      // One-time move of the cache and diagnostics out of the settings file (v0.3.0 and older kept them there).
+      // The old copy is merged into the new file and deleted only after the new file was written, so a failed
+      // step keeps the old copy and simply retries on the next start. Returns a status per key.
+      migrateLegacyDataStores() {
+        const results = {};
+        [CACHE_DATA_KEY, DIAGNOSTIC_DATA_KEY].forEach((key) => {
+          results[key] = this.plugin.migrateLegacyDataStoreKey(key);
+        });
+        return results;
+      }
+      migrateLegacyDataStoreKey(key) {
+        const storeName = this.plugin.getDataStoreName(key);
+        if (storeName === PLUGIN_NAME) return "not-separated";
+        let legacy;
+        try {
+          legacy = this.readDataStore(PLUGIN_NAME, key);
+        } catch (error) {
+          this.plugin.recordDataIoFailure("load", `legacy:${key}`, error);
+          return "legacy-unreadable";
+        }
+        if (legacy === null || legacy === void 0) return "none";
+        let current;
+        try {
+          current = this.readDataStore(storeName, key);
+        } catch (error) {
+          this.plugin.recordDataIoFailure("load", key, error);
+          return "store-unreadable";
+        }
+        const hasCurrent = current !== null && current !== void 0;
+        const payload = hasCurrent ? this.plugin.mergeLegacyDataPayload(key, current, legacy) : legacy;
+        try {
+          if (this.writeDataStore(storeName, key, payload) !== true) throw new Error("DATA_SAVE_FAILED");
+        } catch (error) {
+          this.plugin.recordDataIoFailure("save", key, error);
+          return "save-failed";
+        }
+        try {
+          if (this.deleteDataStoreKey(PLUGIN_NAME, key) !== true) throw new Error("DATA_DELETE_FAILED");
+        } catch (error) {
+          this.plugin.recordDataIoFailure("save", `legacy:${key}`, error);
+          return "delete-failed";
+        }
+        try {
+          this.plugin.logDiagnostic("data.migrate", "ok", { key, merged: hasCurrent });
+        } catch {
+        }
+        return hasCurrent ? "merged" : "migrated";
+      }
+      mergeLegacyDataPayload(key, current, legacy) {
+        if (key === CACHE_DATA_KEY) return this.plugin.mergePersistedTranslationCachePayloads(current, legacy);
+        if (key === DIAGNOSTIC_DATA_KEY) return this.plugin.mergePersistedDiagnosticLogsPayloads(current, legacy);
+        return current;
       }
       recordDataIoFailure(action, key, error) {
         const safeKey = String(key || "");
@@ -11926,15 +15298,22 @@ var require_settings_store = __commonJS({
         if (path === "ui.providerFallbackOrder") {
           return this.plugin.formatProviderFallbackOrder(this.plugin.settings.ui?.providerFallbackOrder);
         }
+        if (path === "ui.messageButtonMode") {
+          return this.plugin.getMessageButtonMode();
+        }
         return path.split(".").reduce((value, key) => value?.[key], this.plugin.settings);
       }
       setSetting(path, value, options = {}) {
         const parts = path.split(".");
         if (path === "ui.currentChannelAutoTranslatePolicy") {
-          return this.plugin.setCurrentChannelAutoTranslatePolicyMode(value, this.plugin.getCurrentRouteKey(), options);
+          const routeKey = options.routeKey !== void 0 ? options.routeKey : this.plugin.getCurrentRouteKey();
+          return this.plugin.setCurrentChannelAutoTranslatePolicyMode(value, routeKey, options);
+        }
+        if (path === "ui.messageButtonMode") {
+          return this.plugin.setMessageButtonMode(value, options);
         }
         if (path === "ui.settingsActiveTab") {
-          value = SETTINGS_SECTION_IDS.includes(value) || SETTINGS_TABS.includes(value) ? value : SETTINGS_SECTION_GENERAL;
+          value = normalizeSettingsTabId(value);
         }
         if (path === "ui.messageButtonVisibility") {
           value = this.plugin.normalizeMessageButtonVisibility(value);
@@ -11970,6 +15349,15 @@ var require_settings_store = __commonJS({
         if (path === "translation.deeplPlan") {
           value = ["free", "pro"].includes(String(value || "")) ? String(value) : DEFAULT_SETTINGS.translation.deeplPlan;
         }
+        if (path === "ui.translationStyle") {
+          value = normalizeTranslationLineStyle(value);
+        }
+        if (path === "ui.translationTextScale") {
+          value = normalizeTranslationLineTextScale(value);
+        }
+        if (path === "ui.panelTheme") {
+          value = normalizePanelTheme(value);
+        }
         let cursor = this.plugin.settings;
         for (let index = 0; index < parts.length - 1; index++) {
           cursor = cursor[parts[index]];
@@ -11987,12 +15375,14 @@ var require_settings_store = __commonJS({
         cursor[leaf] = value;
         if (parts[0] === "googleTranslate") {
           if (path === "googleTranslate.keyPoolText" && !String(value || "").trim()) {
+            this.plugin.settings.googleTranslate.usageById = this.plugin.getGoogleTranslateUsageLedger(this.plugin.settings.googleTranslate);
             this.plugin.settings.googleTranslate.keys = [];
             this.plugin.settings.googleTranslate.keyPoolText = "";
           } else {
             const normalized = this.plugin.normalizeGoogleTranslateKeyPool(this.plugin.settings.googleTranslate);
             this.plugin.settings.googleTranslate.keys = normalized.keys;
             this.plugin.settings.googleTranslate.keyPoolText = normalized.keyPoolText;
+            this.plugin.settings.googleTranslate.usageById = normalized.usageById;
           }
         }
         if (path === "translation.provider") this.plugin.applyProviderIntakeMode(value);
@@ -12006,7 +15396,7 @@ var require_settings_store = __commonJS({
         if (this.plugin.shouldInvalidateAutoTranslationForSetting(path)) {
           this.plugin.invalidateAutoTranslationQueue();
         }
-        if (path === "ui.autoTranslateMessages" && value === false) {
+        if (path === "ui.autoTranslateMessages" && value === false && !this.plugin.isAutoTranslateEnabled()) {
           this.plugin.cancelAutoTranslationRuntimeWork("setting-disabled");
         }
         if (path === "ui.language") {
@@ -12015,6 +15405,9 @@ var require_settings_store = __commonJS({
         if (path === "ui.injectMessageContextMenu") {
           this.plugin.unpatchContextMenus();
           this.plugin.patchMessageContextMenu();
+        }
+        if (path === "translation.enabled") {
+          this.plugin.syncMessageTranslationEntryPoints();
         }
         if (path === "ui.messageButtonVisibility") {
           this.plugin.applyMessageButtonVisibilityToButtons();
@@ -12035,6 +15428,9 @@ var require_settings_store = __commonJS({
             node.remove();
             this.plugin.syncInputActionGroupState(group);
           });
+        }
+        if (path === "polish.enabled" || path === "translation.enabled") {
+          this.plugin.syncInputActionButtonsForSettings();
         }
         if (typeof document !== "undefined" && path === "ui.showQuickSettingsRailButton" && value === false) {
           document.querySelectorAll?.(".dait-quick-settings-rail")?.forEach((node) => node.remove());
@@ -12060,10 +15456,143 @@ var require_settings_store = __commonJS({
         if (path === "ui.hideOriginalAfterTranslation") {
           this.plugin.syncAllTranslationSourceVisibility();
         }
-        if (path === "ui.maskTranslations" || path === "ui.translationPosition") {
+        if (TRANSLATION_LINE_DISPLAY_KEYS.some((key) => path === `ui.${key}`)) {
           this.plugin.syncAllTranslationDisplaySettings();
         }
+        if (path === "ui.panelTheme") {
+          this.plugin.refreshPanelThemes();
+        }
         this.plugin.queueScan();
+      }
+      // Restores the defaults. With keepCredentials (default) it keeps API keys and the other credential fields of
+      // every provider profile (each key with the endpoint and model it was used with), the Google key pool with its
+      // usage counters and monthly limit, and the prompt templates. The UI language is kept unless keepLanguage is
+      // false. Applies the same runtime effects setSetting applies to each changed setting. Stable entry point for
+      // the reset dialog.
+      resetSettingsToDefaults({ keepCredentials = true, keepLanguage = true } = {}) {
+        const previous = this.plugin.settings && typeof this.plugin.settings === "object" ? this.plugin.settings : {};
+        const next = this.plugin.clone(DEFAULT_SETTINGS);
+        if (keepCredentials) this.carryOverResetCredentials(previous, next);
+        const usageById = previous.googleTranslate?.usageById;
+        if (usageById && typeof usageById === "object" && !Array.isArray(usageById)) {
+          next.googleTranslate.usageById = this.plugin.clone(usageById);
+        }
+        const language = previous.ui?.language;
+        if (keepLanguage && typeof language === "string" && language) next.ui.language = language;
+        this.plugin.settings = next;
+        this.plugin.ensureSettingsShape();
+        const saved = this.plugin.saveSettings();
+        this.plugin.applySettingsResetEffects(previous);
+        this.plugin.logDiagnostic("settings.reset", saved === false ? "not-saved" : "ok", { keepCredentials: Boolean(keepCredentials) });
+        return saved !== false;
+      }
+      carryOverResetCredentials(previous, next) {
+        const isObject = (value) => Boolean(value) && typeof value === "object" && !Array.isArray(value);
+        const isFilled = (value) => typeof value === "string" && Boolean(value.trim());
+        const pickCredentials = (source) => {
+          const picked = {};
+          RESET_KEPT_CREDENTIAL_FIELDS.forEach((field) => {
+            if (isFilled(source?.[field])) picked[field] = source[field];
+          });
+          if (!RESET_SECRET_FIELDS.some((field) => picked[field])) return picked;
+          if (source.endpoint !== void 0 && typeof source.endpoint !== "string") {
+            RESET_SECRET_FIELDS.forEach((field) => delete picked[field]);
+            return picked;
+          }
+          RESET_KEPT_CONNECTION_FIELDS.forEach((field) => {
+            if (isFilled(source[field])) picked[field] = source[field];
+          });
+          return picked;
+        };
+        ["polish", "translation"].forEach((kind) => {
+          const before = previous[kind];
+          const after = next[kind];
+          if (!isObject(before) || !isObject(after)) return;
+          const profiles = {};
+          Object.entries(isObject(before.providerProfiles) ? before.providerProfiles : {}).forEach(([provider, profile]) => {
+            if (!isObject(profile)) return;
+            const kept = pickCredentials(profile);
+            if (Object.keys(kept).length) profiles[provider] = kept;
+          });
+          const activeProvider = String(before.provider || "").trim();
+          if (activeProvider) {
+            const live = pickCredentials(before);
+            if (Object.keys(live).length) profiles[activeProvider] = live;
+            else delete profiles[activeProvider];
+          }
+          after.providerProfiles = profiles;
+          const own = profiles[after.provider];
+          if (own) {
+            [...RESET_KEPT_CREDENTIAL_FIELDS, ...RESET_KEPT_CONNECTION_FIELDS].forEach((field) => {
+              if (own[field] !== void 0 && Object.prototype.hasOwnProperty.call(after, field)) after[field] = own[field];
+            });
+          }
+          const templates = Array.isArray(before.promptTemplates) ? before.promptTemplates.filter(isObject).map((template) => this.plugin.clone(template)) : [];
+          if (templates.length) {
+            const ids = new Set(templates.map((template) => template.id));
+            const missingDefaults = (DEFAULT_PROMPT_TEMPLATES[kind] || []).filter((template) => !ids.has(template.id)).map((template) => this.plugin.clone(template));
+            after.promptTemplates = [...missingDefaults, ...templates];
+            const active = after.promptTemplates.find((template) => template.id === after.activePromptTemplate);
+            if (typeof active?.prompt === "string") after.prompt = active.prompt;
+          }
+        });
+        const google = previous.googleTranslate;
+        if (isObject(google)) {
+          if (Array.isArray(google.keys)) next.googleTranslate.keys = this.plugin.clone(google.keys);
+          if (typeof google.keyPoolText === "string") next.googleTranslate.keyPoolText = google.keyPoolText;
+          if (google.defaultMonthlyLimit !== void 0) next.googleTranslate.defaultMonthlyLimit = google.defaultMonthlyLimit;
+        }
+        return next;
+      }
+      // Open settings controls show the new values (so closing quick settings cannot commit the old ones back),
+      // then each runtime effect of a changed setting runs as setSetting would run it.
+      applySettingsResetEffects(previous = {}) {
+        const prevUi = previous?.ui && typeof previous.ui === "object" ? previous.ui : {};
+        const ui = this.plugin.settings.ui;
+        const changed = (key) => !Object.is(prevUi[key], ui[key]);
+        const turnedOff = (key) => ui[key] === false && prevUi[key] !== false;
+        this.plugin.syncAllSettingControls();
+        this.plugin.invalidateAutoTranslationQueue();
+        if (!this.plugin.isAutoTranslateEnabled()) this.plugin.cancelAutoTranslationRuntimeWork("settings-reset");
+        if (changed("language")) {
+          this.plugin.refreshLocalizedUi();
+        } else if (changed("injectMessageContextMenu")) {
+          this.plugin.unpatchContextMenus();
+          this.plugin.patchMessageContextMenu();
+        }
+        if (changed("messageButtonVisibility")) this.plugin.applyMessageButtonVisibilityToButtons();
+        if (typeof document !== "undefined" && document.querySelectorAll) {
+          const removeNodes = (selector, inputGroup) => document.querySelectorAll(selector)?.forEach((node) => {
+            const group = inputGroup ? node.closest?.(".dait-input-action-group") : null;
+            node.remove();
+            if (inputGroup) this.plugin.syncInputActionGroupState(group);
+          });
+          if (turnedOff("injectMessageButtons")) removeNodes(".dait-message-button", false);
+          if (turnedOff("injectInputButton")) removeNodes(".dait-polish-button", true);
+          if (turnedOff("publicBilingualInputButton")) removeNodes(".dait-public-bilingual-button", true);
+          if (turnedOff("showQuickSettingsRailButton")) removeNodes(".dait-quick-settings-rail", false);
+          if (turnedOff("showQuickSettingsPanelButton")) removeNodes(".dait-quick-settings-panel", false);
+        }
+        if (changed("translationCacheTtlHours")) this.plugin.clampTranslationCacheExpiryToCurrentTtl();
+        if (changed("translationCacheTtlHours") || changed("translationCacheMaxEntries")) {
+          this.plugin.pruneTranslationCache({ scanExpired: true });
+          this.plugin.scheduleTranslationCachePersist(TRANSLATION_CACHE_WRITE_DEBOUNCE_MS);
+        }
+        if (turnedOff("showAutoTranslateWarnings") || turnedOff("showAutoTranslateToasts")) this.plugin.hideAutoTranslationWarningLines();
+        if (prevUi.diagnosticsEnabled === true && ui.diagnosticsEnabled !== true) this.plugin.disableDiagnosticLogging();
+        if (changed("hideOriginalAfterTranslation")) this.plugin.syncAllTranslationSourceVisibility();
+        if (TRANSLATION_LINE_DISPLAY_KEYS.some(changed)) this.plugin.syncAllTranslationDisplaySettings();
+        if (changed("panelTheme")) this.plugin.refreshPanelThemes();
+        this.plugin.queueScan();
+      }
+      syncAllSettingControls() {
+        if (typeof document === "undefined" || !document.querySelectorAll) return;
+        const paths = /* @__PURE__ */ new Set();
+        document.querySelectorAll("[data-dait-path]")?.forEach((control) => {
+          const path = String(control?.dataset?.daitPath || "");
+          if (path) paths.add(path);
+        });
+        paths.forEach((path) => this.plugin.syncSettingControls(path, this.plugin.getSetting(path), { includeActive: true }));
       }
       setTaskProvider(kind, provider) {
         if (!this.plugin.settings[kind]) return;
@@ -12133,6 +15662,1199 @@ var require_settings_store = __commonJS({
   }
 });
 
+// src/quick-panel/quick-panel.js
+var require_quick_panel = __commonJS({
+  "src/quick-panel/quick-panel.js"(exports2, module2) {
+    "use strict";
+    var { LANGUAGE_PRESETS, API_ENDPOINT_ERROR_MESSAGE_KEYS } = require_constants();
+    var { PLUGIN_VERSION } = require_version();
+    var { getChannelRouteParts, getChannelRuleKey } = require_channel_rule();
+    var POPOVER_ID = "dait-quick-popover";
+    var POPOVER_WIDTH_PX = 360;
+    var ANCHOR_GAP_PX = 8;
+    var VIEWPORT_MARGIN_PX = 8;
+    var POPOVER_UPDATE_DELAY_MS = 16;
+    var ROUTE_CHECK_INTERVAL_MS = 800;
+    var STATUS_REFRESH_THROTTLE_MS = 250;
+    var STATUS_EXPIRY_SLACK_MS = 50;
+    var LAUNCHER_SELECTOR = ".dait-quick-settings-button";
+    var POINTER_OPENED_CLASS = "dait-qp-pointer-opened";
+    var CHANNEL_RULES = ["inherit", "enabled", "disabled"];
+    var TRANSLATION_POSITIONS = ["before", "after"];
+    var LAUNCHER_STATUS_STATES = ["ok", "busy", "waiting", "needs-you", "off"];
+    var WAITING_FAILURE_TYPES = /* @__PURE__ */ new Set(["rate-limit", "server", "timeout", "network", "parse"]);
+    var ATTENTION_FAILURE_TYPES = /* @__PURE__ */ new Set(["auth", "quota", "local-unavailable"]);
+    var WAITING_REASON_KEYS = {
+      "rate-limit": "quickStatusReasonRateLimit",
+      server: "quickStatusReasonServer",
+      timeout: "quickStatusReasonNetwork",
+      network: "quickStatusReasonNetwork",
+      parse: "quickStatusReasonParse"
+    };
+    var ATTENTION_REASON_KEYS = {
+      auth: "quickStatusReasonAuth",
+      quota: "quickStatusReasonQuota",
+      "local-unavailable": "quickStatusReasonLocal"
+    };
+    var CONFIG_ERROR_REASON_KEYS = {
+      endpoint: "quickStatusReasonEndpoint",
+      "not-found": "quickStatusReasonNotFound"
+    };
+    var ICON_NAMES = { gear: "dait-qp-icon-gear", close: "dait-qp-icon-close" };
+    var QuickPanel = class {
+      constructor(plugin) {
+        this.plugin = plugin;
+        this.root = null;
+        this.launcher = null;
+        this.routeKey = "";
+        this.controls = null;
+        this.listeners = [];
+        this.updatePending = false;
+        this.updateTimer = null;
+        this.routeTimer = null;
+        this.countdownTimer = null;
+        this.testRunning = false;
+        this.statusPending = false;
+        this.statusTimer = null;
+        this.statusExpiryTimer = null;
+        this.statusExpiryAt = 0;
+        this.lastStatus = null;
+        this.lastStatusSignature = "";
+        this.statusRouteKey = "";
+        this.launcherRef = null;
+        this.lastAnchorRect = null;
+        this.configError = null;
+      }
+      // --- Popover lifecycle ---
+      isOpen() {
+        return Boolean(this.root && this.plugin.isNodeConnected(this.root));
+      }
+      toggle(launcher = null, source = "panel", options = {}) {
+        if (this.isOpen()) {
+          this.close("launcher", { restoreFocus: true });
+          return null;
+        }
+        return this.open(launcher, { ...options, source });
+      }
+      open(launcher = null, options = {}) {
+        if (typeof document === "undefined" || !document.body || !this.plugin.isStarted) return null;
+        this.close("reopen", { restoreFocus: false });
+        this.removeStrayPopovers();
+        const anchor = this.plugin.isNodeConnected(launcher) ? launcher : this.findLauncher();
+        let root = null;
+        try {
+          this.launcher = anchor || null;
+          this.routeKey = this.plugin.getCurrentRouteKey();
+          root = this.build();
+          this.root = root;
+          if (options.viaPointer) root.classList.add(POINTER_OPENED_CLASS);
+          this.plugin.applyPanelTheme(root);
+          document.body.appendChild(root);
+          this.update();
+          this.position();
+          this.bindListeners();
+          this.setLauncherExpanded(anchor, true);
+          this.focusElement(this.getFocusableElements()[0] || root);
+          this.startRouteWatch();
+          this.plugin.logQuickSettingsDiagnostic("popover.open", "ok", { source: String(options.source || "") });
+          return root;
+        } catch (error) {
+          this.unbindListeners();
+          root?.remove?.();
+          this.root = null;
+          this.controls = null;
+          this.plugin.logQuickSettingsDiagnostic("popover.open", "error", {
+            source: String(options.source || ""),
+            errorName: error?.name || "",
+            errorText: this.plugin.formatError(error)
+          });
+          this.launcher = null;
+          this.setLauncherExpanded(anchor, false);
+          return this.plugin.openQuickSettingsPanel("quick-panel-fallback", anchor);
+        }
+      }
+      close(reason = "close", options = {}) {
+        const root = this.root;
+        if (!root) return false;
+        this.unbindListeners();
+        this.stopTimers();
+        root.remove?.();
+        this.root = null;
+        this.controls = null;
+        this.lastAnchorRect = null;
+        const launcher = this.launcher;
+        this.launcher = null;
+        this.setLauncherExpanded(launcher, false);
+        if (options.restoreFocus) {
+          const target = this.plugin.isNodeConnected(launcher) ? launcher : this.findLauncher();
+          if (target) this.focusElement(target);
+        }
+        if (this.plugin.isStarted) this.plugin.logQuickSettingsDiagnostic("popover.close", "ok", { reason });
+        return true;
+      }
+      destroy(reason = "stop") {
+        this.close(reason, { restoreFocus: false });
+        this.removeStrayPopovers();
+        if (this.statusTimer) clearTimeout(this.statusTimer);
+        if (this.statusExpiryTimer) clearTimeout(this.statusExpiryTimer);
+        this.statusTimer = null;
+        this.statusPending = false;
+        this.statusExpiryTimer = null;
+        this.statusExpiryAt = 0;
+        this.lastStatus = null;
+        this.lastStatusSignature = "";
+        this.statusRouteKey = "";
+        this.launcherRef = null;
+        this.configError = null;
+        this.testRunning = false;
+      }
+      // The interface language changed while the panel is open: build it again where it is (same channel, focus on
+      // the same control) instead of closing it.
+      rerender(reason = "rerender") {
+        if (!this.isOpen()) return false;
+        const previous = this.root;
+        const previousFocusables = this.controls?.focusables || [];
+        const active = typeof document !== "undefined" ? document.activeElement : null;
+        const focusInside = Boolean(active && (active === previous || previous.contains?.(active)));
+        const focusIndex = focusInside ? previousFocusables.indexOf(active) : -1;
+        let root = null;
+        try {
+          root = this.build();
+        } catch (error) {
+          this.plugin.logQuickSettingsDiagnostic("popover.rerender", "error", {
+            reason,
+            errorName: error?.name || "",
+            errorText: this.plugin.formatError(error)
+          });
+          this.close(reason, { restoreFocus: false });
+          return false;
+        }
+        if (previous.classList?.contains?.(POINTER_OPENED_CLASS)) root.classList.add(POINTER_OPENED_CLASS);
+        root.dataset.daitRerendered = "true";
+        this.plugin.applyPanelTheme(root);
+        if (root.style && previous.style) {
+          root.style.left = previous.style.left;
+          root.style.top = previous.style.top;
+        }
+        if (previous.dataset?.daitPlacement) root.dataset.daitPlacement = previous.dataset.daitPlacement;
+        if (previous.parentElement?.insertBefore) previous.parentElement.insertBefore(root, previous);
+        else document.body.appendChild(root);
+        previous.remove?.();
+        this.root = root;
+        this.bindListeners();
+        this.update();
+        if (focusInside) {
+          const focusables = this.controls?.focusables || [];
+          this.focusElement(focusables[focusIndex] || this.getFocusableElements()[0] || root);
+        }
+        this.plugin.logQuickSettingsDiagnostic("popover.rerender", "ok", { reason });
+        return true;
+      }
+      removeStrayPopovers() {
+        if (typeof document === "undefined") return;
+        document.querySelectorAll?.(`.${POPOVER_ID}`)?.forEach((node) => {
+          if (node !== this.root) node.remove?.();
+        });
+      }
+      openFullSettings() {
+        const launcher = this.plugin.isNodeConnected(this.launcher) ? this.launcher : this.findLauncher();
+        this.close("open-full-settings", { restoreFocus: false });
+        return this.plugin.openQuickSettingsPanel("quick-panel", launcher);
+      }
+      findLauncher() {
+        if (typeof document === "undefined") return null;
+        const found = document.querySelector?.(LAUNCHER_SELECTOR) || null;
+        return this.plugin.isNodeConnected(found) ? found : null;
+      }
+      setLauncherExpanded(launcher, expanded) {
+        if (!launcher?.setAttribute) return;
+        launcher.setAttribute("aria-expanded", expanded ? "true" : "false");
+        launcher.classList?.toggle?.("dait-quick-settings-button-active", Boolean(expanded));
+        if (expanded) launcher.setAttribute("aria-controls", POPOVER_ID);
+        else launcher.removeAttribute?.("aria-controls");
+      }
+      // --- DOM ---
+      createElement(tag, className = "", text) {
+        const node = document.createElement(tag);
+        if (className) node.className = className;
+        if (text !== void 0) node.textContent = text;
+        return node;
+      }
+      createButton(className, text, onClick) {
+        const button = this.createElement("button", className, text);
+        button.type = "button";
+        button.addEventListener("click", (event) => {
+          event?.preventDefault?.();
+          event?.stopPropagation?.();
+          onClick(button, event);
+        });
+        return button;
+      }
+      createIconButton(icon, label, className, onClick) {
+        const button = this.createButton(`dait-qp-icon-button ${className}`, void 0, onClick);
+        button.title = label;
+        button.setAttribute("aria-label", label);
+        const glyph = this.createElement("span", `dait-qp-icon ${ICON_NAMES[icon] || ""}`);
+        glyph.setAttribute("aria-hidden", "true");
+        button.appendChild(glyph);
+        return button;
+      }
+      createSwitchRow(key, label, description, onChange) {
+        const id = `${POPOVER_ID}-${key}`;
+        const row = this.createElement("div", "dait-qp-row");
+        const text = this.createElement("div", "dait-qp-row-text");
+        const labelNode = this.createElement("label", "dait-qp-label", label);
+        labelNode.htmlFor = id;
+        text.appendChild(labelNode);
+        const input = this.createElement("input", "dait-qp-switch");
+        input.type = "checkbox";
+        input.id = id;
+        input.setAttribute("role", "switch");
+        if (description) {
+          const descriptionNode = this.createElement("p", "dait-qp-desc", description);
+          descriptionNode.id = `${id}-desc`;
+          text.appendChild(descriptionNode);
+          input.setAttribute("aria-describedby", descriptionNode.id);
+        }
+        input.addEventListener("change", () => {
+          onChange(Boolean(input.checked));
+          this.update();
+        });
+        row.appendChild(text);
+        row.appendChild(input);
+        return { row, input };
+      }
+      // A radio group of equal-width buttons; arrow keys move and select, like native radios.
+      createSegmented(key, options, labelId, onSelect, className = "") {
+        const group = this.createElement("div", `dait-qp-segmented ${className}`.trim());
+        group.id = `${POPOVER_ID}-${key}`;
+        group.setAttribute("role", "radiogroup");
+        if (labelId) group.setAttribute("aria-labelledby", labelId);
+        const buttons = options.map(([value, text]) => {
+          const button = this.createButton("dait-qp-segment", text, () => {
+            if (button.disabled) return;
+            onSelect(value);
+            this.update();
+          });
+          button.dataset.daitValue = value;
+          button.setAttribute("role", "radio");
+          button.setAttribute("aria-checked", "false");
+          button.setAttribute("tabindex", "-1");
+          group.appendChild(button);
+          return button;
+        });
+        group.addEventListener("keydown", (event) => {
+          const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[event?.key];
+          const edge = { Home: 0, End: buttons.length - 1 }[event?.key];
+          if (step === void 0 && edge === void 0) return;
+          const enabled = buttons.filter((button) => !button.disabled);
+          if (!enabled.length) return;
+          event.preventDefault?.();
+          const current = enabled.indexOf(buttons.find((button) => button.getAttribute("aria-checked") === "true"));
+          const next = edge !== void 0 ? enabled[edge === 0 ? 0 : enabled.length - 1] : enabled[(Math.max(0, current) + step + enabled.length) % enabled.length];
+          if (!next) return;
+          onSelect(next.dataset.daitValue);
+          this.update();
+          this.focusElement(next);
+        });
+        return { group, buttons };
+      }
+      build() {
+        const t = (key, vars) => this.plugin.t(key, vars);
+        const controls = {};
+        const root = this.createElement("section", POPOVER_ID);
+        root.id = POPOVER_ID;
+        root.setAttribute("role", "dialog");
+        root.setAttribute("aria-modal", "false");
+        root.setAttribute("aria-labelledby", `${POPOVER_ID}-title`);
+        root.setAttribute("tabindex", "-1");
+        const header = this.createElement("div", "dait-qp-header");
+        const title = this.createElement("h2", "dait-qp-title", t("quickPanelTitle"));
+        title.id = `${POPOVER_ID}-title`;
+        header.appendChild(title);
+        header.appendChild(this.createElement("span", "dait-qp-chip", `v${PLUGIN_VERSION}`));
+        controls.headerOpenFull = this.createIconButton("gear", t("quickPanelOpenFull"), "dait-qp-header-open-full", () => this.openFullSettings());
+        controls.close = this.createIconButton("close", t("quickPanelClose"), "dait-qp-close", () => this.close("button", { restoreFocus: true }));
+        header.appendChild(controls.headerOpenFull);
+        header.appendChild(controls.close);
+        root.appendChild(header);
+        const body = this.createElement("div", "dait-qp-body");
+        const status = this.createElement("div", "dait-qp-status");
+        controls.statusDot = this.createElement("span", "dait-qp-dot");
+        controls.statusDot.setAttribute("aria-hidden", "true");
+        const statusText = this.createElement("div", "dait-qp-status-text");
+        controls.statusLine = this.createElement("p", "dait-qp-status-line");
+        controls.statusLine.setAttribute("role", "status");
+        controls.statusLine.setAttribute("aria-live", "polite");
+        controls.statusTest = this.createElement("p", "dait-qp-status-test");
+        controls.statusTest.hidden = true;
+        controls.statusDetail = this.createElement("p", "dait-qp-status-detail");
+        controls.statusNote = this.createElement("p", "dait-qp-status-note");
+        controls.statusNote.hidden = true;
+        statusText.appendChild(controls.statusLine);
+        statusText.appendChild(controls.statusTest);
+        statusText.appendChild(controls.statusDetail);
+        statusText.appendChild(controls.statusNote);
+        controls.test = this.createButton("dait-qp-button dait-qp-button-secondary dait-qp-test", t("apiTest"), (button) => this.runConnectionTest(button));
+        controls.test.title = t("translationTestConnectionTitle");
+        status.appendChild(controls.statusDot);
+        status.appendChild(statusText);
+        status.appendChild(controls.test);
+        body.appendChild(status);
+        const auto = this.createSwitchRow(
+          "auto",
+          t("quickPanelAutoTranslate"),
+          t("quickPanelAutoTranslateDesc"),
+          (checked) => this.plugin.setSetting("ui.autoTranslateMessages", checked)
+        );
+        controls.auto = auto.input;
+        body.appendChild(auto.row);
+        const ruleRow = this.createElement("div", "dait-qp-row dait-qp-row-stacked dait-qp-channel-rule");
+        const ruleLabel = this.createElement("div", "dait-qp-label dait-qp-channel-label", t("quickPanelChannel"));
+        ruleLabel.id = `${POPOVER_ID}-rule-label`;
+        controls.channelName = this.createElement("span", "dait-qp-channel-name");
+        ruleLabel.appendChild(controls.channelName);
+        const rule = this.createSegmented("rule", [
+          ["inherit", t("quickPanelRuleInherit")],
+          ["enabled", t("quickPanelRuleEnabled")],
+          ["disabled", t("quickPanelRuleDisabled")]
+        ], ruleLabel.id, (mode) => this.setChannelRule(mode));
+        const ruleNames = { inherit: t("quickPanelRuleInheritFull"), enabled: t("quickPanelRuleEnabledFull"), disabled: t("quickPanelRuleDisabledFull") };
+        rule.buttons.forEach((button) => {
+          const name = ruleNames[button.dataset.daitValue];
+          if (name && name !== button.textContent) {
+            button.title = name;
+            button.setAttribute("aria-label", name);
+          }
+        });
+        controls.rule = rule;
+        controls.ruleCaption = this.createElement("p", "dait-qp-desc dait-qp-rule-caption");
+        controls.ruleCaption.id = `${POPOVER_ID}-rule-caption`;
+        rule.group.setAttribute("aria-describedby", controls.ruleCaption.id);
+        ruleRow.appendChild(ruleLabel);
+        ruleRow.appendChild(rule.group);
+        ruleRow.appendChild(controls.ruleCaption);
+        body.appendChild(ruleRow);
+        const targetRow = this.createElement("div", "dait-qp-row");
+        const targetText = this.createElement("div", "dait-qp-row-text");
+        const targetLabel = this.createElement("label", "dait-qp-label", t("quickPanelTargetLanguage"));
+        targetLabel.htmlFor = `${POPOVER_ID}-target`;
+        targetText.appendChild(targetLabel);
+        controls.target = this.createElement("select", "dait-qp-select dait-qp-control");
+        controls.target.id = `${POPOVER_ID}-target`;
+        controls.target.addEventListener("change", () => {
+          const value = String(controls.target.value || "");
+          if (value) this.plugin.setSetting("translation.targetLanguage", value);
+          this.update();
+        });
+        targetRow.appendChild(targetText);
+        targetRow.appendChild(controls.target);
+        body.appendChild(targetRow);
+        const display = this.createElement("h3", "dait-qp-section", t("quickPanelDisplay"));
+        body.appendChild(display);
+        const mask = this.createSwitchRow(
+          "mask",
+          t("quickPanelMask"),
+          t("quickPanelMaskDesc"),
+          (checked) => this.plugin.setSetting("ui.maskTranslations", checked)
+        );
+        controls.mask = mask.input;
+        body.appendChild(mask.row);
+        const hide = this.createSwitchRow(
+          "hide",
+          t("quickPanelHideOriginal"),
+          t("quickPanelHideOriginalDesc"),
+          (checked) => this.plugin.setSetting("ui.hideOriginalAfterTranslation", checked)
+        );
+        controls.hide = hide.input;
+        body.appendChild(hide.row);
+        const positionRow = this.createElement("div", "dait-qp-row");
+        const positionText = this.createElement("div", "dait-qp-row-text");
+        const positionLabel = this.createElement("span", "dait-qp-label", t("quickPanelPosition"));
+        positionLabel.id = `${POPOVER_ID}-position-label`;
+        positionText.appendChild(positionLabel);
+        const position = this.createSegmented("position", [
+          ["before", t("quickPanelPositionAbove")],
+          ["after", t("quickPanelPositionBelow")]
+        ], positionLabel.id, (value) => this.plugin.setSetting("ui.translationPosition", value), "dait-qp-control");
+        controls.position = position;
+        positionRow.appendChild(positionText);
+        positionRow.appendChild(position.group);
+        body.appendChild(positionRow);
+        root.appendChild(body);
+        const footer = this.createElement("div", "dait-qp-footer");
+        controls.footerOpenFull = this.createButton("dait-qp-link dait-qp-footer-open-full", t("quickPanelOpenFull"), () => this.openFullSettings());
+        footer.appendChild(controls.footerOpenFull);
+        footer.appendChild(this.createElement("span", "dait-qp-hint", t("quickPanelEscHint")));
+        root.appendChild(footer);
+        controls.focusables = [
+          controls.headerOpenFull,
+          controls.close,
+          controls.test,
+          controls.auto,
+          ...rule.buttons,
+          controls.target,
+          controls.mask,
+          controls.hide,
+          ...position.buttons,
+          controls.footerOpenFull
+        ];
+        this.controls = controls;
+        return root;
+      }
+      // Brings every control in line with the settings and the channel captured at render time.
+      update() {
+        const controls = this.controls;
+        if (!this.root || !controls) return;
+        const settings = this.plugin.settings || {};
+        const ui = settings.ui || {};
+        controls.auto.checked = Boolean(ui.autoTranslateMessages);
+        controls.mask.checked = Boolean(ui.maskTranslations);
+        controls.hide.checked = Boolean(ui.hideOriginalAfterTranslation);
+        this.setSegmentedValue(controls.position, TRANSLATION_POSITIONS.includes(ui.translationPosition) ? ui.translationPosition : "before");
+        const channelKey = this.plugin.getChannelAutoTranslatePolicyStorageKey(this.routeKey);
+        const mode = channelKey ? this.plugin.getCurrentChannelAutoTranslatePolicyMode(this.routeKey) : "inherit";
+        this.setText(controls.channelName, this.getChannelLabel(this.routeKey));
+        this.setSegmentedValue(controls.rule, mode, { disabled: !channelKey });
+        this.setText(controls.ruleCaption, this.getChannelRuleCaption(mode, Boolean(channelKey)));
+        this.syncTargetOptions(String(settings.translation?.targetLanguage || ""));
+        this.refreshStatus();
+        this.position();
+      }
+      scheduleUpdate() {
+        if (!this.isOpen() || this.updatePending) return;
+        this.updatePending = true;
+        this.updateTimer = setTimeout(() => {
+          this.updatePending = false;
+          this.updateTimer = null;
+          this.update();
+        }, POPOVER_UPDATE_DELAY_MS);
+      }
+      setSegmentedValue(segmented, value, options = {}) {
+        if (!segmented?.buttons) return;
+        const disabled = Boolean(options.disabled);
+        const checked = segmented.buttons.find((button) => button.dataset.daitValue === value) || segmented.buttons[0];
+        segmented.buttons.forEach((button) => {
+          const isChecked = button === checked;
+          button.setAttribute("aria-checked", isChecked ? "true" : "false");
+          button.setAttribute("tabindex", isChecked && !disabled ? "0" : "-1");
+          button.disabled = disabled;
+        });
+        segmented.group.setAttribute("aria-disabled", disabled ? "true" : "false");
+      }
+      syncTargetOptions(current) {
+        const select = this.controls?.target;
+        if (!select) return;
+        const english = this.plugin.getLocale() === "en";
+        const options = LANGUAGE_PRESETS.map((language) => [language.value, english ? language.en : language.zh]);
+        if (current && !options.some(([value]) => value === current)) options.unshift([current, current]);
+        const signature = options.map(([value]) => value).join("\n");
+        if (select.dataset.daitOptions !== signature) {
+          select.textContent = "";
+          options.forEach(([value, text]) => {
+            const option = this.createElement("option", "", text);
+            option.value = value;
+            select.appendChild(option);
+          });
+          select.dataset.daitOptions = signature;
+        }
+        Array.from(select.options || select.children || []).forEach((option) => {
+          option.selected = option.value === current;
+        });
+        if (select.value !== current) select.value = current;
+      }
+      getChannelLabel(routeKey) {
+        if (!getChannelRuleKey(routeKey)) return this.plugin.t("quickPanelChannelNone");
+        const { guildId, channelId } = getChannelRouteParts(routeKey);
+        let name = "";
+        try {
+          name = String(this.plugin.getDiscordNamedStore("ChannelStore")?.getChannel?.(channelId)?.name || "").trim();
+        } catch {
+          name = "";
+        }
+        if (name) return `#${name}`;
+        return guildId === "@me" ? this.plugin.t("quickPanelChannelDm") : "";
+      }
+      getChannelRuleCaption(mode, hasChannel) {
+        if (!hasChannel) return this.plugin.t("quickPanelRuleCaptionNoChannel");
+        if (this.plugin.settings?.translation?.enabled === false) return this.plugin.t("quickPanelRuleCaptionTranslationOff");
+        if (mode === "enabled") return this.plugin.t("quickPanelRuleCaptionEnabled");
+        if (mode === "disabled") return this.plugin.t("quickPanelRuleCaptionDisabled");
+        return this.plugin.t(this.plugin.settings?.ui?.autoTranslateMessages ? "quickPanelRuleCaptionInheritOn" : "quickPanelRuleCaptionInheritOff");
+      }
+      // Bound to the channel the panel was rendered for, even if Discord has navigated since.
+      setChannelRule(mode) {
+        if (!CHANNEL_RULES.includes(mode)) return false;
+        return this.plugin.setCurrentChannelAutoTranslatePolicyMode(mode, this.routeKey);
+      }
+      // Writes only what differs, so an unchanged status touches nothing (and re-announces nothing).
+      setText(node, text) {
+        const value = String(text ?? "");
+        if (!node || node.textContent === value) return false;
+        node.textContent = value;
+        return true;
+      }
+      // "model · 820 ms" as parts: the dots and the time do not break (css/07 .dait-qp-status-part); the text reads
+      // the same as the summary.
+      setTestSummary(node, text) {
+        const value = String(text ?? "");
+        if (!node || node.textContent === value) return false;
+        node.textContent = "";
+        value.split(" · ").forEach((part, index) => {
+          if (index > 0) {
+            node.appendChild(this.createElement("span", "dait-qp-status-sep", " ·"));
+            node.appendChild(this.createElement("span", "dait-qp-status-gap", " "));
+          }
+          node.appendChild(this.createElement("span", index > 0 ? "dait-qp-status-part" : "dait-qp-status-model", part));
+        });
+        return true;
+      }
+      renderStatus(status) {
+        const controls = this.controls;
+        if (!this.root || !controls || !status) return;
+        if (this.root.dataset.daitStatus !== status.state) this.root.dataset.daitStatus = status.state;
+        if (controls.statusDot.dataset.daitStatus !== status.state) controls.statusDot.dataset.daitStatus = status.state;
+        let resized = this.setText(controls.statusLine, status.headline);
+        const testSummary = String(status.testSummary || "");
+        resized = this.setTestSummary(controls.statusTest, testSummary) || resized;
+        if (controls.statusTest.hidden !== !testSummary) {
+          controls.statusTest.hidden = !testSummary;
+          resized = true;
+        }
+        resized = this.setText(controls.statusDetail, this.getStatusDetailText(status)) || resized;
+        resized = this.setText(controls.statusNote, status.note) || resized;
+        if (controls.statusNote.title !== (status.note || "")) controls.statusNote.title = status.note || "";
+        if (controls.statusNote.hidden !== !status.note) {
+          controls.statusNote.hidden = !status.note;
+          resized = true;
+        }
+        controls.test.disabled = Boolean(status.testing || this.testRunning);
+        this.setText(controls.test, this.plugin.t(this.testRunning ? "apiTestBusy" : "apiTest"));
+        this.syncCountdown(status);
+        if (resized) this.position();
+      }
+      getStatusDetailText(status, now = Date.now()) {
+        if (status.state !== "waiting" || !(status.retryAt > now)) return status.detail;
+        return this.plugin.t("quickStatusWaitingSeconds", {
+          reason: status.reason,
+          seconds: String(Math.max(1, Math.ceil((status.retryAt - now) / 1e3)))
+        });
+      }
+      // While a cooldown shows in an open panel, its seconds count down; nothing ticks otherwise.
+      syncCountdown(status) {
+        const needed = this.isOpen() && status?.state === "waiting" && status.retryAt > Date.now();
+        if (!needed) {
+          if (this.countdownTimer) clearInterval(this.countdownTimer);
+          this.countdownTimer = null;
+          return;
+        }
+        if (this.countdownTimer) return;
+        this.countdownTimer = setInterval(() => {
+          const current = this.lastStatus?.state === "waiting" ? this.lastStatus : status;
+          if (!this.isOpen() || !this.controls || !(current.retryAt > Date.now())) {
+            clearInterval(this.countdownTimer);
+            this.countdownTimer = null;
+            return;
+          }
+          this.setText(this.controls.statusDetail, this.getStatusDetailText(current));
+        }, 1e3);
+        this.countdownTimer?.unref?.();
+      }
+      async runConnectionTest(button) {
+        if (this.testRunning || button?.disabled) return false;
+        const plugin = this.plugin;
+        this.testRunning = true;
+        try {
+          plugin.rememberTranslationAttentionNotice(null, plugin.getTranslationAttentionProviderKey(null), "local-unavailable");
+        } catch {
+        }
+        const statusSink = document.createElement("span");
+        statusSink.dataset.daitKind = "translation";
+        try {
+          await plugin.testApiConnection("translation", button, statusSink);
+        } finally {
+          this.testRunning = false;
+          this.requestStatusUpdate();
+          if (this.isOpen()) this.update();
+        }
+        return true;
+      }
+      // --- Position, keyboard and pointer ---
+      // While the launcher is briefly gone or not laid out (a language switch or Discord re-creates the user panel), the
+      // panel stays where it was anchored.
+      getAnchorRect() {
+        const launcher = this.plugin.isNodeConnected(this.launcher) ? this.launcher : null;
+        const rect = launcher?.getBoundingClientRect?.();
+        if (!rect || !rect.width && !rect.height) return this.lastAnchorRect;
+        this.lastAnchorRect = {
+          left: Number(rect.left || 0),
+          top: Number(rect.top || 0),
+          width: Number(rect.width || 0),
+          height: Number(rect.height || 0),
+          bottom: Number(rect.bottom ?? Number(rect.top || 0) + Number(rect.height || 0))
+        };
+        return this.lastAnchorRect;
+      }
+      // Above the launcher when it fits (Discord's user panel sits at the bottom), else below; always clamped
+      // into the viewport.
+      position() {
+        const root = this.root;
+        if (!root?.style) return;
+        const viewportWidth = Number((typeof window !== "undefined" ? window.innerWidth : 0) || document.documentElement?.clientWidth || 0);
+        const viewportHeight = Number((typeof window !== "undefined" ? window.innerHeight : 0) || document.documentElement?.clientHeight || 0);
+        if (!viewportWidth || !viewportHeight) return;
+        const box = root.getBoundingClientRect?.() || {};
+        const width = Number(box.width) || Math.min(POPOVER_WIDTH_PX, viewportWidth - VIEWPORT_MARGIN_PX * 2);
+        const height = Number(box.height) || 0;
+        const anchor = this.getAnchorRect();
+        const clamp = (value, min, max) => Math.min(Math.max(value, min), Math.max(min, max));
+        let left = anchor ? anchor.left + anchor.width / 2 - width / 2 : VIEWPORT_MARGIN_PX;
+        left = clamp(left, VIEWPORT_MARGIN_PX, viewportWidth - width - VIEWPORT_MARGIN_PX);
+        let placement = "top";
+        let top = viewportHeight - height - VIEWPORT_MARGIN_PX;
+        if (anchor) {
+          const spaceAbove = anchor.top - ANCHOR_GAP_PX - VIEWPORT_MARGIN_PX;
+          const spaceBelow = viewportHeight - anchor.bottom - ANCHOR_GAP_PX - VIEWPORT_MARGIN_PX;
+          if (height > spaceAbove && spaceBelow > spaceAbove) placement = "bottom";
+          top = placement === "top" ? anchor.top - ANCHOR_GAP_PX - height : anchor.bottom + ANCHOR_GAP_PX;
+        }
+        top = clamp(top, VIEWPORT_MARGIN_PX, viewportHeight - height - VIEWPORT_MARGIN_PX);
+        root.style.left = `${Math.round(left)}px`;
+        root.style.top = `${Math.round(top)}px`;
+        root.dataset.daitPlacement = placement;
+      }
+      bindListeners() {
+        this.unbindListeners();
+        const add = (target, type, handler, options) => {
+          if (!target?.addEventListener) return;
+          target.addEventListener(type, handler, options);
+          this.listeners.push(() => target.removeEventListener?.(type, handler, options));
+        };
+        add(document, "keydown", (event) => this.handleDocumentKeydown(event), true);
+        add(document, "pointerdown", (event) => this.handleDocumentPointerDown(event), true);
+        if (typeof window !== "undefined") add(window, "resize", () => this.position(), { passive: true });
+        add(this.root, "keydown", (event) => {
+          if (event?.key !== "Escape") event?.stopPropagation?.();
+        });
+      }
+      unbindListeners() {
+        const listeners = this.listeners.splice(0);
+        listeners.forEach((remove) => {
+          try {
+            remove();
+          } catch {
+          }
+        });
+      }
+      handleDocumentKeydown(event) {
+        if (!this.isOpen() || !event) return;
+        this.root.classList?.remove?.(POINTER_OPENED_CLASS);
+        const active = typeof document !== "undefined" ? document.activeElement : null;
+        const focusInside = Boolean(active && this.root.contains?.(active));
+        const focusElsewhere = Boolean(active && active !== document.body && !focusInside && !this.isLauncherElement(active));
+        if (event.key === "Escape") {
+          if (focusElsewhere) return;
+          event.preventDefault?.();
+          event.stopPropagation?.();
+          event.stopImmediatePropagation?.();
+          this.close("escape", { restoreFocus: true });
+          return;
+        }
+        if (event.key === "Tab" && !focusElsewhere) this.trapTab(event, focusInside ? active : null);
+      }
+      trapTab(event, active) {
+        const focusable = this.getFocusableElements();
+        if (!focusable.length) {
+          event.preventDefault?.();
+          this.focusElement(this.root);
+          return;
+        }
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (!active) {
+          event.preventDefault?.();
+          this.focusElement(event.shiftKey ? last : first);
+          return;
+        }
+        if (event.shiftKey && (active === first || !focusable.includes(active))) {
+          event.preventDefault?.();
+          this.focusElement(last);
+          return;
+        }
+        if (!event.shiftKey && (active === last || !focusable.includes(active))) {
+          event.preventDefault?.();
+          this.focusElement(first);
+        }
+      }
+      handleDocumentPointerDown(event) {
+        if (!this.isOpen()) return;
+        const target = event?.target;
+        if (!target || this.root.contains?.(target)) return;
+        if (this.isLauncherElement(target)) return;
+        this.close("outside", { restoreFocus: false });
+      }
+      isLauncherElement(node) {
+        if (!node) return false;
+        if (this.launcher && (node === this.launcher || this.launcher.contains?.(node))) return true;
+        return Boolean(node.closest?.(LAUNCHER_SELECTOR));
+      }
+      getFocusableElements() {
+        const list = this.controls?.focusables || [];
+        return list.filter((element) => element && !element.disabled && !element.hidden && element.getAttribute?.("tabindex") !== "-1" && this.plugin.isNodeConnected(element));
+      }
+      focusElement(element) {
+        if (!element?.focus) return;
+        try {
+          element.focus({ preventScroll: true });
+        } catch {
+          try {
+            element.focus();
+          } catch {
+          }
+        }
+      }
+      startRouteWatch() {
+        if (this.routeTimer) clearInterval(this.routeTimer);
+        this.routeTimer = setInterval(() => {
+          this.handleRouteChange();
+          this.followAnchor();
+        }, ROUTE_CHECK_INTERVAL_MS);
+        this.routeTimer?.unref?.();
+      }
+      // Discord can move the user panel, and the launcher in it, without a window resize: the open panel follows on
+      // the route watch's tick. Nothing is written while the launcher stays put.
+      followAnchor() {
+        if (!this.isOpen()) return false;
+        if (!this.plugin.isNodeConnected(this.launcher)) {
+          const found = this.findLauncher();
+          if (!found) return false;
+          this.launcher = found;
+          this.setLauncherExpanded(found, true);
+        }
+        const rect = this.launcher.getBoundingClientRect?.();
+        if (!rect || !rect.width && !rect.height) return false;
+        const previous = this.lastAnchorRect;
+        const same = previous && ["left", "top", "width", "height"].every((side) => Math.round(Number(rect[side] || 0)) === Math.round(previous[side]));
+        if (same) return false;
+        this.position();
+        return true;
+      }
+      stopTimers() {
+        if (this.updateTimer) clearTimeout(this.updateTimer);
+        if (this.routeTimer) clearInterval(this.routeTimer);
+        if (this.countdownTimer) clearInterval(this.countdownTimer);
+        this.updateTimer = null;
+        this.updatePending = false;
+        this.routeTimer = null;
+        this.countdownTimer = null;
+      }
+      // --- Change notifications from the plugin ---
+      handleSettingChanged(path = "") {
+        if (path === "ui.showQuickSettingsPanelButton" && this.plugin.settings?.ui?.showQuickSettingsPanelButton === false) {
+          this.close("launcher-hidden", { restoreFocus: false });
+        }
+        this.scheduleUpdate();
+        this.requestStatusUpdate();
+      }
+      // Called by the scan when Discord navigates and, while the panel is open, by its route watch;
+      // nothing is re-read unless the channel really changed.
+      handleRouteChange() {
+        const routeKey = this.plugin.getCurrentRouteKey();
+        if (this.isOpen() && routeKey !== this.routeKey) {
+          this.routeKey = routeKey;
+          this.update();
+        }
+        if (routeKey === this.statusRouteKey) return;
+        this.statusRouteKey = routeKey;
+        this.requestStatusUpdate();
+      }
+      // --- Launcher status ---
+      // "endpoint" for an invalid or unsafe API URL, "not-found" for a URL or model the service does not know,
+      // "" for everything else (those are handled by the provider cooldowns and the connection test).
+      getConfigErrorKind(error) {
+        if (!error || this.plugin.isRequestCancelled?.(error)) return "";
+        if (Object.hasOwn(API_ENDPOINT_ERROR_MESSAGE_KEYS, error.code)) return "endpoint";
+        const status = Number(error.status || 0);
+        if (error.providerModelNotFound || status === 404 || status === 405) return "not-found";
+        return "";
+      }
+      // Called for every failed translation request (automatic and manual). Only the user can fix these errors,
+      // so the launcher shows "needs you" until the settings change, a request or test succeeds, or the plugin stops.
+      // The toast rules are not touched: they stay with notifyTranslationNeedsAttention.
+      noteRequestFailure(requestOptions, error) {
+        const kind = this.getConfigErrorKind(error);
+        if (!kind) return false;
+        let providerKey = "";
+        try {
+          providerKey = String(error?.providerKey || this.plugin.getAutoTranslationProviderKey(requestOptions) || "");
+        } catch {
+          providerKey = "";
+        }
+        if (!providerKey) return false;
+        let message = "";
+        try {
+          message = String(this.plugin.formatError(error) || "");
+        } catch {
+          message = "";
+        }
+        this.configError = { kind, providerKey, message, at: Date.now() };
+        return true;
+      }
+      // A passed connection test or a working request to the service ends the configuration error.
+      noteApiStatus(kind, state) {
+        if (kind === "translation" && state === "success") this.clearConfigError();
+      }
+      watchRequestResult(kind, requestOptions, result) {
+        const record = this.configError;
+        if (kind !== "translation" || !record || typeof result?.then !== "function") return;
+        result.then(() => {
+          let providerKey = "";
+          try {
+            providerKey = String(this.plugin.getAutoTranslationProviderKey(requestOptions) || "");
+          } catch {
+            providerKey = "";
+          }
+          if (this.configError === record && providerKey === record.providerKey) this.clearConfigError();
+        }, () => {
+        });
+      }
+      clearConfigError() {
+        if (!this.configError) return false;
+        this.configError = null;
+        this.requestStatusUpdate();
+        return true;
+      }
+      // The recorded configuration error, while it belongs to the service and settings in use (a changed URL, model
+      // or key makes a new provider key, so the old error no longer shows).
+      getConfigError(providerKey) {
+        const record = this.configError;
+        if (!record || !providerKey || record.providerKey !== providerKey) return null;
+        return CONFIG_ERROR_REASON_KEYS[record.kind] ? record : null;
+      }
+      // Model and response time of the last passed connection test (plugin.getLastApiTestResult, when the provider
+      // layer offers it), while the saved status still says connected, i.e. nothing was changed since.
+      getLastTestSummary(api) {
+        if (api?.state !== "success") return "";
+        let result = null;
+        try {
+          result = this.plugin.getLastApiTestResult?.("translation") || null;
+        } catch {
+          result = null;
+        }
+        if (!result || result.ok !== true) return "";
+        const parts = [];
+        const model = String(result.model || "").trim();
+        if (model) parts.push(model);
+        const latency = Number(result.latencyMs);
+        if (result.latencyMs !== null && result.latencyMs !== void 0 && Number.isFinite(latency) && latency >= 0) {
+          parts.push(this.plugin.t("quickStatusLatency", { ms: String(Math.round(latency)) }));
+        }
+        return parts.join(" · ");
+      }
+      // One of LAUNCHER_STATUS_STATES plus the texts shown on the launcher and in the panel. Reads state only
+      // (no probes, no timers): translation API status, provider cooldowns, local health probes, the auto
+      // queue and whether auto-translate runs in the current channel.
+      getStatus(now = Date.now()) {
+        const plugin = this.plugin;
+        const t = (key, vars) => plugin.t(key, vars);
+        const translation = plugin.settings?.translation || {};
+        const provider = plugin.getProviderDisplayName(translation.provider);
+        const api = plugin.getApiStatus("translation");
+        let configured = false;
+        try {
+          configured = Boolean(plugin.hasUsableApiConfig("translation"));
+        } catch {
+          configured = false;
+        }
+        let providerKey = "";
+        try {
+          providerKey = String(plugin.getAutoTranslationProviderKey(plugin.getAutoTranslationOptions()) || "");
+        } catch {
+          providerKey = "";
+        }
+        const failure = providerKey ? plugin.autoTranslationProviderFailures?.get?.(providerKey) || null : null;
+        const failureType = String(failure?.type || "");
+        const failureActive = Boolean(failure && (failureType === "local-unavailable" || Number(failure.retryAt || 0) > now));
+        const configError = this.getConfigError(providerKey);
+        const probing = Boolean(providerKey && plugin.localProviderHealthChecks?.has?.(providerKey));
+        let settingsTest = false;
+        try {
+          settingsTest = Boolean(plugin.isApiTestRunning?.("translation"));
+        } catch {
+          settingsTest = false;
+        }
+        const testing = probing || this.testRunning || settingsTest;
+        const apiState = api.state === "testing" && !testing ? "untested" : api.state;
+        const queue = plugin.getAutoTranslationQueueSnapshot?.() || {};
+        const inFlight = Math.max(0, Number(queue.inFlightItems || queue.inFlight || 0) || 0);
+        const queued = Math.max(0, Number(queue.queueLength || 0) || 0);
+        const autoActive = Boolean(plugin.isAutoTranslateEnabled());
+        let connection = plugin.getApiStatusText(apiState);
+        if (!configured) connection = t("quickStatusNotConfigured");
+        else if (testing) connection = plugin.getApiStatusText("testing");
+        else if (failureActive && ATTENTION_FAILURE_TYPES.has(failureType)) connection = plugin.getApiStatusText("failed");
+        else if (configError) connection = plugin.getApiStatusText("failed");
+        let state = "ok";
+        let activity = t("quickStatusActive");
+        let note = "";
+        let reason = "";
+        let retryAt = 0;
+        let message = "";
+        if (translation.enabled === false) {
+          state = "off";
+          activity = t("quickStatusOffDisabled");
+        } else if (!configured) {
+          state = "needs-you";
+          const google = translation.provider === "googleCloud" && (plugin.settings?.googleTranslate?.keys || []).length > 0;
+          reason = t(google ? "quickStatusReasonQuota" : "quickStatusReasonConfig");
+        } else if (failureActive && ATTENTION_FAILURE_TYPES.has(failureType) && !testing) {
+          state = "needs-you";
+          reason = t(ATTENTION_REASON_KEYS[failureType]);
+          message = api.state === "failed" ? api.message : "";
+        } else if (configError && !testing) {
+          state = "needs-you";
+          reason = t(CONFIG_ERROR_REASON_KEYS[configError.kind]);
+          message = configError.message;
+        } else if (api.state === "failed" && !testing) {
+          state = "needs-you";
+          reason = t("quickStatusReasonFailed");
+          message = api.message;
+        } else if (testing) {
+          state = "busy";
+          activity = t("quickStatusTesting");
+        } else if (!autoActive) {
+          state = "off";
+          activity = t("quickStatusOffChannel");
+          note = t("quickStatusManualHint");
+        } else if (failureActive && WAITING_FAILURE_TYPES.has(failureType)) {
+          state = "waiting";
+          reason = t(WAITING_REASON_KEYS[failureType]);
+          retryAt = Number(failure.retryAt || 0);
+          activity = t("quickStatusWaiting", { reason });
+        } else if (inFlight > 0 || queued > 0) {
+          state = "busy";
+          activity = t("quickStatusBusy", { inFlight: String(inFlight), queued: String(queued) });
+        }
+        if (state === "needs-you") {
+          activity = t("quickStatusNeedsYou", { reason });
+          note = String(message || "").trim();
+        }
+        const headline = [provider, connection].filter(Boolean).join(" · ");
+        const title = [provider, connection, activity].filter(Boolean).join(" · ");
+        const testSummary = state === "needs-you" ? "" : this.getLastTestSummary(api);
+        return {
+          state,
+          provider,
+          connection,
+          activity,
+          headline,
+          testSummary,
+          // Panel lines: what is happening now, then an optional one-line note (hint or error text).
+          detail: activity,
+          note,
+          reason,
+          message,
+          retryAt,
+          testing,
+          autoActive,
+          title,
+          ariaLabel: t("quickPanelLauncherLabel", { status: title })
+        };
+      }
+      getStatusSafe() {
+        try {
+          return this.getStatus();
+        } catch {
+          return null;
+        }
+      }
+      hasConnectedLauncher() {
+        return Boolean(this.launcherRef && this.plugin.isNodeConnected(this.launcherRef));
+      }
+      // Coalesces bursts of changes (queue drains, status writes, settings) into one read per
+      // STATUS_REFRESH_THROTTLE_MS, and does nothing while there is no launcher or open panel to update.
+      requestStatusUpdate() {
+        if (!this.plugin.isStarted || this.statusPending) return;
+        if (!this.isOpen() && !this.hasConnectedLauncher()) return;
+        this.statusPending = true;
+        this.statusTimer = setTimeout(() => {
+          this.statusPending = false;
+          this.statusTimer = null;
+          this.refreshStatus();
+        }, STATUS_REFRESH_THROTTLE_MS);
+        this.statusTimer?.unref?.();
+      }
+      refreshStatus(options = {}) {
+        if (!this.plugin.isStarted || typeof document === "undefined") return null;
+        const status = this.getStatusSafe();
+        if (!status) return null;
+        const signature = `${status.state}
+${status.title}`;
+        const changed = Boolean(options.force) || signature !== this.lastStatusSignature;
+        this.lastStatus = status;
+        this.lastStatusSignature = signature;
+        if (changed) {
+          [...document.querySelectorAll?.(LAUNCHER_SELECTOR) || []].forEach((button) => this.applyLauncherStatus(button, status));
+        }
+        if (this.isOpen()) this.renderStatus(status);
+        this.scheduleStatusExpiry(status);
+        return status;
+      }
+      // A cooldown ends without any event; look again once it is over.
+      scheduleStatusExpiry(status) {
+        const at = status?.state === "waiting" ? Number(status.retryAt || 0) : 0;
+        if (at === this.statusExpiryAt) return;
+        if (this.statusExpiryTimer) clearTimeout(this.statusExpiryTimer);
+        this.statusExpiryTimer = null;
+        this.statusExpiryAt = at;
+        if (!at) return;
+        this.statusExpiryTimer = setTimeout(() => {
+          this.statusExpiryTimer = null;
+          this.statusExpiryAt = 0;
+          this.requestStatusUpdate();
+        }, Math.max(0, at - Date.now()) + STATUS_EXPIRY_SLACK_MS);
+        this.statusExpiryTimer?.unref?.();
+      }
+      // Called for each launcher Discord's user panel gets; the badge shows the current status at once.
+      // Read fresh: a launcher is re-created after a language switch, and the cached texts would be stale.
+      decorateLauncher(button) {
+        if (!button) return button;
+        this.launcherRef = button;
+        const status = this.getStatusSafe() || this.lastStatus;
+        if (status) {
+          this.lastStatus = status;
+          this.lastStatusSignature = `${status.state}
+${status.title}`;
+          this.applyLauncherStatus(button, status);
+        }
+        if (this.isOpen()) {
+          this.launcher = button;
+          this.setLauncherExpanded(button, true);
+          this.scheduleUpdate();
+        }
+        return button;
+      }
+      applyLauncherStatus(button, status) {
+        if (!button?.setAttribute || !status) return false;
+        this.launcherRef = button;
+        let badge = button.querySelector?.(".dait-launcher-status") || null;
+        let dot = badge?.querySelector?.(".dait-qp-dot") || null;
+        const created = !badge || !dot;
+        if (created) {
+          badge?.remove?.();
+          badge = this.createElement("span", "dait-launcher-status");
+          badge.setAttribute("aria-hidden", "true");
+          dot = this.createElement("span", "dait-qp-dot");
+          badge.appendChild(dot);
+          button.appendChild(badge);
+        }
+        if (!created && button.dataset?.daitStatus === status.state && button.title === status.title) return false;
+        dot.dataset.daitStatus = status.state;
+        button.dataset.daitStatus = status.state;
+        button.title = status.title;
+        button.setAttribute("aria-label", status.ariaLabel);
+        return true;
+      }
+    };
+    module2.exports = { QuickPanel, LAUNCHER_STATUS_STATES, QUICK_POPOVER_ID: POPOVER_ID };
+  }
+});
+
+// src/intake/discord-markup.js
+var require_discord_markup = __commonJS({
+  "src/intake/discord-markup.js"(exports2, module2) {
+    "use strict";
+    var { isStandardEmojiText } = require_emoji_text();
+    var PLACEHOLDER_START = "";
+    var PLACEHOLDER_END = "";
+    var PLACEHOLDER_PATTERN = /\uE000(\d+)\uE001/g;
+    var CODE_OR_ESCAPE_PATTERN = /```(?:[A-Za-z0-9_+.#-]{1,32}\n)?([\s\S]*?)```|``([\s\S]+?)``|`([^`]+?)`|\\([^A-Za-z0-9\s])/g;
+    var BARE_URL_PATTERN = /(?:https?|steam|discord):\/\/[^\s<>]*[^\s<>.,:;"')\]]/g;
+    var SPOILER_PATTERN = /\|\|[\s\S]+?\|\|/;
+    var TIMESTAMP_PATTERN = /<t:-?\d+(?::[A-Za-z])?>/;
+    var GUILD_NAVIGATION_PATTERN = /<id:[A-Za-z_]+>/;
+    var CUSTOM_EMOJI_PATTERN = /<a?:([A-Za-z0-9_~]{1,64}):\d{15,25}>/g;
+    var SLASH_COMMAND_PATTERN = /<\/([^:<>\n]{1,100}):\d{15,25}>/g;
+    var USER_MENTION_PATTERN = /<@!?(\d{15,25})>/g;
+    var ROLE_MENTION_PATTERN = /<@&(\d{15,25})>/g;
+    var CHANNEL_MENTION_PATTERN = /<#(\d{15,25})>/g;
+    var AUTOLINK_PATTERN = /<((?:https?|steam|discord):\/\/[^\s<>]+)>/g;
+    var MASKED_LINK_PATTERN = /\[([^[\]\n]+?)\]\(\s*<?(?:https?:\/\/[^\s()<>]+)>?\s*\)/g;
+    var EMOJI_SHORTCODE_PATTERN = /:([a-z0-9_+-]{1,64}):/g;
+    var UNKNOWN_MARKUP_PATTERN = /<[^<>\s]*\d{15,25}[^<>\s]*>/;
+    function convertDiscordMarkupToDisplayText(text, resolvers = {}) {
+      let value = String(text ?? "");
+      if (!value) return "";
+      if (value.includes(PLACEHOLDER_START) || value.includes(PLACEHOLDER_END)) return "";
+      const protectedParts = [];
+      const protect = (part) => {
+        protectedParts.push(part);
+        return `${PLACEHOLDER_START}${protectedParts.length - 1}${PLACEHOLDER_END}`;
+      };
+      value = value.replace(CODE_OR_ESCAPE_PATTERN, (match, block, doubled, single, escaped) => {
+        if (block !== void 0) return `
+${protect(block)}
+`;
+        if (escaped !== void 0) return protect(escaped);
+        return protect(doubled ?? single ?? "");
+      });
+      if (SPOILER_PATTERN.test(value)) return "";
+      if (TIMESTAMP_PATTERN.test(value) || GUILD_NAVIGATION_PATTERN.test(value)) return "";
+      let unresolved = false;
+      const resolveName = (kind, id) => {
+        let name = "";
+        try {
+          name = String(resolvers?.[kind]?.(id) || "").trim();
+        } catch {
+          name = "";
+        }
+        if (!name) unresolved = true;
+        return name;
+      };
+      value = value.replace(CUSTOM_EMOJI_PATTERN, (match, name) => protect(`:${name}:`));
+      value = value.replace(SLASH_COMMAND_PATTERN, (match, name) => `/${name.trim()}`);
+      value = value.replace(ROLE_MENTION_PATTERN, (match, id) => `@${protect(resolveName("role", id))}`);
+      value = value.replace(USER_MENTION_PATTERN, (match, id) => `@${protect(resolveName("user", id))}`);
+      value = value.replace(CHANNEL_MENTION_PATTERN, (match, id) => `#${protect(resolveName("channel", id))}`);
+      if (unresolved || UNKNOWN_MARKUP_PATTERN.test(value)) return "";
+      value = value.replace(MASKED_LINK_PATTERN, (match, label) => label);
+      value = value.replace(AUTOLINK_PATTERN, (match, url) => protect(url));
+      value = value.replace(BARE_URL_PATTERN, (url) => protect(url));
+      let unknownEmoji = false;
+      value = value.replace(EMOJI_SHORTCODE_PATTERN, (match, name) => {
+        let emoji = "";
+        try {
+          emoji = String(resolvers?.emoji?.(name) || "");
+        } catch {
+          emoji = "";
+        }
+        if (isStandardEmojiText(emoji)) return emoji;
+        if (/[a-z]/.test(name)) unknownEmoji = true;
+        return match;
+      });
+      if (unknownEmoji) return "";
+      value = value.replace(/^>>> ?/m, "");
+      value = value.replace(/^> /gm, "");
+      value = value.replace(/^#{1,3} +/gm, "");
+      value = value.replace(/^-# +/gm, "");
+      value = value.replace(/^( *)[-*] +/gm, "$1");
+      value = value.replace(/^( *)\d{1,9}[.)] +/gm, "$1");
+      for (let pass = 0; pass < 2; pass++) {
+        value = value.replace(/\*\*(?=\S)([\s\S]*?\S)\*\*/g, "$1");
+        value = value.replace(/__(?=\S)([\s\S]*?\S)__/g, "$1");
+        value = value.replace(/~~(?=\S)([\s\S]*?\S)~~/g, "$1");
+        value = value.replace(/\*(?=\S)([^*]*?\S)\*/g, "$1");
+        value = value.replace(/(^|[^A-Za-z0-9_])_(?=\S)([^_]*?\S)_(?![A-Za-z0-9_])/g, "$1$2");
+      }
+      value = value.replace(PLACEHOLDER_PATTERN, (match, index) => protectedParts[Number(index)] ?? "");
+      if (value.includes(PLACEHOLDER_START) || value.includes(PLACEHOLDER_END)) return "";
+      return value;
+    }
+    var DISCORD_MARKUP_DISPLAY_TEXT_MEMO_MAX = 600;
+    module2.exports = { convertDiscordMarkupToDisplayText, DISCORD_MARKUP_DISPLAY_TEXT_MEMO_MAX };
+  }
+});
+
 // src/i18n.js
 var require_i18n = __commonJS({
   "src/i18n.js"(exports2, module2) {
@@ -12140,11 +16862,16 @@ var require_i18n = __commonJS({
     var I18N = {
       "zh-CN": {
         messageButtonVisibility: "翻译按钮显示方式",
-        messageButtonVisibilityDesc: "控制消息旁翻译按钮是默认可见，还是只在鼠标悬停到消息时显示。",
-        messageButtonVisibilityAlways: "默认可见",
-        messageButtonVisibilityHover: "仅悬停可见",
+        messageButtonVisibilityDesc: "一直显示消息旁的翻译按钮，或只在悬停时显示。",
+        messageButtonVisibilityAlways: "一直显示",
+        messageButtonVisibilityHover: "悬停时显示",
+        messageButtonMode: "消息旁的翻译按钮",
+        messageButtonModeDesc: "在每条消息旁显示“翻译”按钮的方式。",
+        messageButtonModeHover: "悬停时显示",
+        messageButtonModeAlways: "一直显示",
+        messageButtonModeOff: "不显示",
         settingsTitle: "Discord AI 翻译助手",
-        settingsNote: "输入润色和频道翻译分别配置。API Key 由 BetterDiscord 保存在本机。",
+        settingsNote: "润色和翻译分别设置；API Key 只保存在本机。",
         generalTitle: "基础设置",
         interfaceLanguage: "界面语言",
         interfaceLanguageDesc: "只影响插件界面文案，不影响润色或翻译的目标语言。",
@@ -12155,28 +16882,39 @@ var require_i18n = __commonJS({
         translationTitle: "频道消息翻译",
         translationDescription: "将频道里的已有消息翻译到指定目标语言。",
         enabled: "启用",
-        enabledDesc: "关闭后这个功能不会显示按钮，也不会发起模型请求。",
+        enabledDesc: "关闭后不显示这项功能的按钮，也不发送请求。",
         provider: "服务商",
-        providerDesc: "选择本功能使用哪个 API 服务。润色和翻译可以分别配置。",
+        providerDesc: "润色和翻译可以各用一个服务商。",
+        providerGroupAi: "AI 模型（也能用于润色）",
+        providerGroupMachine: "机器翻译（只能翻译）",
         providerOpenAI: "OpenAI 兼容",
         providerSakuraLocal: "Sakura 本地",
         providerGoogleCloud: "Google Cloud 翻译",
         googleTranslateTitle: "Google Cloud 翻译 Key 池",
         googleTranslateKeys: "Google API Key 池",
-        googleTranslateKeysDesc: "翻译服务商选择 Google Cloud 翻译时使用。每行一个 Key；可写成 名称|API_KEY|月上限。月上限默认 450000，建议不要顶满 500000。",
+        googleTranslateKeysDesc: "每行一个 Key，也可写成 名称|Key|月上限。",
         googleTranslateDefaultLimit: "Google 单 Key 默认月上限",
-        googleTranslateDefaultLimitDesc: "没有在 Key 行单独写上限时使用。建议 420000-450000，给 Google 统计和同事其它用途留余量。",
+        googleTranslateDefaultLimitDesc: "Key 行没写上限时使用；建议 420000-450000，留出余量。",
         googleTranslateAllowPrefetch: "允许预翻译使用 Google",
-        googleTranslateAllowPrefetchDesc: "关闭后，Google Key 池只服务当前可见消息，预翻译不会消耗 Google 字符。",
+        googleTranslateAllowPrefetchDesc: "关闭后只翻译屏幕上的消息，预翻译不消耗 Google 额度。",
         googleTranslateStats: "Google 用量",
         googleTranslateStatsDesc: "本月 {used}/{limit} 字符；可用 Key {available}/{total}；当前月份 {month}。",
+        googleTranslateStatsCooldown: "冷却中的 Key {count} 个，最早 {time} 恢复。",
         googleTranslateResetStats: "重置本月 Google 统计",
-        googleTranslateResetConfirm: "确认重置本地记录的 Google 本月字符统计？不会影响 Google Cloud 后台真实用量。",
+        googleTranslateResetConfirm: "只清零本机记录的本月字符数，Google Cloud 后台的实际用量不变。",
         googleTranslateStatsReset: "Google 本月统计已重置。",
         googleTranslateNoKey: "Google Cloud 翻译没有可用 API Key。",
         googleTranslateQuotaExceeded: "Google Cloud 翻译 Key 池本月额度已用完。",
+        googleTranslateKeysCooling: "Google Cloud 翻译的 Key 都在冷却中，{time} 恢复。",
+        googleTranslateKeyError: "Key「{label}」：{error}",
         apiKey: "API Key",
-        apiKeyDesc: "只保存在本机 BetterDiscord 数据目录，不会写进消息内容。Sakura 本地模式可以留空。",
+        apiKeyDesc: "只保存在本机，不会写进消息；Sakura 本地可以留空。",
+        apiKeyDeepSeekDesc: "DeepSeek 开放平台的 API Key，只保存在本机。",
+        apiKeyOpenAIDesc: "服务给你的 API Key，只保存在本机，不会写进消息。",
+        apiKeyLocalDesc: "可选，本机服务通常不需要。",
+        apiKeyMicrosoftDesc: "Azure Translator 资源的密钥，只保存在本机。",
+        apiKeyDeepLDesc: "DeepL API 的认证密钥，只保存在本机。",
+        apiKeyOptionalPlaceholder: "可留空",
         apiTest: "测试",
         apiTestBusy: "检测中",
         apiStatusUntested: "未检测",
@@ -12185,68 +16923,111 @@ var require_i18n = __commonJS({
         apiStatusFailed: "连接失败",
         apiTestSuccess: "{name} API 连接正常。",
         apiTestFailed: "{name} API 连接失败：{error}",
+        apiTestJustNow: "刚刚",
+        apiTestMinutesAgo: "{count} 分钟前",
+        apiTestHoursAgo: "{count} 小时前",
+        apiTestNotYet: "还没测试",
         thinkingMode: "DeepSeek 思考模式",
-        thinkingModeDesc: "仅 DeepSeek 生效。开启后模型会先推理再输出，质量可能更好，但速度更慢、消耗更多 token。",
+        thinkingModeDesc: "模型先推理再回答，可能更准，但更慢、用量更多。",
         endpoint: "接口地址",
-        endpointDesc: "OpenAI-compatible chat completions 地址，DeepSeek 默认无需改。",
+        endpointDesc: "服务的 API 地址，一般保持默认即可。",
+        endpointDeepSeekDesc: "DeepSeek 的接口地址，一般保持默认即可。",
+        endpointOpenAIDesc: "服务的 chat/completions 地址，远程地址要用 https。",
+        endpointLocalDesc: "本机服务的地址，只有本机地址可以用 http。",
+        endpointMicrosoftDesc: "Azure Translator 的接口地址，一般保持默认即可。",
+        endpointBaiduDesc: "百度翻译的接口地址，一般保持默认即可。",
         deepseekPreset: "DeepSeek V4 预设",
-        deepseekPresetDesc: "快速切换 DeepSeek V4 Flash / Pro。插件默认关闭思考模式，更适合翻译和润色。",
-        localModelPreset: "本地模型预设",
-        localModelPresetDesc: "用于 Sakura、llama.cpp 或其他本地 OpenAI 兼容服务。若后端忽略 model 字段，可保持 local-model。",
-        customModel: "自定义 / 使用 Model 字段",
+        deepseekPresetDesc: "在 DeepSeek V4 Flash 和 Pro 之间快速切换。",
+        customModel: "自定义（填写下方模型名）",
         model: "模型",
-        modelDesc: "实际传给 API 的 model 字段，例如 deepseek-v4-flash。",
+        modelDesc: "发给服务的模型名，例如 deepseek-v4-flash。",
+        modelOpenAIDesc: "服务提供的模型名，可点“检测模型”列出。",
+        modelLocalDesc: "local-model 表示使用服务端已加载的模型。",
+        modelLocalLoadedDesc: "local-model 使用服务端已加载的模型，现在是 {model}。",
+        modelDetect: "检测模型",
+        modelDetectBusy: "检测中",
+        modelDetectFound: "检测到 {count} 个模型，可在列表中选择。",
+        modelDetectFoundLoaded: "检测到 {count} 个模型，已加载：{model}。",
+        modelDetectNone: "服务端没有列出模型。",
+        modelDetectFailed: "检测失败：{error}",
+        modelDetectUnsupported: "这个服务不支持检测模型。",
+        modelPicker: "可选的模型",
+        modelPickerOther: "其他（填写上方的模型名）",
+        modelPickerServerLoaded: "使用服务端已加载的模型（local-model）",
+        modelPickerDetected: "服务端列出的模型",
+        modelPickerPresets: "常用模型",
+        modelPickerLoadedTag: "{model}（已加载）",
         outputLanguage: "输出语言",
-        outputLanguageDesc: "润色后希望变成哪种语言。自定义时请输入清楚的语言名称。",
+        outputLanguageDesc: "润色结果使用的语言。",
         inputLanguage: "输入语言",
-        inputLanguageDesc: "待处理文本原本是什么语言。建议保持自动检测，只有模型判断错时再指定。",
+        inputLanguageDesc: "草稿原来的语言；一般保持自动检测，识别错了再指定。",
+        messageLanguage: "原文语言",
+        messageLanguageDesc: "频道消息原来的语言；一般保持自动检测，识别错了再指定。",
         autoDetectLanguage: "自动检测",
         targetLanguage: "目标语言",
-        targetLanguageDesc: "频道消息翻译到哪种语言。自定义时请输入清楚的语言名称。",
+        targetLanguageDesc: "频道消息翻译成哪种语言。",
         languagePreset: "常用语言",
         customLanguage: "自定义语言",
         customLanguagePlaceholder: "例如：繁体中文、韩语、Brazilian Portuguese",
-        customLanguageDesc: "自定义语言不会自动识别；插件会把这里的文字原样放进提示词，由模型按这个名称执行。",
+        customLanguageDesc: "自定义语言名会原样交给模型。",
         temperature: "创造性",
-        temperatureDesc: "数值越低越稳定，越高越发散。翻译建议 0.1-0.3，润色建议 0.3-0.7。",
+        temperatureDesc: "越低越稳定；翻译建议 0.1-⁠0.3，润色建议 0.3-⁠0.7。",
         maxTokens: "最大输出长度",
-        maxTokensDesc: "限制模型最多输出多少 token。短消息一般 800 足够，长消息可调高。",
+        maxTokensDesc: "单次回复的长度上限；长消息被截断时调高。",
         afterPolishing: "润色后动作",
-        afterPolishingDesc: "控制润色结果是覆盖当前输入框，还是写入后询问发送。",
+        afterPolishingDesc: "润色结果写入输入框后，是否再询问发送。",
         afterReplace: "覆盖输入框",
         afterDirectReplace: "覆盖输入框",
         afterConfirmSend: "发送前询问",
         repolishSource: "再次润色输入源",
-        repolishSourceDesc: "连续点击润色时，默认继续基于最初原文；也可以改为基于上一次润色结果继续优化。",
+        repolishSourceDesc: "再次润色时，基于最初草稿还是上一次的结果。",
         repolishSourceOriginal: "使用原文",
         repolishSourceLastResult: "使用上一次润色结果",
         restoreOriginal: "还原原文",
+        restoreOriginalChanged: "草稿已有改动，无法还原原文。",
         polishResultTitle: "润色结果",
         polishResultCopy: "复制",
         polishResultCopied: "已复制",
         polishResultReplace: "写入输入框",
+        polishResultApplyFailed: "没能写入输入框，请点“复制”后手动粘贴。",
         polishResultClose: "关闭",
         prompt: "提示词",
-        promptDesc: "告诉模型要怎么润色或翻译。模板可以用中文保存，外层指令会把它当作规则解释，不会当成待翻译文本。",
+        promptDesc: "告诉模型怎么润色或翻译，可以用中文写。",
+        promptUsingTemplate: "正在使用模板：{code} · {name}",
+        promptTemplateNameNaturalChat: "自然聊天润色",
+        promptTemplateNamePolite: "礼貌清晰",
+        promptTemplateNameShort: "简短直接",
+        promptTemplateNameNatural: "自然翻译",
+        promptTemplateNameLiteral: "准确直译",
         promptTemplates: "提示词模板",
-        promptTemplatesDesc: "保存常用提示词，每套模板会按保存顺序生成 001、002 这样的编号。可以搜索名称或编号快速启用。",
+        promptTemplatesDesc: "选中模板只预览；点“使用这个模板”才会替换提示词。",
         promptSearch: "搜索模板名称或编号",
         promptTemplateSelect: "选择模板",
         promptTemplateCustom: "当前提示词未保存为模板",
-        promptApply: "启用",
+        promptTemplateEdited: "基于 {code} · {name}，修改尚未存入模板",
+        promptPreview: "模板预览",
+        promptPreviewActive: "正在使用",
+        promptApply: "使用这个模板",
         promptSave: "保存为模板",
-        promptUpdate: "更新模板",
-        promptDelete: "删除",
+        promptUpdate: "更新当前模板",
+        promptUpdateTitle: "用编辑后的提示词覆盖 {code} · {name}",
+        promptDelete: "删除模板",
         promptCopy: "复制提示词",
         promptCopied: "提示词已复制。",
+        copiedToClipboard: "已复制。",
         promptCopyFailed: "复制失败：{error}",
+        clipboardUnavailable: "无法访问剪贴板，请手动选中文字复制。",
         promptNamePlaceholder: "给这个模板起个名字",
-        promptNameRequired: "模板名称不能为空。",
+        promptSaveNameLabel: "新模板名称",
+        promptNameRequired: "请先填写模板名称。",
         promptSaved: "模板已保存：{code} · {name}",
         promptUpdated: "模板已更新：{code} · {name}",
         promptDeleted: "模板已删除。",
-        promptApplied: "已启用模板：{code} · {name}",
+        promptApplied: "已使用模板：{code} · {name}",
+        promptApplyUnsavedTitle: "替换当前提示词？",
+        promptApplyUnsavedConfirm: "当前提示词有未保存的修改，使用 {code} · {name} 后会被替换。",
         promptDeleteConfirm: "删除这个提示词模板？",
+        promptDeleteActiveNote: "这是正在使用的模板，删除后提示词会换成 {code} · {name}。",
         promptNoTemplate: "没有可用模板。",
         uiTitle: "界面",
         showPolishButton: "在输入框附近显示润色按钮",
@@ -12254,28 +17035,29 @@ var require_i18n = __commonJS({
         showMessageButtons: "在消息旁显示翻译按钮",
         showMessageButtonsDesc: "在频道消息旁添加“翻译”按钮。",
         autoTranslateMessages: "自动翻译可见外语消息",
-        autoTranslateMessagesDesc: "开启后会自动翻译当前屏幕内看起来不是目标语言的消息。默认关闭，并限制并发，避免一次性请求过多 API。",
+        autoTranslateMessagesDesc: "自动翻译屏幕上不是目标语言的消息。",
         autoTranslatePrefetch: "预翻译附近消息",
-        autoTranslatePrefetchDesc: "自动翻译开启时，低优先级预翻译屏幕上下附近几条消息。只在没有可见消息等待翻译时占用 1 个空闲并发槽，因此并发数至少需要 2。",
+        autoTranslatePrefetchDesc: "空闲时提前翻译屏幕上下的消息，并发数需至少为 2。",
         autoTranslatePrefetchRange: "预翻译范围",
-        autoTranslatePrefetchRangeDesc: "控制可见区域前后各预取多少条消息。快速滚动时远离视口的预翻译会被丢弃。",
+        autoTranslatePrefetchRangeDesc: "屏幕上方和下方各提前翻译多少条消息。",
         autoTranslateConcurrency: "自动翻译并发数",
-        autoTranslateConcurrencyDesc: "同时发起的翻译请求数。默认 {default}，范围 {min}-{max}；提高并发会增加资源消耗，实际速度取决于服务性能。",
-        autoTranslateStrictRetry: "失败后自动严格重试",
-        autoTranslateStrictRetryDesc: "模型输出不是目标语言时，先重试失败条目，再严格单条翻译；仍失败才显示重试按钮。",
-        showAutoTranslateWarnings: "开启后显示普通自动翻译失败提示",
-        showAutoTranslateWarningsDesc: "开启后，模型输出不合格、网络抖动、超时这类普通失败会显示行内提示；关闭后静默处理。",
-        showAutoTranslateToasts: "开启后显示自动翻译失败弹窗",
-        showAutoTranslateToastsDesc: "开启后，自动翻译失败会弹出底部红色提示；关闭后所有自动翻译失败弹窗都静默，只保留必要的行内状态。",
+        autoTranslateConcurrencyDesc: "同时进行的翻译请求数，默认 {default}，范围 {min}-{max}。",
+        autoTranslateStrictRetry: "译文语言不对时严格重试",
+        autoTranslateStrictRetryDesc: "先重试失败的部分，再逐条严格翻译，仍失败才显示重试按钮。",
+        showAutoTranslateWarnings: "失败时在消息下提示",
+        showAutoTranslateWarningsDesc: "超时、网络波动等一般失败也会提示；需要你处理的错误总会显示。",
+        showAutoTranslateToasts: "自动翻译失败时弹出提示",
+        showAutoTranslateToastsDesc: "需要你处理的问题（如 Key 无效）总会提示一次。",
         translationCacheTtl: "缓存时间",
-        translationCacheTtlDesc: "译文持久保存在本机，重启 Discord 后仍可复用；过期后会自动重新翻译。",
-        translationCacheMaxEntries: "最大缓存数量",
-        translationCacheMaxEntriesDesc: "超过上限会按最近使用顺序淘汰旧译文。默认 4000 条，最高 15000 条。",
+        translationCacheTtlDesc: "重启 Discord 后仍可用，过期后重新翻译。",
+        translationCacheMaxEntries: "最多缓存消息数",
+        translationCacheMaxEntriesDesc: "超出后先删除最久没用的译文，最多 15000 条。",
         translationCacheStats: "缓存命中统计",
-        translationCacheStatsDesc: "本次会话命中 {hits} 次，未命中 {misses} 次；内存 {memory} 条，已保存 {persistent} 条。",
+        translationCacheStatsDesc: "本次会话命中 {hits} 次，未命中 {misses} 次；内存 {memory} 条消息，已保存 {persistent} 条消息。",
         clearTranslationCacheStats: "清空统计",
         clearTranslationCache: "清空翻译缓存",
-        clearTranslationCacheConfirm: "确认删除所有本地已保存译文缓存？之后相同内容需要重新请求翻译。",
+        clearTranslationCacheConfirm: "所有已保存的译文都会删除，之后相同内容需要重新翻译。",
+        clearTranslationCacheDesc: "删除所有已保存的译文，相同内容以后要重新翻译。",
         translationCacheStatsCleared: "缓存命中统计已清空，已保存译文未删除。",
         translationCacheCleared: "翻译缓存已清空。",
         cacheTtl3h: "3 小时",
@@ -12284,52 +17066,69 @@ var require_i18n = __commonJS({
         cacheTtl1d: "1 天",
         cacheTtl2d: "2 天",
         cacheTtl7d: "7 天",
-        translationPosition: "频道翻译显示顺序",
-        translationPositionDesc: "控制译文插入在原消息上方还是下方。翻译中会先显示灰色占位条。",
+        translationPosition: "译文位置",
+        translationPositionDesc: "译文显示在原消息上方还是下方。",
         translationBeforeOriginal: "译文在前，原文在后",
         translationAfterOriginal: "原文在前，译文在后",
+        translationPositionAbove: "在原文上方",
+        translationPositionBelow: "在原文下方",
         maskTranslations: "默认遮蔽译文",
-        maskTranslationsDesc: "开启后译文先显示为灰条，点击后才展开。关闭后译文默认清晰显示，只保留淡背景区分。",
+        maskTranslationsDesc: "译文先显示为灰条，点击或按 Enter 再展开。",
+        translationStyle: "译文样式",
+        translationStyleDesc: "三种样式都跟随 Discord 主题颜色。",
+        translationStyleTint: "淡底色",
+        translationStyleMuted: "弱化文字",
+        translationStyleTag: "带“译”标记",
+        translationTextScale: "译文字号",
+        translationTextScaleDesc: "相对聊天正文的大小。",
+        panelTheme: "窗口主题",
+        panelThemeDesc: "设置窗口、快捷面板和菜单的配色；确认对话框跟随 Discord。",
+        panelThemeAuto: "跟随 Discord",
+        panelThemeLight: "浅色",
+        panelThemeDark: "深色",
+        translationTag: "译",
         showContextMenu: "在消息右键菜单显示翻译入口",
-        showContextMenuDesc: "右键消息时显示翻译菜单项。若 Discord 更新导致失效，消息旁按钮仍可用。",
+        showContextMenuDesc: "右键消息时显示“翻译”菜单项。",
         enableHotkey: "启用输入润色快捷键",
         enableHotkeyDesc: "输入框聚焦时，按已设置的快捷键直接润色当前草稿。",
         polishHotkey: "润色快捷键",
-        polishHotkeyDesc: "点击录制后按下新的组合键。建议至少包含 Ctrl、Alt 或 Shift，避免和普通输入冲突。",
+        polishHotkeyDesc: "点快捷键按钮，再按下新的组合键；需包含 Ctrl、Alt 或 Win。",
         hotkeyRecord: "录制快捷键",
         hotkeyRecording: "请按组合键...",
         hotkeyReset: "恢复默认",
         hotkeyNotSet: "未设置",
         hotkeySaved: "快捷键已保存：{shortcut}",
-        hotkeyInvalid: "快捷键无效，请使用 Ctrl、Alt、Shift 或 Win 加一个按键。",
-        testMode: "启用测试模式",
-        testModeDesc: "开启后在下方展开独立测试区，用当前配置测试润色/翻译效果。关闭设置页后仍会记住开关状态。",
-        testModeTitle: "测试模式",
-        testModeNote: "这里不会发送 Discord 消息，只用当前配置请求模型，方便检查输出并调整提示词。",
-        testModeTask: "测试功能",
-        testModeInput: "测试输入",
-        testModeInputDesc: "输入一段样本文本，插件会按所选功能的当前配置处理。",
-        testModeInputPlaceholder: "在这里输入要测试的 Discord 文本...",
-        testModePrompt: "当前提示词",
-        testModePromptDesc: "可直接调整所选功能的提示词。点击保存后会同步到上方正式配置。",
-        testModeOutput: "模型输出",
-        testModeOutputPlaceholder: "运行测试后会显示结果。",
-        testModeRun: "运行测试",
-        testModeRunning: "测试中",
-        testModeCopyInput: "复制输入",
-        testModeSavePrompt: "保存提示词",
-        testModeCopyPrompt: "复制提示词",
-        testModeCopyOutput: "复制输出",
-        testModeClear: "清空",
-        testModePromptSaved: "测试模式提示词已保存到 {name}。",
-        testModeInputRequired: "请输入测试文本。",
-        testModeOutputReady: "测试完成。",
-        testModeConfig: "当前配置：{provider} / {model} / 输出 {targetLanguage}",
+        hotkeyInvalid: "快捷键无效：请用 Ctrl、Alt 或 Win 加一个按键（可再加 Shift），且不能占用复制、粘贴等编辑快捷键。",
+        tryTranslate: "试译一句",
+        tryTranslateDesc: "用当前设置翻译一句话，不会发到 Discord。",
+        tryTranslatePlaceholder: "例如：See you tomorrow, same time?",
+        tryTranslateRun: "试译",
+        tryPolish: "试润色",
+        tryPolishDesc: "用当前设置润色一句话，不会发到 Discord。",
+        tryPolishPlaceholder: "例如：明天老时间见？",
+        tryPolishRun: "试润色",
+        tryBusy: "处理中",
+        tryInputRequired: "先输入一句话。",
+        tryResultTime: "用时 {time}",
         reset: "恢复默认设置",
-        resetConfirm: "确定要重置 Discord AI 翻译助手设置？",
+        resetConfirm: "设置、频道规则和显示选项会恢复默认；API Key、Google Key 池和提示词模板会保留。",
+        resetDialogTitle: "恢复默认设置？",
+        resetDialogLead: "以下内容会恢复默认，不能撤销：",
+        resetDialogItemSettings: "翻译和润色的服务设置、开关与数值",
+        resetDialogItemChannelRules: "各频道的自动翻译规则",
+        resetDialogItemDisplay: "显示和界面选项（界面语言不变）",
+        resetDialogItemCredentials: "API Key、Google Key 池和自定义提示词模板",
+        resetDialogItemCredentialsNote: "仅在取消勾选下方选项时清除",
+        resetKeepCredentials: "保留 API Key、Google Key 池和提示词模板",
+        dialogConfirm: "确定",
+        dialogCancel: "取消",
+        settingsLoadBlocked: "无法读取已保存的设置，本次修改不会保存。请检查插件文件夹中的 DiscordAITranslator.config.json，修复后重新启用插件。",
         pluginStarted: "Discord AI 翻译助手 v{version} 已启动。",
         polishButton: "润色",
         polishBusy: "润色中",
+        polishRunning: "正在润色当前草稿...",
+        composerChanged: "输入框已切换，请再试一次。",
+        composerResultHeld: "结果没有自动写入：草稿已改变，或你正在别处输入。可在弹出的面板里复制或写入。",
         polishTitleAttr: "用 AI 润色当前草稿。快捷键：{shortcut}。",
         translateButton: "翻译",
         translateBusy: "翻译中...",
@@ -12338,14 +17137,42 @@ var require_i18n = __commonJS({
         translateRetry: "重试",
         translateRetryTitle: "重新翻译这条消息",
         translationFailedInline: "翻译失败：{error}",
+        translationLoading: "翻译中…",
+        translationRevealLabel: "显示被遮蔽的译文",
+        translationActionsLabel: "译文操作",
+        translationActionCopy: "复制译文",
+        translationActionRetranslate: "重新翻译（不用缓存）",
+        translationActionHide: "隐藏译文",
+        translationCopied: "已复制译文。",
+        translationPartialOne: "第 {parts} 段（共 {total} 段）没有翻译出来",
+        translationPartialMany: "第 {parts} 段（共 {total} 段）没有翻译出来",
+        translationPartialUnknown: "有一部分没有翻译出来",
+        translationRetranslate: "重新翻译",
+        translationRetranslateTitle: "不用缓存，重新翻译整条消息",
+        translationErrorAuth: "翻译服务拒绝了 API Key",
+        translationErrorMissingKey: "还没有填写翻译用的 API Key",
+        translationErrorMissingEndpoint: "还没有填写翻译接口地址",
+        translationErrorMissingModel: "还没有选择翻译模型",
+        translationErrorQuota: "翻译服务的额度用完了",
+        translationErrorLocal: "本地翻译服务没有响应",
+        translationErrorLocalAt: "本地翻译服务没有响应（{host}）",
+        translationErrorRateLimit: "请求太多，请稍后再试",
+        translationErrorRateLimitWait: "请求太多，请 {seconds} 秒后再试",
+        translationOpenSettings: "打开设置",
+        translationOpenSettingsTitle: "打开翻译设置",
+        translationTestConnection: "测试连接",
+        translationTestConnectionTitle: "测试翻译服务能不能连上",
         autoTranslateFailed: "自动翻译失败：{error}",
+        autoTranslateNeedsAttention: "自动翻译需要你处理：{error}",
         autoTranslateTargetFailed: "模型输出不是目标语言，已跳过这条译文。",
-        manualTranslateRescueFailed: "手动翻译未得到可用译文，已尝试普通翻译/强制目标语言/修复，可再次重试。",
+        manualTranslateRescueFailed: "多次尝试后仍没有得到可用的译文，可以再试一次。",
         contextPatchFailed: "无法注入消息右键菜单：{error}",
         polishDisabled: "输入润色已禁用。",
         textboxMissing: "找不到 Discord 输入框。",
         inputEmpty: "输入框是空的。",
-        confirmSend: "现在发送润色后的消息吗？",
+        confirmSend: "发送润色后的消息？",
+        confirmSendAction: "发送",
+        confirmSendDraftChanged: "草稿已有改动，没有发送。",
         translationDisabled: "频道消息翻译已禁用。",
         noTranslatableText: "这条消息没有可翻译文本。",
         messageMissing: "找不到要翻译的消息。",
@@ -12361,52 +17188,70 @@ var require_i18n = __commonJS({
         emptyResult: "API 返回了空结果。",
         errorUnauthorized: "API Key 无效或没有权限。",
         errorRateLimited: "API 请求过快，已进入冷却。",
+        errorQuotaExceeded: "API 额度或账户余额已用完。",
+        errorLanguageUnsupported: "当前服务商不支持所选目标语言，请换一个目标语言或服务商。",
+        errorIpNotAllowed: "服务商拒绝了当前 IP 地址，请检查服务商后台的 IP 白名单。",
+        errorProviderRequestRejected: "服务商拒绝了请求，请检查账号权限、目标语言和服务设置。",
+        errorOutputTruncated: "模型回复被截断，请在设置里调高“最大输出长度”后重试。",
+        errorSaveFailed: "无法保存到本地，请稍后重试。",
         errorServer: "API 服务暂时不可用。",
         errorCancelled: "请求已取消。",
         errorInvalidEndpoint: "接口地址无效，请填写完整的 API 地址。",
+        errorEndpointNotFound: "找不到接口地址或模型，请检查接口地址和模型名称。",
         errorUnsafeEndpoint: "接口地址不安全：远程服务须使用 HTTPS，本机服务可用 HTTP，地址中不能包含用户名或密码。",
-        localIntakeFixed: "当前本地服务固定使用 DOM 发现消息，此项无需修改。",
-        localConcurrencyDesc: "本地模型也可设置 {min}-{max} 个并发请求，每个请求翻译一条消息。请配合本地服务的并发槽位和可用显存调整。",
-        localFallbackUnavailable: "本地服务不会自动转发到云端，因此云端回退及顺序在当前模式下不可用。",
+        localIntakeFixed: "本地服务固定扫描页面发现消息，无需修改。",
+        localConcurrencyDesc: "可设为 {min}-{max}；按本地服务的并行槽位和显存设置。",
+        localFallbackUnavailable: "本地服务不会转到云端服务，此项不可用。",
         errorTimeout: "API 请求超时。",
         errorNetwork: "网络连接失败。",
         unknownError: "未知错误"
       },
       en: {
         settingsTitle: "Discord AI Translator",
-        settingsNote: "Input polishing and channel translation are configured separately. API keys are stored locally by BetterDiscord.",
+        settingsNote: "Polishing and translation are set up separately. API keys stay on this computer.",
         generalTitle: "General",
         interfaceLanguage: "Interface language",
-        interfaceLanguageDesc: "Changes plugin UI text only; it does not affect polishing or translation target languages.",
+        interfaceLanguageDesc: "Changes the plugin's own text only, not the polish or translation language.",
         languageZh: "中文",
         languageEn: "English",
-        polishTitle: "Input Polishing",
+        polishTitle: "Input polishing",
         polishDescription: "Rewrites the current draft and returns the result to the input box.",
-        translationTitle: "Channel Translation",
+        translationTitle: "Channel translation",
         translationDescription: "Translates existing channel messages into the selected target language.",
         enabled: "Enabled",
-        enabledDesc: "When disabled, this feature will not show buttons or send model requests.",
-        provider: "Provider",
-        providerDesc: "Choose which API provider this feature uses. Polishing and translation are configured separately.",
+        enabledDesc: "When off, its buttons are hidden and no requests are sent.",
+        provider: "Service",
+        providerDesc: "Polishing and translation can each use a different service.",
+        providerGroupAi: "AI models (also for polishing)",
+        providerGroupMachine: "Machine translation (translation only)",
         providerOpenAI: "OpenAI-compatible",
         providerSakuraLocal: "Sakura local",
         providerGoogleCloud: "Google Cloud Translation",
         googleTranslateTitle: "Google Cloud Translation key pool",
         googleTranslateKeys: "Google API key pool",
-        googleTranslateKeysDesc: "Used when Translation provider is Google Cloud Translation. One key per line; format can be Label|API_KEY|monthlyLimit. Default limit is 450000, below Google's 500000 free character credit.",
+        googleTranslateKeysDesc: "One key per line, or Label|KEY|monthly limit.",
         googleTranslateDefaultLimit: "Default monthly limit per Google key",
-        googleTranslateDefaultLimitDesc: "Used when a key line does not include its own limit. 420000-450000 is recommended to leave safety margin.",
+        googleTranslateDefaultLimitDesc: "Used when a key line has no limit; 420000-450000 leaves a safety margin.",
         googleTranslateAllowPrefetch: "Allow Google for prefetch",
-        googleTranslateAllowPrefetchDesc: "When disabled, the Google key pool is used only for currently visible messages; prefetch will not spend Google characters.",
+        googleTranslateAllowPrefetchDesc: "When off, only on-screen messages use Google; prefetch spends no Google characters.",
         googleTranslateStats: "Google usage",
         googleTranslateStatsDesc: "This month {used}/{limit} chars; available keys {available}/{total}; month {month}.",
+        googleTranslateStatsCooldown: "{count} key(s) cooling down; the first comes back at {time}.",
         googleTranslateResetStats: "Reset Google monthly stats",
-        googleTranslateResetConfirm: "Reset locally recorded Google character usage for this month? This does not change real Google Cloud usage.",
+        googleTranslateResetConfirm: "Only the count kept on this computer is cleared; real Google Cloud usage is unchanged.",
         googleTranslateStatsReset: "Google monthly stats reset.",
         googleTranslateNoKey: "Google Cloud Translation has no available API key.",
         googleTranslateQuotaExceeded: "Google Cloud Translation key pool monthly quota is exhausted.",
+        googleTranslateKeysCooling: "All Google Cloud Translation keys are cooling down until {time}.",
+        googleTranslateKeyError: 'Key "{label}": {error}',
         apiKey: "API key",
-        apiKeyDesc: "Stored only in BetterDiscord's local data folder; never inserted into messages. Sakura local mode may leave this empty.",
+        apiKeyDesc: "Stored only on this computer, never in messages; Sakura local can leave it empty.",
+        apiKeyDeepSeekDesc: "Your DeepSeek platform API key, stored only on this computer.",
+        apiKeyOpenAIDesc: "The API key your service gave you, stored only on this computer.",
+        apiKeyLocalDesc: "Optional; local servers usually don't need one.",
+        apiKeyMicrosoftDesc: "Your Azure Translator resource key, stored only on this computer.",
+        apiKeyDeepLDesc: "Your DeepL API authentication key, stored only on this computer.",
+        apiKeyOptionalPlaceholder: "Optional",
         apiTest: "Test",
         apiTestBusy: "Testing",
         apiStatusUntested: "Untested",
@@ -12415,114 +17260,166 @@ var require_i18n = __commonJS({
         apiStatusFailed: "Failed",
         apiTestSuccess: "{name} API connection succeeded.",
         apiTestFailed: "{name} API connection failed: {error}",
+        apiTestJustNow: "just now",
+        apiTestMinutesAgo: "{count} min ago",
+        apiTestHoursAgo: "{count} h ago",
+        apiTestNotYet: "Not tested yet",
         thinkingMode: "DeepSeek thinking mode",
-        thinkingModeDesc: "Applies only to DeepSeek. The model reasons before answering, which may improve quality but is slower and uses more tokens.",
+        thinkingModeDesc: "The model reasons before answering: maybe better, but slower and uses more tokens.",
         endpoint: "Endpoint",
-        endpointDesc: "OpenAI-compatible chat completions endpoint. The DeepSeek default usually does not need changes.",
+        endpointDesc: "The service's API address; the default usually works.",
+        endpointDeepSeekDesc: "DeepSeek's API address; the default usually works.",
+        endpointOpenAIDesc: "Your service's chat/completions URL; remote addresses need https.",
+        endpointLocalDesc: "Your local server's address; only local addresses may use http.",
+        endpointMicrosoftDesc: "Azure Translator's API address; the default usually works.",
+        endpointBaiduDesc: "Baidu Translate's API address; the default usually works.",
         deepseekPreset: "DeepSeek V4 preset",
-        deepseekPresetDesc: "Quickly switch between DeepSeek V4 Flash and Pro. Thinking mode is disabled by default for translation and polishing.",
-        localModelPreset: "Local model preset",
-        localModelPresetDesc: "For Sakura, llama.cpp, or another local OpenAI-compatible service. Keep local-model if the backend ignores the model field.",
-        customModel: "Custom / use Model field",
+        deepseekPresetDesc: "Switch quickly between DeepSeek V4 Flash and Pro.",
+        customModel: "Custom (type it below)",
         model: "Model",
-        modelDesc: "The model field sent to the API, for example deepseek-v4-flash.",
+        modelDesc: "The model name sent to the service, e.g. deepseek-v4-flash.",
+        modelOpenAIDesc: "The model name your service offers; Detect models lists them.",
+        modelLocalDesc: "local-model uses whichever model the server has loaded.",
+        modelLocalLoadedDesc: "local-model uses the server's loaded model, now {model}.",
+        modelDetect: "Detect models",
+        modelDetectBusy: "Detecting",
+        modelDetectFound: "Found {count} models; pick one from the list.",
+        modelDetectFoundLoaded: "Found {count} models; loaded: {model}.",
+        modelDetectNone: "The server listed no models.",
+        modelDetectFailed: "Detection failed: {error}",
+        modelDetectUnsupported: "This service can't list its models.",
+        modelPicker: "Available models",
+        modelPickerOther: "Other (type it above)",
+        modelPickerServerLoaded: "Use the server's loaded model (local-model)",
+        modelPickerDetected: "Listed by the server",
+        modelPickerPresets: "Common models",
+        modelPickerLoadedTag: "{model} (loaded)",
         outputLanguage: "Output language",
-        outputLanguageDesc: "The language produced after polishing. For custom input, use a clear language name.",
+        outputLanguageDesc: "The language of the polished text.",
         inputLanguage: "Input language",
-        inputLanguageDesc: "The original language of the text. Keep auto-detect unless the model guesses wrong.",
+        inputLanguageDesc: "The language of your draft; keep auto-detect unless it guesses wrong.",
+        messageLanguage: "Message language",
+        messageLanguageDesc: "The language of channel messages; keep auto-detect unless it guesses wrong.",
         autoDetectLanguage: "Auto-detect",
         targetLanguage: "Target language",
-        targetLanguageDesc: "The language channel messages are translated into. For custom input, use a clear language name.",
+        targetLanguageDesc: "The language channel messages are translated into.",
         languagePreset: "Common language",
         customLanguage: "Custom language",
         customLanguagePlaceholder: "Examples: Traditional Chinese, Korean, Brazilian Portuguese",
-        customLanguageDesc: "Custom language is not auto-detected; the text is inserted into the prompt and interpreted by the model.",
+        customLanguageDesc: "Custom names go to the model as typed.",
         temperature: "Creativity",
-        temperatureDesc: "Lower is more stable, higher is more varied. Translation: 0.1-0.3. Polishing: 0.3-0.7.",
+        temperatureDesc: "Lower is steadier: 0.1-⁠0.3 for translation, 0.3-⁠0.7 for polishing.",
         maxTokens: "Max output length",
-        maxTokensDesc: "Limits how many tokens the model can output. 800 is enough for short messages; raise it for long text.",
+        maxTokensDesc: "Longest reply the model may write; raise it if long messages get cut off.",
         afterPolishing: "After polishing",
-        afterPolishingDesc: "Controls whether the polished result replaces the current input or asks before sending.",
+        afterPolishingDesc: "Whether to ask before sending once the polished text is in the input box.",
         afterReplace: "Replace input",
         afterDirectReplace: "Replace input",
         afterConfirmSend: "Ask before sending",
         repolishSource: "Re-polish source",
-        repolishSourceDesc: "When polishing repeatedly, use the original draft by default, or continue from the previous polished result.",
+        repolishSourceDesc: "When you polish again, start from the original draft or the last result.",
         repolishSourceOriginal: "Use original draft",
         repolishSourceLastResult: "Use previous result",
         restoreOriginal: "Restore original",
+        restoreOriginalChanged: "The draft has changed, so the original can't be restored.",
         polishResultTitle: "Polished result",
         polishResultCopy: "Copy",
         polishResultCopied: "Copied",
         polishResultReplace: "Insert into input",
+        polishResultApplyFailed: "Could not insert into the input box. Use Copy and paste it instead.",
         polishResultClose: "Close",
         prompt: "Prompt",
-        promptDesc: "Instructions for the model. Templates may be written in Chinese; the wrapper treats them as rules, not source text.",
+        promptDesc: "Tells the model how to polish or translate; any language works.",
+        promptUsingTemplate: "Using template: {code} · {name}",
+        promptTemplateNameNaturalChat: "Natural chat",
+        promptTemplateNamePolite: "Polite and clear",
+        promptTemplateNameShort: "Short and direct",
+        promptTemplateNameNatural: "Natural",
+        promptTemplateNameLiteral: "Literal",
         promptTemplates: "Prompt templates",
-        promptTemplatesDesc: "Save common prompts. Each template gets a stable 001, 002 style code in save order. Search by name or code.",
+        promptTemplatesDesc: "Choosing a template only previews it; “Use template” replaces the prompt.",
         promptSearch: "Search template name or code",
         promptTemplateSelect: "Select template",
         promptTemplateCustom: "Current prompt is not saved as a template",
-        promptApply: "Apply",
+        promptTemplateEdited: "Based on {code} · {name}; edits not saved to the template",
+        promptPreview: "Template preview",
+        promptPreviewActive: "In use",
+        promptApply: "Use template",
         promptSave: "Save as template",
-        promptUpdate: "Update template",
-        promptDelete: "Delete",
+        promptUpdate: "Update current template",
+        promptUpdateTitle: "Overwrite {code} · {name} with the edited prompt",
+        promptDelete: "Delete template",
         promptCopy: "Copy prompt",
         promptCopied: "Prompt copied.",
+        copiedToClipboard: "Copied.",
         promptCopyFailed: "Copy failed: {error}",
+        clipboardUnavailable: "The clipboard is not available. Select the text and copy it manually.",
         promptNamePlaceholder: "Name this template",
-        promptNameRequired: "Template name cannot be empty.",
+        promptSaveNameLabel: "New template name",
+        promptNameRequired: "Enter a template name first.",
         promptSaved: "Template saved: {code} · {name}",
         promptUpdated: "Template updated: {code} · {name}",
         promptDeleted: "Template deleted.",
         promptApplied: "Template applied: {code} · {name}",
+        promptApplyUnsavedTitle: "Replace the current prompt?",
+        promptApplyUnsavedConfirm: "Your prompt has unsaved edits; using {code} · {name} replaces them.",
         promptDeleteConfirm: "Delete this prompt template?",
+        promptDeleteActiveNote: "This template is in use; deleting it switches the prompt to {code} · {name}.",
         promptNoTemplate: "No templates available.",
         uiTitle: "UI",
         showPolishButton: "Show Polish button near the input box",
         showPolishButtonDesc: "Adds a Polish shortcut button near the Discord input box.",
         publicBilingualInputButton: "Show public bilingual button near the input box",
-        publicBilingualInputButtonDesc: "Adds a button that translates your current draft, then writes a public Discord message as translation plus hidden original. It does not auto-send.",
+        publicBilingualInputButtonDesc: "Writes your draft as translation plus hidden original, for you to check and send.",
         publicBilingualUseInitialOriginal: "Use initial draft as hidden original",
-        publicBilingualUseInitialOriginalDesc: "When enabled, if you polish before creating a public bilingual message, the spoiler keeps the first unpolished draft.",
+        publicBilingualUseInitialOriginalDesc: "If you polished first, the hidden original keeps your unpolished draft.",
         publicBilingualAfterPolish: "Auto-create public bilingual message after polishing",
-        publicBilingualAfterPolishDesc: "When enabled, clicking Polish first rewrites the draft, then automatically translates it into a public bilingual message. It still does not auto-send.",
+        publicBilingualAfterPolishDesc: "After Polish, also turns the result into a bilingual message; nothing is sent.",
         publicBilingualPolishBeforeTranslate: "Auto-polish before public bilingual",
-        publicBilingualPolishBeforeTranslateDesc: "When enabled, clicking Bilingual first polishes the current draft, then translates the polished text while keeping the original draft in the spoiler if that option is enabled.",
+        publicBilingualPolishBeforeTranslateDesc: "Clicking Bilingual polishes the draft first, then translates the result.",
         showMessageButtons: "Show Translate buttons on messages",
         showMessageButtonsDesc: "Adds a Translate button beside channel messages.",
         messageButtonVisibility: "Translate button visibility",
-        messageButtonVisibilityDesc: "Choose whether message Translate buttons are visible by default or only while hovering a message.",
-        messageButtonVisibilityAlways: "Visible by default",
-        messageButtonVisibilityHover: "Only on hover",
+        messageButtonVisibilityDesc: "Show the Translate button all the time, or only when you hover a message.",
+        messageButtonVisibilityAlways: "Always shown",
+        messageButtonVisibilityHover: "Shown on hover",
+        messageButtonMode: "Translate button on messages",
+        messageButtonModeDesc: "How the Translate button appears next to each message.",
+        messageButtonModeHover: "Show on hover",
+        messageButtonModeAlways: "Always show",
+        messageButtonModeOff: "Don't show",
         autoTranslateMessages: "Auto-translate visible foreign messages",
-        autoTranslateMessagesDesc: "Automatically translates visible messages that do not look like the target language. Off by default, with request limits to avoid API bursts.",
+        autoTranslateMessagesDesc: "Translates on-screen messages that aren't in your target language.",
         autoTranslatePrefetch: "Prefetch nearby messages",
-        autoTranslatePrefetchDesc: "When auto-translation is enabled, pre-translates nearby messages at low priority. It uses one spare slot only while no visible message is waiting, so it needs a concurrency of 2 or more.",
+        autoTranslatePrefetchDesc: "Translates nearby off-screen messages when idle; needs a concurrency of 2 or more.",
         autoTranslatePrefetchRange: "Prefetch range",
-        autoTranslatePrefetchRangeDesc: "How many messages above and below the visible area should be prefetched. Far prefetch work is dropped during fast scrolling.",
+        autoTranslatePrefetchRangeDesc: "How many messages above and below the screen to prefetch.",
         autoTranslateConcurrency: "Auto-translation concurrency",
-        autoTranslateConcurrencyDesc: "Simultaneous translation requests. Default {default}, range {min}-{max}. Higher concurrency uses more resources; actual speed depends on the service.",
-        autoTranslateStrictRetry: "Strict retry after invalid output",
-        autoTranslateStrictRetryDesc: "When model output is not in the target language, retry failed items, then use strict single-message translation before showing a retry button.",
-        showAutoTranslateWarnings: "Show normal auto-translation failures when enabled",
-        showAutoTranslateWarningsDesc: "When enabled, invalid model output, network jitter, and timeouts show inline warnings. When disabled, they are handled silently.",
-        showAutoTranslateToasts: "Show auto-translation failure popups when enabled",
-        showAutoTranslateToastsDesc: "When enabled, auto-translation failures show bottom red popups. When disabled, all auto-translation failure popups stay silent.",
+        autoTranslateConcurrencyDesc: "How many translation requests run at once: default {default}, range {min}-{max}.",
+        autoTranslateStrictRetry: "Retry strictly when the output language is wrong",
+        autoTranslateStrictRetryDesc: "Retries failed parts, then one message at a time, before showing Retry.",
+        showAutoTranslateWarnings: "Show failures under messages",
+        showAutoTranslateWarningsDesc: "Includes timeouts and network hiccups; errors you must fix always show.",
+        showAutoTranslateToasts: "Show a pop-up when auto-translation fails",
+        showAutoTranslateToastsDesc: "Problems you must fix, like an invalid key, are always shown once.",
         diagnosticLogs: "Diagnostic logs",
-        diagnosticLogsDesc: "When enabled, records auto-translation queue, cache, API, failure, and render state. Logs are saved locally in delayed batches, capped at 500 entries, and can be exported for analysis.",
+        diagnosticLogsDesc: "Records requests, cache use and failure reasons (up to 500 entries) for export.",
         diagnosticLogsStats: "Logs: {entries}; compressed repeated events: {compressed}.",
         diagnosticSummary: "Diagnostic summary",
-        diagnosticSummaryDesc: "Aggregates recent logs by state, reason, flow, provider, queue, and failure type. The exported JSON includes the full summary.",
-        diagnosticSummaryEmpty: "No diagnostic summary yet. Enable diagnostics and reproduce the issue first.",
-        diagnosticSummaryEvents: "Events {events}; latest {latest}.",
+        diagnosticSummaryEmpty: "Turn on diagnostics and reproduce the issue to see a summary here.",
+        diagnosticSummaryEvents: "Events: {events}, grouped by state, reason and service; latest {latest}.",
         diagnosticSummaryStates: "States",
         diagnosticSummaryReasons: "Reasons",
         diagnosticSummaryFlows: "Flows",
         diagnosticSummaryQueues: "Queues",
-        diagnosticSummaryProviders: "Providers",
+        diagnosticSummaryProviders: "Services",
         diagnosticSummaryFailures: "Failures",
+        diagnosticSummaryFailureLayers: "Failure stages",
+        diagnosticSummaryFlowStages: "Flow stages",
         clearDiagnosticLogs: "Clear logs",
+        clearDiagnosticLogsConfirm: "All diagnostic logs will be deleted. Export them first if you need them.",
+        clearDiagnosticLogsDesc: "Deletes every diagnostic log; export them first if you need them.",
+        exportDiagnosticLogs: "Export logs",
         copyDiagnosticLogs: "Copy logs",
         exportDiagnosticJson: "Export JSON",
         exportDiagnosticTxt: "Export TXT",
@@ -12531,19 +17428,20 @@ var require_i18n = __commonJS({
         diagnosticLogsEmpty: "No diagnostic logs yet.",
         diagnosticLogsExported: "Diagnostic logs exported.",
         settingsSnapshot: "Settings snapshot",
-        settingsSnapshotDesc: "Downloads your current settings as JSON for troubleshooting. API keys and other secrets are hidden, cloud endpoints lose their query strings, prompts are summarized and channel IDs are hashed. Switches and numbers are kept as-is.",
+        settingsSnapshotDesc: "Downloads your settings as JSON with keys hidden, safe to share for troubleshooting.",
         exportSettingsSnapshot: "Download settings",
         settingsSnapshotExported: "Settings snapshot downloaded; secrets are hidden.",
         settingsSnapshotCopied: "Settings snapshot copied; secrets are hidden.",
         translationCacheTtl: "Cache lifetime",
-        translationCacheTtlDesc: "Translations are persisted locally and reused after Discord restarts. Expired entries are translated again.",
-        translationCacheMaxEntries: "Max cache entries",
-        translationCacheMaxEntriesDesc: "Older translations are evicted by recent use when the limit is exceeded. Default is 4000, maximum is 15000.",
+        translationCacheTtlDesc: "Kept across Discord restarts; expired translations are fetched again.",
+        translationCacheMaxEntries: "Max cached messages",
+        translationCacheMaxEntriesDesc: "When full, the least recently used translations go first; up to 15000.",
         translationCacheStats: "Cache hit stats",
-        translationCacheStatsDesc: "This session: hits {hits}, misses {misses}; memory {memory}, saved {persistent}.",
+        translationCacheStatsDesc: "This session: {hits} hits, {misses} misses; {memory} in memory, {persistent} saved.",
         clearTranslationCacheStats: "Clear stats",
         clearTranslationCache: "Clear translation cache",
-        clearTranslationCacheConfirm: "Delete all saved local translations? The same content will need to be translated again.",
+        clearTranslationCacheConfirm: "All saved translations will be deleted and fetched again when needed.",
+        clearTranslationCacheDesc: "Deletes every saved translation; the same text is translated again when needed.",
         translationCacheStatsCleared: "Cache hit stats cleared. Saved translations were kept.",
         translationCacheCleared: "Translation cache cleared.",
         cacheTtl3h: "3 hours",
@@ -12552,54 +17450,71 @@ var require_i18n = __commonJS({
         cacheTtl1d: "1 day",
         cacheTtl2d: "2 days",
         cacheTtl7d: "7 days",
-        translationPosition: "Channel translation display order",
-        translationPositionDesc: "Controls whether the translated text appears above or below the original message. A gray skeleton is shown while translating.",
+        translationPosition: "Translation position",
+        translationPositionDesc: "Show the translation above or below the original message.",
         translationBeforeOriginal: "Translation first, original below",
         translationAfterOriginal: "Original first, translation below",
+        translationPositionAbove: "Above original",
+        translationPositionBelow: "Below original",
         maskTranslations: "Mask translations by default",
-        maskTranslationsDesc: "When enabled, translations appear as a gray bar until clicked. When disabled, translations are readable by default with a subtle background.",
-        hideOriginalAfterTranslation: "Mask original text after translation",
-        hideOriginalAfterTranslationDesc: "When enabled, successful translations locally turn the original message text into a gray mask bar. This only affects your client.",
+        maskTranslationsDesc: "Translations show as a gray bar until you click it or press Enter.",
+        translationStyle: "Translation style",
+        translationStyleDesc: "All styles follow Discord's theme colors.",
+        translationStyleTint: "Faint background",
+        translationStyleMuted: "Dimmer text",
+        translationStyleTag: '"TR" tag',
+        translationTextScale: "Translation text size",
+        translationTextScaleDesc: "Relative to the chat text size.",
+        panelTheme: "Window theme",
+        panelThemeDesc: "Colors of the settings window, quick panel and menus; confirmation dialogs follow Discord.",
+        panelThemeAuto: "Follow Discord",
+        panelThemeLight: "Light",
+        panelThemeDark: "Dark",
+        translationTag: "TR",
+        hideOriginalAfterTranslation: "Hide original after translation",
+        hideOriginalAfterTranslationDesc: "Shows the original as a gray bar until you hover or focus it; only you see this.",
         showContextMenu: "Show Translate action in message right-click menus",
-        showContextMenuDesc: "Adds a translate menu item when right-clicking a message. The message button remains available as fallback.",
+        showContextMenuDesc: "Adds Translate to the message right-click menu.",
         enableHotkey: "Enable input polishing hotkey",
         enableHotkeyDesc: "When the input box is focused, the configured shortcut polishes the current draft.",
         polishHotkey: "Polishing hotkey",
-        polishHotkeyDesc: "Click record, then press the new shortcut. Use Ctrl, Alt, or Shift to avoid conflicts with normal typing.",
+        polishHotkeyDesc: "Click the shortcut button, then press a new combination with Ctrl, Alt or Win.",
         hotkeyRecord: "Record shortcut",
         hotkeyRecording: "Press shortcut...",
         hotkeyReset: "Reset default",
         hotkeyNotSet: "Not set",
         hotkeySaved: "Shortcut saved: {shortcut}",
-        hotkeyInvalid: "Invalid shortcut. Use Ctrl, Alt, Shift, or Win plus another key.",
-        testMode: "Enable test mode",
-        testModeDesc: "Expands a test panel below using the current polishing/translation configuration. The toggle is remembered.",
-        testModeTitle: "Test Mode",
-        testModeNote: "This does not send Discord messages. It only calls the model with the current configuration so you can review output and tune prompts.",
-        testModeTask: "Feature to test",
-        testModeInput: "Test input",
-        testModeInputDesc: "Enter sample text and the plugin will process it using the selected feature's current configuration.",
-        testModeInputPlaceholder: "Enter Discord text to test...",
-        testModePrompt: "Current prompt",
-        testModePromptDesc: "Edit the selected feature's prompt here. Saving syncs it back to the main configuration above.",
-        testModeOutput: "Model output",
-        testModeOutputPlaceholder: "The result appears here after running a test.",
-        testModeRun: "Run test",
-        testModeRunning: "Testing",
-        testModeCopyInput: "Copy input",
-        testModeSavePrompt: "Save prompt",
-        testModeCopyPrompt: "Copy prompt",
-        testModeCopyOutput: "Copy output",
-        testModeClear: "Clear",
-        testModePromptSaved: "Test prompt saved to {name}.",
-        testModeInputRequired: "Enter test text first.",
-        testModeOutputReady: "Test complete.",
-        testModeConfig: "Current config: {provider} / {model} / output {targetLanguage}",
+        hotkeyInvalid: "Invalid shortcut. Use Ctrl, Alt, or Win plus a key (Shift is optional); editing shortcuts such as copy and paste are not allowed.",
+        tryTranslate: "Try a sentence",
+        tryTranslateDesc: "Translates one sentence with these settings; nothing goes to Discord.",
+        tryTranslatePlaceholder: "e.g. Bis morgen, gleiche Zeit?",
+        tryTranslateRun: "Translate",
+        tryPolish: "Try polishing",
+        tryPolishDesc: "Polishes one sentence with these settings; nothing goes to Discord.",
+        tryPolishPlaceholder: "e.g. see u tmrw same time?",
+        tryPolishRun: "Polish",
+        tryBusy: "Working",
+        tryInputRequired: "Type a sentence first.",
+        tryResultTime: "took {time}",
         reset: "Reset to defaults",
-        resetConfirm: "Reset Discord AI Translator settings?",
+        resetConfirm: "Settings, channel rules and display options return to defaults; API keys, the Google key pool and prompt templates are kept.",
+        resetDialogTitle: "Reset to defaults?",
+        resetDialogLead: "These return to their defaults. This can't be undone:",
+        resetDialogItemSettings: "Service settings, switches and numbers for translation and polishing",
+        resetDialogItemChannelRules: "Auto-translation rules for each channel",
+        resetDialogItemDisplay: "Display and interface options (the interface language stays)",
+        resetDialogItemCredentials: "API keys, the Google key pool and custom prompt templates",
+        resetDialogItemCredentialsNote: "Only if you untick the box below",
+        resetKeepCredentials: "Keep API keys, the Google key pool and prompt templates",
+        dialogConfirm: "OK",
+        dialogCancel: "Cancel",
+        settingsLoadBlocked: "Saved settings could not be read, so changes will not be saved. Check DiscordAITranslator.config.json in the plugins folder, then re-enable the plugin.",
         pluginStarted: "Discord AI Translator v{version} started.",
         polishButton: "Polish",
         polishBusy: "Polishing",
+        polishRunning: "Polishing the current draft...",
+        composerChanged: "The input box changed. Please try again.",
+        composerResultHeld: "The result was not inserted because the draft changed or you were typing elsewhere. Copy or insert it from the panel.",
         polishTitleAttr: "Polish current draft with AI. Shortcut: {shortcut}.",
         publicBilingualButton: "Bilingual",
         publicBilingualBusy: "Translating",
@@ -12607,6 +17522,7 @@ var require_i18n = __commonJS({
         publicBilingualReady: "Bilingual message is ready. Review it, then send.",
         publicBilingualFailed: "Could not write the bilingual message: {error}",
         publicBilingualInputChanged: "Input changed while translating, so the bilingual result was not written.",
+        errorComposerWriteFailed: "The input box did not accept the text. The result is shown in the panel so you can copy it.",
         publicBilingualTooLong: "Bilingual message is too long for one Discord message ({length}/{limit}).",
         publicBilingualPolishSkipped: "Polishing is disabled, so the bilingual message used the current draft.",
         translateButton: "Translate",
@@ -12616,14 +17532,42 @@ var require_i18n = __commonJS({
         translateRetry: "Retry",
         translateRetryTitle: "Retry translating this message",
         translationFailedInline: "Translation failed: {error}",
+        translationLoading: "Translating…",
+        translationRevealLabel: "Show hidden translation",
+        translationActionsLabel: "Translation actions",
+        translationActionCopy: "Copy translation",
+        translationActionRetranslate: "Translate again (skip cache)",
+        translationActionHide: "Hide translation",
+        translationCopied: "Translation copied.",
+        translationPartialOne: "Part {parts} of {total} could not be translated",
+        translationPartialMany: "Parts {parts} of {total} could not be translated",
+        translationPartialUnknown: "Part of this message could not be translated",
+        translationRetranslate: "Retranslate",
+        translationRetranslateTitle: "Translate the whole message again without the cache",
+        translationErrorAuth: "The translation service rejected the API key",
+        translationErrorMissingKey: "No API key is set for translation",
+        translationErrorMissingEndpoint: "No endpoint is set for translation",
+        translationErrorMissingModel: "No model is chosen for translation",
+        translationErrorQuota: "The translation service quota is used up",
+        translationErrorLocal: "The local translation service is not responding",
+        translationErrorLocalAt: "The local translation service is not responding ({host})",
+        translationErrorRateLimit: "Too many requests. Try again shortly",
+        translationErrorRateLimitWait: "Too many requests. Try again in {seconds} s",
+        translationOpenSettings: "Open settings",
+        translationOpenSettingsTitle: "Open translation settings",
+        translationTestConnection: "Test connection",
+        translationTestConnectionTitle: "Check whether the translation service can be reached",
         autoTranslateFailed: "Auto-translation failed: {error}",
+        autoTranslateNeedsAttention: "Auto-translation needs your attention: {error}",
         autoTranslateTargetFailed: "Model output was not in the target language, so this translation was skipped.",
-        manualTranslateRescueFailed: "Manual translation did not produce a usable result after normal, forced-target, and repair attempts. You can retry.",
+        manualTranslateRescueFailed: "No usable translation after several attempts. You can try again.",
         contextPatchFailed: "Could not patch message context menu: {error}",
         polishDisabled: "Input polishing is disabled.",
         textboxMissing: "Could not find the Discord input box.",
         inputEmpty: "Input box is empty.",
-        confirmSend: "Send the polished message now?",
+        confirmSend: "Send the polished message?",
+        confirmSendAction: "Send",
+        confirmSendDraftChanged: "The draft changed, so nothing was sent.",
         translationDisabled: "Channel translation is disabled.",
         noTranslatableText: "Message has no translatable text.",
         messageMissing: "Could not find a message to translate.",
@@ -12639,13 +17583,20 @@ var require_i18n = __commonJS({
         emptyResult: "API returned an empty result.",
         errorUnauthorized: "API key is invalid or does not have permission.",
         errorRateLimited: "API rate limit reached; automatic retries are cooling down.",
+        errorQuotaExceeded: "API quota or account balance is used up.",
+        errorLanguageUnsupported: "This service does not support the selected target language. Choose another language or service.",
+        errorIpNotAllowed: "The service rejected your IP address. Check the IP allowlist in the service console.",
+        errorProviderRequestRejected: "The service rejected the request. Check account permissions, target language and service settings.",
+        errorOutputTruncated: "The model's reply was cut off. Raise “Max output length” in settings and try again.",
+        errorSaveFailed: "Could not save locally. Try again later.",
         errorServer: "API service is temporarily unavailable.",
         errorCancelled: "Request cancelled.",
         errorInvalidEndpoint: "Invalid endpoint. Enter a complete API URL.",
+        errorEndpointNotFound: "Endpoint or model not found. Check the API URL and the model name.",
         errorUnsafeEndpoint: "Unsafe endpoint: remote services require HTTPS; loopback services may use HTTP. Do not embed a username or password in the URL.",
-        localIntakeFixed: "This local provider uses DOM message discovery. No change is required.",
-        localConcurrencyDesc: "Local models support {min}-{max} concurrent requests, with one message per request. Adjust to match your local server's parallel slots and available VRAM.",
-        localFallbackUnavailable: "Local providers never forward requests to the cloud. Cloud fallback and its order are unavailable in this mode.",
+        localIntakeFixed: "Local services always scan the page for messages; nothing to change.",
+        localConcurrencyDesc: "Can be set from {min} to {max}; match your local server's parallel slots and VRAM.",
+        localFallbackUnavailable: "Local services never fall back to the cloud, so this is unavailable.",
         errorTimeout: "API request timed out.",
         errorNetwork: "Network request failed.",
         errorLocalProviderUnavailable: "Sakura local service is not reachable. Auto-translation is paused; start Sakura or test the connection to resume.",
@@ -12654,19 +17605,23 @@ var require_i18n = __commonJS({
     };
     Object.assign(I18N["zh-CN"], {
       diagnosticLogs: "诊断日志",
-      diagnosticLogsDesc: "开启后记录自动翻译队列、缓存、API、失败和渲染状态；日志会延迟合并后再保存到本地，上限 500 条，可导出给 Codex 分析。",
+      diagnosticLogsDesc: "记录自动翻译的请求、缓存和失败原因，最多 500 条，可导出排查。",
       diagnosticLogsStats: "日志 {entries} 条，已压缩 {compressed} 条重复事件。",
       diagnosticSummary: "诊断摘要",
-      diagnosticSummaryDesc: "按最近日志聚合状态、原因、流程、服务商、队列和失败类型；导出的 JSON 会包含完整 summary。",
-      diagnosticSummaryEmpty: "暂无诊断摘要。开启诊断并复现问题后会显示。",
-      diagnosticSummaryEvents: "事件 {events} 次，最近 {latest}。",
+      diagnosticSummaryEmpty: "开启诊断并复现问题后，这里会显示诊断摘要。",
+      diagnosticSummaryEvents: "共 {events} 个事件，按状态、原因和服务商汇总，最近一次 {latest}。",
       diagnosticSummaryStates: "状态",
       diagnosticSummaryReasons: "原因",
       diagnosticSummaryFlows: "流程",
       diagnosticSummaryQueues: "队列",
-      diagnosticSummaryProviders: "服务",
+      diagnosticSummaryProviders: "服务商",
       diagnosticSummaryFailures: "失败",
+      diagnosticSummaryFailureLayers: "失败环节",
+      diagnosticSummaryFlowStages: "流程阶段",
       clearDiagnosticLogs: "清空日志",
+      clearDiagnosticLogsConfirm: "所有诊断日志都会删除；需要的话请先导出。",
+      clearDiagnosticLogsDesc: "删除全部诊断日志；需要的话请先导出。",
+      exportDiagnosticLogs: "导出日志",
       copyDiagnosticLogs: "复制日志",
       exportDiagnosticJson: "导出 JSON",
       exportDiagnosticTxt: "导出 TXT",
@@ -12675,7 +17630,7 @@ var require_i18n = __commonJS({
       diagnosticLogsEmpty: "暂无诊断日志。",
       diagnosticLogsExported: "诊断日志已导出。",
       settingsSnapshot: "设置快照",
-      settingsSnapshotDesc: "把当前设置下载为 JSON，方便排查问题。API Key 等密钥会被隐藏，云端接口地址去掉查询参数，提示词只显示是否自定义，频道 ID 会做哈希；开关和数值保持原样。",
+      settingsSnapshotDesc: "下载当前设置（JSON），API Key 等已隐藏，可放心发给别人排查。",
       exportSettingsSnapshot: "下载设置",
       settingsSnapshotExported: "设置快照已下载，密钥已隐藏。",
       settingsSnapshotCopied: "设置快照已复制，密钥已隐藏。"
@@ -12691,38 +17646,140 @@ var require_i18n = __commonJS({
       deeplPlanFree: "Free",
       deeplPlanPro: "Pro",
       baiduAppId: "百度 App ID",
-      baiduAppIdDesc: "百度翻译开放平台的 appid，只保存在本机。",
+      baiduAppIdDesc: "百度翻译开放平台的 App ID，只保存在本机。",
       baiduSecretKey: "百度密钥",
-      baiduSecretKeyDesc: "百度翻译开放平台的 secretKey，只保存在本机，不写入诊断日志。",
+      baiduSecretKeyDesc: "百度翻译开放平台的密钥，只保存在本机，不写入日志。",
       autoTranslateIntakeMode: "消息发现方式",
-      autoTranslateIntakeModeDesc: "auto 会优先尝试 BDFDB 消息身份增强，不可用时自动回退 DOM；dom 完全使用当前扫描；bdfdb 不可用时会写诊断并回退 DOM。",
+      autoTranslateIntakeModeDesc: "“自动”在装有 BDFDB 插件库时用它识别消息，否则扫描页面。",
       autoTranslateIntakeAuto: "自动",
-      autoTranslateIntakeDom: "DOM",
-      autoTranslateIntakeBdfdb: "BDFDB 优先",
+      autoTranslateIntakeDom: "只扫描页面",
+      autoTranslateIntakeBdfdb: "优先用 BDFDB",
       settingsTabPolish: "输入润色",
       settingsTabTranslation: "频道翻译",
       settingsTabPublicBilingual: "公开双语",
       settingsTabDisplay: "显示・缓存・诊断",
+      settingsTabOverview: "概览",
+      settingsTabTranslate: "翻译消息",
+      settingsTabCompose: "输入框工具",
+      settingsTabAppearance: "显示",
+      settingsTabAdvanced: "高级",
+      settingsTabData: "数据与诊断",
+      settingsTabsLabel: "设置分类",
+      settingsSearchPlaceholder: "搜索设置",
+      settingsSearchResults: "找到 {count} 项设置",
+      settingsSearchEmpty: "没有找到与“{query}”相关的设置",
+      settingsClose: "关闭设置",
+      settingsGroupCommon: "常用",
+      overviewSetupTitle: "开始使用：还差 {count} 步",
+      overviewSetupProgress: "{done} / {total} · 全部完成后这张卡片会自动收起",
+      overviewSetupService: "选择翻译服务",
+      overviewSetupServiceOff: "消息翻译已关闭",
+      overviewSetupServiceMissing: "{provider} 还没填完",
+      overviewSetupTest: "测试连接",
+      overviewSetupTestBlocked: "先选好翻译服务",
+      overviewSetupTarget: "目标语言",
+      overviewSetupAuto: "开启自动翻译",
+      overviewSetupAutoOn: "已开启",
+      overviewSetupAutoOff: "目前关闭，只能手动点“翻译”",
+      overviewSetupAutoChannel: "总开关关闭，本频道总是翻译",
+      overviewSetupChannel: "本频道",
+      overviewSetupChannelNone: "现在不在频道里",
+      overviewSetupChannelNever: "本频道设为不翻译",
+      overviewStateDone: "已完成",
+      overviewStateTodo: "未完成",
+      overviewSetUp: "去设置",
+      overviewTurnOn: "开启",
+      overviewChange: "更改",
+      overviewServicesTitle: "服务状态",
+      overviewCardTranslation: "翻译消息",
+      overviewCardPolish: "输入框润色",
+      overviewServiceOff: "已关闭",
+      overviewServiceMissing: "未配置：缺少 {field}",
+      settingsGroupAutoTranslate: "自动翻译",
+      settingsGroupHistoryBackfill: "历史补翻",
+      settingsGroupFallback: "手动翻译备用服务",
+      settingsGroupTranslatedText: "译文显示",
+      settingsGroupNotices: "提示与入口",
+      settingsGroupWindows: "窗口外观",
+      settingsMoreModelParams: "更多模型参数",
+      settingsApiKeyOptional: "API Key（可选）",
+      settingsRequiresParent: "先开启“{parent}”",
+      settingsDangerZone: "危险操作",
+      settingsResetDesc: "恢复默认设置，可选择保留 API Key 和提示词模板，操作前会先确认。",
       providerSettingsTitle: "服务商配置",
-      providerSettingsDesc: "只显示当前服务商真正会用到的选项，隐藏的配置会保留，切回来继续可用。",
+      providerSettingsDesc: "只显示当前服务商用到的选项，切换回来时其他配置仍在。",
       polishControlsTitle: "输入体验",
       translationControlsTitle: "消息翻译入口",
       autoTranslateSettingsTitle: "自动翻译调度",
       publicBilingualTitle: "公开双语输入",
       publicBilingualDependencyTitle: "当前链路",
-      publicBilingualDependencyDesc: "公开双语发出的是 Discord 原生文本，所有人都能看到。若开启自动润色，先走输入润色服务，再走频道翻译服务生成译文和 spoiler 原文。",
-      publicBilingualDependencyStatus: "润色：{polishProvider}；翻译：{translationProvider}；目标语言：{targetLanguage}。",
+      publicBilingualDependencyDesc: "双语消息是普通 Discord 文本，发送后所有人都能看到。",
+      publicBilingualDependencyStatus: "双语前润色：{polishProvider}；翻译：{translationProvider}；目标语言：{targetLanguage}。",
+      publicBilingualDependencyFlowDesc: "润色服务已配置时由它翻译，目标语言跟随润色输出语言。",
+      publicBilingualDependencyPolishOff: "不润色",
       displaySettingsTitle: "显示行为",
       cacheSettingsTitle: "翻译缓存",
-      diagnosticsSettingsTitle: "诊断与测试",
+      diagnosticsSettingsTitle: "诊断",
       providerStatus: "服务状态",
-      providerStatusDesc: "用当前服务商配置做一次连接测试。Google 会使用 Key 池，Sakura 会检查本地服务。",
+      providerStatusDesc: "用当前设置测试一次连接。",
       quickSettingsOpen: "打开 Discord AI Translator 设置",
-      quickSettingsClose: "关闭快捷设置",
       quickSettingsDone: "完成",
       quickSettingsOpenFailed: "快捷设置打开失败：{error}",
       quickSettingsFallbackTitle: "快捷设置未能完整渲染",
       quickSettingsFallbackHint: "已记录打开链路诊断；关闭此窗口后可导出诊断 JSON 继续排查。",
+      quickPanelTitle: "AI 翻译助手",
+      quickPanelLauncherLabel: "AI 翻译助手：{status}",
+      quickPanelOpenFull: "打开完整设置",
+      quickPanelClose: "关闭",
+      quickPanelEscHint: "Esc 关闭",
+      quickPanelAutoTranslate: "自动翻译",
+      quickPanelAutoTranslateDesc: "翻译屏幕上的外语消息",
+      quickPanelChannel: "本频道",
+      quickPanelChannelNone: "未打开频道",
+      quickPanelChannelDm: "私信",
+      quickPanelRuleInherit: "跟随总开关",
+      quickPanelRuleEnabled: "总是翻译",
+      quickPanelRuleDisabled: "不翻译",
+      quickPanelRuleInheritFull: "跟随总开关",
+      quickPanelRuleEnabledFull: "总是翻译",
+      quickPanelRuleDisabledFull: "不翻译",
+      quickPanelRuleCaptionInheritOn: "现在：会自动翻译（跟随总开关）",
+      quickPanelRuleCaptionInheritOff: "现在：不自动翻译（跟随总开关）",
+      quickPanelRuleCaptionEnabled: "总开关关闭时，这个频道也会自动翻译",
+      quickPanelRuleCaptionDisabled: "这个频道不自动翻译；手动翻译不受影响",
+      quickPanelRuleCaptionNoChannel: "打开一个频道后可以单独设置",
+      quickPanelRuleCaptionTranslationOff: "频道翻译已关闭，这里的规则暂不生效",
+      quickPanelTargetLanguage: "翻译成",
+      quickPanelDisplay: "显示",
+      quickPanelMask: "遮蔽译文",
+      quickPanelMaskDesc: "先显示灰条，点一下再看",
+      quickPanelHideOriginal: "翻译后遮挡原文",
+      quickPanelHideOriginalDesc: "悬停在消息上可看原文",
+      quickPanelPosition: "译文位置",
+      quickPanelPositionAbove: "原文上方",
+      quickPanelPositionBelow: "原文下方",
+      quickStatusActive: "本频道自动翻译中",
+      quickStatusBusy: "正在翻译 {inFlight} 条，排队 {queued} 条",
+      quickStatusTesting: "正在测试连接…",
+      quickStatusLatency: "{ms} ms",
+      quickStatusWaiting: "{reason}，稍后自动继续",
+      quickStatusWaitingSeconds: "{reason}，约 {seconds} 秒后自动继续",
+      quickStatusReasonRateLimit: "服务繁忙",
+      quickStatusReasonServer: "服务出错",
+      quickStatusReasonNetwork: "连接不稳定",
+      quickStatusReasonParse: "返回内容异常",
+      quickStatusNeedsYou: "需要处理：{reason}",
+      quickStatusReasonConfig: "缺少 API Key 等配置",
+      quickStatusReasonAuth: "API Key 无效或没有权限",
+      quickStatusReasonQuota: "额度用完或余额不足",
+      quickStatusReasonLocal: "本地服务没有响应",
+      quickStatusReasonFailed: "连接测试没有通过",
+      quickStatusReasonEndpoint: "接口地址不可用",
+      quickStatusReasonNotFound: "找不到接口或模型",
+      quickStatusNotConfigured: "未配置",
+      quickStatusOffChannel: "本频道不自动翻译",
+      quickStatusOffDisabled: "频道翻译已关闭",
+      quickStatusManualHint: "手动翻译仍可用",
       inputActionMenu: "AI 操作",
       inputActionOpenSettings: "设置",
       restoreOriginalShort: "↶",
@@ -12742,105 +17799,224 @@ var require_i18n = __commonJS({
       deeplPlanFree: "Free",
       deeplPlanPro: "Pro",
       baiduAppId: "Baidu App ID",
-      baiduAppIdDesc: "Baidu Translate Open Platform appid, stored locally only.",
+      baiduAppIdDesc: "Your Baidu Translate App ID, stored only on this computer.",
       baiduSecretKey: "Baidu secret key",
-      baiduSecretKeyDesc: "Baidu Translate Open Platform secretKey, stored locally and redacted from diagnostics.",
+      baiduSecretKeyDesc: "Your Baidu Translate secret key; stored locally and never logged.",
       autoTranslateIntakeMode: "Message intake",
-      autoTranslateIntakeModeDesc: "Auto tries BDFDB identity enrichment first and falls back to DOM. DOM keeps the current scanner. BDFDB logs diagnostics and falls back when unavailable.",
+      autoTranslateIntakeModeDesc: "Auto uses the BDFDB plugin library to identify messages if present, else scans the page.",
       autoTranslateIntakeAuto: "Auto",
-      autoTranslateIntakeDom: "DOM",
+      autoTranslateIntakeDom: "Page scan only",
       autoTranslateIntakeBdfdb: "Prefer BDFDB",
       settingsTabPolish: "Input polish",
       settingsTabTranslation: "Channel translation",
       settingsTabPublicBilingual: "Public bilingual",
       settingsTabDisplay: "Display, cache, diagnostics",
-      providerSettingsTitle: "Provider settings",
-      providerSettingsDesc: "Only options used by the selected provider are shown. Hidden provider values are kept and restored when you switch back.",
+      settingsTabOverview: "Overview",
+      settingsTabTranslate: "Translate messages",
+      settingsTabCompose: "Composer tools",
+      settingsTabAppearance: "Display",
+      settingsTabAdvanced: "Advanced",
+      settingsTabData: "Data & diagnostics",
+      settingsTabsLabel: "Settings sections",
+      settingsSearchPlaceholder: "Search settings",
+      settingsSearchResults: "{count} matching settings",
+      settingsSearchEmpty: 'No settings match "{query}"',
+      settingsClose: "Close settings",
+      settingsGroupCommon: "Everyday",
+      overviewSetupTitle: "Get started: {count} to go",
+      overviewSetupProgress: "{done} of {total} done · this card hides when all are done",
+      overviewSetupService: "Choose a service",
+      overviewSetupServiceOff: "Message translation is off",
+      overviewSetupServiceMissing: "{provider} is not set up yet",
+      overviewSetupTest: "Test the connection",
+      overviewSetupTestBlocked: "Set up the service first",
+      overviewSetupTarget: "Target language",
+      overviewSetupAuto: "Turn on auto-⁠translate",
+      overviewSetupAutoOn: "On",
+      overviewSetupAutoOff: "Off: only the Translate button works",
+      overviewSetupAutoChannel: "Main switch off; this channel always translates",
+      overviewSetupChannel: "This channel",
+      overviewSetupChannelNone: "Not in a channel right now",
+      overviewSetupChannelNever: "Set to never translate",
+      overviewStateDone: "Done",
+      overviewStateTodo: "To do",
+      overviewSetUp: "Set up",
+      overviewTurnOn: "Turn on",
+      overviewChange: "Change",
+      overviewServicesTitle: "Service status",
+      overviewCardTranslation: "Translate messages",
+      overviewCardPolish: "Composer polishing",
+      overviewServiceOff: "Off",
+      overviewServiceMissing: "Not set up: {field} missing",
+      settingsGroupAutoTranslate: "Auto-translate",
+      settingsGroupHistoryBackfill: "History backfill",
+      settingsGroupFallback: "Manual translation fallback",
+      settingsGroupTranslatedText: "Translated text",
+      settingsGroupNotices: "Notices and shortcuts",
+      settingsGroupWindows: "Window appearance",
+      settingsMoreModelParams: "More model parameters",
+      settingsApiKeyOptional: "API key (optional)",
+      settingsRequiresParent: 'Turn on "{parent}" first',
+      settingsDangerZone: "Danger zone",
+      settingsResetDesc: "Restores the defaults after you confirm; you can keep API keys and prompt templates.",
+      providerSettingsTitle: "Service settings",
+      providerSettingsDesc: "Shows only this service's options; the others are kept for when you switch back.",
       polishControlsTitle: "Input experience",
       translationControlsTitle: "Message translation entry points",
       autoTranslateSettingsTitle: "Auto-translation scheduling",
       publicBilingualTitle: "Public bilingual input",
       publicBilingualDependencyTitle: "Current flow",
-      publicBilingualDependencyDesc: "Public bilingual output is native Discord text, so everyone can see it. If auto-polish is enabled, the draft is polished first, then the channel translation provider creates the translation plus spoiler original.",
-      publicBilingualDependencyStatus: "Polish: {polishProvider}; translation: {translationProvider}; target: {targetLanguage}.",
+      publicBilingualDependencyDesc: "A bilingual message is plain Discord text that everyone can see once sent.",
+      publicBilingualDependencyStatus: "Polish before bilingual: {polishProvider}; translation: {translationProvider}; target: {targetLanguage}.",
+      publicBilingualDependencyFlowDesc: "Uses the polish service to translate when it is set up, into the polish output language.",
+      publicBilingualDependencyPolishOff: "no",
       displaySettingsTitle: "Display behavior",
       cacheSettingsTitle: "Translation cache",
-      diagnosticsSettingsTitle: "Diagnostics and test mode",
-      providerStatus: "Provider status",
-      providerStatusDesc: "Runs a connection test with the current provider. Google uses the key pool; Sakura checks the local service.",
+      diagnosticsSettingsTitle: "Diagnostics",
+      providerStatus: "Service status",
+      providerStatusDesc: "Runs a quick connection test with the current settings.",
       quickSettingsOpen: "Open Discord AI Translator settings",
-      quickSettingsClose: "Close quick settings",
       quickSettingsDone: "Done",
       quickSettingsOpenFailed: "Quick settings failed to open: {error}",
       quickSettingsFallbackTitle: "Quick settings did not render completely",
       quickSettingsFallbackHint: "The opening path has been logged. Close this window, then export diagnostics JSON if more debugging is needed.",
+      quickPanelTitle: "AI Translator",
+      quickPanelLauncherLabel: "AI Translator: {status}",
+      quickPanelOpenFull: "Open full settings",
+      quickPanelClose: "Close",
+      quickPanelEscHint: "Esc to close",
+      quickPanelAutoTranslate: "Auto-translate",
+      quickPanelAutoTranslateDesc: "Translate foreign messages on screen",
+      quickPanelChannel: "This channel",
+      quickPanelChannelNone: "no channel open",
+      quickPanelChannelDm: "Direct message",
+      quickPanelRuleInherit: "Follow main",
+      quickPanelRuleEnabled: "Always",
+      quickPanelRuleDisabled: "Never",
+      quickPanelRuleInheritFull: "Follow main switch",
+      quickPanelRuleEnabledFull: "Always translate",
+      quickPanelRuleDisabledFull: "Never translate",
+      quickPanelRuleCaptionInheritOn: "Now: auto-translating (follows the main switch)",
+      quickPanelRuleCaptionInheritOff: "Now: not auto-translating (follows the main switch)",
+      quickPanelRuleCaptionEnabled: "Auto-translates here even when the main switch is off",
+      quickPanelRuleCaptionDisabled: "No auto-translation here; manual translation still works",
+      quickPanelRuleCaptionNoChannel: "Open a channel to set a rule for it",
+      quickPanelRuleCaptionTranslationOff: "Channel translation is off; this rule applies once it is on",
+      quickPanelTargetLanguage: "Translate to",
+      quickPanelDisplay: "Display",
+      quickPanelMask: "Mask translations",
+      quickPanelMaskDesc: "Show a bar first; click it to read",
+      quickPanelHideOriginal: "Hide original after translation",
+      quickPanelHideOriginalDesc: "Hover a message to see the original",
+      quickPanelPosition: "Show translation",
+      quickPanelPositionAbove: "Above",
+      quickPanelPositionBelow: "Below",
+      quickStatusActive: "Auto-translating in this channel",
+      quickStatusBusy: "Translating {inFlight}, {queued} queued",
+      quickStatusTesting: "Testing the connection…",
+      quickStatusLatency: "{ms} ms",
+      quickStatusWaiting: "{reason}; resumes automatically",
+      quickStatusWaitingSeconds: "{reason}; resumes in about {seconds} s",
+      quickStatusReasonRateLimit: "Service busy",
+      quickStatusReasonServer: "Service error",
+      quickStatusReasonNetwork: "Connection unstable",
+      quickStatusReasonParse: "Unexpected response",
+      quickStatusNeedsYou: "Needs attention: {reason}",
+      quickStatusReasonConfig: "API key or other settings missing",
+      quickStatusReasonAuth: "API key rejected",
+      quickStatusReasonQuota: "quota or balance used up",
+      quickStatusReasonLocal: "local service not responding",
+      quickStatusReasonFailed: "connection test failed",
+      quickStatusReasonEndpoint: "API URL not usable",
+      quickStatusReasonNotFound: "API URL or model not found",
+      quickStatusNotConfigured: "Not set up",
+      quickStatusOffChannel: "Not auto-translating in this channel",
+      quickStatusOffDisabled: "Channel translation is off",
+      quickStatusManualHint: "Manual translation still works",
       inputActionMenu: "AI actions",
       inputActionOpenSettings: "Settings",
       restoreOriginalShort: "↶",
-      polishButtonShort: "AI",
+      polishButtonShort: "P",
       publicBilingualButtonShort: "Bi",
       showQuickSettingsPanelButton: "Show user panel quick settings",
       showQuickSettingsPanelButtonDesc: "Adds an AI entry near Discord's lower-left user controls and settings gear."
     });
     Object.assign(I18N["zh-CN"], {
-      currentChannelAutoTranslatePolicy: "当前频道自动翻译",
-      currentChannelAutoTranslatePolicyDesc: "只控制当前频道的自动翻译；手动点击翻译和已缓存译文显示不受影响。",
-      channelPolicyInherit: "继承全局",
-      channelPolicyEnabled: "本频道启用",
-      channelPolicyDisabled: "本频道禁用",
-      historyBackfillEnabled: "允许显式历史补翻",
-      historyBackfillEnabledDesc: "默认关闭。开启后才会显示已加载消息的手动补翻入口，不会自动扫不可见历史。",
+      currentChannelAutoTranslatePolicy: "本频道自动翻译",
+      currentChannelAutoTranslatePolicyDesc: "只影响本频道的自动翻译，手动翻译不受影响。",
+      channelPolicyInherit: "跟随总开关",
+      channelPolicyEnabled: "总是翻译",
+      channelPolicyDisabled: "不翻译",
+      channelRuleFollow: "跟随总开关",
+      channelRuleAlways: "总是翻译",
+      channelRuleNever: "不翻译",
+      historyBackfillEnabled: "允许补翻已加载的历史消息",
+      historyBackfillEnabledDesc: "开启后可以手动补翻已加载的消息，不会自己运行。",
       historyBackfillLimit: "每次历史补翻上限",
-      historyBackfillLimitDesc: "仅对当前已加载的消息生效，范围 1-100。快速滚动或 provider 冷却时会继续保守。",
+      historyBackfillLimitDesc: "每次最多补翻多少条已加载的消息（1-100）。",
       historyBackfillRun: "补翻已加载消息",
       historyBackfillRunning: "补翻中...",
-      historyBackfillRunDesc: "按当前设置将已加载但未翻译的消息加入低优先级队列。",
+      historyBackfillRunDesc: "把已加载但还没翻译的消息排进低优先级队列。",
       historyBackfillQueued: "已加入历史补翻队列：{count} 条。",
       historyBackfillNoWork: "没有可补翻的已加载消息。",
       historyBackfillContextMenu: "补翻已加载消息",
-      providerFallbackEnabled: "启用手动翻译主备 provider",
-      providerFallbackEnabledDesc: "默认关闭。仅用于手动翻译和公开双语的云 provider；Sakura local 不会自动切到云 provider。",
-      providerFallbackOrder: "备用 provider 顺序",
-      providerFallbackOrderDesc: "用逗号、空格或换行分隔 provider id。可用：{providers}。无效项会在保存时过滤。"
+      providerFallbackEnabled: "手动翻译失败时换用备用服务",
+      providerFallbackEnabledDesc: "只用于手动翻译和公开双语；本地服务不会转到云端。",
+      providerFallbackOrder: "备用服务顺序",
+      providerFallbackOrderListDesc: "勾选要用的备用服务，用箭头调整先后顺序。",
+      providerFallbackMoveUp: "把 {provider} 上移",
+      providerFallbackMoveDown: "把 {provider} 下移",
+      providerFallbackCurrent: "（当前服务）",
+      providerFallbackOrderDesc: "用逗号或换行分隔，可用：{providers}。"
     });
     Object.assign(I18N.en, {
-      currentChannelAutoTranslatePolicy: "Current channel auto-translation",
-      currentChannelAutoTranslatePolicyDesc: "Controls only auto-translation in the current channel. Manual translation and cached translation display are not affected.",
-      channelPolicyInherit: "Inherit global",
-      channelPolicyEnabled: "Enable in this channel",
-      channelPolicyDisabled: "Disable in this channel",
-      historyBackfillEnabled: "Allow explicit history backfill",
-      historyBackfillEnabledDesc: "Off by default. When enabled, loaded messages can be manually backfilled; invisible history is never scanned automatically.",
+      currentChannelAutoTranslatePolicy: "Auto-translate in this channel",
+      currentChannelAutoTranslatePolicyDesc: "Affects auto-translation in this channel only; manual translation is unchanged.",
+      channelPolicyInherit: "Follow main switch",
+      channelPolicyEnabled: "Always translate",
+      channelPolicyDisabled: "Never translate",
+      channelRuleFollow: "Follow main switch",
+      channelRuleAlways: "Always translate",
+      channelRuleNever: "Never translate",
+      historyBackfillEnabled: "Allow backfilling loaded history",
+      historyBackfillEnabledDesc: "Lets you translate already-loaded messages on demand; it never runs by itself."
+    });
+    Object.assign(I18N.en, {
       historyBackfillLimit: "History backfill limit",
-      historyBackfillLimitDesc: "Applies only to currently loaded messages, range 1-100. Fast scrolling and provider cooldown still keep this conservative.",
+      historyBackfillLimitDesc: "Most loaded messages to backfill per run (1-100).",
       historyBackfillRun: "Backfill loaded messages",
       historyBackfillRunning: "Backfilling...",
-      historyBackfillRunDesc: "Queues loaded untranslated messages using the current settings and low history priority.",
+      historyBackfillRunDesc: "Queues loaded, untranslated messages at low priority.",
       historyBackfillQueued: "Queued history backfill: {count} messages.",
       historyBackfillNoWork: "No loaded messages need backfill.",
       historyBackfillContextMenu: "Backfill loaded messages",
-      providerFallbackEnabled: "Enable manual provider fallback",
-      providerFallbackEnabledDesc: "Off by default. Applies only to manual translation and public bilingual cloud providers; Sakura local never falls back to cloud automatically.",
-      providerFallbackOrder: "Fallback provider order",
-      providerFallbackOrderDesc: "Separate provider ids with commas, spaces, or new lines. Available: {providers}. Invalid entries are filtered when saved."
+      providerFallbackEnabled: "Use backup services when manual translation fails",
+      providerFallbackEnabledDesc: "Only for manual translation and public bilingual; local services never use the cloud.",
+      providerFallbackOrder: "Backup service order",
+      providerFallbackOrderListDesc: "Tick the fallback services to use; the arrows set their order.",
+      providerFallbackMoveUp: "Move {provider} up",
+      providerFallbackMoveDown: "Move {provider} down",
+      providerFallbackCurrent: " (current service)",
+      providerFallbackOrderDesc: "Separate with commas or new lines; available: {providers}."
     });
     Object.assign(I18N["zh-CN"], {
       hideOriginalAfterTranslation: "翻译后遮挡原文",
-      hideOriginalAfterTranslationDesc: "开启后，译文成功显示时会在本机把原消息文字变成灰色遮挡条，只影响你自己的客户端。",
+      hideOriginalAfterTranslationDesc: "原文变成灰条，悬停或聚焦时显示，只影响你自己。",
       publicBilingualInputButton: "在输入框附近显示公开双语按钮",
-      publicBilingualInputButtonDesc: "将当前草稿翻译后写成“译文 + 隐藏原文”的 Discord 原生消息，发送后所有人都能看到；不会自动发送。",
+      publicBilingualInputButtonDesc: "把草稿写成“译文 + 隐藏原文”，由你检查后发送。",
       publicBilingualUseInitialOriginal: "双语隐藏原文使用最初草稿",
-      publicBilingualUseInitialOriginalDesc: "开启后，如果先润色再生成公开双语，spoiler 里保留最开始没润色的原文。",
+      publicBilingualUseInitialOriginalDesc: "先润色再做双语时，隐藏原文保留润色前的草稿。",
       publicBilingualAfterPolish: "润色后自动生成公开双语",
-      publicBilingualAfterPolishDesc: "开启后，点击润色会先改写草稿，然后自动翻译成公开双语格式；仍不会自动发送。",
+      publicBilingualAfterPolishDesc: "点“润色”后接着把结果写成公开双语，不会自动发送。",
       publicBilingualPolishBeforeTranslate: "双语前自动润色",
-      publicBilingualPolishBeforeTranslateDesc: "开启后，点击双语会先润色当前草稿，再翻译润色结果；如果同时开启“使用最初草稿”，spoiler 仍保留最初原文。",
+      publicBilingualPolishBeforeTranslateDesc: "点“双语”时先润色草稿，再翻译润色结果。",
       publicBilingualButton: "双语",
       publicBilingualBusy: "翻译中",
       publicBilingualTitleAttr: "写入面向所有人可见的双语消息，目标语言：{targetLanguage}",
       publicBilingualReady: "双语消息已写入，检查后再发送。",
       publicBilingualFailed: "无法写入双语消息：{error}",
       publicBilingualInputChanged: "翻译期间输入已改变，未覆盖当前草稿。",
+      errorComposerWriteFailed: "输入框没有接受写入，结果已显示在面板中，可手动复制。",
       publicBilingualTooLong: "双语消息超过 Discord 单条长度（{length}/{limit}）。",
       publicBilingualPolishSkipped: "润色功能已关闭，本次双语直接使用当前草稿。",
       errorLocalProviderUnavailable: "Sakura 本地服务无法连接，自动翻译已暂停；启动 Sakura 后等待自动恢复，或在设置里点击测试连接立即恢复。"
@@ -12855,17 +18031,36 @@ var require_discord_ai_translator = __commonJS({
     "use strict";
     var { TranslationRenderer } = require_translation_renderer();
     var { ComposerWriter } = require_composer_writer();
-    var { SettingsSchema } = require_settings_schema();
+    var {
+      SettingsSchema,
+      SETTINGS_TAB_OVERVIEW,
+      SETTINGS_TAB_TRANSLATE,
+      SETTINGS_TAB_COMPOSE,
+      SETTINGS_TAB_APPEARANCE,
+      SETTINGS_TAB_ADVANCED,
+      SETTINGS_TAB_DATA,
+      SETTINGS_TAB_IDS,
+      SETTINGS_TABS_DEFINITION,
+      SETTINGS_WINDOW_MAX_WIDTH,
+      SETTINGS_CONTROL_WIDTH,
+      MESSAGE_BUTTON_MODE_OFF,
+      normalizeSettingsTabId
+    } = require_settings_schema();
     var { PLUGIN_CSS } = require_styles();
     var { AutoTranslationTaskState } = require_task_state();
     var { AutoTranslationRequestPipeline } = require_request_pipeline();
     var { AutoTranslationQueueCore } = require_queue_core();
     var { DiagnosticsRecorder } = require_diagnostics_recorder();
+    var { getDiagnosticCodeLabel } = require_diagnostic_labels();
     var { OutputGuard } = require_output_guard();
     var { TranslationCacheStore } = require_translation_cache_store();
     var { PLUGIN_VERSION } = require_version();
     var { ProviderLayer } = require_provider_layer();
     var { SettingsStore } = require_settings_store();
+    var { QuickPanel } = require_quick_panel();
+    var { PanelTheme } = require_panel_theme();
+    var { convertDiscordMarkupToDisplayText, DISCORD_MARKUP_DISPLAY_TEXT_MEMO_MAX } = require_discord_markup();
+    var { removeStandardEmoji, getEmojiNeutralTextLength } = require_emoji_text();
     var {
       PLUGIN_NAME,
       DATA_KEY,
@@ -12882,23 +18077,6 @@ var require_discord_ai_translator = __commonJS({
       DISCORD_MEDIA_MUTATION_SELECTOR,
       DISCORD_THEME_VARIABLES,
       PROVIDER_DEFAULTS,
-      SETTINGS_TAB_POLISH,
-      SETTINGS_TAB_TRANSLATION,
-      SETTINGS_TAB_PUBLIC_BILINGUAL,
-      SETTINGS_TAB_DISPLAY,
-      SETTINGS_TAB_DEFAULT,
-      SETTINGS_TABS,
-      SETTINGS_SECTION_GENERAL,
-      SETTINGS_SECTION_POLISH,
-      SETTINGS_SECTION_POLISH_CONTROLS,
-      SETTINGS_SECTION_TRANSLATION,
-      SETTINGS_SECTION_TRANSLATION_CONTROLS,
-      SETTINGS_SECTION_AUTO_TRANSLATE,
-      SETTINGS_SECTION_PUBLIC_BILINGUAL,
-      SETTINGS_SECTION_DISPLAY,
-      SETTINGS_SECTION_CACHE,
-      SETTINGS_SECTION_DIAGNOSTICS,
-      SETTINGS_SECTION_IDS,
       PROVIDER_ORDER,
       PROVIDER_PROFILE_FIELDS,
       PROVIDER_CAPABILITIES,
@@ -12979,6 +18157,7 @@ var require_discord_ai_translator = __commonJS({
       INCREMENTAL_MESSAGE_WORK_MAX_PER_SLICE,
       MESSAGE_BUTTON_VISIBILITY_ALWAYS,
       MESSAGE_BUTTON_VISIBILITY_HOVER,
+      RTL_LANGUAGE_CODES,
       POLISH_REPOLISH_SOURCE_ORIGINAL,
       POLISH_REPOLISH_SOURCE_LAST_RESULT,
       TRANSLATION_CACHE_DEFAULT_TTL_HOURS,
@@ -13438,6 +18617,7 @@ var require_discord_ai_translator = __commonJS({
       }
       shouldRunItemSingle(item) {
         if (!item) return false;
+        if (item.daitSingleRequest) return true;
         const config = this.plugin.getEffectiveTaskConfig("translation", item?.requestOptions?.configOverrides);
         if (this.plugin.isLocalTranslationProvider(config)) return true;
         return this.isLongItem(item);
@@ -13456,7 +18636,7 @@ var require_discord_ai_translator = __commonJS({
         if (previous && plugin.isAutoTranslationFailureExpired(previous)) plugin.autoTranslationProviderFailures.delete(key);
         const previousCount = previous && !plugin.isAutoTranslationFailureExpired(previous) ? Number(previous.count || 0) : 0;
         const count = Math.min(5, previousCount + 1);
-        const retryAfterMs = Math.max(itemFailure?.retryAfterMs || 0, plugin.getAutoTranslationRetryAfter(error, count));
+        const retryAfterMs = plugin.getAutoTranslationRetryAfter(error, count);
         plugin.autoTranslationProviderFailures.set(key, {
           at: Date.now(),
           count,
@@ -13468,9 +18648,10 @@ var require_discord_ai_translator = __commonJS({
           plugin.localProviderHealthyKeys.delete(key);
           plugin.discardAutoTranslationProviderWork(key, { retryMs: retryAfterMs, skipCacheKeys: options.skipCacheKeys });
           plugin.setApiRuntimeStatus("translation", "failed", plugin.t("apiStatusFailed"), plugin.formatError(error));
-        } else if (type === "quota" || type === "auth") {
+        } else if ((type === "quota" || type === "auth") && !plugin.isGoogleTranslatePoolServing?.(error)) {
           plugin.setApiRuntimeStatus("translation", "failed", plugin.t("apiStatusFailed"), plugin.formatError(error));
         }
+        plugin.notifyTranslationNeedsAttention?.(error, key);
         plugin.logDiagnostic("auto.provider.failure", "cooldown", {
           key: plugin.getTextFingerprint(key),
           type,
@@ -13599,19 +18780,10 @@ var require_discord_ai_translator = __commonJS({
           heavyTextLength: AUTO_TRANSLATE_FORCE_SINGLE_TEXT_LENGTH
         });
         this.composerWriter = new ComposerWriter(this);
+        this.quickPanel = new QuickPanel(this);
+        this.panelTheme = new PanelTheme(this);
         this.settingsSchema = new SettingsSchema({
-          sections: [
-            { id: SETTINGS_SECTION_GENERAL, labelKey: "generalTitle", level: "primary" },
-            { id: SETTINGS_SECTION_POLISH, labelKey: "settingsTabPolish", level: "primary" },
-            { id: SETTINGS_SECTION_POLISH_CONTROLS, labelKey: "polishControlsTitle", level: "secondary" },
-            { id: SETTINGS_SECTION_TRANSLATION, labelKey: "settingsTabTranslation", level: "primary" },
-            { id: SETTINGS_SECTION_TRANSLATION_CONTROLS, labelKey: "translationControlsTitle", level: "secondary" },
-            { id: SETTINGS_SECTION_AUTO_TRANSLATE, labelKey: "autoTranslateSettingsTitle", level: "secondary" },
-            { id: SETTINGS_SECTION_PUBLIC_BILINGUAL, labelKey: "settingsTabPublicBilingual", level: "primary" },
-            { id: SETTINGS_SECTION_DISPLAY, labelKey: "displaySettingsTitle", level: "primary" },
-            { id: SETTINGS_SECTION_CACHE, labelKey: "cacheSettingsTitle", level: "secondary" },
-            { id: SETTINGS_SECTION_DIAGNOSTICS, labelKey: "diagnosticsSettingsTitle", level: "secondary" }
-          ],
+          tabs: SETTINGS_TABS_DEFINITION,
           providerCapabilities: PROVIDER_CAPABILITIES,
           providerOrder: PROVIDER_ORDER,
           defaultProvider: "deepseek"
@@ -13649,6 +18821,8 @@ var require_discord_ai_translator = __commonJS({
         this.autoTranslationFailureHistory = /* @__PURE__ */ new Map();
         this.autoTranslationProviderFailures = /* @__PURE__ */ new Map();
         this.autoTranslationProviderNoticeAt = /* @__PURE__ */ new Map();
+        this.dismissedTranslationMessages = /* @__PURE__ */ new Map();
+        this.translationLineTexts = typeof WeakMap === "function" ? /* @__PURE__ */ new WeakMap() : null;
         this.autoTranslationPrecheckSkips = /* @__PURE__ */ new Map();
         this.autoTranslationRecentRenders = /* @__PURE__ */ new Map();
         this.autoTranslationLastExternalScrollAt = 0;
@@ -13702,7 +18876,7 @@ var require_discord_ai_translator = __commonJS({
         this.quickSettingsModalRoot = null;
         this.quickSettingsModalKeydown = null;
         this.quickSettingsPreviousFocus = null;
-        this.quickSettingsLastOpenAt = 0;
+        this.quickSettingsPress = null;
         this.quickSettingsRetryTimer = null;
         this.quickSettingsOpenTimer = null;
         this.quickSettingsVerifyRaf = null;
@@ -13724,7 +18898,9 @@ var require_discord_ai_translator = __commonJS({
         this.activeApiControllers = /* @__PURE__ */ new Set();
         this.apiRequestsClosed = false;
         this.hotkeyRecordTimer = null;
+        this.hotkeyRecordTimeout = null;
         this.hotkeyRecordCleanup = null;
+        this.hotkeyRecordButton = null;
         this.observer = null;
         this.observerRoot = null;
         this.observerLifecycle = null;
@@ -13777,6 +18953,11 @@ var require_discord_ai_translator = __commonJS({
         this.isStarted = true;
         this.apiRequestsClosed = false;
         try {
+          const unsavedDiagnostics = Boolean(this.diagnosticLogsDirty);
+          if (!unsavedDiagnostics) {
+            this.diagnosticLogs = [];
+            this.diagnosticCompressedCount = 0;
+          }
           if (this.settingsLoadBlocked) {
             this.loadSettings();
           } else if (this.settingsDirty) {
@@ -13785,7 +18966,14 @@ var require_discord_ai_translator = __commonJS({
           } else {
             this.loadSettings();
           }
-          if (this.settings.ui?.diagnosticsEnabled) {
+          try {
+            this.migrateLegacyDataStores();
+          } catch (error) {
+            this.warnSanitized("Data store migration failed; old data kept", error);
+          }
+          if (this.settings.ui?.diagnosticsEnabled && !unsavedDiagnostics) {
+            this.loadDiagnosticLogs({ keepLogged: true });
+          } else if (this.settings.ui?.diagnosticsEnabled) {
             if (this.diagnosticLogsDirty) this.flushDiagnosticLogs({ retryOnError: false });
             if (!this.diagnosticLogsDirty) this.loadDiagnosticLogs();
             else this.scheduleDiagnosticLogsPersist();
@@ -13794,11 +18982,15 @@ var require_discord_ai_translator = __commonJS({
             this.diagnosticCompressedCount = 0;
             this.diagnosticLogsDirty = false;
             this.diagnosticLogsDirtyAt = 0;
+            const storedDiagnostics = this.loadData(DIAGNOSTIC_DATA_KEY);
+            const storedLogs = Array.isArray(storedDiagnostics) ? storedDiagnostics : storedDiagnostics?.logs;
+            if (Array.isArray(storedLogs) && storedLogs.length) this.disableDiagnosticLogging();
           }
           if (this.translationCacheDirty) this.flushTranslationCache({ retryOnError: false });
           if (!this.translationCacheDirty) this.loadTranslationCache();
           else this.scheduleTranslationCachePersist();
           this.injectStyles();
+          this.panelTheme.startWatching();
           this.patchMessageContextMenu();
           this.startObserver();
           document.addEventListener("keydown", this.boundKeydown, true);
@@ -13806,6 +18998,8 @@ var require_discord_ai_translator = __commonJS({
           window.addEventListener("resize", this.boundViewportScan, { capture: true, passive: true });
           window.addEventListener("focus", this.boundViewportScan, { capture: true, passive: true });
           document.addEventListener("visibilitychange", this.boundViewportScan, true);
+          window.addEventListener("pagehide", this.getPageHideHandler(), true);
+          window.addEventListener("beforeunload", this.getPageHideHandler(), true);
           this.queueScan();
           this.showToast(this.t("pluginStarted", { version: PLUGIN_VERSION }), "success");
           return true;
@@ -13829,6 +19023,7 @@ var require_discord_ai_translator = __commonJS({
         this.lifecycleToken++;
         if (this.observer) this.observer.disconnect();
         if (this.observerLifecycle) this.observerLifecycle.disconnect();
+        this.panelTheme.stopWatching();
         if (this.observerRebindTimer) clearTimeout(this.observerRebindTimer);
         if (this.observerRetryTimer) clearTimeout(this.observerRetryTimer);
         this.cancelHeavyPersistenceIdle("diagnostics");
@@ -13842,6 +19037,7 @@ var require_discord_ai_translator = __commonJS({
         this.cancelQuickSettingsModalVerify();
         if (this.autoTranslationRetryTimer) clearTimeout(this.autoTranslationRetryTimer);
         this.cancelAutoTranslationRenderQueue();
+        this.clearTranslationErrorWaitTimers();
         if (this.settingsDirtyTimer) clearTimeout(this.settingsDirtyTimer);
         if (this.translationCacheDirtyTimer) clearTimeout(this.translationCacheDirtyTimer);
         if (this.googleTranslateRuntimeDirtyTimer) clearTimeout(this.googleTranslateRuntimeDirtyTimer);
@@ -13851,6 +19047,7 @@ var require_discord_ai_translator = __commonJS({
         this.composerWriter.cancelAll("stop");
         this.clearHotkeyRecording();
         this.clearPolishSubmitTimer();
+        this.cancelPendingConfirmDialogs();
         this.cancelTextboxReplacementCleanup();
         this.localProviderHealthChecks.clear();
         this.localProviderHealthProbeStartedAt.clear();
@@ -13867,10 +19064,13 @@ var require_discord_ai_translator = __commonJS({
         window.removeEventListener("resize", this.boundViewportScan, { capture: true });
         window.removeEventListener("focus", this.boundViewportScan, { capture: true });
         document.removeEventListener("visibilitychange", this.boundViewportScan, true);
+        window.removeEventListener("pagehide", this.getPageHideHandler(), true);
+        window.removeEventListener("beforeunload", this.getPageHideHandler(), true);
         this.removePolishResultPanel();
         this.removePolishRestoreControl();
         this.removeInputActionMenu();
         this.closeQuickSettingsPanel(null, "stop");
+        this.quickPanel.destroy("stop");
         document.querySelectorAll?.(".dait-settings")?.forEach((panel) => this.destroySettingsModalSizing(panel));
         this.restoreAllTranslationSourceVisibility();
         document.querySelectorAll(".dait-message-button, .dait-polish-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-menu-button, .dait-input-action-menu, .dait-quick-settings-button, .dait-translation-line, .dait-translation-box, .dait-input-action-group").forEach((node) => node.remove());
@@ -13889,6 +19089,7 @@ var require_discord_ai_translator = __commonJS({
         this.inputButtonScanDueAt = 0;
         this.quickSettingsRetryTimer = null;
         this.quickSettingsOpenTimer = null;
+        this.quickSettingsPress = null;
         if (diagnosticLogsPersisted) this.quickSettingsDiagnosticLogs = [];
         if (translationCachePersisted) this.persistentTranslationCacheCount = 0;
         if (diagnosticLogsPersisted) {
@@ -13912,6 +19113,9 @@ var require_discord_ai_translator = __commonJS({
         this.cachedDrawMemo.clear();
         this.cachedDrawMessageMemo = /* @__PURE__ */ new WeakMap();
         this.cachedDrawScroller = null;
+        this.elementTextCache = typeof WeakMap === "function" ? /* @__PURE__ */ new WeakMap() : null;
+        this.translationSourceStyleMutationCounts = typeof WeakMap === "function" ? /* @__PURE__ */ new WeakMap() : null;
+        this.pendingMutationScanRoots?.clear?.();
         this.autoTranslationOwnScrolls = /* @__PURE__ */ new WeakMap();
         this.autoTranslationLastExternalScrollAt = 0;
         this.lastAutoTranslationDecisions.clear();
@@ -13954,6 +19158,29 @@ var require_discord_ai_translator = __commonJS({
         this.discordThemeGlobalCandidatesCache = null;
         this.discordThemeVariableValuesCache = null;
       }
+      getPageHideHandler() {
+        if (!this.boundPageHide) this.boundPageHide = () => this.flushPendingPersistence("pagehide");
+        return this.boundPageHide;
+      }
+      // A reload or quit may not call stop(), so save what the debounce and busy-deferral timers still hold.
+      // Each flush is a no-op when nothing is dirty; none of them schedules a retry.
+      flushPendingPersistence(reason = "pagehide") {
+        const results = {};
+        [
+          ["cache", () => this.flushTranslationCache({ retryOnError: false })],
+          ["google", () => this.flushGoogleTranslateRuntimeState({ retryOnError: false })],
+          ["settings", () => this.flushSettings({ retryOnError: false })],
+          ["diagnostics", () => this.flushDiagnosticLogs({ retryOnError: false })]
+        ].forEach(([name, flush]) => {
+          try {
+            results[name] = flush() !== false;
+          } catch (error) {
+            results[name] = false;
+            this.warnSanitized(`Persist on ${reason} failed for ${name}`, error);
+          }
+        });
+        return results;
+      }
       getLifecycleToken() {
         return this.lifecycleToken;
       }
@@ -13972,300 +19199,536 @@ var require_discord_ai_translator = __commonJS({
         const quickSettings = Boolean(options.quickSettings);
         const panel = document.createElement("div");
         panel.className = "dait-settings";
-        this.syncDiscordThemeClasses(panel);
-        panel.appendChild(this.createSettingsHero());
+        if (quickSettings) panel.dataset.daitQuickSettings = "true";
+        panel.dataset.daitLocale = this.getLocale();
+        this.applyPanelTheme(panel);
+        panel.appendChild(this.createSettingsHeader({ quickSettings }));
         panel.appendChild(this.createSettingsLayout(panel));
-        if (!quickSettings) {
-          this.scheduleSettingsModalSizing(panel);
-          this.scheduleSettingsScrollTracking(panel);
-        }
+        if (!quickSettings) this.scheduleSettingsModalSizing(panel);
         this.logSlowOperation("settings.panel.build", startedAt, {
-          sections: SETTINGS_SECTION_IDS.length,
-          testMode: Boolean(this.settings.ui?.testModeEnabled),
+          tabs: SETTINGS_TAB_IDS.length,
           quickSettings
         });
         return panel;
       }
+      // Tab rail (search + tabs) on the left, one tab page at a time on the right. Every page is built up front so
+      // search and syncSettingControls see all controls; inactive pages are hidden.
       createSettingsLayout(panel) {
+        const uid = this.createSettingsControlId("dait-settings");
+        const activeTab = this.getSettingsActiveTab();
+        const state = {
+          panel,
+          activeTab,
+          searchQuery: "",
+          tabs: this.getSettingsNavItems().map((tab) => ({ ...tab, tabId: `${uid}-tab-${tab.id}`, panelId: `${uid}-panel-${tab.id}` })),
+          resultsId: `${uid}-results`
+        };
+        if (panel) panel.__daitSettingsUi = state;
         const layout = document.createElement("div");
-        layout.className = "dait-settings-layout";
-        layout.appendChild(this.createSettingsSidebar(panel));
-        layout.appendChild(this.createSettingsContentList());
+        layout.className = "dait-settings-body";
+        const content = document.createElement("div");
+        content.className = "dait-settings-content";
+        state.content = content;
+        content.appendChild(this.createSettingsSearchResults(state));
+        state.tabs.forEach((tab) => {
+          tab.tabpanel = this.createSettingsTabPanel(state, tab, tab.id === activeTab);
+          content.appendChild(tab.tabpanel);
+        });
+        layout.appendChild(this.createSettingsRail(state));
+        layout.appendChild(content);
         return layout;
       }
       getSettingsActiveTab() {
-        const tab = String(this.settings.ui?.settingsActiveTab || "");
-        return SETTINGS_SECTION_IDS.includes(tab) || SETTINGS_TABS.includes(tab) ? tab : SETTINGS_SECTION_GENERAL;
-      }
-      createSettingsSidebar(panel = null) {
-        const tabs = document.createElement("aside");
-        tabs.className = "dait-settings-sidebar";
-        tabs.setAttribute("role", "navigation");
-        const nav = document.createElement("div");
-        nav.className = "dait-settings-nav-list";
-        const activeAnchor = this.getSettingsActiveTab();
-        this.getSettingsNavItems().forEach((item) => {
-          const button = document.createElement("button");
-          const active = item.id === activeAnchor;
-          button.className = `dait-settings-nav-button dait-settings-nav-${item.level || "primary"}${active ? " dait-settings-nav-active" : ""}`;
-          button.type = "button";
-          button.dataset.daitSettingsTab = item.id;
-          button.dataset.daitSettingsAnchor = item.id;
-          button.setAttribute("aria-current", active ? "true" : "false");
-          button.textContent = item.label;
-          button.addEventListener("click", () => this.scrollToSettingsSection(item.id, button));
-          nav.appendChild(button);
-        });
-        tabs.appendChild(nav);
-        const reset = document.createElement("button");
-        reset.className = "dait-settings-sidebar-reset";
-        reset.type = "button";
-        reset.textContent = this.t("reset");
-        reset.addEventListener("click", () => {
-          if (!window.confirm(this.t("resetConfirm"))) return;
-          this.settings = this.clone(DEFAULT_SETTINGS);
-          this.invalidateAutoTranslationQueue();
-          this.saveSettings();
-          const currentPanel = panel || reset.closest?.(".dait-settings");
-          this.replaceSettingsPanelElement(currentPanel);
-          this.queueScan();
-        });
-        tabs.appendChild(reset);
-        return tabs;
+        return normalizeSettingsTabId(this.settings.ui?.settingsActiveTab);
       }
       getSettingsNavItems() {
-        return this.settingsSchema.getSections().map((section) => ({
-          id: section.id,
-          label: this.t(section.labelKey),
-          level: section.level
+        return this.settingsSchema.getTabs().map((tab) => ({
+          id: tab.id,
+          label: this.t(tab.labelKey)
         }));
       }
-      setSettingsActiveTab(tab, source = null) {
-        const activeTab = SETTINGS_SECTION_IDS.includes(tab) || SETTINGS_TABS.includes(tab) ? tab : SETTINGS_SECTION_GENERAL;
-        this.settings.ui.settingsActiveTab = activeTab;
-        this.saveSettings({ debounce: true });
-        this.replaceSettingsPanelFrom(source);
+      createSettingsControlId(prefix = "dait-control") {
+        this.settingsControlIdCounter = (Number(this.settingsControlIdCounter) || 0) + 1;
+        return `${prefix}-${this.settingsControlIdCounter}`;
       }
+      createSettingsRail(state) {
+        const rail = document.createElement("div");
+        rail.className = "dait-settings-rail";
+        rail.appendChild(this.createSettingsSearch(state));
+        const tablist = document.createElement("div");
+        tablist.className = "dait-settings-tabs";
+        tablist.setAttribute("role", "tablist");
+        tablist.setAttribute("aria-orientation", "vertical");
+        tablist.setAttribute("aria-label", this.t("settingsTabsLabel"));
+        state.tabs.forEach((tab) => {
+          const active = tab.id === state.activeTab;
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "dait-settings-tab";
+          button.id = tab.tabId;
+          button.setAttribute("role", "tab");
+          button.setAttribute("aria-controls", tab.panelId);
+          button.setAttribute("aria-selected", active ? "true" : "false");
+          button.setAttribute("tabindex", active ? "0" : "-1");
+          button.dataset.daitSettingsTab = tab.id;
+          button.textContent = tab.label;
+          button.addEventListener("click", () => this.showSettingsTab(state, tab.id));
+          tab.button = button;
+          tablist.appendChild(button);
+        });
+        tablist.addEventListener("keydown", (event) => this.handleSettingsTabKeydown(state, event));
+        state.tablist = tablist;
+        rail.appendChild(tablist);
+        return rail;
+      }
+      createSettingsTabPanel(state, tab, active) {
+        const tabpanel = document.createElement("div");
+        tabpanel.className = "dait-settings-tabpanel";
+        tabpanel.id = tab.panelId;
+        tabpanel.setAttribute("role", "tabpanel");
+        tabpanel.setAttribute("aria-labelledby", tab.tabId);
+        tabpanel.dataset.daitSettingsTabPanel = tab.id;
+        tabpanel.dataset.daitSettingsSection = tab.id;
+        tabpanel.hidden = !active;
+        const heading = document.createElement("h2");
+        heading.className = "dait-settings-page-title";
+        heading.textContent = tab.label;
+        tabpanel.appendChild(heading);
+        const builders = {
+          [SETTINGS_TAB_OVERVIEW]: () => this.createOverviewTabContent(),
+          [SETTINGS_TAB_TRANSLATE]: () => this.createTranslateTabContent(),
+          [SETTINGS_TAB_COMPOSE]: () => this.createComposeTabContent(),
+          [SETTINGS_TAB_APPEARANCE]: () => this.createDisplayTabContent(),
+          [SETTINGS_TAB_ADVANCED]: () => this.createAdvancedTabContent(),
+          [SETTINGS_TAB_DATA]: () => this.createDataTabContent(state)
+        };
+        (builders[tab.id]?.() || []).forEach((node) => {
+          if (node) tabpanel.appendChild(node);
+        });
+        return tabpanel;
+      }
+      // Shows one tab page. Saving is debounced; a rebuilt panel opens on the same tab.
+      showSettingsTab(state, tabId, options = {}) {
+        if (!state?.tabs?.length) return null;
+        const id = normalizeSettingsTabId(tabId);
+        const target = state.tabs.find((tab) => tab.id === id) || state.tabs[0];
+        if (options.clearSearch !== false && state.searchQuery) this.clearSettingsSearch(state, { focus: false, showTab: false });
+        state.activeTab = target.id;
+        state.tabs.forEach((tab) => {
+          const active = tab === target;
+          tab.button?.setAttribute?.("aria-selected", active && !state.searchQuery ? "true" : "false");
+          tab.button?.setAttribute?.("tabindex", active ? "0" : "-1");
+          if (tab.tabpanel) tab.tabpanel.hidden = !active || Boolean(state.searchQuery);
+        });
+        if (options.resetScroll !== false && state.content) state.content.scrollTop = 0;
+        if (target.id === SETTINGS_TAB_OVERVIEW) this.refreshOverviewStatusSection(target.tabpanel);
+        if (options.focusTab) this.focusSettingsElement(target.button);
+        if (options.save !== false && this.settings?.ui && this.settings.ui.settingsActiveTab !== target.id) {
+          this.settings.ui.settingsActiveTab = target.id;
+          this.saveSettings({ debounce: true });
+        }
+        return target.id;
+      }
+      // Arrow keys move along the rail (up/down, or left/right when it is a horizontal row); Home/End jump to the ends.
+      handleSettingsTabKeydown(state, event) {
+        const count = state?.tabs?.length || 0;
+        if (!count) return;
+        const steps = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 };
+        const current = Math.max(0, state.tabs.findIndex((tab) => tab.id === state.activeTab));
+        let next = null;
+        if (steps[event?.key]) next = (current + steps[event.key] + count) % count;
+        else if (event?.key === "Home") next = 0;
+        else if (event?.key === "End") next = count - 1;
+        if (next === null) return;
+        event.preventDefault?.();
+        event.stopPropagation?.();
+        this.showSettingsTab(state, state.tabs[next].id, { focusTab: true });
+      }
+      setSettingsActiveTab(tab, source = null) {
+        const id = normalizeSettingsTabId(tab);
+        const state = source?.closest?.(".dait-settings")?.__daitSettingsUi;
+        if (state) return this.showSettingsTab(state, id);
+        if (this.settings?.ui) this.settings.ui.settingsActiveTab = id;
+        this.saveSettings({ debounce: true });
+        return id;
+      }
+      focusSettingsElement(element) {
+        if (!element?.focus) return false;
+        try {
+          element.focus({ preventScroll: true });
+        } catch {
+          try {
+            element.focus();
+          } catch {
+            return false;
+          }
+        }
+        return true;
+      }
+      // --- Settings search: filters rows of every tab by label and description in the current UI language. ---
+      createSettingsSearch(state) {
+        const wrap = document.createElement("div");
+        wrap.className = "dait-settings-search";
+        const input = document.createElement("input");
+        input.type = "search";
+        input.className = "dait-settings-search-input";
+        input.placeholder = this.t("settingsSearchPlaceholder");
+        input.autocomplete = "off";
+        input.spellcheck = false;
+        input.setAttribute("aria-label", this.t("settingsSearchPlaceholder"));
+        input.setAttribute("aria-controls", state.resultsId);
+        input.addEventListener("input", () => this.runSettingsSearch(state, input.value));
+        input.addEventListener("keydown", (event) => this.handleSettingsSearchKeydown(state, event));
+        input.addEventListener("focus", () => this.bindSettingsSearchEscape(state));
+        state.searchInput = input;
+        wrap.appendChild(input);
+        return wrap;
+      }
+      createSettingsSearchResults(state) {
+        const results = document.createElement("div");
+        results.className = "dait-settings-search-results";
+        results.id = state.resultsId;
+        results.setAttribute("role", "region");
+        results.setAttribute("aria-label", this.t("settingsSearchPlaceholder"));
+        results.hidden = true;
+        const summary = document.createElement("p");
+        summary.className = "dait-settings-search-summary";
+        summary.setAttribute("aria-live", "polite");
+        results.appendChild(summary);
+        const list = document.createElement("ul");
+        list.className = "dait-settings-search-list";
+        results.appendChild(list);
+        state.results = results;
+        state.resultsSummary = summary;
+        state.resultsList = list;
+        return results;
+      }
+      // Every searchable row with the tab it lives on. Group titles and the row's own button texts (Clear stats,
+      // Export JSON, Test) take part in matching but are not shown.
+      getSettingsSearchEntries(state) {
+        const entries = [];
+        const visit = (node, tab, groupTitle) => {
+          for (const child of node?.children || []) {
+            const group = child.dataset?.daitSearchGroup;
+            const nextGroup = group !== void 0 ? group : groupTitle;
+            const classes = String(child.className || "").split(/\s+/);
+            if (classes.includes("dait-settings-row") || classes.includes("dait-settings-search-target")) {
+              const label = String(child.dataset?.daitSearchLabel || "").trim();
+              if (label) {
+                const description = String(child.dataset?.daitSearchDescription || "").trim();
+                entries.push({
+                  row: child,
+                  tabId: tab.id,
+                  tabLabel: tab.label,
+                  label,
+                  description,
+                  haystack: `${label} ${description} ${this.getSettingsSearchButtonText(child)} ${nextGroup || ""} ${tab.label}`.toLocaleLowerCase()
+                });
+              }
+            }
+            visit(child, tab, nextGroup);
+          }
+        };
+        (state?.tabs || []).forEach((tab) => visit(tab.tabpanel, tab, ""));
+        return entries;
+      }
+      // The texts of the buttons that belong to this row (not to a row nested in it).
+      getSettingsSearchButtonText(row) {
+        return [...row?.querySelectorAll?.("button") || []].filter((button) => button.closest?.(".dait-settings-row, .dait-settings-search-target") === row).map((button) => String(button.textContent || "").trim()).filter(Boolean).join(" ");
+      }
+      // A Latin or numeric term matches at the start of a word ("reset" is not found in "preset"); other scripts,
+      // which do not separate words with spaces, match anywhere.
+      matchesSettingsSearchTerm(haystack, term) {
+        if (!/^[a-z0-9]/.test(term)) return haystack.includes(term);
+        for (let index = haystack.indexOf(term); index >= 0; index = haystack.indexOf(term, index + 1)) {
+          if (index === 0 || !/[a-z0-9]/.test(haystack[index - 1])) return true;
+        }
+        return false;
+      }
+      runSettingsSearch(state, rawQuery) {
+        if (!state) return [];
+        const query = String(rawQuery || "").trim().toLocaleLowerCase();
+        state.searchQuery = query;
+        if (!query) {
+          this.clearSettingsSearch(state, { focus: false, keepInput: true });
+          return [];
+        }
+        const terms = query.split(/\s+/).filter(Boolean);
+        const entries = this.getSettingsSearchEntries(state).filter((entry) => terms.every((term) => this.matchesSettingsSearchTerm(entry.haystack, term)));
+        state.searchEntries = entries;
+        state.tabs.forEach((tab) => {
+          if (tab.tabpanel) tab.tabpanel.hidden = true;
+          tab.button?.setAttribute?.("aria-selected", "false");
+        });
+        if (state.results) state.results.hidden = false;
+        if (state.resultsSummary) {
+          state.resultsSummary.textContent = entries.length ? this.t("settingsSearchResults", { count: entries.length }) : this.t("settingsSearchEmpty", { query: String(rawQuery || "").trim() });
+        }
+        if (state.resultsList) {
+          state.resultsList.textContent = "";
+          entries.forEach((entry, index) => {
+            const item = document.createElement("li");
+            item.className = "dait-settings-search-item";
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "dait-settings-search-result";
+            const label = document.createElement("span");
+            label.className = "dait-settings-search-result-label";
+            label.textContent = entry.label;
+            button.appendChild(label);
+            const tab = document.createElement("span");
+            tab.className = "dait-settings-search-result-tab";
+            tab.textContent = entry.tabLabel;
+            button.appendChild(tab);
+            if (entry.description) {
+              const description = document.createElement("span");
+              description.className = "dait-settings-search-result-description";
+              description.textContent = entry.description;
+              button.appendChild(description);
+            }
+            button.addEventListener("click", () => this.openSettingsSearchResult(state, entry));
+            button.addEventListener("keydown", (event) => this.handleSettingsSearchResultKeydown(state, event, index));
+            entry.button = button;
+            item.appendChild(button);
+            state.resultsList.appendChild(item);
+          });
+        }
+        if (state.content) state.content.scrollTop = 0;
+        return entries;
+      }
+      clearSettingsSearch(state, options = {}) {
+        if (!state) return;
+        state.searchQuery = "";
+        state.searchEntries = [];
+        if (state.searchInput && !options.keepInput) state.searchInput.value = "";
+        if (state.results) state.results.hidden = true;
+        if (state.resultsList) state.resultsList.textContent = "";
+        if (state.resultsSummary) state.resultsSummary.textContent = "";
+        if (options.showTab !== false) {
+          state.tabs.forEach((tab) => {
+            if (tab.tabpanel) tab.tabpanel.hidden = tab.id !== state.activeTab;
+            tab.button?.setAttribute?.("aria-selected", tab.id === state.activeTab ? "true" : "false");
+          });
+        }
+        if (options.focus) this.focusSettingsElement(state.searchInput);
+      }
+      handleSettingsSearchKeydown(state, event) {
+        const entries = state?.searchEntries || [];
+        if (event?.key === "Enter") {
+          event.preventDefault?.();
+          if (entries.length) this.openSettingsSearchResult(state, entries[0]);
+          return;
+        }
+        if (event?.key === "ArrowDown" && entries.length) {
+          event.preventDefault?.();
+          this.focusSettingsElement(entries[0].button);
+          return;
+        }
+        if (event?.key === "Escape" && (state.searchQuery || state.searchInput?.value)) {
+          event.preventDefault?.();
+          event.stopPropagation?.();
+          this.clearSettingsSearch(state, { focus: true });
+        }
+      }
+      handleSettingsSearchResultKeydown(state, event, index) {
+        const entries = state?.searchEntries || [];
+        if (event?.key === "ArrowDown" || event?.key === "ArrowUp") {
+          event.preventDefault?.();
+          const next = index + (event.key === "ArrowDown" ? 1 : -1);
+          if (next < 0) this.focusSettingsElement(state.searchInput);
+          else if (entries[next]) this.focusSettingsElement(entries[next].button);
+          return;
+        }
+        if (event?.key === "Escape") {
+          event.preventDefault?.();
+          event.stopPropagation?.();
+          this.clearSettingsSearch(state, { focus: true });
+        }
+      }
+      // Esc with a query clears the search instead of closing the window. The quick-settings window listens on the
+      // document in the capture phase, so this listener sits one step earlier, on window, while the panel is open.
+      // Only a running plugin with the panel on the page binds it: a BetterDiscord settings panel left open across a
+      // plugin reload would otherwise keep the listener (and the panel) alive with nothing left to remove them.
+      bindSettingsSearchEscape(state) {
+        if (!state || state.searchEscapeListener || typeof window === "undefined" || typeof window.addEventListener !== "function") return;
+        if (!this.isStarted || state.panel && state.panel.isConnected === false) return;
+        state.searchEscapeListener = (event) => {
+          if (state.panel && state.panel.isConnected === false) {
+            this.cleanupSettingsPanelListeners(state.panel);
+            return;
+          }
+          if (event?.key !== "Escape" || !(state.searchQuery || state.searchInput?.value)) return;
+          const active = typeof document !== "undefined" ? document.activeElement : null;
+          if (!active || !(active === state.searchInput || state.results?.contains?.(active))) return;
+          event.preventDefault?.();
+          event.stopPropagation?.();
+          event.stopImmediatePropagation?.();
+          this.clearSettingsSearch(state, { focus: true });
+        };
+        window.addEventListener("keydown", state.searchEscapeListener, true);
+      }
+      openSettingsSearchResult(state, entry) {
+        if (!state || !entry?.row) return false;
+        this.clearSettingsSearch(state, { focus: false, showTab: false });
+        this.showSettingsTab(state, entry.tabId, { clearSearch: false });
+        for (let node = entry.row.parentElement; node && node !== entry.row.closest?.(".dait-settings-tabpanel"); node = node.parentElement) {
+          if (String(node.tagName || "").toUpperCase() === "DETAILS") node.open = true;
+        }
+        entry.row.scrollIntoView?.({ block: "center", behavior: "auto" });
+        entry.row.classList?.add?.("dait-settings-row-found");
+        const timer = setTimeout(() => entry.row.classList?.remove?.("dait-settings-row-found"), 1600);
+        this.unrefTimer(timer);
+        const target = this.getSettingsRowControls(entry.row).find((control) => !control.disabled && !control.hidden && control.getAttribute?.("tabindex") !== "-1") || this.getSettingsRowControls(entry.row).find((control) => !control.disabled && !control.hidden);
+        if (target) return this.focusSettingsElement(target);
+        entry.row.setAttribute?.("tabindex", "-1");
+        return this.focusSettingsElement(entry.row);
+      }
+      // --- Header ---
+      // The one title bar of every settings window: the plugin's own window has no header of its own, so the panel
+      // shows the title and the close button there too.
+      createSettingsHeader() {
+        const header = document.createElement("div");
+        header.className = "dait-settings-header";
+        const logo = document.createElement("div");
+        logo.className = "dait-settings-logo";
+        logo.setAttribute("aria-hidden", "true");
+        logo.textContent = "AI";
+        header.appendChild(logo);
+        const title = document.createElement("h2");
+        title.className = "dait-settings-title";
+        title.textContent = this.t("settingsTitle");
+        header.appendChild(title);
+        const versionChip = document.createElement("span");
+        versionChip.className = "dait-settings-version";
+        versionChip.dataset.daitVersion = PLUGIN_VERSION;
+        versionChip.textContent = `v${PLUGIN_VERSION}`;
+        header.appendChild(versionChip);
+        header.appendChild(this.createSettingsHeaderStatus());
+        const close = document.createElement("button");
+        close.type = "button";
+        close.className = "dait-settings-close";
+        close.title = this.t("settingsClose");
+        close.setAttribute("aria-label", this.t("settingsClose"));
+        close.appendChild(this.createWindowIcon("close"));
+        close.addEventListener("click", (event) => {
+          event?.preventDefault?.();
+          this.closeSettingsWindow(close);
+        });
+        header.appendChild(close);
+        return header;
+      }
+      // An icon for an icon button in a plugin window (css/01-theme-tokens .dait-icon); the button carries the label.
+      createWindowIcon(name) {
+        const icon = document.createElement("span");
+        icon.className = `dait-icon dait-icon-${name}`;
+        icon.setAttribute("aria-hidden", "true");
+        return icon;
+      }
+      createSettingsHero(options = {}) {
+        return this.createSettingsHeader(options);
+      }
+      // "<status> · <translation service>" for the header; the status badge updates live after a test.
+      createSettingsHeaderStatus() {
+        const wrap = document.createElement("span");
+        wrap.className = "dait-settings-header-status";
+        wrap.title = this.t("translationTitle");
+        wrap.appendChild(this.createApiStatusBadge("translation"));
+        const provider = document.createElement("span");
+        provider.className = "dait-settings-header-provider";
+        provider.textContent = this.getProviderDisplayName(this.settings.translation?.provider);
+        wrap.appendChild(provider);
+        return wrap;
+      }
+      createApiStatusBadge(kind) {
+        const status = document.createElement("span");
+        const savedStatus = this.getApiStatus(kind);
+        status.dataset.daitKind = kind;
+        this.renderApiStatusBadge(status, kind, savedStatus.state, this.getApiStatusText(savedStatus.state), savedStatus.message || "");
+        return status;
+      }
+      // What a status badge shows: "Not set up" (with the "needs you" mark) while the service is missing a required
+      // field, the same name the quick panel and the overview cards use; otherwise the saved or live state. A test
+      // that is running still shows as testing.
+      getApiStatusBadgeState(kind, state = this.getApiStatus(kind).state) {
+        if (state === "testing" || !kind) return state;
+        let configured = true;
+        try {
+          configured = Boolean(this.hasUsableApiConfig(kind));
+        } catch {
+          configured = true;
+        }
+        return configured ? state : "unconfigured";
+      }
+      renderApiStatusBadge(badge, kind, state, text = this.getApiStatusText(state), title = "") {
+        if (!badge) return;
+        const shown = this.getApiStatusBadgeState(kind, state);
+        badge.className = `dait-api-status dait-api-status-${shown}`;
+        badge.textContent = shown === state ? text : this.getApiStatusText(shown);
+        badge.title = shown === state ? title || "" : this.t("overviewServiceMissing", { field: this.getSettingLabelForPath(this.getMissingServiceSettingPath(kind)) });
+      }
+      // The close button closes whichever window holds the panel: the plugin's own settings window, or
+      // BetterDiscord's plugin-settings modal (through its own footer button, or Escape as a last resort).
+      closeSettingsWindow(source) {
+        const quickRoot = source?.closest?.(".dait-quick-settings-modal-root");
+        if (quickRoot) {
+          this.closeQuickSettingsPanel(quickRoot, "button");
+          return true;
+        }
+        const modal = source?.closest?.("[data-dait-settings-modal-root='true']") || source?.closest?.("[role='dialog']");
+        const hostButtons = [...modal?.querySelectorAll?.("button") || []].filter((button) => !button.closest?.(".dait-settings"));
+        const hostClose = hostButtons[hostButtons.length - 1];
+        if (hostClose?.click) {
+          hostClose.click();
+          return true;
+        }
+        if (typeof document === "undefined" || typeof KeyboardEvent !== "function") return false;
+        const target = document.activeElement || document.body;
+        target?.dispatchEvent?.(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", keyCode: 27, which: 27, bubbles: true, cancelable: true }));
+        return true;
+      }
+      // --- Panel replacement and sizing ---
       replaceSettingsPanelFrom(source) {
         const panel = source?.closest?.(".dait-settings");
         if (panel) this.replaceSettingsPanelElement(panel);
       }
+      // Rebuilds the panel in place (provider or language change, reset) and keeps the tab, the scroll position and
+      // the focused control.
       replaceSettingsPanelElement(panel, nextPanel = null) {
         if (!panel) return null;
-        nextPanel = nextPanel || this.getSettingsPanel();
+        if (panel.__daitReplacedBy && panel.isConnected === false) return panel.__daitReplacedBy;
+        const scrollTop = Number(panel.__daitSettingsUi?.content?.scrollTop || 0);
+        const active = typeof document !== "undefined" ? document.activeElement : null;
+        const focusPath = active && panel.contains?.(active) ? String(active.dataset?.daitPath || "") : "";
+        const activeTab = panel.__daitSettingsUi?.activeTab;
+        if (activeTab && this.settings?.ui) this.settings.ui.settingsActiveTab = activeTab;
+        nextPanel = nextPanel || this.getSettingsPanel({ quickSettings: panel.dataset?.daitQuickSettings === "true" });
+        ["--dait-host-chrome", "--dait-host-max"].forEach((name) => {
+          const value = panel.style?.getPropertyValue?.(name);
+          if (value) nextPanel.style?.setProperty?.(name, value);
+        });
         this.destroySettingsModalSizing(panel);
         panel.replaceWith?.(nextPanel);
+        panel.__daitReplacedBy = nextPanel;
+        const content = nextPanel.__daitSettingsUi?.content;
+        if (content && scrollTop) content.scrollTop = scrollTop;
+        if (focusPath) {
+          const control = [...nextPanel.querySelectorAll?.(`[data-dait-path='${focusPath}']`) || []].find((node) => !node.closest?.("[hidden]"));
+          this.focusSettingsElement(control);
+        }
+        if (nextPanel.dataset?.daitQuickSettings === "true") this.syncSettingsPanelHeight(nextPanel);
         return nextPanel;
       }
-      scrollToSettingsSection(tab, source = null) {
-        const anchor = String(tab || SETTINGS_SECTION_GENERAL);
-        this.settings.ui.settingsActiveTab = anchor;
-        const panel = source?.closest?.(".dait-settings");
-        const target = panel?.querySelector?.(`[data-dait-settings-section='${anchor}']`);
-        if (!target) return;
-        this.applySettingsActiveSection(panel, anchor, { force: true });
-        target.scrollIntoView?.({ block: "start", behavior: "smooth" });
+      // Kept for the quick-settings window, which calls it after inserting the panel. The tabbed window has no
+      // scroll-spy; this shows the saved tab and fits the panel to its host.
+      bindSettingsScrollTracking(panel, scroller = null) {
+        const state = panel?.__daitSettingsUi;
+        if (state) this.showSettingsTab(state, this.getSettingsActiveTab(), { save: false, resetScroll: false });
+        this.syncSettingsPanelHeight(panel, scroller);
       }
-      applySettingsActiveSection(panel, anchor, options = {}) {
-        if (!panel?.querySelectorAll) return false;
-        const activeAnchor = String(anchor || SETTINGS_SECTION_GENERAL);
-        const force = Boolean(options?.force);
-        if (!force && panel.__daitSettingsAppliedAnchor === activeAnchor) return false;
-        panel.__daitSettingsAppliedAnchor = activeAnchor;
-        const setClass = (node, className, active) => {
-          if (!node?.classList?.toggle) return;
-          if (this.elementHasClassName(node, className) === active) return;
-          node.classList.toggle(className, active);
-        };
-        const setAttribute = (node, name, value) => {
-          if (!node?.setAttribute) return;
-          if (node.getAttribute?.(name) === value) return;
-          node.setAttribute(name, value);
-        };
-        panel?.querySelectorAll?.(".dait-settings-nav-button")?.forEach((button) => {
-          const active = button.dataset?.daitSettingsAnchor === activeAnchor;
-          setClass(button, "dait-settings-nav-active", active);
-          setAttribute(button, "aria-current", active ? "true" : "false");
-        });
-        panel?.querySelectorAll?.("[data-dait-settings-section]")?.forEach((section) => {
-          const active = section.dataset?.daitSettingsSection === activeAnchor;
-          setClass(section, "dait-settings-section-active", active);
-        });
-        return true;
-      }
-      scheduleSettingsScrollTracking(panel) {
-        if (!panel) return;
-        this.clearSettingsScrollTrackingSchedule(panel);
-        const schedule = { raf: null, timers: [] };
-        panel.__daitSettingsScrollTrackingSchedule = schedule;
-        const bind = () => this.bindSettingsScrollTracking(panel);
-        if (typeof requestAnimationFrame === "function") {
-          schedule.raf = requestAnimationFrame(() => {
-            schedule.raf = null;
-            bind();
-          });
-        }
-        schedule.timers.push(setTimeout(bind, 80));
-        schedule.timers.push(setTimeout(bind, 260));
-      }
-      clearSettingsScrollTrackingSchedule(panel) {
-        const schedule = panel?.__daitSettingsScrollTrackingSchedule;
-        if (!schedule) return;
-        if (schedule.raf !== null && schedule.raf !== void 0 && typeof cancelAnimationFrame === "function") {
-          cancelAnimationFrame(schedule.raf);
-        }
-        (schedule.timers || []).forEach((timer) => clearTimeout(timer));
-        panel.__daitSettingsScrollTrackingSchedule = null;
-      }
-      bindSettingsScrollTracking(panel, explicitScroller = null) {
-        if (!panel?.querySelectorAll || panel.isConnected === false) return;
-        const scroller = explicitScroller || this.getSettingsScrollTrackingContainer(panel);
-        if (!scroller?.addEventListener) return;
-        if (panel.__daitSettingsScrollTracking?.scroller === scroller) return;
-        this.cleanupSettingsScrollTracking(panel);
-        const isQuickSettingsScroller = this.elementHasClassName(scroller, "dait-quick-settings-body") || panel.closest?.(".dait-quick-settings-body") === scroller;
-        const state = {
-          scroller,
-          raf: null,
-          saveTimer: null,
-          scrollIdleTimer: null,
-          quickSettingsScroller: isQuickSettingsScroller,
-          sections: this.getSettingsTrackedSections(panel)
-        };
-        const updateActiveSection = () => this.updateSettingsActiveSectionFromScroll(panel, scroller);
-        const onScroll = () => {
-          if (state.quickSettingsScroller) {
-            if (state.scrollIdleTimer) clearTimeout(state.scrollIdleTimer);
-            state.scrollIdleTimer = setTimeout(() => {
-              state.scrollIdleTimer = null;
-              updateActiveSection();
-            }, 140);
-            return;
-          }
-          const schedule = typeof requestAnimationFrame === "function" ? requestAnimationFrame : (callback) => setTimeout(callback, 0);
-          if (state.raf !== null && state.raf !== void 0) return;
-          state.raf = schedule(() => {
-            state.raf = null;
-            updateActiveSection();
-          });
-        };
-        state.onScroll = onScroll;
-        panel.__daitSettingsScrollTracking = state;
-        scroller.addEventListener("scroll", onScroll, { passive: true });
-        this.syncSettingsScrollPosition(panel, scroller, "auto");
-      }
-      syncSettingsScrollPosition(panel, scroller = null, behavior = "auto") {
-        if (!panel?.querySelector) return;
-        const active = this.getSettingsActiveTab();
-        const target = panel.querySelector?.(`[data-dait-settings-section='${active}']`);
-        this.applySettingsActiveSection(panel, active, { force: true });
-        if (!target) return;
-        const container = scroller || this.getSettingsScrollTrackingContainer(panel);
-        if (container) {
-          const offset = Number(target.offsetTop);
-          if (Number.isFinite(offset)) {
-            container.scrollTop = Math.max(0, offset - 12);
-            return;
-          }
-        }
-        if (typeof target.scrollIntoView === "function") {
-          target.scrollIntoView({ block: "start", behavior });
-        }
-      }
-      getSettingsScrollTrackingContainer(panel) {
-        const quickBody = panel?.closest?.(".dait-quick-settings-body");
-        if (quickBody) return quickBody;
-        try {
-          return this.getSettingsScrollContainer(panel);
-        } catch {
-          return null;
-        }
-      }
-      updateSettingsActiveSectionFromScroll(panel, scroller) {
-        const state = panel?.__daitSettingsScrollTracking;
-        const anchor = this.getSettingsSectionNearestScrollTop(panel, scroller, state?.sections);
-        if (!anchor) return;
-        if (panel.__daitSettingsAppliedAnchor === anchor) return;
-        this.applySettingsActiveSection(panel, anchor);
-      }
-      getSettingsTrackedSections(panel) {
-        return [...panel?.querySelectorAll?.("[data-dait-settings-section]") || []].filter((section) => SETTINGS_SECTION_IDS.includes(section.dataset?.daitSettingsSection));
-      }
-      getSettingsSectionNearestScrollTop(panel, scroller, trackedSections = null) {
-        const sections = (Array.isArray(trackedSections) && trackedSections.length ? trackedSections : this.getSettingsTrackedSections(panel)).filter((section) => section?.isConnected !== false && SETTINGS_SECTION_IDS.includes(section.dataset?.daitSettingsSection));
-        if (!sections.length) return "";
-        const scrollerRect = scroller?.getBoundingClientRect?.();
-        const top = Number(scrollerRect?.top || 0);
-        let best = null;
-        sections.forEach((section) => {
-          const rect = section.getBoundingClientRect?.();
-          const offsetTop = Number.isFinite(Number(rect?.top)) ? Number(rect.top) - top : Number(section.offsetTop || 0) - Number(scroller?.scrollTop || 0);
-          const score = offsetTop <= 36 ? Math.abs(offsetTop - 12) : offsetTop + 48;
-          if (!best || score < best.score) best = { section, score };
-        });
-        return best?.section?.dataset?.daitSettingsSection || "";
-      }
-      flushSettingsActiveTabSave(panel) {
-        const state = panel?.__daitSettingsScrollTracking;
-        if (!state?.saveTimer) return;
-        clearTimeout(state.saveTimer);
-        state.saveTimer = null;
-      }
-      cleanupSettingsScrollTracking(panel) {
-        this.clearSettingsScrollTrackingSchedule(panel);
-        const state = panel?.__daitSettingsScrollTracking;
-        if (!state) return;
-        this.flushSettingsActiveTabSave(panel);
-        if (state.scrollIdleTimer) {
-          clearTimeout(state.scrollIdleTimer);
-          state.scrollIdleTimer = null;
-        }
-        if (state.raf !== null && state.raf !== void 0 && typeof cancelAnimationFrame === "function") {
-          cancelAnimationFrame(state.raf);
-        }
-        state.scroller?.removeEventListener?.("scroll", state.onScroll, { passive: true });
-        panel.__daitSettingsScrollTracking = null;
-      }
-      createSettingsContentList() {
-        const page = document.createElement("div");
-        page.className = "dait-settings-page dait-settings-page-all";
-        page.dataset.daitSettingsPage = "all";
-        const general = this.createGeneralSection();
-        general.dataset.daitSettingsSection = SETTINGS_SECTION_GENERAL;
-        page.appendChild(general);
-        const polish = this.createTaskSection("polish", this.t("polishTitle"), this.t("polishDescription"));
-        polish.dataset.daitSettingsSection = SETTINGS_SECTION_POLISH;
-        page.appendChild(polish);
-        const polishControls = this.createPolishControlsSection();
-        polishControls.dataset.daitSettingsSection = SETTINGS_SECTION_POLISH_CONTROLS;
-        page.appendChild(polishControls);
-        const translation = this.createTaskSection("translation", this.t("translationTitle"), this.t("translationDescription"));
-        translation.dataset.daitSettingsSection = SETTINGS_SECTION_TRANSLATION;
-        page.appendChild(translation);
-        const translationControls = this.createTranslationControlsSection();
-        translationControls.dataset.daitSettingsSection = SETTINGS_SECTION_TRANSLATION_CONTROLS;
-        page.appendChild(translationControls);
-        const autoTranslate = this.createAutoTranslateSection();
-        autoTranslate.dataset.daitSettingsSection = SETTINGS_SECTION_AUTO_TRANSLATE;
-        page.appendChild(autoTranslate);
-        const publicBilingual = this.createPublicBilingualSection();
-        publicBilingual.dataset.daitSettingsSection = SETTINGS_SECTION_PUBLIC_BILINGUAL;
-        page.appendChild(publicBilingual);
-        const display = this.createDisplayBehaviorSection();
-        display.dataset.daitSettingsSection = SETTINGS_SECTION_DISPLAY;
-        page.appendChild(display);
-        const cache = this.createCacheSection();
-        cache.dataset.daitSettingsSection = SETTINGS_SECTION_CACHE;
-        page.appendChild(cache);
-        const diagnostics = this.createDiagnosticsSection();
-        diagnostics.dataset.daitSettingsSection = SETTINGS_SECTION_DIAGNOSTICS;
-        page.appendChild(diagnostics);
-        if (this.settings.ui.testModeEnabled) {
-          const testMode = this.createTestModeSection();
-          testMode.dataset.daitSettingsSection = SETTINGS_SECTION_DIAGNOSTICS;
-          page.appendChild(testMode);
-        }
-        return page;
+      syncSettingsScrollPosition(panel, scroller = null) {
+        const state = panel?.__daitSettingsUi;
+        if (state) this.showSettingsTab(state, this.getSettingsActiveTab(), { save: false });
+        this.syncSettingsPanelHeight(panel, scroller);
       }
       scheduleSettingsModalSizing(panel) {
         this.clearSettingsModalSizingSchedule(panel);
@@ -14283,6 +19746,8 @@ var require_discord_ai_translator = __commonJS({
         schedule.timers.push(setTimeout(apply, 250));
         if (panel?.isConnected) this.watchSettingsModalSizingCleanup(panel);
       }
+      // BetterDiscord's plugin-settings modal is narrow; widen it to a moderate window (at most 920 px). The
+      // panel works without this too: below 640 px its tab rail becomes a row and rows stack.
       applySettingsModalSizing(panel) {
         if (!this.isStarted || !panel?.isConnected || typeof window === "undefined") {
           this.cleanupSettingsModalSizing(panel);
@@ -14291,7 +19756,7 @@ var require_discord_ai_translator = __commonJS({
         if (panel.closest?.(".dait-quick-settings-dialog")) return;
         const documentWidth = typeof document !== "undefined" ? Number(document.documentElement?.clientWidth || 0) : 0;
         const viewportWidth = Number(window.innerWidth || documentWidth || 0);
-        const desiredWidth = Math.max(760, Math.min(1280, viewportWidth ? viewportWidth - 72 : 1280));
+        const desiredWidth = Math.min(SETTINGS_WINDOW_MAX_WIDTH, viewportWidth ? viewportWidth - 48 : SETTINGS_WINDOW_MAX_WIDTH);
         let current = panel.parentElement;
         let marked = 0;
         let root = null;
@@ -14299,9 +19764,9 @@ var require_discord_ai_translator = __commonJS({
         while (current && current !== document.body && marked < 5) {
           const rect = current.getBoundingClientRect?.();
           const width = Number(rect?.width || 0);
+          if (viewportWidth && width >= viewportWidth - 1) break;
           if (!width || width <= desiredWidth + 80) {
             if (current.dataset.daitSettingsModal !== "true") current.dataset.daitSettingsModal = "true";
-            this.applyDiscordThemeData(current, panel);
             root = current;
             markedNodes.push(current);
             marked++;
@@ -14310,7 +19775,6 @@ var require_discord_ai_translator = __commonJS({
         }
         if (root) {
           if (root.dataset.daitSettingsModalRoot !== "true") root.dataset.daitSettingsModalRoot = "true";
-          this.applyDiscordThemeData(root, panel);
           if (!markedNodes.includes(root)) markedNodes.push(root);
         }
         const nextNodes = new Set(markedNodes);
@@ -14319,7 +19783,96 @@ var require_discord_ai_translator = __commonJS({
           if (!nextNodes.has(node)) this.cleanupSettingsModalNode(node);
         });
         panel.__daitSettingsModalMarkedNodes = markedNodes;
+        this.syncSettingsPanelHeight(panel);
         this.watchSettingsModalSizingCleanup(panel);
+      }
+      // The panel is as tall as the window allows (min(760px, 100vh - 64px)) minus what its host draws around it:
+      // BetterDiscord's modal header and footer, or the quick-settings window's header and footer. The content pane
+      // scrolls inside, so the header and the tab rail stay put.
+      syncSettingsPanelHeight(panel, scroller = null) {
+        if (!panel?.isConnected || !panel.style?.setProperty || typeof getComputedStyle !== "function") return false;
+        this.bindSettingsTabOrientation(panel);
+        const host = scroller || this.getSettingsHostScroller(panel);
+        const frame = panel.closest?.(".dait-quick-settings-dialog") || panel.closest?.("[data-dait-settings-modal-root='true']") || host;
+        if (!host || !frame?.getBoundingClientRect) return false;
+        try {
+          const hostStyle = getComputedStyle(host);
+          const hostRect = host.getBoundingClientRect();
+          const panelRect = panel.getBoundingClientRect();
+          const above = Math.max(0, panelRect.top - hostRect.top - Number(host.clientTop || 0) + Number(host.scrollTop || 0));
+          const below = Number.parseFloat(hostStyle.paddingBottom) || 0;
+          const chrome = frame.getBoundingClientRect().height - Number(host.clientHeight || 0) + above + below;
+          if (Number.isFinite(chrome) && chrome >= 0) panel.style.setProperty("--dait-host-chrome", `${Math.ceil(chrome)}px`);
+          const frameMax = Number.parseFloat(getComputedStyle(frame).maxHeight);
+          if (Number.isFinite(frameMax) && frameMax > 0) panel.style.setProperty("--dait-host-max", `${Math.floor(frameMax)}px`);
+          else panel.style.removeProperty?.("--dait-host-max");
+          this.bindSettingsPanelResize(panel);
+          return true;
+        } catch {
+          return false;
+        }
+      }
+      // The tab rail is a vertical list, or a row once the panel is 760 px wide or less (the @container rule in
+      // css/04-settings.js); aria-orientation follows the panel's width as it changes.
+      bindSettingsTabOrientation(panel) {
+        this.syncSettingsTabOrientation(panel);
+        if (!panel || panel.__daitSettingsOrientationObserver || typeof ResizeObserver !== "function") return;
+        try {
+          const observer = new ResizeObserver(() => this.syncSettingsTabOrientation(panel));
+          observer.observe(panel);
+          panel.__daitSettingsOrientationObserver = observer;
+        } catch {
+        }
+      }
+      syncSettingsTabOrientation(panel) {
+        const tablist = panel?.__daitSettingsUi?.tablist;
+        const width = Number(panel?.clientWidth || panel?.getBoundingClientRect?.()?.width || 0);
+        if (!tablist?.setAttribute || !width) return "";
+        const orientation = width <= 760 ? "horizontal" : "vertical";
+        if (tablist.getAttribute?.("aria-orientation") !== orientation) tablist.setAttribute("aria-orientation", orientation);
+        return orientation;
+      }
+      getSettingsHostScroller(panel) {
+        for (let node = panel?.parentElement; node && node !== document.body; node = node.parentElement) {
+          try {
+            if (/(auto|scroll)/.test(getComputedStyle(node).overflowY)) return node;
+          } catch {
+            return null;
+          }
+        }
+        return null;
+      }
+      // A host whose max-height follows the viewport changes size with the window.
+      bindSettingsPanelResize(panel) {
+        if (!panel || panel.__daitSettingsResize || typeof window === "undefined" || typeof window.addEventListener !== "function") return;
+        const state = { raf: null };
+        state.listener = () => {
+          if (state.raf !== null || typeof requestAnimationFrame !== "function") return;
+          state.raf = requestAnimationFrame(() => {
+            state.raf = null;
+            if (panel.isConnected) this.syncSettingsPanelHeight(panel);
+            else this.cleanupSettingsPanelListeners(panel);
+          });
+        };
+        panel.__daitSettingsResize = state;
+        window.addEventListener("resize", state.listener, { passive: true });
+      }
+      cleanupSettingsPanelListeners(panel) {
+        const resize = panel?.__daitSettingsResize;
+        if (resize) {
+          if (resize.raf !== null && typeof cancelAnimationFrame === "function") cancelAnimationFrame(resize.raf);
+          if (typeof window !== "undefined") window.removeEventListener?.("resize", resize.listener, { passive: true });
+          panel.__daitSettingsResize = null;
+        }
+        if (panel?.__daitSettingsOrientationObserver) {
+          panel.__daitSettingsOrientationObserver.disconnect?.();
+          panel.__daitSettingsOrientationObserver = null;
+        }
+        const state = panel?.__daitSettingsUi;
+        if (state?.searchEscapeListener) {
+          if (typeof window !== "undefined") window.removeEventListener?.("keydown", state.searchEscapeListener, true);
+          state.searchEscapeListener = null;
+        }
       }
       cleanupSettingsModalSizing(panel) {
         const nodes = new Set(Array.isArray(panel?.__daitSettingsModalMarkedNodes) ? panel.__daitSettingsModalMarkedNodes : []);
@@ -14344,7 +19897,8 @@ var require_discord_ai_translator = __commonJS({
         if (panel) panel.__daitSettingsModalSizingSchedule = null;
       }
       destroySettingsModalSizing(panel) {
-        this.cleanupSettingsScrollTracking(panel);
+        this.clearHotkeyRecordingWithin(panel);
+        this.cleanupSettingsPanelListeners(panel);
         this.clearSettingsModalSizingSchedule(panel);
         if (panel?.__daitSettingsModalCleanupObserver) {
           panel.__daitSettingsModalCleanupObserver.disconnect?.();
@@ -14356,7 +19910,8 @@ var require_discord_ai_translator = __commonJS({
         if (!panel?.isConnected || panel.__daitSettingsModalCleanupObserver || typeof MutationObserver !== "function" || typeof document === "undefined" || !document.body) return;
         const observer = new MutationObserver(() => {
           if (panel.isConnected) return;
-          this.cleanupSettingsScrollTracking(panel);
+          this.clearHotkeyRecordingWithin(panel);
+          this.cleanupSettingsPanelListeners(panel);
           this.clearSettingsModalSizingSchedule(panel);
           this.cleanupSettingsModalSizing(panel);
           observer.disconnect?.();
@@ -14365,66 +19920,457 @@ var require_discord_ai_translator = __commonJS({
         observer.observe(document.body, { childList: true, subtree: true });
         panel.__daitSettingsModalCleanupObserver = observer;
       }
-      createSettingsHero() {
-        const hero = document.createElement("div");
-        hero.className = "dait-settings-hero";
-        const mark = document.createElement("div");
-        mark.className = "dait-settings-mark";
-        mark.textContent = "AI";
-        hero.appendChild(mark);
-        const copy = document.createElement("div");
-        copy.className = "dait-settings-copy";
-        const title = document.createElement("h2");
-        title.textContent = this.t("settingsTitle");
-        copy.appendChild(title);
-        const note = document.createElement("p");
-        note.className = "dait-note";
-        note.textContent = this.t("settingsNote");
-        copy.appendChild(note);
-        const chips = document.createElement("div");
-        chips.className = "dait-settings-chips";
-        const versionChip = document.createElement("span");
-        versionChip.className = "dait-settings-version";
-        versionChip.dataset.daitVersion = PLUGIN_VERSION;
-        versionChip.textContent = `v${PLUGIN_VERSION}`;
-        chips.appendChild(versionChip);
-        [this.t("polishTitle"), this.t("translationTitle"), "DeepSeek V4"].forEach((text) => {
-          const chip = document.createElement("span");
-          chip.textContent = text;
-          chips.appendChild(chip);
+      // --- Tab pages (UI-SPEC information architecture) ---
+      createSettingsGroup(titleText, key, options = {}) {
+        const group = document.createElement("section");
+        group.className = `dait-settings-group dait-settings-group-${key}${options.className ? ` ${options.className}` : ""}`;
+        group.dataset.daitSettingsGroup = key;
+        group.dataset.daitSearchGroup = titleText || "";
+        if (titleText) {
+          const title = document.createElement("h3");
+          title.className = "dait-settings-group-title";
+          title.textContent = titleText;
+          group.appendChild(title);
+        }
+        if (options.description) {
+          const note = document.createElement("p");
+          note.className = "dait-settings-group-note";
+          note.textContent = options.description;
+          group.appendChild(note);
+        }
+        return group;
+      }
+      createOverviewTabContent() {
+        return [this.createOverviewStatusSection(), this.createGeneralSection()];
+      }
+      // Setup checklist (hidden once everything is done) and the status of the two services, each with a Test button.
+      // Rebuilt in place when the overview is shown, after a test and when a setting it reports on changes.
+      createOverviewStatusSection() {
+        const section = document.createElement("section");
+        section.className = "dait-settings-group dait-overview-status";
+        section.dataset.daitSettingsGroup = "overview-status";
+        section.dataset.daitSearchGroup = "";
+        const items = this.getOverviewSetupItems();
+        const done = items.filter((item) => item.done).length;
+        if (done < items.length) section.appendChild(this.createOverviewSetupCard(items, done));
+        const title = document.createElement("h3");
+        title.className = "dait-settings-group-title";
+        title.textContent = this.t("overviewServicesTitle");
+        section.appendChild(title);
+        const cards = document.createElement("div");
+        cards.className = "dait-service-cards";
+        ["translation", "polish"].forEach((kind) => cards.appendChild(this.createOverviewServiceCard(kind)));
+        section.appendChild(cards);
+        return section;
+      }
+      // One entry per setup step: { id, label, state, done, detail, action }. state is the icon: done, todo, error,
+      // busy or off (a step that does not apply, which counts as done). action: { key, text, run } or
+      // { key, text, tab, path } (opens that tab and focuses the control).
+      getOverviewSetupItems() {
+        const translation = this.settings.translation || {};
+        const providerName = this.getProviderDisplayName(translation.provider);
+        const enabled = translation.enabled !== false;
+        const configured = enabled && this.hasUsableApiConfig("translation");
+        const status = this.getApiStatus("translation");
+        const routeKey = this.getCurrentRouteKey();
+        const hasChannel = Boolean(this.getChannelAutoTranslatePolicyStorageKey(routeKey));
+        const rule = hasChannel ? this.getCurrentChannelAutoTranslatePolicyMode(routeKey) : "";
+        const autoOn = Boolean(this.settings.ui?.autoTranslateMessages);
+        const target = String(translation.targetLanguage || "").trim();
+        const items = [];
+        items.push({
+          id: "service",
+          label: this.t("overviewSetupService"),
+          done: configured,
+          state: configured ? "done" : "todo",
+          detail: !enabled ? this.t("overviewSetupServiceOff") : configured ? providerName : this.t("overviewSetupServiceMissing", { provider: providerName }),
+          action: configured ? null : { key: "setup", text: this.t("overviewSetUp"), tab: SETTINGS_TAB_TRANSLATE, path: enabled ? this.getMissingServiceSettingPath("translation") : "translation.enabled" }
         });
-        copy.appendChild(chips);
-        hero.appendChild(copy);
-        return hero;
+        const tested = status.state === "success";
+        items.push({
+          id: "test",
+          label: this.t("overviewSetupTest"),
+          done: tested,
+          state: tested ? "done" : status.state === "failed" ? "error" : status.state === "testing" ? "busy" : "todo",
+          detail: !configured && !tested ? this.t("overviewSetupTestBlocked") : this.getApiTestSummaryText("translation"),
+          action: tested || !configured ? null : { key: "test", text: this.t("apiTest"), run: "test" }
+        });
+        items.push({
+          id: "target",
+          label: this.t("overviewSetupTarget"),
+          done: Boolean(target),
+          state: target ? "done" : "todo",
+          detail: target ? this.getDisplayLanguage(target) : "",
+          action: target ? null : { key: "setup", text: this.t("overviewSetUp"), tab: SETTINGS_TAB_TRANSLATE, path: "translation.targetLanguage" }
+        });
+        const autoDone = autoOn || rule === "enabled";
+        items.push({
+          id: "auto",
+          label: this.t("overviewSetupAuto"),
+          done: autoDone,
+          state: autoDone ? "done" : "todo",
+          detail: autoOn ? this.t("overviewSetupAutoOn") : autoDone ? this.t("overviewSetupAutoChannel") : this.t("overviewSetupAutoOff"),
+          action: autoDone ? null : { key: "auto", text: this.t("overviewTurnOn"), run: "autoTranslate" }
+        });
+        const channelLabel = hasChannel ? this.getSettingsChannelLabel(routeKey) : "";
+        const channelDetail = !hasChannel ? this.t("overviewSetupChannelNone") : rule === "disabled" ? this.t("overviewSetupChannelNever") : rule === "enabled" ? this.t("channelRuleAlways") : this.t("channelRuleFollow");
+        items.push({
+          id: "channel",
+          label: this.t("overviewSetupChannel"),
+          done: rule !== "disabled",
+          state: !hasChannel ? "off" : rule === "disabled" ? "todo" : "done",
+          detail: channelLabel ? `${channelLabel} · ${channelDetail}` : channelDetail,
+          action: rule === "disabled" ? { key: "channel", text: this.t("overviewChange"), tab: SETTINGS_TAB_OVERVIEW, path: "ui.currentChannelAutoTranslatePolicy" } : null
+        });
+        return items;
+      }
+      createOverviewSetupCard(items, done) {
+        const card = document.createElement("div");
+        card.className = "dait-setup-card";
+        const titleId = this.createSettingsControlId("dait-setup-title");
+        card.setAttribute("role", "region");
+        card.setAttribute("aria-labelledby", titleId);
+        const head = document.createElement("div");
+        head.className = "dait-setup-head";
+        const title = document.createElement("h3");
+        title.className = "dait-setup-title";
+        title.id = titleId;
+        title.textContent = this.t("overviewSetupTitle", { count: items.length - done });
+        head.appendChild(title);
+        const progress = document.createElement("span");
+        progress.className = "dait-setup-progress";
+        progress.textContent = this.t("overviewSetupProgress", { done, total: items.length });
+        head.appendChild(progress);
+        card.appendChild(head);
+        const list = document.createElement("ul");
+        list.className = "dait-setup-list";
+        items.forEach((item) => {
+          const entry = document.createElement("li");
+          entry.className = `dait-setup-item dait-setup-item-${item.state}`;
+          entry.dataset.daitSetupItem = item.id;
+          const icon = document.createElement("span");
+          icon.className = "dait-setup-icon";
+          const iconText = document.createElement("span");
+          iconText.className = "dait-visually-hidden";
+          iconText.textContent = this.t(item.done ? "overviewStateDone" : "overviewStateTodo");
+          icon.appendChild(iconText);
+          entry.appendChild(icon);
+          const label = document.createElement("span");
+          label.className = "dait-setup-label";
+          label.textContent = item.label;
+          entry.appendChild(label);
+          const detail = document.createElement("span");
+          detail.className = "dait-setup-detail";
+          detail.textContent = item.detail || "";
+          detail.title = item.detail || "";
+          entry.appendChild(detail);
+          if (item.action) entry.appendChild(this.createOverviewActionButton(item.action, item.label));
+          list.appendChild(entry);
+        });
+        card.appendChild(list);
+        return card;
+      }
+      createOverviewActionButton(action, context = "") {
+        const button = this.createSmallButton(action.text, action.run === "autoTranslate" || action.run === "test" ? "primary" : "outline");
+        button.dataset.daitOverviewAction = action.key;
+        if (context) button.setAttribute("aria-label", `${action.text}: ${context}`);
+        button.addEventListener("click", (event) => {
+          event?.preventDefault?.();
+          if (action.run === "test") {
+            this.runOverviewApiTest("translation", button);
+            return;
+          }
+          if (action.run === "autoTranslate") {
+            this.setSetting("ui.autoTranslateMessages", true);
+            this.refreshOverviewStatusSection(button.closest?.(".dait-settings") || null);
+            return;
+          }
+          this.openSettingsControl(button, action.tab, action.path);
+        });
+        return button;
+      }
+      // Service card: task and service name, the connection state (the same live badge as the connection card), a
+      // detail line and Test, or "Set up" while the service is off or missing a field.
+      createOverviewServiceCard(kind) {
+        const task = this.settings[kind] || {};
+        const card = document.createElement("div");
+        card.className = "dait-service-card";
+        card.dataset.daitKind = kind;
+        const text = document.createElement("div");
+        text.className = "dait-service-card-text";
+        const title = document.createElement("div");
+        title.className = "dait-service-card-title";
+        title.textContent = `${this.t(kind === "polish" ? "overviewCardPolish" : "overviewCardTranslation")} · ${this.getProviderDisplayName(task.provider)}`;
+        text.appendChild(title);
+        const line = document.createElement("div");
+        line.className = "dait-service-card-status";
+        const enabled = task.enabled !== false;
+        const configured = enabled && this.hasUsableApiConfig(kind);
+        let action = null;
+        if (!enabled || !configured) {
+          const mark = document.createElement("span");
+          mark.className = `dait-status-mark dait-status-mark-${enabled ? "needs" : "off"}`;
+          mark.textContent = enabled ? this.t("overviewServiceMissing", { field: this.getSettingLabelForPath(this.getMissingServiceSettingPath(kind)) }) : this.t("overviewServiceOff");
+          line.appendChild(mark);
+          action = { key: "setup", text: this.t("overviewSetUp"), tab: kind === "polish" ? SETTINGS_TAB_COMPOSE : SETTINGS_TAB_TRANSLATE, path: enabled ? this.getMissingServiceSettingPath(kind) : `${kind}.enabled` };
+        } else {
+          line.appendChild(this.createApiStatusBadge(kind));
+          line.appendChild(this.createApiTestDetail(kind));
+        }
+        text.appendChild(line);
+        card.appendChild(text);
+        if (action) {
+          const setup = this.createOverviewActionButton(action, title.textContent);
+          card.appendChild(setup);
+        } else {
+          const test = this.createSmallButton(this.t("apiTest"));
+          test.dataset.daitAction = "apiTest";
+          test.dataset.daitKind = kind;
+          test.setAttribute("aria-label", `${this.t("apiTest")}: ${title.textContent}`);
+          test.addEventListener("click", (event) => {
+            event?.preventDefault?.();
+            this.runOverviewApiTest(kind, test, line.querySelector?.(".dait-api-status"));
+          });
+          card.appendChild(test);
+        }
+        return card;
+      }
+      // A test started from the overview: the card's badge shows it, then every view of this task's status follows.
+      runOverviewApiTest(kind, button, badge = null) {
+        const status = badge || this.createApiStatusBadge(kind);
+        const run = Promise.resolve(this.testApiConnection(kind, button, status));
+        return run.finally(() => this.refreshApiTestViews(kind));
+      }
+      // The first field a task's service still needs, or its provider select.
+      getMissingServiceSettingPath(kind) {
+        const config = this.getTaskConfig(kind) || {};
+        const provider = String(config.provider || "");
+        const defaults = this.getProviderDefaults(provider) || {};
+        const ui = this.getProviderCapabilities(provider)?.ui || {};
+        if (provider === "baidu") {
+          if (!String(config.appId || "").trim()) return `${kind}.appId`;
+          if (!String(config.secretKey || "").trim()) return `${kind}.secretKey`;
+        }
+        if (provider === "googleCloud" && !this.getEffectiveRequestApiKey(config)) return "googleTranslate.keyPoolText";
+        if (ui.apiKey && !this.isProviderApiKeyOptional(provider) && !String(config.apiKey || "").trim()) return `${kind}.apiKey`;
+        if (ui.endpoint && !String(config.endpoint || defaults.endpoint || "").trim()) return `${kind}.endpoint`;
+        if (ui.model && !String(config.model || defaults.model || "").trim()) return `${kind}.model`;
+        return `${kind}.provider`;
+      }
+      getSettingLabelForPath(path) {
+        const field = String(path || "").split(".").pop();
+        const keys = {
+          apiKey: "apiKey",
+          endpoint: "endpoint",
+          model: "model",
+          appId: "baiduAppId",
+          secretKey: "baiduSecretKey",
+          keyPoolText: "googleTranslateKeys",
+          provider: "provider",
+          enabled: "enabled"
+        };
+        return this.t(keys[field] || "provider");
+      }
+      // "#general" for the current channel when Discord's store knows it.
+      getSettingsChannelLabel(routeKey = this.getCurrentRouteKey()) {
+        if (!this.getChannelAutoTranslatePolicyStorageKey(routeKey)) return "";
+        const channelId = String(routeKey || "").split(":")[1] || "";
+        try {
+          const name = String(this.getDiscordNamedStore?.("ChannelStore")?.getChannel?.(channelId)?.name || "").trim();
+          return name ? `#${name}` : "";
+        } catch {
+          return "";
+        }
+      }
+      // Opens a tab and brings one control into view with focus (the overview's "Set up" / "Change" buttons).
+      openSettingsControl(source, tabId, path) {
+        const panel = source?.closest?.(".dait-settings");
+        const state = panel?.__daitSettingsUi;
+        if (!state) return false;
+        const tab = state.tabs.find((item) => item.id === normalizeSettingsTabId(tabId)) || state.tabs[0];
+        const control = [...tab.tabpanel?.querySelectorAll?.(`[data-dait-path='${path}']`) || []][0] || null;
+        const row = control?.closest?.(".dait-settings-row") || null;
+        if (!row) {
+          this.showSettingsTab(state, tab.id);
+          return false;
+        }
+        return this.openSettingsSearchResult(state, { row, tabId: tab.id });
+      }
+      // Rebuilds the overview status sections under root (a panel, a tab page, or the whole document), keeping the
+      // keyboard focus on the same kind of button when it was inside.
+      refreshOverviewStatusSection(root = null) {
+        const scope = root || (typeof document !== "undefined" ? document : null);
+        let sections = [];
+        try {
+          sections = [...scope?.querySelectorAll?.(".dait-overview-status") || []];
+        } catch {
+          sections = [];
+        }
+        sections = sections.filter((section) => section?.replaceWith && !section.__daitReplaced && section.isConnected !== false);
+        sections.forEach((section) => {
+          section.__daitReplaced = true;
+          const active = typeof document !== "undefined" ? document.activeElement : null;
+          const hadFocus = Boolean(active && section.contains?.(active));
+          const focusAction = hadFocus ? String(active.dataset?.daitOverviewAction || active.dataset?.daitAction || "") : "";
+          const focusKind = hadFocus ? String(active.closest?.(".dait-service-card")?.dataset?.daitKind || "") : "";
+          const next = this.createOverviewStatusSection();
+          section.replaceWith(next);
+          if (!hadFocus) return;
+          const candidates = [...next.querySelectorAll?.("button") || []];
+          const target = candidates.find((button) => (button.dataset?.daitOverviewAction || button.dataset?.daitAction) === focusAction && String(button.closest?.(".dait-service-card")?.dataset?.daitKind || "") === focusKind) || candidates.find((button) => !button.disabled);
+          this.focusSettingsElement(target);
+        });
+        return sections.length;
+      }
+      // Setting writes the overview reports on refresh it once, after the current event.
+      scheduleOverviewStatusRefresh(path = "") {
+        if (!/^(translation|polish|googleTranslate)\./.test(path) && !["ui.autoTranslateMessages", "ui.currentChannelAutoTranslatePolicy"].includes(path)) return;
+        if (this.overviewStatusRefreshTimer || typeof setTimeout !== "function") return;
+        this.overviewStatusRefreshTimer = setTimeout(() => {
+          this.overviewStatusRefreshTimer = null;
+          if (!this.isStarted || typeof document === "undefined") return;
+          this.refreshOverviewStatusSection();
+        }, 0);
+        this.unrefTimer(this.overviewStatusRefreshTimer);
+      }
+      // After a connection test: every badge, detail line and overview of this task shows the new state.
+      refreshApiTestViews(kind) {
+        if (typeof document === "undefined") return;
+        const status = this.getApiStatus(kind);
+        let badges = [];
+        let details = [];
+        try {
+          badges = [...document.querySelectorAll?.(`.dait-api-status[data-dait-kind='${kind}']`) || []];
+          details = [...document.querySelectorAll?.(`.dait-api-test-detail[data-dait-kind='${kind}']`) || []];
+        } catch {
+        }
+        badges.forEach((badge) => this.renderApiStatusBadge(badge, kind, status.state, this.getApiStatusText(status.state), status.message || ""));
+        details.forEach((detail) => this.syncApiTestDetail(detail, kind));
+        this.refreshOverviewStatusSection();
+      }
+      // Text after the status badge: "Hy-MT2 · 820 ms · just now" after a passed test, the error after a failed one.
+      createApiTestDetail(kind) {
+        const detail = document.createElement("span");
+        detail.className = "dait-api-test-detail";
+        detail.dataset.daitKind = kind;
+        this.syncApiTestDetail(detail, kind);
+        return detail;
+      }
+      syncApiTestDetail(detail, kind) {
+        if (!detail) return;
+        const status = this.getApiStatus(kind);
+        const result = this.getLastApiTestResult(kind);
+        let text = "";
+        if (status.state === "success") text = result?.ok ? this.formatApiTestResult(result) : "";
+        else if (status.state === "failed") text = status.message || result?.message || "";
+        detail.dataset.daitFor = status.state;
+        detail.textContent = text;
+        detail.title = text;
+        detail.hidden = !text;
+      }
+      // "Hy-MT2 · 820 ms · just now"
+      formatApiTestResult(result) {
+        if (!result) return "";
+        return [
+          result.model || "",
+          this.formatLatency(result.latencyMs),
+          this.formatTimeAgo(result.at)
+        ].filter(Boolean).join(" · ");
+      }
+      // One line for the overview checklist: the result of the last test, or that none ran.
+      getApiTestSummaryText(kind) {
+        const status = this.getApiStatus(kind);
+        const result = this.getLastApiTestResult(kind);
+        if (status.state === "success") {
+          const details = result?.ok ? this.formatApiTestResult(result) : "";
+          return details ? `${this.t("apiStatusSuccess")} · ${details}` : this.t("apiStatusSuccess");
+        }
+        if (status.state === "failed") return status.message || this.t("apiStatusFailed");
+        if (status.state === "testing") return this.t("apiStatusTesting");
+        return this.t("apiTestNotYet");
+      }
+      formatLatency(ms) {
+        if (ms === null || ms === void 0 || ms === "") return "";
+        const value = Number(ms);
+        if (!Number.isFinite(value) || value < 0) return "";
+        if (value < 1e3) return `${Math.round(value)} ms`;
+        return `${(value / 1e3).toFixed(1)} s`;
+      }
+      formatTimeAgo(at, now = Date.now()) {
+        const time = Number(at);
+        if (!Number.isFinite(time) || time <= 0) return "";
+        const elapsed = Math.max(0, now - time);
+        if (elapsed < 60 * 1e3) return this.t("apiTestJustNow");
+        if (elapsed < 60 * 60 * 1e3) return this.t("apiTestMinutesAgo", { count: Math.floor(elapsed / 6e4) });
+        if (elapsed < 24 * 60 * 60 * 1e3) return this.t("apiTestHoursAgo", { count: Math.floor(elapsed / 36e5) });
+        return this.formatDiagnosticSummaryTime(new Date(time).toISOString());
       }
       createGeneralSection() {
-        const section = document.createElement("section");
-        section.className = "dait-settings-section dait-section-general";
-        const title = document.createElement("h3");
-        title.textContent = this.t("generalTitle");
-        section.appendChild(title);
-        section.appendChild(this.createSelectRow("ui.language", this.t("interfaceLanguage"), [
+        const group = this.createSettingsGroup(this.t("settingsGroupCommon"), "general");
+        group.appendChild(this.createCheckboxRow("ui.autoTranslateMessages", this.t("autoTranslateMessages"), { description: this.t("autoTranslateMessagesDesc") }));
+        group.appendChild(this.createCurrentChannelPolicyRow());
+        group.appendChild(this.createSelectRow("ui.language", this.t("interfaceLanguage"), [
           ["zh-CN", this.t("languageZh")],
           ["en", this.t("languageEn")]
         ], { description: this.t("interfaceLanguageDesc") }));
+        return group;
+      }
+      createTranslateTabContent() {
+        return [
+          this.createTaskSection("translation", this.t("translationTitle"), this.t("translationDescription")),
+          this.createAutoTranslateSection(),
+          this.createTranslationControlsSection(),
+          this.createTaskPromptSection("translation")
+        ];
+      }
+      createComposeTabContent() {
+        return [
+          this.createTaskSection("polish", this.t("polishTitle"), this.t("polishDescription")),
+          this.createTaskPromptSection("polish"),
+          this.createPolishControlsSection(),
+          this.createPublicBilingualSection()
+        ];
+      }
+      createDisplayTabContent() {
+        return [this.createDisplayWindowSection(), this.createDisplayBehaviorSection(), this.createDisplayNoticesSection()];
+      }
+      // The palette of the plugin's own windows (ui.panelTheme); changing it restyles every open window in place.
+      createDisplayWindowSection() {
+        const section = this.createSettingsGroup(this.t("settingsGroupWindows"), "windows");
+        section.appendChild(this.createSegmentedRow("ui.panelTheme", this.t("panelTheme"), [
+          ["auto", this.t("panelThemeAuto")],
+          ["light", this.t("panelThemeLight")],
+          ["dark", this.t("panelThemeDark")]
+        ], { description: this.t("panelThemeDesc") }));
         return section;
       }
+      createAdvancedTabContent() {
+        const local = this.isLocalTranslationProvider(this.settings.translation);
+        return [
+          this.createAdvancedSection(),
+          this.createHistoryBackfillSection(),
+          this.createProviderFallbackSection(local)
+        ];
+      }
+      createDataTabContent(state = null) {
+        return [
+          this.createCacheSection(),
+          this.createDiagnosticsSection(state),
+          this.createSettingsDangerZone()
+        ];
+      }
       createTaskSection(kind, titleText, descriptionText) {
-        const section = document.createElement("section");
-        section.className = `dait-settings-section dait-section-${kind}`;
-        const title = document.createElement("h3");
-        title.textContent = titleText;
-        section.appendChild(title);
-        const description = document.createElement("p");
-        description.className = "dait-note";
-        description.textContent = descriptionText;
-        section.appendChild(description);
+        const section = this.createSettingsGroup(titleText, kind, { description: descriptionText });
         section.appendChild(this.createCheckboxRow(`${kind}.enabled`, this.t("enabled"), { description: this.t("enabledDesc") }));
-        const providerOptions = this.getProviderOptionsForTask(kind);
-        section.appendChild(this.createSelectRow(`${kind}.provider`, this.t("provider"), providerOptions, { description: this.t("providerDesc") }));
+        section.appendChild(this.createSelectRow(`${kind}.provider`, this.t("provider"), this.getGroupedProviderOptionsForTask(kind), { description: this.t("providerDesc") }));
         const capabilities = this.getProviderCapabilities(this.settings[kind]?.provider);
         const ui = capabilities.ui || {};
-        if (ui.sourceLanguage) section.appendChild(this.createLanguageRow(kind, "sourceLanguage", this.t("inputLanguage"), this.t("inputLanguageDesc"), { allowAuto: true }));
+        const providerSettings = this.createTaskProviderSettingsBlock(kind, ui);
+        if (providerSettings) section.appendChild(providerSettings);
+        if (ui.sourceLanguage) {
+          const sourceKey = kind === "polish" ? "inputLanguage" : "messageLanguage";
+          section.appendChild(this.createLanguageRow(kind, "sourceLanguage", this.t(sourceKey), this.t(`${sourceKey}Desc`), { allowAuto: true }));
+        }
         if (ui.targetLanguage) section.appendChild(this.createLanguageRow(kind, "targetLanguage", kind === "polish" ? this.t("outputLanguage") : this.t("targetLanguage"), kind === "polish" ? this.t("outputLanguageDesc") : this.t("targetLanguageDesc")));
         if (kind === "polish") {
           section.appendChild(this.createSelectRow("polish.afterAction", this.t("afterPolishing"), [
@@ -14436,34 +20382,50 @@ var require_discord_ai_translator = __commonJS({
             [POLISH_REPOLISH_SOURCE_LAST_RESULT, this.t("repolishSourceLastResult")]
           ], { description: this.t("repolishSourceDesc") }));
         }
-        const providerSettings = this.createTaskProviderSettingsBlock(kind, ui);
-        if (providerSettings) section.appendChild(providerSettings);
         return section;
       }
+      // Translation providers are listed in two groups: AI models (also usable for polishing) and machine translation.
+      getGroupedProviderOptionsForTask(kind) {
+        const options = this.getProviderOptionsForTask(kind);
+        const machine = options.filter(([provider]) => this.isDirectTranslateProvider(provider));
+        if (!machine.length) return options;
+        const models = options.filter(([provider]) => !this.isDirectTranslateProvider(provider));
+        return [
+          { label: this.t("providerGroupAi"), options: models },
+          { label: this.t("providerGroupMachine"), options: machine }
+        ];
+      }
+      // The connection card: status and Test in its header, then only the fields the selected provider uses.
+      // Rarely changed model parameters and an optional API key sit behind <details>.
       createTaskProviderSettingsBlock(kind, ui = this.getProviderCapabilities(this.settings[kind]?.provider).ui || {}) {
+        const provider = String(this.settings[kind]?.provider || "");
+        const defaults = this.getProviderDefaults(provider) || {};
         const block = document.createElement("div");
         block.className = "dait-provider-settings-block";
-        block.dataset.daitProvider = String(this.settings[kind]?.provider || "");
+        block.dataset.daitProvider = provider;
         const header = document.createElement("div");
         header.className = "dait-provider-settings-header";
         const title = document.createElement("span");
         title.className = "dait-provider-settings-title";
-        title.textContent = `${this.t("providerSettingsTitle")} - ${this.getProviderDisplayName(this.settings[kind]?.provider)}`;
-        const description = document.createElement("p");
-        description.className = "dait-row-description";
-        description.textContent = this.t("providerSettingsDesc");
+        title.textContent = `${this.t("providerSettingsTitle")} · ${this.getProviderDisplayName(provider)}`;
+        title.title = this.t("providerSettingsDesc");
         header.appendChild(title);
-        header.appendChild(description);
+        if (ui.apiTest || ui.apiKey) {
+          header.appendChild(this.createProviderConnectionStatus(kind));
+          header.className = `${header.className} dait-settings-search-target`;
+          header.dataset.daitSearchLabel = title.textContent;
+          header.dataset.daitSearchDescription = this.t("providerStatusDesc");
+        }
         block.appendChild(header);
         let hasRows = false;
-        const append = (node) => {
+        const append = (node, parent = block) => {
           if (!node) return;
           hasRows = true;
-          block.appendChild(node);
+          parent.appendChild(node);
         };
-        if (ui.apiKey) append(this.createApiKeyRow(kind));
-        else if (ui.apiTest) append(this.createProviderStatusRow(kind));
-        if (ui.endpoint) append(this.createInputRow(`${kind}.endpoint`, this.t("endpoint"), "text", "https://api.example.com/v1/chat/completions", {}, { description: this.t("endpointDesc") }));
+        const apiKeyOptional = Boolean(ui.apiKey && this.isProviderApiKeyOptional(provider));
+        if (ui.apiKey && !apiKeyOptional) append(this.createApiKeyRow(kind));
+        if (ui.endpoint) append(this.createInputRow(`${kind}.endpoint`, this.t("endpoint"), "text", defaults.endpoint || "", {}, { description: this.getProviderFieldHelp("endpoint", provider), stacked: true }));
         if (ui.region) append(this.createInputRow(`${kind}.region`, this.t("providerRegion"), "text", "eastus", {}, { description: this.t("providerRegionDesc") }));
         if (ui.deeplPlan) append(this.createSelectRow(`${kind}.deeplPlan`, this.t("deeplPlan"), [
           ["free", this.t("deeplPlanFree")],
@@ -14471,78 +20433,399 @@ var require_discord_ai_translator = __commonJS({
         ], { description: this.t("deeplPlanDesc") }));
         if (ui.baiduCredentials) {
           append(this.createInputRow(`${kind}.appId`, this.t("baiduAppId"), "text", "", {}, { description: this.t("baiduAppIdDesc") }));
-          append(this.createInputRow(`${kind}.secretKey`, this.t("baiduSecretKey"), "password", "", {}, { description: this.t("baiduSecretKeyDesc") }));
+          append(this.createInputRow(`${kind}.secretKey`, this.t("baiduSecretKey"), "password", "", {}, { description: this.t("baiduSecretKeyDesc"), stacked: true }));
         }
         if (ui.deepseekPreset) append(this.createDeepSeekModelRow(kind));
-        if (ui.localModelPreset) append(this.createLocalModelRow(kind));
-        if (ui.model) append(this.createInputRow(`${kind}.model`, this.t("model"), "text", "deepseek-v4-flash", {}, { description: this.t("modelDesc") }));
-        if (ui.enableThinking) append(this.createCheckboxRow(`${kind}.enableThinking`, this.t("thinkingMode"), { description: this.t("thinkingModeDesc") }));
-        if (ui.temperature) append(this.createInputRow(`${kind}.temperature`, this.t("temperature"), "number", "0.4", { min: "0", max: "2", step: "0.1" }, { description: this.t("temperatureDesc") }));
-        if (ui.maxTokens) append(this.createInputRow(`${kind}.maxTokens`, this.t("maxTokens"), "number", "800", { min: "1", step: "1" }, { description: this.t("maxTokensDesc") }));
+        if (ui.model && this.isModelDetectionProvider(provider)) append(this.createModelFieldRow(kind));
+        else if (ui.model) append(this.createInputRow(`${kind}.model`, this.t("model"), "text", defaults.model || "", {}, { description: this.getProviderFieldHelp("model", provider), stacked: true }));
         if (kind === "translation" && ui.googleTranslateSettings) append(this.createGoogleTranslateSettings());
-        if (ui.promptManager) append(this.createPromptManager(kind));
+        if (ui.enableThinking || ui.temperature || ui.maxTokens) {
+          const details = this.createSettingsDetails(this.t("settingsMoreModelParams"), "model-params");
+          if (ui.enableThinking) append(this.createCheckboxRow(`${kind}.enableThinking`, this.t("thinkingMode"), { description: this.t("thinkingModeDesc") }), details);
+          if (ui.temperature) append(this.createInputRow(`${kind}.temperature`, this.t("temperature"), "number", "0.4", { min: "0", max: "2", step: "0.1" }, { description: this.t("temperatureDesc") }), details);
+          if (ui.maxTokens) append(this.createInputRow(`${kind}.maxTokens`, this.t("maxTokens"), "number", "800", { min: "1", step: "1" }, { description: this.t("maxTokensDesc") }), details);
+          block.appendChild(details);
+        }
+        if (apiKeyOptional) {
+          const details = this.createSettingsDetails(this.t("settingsApiKeyOptional"), "api-key");
+          details.open = Boolean(String(this.settings[kind]?.apiKey || "").trim());
+          append(this.createApiKeyRow(kind), details);
+          block.appendChild(details);
+        }
+        if (hasRows) block.appendChild(this.createTryTaskRow(kind));
         return hasRows ? block : null;
       }
+      // Help text that fits the selected service (endpoint, model, API key); other services use the general text.
+      getProviderFieldHelp(field, provider) {
+        const keys = {
+          endpoint: { deepseek: "endpointDeepSeekDesc", openaiCompatible: "endpointOpenAIDesc", sakuraLocal: "endpointLocalDesc", microsoft: "endpointMicrosoftDesc", baidu: "endpointBaiduDesc" },
+          model: { deepseek: "modelDesc", openaiCompatible: "modelOpenAIDesc", sakuraLocal: "modelLocalDesc" },
+          apiKey: { deepseek: "apiKeyDeepSeekDesc", openaiCompatible: "apiKeyOpenAIDesc", sakuraLocal: "apiKeyLocalDesc", microsoft: "apiKeyMicrosoftDesc", deepl: "apiKeyDeepLDesc" }
+        };
+        const fallback = { endpoint: "endpointDesc", model: "modelDesc", apiKey: "apiKeyDesc" }[field] || "";
+        const key = keys[field]?.[String(provider || "")] || fallback;
+        return key ? this.t(key) : "";
+      }
+      // The model field of Sakura local and OpenAI-compatible: the name, "Detect models", and a picker below with the
+      // server's models (after detection) and, for Sakura, "use the loaded model" plus common models. The picker
+      // follows the field (data-dait-model-preset), and picking writes the field.
+      createModelFieldRow(kind) {
+        const provider = String(this.settings[kind]?.provider || "");
+        const defaults = this.getProviderDefaults(provider) || {};
+        const local = this.isLocalTranslationProvider(provider);
+        const field = document.createElement("div");
+        field.className = "dait-model-field";
+        const line = document.createElement("div");
+        line.className = "dait-model-field-line";
+        const input = document.createElement("input");
+        input.type = "text";
+        input.dataset.daitPath = `${kind}.model`;
+        input.placeholder = defaults.model || "";
+        input.spellcheck = false;
+        input.autocomplete = "off";
+        input.value = this.getSetting(`${kind}.model`) ?? "";
+        input.addEventListener("change", () => this.setSetting(`${kind}.model`, input.value, { save: "immediate", retryOnError: false }));
+        line.appendChild(input);
+        const detect = this.createSmallButton(this.t("modelDetect"), "outline");
+        detect.dataset.daitAction = "detectModels";
+        detect.dataset.daitKind = kind;
+        line.appendChild(detect);
+        field.appendChild(line);
+        const picker = document.createElement("select");
+        picker.className = "dait-model-picker";
+        picker.dataset.daitModelPreset = kind;
+        picker.setAttribute("aria-label", this.t("modelPicker"));
+        this.renderModelPickerOptions(picker, kind, []);
+        picker.hidden = !local;
+        picker.addEventListener("change", () => {
+          if (!picker.value) {
+            this.focusSettingsElement(input);
+            return;
+          }
+          this.setSetting(`${kind}.model`, picker.value);
+        });
+        field.appendChild(picker);
+        let description = this.getProviderFieldHelp("model", provider);
+        if (local && this.isLocalProviderAutoModelValue(this.settings[kind]?.model)) {
+          const snapshot = this.getLocalProviderDetectedModelSnapshot(this.settings[kind]);
+          if (snapshot?.model) description = this.t("modelLocalLoadedDesc", { model: snapshot.model });
+        }
+        const row = this.createRow(this.t("model"), field, { description, stacked: true, labelFor: input });
+        row.classList.add("dait-model-field-row");
+        const status = row.__daitDescription;
+        status?.setAttribute?.("aria-live", "polite");
+        detect.addEventListener("click", (event) => {
+          event?.preventDefault?.();
+          this.runModelDetection(kind, { button: detect, picker, status });
+        });
+        return row;
+      }
+      renderModelPickerOptions(picker, kind, detected = [], loaded = "") {
+        if (!picker) return;
+        const provider = String(this.settings[kind]?.provider || "");
+        const local = this.isLocalTranslationProvider(provider);
+        const current = String(this.settings[kind]?.model || "");
+        [...picker.children || []].forEach((child) => child.remove?.());
+        picker.textContent = "";
+        const option = (parent, value, text) => {
+          const node = document.createElement("option");
+          node.value = value;
+          node.textContent = text;
+          node.selected = value === current;
+          parent.appendChild(node);
+          return node;
+        };
+        const group = (label) => {
+          const node = document.createElement("optgroup");
+          node.label = label;
+          node.setAttribute("label", label);
+          picker.appendChild(node);
+          return node;
+        };
+        const listed = /* @__PURE__ */ new Set();
+        if (local) {
+          option(picker, LOCAL_PROVIDER_AUTO_MODEL_VALUE, this.t("modelPickerServerLoaded"));
+          listed.add(LOCAL_PROVIDER_AUTO_MODEL_VALUE);
+        }
+        const fresh = detected.filter((model) => model && !listed.has(model));
+        if (fresh.length) {
+          const parent = group(this.t("modelPickerDetected"));
+          fresh.forEach((model) => {
+            listed.add(model);
+            option(parent, model, model === loaded ? this.t("modelPickerLoadedTag", { model: this.getDiagnosticModelLabel(model) }) : model);
+          });
+        }
+        if (local) {
+          const presets = LOCAL_MODEL_PRESETS.filter(([value]) => !listed.has(value));
+          if (presets.length) {
+            const parent = group(this.t("modelPickerPresets"));
+            presets.forEach(([value, text]) => option(parent, value, text));
+          }
+        }
+        const other = option(picker, "", this.t("modelPickerOther"));
+        const known = [...picker.querySelectorAll?.("option") || []].some((node) => node.value && node.value === current);
+        if (!known) other.selected = true;
+        picker.value = known ? current : "";
+      }
+      // "Detect models": asks the server for its models (only on this click), fills the picker and says what it found.
+      async runModelDetection(kind, { button = null, picker = null, status = null } = {}) {
+        const lifecycleToken = this.getLifecycleToken();
+        this.setButtonBusy(button, true, this.t("modelDetectBusy"));
+        try {
+          const { models, loaded } = await this.detectProviderModels(kind);
+          if (!this.isLifecycleTokenCurrent(lifecycleToken)) return null;
+          this.renderModelPickerOptions(picker, kind, models, loaded);
+          if (picker && models.length) picker.hidden = false;
+          const text = !models.length ? this.t("modelDetectNone") : loaded ? this.t("modelDetectFoundLoaded", { count: models.length, model: this.getDiagnosticModelLabel(loaded) }) : this.t("modelDetectFound", { count: models.length });
+          if (status) {
+            status.textContent = text;
+            status.hidden = false;
+            status.classList?.remove?.("dait-row-description-error");
+          }
+          return { models, loaded };
+        } catch (error) {
+          if (!this.isLifecycleTokenCurrent(lifecycleToken)) return null;
+          const text = this.t("modelDetectFailed", { error: this.formatError(error) });
+          if (status) {
+            status.textContent = text;
+            status.hidden = false;
+            status.classList?.add?.("dait-row-description-error");
+          }
+          return null;
+        } finally {
+          if (this.isLifecycleTokenCurrent(lifecycleToken)) this.setButtonBusy(button, false, this.t("modelDetect"));
+        }
+      }
+      // "Try a sentence" (translation) / "Try polishing" (composer), at the end of the connection card: runs one
+      // sentence through the task with the settings as they are now (like the old test mode) and shows the result with
+      // the time it took. Nothing is sent to Discord.
+      createTryTaskRow(kind) {
+        const polish = kind === "polish";
+        const wrap = document.createElement("div");
+        wrap.className = "dait-try-field";
+        const line = document.createElement("div");
+        line.className = "dait-try-line";
+        const input = document.createElement("input");
+        input.type = "text";
+        input.className = "dait-try-input";
+        input.placeholder = this.t(polish ? "tryPolishPlaceholder" : "tryTranslatePlaceholder");
+        input.autocomplete = "off";
+        line.appendChild(input);
+        const run = this.createSmallButton(this.t(polish ? "tryPolishRun" : "tryTranslateRun"));
+        run.dataset.daitAction = "tryTask";
+        run.dataset.daitKind = kind;
+        line.appendChild(run);
+        wrap.appendChild(line);
+        const result = document.createElement("p");
+        result.className = "dait-try-result";
+        result.setAttribute("aria-live", "polite");
+        result.hidden = true;
+        const output = document.createElement("span");
+        output.className = "dait-try-output";
+        result.appendChild(output);
+        const time = document.createElement("span");
+        time.className = "dait-try-time";
+        result.appendChild(time);
+        wrap.appendChild(result);
+        const start = () => this.runTryTask(kind, input.value, { button: run, result, output, time });
+        run.addEventListener("click", (event) => {
+          event?.preventDefault?.();
+          start();
+        });
+        input.addEventListener("keydown", (event) => {
+          if (event?.key !== "Enter" || event.isComposing) return;
+          event.preventDefault?.();
+          start();
+        });
+        const row = this.createRow(this.t(polish ? "tryPolish" : "tryTranslate"), wrap, {
+          description: this.t(polish ? "tryPolishDesc" : "tryTranslateDesc"),
+          stacked: true,
+          labelFor: input
+        });
+        row.classList.add("dait-try-row");
+        return row;
+      }
+      async runTryTask(kind, text, { button = null, result = null, output = null, time = null } = {}) {
+        const sample = String(text || "").trim();
+        const show = (value, seconds = "", failed = false) => {
+          if (output) output.textContent = value;
+          if (time) {
+            time.textContent = seconds ? this.t("tryResultTime", { time: seconds }) : "";
+            time.hidden = !seconds;
+          }
+          if (result) {
+            result.hidden = !value;
+            result.classList?.toggle?.("dait-try-result-error", Boolean(failed));
+          }
+        };
+        if (!sample) {
+          show(this.t("tryInputRequired"), "", true);
+          return null;
+        }
+        const lifecycleToken = this.getLifecycleToken();
+        const label = button?.textContent || "";
+        this.setButtonBusy(button, true, this.t("tryBusy"));
+        const startedAt = Date.now();
+        try {
+          const translated = await this.runModelTask(kind, sample, { mode: "test" });
+          if (!this.isLifecycleTokenCurrent(lifecycleToken)) return null;
+          show(String(translated ?? ""), this.formatLatency(Date.now() - startedAt));
+          return translated;
+        } catch (error) {
+          if (!this.isLifecycleTokenCurrent(lifecycleToken)) return null;
+          show(this.formatError(error), this.formatLatency(Date.now() - startedAt), true);
+          return null;
+        } finally {
+          if (this.isLifecycleTokenCurrent(lifecycleToken)) this.setButtonBusy(button, false, label);
+        }
+      }
+      createSettingsDetails(summaryText, key) {
+        const details = document.createElement("details");
+        details.className = `dait-settings-details dait-settings-details-${key}`;
+        const summary = document.createElement("summary");
+        summary.className = "dait-settings-details-summary";
+        summary.textContent = summaryText;
+        details.appendChild(summary);
+        return details;
+      }
+      // Status badge, the last test's details ("Hy-MT2 · 820 ms · just now") and Test.
+      createProviderConnectionStatus(kind) {
+        const wrap = document.createElement("span");
+        wrap.className = "dait-provider-connection";
+        const status = this.createApiStatusBadge(kind);
+        wrap.appendChild(status);
+        wrap.appendChild(this.createApiTestDetail(kind));
+        const test = this.createSmallButton(this.t("apiTest"));
+        test.dataset.daitAction = "apiTest";
+        test.dataset.daitKind = kind;
+        test.addEventListener("click", (event) => {
+          event?.preventDefault?.();
+          event?.stopPropagation?.();
+          Promise.resolve(this.testApiConnection(kind, test, status)).finally(() => this.refreshApiTestViews(kind));
+        });
+        wrap.appendChild(test);
+        return wrap;
+      }
+      // Prompt templates and the prompt editor belong to the task, not to the provider connection.
+      createTaskPromptSection(kind) {
+        const ui = this.getProviderCapabilities(this.settings[kind]?.provider)?.ui || {};
+        if (!ui.promptManager) return null;
+        const group = this.createSettingsGroup("", `${kind}-prompt`);
+        const manager = this.createPromptManager(kind);
+        manager.className = `${manager.className || ""} dait-settings-search-target`.trim();
+        manager.dataset.daitSearchLabel = this.t("promptTemplates");
+        manager.dataset.daitSearchDescription = this.t("promptTemplatesDesc");
+        group.appendChild(manager);
+        return group;
+      }
       createPolishControlsSection() {
-        const section = document.createElement("section");
-        section.className = "dait-settings-section dait-section-polish-controls";
-        const title = document.createElement("h3");
-        title.textContent = this.t("polishControlsTitle");
-        section.appendChild(title);
+        const section = this.createSettingsGroup(this.t("polishControlsTitle"), "polish-controls");
         section.appendChild(this.createCheckboxRow("ui.injectInputButton", this.t("showPolishButton"), { description: this.t("showPolishButtonDesc") }));
         section.appendChild(this.createCheckboxRow("ui.enablePolishHotkey", this.t("enableHotkey"), { description: this.t("enableHotkeyDesc") }));
-        section.appendChild(this.createHotkeyRow());
+        section.appendChild(this.createHotkeyRow({ dependsOn: { path: "ui.enablePolishHotkey", label: this.t("enableHotkey") } }));
         return section;
       }
       createTranslationControlsSection() {
-        const section = document.createElement("section");
-        section.className = "dait-settings-section dait-section-translation-controls";
-        const title = document.createElement("h3");
-        title.textContent = this.t("translationControlsTitle");
-        section.appendChild(title);
-        section.appendChild(this.createCheckboxRow("ui.injectMessageButtons", this.t("showMessageButtons"), { description: this.t("showMessageButtonsDesc") }));
-        section.appendChild(this.createSelectRow("ui.messageButtonVisibility", this.t("messageButtonVisibility"), [
-          [MESSAGE_BUTTON_VISIBILITY_ALWAYS, this.t("messageButtonVisibilityAlways")],
-          [MESSAGE_BUTTON_VISIBILITY_HOVER, this.t("messageButtonVisibilityHover")]
-        ], { description: this.t("messageButtonVisibilityDesc") }));
+        const section = this.createSettingsGroup(this.t("translationControlsTitle"), "translation-controls");
+        section.appendChild(this.createMessageButtonModeRow());
         section.appendChild(this.createCheckboxRow("ui.injectMessageContextMenu", this.t("showContextMenu"), { description: this.t("showContextMenuDesc") }));
         return section;
       }
+      // One select for the message Translate button: on hover / always / off.
+      createMessageButtonModeRow() {
+        return this.createSelectRow("ui.messageButtonMode", this.t("messageButtonMode"), [
+          [MESSAGE_BUTTON_VISIBILITY_HOVER, this.t("messageButtonModeHover")],
+          [MESSAGE_BUTTON_VISIBILITY_ALWAYS, this.t("messageButtonModeAlways")],
+          [MESSAGE_BUTTON_MODE_OFF, this.t("messageButtonModeOff")]
+        ], { description: this.t("messageButtonModeDesc") });
+      }
+      getMessageButtonMode() {
+        if (this.settings.ui?.injectMessageButtons === false) return MESSAGE_BUTTON_MODE_OFF;
+        return this.getMessageButtonVisibility();
+      }
+      // Stored as ui.injectMessageButtons + ui.messageButtonVisibility, each through setSetting so its own effects run.
+      setMessageButtonMode(mode, options = {}) {
+        const value = [MESSAGE_BUTTON_VISIBILITY_HOVER, MESSAGE_BUTTON_VISIBILITY_ALWAYS, MESSAGE_BUTTON_MODE_OFF].includes(mode) ? mode : MESSAGE_BUTTON_VISIBILITY_ALWAYS;
+        if (value === MESSAGE_BUTTON_MODE_OFF) {
+          this.setSetting("ui.injectMessageButtons", false, options);
+        } else {
+          this.setSetting("ui.messageButtonVisibility", value, options);
+          this.setSetting("ui.injectMessageButtons", true, options);
+        }
+        this.syncSettingControls("ui.messageButtonMode", this.getMessageButtonMode(), { includeActive: true });
+        return value;
+      }
       createAutoTranslateSection() {
-        const section = document.createElement("section");
-        section.className = "dait-settings-section dait-section-auto-translate";
+        const section = this.createSettingsGroup(this.t("settingsGroupAutoTranslate"), "auto-translate");
+        section.appendChild(this.createCheckboxRow("ui.autoTranslateMessages", this.t("autoTranslateMessages"), { description: this.t("autoTranslateMessagesDesc") }));
+        section.appendChild(this.createCheckboxRow("ui.autoTranslatePrefetch", this.t("autoTranslatePrefetch"), { description: this.t("autoTranslatePrefetchDesc") }));
+        section.appendChild(this.createSelectRow("ui.autoTranslatePrefetchRange", this.t("autoTranslatePrefetchRange"), AUTO_TRANSLATE_PREFETCH_RANGES.map((value) => [String(value), String(value)]), {
+          description: this.t("autoTranslatePrefetchRangeDesc"),
+          dependsOn: { path: "ui.autoTranslatePrefetch", label: this.t("autoTranslatePrefetch") }
+        }));
+        section.appendChild(this.createCurrentChannelPolicyRow());
+        return section;
+      }
+      // Tuning that rarely needs a change: concurrency, how messages are found, strict retry.
+      createAdvancedSection() {
+        const section = this.createSettingsGroup(this.t("autoTranslateSettingsTitle"), "advanced");
         const provider = this.getProviderDefaults(this.settings.translation.provider);
         const local = this.isLocalTranslationProvider(this.settings.translation);
         const concurrencyRange = { min: AUTO_TRANSLATE_MIN_CONCURRENCY, max: AUTO_TRANSLATE_MAX_CONCURRENCY, default: AUTO_TRANSLATE_DEFAULT_CONCURRENCY };
-        const title = document.createElement("h3");
-        title.textContent = this.t("autoTranslateSettingsTitle");
-        section.appendChild(title);
-        section.appendChild(this.createCheckboxRow("ui.autoTranslateMessages", this.t("autoTranslateMessages"), { description: this.t("autoTranslateMessagesDesc") }));
-        section.appendChild(this.createCheckboxRow("ui.autoTranslatePrefetch", this.t("autoTranslatePrefetch"), { description: this.t("autoTranslatePrefetchDesc") }));
-        section.appendChild(this.createSelectRow("ui.autoTranslatePrefetchRange", this.t("autoTranslatePrefetchRange"), AUTO_TRANSLATE_PREFETCH_RANGES.map((value) => [String(value), String(value)]), { description: this.t("autoTranslatePrefetchRangeDesc") }));
+        section.appendChild(this.createInputRow("ui.autoTranslateConcurrency", this.t("autoTranslateConcurrency"), "number", String(AUTO_TRANSLATE_DEFAULT_CONCURRENCY), { min: String(AUTO_TRANSLATE_MIN_CONCURRENCY), max: String(AUTO_TRANSLATE_MAX_CONCURRENCY), step: "1" }, { description: this.t(local ? "localConcurrencyDesc" : "autoTranslateConcurrencyDesc", concurrencyRange) }));
         section.appendChild(this.createSelectRow("ui.autoTranslateIntakeMode", this.t("autoTranslateIntakeMode"), [
           ["auto", this.t("autoTranslateIntakeAuto")],
           ["dom", this.t("autoTranslateIntakeDom")],
           ["bdfdb", this.t("autoTranslateIntakeBdfdb")]
         ], { description: this.t("autoTranslateIntakeModeDesc"), disabledReason: provider?.autoTranslateIntakeMode && this.t("localIntakeFixed") }));
-        section.appendChild(this.createInputRow("ui.autoTranslateConcurrency", this.t("autoTranslateConcurrency"), "number", String(AUTO_TRANSLATE_DEFAULT_CONCURRENCY), { min: String(AUTO_TRANSLATE_MIN_CONCURRENCY), max: String(AUTO_TRANSLATE_MAX_CONCURRENCY), step: "1" }, { description: this.t(local ? "localConcurrencyDesc" : "autoTranslateConcurrencyDesc", concurrencyRange) }));
         section.appendChild(this.createCheckboxRow("ui.autoTranslateStrictRetry", this.t("autoTranslateStrictRetry"), { description: this.t("autoTranslateStrictRetryDesc") }));
-        section.appendChild(this.createCurrentChannelPolicyRow());
+        return section;
+      }
+      createHistoryBackfillSection() {
+        const section = this.createSettingsGroup(this.t("settingsGroupHistoryBackfill"), "history-backfill");
+        const dependsOn = { path: "ui.historyBackfillEnabled", label: this.t("historyBackfillEnabled") };
         section.appendChild(this.createCheckboxRow("ui.historyBackfillEnabled", this.t("historyBackfillEnabled"), { description: this.t("historyBackfillEnabledDesc") }));
-        section.appendChild(this.createInputRow("ui.historyBackfillLimit", this.t("historyBackfillLimit"), "number", String(DEFAULT_SETTINGS.ui.historyBackfillLimit), { min: "1", max: "100", step: "1" }, { description: this.t("historyBackfillLimitDesc") }));
-        section.appendChild(this.createHistoryBackfillActionRow());
+        section.appendChild(this.createInputRow("ui.historyBackfillLimit", this.t("historyBackfillLimit"), "number", String(DEFAULT_SETTINGS.ui.historyBackfillLimit), { min: "1", max: "100", step: "1" }, { description: this.t("historyBackfillLimitDesc"), dependsOn }));
+        section.appendChild(this.createHistoryBackfillActionRow({ dependsOn }));
+        return section;
+      }
+      createProviderFallbackSection(local = this.isLocalTranslationProvider(this.settings.translation)) {
+        const section = this.createSettingsGroup(this.t("settingsGroupFallback"), "provider-fallback");
         section.appendChild(this.createCheckboxRow("ui.providerFallbackEnabled", this.t("providerFallbackEnabled"), { description: this.t("providerFallbackEnabledDesc"), disabledReason: local && this.t("localFallbackUnavailable") }));
         section.appendChild(this.createProviderFallbackOrderRow(local));
         return section;
       }
       createCurrentChannelPolicyRow() {
-        return this.createSelectRow("ui.currentChannelAutoTranslatePolicy", this.t("currentChannelAutoTranslatePolicy"), [
-          ["inherit", this.t("channelPolicyInherit")],
-          ["enabled", this.t("channelPolicyEnabled")],
-          ["disabled", this.t("channelPolicyDisabled")]
-        ], { description: this.t("currentChannelAutoTranslatePolicyDesc") });
+        const routeKey = this.getCurrentRouteKey();
+        const noChannel = !this.getChannelAutoTranslatePolicyStorageKey(routeKey);
+        const row = this.createSegmentedRow("ui.currentChannelAutoTranslatePolicy", this.t("currentChannelAutoTranslatePolicy"), [
+          ["inherit", this.t("channelRuleFollow")],
+          ["enabled", this.t("channelRuleAlways")],
+          ["disabled", this.t("channelRuleNever")]
+        ], {
+          description: this.t("currentChannelAutoTranslatePolicyDesc"),
+          disabledReason: noChannel && this.t("quickPanelRuleCaptionNoChannel"),
+          routeKey
+        });
+        if (noChannel) {
+          const control = row?.querySelectorAll?.("[data-dait-path='ui.currentChannelAutoTranslatePolicy']")?.[0];
+          if (control) this.setChannelRuleControlDisabled(control, true);
+        }
+        return row;
       }
-      createHistoryBackfillActionRow() {
+      // The rule control is a radiogroup of buttons; "disabled" has to reach every button.
+      setChannelRuleControlDisabled(control, disabled) {
+        control.disabled = Boolean(disabled);
+        if (disabled) control.setAttribute?.("aria-disabled", "true");
+        else control.removeAttribute?.("aria-disabled");
+        [...control.children || []].filter((child) => child?.tagName === "BUTTON").forEach((button) => {
+          button.disabled = Boolean(disabled);
+        });
+      }
+      isChannelRuleControlDisabled(control) {
+        return Boolean(control?.disabled) || control?.getAttribute?.("aria-disabled") === "true";
+      }
+      createHistoryBackfillActionRow(rowOptions = {}) {
         const controls = document.createElement("div");
         controls.className = "dait-history-backfill-actions";
         const button = this.createSmallButton(this.t("historyBackfillRun"));
@@ -14553,33 +20836,110 @@ var require_discord_ai_translator = __commonJS({
           this.runExplicitHistoryBackfillFromUi(button, { source: "settings" });
         });
         controls.appendChild(button);
-        return this.createRow(this.t("historyBackfillRun"), controls, { description: this.t("historyBackfillRunDesc") });
+        return this.createRow(this.t("historyBackfillRun"), controls, { ...rowOptions, description: this.t("historyBackfillRunDesc") });
       }
+      // The manual-translation fallback services as an ordered list: tick the services to use and move them with the
+      // arrow buttons (no typing of provider ids). Local services cannot be a fallback, so they are not listed.
       createProviderFallbackOrderRow(local) {
-        const textarea = document.createElement("textarea");
-        textarea.dataset.daitPath = "ui.providerFallbackOrder";
-        textarea.rows = 3;
-        textarea.value = this.formatProviderFallbackOrder(this.settings.ui?.providerFallbackOrder);
-        this.bindSettingsTextarea(textarea);
-        textarea.addEventListener("change", () => {
-          this.preserveSettingsScroll(textarea, () => this.setSetting("ui.providerFallbackOrder", textarea.value));
-        });
-        return this.createRow(this.t("providerFallbackOrder"), textarea, {
-          description: this.t("providerFallbackOrderDesc", { providers: PROVIDER_ORDER.join(", ") }),
+        const list = document.createElement("div");
+        list.className = "dait-order-list";
+        list.setAttribute("role", "group");
+        list.dataset.daitPath = "ui.providerFallbackOrder";
+        list.dataset.daitControl = "order-list";
+        this.renderProviderFallbackOrderList(list);
+        return this.createRow(this.t("providerFallbackOrder"), list, {
+          description: this.t("providerFallbackOrderListDesc"),
           disabledReason: local && this.t("localFallbackUnavailable"),
-          wide: true
+          dependsOn: { path: "ui.providerFallbackEnabled", label: this.t("providerFallbackEnabled") },
+          stacked: true,
+          ariaTarget: list
         });
+      }
+      getProviderFallbackCandidates() {
+        return PROVIDER_ORDER.filter((provider) => !this.isLocalTranslationProvider(provider));
+      }
+      // Chosen services first, in their saved order, then the others.
+      renderProviderFallbackOrderList(list) {
+        if (!list) return;
+        const candidates = this.getProviderFallbackCandidates();
+        const order = this.parseProviderFallbackOrderText(this.settings.ui?.providerFallbackOrder).filter((provider) => candidates.includes(provider));
+        const current = String(this.settings.translation?.provider || "");
+        const focusHint = list.__daitFocusHint || null;
+        list.__daitFocusHint = null;
+        [...list.children || []].forEach((child) => child.remove?.());
+        list.textContent = "";
+        const save = (next, hint) => {
+          list.__daitFocusHint = hint;
+          this.setSetting("ui.providerFallbackOrder", next);
+        };
+        [...order, ...candidates.filter((provider) => !order.includes(provider))].forEach((provider) => {
+          const index = order.indexOf(provider);
+          const name = this.getProviderDisplayName(provider);
+          const item = document.createElement("div");
+          item.className = index >= 0 ? "dait-order-item dait-order-item-on" : "dait-order-item";
+          item.dataset.daitProvider = provider;
+          const position = document.createElement("span");
+          position.className = "dait-order-position";
+          position.setAttribute("aria-hidden", "true");
+          position.textContent = index >= 0 ? String(index + 1) : "";
+          item.appendChild(position);
+          const include = document.createElement("input");
+          include.type = "checkbox";
+          include.className = "dait-order-include";
+          include.id = this.createSettingsControlId();
+          include.checked = index >= 0;
+          include.addEventListener("change", () => {
+            const next = include.checked ? [...order, provider] : order.filter((item2) => item2 !== provider);
+            save(next, { provider, part: "include" });
+          });
+          item.appendChild(include);
+          const label = document.createElement("label");
+          label.className = "dait-order-name";
+          label.setAttribute("for", include.id);
+          label.textContent = name;
+          if (provider === current) {
+            const note = document.createElement("span");
+            note.className = "dait-order-note";
+            note.textContent = this.t("providerFallbackCurrent");
+            label.appendChild(note);
+          }
+          item.appendChild(label);
+          const move = (delta, part, labelKey) => {
+            const button = this.createSmallButton(delta < 0 ? "↑" : "↓", "outline");
+            button.className = `${button.className} dait-order-move`;
+            button.dataset.daitMove = part;
+            button.title = this.t(labelKey, { provider: name });
+            button.setAttribute("aria-label", this.t(labelKey, { provider: name }));
+            const target = index + delta;
+            button.disabled = index < 0 || target < 0 || target >= order.length;
+            button.addEventListener("click", () => {
+              if (button.disabled || index < 0 || target < 0 || target >= order.length) return;
+              const next = [...order];
+              next.splice(index, 1);
+              next.splice(target, 0, provider);
+              save(next, { provider, part });
+            });
+            return button;
+          };
+          item.appendChild(move(-1, "up", "providerFallbackMoveUp"));
+          item.appendChild(move(1, "down", "providerFallbackMoveDown"));
+          list.appendChild(item);
+        });
+        const row = list.closest?.(".dait-settings-row");
+        const parentPath = row?.dataset?.daitDependsOn;
+        if (row?.dataset?.daitLocked === "true" || parentPath && !this.getSetting(parentPath)) {
+          this.getSettingsRowControls(list).forEach((node) => {
+            node.disabled = true;
+          });
+        }
+        if (focusHint) {
+          const item = [...list.children || []].find((node) => node.dataset?.daitProvider === focusHint.provider);
+          const target = focusHint.part === "include" ? item?.querySelector?.(".dait-order-include") : [...item?.children || []].find((node) => node.dataset?.daitMove === focusHint.part && !node.disabled) || item?.querySelector?.(".dait-order-include");
+          this.focusSettingsElement(target);
+        }
       }
       createPublicBilingualSection() {
-        const section = document.createElement("section");
-        section.className = "dait-settings-section dait-section-public-bilingual";
-        const title = document.createElement("h3");
-        title.textContent = this.t("publicBilingualTitle");
-        section.appendChild(title);
-        const description = document.createElement("p");
-        description.className = "dait-note";
-        description.textContent = this.t("publicBilingualDependencyDesc");
-        section.appendChild(description);
+        const section = this.createSettingsGroup(this.t("publicBilingualTitle"), "public-bilingual");
         section.appendChild(this.createCheckboxRow("ui.publicBilingualInputButton", this.t("publicBilingualInputButton"), { description: this.t("publicBilingualInputButtonDesc") }));
         section.appendChild(this.createCheckboxRow("ui.publicBilingualUseInitialOriginal", this.t("publicBilingualUseInitialOriginal"), { description: this.t("publicBilingualUseInitialOriginalDesc") }));
         section.appendChild(this.createCheckboxRow("ui.publicBilingualAfterPolish", this.t("publicBilingualAfterPolish"), { description: this.t("publicBilingualAfterPolishDesc") }));
@@ -14587,178 +20947,134 @@ var require_discord_ai_translator = __commonJS({
         section.appendChild(this.createPublicBilingualDependencyRow());
         return section;
       }
+      // Shows the service and target language the bilingual message really uses: the polish service when it is
+      // usable (otherwise the translation service), and the polish output language.
       createPublicBilingualDependencyRow() {
         const summary = document.createElement("div");
         summary.className = "dait-provider-summary";
-        summary.textContent = this.t("publicBilingualDependencyStatus", {
-          polishProvider: this.getProviderDisplayName(this.settings.polish?.provider),
-          translationProvider: this.getProviderDisplayName(this.settings.translation?.provider),
-          targetLanguage: this.getDisplayLanguage(this.settings.translation?.targetLanguage)
-        });
+        summary.textContent = this.getPublicBilingualFlowText();
+        if (typeof setTimeout === "function") {
+          this.unrefTimer(setTimeout(() => {
+            const root = summary.closest?.(".dait-settings") || summary.closest?.(".dait-settings-section");
+            root?.addEventListener?.("change", () => {
+              summary.textContent = this.getPublicBilingualFlowText();
+            });
+          }, 0));
+        }
         return this.createRow(this.t("publicBilingualDependencyTitle"), summary, {
-          description: this.t("publicBilingualDependencyDesc"),
+          description: this.t("publicBilingualDependencyFlowDesc"),
           wide: true
         });
       }
+      // What a bilingual message really goes through: the polish step only when a bilingual option runs it and
+      // polishing is on, the service picked by getPublicBilingualBaseConfig (the polish service when it is set up)
+      // and the language from getPublicBilingualTargetLanguage (the polish output language first).
+      getPublicBilingualFlowText() {
+        const polishRuns = Boolean(this.settings.polish?.enabled) && (this.isPublicBilingualPolishBeforeTranslateEnabled() || this.isPublicBilingualAfterPolishEnabled());
+        return this.t("publicBilingualDependencyStatus", {
+          polishProvider: polishRuns ? this.getProviderDisplayName(this.settings.polish?.provider) : this.t("publicBilingualDependencyPolishOff"),
+          translationProvider: this.getProviderDisplayName(this.getPublicBilingualBaseConfig()?.provider),
+          targetLanguage: this.getDisplayLanguage(this.getPublicBilingualTargetLanguage())
+        });
+      }
       createDisplayBehaviorSection() {
-        const section = document.createElement("section");
-        section.className = "dait-settings-section dait-section-display";
-        const title = document.createElement("h3");
-        title.textContent = this.t("displaySettingsTitle");
-        section.appendChild(title);
-        section.appendChild(this.createCheckboxRow("ui.showQuickSettingsPanelButton", this.t("showQuickSettingsPanelButton"), { description: this.t("showQuickSettingsPanelButtonDesc") }));
-        section.appendChild(this.createCheckboxRow("ui.showAutoTranslateWarnings", this.t("showAutoTranslateWarnings"), { description: this.t("showAutoTranslateWarningsDesc") }));
-        section.appendChild(this.createCheckboxRow("ui.showAutoTranslateToasts", this.t("showAutoTranslateToasts"), { description: this.t("showAutoTranslateToastsDesc") }));
-        section.appendChild(this.createSelectRow("ui.translationPosition", this.t("translationPosition"), [
-          ["before", this.t("translationBeforeOriginal")],
-          ["after", this.t("translationAfterOriginal")]
+        const section = this.createSettingsGroup(this.t("settingsGroupTranslatedText"), "display");
+        section.appendChild(this.createSegmentedRow("ui.translationPosition", this.t("translationPosition"), [
+          ["before", this.t("translationPositionAbove")],
+          ["after", this.t("translationPositionBelow")]
         ], { description: this.t("translationPositionDesc") }));
+        section.appendChild(this.createSelectRow("ui.translationStyle", this.t("translationStyle"), [
+          ["tint", this.t("translationStyleTint")],
+          ["muted", this.t("translationStyleMuted")],
+          ["tag", this.t("translationStyleTag")]
+        ], { description: this.t("translationStyleDesc") }));
+        section.appendChild(this.createSelectRow("ui.translationTextScale", this.t("translationTextScale"), [
+          ["100", "100%"],
+          ["90", "90%"]
+        ], { description: this.t("translationTextScaleDesc") }));
         section.appendChild(this.createCheckboxRow("ui.maskTranslations", this.t("maskTranslations"), { description: this.t("maskTranslationsDesc") }));
         section.appendChild(this.createCheckboxRow("ui.hideOriginalAfterTranslation", this.t("hideOriginalAfterTranslation"), { description: this.t("hideOriginalAfterTranslationDesc") }));
         return section;
       }
+      createDisplayNoticesSection() {
+        const section = this.createSettingsGroup(this.t("settingsGroupNotices"), "notices");
+        section.appendChild(this.createCheckboxRow("ui.showAutoTranslateWarnings", this.t("showAutoTranslateWarnings"), { description: this.t("showAutoTranslateWarningsDesc") }));
+        section.appendChild(this.createCheckboxRow("ui.showAutoTranslateToasts", this.t("showAutoTranslateToasts"), { description: this.t("showAutoTranslateToastsDesc") }));
+        section.appendChild(this.createCheckboxRow("ui.showQuickSettingsPanelButton", this.t("showQuickSettingsPanelButton"), { description: this.t("showQuickSettingsPanelButtonDesc") }));
+        return section;
+      }
       createCacheSection() {
-        const section = document.createElement("section");
-        section.className = "dait-settings-section dait-section-cache";
-        const title = document.createElement("h3");
-        title.textContent = this.t("cacheSettingsTitle");
-        section.appendChild(title);
+        const section = this.createSettingsGroup(this.t("cacheSettingsTitle"), "cache");
         section.appendChild(this.createSelectRow("ui.translationCacheTtlHours", this.t("translationCacheTtl"), TRANSLATION_CACHE_TTL_OPTIONS.map((value) => [String(value), this.getTranslationCacheTtlLabel(value)]), { description: this.t("translationCacheTtlDesc") }));
         section.appendChild(this.createInputRow("ui.translationCacheMaxEntries", this.t("translationCacheMaxEntries"), "number", String(TRANSLATION_CACHE_DEFAULT_LIMIT), { min: String(TRANSLATION_CACHE_MIN_LIMIT), max: String(TRANSLATION_CACHE_MAX_LIMIT), step: "100" }, { description: this.t("translationCacheMaxEntriesDesc") }));
         section.appendChild(this.createTranslationCacheStatsRow());
+        section.appendChild(this.createTranslationCacheClearRow());
         return section;
       }
+      // Test mode is gone: "Try a sentence" / "Try polishing" in the connection cards replace it. ui.testModeEnabled
+      // still loads from old settings and simply shows nothing.
       createDiagnosticsSection() {
-        const section = document.createElement("section");
-        section.className = "dait-settings-section dait-section-diagnostics";
-        const title = document.createElement("h3");
-        title.textContent = this.t("diagnosticsSettingsTitle");
-        section.appendChild(title);
+        const section = this.createSettingsGroup(this.t("diagnosticsSettingsTitle"), "diagnostics");
         section.appendChild(this.createCheckboxRow("ui.diagnosticsEnabled", this.t("diagnosticLogs"), { description: this.t("diagnosticLogsDesc") }));
         section.appendChild(this.createDiagnosticLogsRow());
+        section.appendChild(this.createDiagnosticLogsClearRow());
         section.appendChild(this.createSettingsSnapshotRow());
         section.appendChild(this.createDiagnosticSummaryRow());
-        section.appendChild(this.createCheckboxRow("ui.testModeEnabled", this.t("testMode"), { description: this.t("testModeDesc"), refreshPanel: true }));
         return section;
+      }
+      // Reset lives at the end of the data tab, away from navigation.
+      createSettingsDangerZone() {
+        const section = this.createSettingsGroup(this.t("settingsDangerZone"), "danger", { className: "dait-settings-danger-zone" });
+        const button = this.createSmallButton(this.t("reset"), "danger");
+        button.className = `${button.className} dait-settings-reset-button`;
+        button.dataset.daitAction = "resetSettings";
+        button.addEventListener("click", (event) => {
+          event?.preventDefault?.();
+          this.runSettingsResetFromUi(button);
+        });
+        section.appendChild(this.createRow(this.t("reset"), button, { description: this.t("settingsResetDesc") }));
+        return section;
+      }
+      // The reset dialog confirms, resets and refreshes every open settings panel itself.
+      runSettingsResetFromUi(source) {
+        const panel = source?.closest?.(".dait-settings") || null;
+        return this.openResetSettingsDialog({ panel, source });
       }
       createCheckboxRow(path, labelText, rowOptions = {}) {
         const input = document.createElement("input");
         input.type = "checkbox";
+        input.className = "dait-switch";
+        input.setAttribute("role", "switch");
         input.dataset.daitPath = path;
         input.checked = Boolean(this.getSetting(path));
-        input.addEventListener("change", () => {
-          this.setSetting(path, input.checked);
-          if (rowOptions.refreshPanel) {
-            const panel = input.closest(".dait-settings");
-            if (panel) this.updateTestModeVisibility(panel, input.checked);
-          }
-        });
+        input.addEventListener("change", () => this.setSetting(path, input.checked));
         return this.createRow(labelText, input, { ...rowOptions, checkbox: true });
       }
-      updateTestModeVisibility(panel, enabled) {
-        const page = panel?.querySelector?.(".dait-settings-page-all");
-        if (!page?.appendChild) {
-          const nextPanel = this.getSettingsPanel();
-          this.replaceSettingsPanelElement(panel, nextPanel);
-          if (enabled) {
-            nextPanel.querySelector?.(".dait-test-mode-section")?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
-          }
-          return;
-        }
-        let section = page.querySelector?.(".dait-test-mode-section");
-        if (!enabled) {
-          section?.remove?.();
-          this.applySettingsActiveSection(panel, this.getSettingsActiveTab(), { force: true });
-          return;
-        }
-        if (!section) {
-          section = this.createTestModeSection();
-          section.dataset.daitSettingsSection = SETTINGS_SECTION_DIAGNOSTICS;
-          const diagnostics = page.querySelector?.(".dait-section-diagnostics") || page.querySelector?.(`[data-dait-settings-section='${SETTINGS_SECTION_DIAGNOSTICS}']`);
-          if (diagnostics?.parentElement === page && page.insertBefore) {
-            page.insertBefore(section, diagnostics.nextSibling || null);
-          } else {
-            page.appendChild(section);
-          }
-        }
-        if (enabled) {
-          section.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
-        }
-        this.applySettingsActiveSection(panel, this.getSettingsActiveTab(), { force: true });
-      }
       createApiKeyRow(kind) {
-        const row = document.createElement("div");
-        row.className = "dait-settings-row dait-api-key-row";
-        const label = document.createElement("span");
-        label.className = "dait-row-label";
-        label.textContent = this.t("apiKey");
-        row.appendChild(label);
-        const status = document.createElement("span");
-        const savedStatus = this.getApiStatus(kind);
-        status.className = `dait-api-status dait-api-status-${savedStatus.state}`;
-        status.dataset.daitKind = kind;
-        status.textContent = this.getApiStatusText(savedStatus.state);
-        status.title = savedStatus.message || "";
-        row.appendChild(status);
-        const description = document.createElement("p");
-        description.className = "dait-row-description";
-        description.textContent = this.t("apiKeyDesc");
-        row.appendChild(description);
-        const controls = document.createElement("div");
-        controls.className = "dait-api-controls";
+        const provider = String(this.settings[kind]?.provider || "");
         const input = document.createElement("input");
         input.type = "password";
         input.dataset.daitPath = `${kind}.apiKey`;
-        input.placeholder = "sk-...";
+        input.placeholder = this.isProviderApiKeyOptional(provider) ? this.t("apiKeyOptionalPlaceholder") : ["deepseek", "openaiCompatible"].includes(provider) ? "sk-..." : "";
+        input.autocomplete = "off";
+        input.spellcheck = false;
         input.value = this.getSetting(`${kind}.apiKey`) ?? "";
         input.addEventListener("change", () => this.setSetting(`${kind}.apiKey`, input.value));
-        controls.appendChild(input);
-        const test = this.createSmallButton(this.t("apiTest"));
-        test.addEventListener("click", (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          this.testApiConnection(kind, test, status);
-        });
-        controls.appendChild(test);
-        row.appendChild(controls);
+        const row = this.createRow(this.t("apiKey"), input, { description: this.getProviderFieldHelp("apiKey", provider), stacked: true });
+        row.className = `${row.className} dait-api-key-field`;
         return row;
       }
+      // Service status with its Test button, as a row (the connection card shows the same in its header).
       createProviderStatusRow(kind) {
-        const row = document.createElement("div");
-        row.className = "dait-settings-row dait-api-key-row dait-provider-status-row";
-        const label = document.createElement("span");
-        label.className = "dait-row-label";
-        label.textContent = this.t("providerStatus");
-        row.appendChild(label);
-        const status = document.createElement("span");
-        const savedStatus = this.getApiStatus(kind);
-        status.className = `dait-api-status dait-api-status-${savedStatus.state}`;
-        status.dataset.daitKind = kind;
-        status.textContent = this.getApiStatusText(savedStatus.state);
-        status.title = savedStatus.message || "";
-        row.appendChild(status);
-        const description = document.createElement("p");
-        description.className = "dait-row-description";
-        description.textContent = this.t("providerStatusDesc");
-        row.appendChild(description);
-        const controls = document.createElement("div");
-        controls.className = "dait-api-controls";
-        const test = this.createSmallButton(this.t("apiTest"));
-        test.addEventListener("click", (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          this.testApiConnection(kind, test, status);
-        });
-        controls.appendChild(test);
-        row.appendChild(controls);
-        return row;
+        return this.createRow(this.t("providerStatus"), this.createProviderConnectionStatus(kind), { description: this.t("providerStatusDesc") });
       }
-      createHotkeyRow() {
+      createHotkeyRow(rowOptions = {}) {
         const controls = document.createElement("div");
         controls.className = "dait-hotkey-controls";
         const record = this.createSmallButton(this.getHotkeyLabel());
         record.classList.add("dait-hotkey-recorder");
-        const reset = this.createSmallButton(this.t("hotkeyReset"));
+        record.title = this.t("hotkeyRecord");
+        const reset = this.createSmallButton(this.t("hotkeyReset"), "link");
         reset.addEventListener("click", () => {
           this.setSetting("ui.polishHotkey", DEFAULT_SETTINGS.ui.polishHotkey);
           record.textContent = this.getHotkeyLabel();
@@ -14767,53 +21083,62 @@ var require_discord_ai_translator = __commonJS({
         record.addEventListener("click", () => this.recordHotkey(record));
         controls.appendChild(record);
         controls.appendChild(reset);
-        return this.createRow(this.t("polishHotkey"), controls, { description: this.t("polishHotkeyDesc") });
+        return this.createRow(this.t("polishHotkey"), controls, { ...rowOptions, description: this.t("polishHotkeyDesc") });
       }
+      // The data tab gives every action a row of its own (a destructive one always), so a row never mixes unrelated
+      // buttons: the stats rows show the counts, the clear rows below them update those counts.
       createTranslationCacheStatsRow() {
         const controls = document.createElement("div");
         controls.className = "dait-cache-actions";
         const clearStats = this.createSmallButton(this.t("clearTranslationCacheStats"));
-        const clearCache = this.createSmallButton(this.t("clearTranslationCache"), "danger");
-        const refreshDescription = (button) => {
-          const row = button.closest(".dait-settings-row");
-          const description = row?.querySelector?.(".dait-row-description");
-          if (description) description.textContent = this.getTranslationCacheStatsText();
-        };
         clearStats.addEventListener("click", () => {
           this.clearTranslationCacheStats();
-          refreshDescription(clearStats);
-        });
-        clearCache.addEventListener("click", () => {
-          if (!window.confirm(this.t("clearTranslationCacheConfirm"))) return;
-          this.clearTranslationCache();
-          refreshDescription(clearCache);
+          this.refreshSettingsStatsRow(clearStats, "translation-cache");
         });
         controls.appendChild(clearStats);
-        controls.appendChild(clearCache);
-        return this.createRow(this.t("translationCacheStats"), controls, {
+        const row = this.createRow(this.t("translationCacheStats"), controls, {
           description: this.getTranslationCacheStatsText()
         });
+        row.dataset.daitStats = "translation-cache";
+        return row;
       }
+      createTranslationCacheClearRow() {
+        const controls = document.createElement("div");
+        controls.className = "dait-cache-actions";
+        const clearCache = this.createSmallButton(this.t("clearTranslationCache"), "danger");
+        clearCache.addEventListener("click", async () => {
+          const confirmed = await this.confirmAction({
+            title: this.t("clearTranslationCache"),
+            body: this.t("clearTranslationCacheConfirm"),
+            confirmText: this.t("clearTranslationCache"),
+            danger: true
+          });
+          if (!confirmed) return;
+          this.clearTranslationCache();
+          this.refreshSettingsStatsRow(clearCache, "translation-cache");
+        });
+        controls.appendChild(clearCache);
+        return this.createRow(this.t("clearTranslationCache"), controls, { description: this.t("clearTranslationCacheDesc") });
+      }
+      // Writes the current counts into the stats row of the same group ("translation-cache" or "diagnostic-logs").
+      refreshSettingsStatsRow(source, kind) {
+        const scope = source?.closest?.(".dait-settings-group") || source?.closest?.(".dait-settings");
+        const row = scope?.querySelector?.(`[data-dait-stats='${kind}']`);
+        const description = row?.querySelector?.(".dait-row-description");
+        if (!description) return;
+        description.textContent = kind === "translation-cache" ? this.getTranslationCacheStatsText() : this.getDiagnosticLogsStatsText();
+      }
+      // Copy and export: one small group of related buttons, with the log counts as the row's description.
       createDiagnosticLogsRow() {
         const controls = document.createElement("div");
         controls.className = "dait-diagnostic-actions";
-        const clear = this.createSmallButton(this.t("clearDiagnosticLogs"));
         const copy = this.createSmallButton(this.t("copyDiagnosticLogs"));
         const exportJson = this.createSmallButton(this.t("exportDiagnosticJson"));
         const exportTxt = this.createSmallButton(this.t("exportDiagnosticTxt"));
-        const refreshDescription = (button) => {
-          const row = button.closest(".dait-settings-row");
-          const description = row?.querySelector?.(".dait-row-description");
-          if (description) description.textContent = this.getDiagnosticLogsStatsText();
-        };
         const refreshDiagnostics = (button) => {
-          refreshDescription(button);
-          this.refreshDiagnosticSummary(button.closest(".dait-settings-section"));
+          this.refreshSettingsStatsRow(button, "diagnostic-logs");
+          this.refreshDiagnosticSummary(button.closest(".dait-settings-group") || button.closest(".dait-settings"));
         };
-        clear.addEventListener("click", () => {
-          this.clearDiagnosticLogs();
-          refreshDiagnostics(clear);
-        });
         copy.addEventListener("click", async () => {
           await this.copyDiagnosticLogs();
           refreshDiagnostics(copy);
@@ -14826,13 +21151,33 @@ var require_discord_ai_translator = __commonJS({
           await this.exportDiagnosticLogs("txt");
           refreshDiagnostics(exportTxt);
         });
-        controls.appendChild(clear);
         controls.appendChild(copy);
         controls.appendChild(exportJson);
         controls.appendChild(exportTxt);
-        return this.createRow(this.t("diagnosticLogs"), controls, {
+        const row = this.createRow(this.t("exportDiagnosticLogs"), controls, {
           description: this.getDiagnosticLogsStatsText()
         });
+        row.dataset.daitStats = "diagnostic-logs";
+        return row;
+      }
+      createDiagnosticLogsClearRow() {
+        const controls = document.createElement("div");
+        controls.className = "dait-diagnostic-actions";
+        const clear = this.createSmallButton(this.t("clearDiagnosticLogs"), "danger");
+        clear.addEventListener("click", async () => {
+          const confirmed = await this.confirmAction({
+            title: this.t("clearDiagnosticLogs"),
+            body: this.t("clearDiagnosticLogsConfirm"),
+            confirmText: this.t("clearDiagnosticLogs"),
+            danger: true
+          });
+          if (!confirmed) return;
+          this.clearDiagnosticLogs();
+          this.refreshSettingsStatsRow(clear, "diagnostic-logs");
+          this.refreshDiagnosticSummary(clear.closest(".dait-settings-group") || clear.closest(".dait-settings"));
+        });
+        controls.appendChild(clear);
+        return this.createRow(this.t("clearDiagnosticLogs"), controls, { description: this.t("clearDiagnosticLogsDesc") });
       }
       createSettingsSnapshotRow() {
         const controls = document.createElement("div");
@@ -14871,18 +21216,21 @@ var require_discord_ai_translator = __commonJS({
           [this.t("diagnosticSummaryQueues"), this.getDiagnosticSummaryQueueItems(summary)],
           [this.t("diagnosticSummaryProviders"), summary.top?.providers || []],
           [this.t("diagnosticSummaryFailures"), summary.top?.failureClasses?.length ? summary.top.failureClasses : summary.top?.failureTypes || []],
-          ["failureLayer", summary.top?.failureLayers || []],
-          ["flowStage", summary.top?.flowStages || []]
+          [this.t("diagnosticSummaryFailureLayers"), summary.top?.failureLayers || []],
+          [this.t("diagnosticSummaryFlowStages"), summary.top?.flowStages || []]
         ].filter(([, items]) => Array.isArray(items) && items.length);
         if (!groups.length) {
-          const empty = document.createElement("span");
-          empty.className = "dait-diagnostic-summary-empty";
-          empty.textContent = this.t("diagnosticSummaryEmpty");
-          panel.appendChild(empty);
+          panel.hidden = true;
           return panel;
         }
         groups.forEach(([label, items]) => panel.appendChild(this.createDiagnosticSummaryGroup(label, items)));
         return panel;
+      }
+      // A chip shows a short label for its code (service names for services); the code stays in the tooltip.
+      getDiagnosticChipLabel(code) {
+        const value = String(code ?? "");
+        if (PROVIDER_ORDER.includes(value)) return this.getProviderDisplayName(value);
+        return getDiagnosticCodeLabel(value, this.getLocale());
       }
       createDiagnosticSummaryGroup(label, items = []) {
         const group = document.createElement("div");
@@ -14896,7 +21244,9 @@ var require_discord_ai_translator = __commonJS({
         items.slice(0, 8).forEach((item) => {
           const chip = document.createElement("span");
           chip.className = "dait-diagnostic-chip";
-          chip.textContent = `${item.key}: ${item.count}`;
+          chip.dataset.daitCode = String(item.key ?? "");
+          chip.textContent = `${this.getDiagnosticChipLabel(item.key)}: ${item.count}`;
+          chip.title = String(item.key ?? "");
           chips.appendChild(chip);
         });
         group.appendChild(chips);
@@ -14921,7 +21271,7 @@ var require_discord_ai_translator = __commonJS({
         const block = document.createElement("div");
         block.className = "dait-google-settings";
         const header = document.createElement("div");
-        header.className = "dait-prompt-manager-header";
+        header.className = "dait-settings-subheading";
         const title = document.createElement("span");
         title.textContent = this.t("googleTranslateTitle");
         header.appendChild(title);
@@ -14944,8 +21294,14 @@ var require_discord_ai_translator = __commonJS({
         const controls = document.createElement("div");
         controls.className = "dait-cache-actions";
         const reset = this.createSmallButton(this.t("googleTranslateResetStats"), "danger");
-        reset.addEventListener("click", () => {
-          if (!window.confirm(this.t("googleTranslateResetConfirm"))) return;
+        reset.addEventListener("click", async () => {
+          const confirmed = await this.confirmAction({
+            title: this.t("googleTranslateResetStats"),
+            body: this.t("googleTranslateResetConfirm"),
+            confirmText: this.t("googleTranslateResetStats"),
+            danger: true
+          });
+          if (!confirmed) return;
           this.resetGoogleTranslateUsageStats();
           const row = reset.closest(".dait-settings-row");
           const description = row?.querySelector?.(".dait-row-description");
@@ -14962,11 +21318,12 @@ var require_discord_ai_translator = __commonJS({
           compressed: this.diagnosticCompressedCount
         });
       }
+      // One sentence (UI-SPEC descriptions): the count, what the chips group by, and the latest event.
       getDiagnosticSummaryStatsText(summary = this.createDiagnosticSummary(this.diagnosticLogs)) {
         const events = Number(summary?.totalEvents || 0) || 0;
         if (!events) return this.t("diagnosticSummaryEmpty");
         const latest = this.formatDiagnosticSummaryTime(summary?.latestIso);
-        return `${this.t("diagnosticSummaryEvents", { events, latest })} ${this.t("diagnosticSummaryDesc")}`;
+        return this.t("diagnosticSummaryEvents", { events, latest });
       }
       formatDiagnosticSummaryTime(iso) {
         if (!iso) return "-";
@@ -14981,19 +21338,24 @@ var require_discord_ai_translator = __commonJS({
       }
       getGoogleTranslateStatsText() {
         const stats = this.getGoogleTranslateUsageSummary();
-        return this.t("googleTranslateStatsDesc", {
+        const text = this.t("googleTranslateStatsDesc", {
           used: stats.used,
           limit: stats.limit,
           available: stats.available,
           total: stats.total,
           month: stats.monthKey
         });
+        if (!stats.coolingDown) return text;
+        return `${text} ${this.t("googleTranslateStatsCooldown", {
+          count: stats.coolingDown,
+          time: this.formatDiagnosticSummaryTime(stats.nextCooldownEndsAt)
+        })}`;
       }
       getTranslationCacheStatsText() {
         return this.t("translationCacheStatsDesc", {
           hits: this.translationCacheStats.hits,
           misses: this.translationCacheStats.misses,
-          memory: this.translationCache.size,
+          memory: this.getTranslationCacheMessageCount(),
           persistent: this.persistentTranslationCacheCount
         });
       }
@@ -15008,146 +21370,6 @@ var require_discord_ai_translator = __commonJS({
           168: this.t("cacheTtl7d")
         };
         return labels[value] || `${value}h`;
-      }
-      createTestModeSection() {
-        const section = document.createElement("section");
-        section.className = "dait-settings-section dait-test-mode-section";
-        const title = document.createElement("h3");
-        title.textContent = this.t("testModeTitle");
-        section.appendChild(title);
-        const note = document.createElement("p");
-        note.className = "dait-note";
-        note.textContent = this.t("testModeNote");
-        section.appendChild(note);
-        const panel = document.createElement("div");
-        panel.className = "dait-test-panel";
-        const toolbar = document.createElement("div");
-        toolbar.className = "dait-test-toolbar";
-        const kindSelect = document.createElement("select");
-        kindSelect.className = "dait-test-kind";
-        [
-          ["polish", this.t("polishTitle")],
-          ["translation", this.t("translationTitle")]
-        ].forEach(([value, text]) => {
-          const option = document.createElement("option");
-          option.value = value;
-          option.textContent = text;
-          option.selected = value === this.getTestModeKind();
-          kindSelect.appendChild(option);
-        });
-        toolbar.appendChild(kindSelect);
-        const config = document.createElement("span");
-        config.className = "dait-test-config";
-        toolbar.appendChild(config);
-        panel.appendChild(toolbar);
-        const inputBlock = this.createTestBlock(this.t("testModeInput"), this.t("testModeInputDesc"), { compactHeader: true });
-        const copyInput = this.createSmallButton(this.t("testModeCopyInput"));
-        inputBlock.querySelector(".dait-test-block-header")?.appendChild(copyInput);
-        const input = document.createElement("textarea");
-        input.className = "dait-test-input";
-        input.placeholder = this.t("testModeInputPlaceholder");
-        input.rows = 5;
-        inputBlock.appendChild(input);
-        panel.appendChild(inputBlock);
-        const promptBlock = this.createTestBlock(this.t("testModePrompt"), this.t("testModePromptDesc"), { compactHeader: true });
-        const copyPrompt = this.createSmallButton(this.t("testModeCopyPrompt"));
-        promptBlock.querySelector(".dait-test-block-header")?.appendChild(copyPrompt);
-        const prompt = document.createElement("textarea");
-        prompt.className = "dait-test-prompt";
-        prompt.rows = 6;
-        this.bindSettingsTextarea(prompt);
-        promptBlock.appendChild(prompt);
-        panel.appendChild(promptBlock);
-        const actionBar = document.createElement("div");
-        actionBar.className = "dait-test-actions";
-        const run = this.createSmallButton(this.t("testModeRun"));
-        const savePrompt = this.createSmallButton(this.t("testModeSavePrompt"));
-        const clear = this.createSmallButton(this.t("testModeClear"));
-        actionBar.appendChild(run);
-        actionBar.appendChild(savePrompt);
-        actionBar.appendChild(clear);
-        panel.appendChild(actionBar);
-        const outputBlock = this.createTestBlock(this.t("testModeOutput"), "", { compactHeader: true });
-        const copyOutput = this.createSmallButton(this.t("testModeCopyOutput"));
-        copyOutput.classList.add("dait-test-copy-output");
-        outputBlock.querySelector(".dait-test-block-header")?.appendChild(copyOutput);
-        const output = document.createElement("pre");
-        output.className = "dait-test-output";
-        output.textContent = this.t("testModeOutputPlaceholder");
-        outputBlock.appendChild(output);
-        panel.appendChild(outputBlock);
-        const syncKind = () => {
-          const kind = kindSelect.value;
-          this.settings.ui.testModeKind = kind;
-          this.saveSettings({ debounce: true });
-          prompt.value = this.settings[kind]?.prompt || "";
-          config.textContent = this.t("testModeConfig", {
-            provider: PROVIDER_DEFAULTS[this.settings[kind]?.provider]?.label || this.settings[kind]?.provider || "",
-            model: this.settings[kind]?.model || "",
-            targetLanguage: this.getDisplayLanguage(this.settings[kind]?.targetLanguage)
-          });
-        };
-        kindSelect.addEventListener("change", () => {
-          syncKind();
-          output.textContent = this.t("testModeOutputPlaceholder");
-        });
-        savePrompt.addEventListener("click", () => {
-          const kind = kindSelect.value;
-          this.preserveSettingsScroll(prompt, () => {
-            this.setSetting(`${kind}.prompt`, prompt.value);
-            this.showToast(this.t("testModePromptSaved", { name: this.getTaskDisplayName(kind) }), "success");
-          });
-        });
-        copyInput.addEventListener("click", () => this.copyPromptText(input));
-        copyPrompt.addEventListener("click", () => this.copyPromptText(prompt));
-        copyOutput.addEventListener("click", () => this.copyTextFromNode(output));
-        clear.addEventListener("click", () => {
-          input.value = "";
-          output.textContent = this.t("testModeOutputPlaceholder");
-        });
-        run.addEventListener("click", async () => {
-          const kind = kindSelect.value;
-          const sample = input.value.trim();
-          if (!sample) {
-            this.showToast(this.t("testModeInputRequired"), "error");
-            return;
-          }
-          output.textContent = "";
-          this.setButtonBusy(run, true, this.t("testModeRunning"));
-          try {
-            output.textContent = await this.runModelTask(kind, sample, {
-              configOverrides: { prompt: prompt.value },
-              mode: "test"
-            });
-            this.showToast(this.t("testModeOutputReady"), "success");
-          } catch (error) {
-            output.textContent = this.formatError(error);
-            this.showToast(this.formatError(error), "error");
-          } finally {
-            this.setButtonBusy(run, false, this.t("testModeRun"));
-          }
-        });
-        syncKind();
-        section.appendChild(panel);
-        return section;
-      }
-      createTestBlock(labelText, descriptionText, options = {}) {
-        const block = document.createElement("div");
-        block.className = "dait-test-block";
-        const header = document.createElement("div");
-        header.className = "dait-test-block-header";
-        if (options.compactHeader) header.classList.add("dait-test-block-header-compact");
-        const label = document.createElement("span");
-        label.textContent = labelText;
-        header.appendChild(label);
-        block.appendChild(header);
-        if (descriptionText) {
-          const description = document.createElement("p");
-          description.className = "dait-row-description";
-          description.textContent = descriptionText;
-          block.appendChild(description);
-        }
-        return block;
       }
       createInputRow(path, labelText, type, placeholder, attrs = {}, rowOptions = {}) {
         const input = document.createElement("input");
@@ -15186,18 +21408,31 @@ var require_discord_ai_translator = __commonJS({
         textarea.value = this.getSetting(path) ?? "";
         this.bindSettingsTextarea(textarea);
         textarea.addEventListener("change", () => this.preserveSettingsScroll(textarea, () => this.setSetting(path, textarea.value)));
-        return this.createRow(labelText, textarea, { ...rowOptions, wide: true });
+        return this.createRow(labelText, textarea, { ...rowOptions, stacked: true });
       }
       createSelectRow(path, labelText, options, rowOptions = {}) {
         const select = document.createElement("select");
         select.dataset.daitPath = path;
-        const current = this.getSetting(path);
-        options.forEach(([value, text]) => {
+        const routeKey = typeof rowOptions.routeKey === "string" ? rowOptions.routeKey : null;
+        if (routeKey !== null) select.dataset.daitRouteKey = routeKey;
+        const current = routeKey !== null && path === "ui.currentChannelAutoTranslatePolicy" ? this.getCurrentChannelAutoTranslatePolicyMode(routeKey) : this.getSetting(path);
+        const appendOption = (parent, [value, text]) => {
           const option = document.createElement("option");
           option.value = value;
           option.textContent = text;
           option.selected = String(value) === String(current);
-          select.appendChild(option);
+          parent.appendChild(option);
+        };
+        options.forEach((entry) => {
+          if (entry && !Array.isArray(entry) && Array.isArray(entry.options)) {
+            const group = document.createElement("optgroup");
+            group.label = entry.label;
+            group.setAttribute("label", entry.label);
+            entry.options.forEach((option) => appendOption(group, option));
+            select.appendChild(group);
+            return;
+          }
+          appendOption(select, entry);
         });
         select.addEventListener("change", () => {
           if (path.endsWith(".provider")) {
@@ -15205,9 +21440,9 @@ var require_discord_ai_translator = __commonJS({
             this.replaceSettingsPanelFrom(select);
             return;
           }
-          this.setSetting(path, select.value);
+          this.setSetting(path, select.value, routeKey !== null ? { routeKey } : void 0);
           if (path === "ui.language") {
-            const panel = select.closest(".dait-settings");
+            const panel = select.closest?.(".dait-settings");
             if (panel) this.replaceSettingsPanelElement(panel);
           }
         });
@@ -15245,6 +21480,9 @@ var require_discord_ai_translator = __commonJS({
         customInput.type = "text";
         customInput.className = "dait-language-custom";
         customInput.placeholder = this.t("customLanguagePlaceholder");
+        customInput.title = this.t("customLanguageDesc");
+        customInput.setAttribute("aria-description", this.t("customLanguageDesc"));
+        customInput.setAttribute("aria-label", `${labelText}: ${this.t("customLanguage")}`);
         customInput.value = isCustom ? current : "";
         customInput.hidden = !isCustom;
         select.addEventListener("change", () => {
@@ -15270,17 +21508,15 @@ var require_discord_ai_translator = __commonJS({
         });
         controls.appendChild(select);
         controls.appendChild(customInput);
-        return this.createRow(
-          labelText,
-          controls,
-          {
-            description: `${descriptionText} ${this.t("customLanguageDesc")}`
-          }
-        );
+        return this.createRow(labelText, controls, { description: descriptionText, labelFor: select });
       }
+      // Template picker (select only previews), read-only preview, the prompt editor and an inline "save as
+      // template" name field. Only "Use template" replaces the prompt, after a confirmation when the current
+      // prompt has edits that no template holds.
       createPromptManager(kind) {
         const manager = document.createElement("div");
         manager.className = "dait-prompt-manager";
+        const idBase = `dait-prompt-${kind}-${Math.random().toString(36).slice(2, 8)}`;
         const header = document.createElement("div");
         header.className = "dait-prompt-manager-header";
         const title = document.createElement("span");
@@ -15296,98 +21532,206 @@ var require_discord_ai_translator = __commonJS({
         const search = document.createElement("input");
         search.type = "search";
         search.placeholder = this.t("promptSearch");
+        search.setAttribute("aria-label", this.t("promptSearch"));
         tools.appendChild(search);
         const select = document.createElement("select");
         select.className = "dait-prompt-select";
+        select.setAttribute("aria-label", this.t("promptTemplateSelect"));
         tools.appendChild(select);
         const actions = document.createElement("div");
         actions.className = "dait-prompt-actions";
-        const apply = this.createSmallButton(this.t("promptApply"));
-        const save = this.createSmallButton(this.t("promptSave"));
-        const update = this.createSmallButton(this.t("promptUpdate"));
-        const copy = this.createSmallButton(this.t("promptCopy"));
+        const apply = this.createSmallButton(this.t("promptApply"), "primary");
+        apply.dataset.daitAction = "promptApply";
         const remove = this.createSmallButton(this.t("promptDelete"), "danger");
+        remove.dataset.daitAction = "promptDelete";
         actions.appendChild(apply);
-        actions.appendChild(save);
-        actions.appendChild(update);
-        actions.appendChild(copy);
         actions.appendChild(remove);
         tools.appendChild(actions);
         manager.appendChild(tools);
+        const previewBlock = document.createElement("div");
+        previewBlock.className = "dait-prompt-preview-block";
+        const previewLabel = document.createElement("span");
+        previewLabel.className = "dait-prompt-preview-label";
+        previewLabel.id = `${idBase}-preview-label`;
+        previewBlock.appendChild(previewLabel);
+        const preview = document.createElement("div");
+        preview.className = "dait-prompt-preview";
+        preview.tabIndex = 0;
+        preview.setAttribute("role", "region");
+        preview.setAttribute("aria-labelledby", previewLabel.id);
+        previewBlock.appendChild(preview);
+        manager.appendChild(previewBlock);
         const promptBlock = document.createElement("div");
         promptBlock.className = "dait-prompt-editor";
         const promptLabel = document.createElement("span");
+        promptLabel.id = `${idBase}-label`;
         promptLabel.textContent = this.t("prompt");
         promptBlock.appendChild(promptLabel);
         const promptDesc = document.createElement("p");
         promptDesc.className = "dait-row-description";
+        promptDesc.id = `${idBase}-desc`;
         promptDesc.textContent = this.t("promptDesc");
         promptBlock.appendChild(promptDesc);
         const textarea = document.createElement("textarea");
         textarea.dataset.daitPath = `${kind}.prompt`;
         textarea.rows = 6;
         textarea.value = this.getSetting(`${kind}.prompt`) ?? "";
+        textarea.setAttribute("aria-labelledby", promptLabel.id);
+        textarea.setAttribute("aria-describedby", `${promptDesc.id} ${idBase}-status`);
         this.bindSettingsTextarea(textarea);
-        textarea.addEventListener("change", () => this.preserveSettingsScroll(textarea, () => this.setSetting(`${kind}.prompt`, textarea.value)));
         promptBlock.appendChild(textarea);
+        const footer = document.createElement("div");
+        footer.className = "dait-prompt-editor-footer";
+        const status = document.createElement("span");
+        status.className = "dait-prompt-status";
+        status.id = `${idBase}-status`;
+        footer.appendChild(status);
+        const editorActions = document.createElement("div");
+        editorActions.className = "dait-prompt-actions";
+        const update = this.createSmallButton(this.t("promptUpdate"));
+        update.dataset.daitAction = "promptUpdate";
+        const copy = this.createSmallButton(this.t("promptCopy"));
+        editorActions.appendChild(update);
+        editorActions.appendChild(copy);
+        footer.appendChild(editorActions);
+        promptBlock.appendChild(footer);
+        const saveRow = document.createElement("div");
+        saveRow.className = "dait-prompt-tools dait-prompt-save";
+        const nameInput = document.createElement("input");
+        nameInput.type = "text";
+        nameInput.maxLength = 80;
+        nameInput.placeholder = this.t("promptNamePlaceholder");
+        nameInput.setAttribute("aria-label", this.t("promptSaveNameLabel"));
+        saveRow.appendChild(nameInput);
+        const save = this.createSmallButton(this.t("promptSave"));
+        save.dataset.daitAction = "promptSave";
+        saveRow.appendChild(save);
+        promptBlock.appendChild(saveRow);
         manager.appendChild(promptBlock);
-        const renderOptions = () => {
-          const query = search.value.trim().toLowerCase();
+        const normalize = (value) => String(value ?? "").replace(/\r\n?/g, "\n").trim();
+        const getPromptValue = () => textarea.value ?? this.settings[kind]?.prompt ?? "";
+        const findTemplate = (id) => (id ? this.getPromptTemplates(kind).find((template) => template.id === id) : null) || null;
+        const hasUnsavedEdits = (prompt) => Boolean(normalize(prompt)) && !this.getPromptTemplates(kind).some((template) => normalize(template.prompt) === normalize(prompt));
+        const syncStatus = () => {
+          const prompt = getPromptValue();
+          const active = findTemplate(this.settings[kind]?.activePromptTemplate);
+          const matching = active && normalize(active.prompt) === normalize(prompt) ? active : this.getPromptTemplates(kind).find((template) => normalize(template.prompt) === normalize(prompt)) || null;
+          status.textContent = matching ? this.t("promptUsingTemplate", { code: matching.serial, name: this.getPromptTemplateDisplayName(matching) }) : active && normalize(prompt) ? this.t("promptTemplateEdited", { code: active.serial, name: this.getPromptTemplateDisplayName(active) }) : this.t("promptTemplateCustom");
+          update.disabled = !active || !normalize(prompt) || normalize(active.prompt) === normalize(prompt);
+          update.title = active ? this.t("promptUpdateTitle", { code: active.serial, name: this.getPromptTemplateDisplayName(active) }) : "";
+        };
+        const syncPreview = () => {
+          const template = findTemplate(select.value);
+          const inUse = Boolean(template) && template.id === this.settings[kind]?.activePromptTemplate;
+          previewLabel.textContent = inUse ? `${this.t("promptPreview")} · ${this.t("promptPreviewActive")}` : this.t("promptPreview");
+          preview.textContent = template ? String(template.prompt || "") : this.t("promptNoTemplate");
+          apply.disabled = !template;
+          remove.disabled = !template;
+        };
+        const renderOptions = (preferredId = "") => {
+          const query = String(search.value || "").trim().toLowerCase();
           const templates = this.getPromptTemplates(kind).filter((template) => !query || this.getPromptTemplateSearchText(template).includes(query));
+          const previous = preferredId || select.value;
           select.textContent = "";
           if (!templates.length) {
             const option = document.createElement("option");
             option.value = "";
             option.textContent = this.t("promptNoTemplate");
             select.appendChild(option);
+            syncPreview();
             return;
           }
+          const activeId = this.settings[kind]?.activePromptTemplate;
+          const selectedId = [previous, activeId].find((id) => id && templates.some((template) => template.id === id)) || templates[0].id;
           templates.forEach((template) => {
             const option = document.createElement("option");
             option.value = template.id;
             option.textContent = this.getPromptTemplateLabel(template);
-            option.selected = template.id === this.settings[kind].activePromptTemplate;
+            option.selected = template.id === selectedId;
             select.appendChild(option);
           });
+          syncPreview();
         };
-        const getPromptValue = () => {
-          const textarea2 = manager.querySelector(`[data-dait-path='${kind}.prompt']`);
-          return textarea2?.value ?? this.settings[kind].prompt;
+        const commitPrompt = (prompt) => {
+          if (prompt !== this.settings[kind]?.prompt) this.setSetting(`${kind}.prompt`, prompt);
         };
-        const applySelected = () => {
-          if (!select.value) return;
-          this.applyPromptTemplate(kind, select.value);
-          renderOptions();
-        };
-        search.addEventListener("input", renderOptions);
-        select.addEventListener("change", applySelected);
-        apply.addEventListener("click", applySelected);
-        save.addEventListener("click", () => {
-          const name = window.prompt(this.t("promptNamePlaceholder"), "");
-          if (!name || !name.trim()) {
+        const saveTemplate = () => {
+          const name = String(nameInput.value || "").trim();
+          if (!name) {
             this.showToast(this.t("promptNameRequired"), "error");
+            nameInput.focus?.();
             return;
           }
           const prompt = getPromptValue();
-          this.settings[kind].prompt = prompt;
-          this.savePromptTemplate(kind, name.trim(), prompt);
+          commitPrompt(prompt);
+          this.savePromptTemplate(kind, name, prompt);
+          nameInput.value = "";
           search.value = "";
-          renderOptions();
+          renderOptions(this.settings[kind]?.activePromptTemplate);
+          syncStatus();
+        };
+        textarea.addEventListener("change", () => this.preserveSettingsScroll(textarea, () => this.setSetting(`${kind}.prompt`, textarea.value)));
+        textarea.addEventListener("input", syncStatus);
+        textarea.__daitAfterSync = () => {
+          syncStatus();
+          syncPreview();
+        };
+        search.addEventListener("input", () => renderOptions());
+        select.addEventListener("change", syncPreview);
+        apply.addEventListener("click", async () => {
+          const template = findTemplate(select.value);
+          if (!template) return;
+          const current = getPromptValue();
+          if (normalize(current) !== normalize(template.prompt) && hasUnsavedEdits(current)) {
+            const confirmed = await this.confirmAction({
+              title: this.t("promptApplyUnsavedTitle"),
+              body: this.t("promptApplyUnsavedConfirm", { code: template.serial, name: this.getPromptTemplateDisplayName(template) }),
+              confirmText: this.t("promptApply"),
+              danger: true
+            });
+            if (!confirmed || !findTemplate(template.id)) return;
+          }
+          this.applyPromptTemplate(kind, template.id);
+          textarea.value = this.settings[kind]?.prompt ?? template.prompt;
+          renderOptions(template.id);
+          syncStatus();
+        });
+        save.addEventListener("click", saveTemplate);
+        nameInput.addEventListener("keydown", (event) => {
+          if (event.key !== "Enter" || event.isComposing) return;
+          event.preventDefault?.();
+          saveTemplate();
         });
         update.addEventListener("click", () => {
-          if (!select.value) return;
+          const active = findTemplate(this.settings[kind]?.activePromptTemplate);
+          if (!active) return;
           const prompt = getPromptValue();
-          this.settings[kind].prompt = prompt;
-          this.updatePromptTemplate(kind, select.value, prompt);
+          commitPrompt(prompt);
+          this.updatePromptTemplate(kind, active.id, prompt);
           renderOptions();
+          syncStatus();
         });
         copy.addEventListener("click", () => this.copyPromptText(textarea));
-        remove.addEventListener("click", () => {
-          if (!select.value || !window.confirm(this.t("promptDeleteConfirm"))) return;
-          this.deletePromptTemplate(kind, select.value);
+        remove.addEventListener("click", async () => {
+          const template = findTemplate(select.value);
+          if (!template) return;
+          const fallback = template.id === this.settings[kind]?.activePromptTemplate ? this.getPromptTemplates(kind).find((item) => item.id !== template.id) || null : null;
+          const label = this.getPromptTemplateLabel(template);
+          const confirmed = await this.confirmAction({
+            title: this.t("promptDeleteConfirm"),
+            body: fallback && normalize(fallback.prompt) !== normalize(getPromptValue()) ? [label, this.t("promptDeleteActiveNote", { code: fallback.serial, name: this.getPromptTemplateDisplayName(fallback) })] : label,
+            confirmText: this.t("promptDelete"),
+            danger: true
+          });
+          if (!confirmed || !findTemplate(template.id)) return;
+          const wasActive = this.settings[kind]?.activePromptTemplate === template.id;
+          this.deletePromptTemplate(kind, template.id);
+          if (wasActive) textarea.value = this.settings[kind]?.prompt ?? "";
           renderOptions();
+          syncStatus();
         });
         renderOptions();
+        syncStatus();
         return manager;
       }
       createSmallButton(text, variant = "") {
@@ -15399,6 +21743,7 @@ var require_discord_ai_translator = __commonJS({
       }
       createDeepSeekModelRow(kind) {
         const select = document.createElement("select");
+        select.dataset.daitModelPreset = kind;
         const current = this.settings[kind]?.model;
         const custom = document.createElement("option");
         custom.value = "";
@@ -15419,46 +21764,192 @@ var require_discord_ai_translator = __commonJS({
         });
         return this.createRow(this.t("deepseekPreset"), select, { description: this.t("deepseekPresetDesc") });
       }
-      createLocalModelRow(kind) {
-        const select = document.createElement("select");
-        const current = this.settings[kind]?.model;
-        const custom = document.createElement("option");
-        custom.value = "";
-        custom.textContent = this.t("customModel");
-        custom.selected = !LOCAL_MODEL_PRESETS.some(([value]) => value === current);
-        select.appendChild(custom);
-        LOCAL_MODEL_PRESETS.forEach(([value, text]) => {
-          const option = document.createElement("option");
-          option.value = value;
-          option.textContent = text;
-          option.selected = value === current;
-          select.appendChild(option);
-        });
-        select.addEventListener("change", () => {
-          if (!select.value) return;
-          this.setSetting(`${kind}.model`, select.value);
-          this.showToast(this.t("modelSet", { model: select.options[select.selectedIndex].textContent }), "success");
-        });
-        return this.createRow(this.t("localModelPreset"), select, { description: this.t("localModelPresetDesc") });
-      }
+      // One settings row (UI-SPEC): a div with the label and a one-line description on the left and the control on
+      // the right. Options:
+      //   description      help text under the label (aria-describedby on the control)
+      //   disabledReason   locks the control and shows the reason instead of the description
+      //   checkbox         the control is a switch
+      //   stacked / wide   label above a full-width control, help below (long values: URLs, keys, prompts)
+      //   dependsOn        { path, label }: indented under its parent switch and disabled, with the reason, while it is off
+      //   labelFor         the element inside a composite control that the <label> names
+      //   ariaTarget       a composite control (radiogroup) named through aria-labelledby
+      // Only form fields get a <label for>; rows of action buttons use a plain text label, so a click on the row text
+      // never presses a button.
       createRow(labelText, control, options = {}) {
-        if (options.disabledReason) control.disabled = true;
-        const descriptionText = options.disabledReason || options.description;
-        const row = document.createElement("label");
-        row.className = "dait-settings-row";
-        if (options.checkbox) row.classList.add("dait-settings-row-checkbox");
-        if (options.wide) row.classList.add("dait-settings-row-wide");
-        const label = document.createElement("span");
+        const id = this.createSettingsControlId();
+        const stacked = Boolean(options.stacked || options.wide);
+        const classes = ["dait-settings-row"];
+        if (options.checkbox) classes.push("dait-settings-row-switch");
+        if (stacked) classes.push("dait-settings-row-stacked");
+        if (options.dependsOn) classes.push("dait-settings-row-dependent");
+        if (options.disabledReason) classes.push("dait-settings-row-inactive");
+        const row = document.createElement("div");
+        row.className = classes.join(" ");
+        row.id = `${id}-row`;
+        const labelTarget = options.labelFor || (this.isSettingsLabelableControl(control) ? control : null);
+        const ariaTarget = labelTarget ? null : options.ariaTarget || null;
+        const text = document.createElement("div");
+        text.className = "dait-row-text";
+        const label = document.createElement(labelTarget ? "label" : "span");
+        label.className = "dait-row-label";
+        label.id = `${id}-label`;
         label.textContent = labelText;
-        row.appendChild(label);
-        if (descriptionText) {
-          const description = document.createElement("p");
-          description.className = "dait-row-description";
-          description.textContent = descriptionText;
-          row.appendChild(description);
+        if (labelTarget) {
+          if (!labelTarget.id) labelTarget.id = id;
+          label.setAttribute("for", labelTarget.id);
+        } else if (ariaTarget) {
+          ariaTarget.setAttribute("aria-labelledby", label.id);
         }
-        row.appendChild(control);
+        text.appendChild(label);
+        const descriptionText = options.disabledReason || options.description || "";
+        let description = null;
+        if (descriptionText || options.dependsOn) {
+          description = document.createElement("p");
+          description.className = "dait-row-description";
+          description.id = `${id}-desc`;
+          description.textContent = descriptionText;
+          description.hidden = !descriptionText;
+          text.appendChild(description);
+          (labelTarget || ariaTarget)?.setAttribute("aria-describedby", description.id);
+        }
+        const cell = document.createElement("div");
+        cell.className = "dait-row-control";
+        cell.appendChild(control);
+        row.appendChild(text);
+        row.appendChild(cell);
+        row.dataset.daitSearchLabel = String(labelText || "");
+        row.dataset.daitSearchDescription = String(options.description || "");
+        if (control?.dataset?.daitPath) row.dataset.daitRowPath = control.dataset.daitPath;
+        row.__daitDescription = description;
+        if (options.disabledReason) {
+          row.dataset.daitLocked = "true";
+          this.getSettingsRowControls(control).forEach((node) => {
+            node.disabled = true;
+          });
+        }
+        if (options.dependsOn?.path) {
+          row.dataset.daitDependsOn = options.dependsOn.path;
+          row.dataset.daitDependsOnLabel = String(options.dependsOn.label || "");
+          this.applySettingsRowDependency(row);
+        }
         return row;
+      }
+      isSettingsLabelableControl(control) {
+        const tag = String(control?.tagName || "").toUpperCase();
+        if (tag === "SELECT" || tag === "TEXTAREA") return true;
+        return tag === "INPUT" && String(control.type || "").toLowerCase() !== "hidden";
+      }
+      // Form controls and buttons in a row (or the element itself when it is one), in document order.
+      getSettingsRowControls(root) {
+        const found = [];
+        const isControl = (node) => ["INPUT", "SELECT", "TEXTAREA", "BUTTON"].includes(String(node?.tagName || "").toUpperCase());
+        const visit = (node) => {
+          if (!node) return;
+          if (isControl(node)) found.push(node);
+          for (const child of node.children || []) visit(child);
+        };
+        visit(root);
+        return found;
+      }
+      // A dependent row is usable only while its parent switch is on; otherwise it says which switch to turn on.
+      applySettingsRowDependency(row) {
+        const path = row?.dataset?.daitDependsOn;
+        if (!path) return;
+        const inactive = !this.getSetting(path);
+        const locked = row.dataset.daitLocked === "true";
+        row.classList?.toggle?.("dait-settings-row-inactive", inactive || locked);
+        if (locked) return;
+        this.getSettingsRowControls(row.children?.[1] || row).forEach((node) => {
+          node.disabled = inactive;
+        });
+        if (!inactive) {
+          const list = row.children?.[1]?.children?.[0];
+          if (list?.dataset?.daitControl === "order-list") this.renderProviderFallbackOrderList(list);
+        }
+        const description = row.__daitDescription;
+        if (!description) return;
+        const text = inactive ? this.t("settingsRequiresParent", { parent: row.dataset.daitDependsOnLabel || "" }) : String(row.dataset.daitSearchDescription || "");
+        description.textContent = text;
+        description.hidden = !text;
+      }
+      syncSettingsDependentRows(root = null, changedPath = "") {
+        const scope = root || (typeof document !== "undefined" ? document : null);
+        let rows = [];
+        try {
+          rows = [...scope?.querySelectorAll?.(".dait-settings-row-dependent") || []];
+        } catch {
+          rows = [];
+        }
+        rows.forEach((row) => {
+          if (changedPath && row.dataset?.daitDependsOn !== changedPath) return;
+          this.applySettingsRowDependency(row);
+        });
+      }
+      // A segmented control (role=radiogroup) for a short list of exclusive choices. Arrow keys move the choice.
+      // Labels that do not fit the shared control width make the row a stacked one.
+      createSegmentedRow(path, labelText, choices, rowOptions = {}) {
+        const group = document.createElement("div");
+        group.className = "dait-segmented";
+        group.setAttribute("role", "radiogroup");
+        group.dataset.daitPath = path;
+        group.dataset.daitControl = "segmented";
+        const routeKey = typeof rowOptions.routeKey === "string" ? rowOptions.routeKey : null;
+        if (routeKey !== null) group.dataset.daitRouteKey = routeKey;
+        const current = routeKey !== null && path === "ui.currentChannelAutoTranslatePolicy" ? this.getCurrentChannelAutoTranslatePolicyMode(routeKey) : this.getSetting(path);
+        const choose = (value, focus = false) => {
+          this.syncSegmentedControl(group, value);
+          if (focus) this.focusSettingsElement(group.__daitSegmentedButtons.find((button) => button.dataset.daitValue === value));
+          this.setSetting(path, value, routeKey !== null ? { routeKey } : void 0);
+        };
+        group.__daitSegmentedButtons = choices.map(([value, text]) => {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "dait-segmented-option";
+          button.setAttribute("role", "radio");
+          button.dataset.daitValue = String(value);
+          button.textContent = text;
+          button.title = text;
+          button.addEventListener("click", () => choose(String(value)));
+          group.appendChild(button);
+          return button;
+        });
+        group.addEventListener("keydown", (event) => {
+          const buttons = group.__daitSegmentedButtons.filter((button) => !button.disabled);
+          if (!buttons.length) return;
+          const steps = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 };
+          const index = Math.max(0, buttons.findIndex((button) => button.getAttribute("aria-checked") === "true"));
+          let next = null;
+          if (steps[event?.key]) next = (index + steps[event.key] + buttons.length) % buttons.length;
+          else if (event?.key === "Home") next = 0;
+          else if (event?.key === "End") next = buttons.length - 1;
+          if (next === null) return;
+          event.preventDefault?.();
+          choose(buttons[next].dataset.daitValue, true);
+        });
+        this.syncSegmentedControl(group, current);
+        const stacked = rowOptions.stacked ?? !this.segmentedLabelsFit(choices.map(([, text]) => text));
+        return this.createRow(labelText, group, { ...rowOptions, ariaTarget: group, stacked });
+      }
+      syncSegmentedControl(group, value) {
+        const buttons = group?.__daitSegmentedButtons || [...group?.children || []];
+        const wanted = String(value ?? "");
+        const matched = buttons.some((button) => button.dataset?.daitValue === wanted);
+        buttons.forEach((button, index) => {
+          const checked = matched ? button.dataset?.daitValue === wanted : index === 0;
+          button.setAttribute("aria-checked", checked ? "true" : "false");
+          button.setAttribute("tabindex", checked ? "0" : "-1");
+        });
+        if (group?.dataset) group.dataset.daitValue = wanted;
+      }
+      // Rough text width at the segmented control's 15 px font: CJK characters are 1em, other characters ~0.55em (a
+      // generous estimate). Options are as wide as their labels plus 6 px padding on each side (css/04 .dait-segmented),
+      // so the labels fit when together they need no more than the control width less its 1 px border, 2 px padding
+      // and the 2 px gaps between options.
+      segmentedLabelsFit(labels, controlWidth = SETTINGS_CONTROL_WIDTH) {
+        const count = labels.length || 1;
+        const available = controlWidth - 6 - 2 * (count - 1);
+        const needed = labels.reduce((total, label) => total + 12 + [...String(label || "")].reduce((sum, char) => sum + (/[⺀-鿿豈-﫿＀-￯]/.test(char) ? 15 : 8.3), 0), 0);
+        return needed <= available;
       }
       getLanguageLabel(language) {
         return this.getLocale() === "en" ? language.en : `${language.zh} - ${language.en}`;
@@ -15475,13 +21966,30 @@ var require_discord_ai_translator = __commonJS({
         return digits.padStart(3, "0").slice(-3);
       }
       getPromptTemplateLabel(template) {
-        return `${template.serial || "000"} · ${template.name || ""}`;
+        return `${template.serial || "000"} · ${this.getPromptTemplateDisplayName(template)}`;
+      }
+      // A built-in template keeps its stored (Chinese) name but is shown in the interface language, unless the user
+      // renamed it; the user's own templates show their name as typed.
+      getPromptTemplateDisplayName(template) {
+        const name = String(template?.name || "");
+        const keys = {
+          "polish-natural-chat": "promptTemplateNameNaturalChat",
+          "polish-polite": "promptTemplateNamePolite",
+          "polish-short": "promptTemplateNameShort",
+          "translation-natural": "promptTemplateNameNatural",
+          "translation-literal": "promptTemplateNameLiteral"
+        };
+        const key = keys[template?.id];
+        if (!key) return name;
+        const builtIn = [...DEFAULT_PROMPT_TEMPLATES.polish, ...DEFAULT_PROMPT_TEMPLATES.translation].find((item) => item.id === template.id);
+        return !name || name === builtIn?.name ? this.t(key) : name;
       }
       getPromptTemplateSearchText(template) {
         return [
           template.serial,
           String(template.serial || "").replace(/^0+/, ""),
-          template.name
+          template.name,
+          this.getPromptTemplateDisplayName(template)
         ].filter(Boolean).join(" ").toLowerCase();
       }
       normalizeLanguageName(language) {
@@ -15660,17 +22168,42 @@ var require_discord_ai_translator = __commonJS({
         });
       }
       syncSettingControls(path, value, options = {}) {
+        this.quickPanel?.handleSettingChanged(path);
         if (typeof document === "undefined") return;
         if (path === "ui.providerFallbackOrder") value = this.formatProviderFallbackOrder(value);
-        if (path === "ui.currentChannelAutoTranslatePolicy") value = this.normalizeChannelAutoTranslatePolicyMode(value);
+        const channelRule = path === "ui.currentChannelAutoTranslatePolicy";
+        if (channelRule) value = this.normalizeChannelAutoTranslatePolicyMode(value);
+        const syncedChannel = channelRule && typeof options.routeKey === "string" ? this.getChannelAutoTranslatePolicyStorageKey(options.routeKey) : null;
         document.querySelectorAll(`[data-dait-path='${path}']`).forEach((control) => {
           if (control === document.activeElement && options.includeActive !== true) return;
+          if (syncedChannel !== null && typeof control.dataset?.daitRouteKey === "string" && this.getChannelAutoTranslatePolicyStorageKey(control.dataset.daitRouteKey) !== syncedChannel) return;
           if (control.type === "checkbox") {
             control.checked = Boolean(value);
             return;
           }
+          if (control.dataset?.daitControl === "segmented") {
+            this.syncSegmentedControl(control, value);
+            return;
+          }
+          if (control.dataset?.daitControl === "order-list") {
+            this.renderProviderFallbackOrderList(control);
+            return;
+          }
           control.value = value ?? "";
+          if (typeof control.__daitAfterSync === "function") control.__daitAfterSync();
         });
+        const modelKind = /^(polish|translation)\.model$/.exec(path)?.[1];
+        if (modelKind) {
+          document.querySelectorAll?.(`[data-dait-model-preset='${modelKind}']`)?.forEach((select) => {
+            const options2 = [...select.options || []];
+            select.value = options2.some((option) => option.value && option.value === value) ? value : "";
+          });
+        }
+        if (path === "ui.injectMessageButtons" || path === "ui.messageButtonVisibility") {
+          this.syncSettingControls("ui.messageButtonMode", this.getMessageButtonMode(), { includeActive: true });
+        }
+        this.syncSettingsDependentRows(null, path);
+        this.scheduleOverviewStatusRefresh(path);
       }
       commitSettingsControls(root = null) {
         const scope = root?.querySelectorAll ? root : typeof document !== "undefined" ? document : null;
@@ -15678,6 +22211,7 @@ var require_discord_ai_translator = __commonJS({
         scope.querySelectorAll("[data-dait-path]").forEach((control) => {
           const path = String(control?.dataset?.daitPath || "");
           if (!path) return;
+          if (path === "ui.currentChannelAutoTranslatePolicy") return;
           if (control.tagName === "TEXTAREA") {
             this.setSetting(path, control.value);
             return;
@@ -15715,25 +22249,25 @@ var require_discord_ai_translator = __commonJS({
         const snapshot = this.getSettingsScrollSnapshot(anchor);
         this.restoreSettingsScroll(snapshot);
       }
-      async copyPromptText(textarea) {
+      async copyPromptText(textarea, successKey = "promptCopied") {
         const text = String(textarea?.value || "");
         const snapshot = this.getSettingsScrollSnapshot(textarea);
         try {
           await this.copyTextToClipboard(text);
           this.restoreSettingsScroll(snapshot);
-          this.showToast(this.t("promptCopied"), "success");
+          this.showToast(this.t(successKey), "success");
         } catch (error) {
           this.restoreSettingsScroll(snapshot);
           this.showToast(this.t("promptCopyFailed", { error: this.formatError(error) }), "error");
         }
       }
-      async copyTextFromNode(node) {
+      async copyTextFromNode(node, successKey = "copiedToClipboard") {
         const text = String(node?.textContent || "");
         const snapshot = this.getSettingsScrollSnapshot(node);
         try {
           await this.copyTextToClipboard(text);
           this.restoreSettingsScroll(snapshot);
-          this.showToast(this.t("promptCopied"), "success");
+          this.showToast(this.t(successKey), "success");
         } catch (error) {
           this.restoreSettingsScroll(snapshot);
           this.showToast(this.t("promptCopyFailed", { error: this.formatError(error) }), "error");
@@ -16127,6 +22661,8 @@ var require_discord_ai_translator = __commonJS({
             return String(value ?? "").trim() ? "[hidden]" : "";
           }
           if (name === "endpoint") return this.getSettingsSnapshotEndpoint(value);
+          if (name === "model") return this.getDiagnosticModelLabel(value);
+          if (name === "usagebyid") return `[hidden: ${Object.keys(value || {}).length}]`;
           if (name === "prompt") return value === defaults ? "default" : `custom (${String(value ?? "").length} chars)`;
           if (name === "prompttemplates") return `${Array.isArray(value) ? value.length : 0} templates`;
           if (name === "channelautotranslatepolicies") {
@@ -16147,7 +22683,11 @@ var require_discord_ai_translator = __commonJS({
             localProvider: this.isLocalTranslationProvider(this.settings.translation),
             concurrency: this.getAutoTranslateConcurrency(),
             prefetchRange: this.getAutoTranslatePrefetchRange(),
-            intakeMode: this.normalizeAutoTranslateIntakeMode(this.settings.ui?.autoTranslateIntakeMode)
+            intakeMode: this.normalizeAutoTranslateIntakeMode(this.settings.ui?.autoTranslateIntakeMode),
+            // Channels that auto-translate even with the main switch off.
+            allowListedChannels: this.getChannelAutoTranslateAllowListCount(),
+            // The palette the plugin's windows use now (ui.panelTheme "auto" resolved against Discord's theme).
+            panelTheme: this.resolvePanelTheme()
           },
           settings: sanitize(this.settings, "", DEFAULT_SETTINGS)
         };
@@ -16203,7 +22743,7 @@ var require_discord_ai_translator = __commonJS({
       }
       copyTextToClipboardFallback(text) {
         if (typeof document === "undefined" || !document.body?.appendChild) {
-          throw new Error("clipboard unavailable");
+          throw Object.assign(new Error(this.t("clipboardUnavailable")), { code: "CLIPBOARD_UNAVAILABLE" });
         }
         const previousFocus = document.activeElement || null;
         const fallback = document.createElement("textarea");
@@ -16228,7 +22768,7 @@ var require_discord_ai_translator = __commonJS({
             }
           }
         }
-        if (!ok) throw new Error("document.execCommand copy failed");
+        if (!ok) throw Object.assign(new Error(this.t("clipboardUnavailable")), { code: "CLIPBOARD_UNAVAILABLE" });
       }
       getSettingsScrollSnapshot(anchor) {
         const scroller = this.getSettingsScrollContainer(anchor);
@@ -16267,7 +22807,8 @@ var require_discord_ai_translator = __commonJS({
           testing: "apiStatusTesting",
           success: "apiStatusSuccess",
           failed: "apiStatusFailed",
-          untested: "apiStatusUntested"
+          untested: "apiStatusUntested",
+          unconfigured: "quickStatusNotConfigured"
         }[state] || "apiStatusUntested";
         return this.t(key);
       }
@@ -16282,13 +22823,29 @@ var require_discord_ai_translator = __commonJS({
         this.removePolishResultPanel();
         this.removePolishRestoreControl();
         this.removeInputActionMenu();
-        this.closeQuickSettingsPanel();
+        this.refreshSettingsWindowsLocale();
+        this.quickPanel?.rerender?.("language");
         this.restoreAllTranslationSourceVisibility();
         document.querySelectorAll(".dait-message-button, .dait-polish-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-menu-button, .dait-input-action-menu, .dait-quick-settings-button").forEach((node) => node.remove());
         document.querySelectorAll(".dait-translation-line, .dait-translation-box").forEach((node) => node.remove());
         this.unpatchContextMenus();
         this.patchMessageContextMenu();
         this.queueScan();
+      }
+      // Rebuilds every open settings panel that still shows another language, in place and on the same tab (the
+      // panel keeps its scroll position and focused control), and renames the plugin's own settings window.
+      refreshSettingsWindowsLocale() {
+        if (typeof document === "undefined") return 0;
+        const locale = this.getLocale();
+        this.getQuickSettingsModalRoots().forEach((root) => {
+          this.findQuickSettingsDialog(root)?.setAttribute?.("aria-label", this.t("settingsTitle"));
+        });
+        let rebuilt = 0;
+        [...document.querySelectorAll?.(".dait-settings") || []].forEach((panel) => {
+          if (!panel || panel.isConnected === false || panel.dataset?.daitLocale === locale) return;
+          if (this.replaceSettingsPanelElement(panel)) rebuilt++;
+        });
+        return rebuilt;
       }
       getLocale() {
         return I18N[this.settings.ui?.language] ? this.settings.ui.language : "zh-CN";
@@ -16328,7 +22885,7 @@ var require_discord_ai_translator = __commonJS({
         return Number(rect.width || 0) > 0 && Number(rect.height || 0) > 0;
       }
       isOwnPluginElement(element) {
-        return Boolean(element?.closest?.(".dait-settings, .dait-quick-settings-button, .dait-quick-settings-modal-root, .dait-message-button, .dait-polish-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-menu-button, .dait-input-action-menu, .dait-polish-result-panel, .dait-polish-restore-control, .dait-translation-line, .dait-translation-box"));
+        return Boolean(element?.closest?.(".dait-settings, .dait-quick-settings-button, .dait-quick-settings-modal-root, .dait-quick-popover, .dait-message-button, .dait-polish-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-menu-button, .dait-input-action-menu, .dait-polish-result-panel, .dait-polish-restore-control, .dait-translation-line, .dait-translation-box"));
       }
       startObserver() {
         if (!this.isStarted) return;
@@ -16551,7 +23108,7 @@ var require_discord_ai_translator = __commonJS({
       isOwnMutationNode(node) {
         const element = node?.nodeType === 3 ? node.parentElement : node;
         if (this.isOwnPluginElement(element)) return true;
-        return Boolean(element?.matches?.(".dait-settings, .dait-quick-settings-button, .dait-quick-settings-modal-root, .dait-message-button, .dait-polish-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-menu-button, .dait-input-action-menu, .dait-polish-result-panel, .dait-polish-restore-control, .dait-translation-line, .dait-translation-box"));
+        return Boolean(element?.matches?.(".dait-settings, .dait-quick-settings-button, .dait-quick-settings-modal-root, .dait-quick-popover, .dait-message-button, .dait-polish-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-menu-button, .dait-input-action-menu, .dait-polish-result-panel, .dait-polish-restore-control, .dait-translation-line, .dait-translation-box"));
       }
       isMediaOnlyMutation(mutation) {
         const target = mutation?.target?.nodeType === 3 ? mutation.target.parentElement : mutation?.target;
@@ -16836,6 +23393,7 @@ var require_discord_ai_translator = __commonJS({
         if (!this.isStarted) return;
         const type = String(event?.type || "");
         if (type === "scroll" && !this.isAutoTranslateEnabled()) return;
+        if (type === "focus" && event?.target && (typeof window === "undefined" || event.target !== window)) return;
         if (this.isDiscordMediaViewerQuiet()) return;
         if (this.isDiscordMediaViewerViewportEvent(event)) return;
         if (type === "scroll" && !this.isAutoTranslationScrollEventRelevant(event)) return;
@@ -17063,6 +23621,7 @@ var require_discord_ai_translator = __commonJS({
           return;
         }
         if (this.isQuickSettingsPanelOpen()) {
+          this.refreshChannelRuleControls();
           this.quickSettingsScanDeferred = true;
           this.logSlowOperation("scan.discord-ui", startedAt, { outcome: "blocked", reason: "quick-settings-open" }, 0);
           return;
@@ -17074,6 +23633,9 @@ var require_discord_ai_translator = __commonJS({
         }
         const routeChanged = this.trackAutoTranslationRouteChange();
         if (routeChanged) {
+          this.refreshChannelRuleControls();
+          this.cachedDrawScroller = null;
+          this.quickPanel.handleRouteChange();
           const delayMs = Math.max(
             AUTO_TRANSLATE_VIEWPORT_STABLE_RESCAN_MS,
             this.getAutoTranslationViewportSettleRemainingMs()
@@ -17131,7 +23693,7 @@ var require_discord_ai_translator = __commonJS({
           scanStages.autoMs = 0;
         } else {
           this.cancelIncrementalMessageScan();
-          if (this.settings.ui.injectMessageButtons) this.injectMessageButtons(context);
+          if (this.shouldInjectMessageButtons()) this.injectMessageButtons(context);
           finishStage("buttonMs");
           if (this.isAutoTranslateEnabled()) this.queueAutoTranslateVisibleMessages(context);
           finishStage("autoMs");
@@ -17147,7 +23709,7 @@ var require_discord_ai_translator = __commonJS({
       }
       shouldUseIncrementalMessageScan(context = null) {
         if (!context?.messageNodes?.length) return false;
-        if (!this.isAutoTranslateEnabled() && !this.settings.ui?.injectMessageButtons) return false;
+        if (!this.isAutoTranslateEnabled() && !this.shouldInjectMessageButtons()) return false;
         if (typeof window === "undefined" || typeof window.requestIdleCallback !== "function") return false;
         return true;
       }
@@ -17157,7 +23719,7 @@ var require_discord_ai_translator = __commonJS({
         const messageNodes = [...new Set(context?.messageNodes || [])];
         const tasks = [];
         messageNodes.forEach((messageNode) => {
-          if (this.settings.ui.injectMessageButtons) tasks.push({ kind: "button", messageNode });
+          if (this.shouldInjectMessageButtons()) tasks.push({ kind: "button", messageNode });
           if (this.isAutoTranslateEnabled()) tasks.push({ kind: "auto", messageNode });
         });
         let index = 0;
@@ -17206,7 +23768,7 @@ var require_discord_ai_translator = __commonJS({
             if (messageNode?.isConnected) {
               try {
                 if (task.kind === "button") {
-                  if (this.settings.ui?.injectMessageButtons) this.injectMessageButton(messageNode, context);
+                  if (this.shouldInjectMessageButtons()) this.injectMessageButton(messageNode, context);
                 } else if (work) {
                   let candidates = this.createDomAutoTranslationCandidatesForMessage(messageNode, context);
                   work.context.autoTranslateIntake.domCandidates += candidates.length;
@@ -17428,11 +23990,32 @@ var require_discord_ai_translator = __commonJS({
         const bdApi = globalThis.BdApi;
         if (!this.settings.ui.injectMessageContextMenu || !bdApi?.ContextMenu?.patch || !bdApi.ContextMenu?.buildMenuChildren) return;
         const patch = (tree, props) => {
+          if (!this.shouldInjectMessageContextMenu()) return;
           const items = [{
             id: "dait-translate-message",
             label: this.t("translateMenu", { targetLanguage: this.getDisplayLanguage(this.settings.translation.targetLanguage) }),
             action: () => this.translateMessageFromContextTarget(props?.target)
           }];
+          const translated = this.getTranslatedLineForContextTarget(props?.target);
+          if (translated) {
+            items.push(
+              {
+                id: "dait-retranslate-message",
+                label: this.t("translationActionRetranslate"),
+                action: () => this.retranslateMessage(translated.messageNode, translated.content)
+              },
+              {
+                id: "dait-copy-translation",
+                label: this.t("translationActionCopy"),
+                action: () => this.copyTranslationLineText(translated.line)
+              },
+              {
+                id: "dait-hide-translation",
+                label: this.t("translationActionHide"),
+                action: () => this.dismissTranslationLine(translated.line, translated.messageNode, translated.content)
+              }
+            );
+          }
           if (this.settings.ui?.historyBackfillEnabled === true) {
             items.push({
               id: "dait-history-backfill",
@@ -17575,42 +24158,44 @@ var require_discord_ai_translator = __commonJS({
             event.stopImmediatePropagation?.();
           });
         });
-        button.addEventListener("pointerdown", (event) => this.handleQuickSettingsButtonEvent(event, variant), true);
-        button.addEventListener("pointerup", (event) => this.handleQuickSettingsButtonEvent(event, variant), true);
-        button.addEventListener("click", (event) => {
-          this.handleQuickSettingsButtonEvent(event, variant);
-        }, true);
+        ["pointerdown", "pointerup", "click"].forEach((type) => {
+          button.addEventListener(type, (event) => this.handleQuickSettingsButtonEvent(event, variant, type), true);
+        });
+        this.quickPanel.decorateLauncher(button);
         return button;
       }
-      handleQuickSettingsButtonEvent(event, variant = "panel") {
+      // One toggle per press, however long the button is held. A mouse or touch press sends pointerdown, pointerup
+      // and click; the first of them that reaches the launcher toggles the quick panel and the rest of that press are
+      // swallowed (each one is a fallback in case Discord swallowed the ones before it). Only the primary button
+      // counts. A click from Enter or Space (detail 0) is a press of its own.
+      handleQuickSettingsButtonEvent(event, variant = "panel", listenerType = "") {
         event?.preventDefault?.();
         event?.stopPropagation?.();
         event?.stopImmediatePropagation?.();
-        const now = Date.now();
-        const elapsedMs = now - Number(this.quickSettingsLastOpenAt || 0);
-        this.logQuickSettingsDiagnostic("button.event", "received", {
-          eventType: event?.type || "",
-          variant,
-          elapsedMs: Number.isFinite(elapsedMs) ? elapsedMs : 0
-        });
-        if (elapsedMs < 300) {
-          this.logQuickSettingsDiagnostic("button.event", "deduped", {
-            eventType: event?.type || "",
-            variant,
-            elapsedMs
-          });
+        const eventType = String(listenerType || event?.type || "");
+        this.logQuickSettingsDiagnostic("button.event", "received", { eventType, variant });
+        if (eventType.startsWith("pointer") && (Number(event?.button || 0) !== 0 || event?.isPrimary === false)) {
+          this.logQuickSettingsDiagnostic("button.event", "ignored", { eventType, variant, reason: "not-primary" });
           return;
         }
-        this.quickSettingsLastOpenAt = now;
-        this.logQuickSettingsDiagnostic("button.event", "scheduled", {
-          eventType: event?.type || "",
-          variant
-        });
+        const keyboard = eventType === "click" && Number(event?.detail) === 0;
+        const pointerId = event?.pointerId ?? null;
+        const press = this.quickSettingsPress;
+        const samePress = Boolean(press) && !keyboard && eventType !== "pointerdown" && (pointerId === null || press.pointerId === null || pointerId === press.pointerId || eventType === "click" && Boolean(event?.pointerType));
+        if (eventType === "click") this.quickSettingsPress = null;
+        else if (!samePress) this.quickSettingsPress = { pointerId };
+        if (samePress) {
+          this.logQuickSettingsDiagnostic("button.event", "deduped", { eventType, variant });
+          return;
+        }
+        this.logQuickSettingsDiagnostic("button.event", "scheduled", { eventType, variant });
+        const launcher = event?.currentTarget?.closest?.(".dait-quick-settings-button") || event?.target?.closest?.(".dait-quick-settings-button") || event?.currentTarget || event?.target || null;
+        const viaPointer = eventType.startsWith("pointer") || eventType === "click" && Number(event?.detail) > 0;
         if (this.quickSettingsOpenTimer) clearTimeout(this.quickSettingsOpenTimer);
         this.quickSettingsOpenTimer = setTimeout(() => {
           this.quickSettingsOpenTimer = null;
           if (!this.isStarted || !this.settings.ui?.showQuickSettingsPanelButton) return;
-          this.openQuickSettingsPanel(variant, event?.currentTarget || event?.target || null);
+          this.toggleQuickPopover(launcher, variant, { viaPointer });
         }, 0);
       }
       findDiscordUserSettingsButton(options = {}) {
@@ -17666,7 +24251,7 @@ var require_discord_ai_translator = __commonJS({
         return true;
       }
       isLikelyDiscordUserSettingsButton(button) {
-        if (!button || button.closest?.(".dait-settings, .dait-quick-settings-modal-root, .dait-quick-settings-button")) return false;
+        if (!button || button.closest?.(".dait-settings, .dait-quick-settings-modal-root, .dait-quick-settings-button, .dait-quick-popover")) return false;
         const buttonLabel = this.getDiscordButtonLabel(button).toLowerCase();
         const exactSettingsLabel = /user settings|用户设置|使用者設定|ユーザー設定|사용자 설정|param[eè]tres utilisateur|impostazioni utente|ajustes de usuario|configura[cç][aã]o do usu[aá]rio|настройки пользователя/i.test(buttonLabel);
         const genericSettingsLabel = /(^|[\s_-])settings([\s_-]|$)|设置|設定/i.test(buttonLabel);
@@ -17705,7 +24290,7 @@ var require_discord_ai_translator = __commonJS({
         const fallback = current;
         let depth = 0;
         while (current && current !== document.body && depth < 6) {
-          const controls = [...current.querySelectorAll?.("button, [role='button']") || []].filter((button) => button && !button.closest?.(".dait-settings, .dait-quick-settings-modal-root, .dait-quick-settings-button"));
+          const controls = [...current.querySelectorAll?.("button, [role='button']") || []].filter((button) => button && !button.closest?.(".dait-settings, .dait-quick-settings-modal-root, .dait-quick-settings-button, .dait-quick-popover"));
           if (controls.length >= 2 && controls.length <= 8) return current;
           current = current.parentElement;
           depth++;
@@ -17791,7 +24376,7 @@ var require_discord_ai_translator = __commonJS({
           root.className = "dait-quick-settings-modal-root";
           root.dataset.daitQuickSettingsSource = source;
           this.setQuickSettingsLauncherButton(launcher || this.quickSettingsPreviousFocus || null, true);
-          this.applyDiscordThemeData(root, launcher || document.body);
+          this.applyPanelTheme(root);
           const backdrop = document.createElement("div");
           backdrop.className = "dait-quick-settings-backdrop";
           root.appendChild(backdrop);
@@ -17800,27 +24385,6 @@ var require_discord_ai_translator = __commonJS({
           dialog.setAttribute("role", "dialog");
           dialog.setAttribute("aria-modal", "true");
           dialog.setAttribute("aria-label", this.t("settingsTitle"));
-          const header = document.createElement("div");
-          header.className = "dait-quick-settings-header";
-          const title = document.createElement("h2");
-          title.className = "dait-quick-settings-title";
-          title.id = "dait-quick-settings-title";
-          title.textContent = this.t("settingsTitle");
-          header.appendChild(title);
-          dialog.setAttribute("aria-labelledby", title.id);
-          const close = document.createElement("button");
-          close.className = "dait-quick-settings-close";
-          close.type = "button";
-          close.textContent = "×";
-          close.title = this.t("quickSettingsClose");
-          close.setAttribute("aria-label", this.t("quickSettingsClose"));
-          close.addEventListener("click", (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            this.closeQuickSettingsPanel(root, "button");
-          });
-          header.appendChild(close);
-          dialog.appendChild(header);
           const body = document.createElement("div");
           body.className = "dait-quick-settings-body";
           const panelStartedAt = Date.now();
@@ -17836,7 +24400,7 @@ var require_discord_ai_translator = __commonJS({
               bodyChildCount: this.getElementChildCount(body)
             });
           } catch (error) {
-            body.appendChild(this.createQuickSettingsErrorPanel(error));
+            body.appendChild(this.createQuickSettingsErrorPanel(error, () => this.closeQuickSettingsPanel(root, "done")));
             this.logQuickSettingsDiagnostic("panel.build", "error", {
               source,
               ms: Date.now() - panelStartedAt,
@@ -17846,19 +24410,6 @@ var require_discord_ai_translator = __commonJS({
             this.showToast(this.t("quickSettingsOpenFailed", { error: this.formatError(error) }), "error");
           }
           dialog.appendChild(body);
-          const footer = document.createElement("div");
-          footer.className = "dait-quick-settings-footer";
-          const done = document.createElement("button");
-          done.className = "dait-quick-settings-done";
-          done.type = "button";
-          done.textContent = this.t("quickSettingsDone");
-          done.addEventListener("click", (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            this.closeQuickSettingsPanel(root, "done");
-          });
-          footer.appendChild(done);
-          dialog.appendChild(footer);
           dialog.addEventListener("pointerdown", (event) => event.stopPropagation());
           root.addEventListener("pointerdown", (event) => {
             if (event.target === root || event.target === backdrop) this.closeQuickSettingsPanel(root, "backdrop");
@@ -17899,6 +24450,17 @@ var require_discord_ai_translator = __commonJS({
           document.removeEventListener?.("keydown", this.quickSettingsModalKeydown, true);
         }
         this.quickSettingsModalKeydown = (event) => {
+          if (event?.isComposing) return;
+          if (this.isConfirmDialogOpen()) return;
+          const recorder = this.hotkeyRecordCleanup ? this.hotkeyRecordButton : null;
+          if (recorder && dialog?.contains?.(recorder)) {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              event.stopPropagation();
+              this.clearHotkeyRecording();
+            }
+            return;
+          }
           if (event.key === "Escape") {
             event.preventDefault();
             event.stopPropagation();
@@ -17923,7 +24485,7 @@ var require_discord_ai_translator = __commonJS({
         button.setAttribute("aria-expanded", expanded ? "true" : "false");
       }
       focusQuickSettingsInitialControl(dialog) {
-        const focusTarget = dialog?.querySelector?.(".dait-quick-settings-close") || this.getQuickSettingsFocusableElements(dialog)[0] || dialog;
+        const focusTarget = dialog?.querySelector?.(".dait-settings-close") || dialog?.querySelector?.(".dait-quick-settings-done") || this.getQuickSettingsFocusableElements(dialog)[0] || dialog;
         try {
           focusTarget?.focus?.({ preventScroll: true });
         } catch {
@@ -17988,16 +24550,23 @@ var require_discord_ai_translator = __commonJS({
           }
         };
         visit(root);
-        return [.../* @__PURE__ */ new Set([...queried, ...fallback])].filter((element) => this.isFocusableQuickSettingsElement(element));
+        return [.../* @__PURE__ */ new Set([...queried, ...fallback])].filter((element) => this.isFocusableQuickSettingsElement(element, root));
       }
-      isFocusableQuickSettingsElement(element) {
+      // Only controls the user can reach: not on a hidden tab page (or in another hidden part) and, where there is
+      // layout, rendered at all (a closed <details>, a display:none toolbar).
+      isFocusableQuickSettingsElement(element, root = null) {
         if (!element || element.disabled || element.hidden || element.removed) return false;
+        for (let node = element.parentElement; node && node !== root; node = node.parentElement) {
+          if (node.hidden === true) return false;
+        }
+        if (typeof element.getClientRects === "function" && element.isConnected && !element.getClientRects().length) return false;
         const tag = String(element.tagName || "").toLowerCase();
         if (["button", "input", "select", "textarea", "a"].includes(tag)) return true;
         const tabindex = element.getAttribute?.("tabindex");
         return tabindex !== void 0 && tabindex !== null && tabindex !== "-1";
       }
-      createQuickSettingsErrorPanel(error) {
+      // Shown in the window when the panel cannot be built; without the panel's title bar it carries its own close button.
+      createQuickSettingsErrorPanel(error, onClose = null) {
         const panel = document.createElement("div");
         panel.className = "dait-quick-settings-error";
         const title = document.createElement("h3");
@@ -18009,6 +24578,18 @@ var require_discord_ai_translator = __commonJS({
         panel.appendChild(title);
         panel.appendChild(detail);
         panel.appendChild(hint);
+        if (typeof onClose === "function") {
+          const done = document.createElement("button");
+          done.className = "dait-quick-settings-done";
+          done.type = "button";
+          done.textContent = this.t("quickSettingsDone");
+          done.addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onClose();
+          });
+          panel.appendChild(done);
+        }
         return panel;
       }
       syncDiscordThemeClasses(target, anchor = null) {
@@ -18018,31 +24599,26 @@ var require_discord_ai_translator = __commonJS({
         target.classList.add?.(themeClass);
         return themeClass;
       }
-      syncQuickSettingsThemeTree(root, anchor = null) {
+      // The launcher's settings window and the panel inside it take the current panel palette (the frame's children
+      // inherit it). Returns the theme applied.
+      syncQuickSettingsThemeTree(root) {
         if (!root) return "";
-        const themeSource = this.getDiscordThemeSource(anchor);
-        const themeClass = themeSource.themeClass || DISCORD_DEFAULT_THEME_CLASS;
-        const nodes = [
-          root,
-          this.findQuickSettingsDialog(root),
-          root.querySelector?.(".dait-quick-settings-backdrop"),
-          root.querySelector?.(".dait-quick-settings-header"),
-          root.querySelector?.(".dait-quick-settings-body"),
-          root.querySelector?.(".dait-quick-settings-footer"),
-          root.querySelector?.(".dait-quick-settings-title"),
-          root.querySelector?.(".dait-quick-settings-close"),
-          root.querySelector?.(".dait-quick-settings-done"),
-          root.querySelector?.(".dait-quick-settings-error"),
-          ...root.querySelectorAll?.(".dait-settings") || []
-        ].filter(Boolean);
-        [...new Set(nodes)].forEach((node) => {
-          if (!node?.classList) return;
-          DISCORD_THEME_CLASSES.forEach((theme) => node.classList.remove?.(theme));
-          node.classList.add?.(themeClass);
-          if (node.dataset) node.dataset.daitDiscordTheme = themeClass.replace(/^theme-/, "");
-          this.copyDiscordThemeVariables(node, themeSource.node);
-        });
-        return themeClass;
+        const theme = this.resolvePanelTheme();
+        this.applyPanelTheme(root, theme);
+        (root.querySelectorAll?.(".dait-settings") || []).forEach((panel) => this.applyPanelTheme(panel, theme));
+        return theme;
+      }
+      // ui.panelTheme resolved to "light" or "dark" (auto follows Discord, then the system theme).
+      resolvePanelTheme(setting) {
+        return this.panelTheme.resolve(setting === void 0 ? this.panelTheme.getSetting() : setting);
+      }
+      // Marks a plugin window root (data-dait-panel-theme) so css/01-theme-tokens gives it the matching palette.
+      applyPanelTheme(node, theme = void 0) {
+        return this.panelTheme.apply(node, theme === void 0 ? this.resolvePanelTheme() : theme);
+      }
+      // Restyles every open plugin window in place (setting, Discord theme or system theme changed).
+      refreshPanelThemes() {
+        return this.panelTheme.refresh();
       }
       applyDiscordThemeData(target, anchor = null) {
         if (!target) return DISCORD_DEFAULT_THEME_CLASS;
@@ -18052,18 +24628,16 @@ var require_discord_ai_translator = __commonJS({
         this.copyDiscordThemeVariables(target, themeSource.node);
         return themeClass;
       }
+      // Discord's theme changed: the buttons that sit inside Discord's UI copy its theme again, and the plugin's own
+      // windows take the matching panel palette.
       refreshDiscordThemeClasses() {
         if (typeof document === "undefined") return;
         this.discordThemeCacheEpoch++;
-        const selector = ".dait-settings, .dait-quick-settings-button, .dait-quick-settings-modal-root, .dait-polish-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-menu-button, .dait-input-action-menu, .dait-message-button, .dait-polish-result-panel, .dait-polish-restore-control, [data-dait-settings-modal='true'], [data-dait-settings-modal-root='true']";
+        const selector = ".dait-quick-settings-button, .dait-polish-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-menu-button, .dait-message-button, .dait-polish-restore-control";
         const queried = [...document.querySelectorAll?.(selector) || []];
-        [...new Set(queried)].forEach((node) => {
-          if (this.elementHasClassName(node, "dait-quick-settings-modal-root")) this.syncQuickSettingsThemeTree(node);
-          else this.syncDiscordThemeClasses(node);
-        });
-        if (this.quickSettingsModalRoot) this.syncQuickSettingsThemeTree(this.quickSettingsModalRoot);
-        if (this.polishResultPanel) this.syncDiscordThemeClasses(this.polishResultPanel);
+        [...new Set(queried)].forEach((node) => this.syncDiscordThemeClasses(node));
         if (this.polishRestoreControl) this.syncDiscordThemeClasses(this.polishRestoreControl);
+        this.refreshPanelThemes();
       }
       getDiscordThemeClass(anchor = null) {
         return this.getDiscordThemeSource(anchor).themeClass || DISCORD_DEFAULT_THEME_CLASS;
@@ -18388,6 +24962,7 @@ var require_discord_ai_translator = __commonJS({
         this.quickSettingsVerifyTimer = null;
       }
       closeQuickSettingsPanel(root = this.quickSettingsModalRoot, reason = "close") {
+        this.clearHotkeyRecordingWithin(root);
         if (!root && typeof document !== "undefined") {
           this.cancelQuickSettingsModalVerify();
           const roots = this.getQuickSettingsModalRoots();
@@ -18435,6 +25010,25 @@ var require_discord_ai_translator = __commonJS({
         }
         this.resumeQuickSettingsDeferredWork(reason);
       }
+      // --- Delegators to QuickPanel (the launcher's compact popover and status badge). ---
+      toggleQuickPopover(...args) {
+        return this.quickPanel.toggle(...args);
+      }
+      openQuickPopover(...args) {
+        return this.quickPanel.open(...args);
+      }
+      closeQuickPopover(...args) {
+        return this.quickPanel.close(...args);
+      }
+      isQuickPopoverOpen(...args) {
+        return this.quickPanel.isOpen(...args);
+      }
+      getLauncherStatus(...args) {
+        return this.quickPanel.getStatus(...args);
+      }
+      requestLauncherStatusUpdate(...args) {
+        return this.quickPanel.requestStatusUpdate(...args);
+      }
       injectInputButtons(options = {}) {
         const textbox = this.getActiveTextbox() || this.getTextbox();
         if (!textbox) return;
@@ -18443,7 +25037,8 @@ var require_discord_ai_translator = __commonJS({
         if (!container) return;
         const group = this.getInputActionGroup(container);
         if (!group) return;
-        if ((options.forcePolish || this.settings.ui.injectInputButton) && !group.querySelector(".dait-polish-button")) {
+        this.removeDisabledInputActionButtons(group);
+        if (this.isPolishInputButtonEnabled(options) && !group.querySelector(".dait-polish-button")) {
           const button = this.createInputActionButton(
             "dait-polish-button",
             this.t("polishButton"),
@@ -18453,7 +25048,7 @@ var require_discord_ai_translator = __commonJS({
           );
           group.appendChild(button);
         }
-        if (!options.forcePolish && this.settings.ui.publicBilingualInputButton && !group.querySelector(".dait-public-bilingual-button")) {
+        if (!options.forcePolish && this.isPublicBilingualInputButtonEnabled() && !group.querySelector(".dait-public-bilingual-button")) {
           const button = this.createInputActionButton(
             "dait-public-bilingual-button",
             this.t("publicBilingualButton"),
@@ -18466,6 +25061,32 @@ var require_discord_ai_translator = __commonJS({
         this.syncInputRestoreButtonState(group, textbox, options);
         this.syncInputActionButtonThemes(group, textbox || container);
         this.syncInputActionGroupState(group, textbox, container);
+      }
+      // Polish needs polish.enabled and public bilingual needs translation.enabled; a feature that is
+      // switched off loses its composer button (it comes back on the next scan once re-enabled).
+      removeDisabledInputActionButtons(group) {
+        if (!group?.querySelectorAll) return false;
+        const selectors = [];
+        if (this.settings.polish?.enabled === false) selectors.push(".dait-polish-button");
+        if (!this.isPublicBilingualFeatureEnabled()) selectors.push(".dait-public-bilingual-button");
+        let removed = false;
+        selectors.forEach((selector) => {
+          [...group.querySelectorAll(selector) || []].forEach((button) => {
+            button.remove?.();
+            removed = true;
+          });
+        });
+        return removed;
+      }
+      syncInputActionButtonsForSettings() {
+        this.removeInputActionMenu();
+        if (typeof document === "undefined") return;
+        [...document.querySelectorAll?.(".dait-input-action-group") || []].forEach((group) => {
+          if (this.removeDisabledInputActionButtons(group)) this.syncInputActionGroupState(group);
+        });
+        if (!this.isStarted || !(this.settings.ui?.injectInputButton || this.settings.ui?.publicBilingualInputButton)) return;
+        if (this.isDiscordSettingsSurfaceOpen()) this.queueInputButtonScan({ delayMs: 120, trailing: true });
+        else this.injectInputButtons();
       }
       createInputActionButton(className, text, title, action, options = {}) {
         const button = document.createElement("button");
@@ -18637,12 +25258,17 @@ var require_discord_ai_translator = __commonJS({
       }
       syncInputActionButtonLabels(group, density = "roomy") {
         if (!group?.querySelectorAll) return;
-        const compact = density !== "roomy";
         group.querySelectorAll(".dait-polish-restore-button, .dait-polish-button, .dait-public-bilingual-button").forEach((button) => {
-          const full = button.dataset?.daitFullLabel || button.textContent || "";
-          const short = button.dataset?.daitShortLabel || full;
-          button.textContent = compact ? short : full;
+          this.renderInputActionButtonLabel(button, density);
         });
+      }
+      // The one place that writes a composer button's label, so busy/idle changes keep the group's density.
+      renderInputActionButtonLabel(button, density = null) {
+        if (!button) return;
+        const groupDensity = density || button.parentElement?.dataset?.daitDensity || button.closest?.(".dait-input-action-group")?.dataset?.daitDensity || "roomy";
+        const full = button.dataset?.daitFullLabel || button.textContent || "";
+        const short = button.dataset?.daitShortLabel || full;
+        button.textContent = groupDensity !== "roomy" ? short : full;
       }
       toggleInputActionMenu(group, textbox = null, container = null, button = null) {
         if (this.inputActionMenu?.isConnected) {
@@ -18658,7 +25284,7 @@ var require_discord_ai_translator = __commonJS({
         menu.className = "dait-input-action-menu";
         menu.setAttribute("role", "menu");
         menu.setAttribute("aria-label", this.t("inputActionMenu"));
-        this.syncDiscordThemeClasses(menu, textbox || button || container || group);
+        this.applyPanelTheme(menu);
         const addItem = (label, title, action) => {
           const item = document.createElement("button");
           item.className = "dait-input-action-menu-item";
@@ -18681,10 +25307,10 @@ var require_discord_ai_translator = __commonJS({
         if (session && this.canRestorePolishOriginal(textbox, session)) {
           addItem(this.t("restoreOriginal"), this.t("restoreOriginal"), () => this.restorePolishOriginal(textbox, session, button));
         }
-        if (this.settings.ui?.injectInputButton || group?.querySelector?.(".dait-polish-button")) {
-          addItem(this.t("polishButton"), this.t("polishTitleAttr", { shortcut: this.getHotkeyLabel() }), () => this.polishCurrentDraft(group?.querySelector?.(".dait-polish-button") || button, { textbox, composerKey }));
+        if (this.settings.polish?.enabled !== false && (this.settings.ui?.injectInputButton || group?.querySelector?.(".dait-polish-button"))) {
+          addItem(this.t("polishButton"), this.t("polishTitleAttr", { shortcut: this.getHotkeyLabel() }), () => this.polishCurrentDraft(group?.querySelector?.(".dait-polish-button") || button, { textbox, composerKey, fromMenu: true }));
         }
-        if (this.settings.ui?.publicBilingualInputButton || group?.querySelector?.(".dait-public-bilingual-button")) {
+        if (this.isPublicBilingualFeatureEnabled() && (this.settings.ui?.publicBilingualInputButton || group?.querySelector?.(".dait-public-bilingual-button"))) {
           addItem(this.t("publicBilingualButton"), this.t("publicBilingualTitleAttr", { targetLanguage: this.getDisplayLanguage(this.getPublicBilingualTargetLanguage()) }), () => this.publicBilingualCurrentDraft(group?.querySelector?.(".dait-public-bilingual-button") || button, { textbox, composerKey }));
         }
         addItem(this.t("inputActionOpenSettings"), this.t("quickSettingsOpen"), () => this.openQuickSettingsPanel("input-menu", button || group));
@@ -18695,7 +25321,7 @@ var require_discord_ai_translator = __commonJS({
         this.inputActionMenu = menu;
         button?.setAttribute?.("aria-expanded", "true");
         const reposition = () => {
-          this.syncDiscordThemeClasses(menu, textbox || button || container || group);
+          this.applyPanelTheme(menu);
           this.positionInputActionMenu(menu, button || group);
         };
         const outsidePointerDown = (event) => {
@@ -18864,17 +25490,31 @@ var require_discord_ai_translator = __commonJS({
         if (typeof document === "undefined") return;
         document.querySelectorAll(".dait-message-button").forEach((button) => this.applyMessageButtonVisibilityToButton(button));
       }
+      // The per-message Translate button and context-menu item exist only while channel translation is on.
+      shouldInjectMessageButtons() {
+        return Boolean(this.settings.translation?.enabled && this.settings.ui?.injectMessageButtons);
+      }
+      shouldInjectMessageContextMenu() {
+        return Boolean(this.settings.translation?.enabled && this.settings.ui?.injectMessageContextMenu);
+      }
+      // Applies a change of channel translation: its buttons go now and come back with the next scan.
+      // The context-menu patch checks the switch each time a menu opens.
+      syncMessageTranslationEntryPoints() {
+        if (!this.shouldInjectMessageButtons() && typeof document !== "undefined") {
+          document.querySelectorAll?.(".dait-message-button")?.forEach((node) => node.remove());
+        }
+      }
       injectMessageButtons(context = this.createScanContext()) {
         const messageNodes = context.messageNodes;
         messageNodes.forEach((messageNode) => this.injectMessageButton(messageNode, context));
       }
       injectMessageButton(messageNode, context = null) {
-        if (!this.settings.ui?.injectMessageButtons) return false;
+        if (!this.shouldInjectMessageButtons()) return false;
         if (!messageNode || messageNode.isConnected === false) return false;
         const content = this.getMessageContentElement(messageNode, context);
         if (!content) return false;
         const text = this.getCachedElementText(content, context);
-        if (!text) return false;
+        if (!this.hasTranslatableMessageText(text)) return false;
         let button = content.querySelector(":scope > .dait-message-button");
         if (!button) {
           button = document.createElement("button");
@@ -18959,15 +25599,7 @@ var require_discord_ai_translator = __commonJS({
           "[id*='translator']",
           "[id^='translate']",
           "[id*='-translate']",
-          "[id*='_translate']",
-          "[aria-label*='Translate']",
-          "[aria-label*='translation']",
-          "[aria-label*='翻译']",
-          "[aria-label*='译文']",
-          "[title*='Translate']",
-          "[title*='translation']",
-          "[title*='翻译']",
-          "[title*='译文']"
+          "[id*='_translate']"
         ];
       }
       isInsideForeignTranslationElement(element) {
@@ -18984,33 +25616,28 @@ var require_discord_ai_translator = __commonJS({
       isForeignTranslationElement(element) {
         if (!element || element.nodeType !== 1) return false;
         if (element.classList?.contains?.("dait-translation-line") || element.classList?.contains?.("dait-translation-box")) return true;
+        const tag = String(element.tagName || "").toLowerCase();
+        if (tag === "a" || tag === "img") return false;
         const identityText = this.getElementForeignTranslationIdentityText(element);
         const normalized = identityText.replace(/notranslate/gi, "");
-        if (/(translation|translated|translator|deepl|google[-_\s]?translate|i18n|l10n|intl|译文|翻译|已翻译)/i.test(normalized)) return true;
+        if (/(translation|translated|translator|deepl|google[-_\s]?translate|译文|翻译|已翻译)/i.test(normalized)) return true;
         if (/(^|[^a-z])translate([^a-z]|$)/i.test(normalized)) return true;
-        const tag = String(element.tagName || "").toLowerCase();
-        const role = String(element.getAttribute?.("role") || "").toLowerCase();
-        if (tag === "button" || role === "button") {
+        if (tag === "button") {
           const label = this.getElementControlLabel(element);
           return /(translate|translation|show original|original text|翻译|译文|查看原文|显示原文)/i.test(label);
         }
         return false;
       }
+      // Translator plugins and browser translators mark their own nodes through class names, ids and
+      // data-* attribute names. Labels, titles and attribute values can carry message text, so they are
+      // not read.
       getElementForeignTranslationIdentityText(element) {
-        const parts = [
-          element.className?.baseVal || element.className || "",
-          element.id || "",
-          element.getAttribute?.("aria-label") || "",
-          element.getAttribute?.("title") || "",
-          element.getAttribute?.("data-tooltip-text") || "",
-          element.getAttribute?.("data-testid") || "",
-          element.getAttribute?.("data-translation") || "",
-          element.getAttribute?.("data-translated") || "",
-          element.getAttribute?.("data-translator") || "",
-          element.getAttribute?.("data-translate") || ""
-        ];
-        const dataset = element.dataset || {};
-        Object.keys(dataset).forEach((key) => parts.push(key, dataset[key]));
+        const className = typeof element.className === "string" ? element.className : element.className?.baseVal || "";
+        const parts = [className, element.id || ""];
+        Object.keys(element.dataset || {}).forEach((key) => {
+          if (/^dait[A-Z]/.test(key) && key !== "daitIgnoreTranslation") return;
+          parts.push(`data-${key.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)}`);
+        });
         return parts.filter(Boolean).join(" ");
       }
       getElementControlLabel(element) {
@@ -19228,7 +25855,7 @@ var require_discord_ai_translator = __commonJS({
           const meta = this.getBdfdbAutoTranslationCandidateMeta(candidate, context);
           if (!meta?.messageId) return candidate;
           const fullContent = this.normalizeExtractedText(meta.fullContent || "");
-          const useFullContent = fullContent && fullContent.length > String(candidate.text || "").length + 4 && this.isManualTranslationSourceCompatible(fullContent, candidate.text);
+          const useFullContent = this.isStoreFullRequestText(fullContent, candidate.text);
           const text = useFullContent ? fullContent : candidate.text;
           return this.createAutoTranslationCandidate({
             ...candidate,
@@ -19238,7 +25865,7 @@ var require_discord_ai_translator = __commonJS({
             fullContent,
             sourceTextKind: useFullContent ? "store-full" : "dom",
             source: "bdfdb",
-            messageIdentity: this.createStructuredAutoTranslationMessageIdentity({ ...candidate, ...meta, text }) || candidate.messageIdentity
+            messageIdentity: this.createStructuredAutoTranslationMessageIdentity({ ...candidate, ...meta, text: candidate.text }) || candidate.messageIdentity
           });
         });
       }
@@ -19372,13 +25999,22 @@ var require_discord_ai_translator = __commonJS({
           sourceTextHash
         ].join(":");
       }
-      completeAutoTranslationFromCache(messageNode, content, text, translated, cacheKey, canRender = true, requestOptions = null, textOptions = null) {
-        if (requestOptions && this.isInvalidAutoTranslationCacheValue(text, translated, requestOptions)) {
+      // What a target shows on screen. A store-full target requests fuller MessageStore text
+      // (target.text), but its message identity, its line's source signature and every stale-DOM
+      // guard use this text.
+      getAutoTranslationTargetDomText(target) {
+        return String(target?.domText || target?.text || "");
+      }
+      isAutoTranslationTargetDomTextCurrent(target) {
+        return this.getElementText(target?.content, target?.textOptions) === this.getAutoTranslationTargetDomText(target);
+      }
+      completeAutoTranslationFromCache(messageNode, content, text, translated, cacheKey, canRender = true, requestOptions = null, textOptions = null, renderMeta = null, domText = "") {
+        if (requestOptions && !renderMeta?.partial && this.isInvalidAutoTranslationCacheValue(text, translated, requestOptions)) {
           this.deleteTranslationCacheCandidates(cacheKey, ...this.getTranslationCacheAliases(text, requestOptions));
           return;
         }
         this.removeQueuedAutoTranslationItem(cacheKey);
-        const currentTarget = { messageNode, content, text, textOptions, cacheKey, requestOptions };
+        const currentTarget = { messageNode, content, text, domText, textOptions, cacheKey, requestOptions };
         const pendingTargets = this.getAutoTranslationPendingTargets(currentTarget);
         const ownerId = this.getTranslationOwnerId(content);
         const targets = pendingTargets.some((target) => this.getTranslationOwnerId(target?.content) === ownerId) ? pendingTargets : [currentTarget, ...pendingTargets];
@@ -19403,7 +26039,7 @@ var require_discord_ai_translator = __commonJS({
             );
             return;
           }
-          if (this.getElementText(target.content, target.textOptions) !== target.text) {
+          if (!this.isAutoTranslationTargetDomTextCurrent(target)) {
             this.removeAutoTranslationNode(target, cacheKey);
             this.logAutoTranslationMessageState(
               "auto.message.state",
@@ -19425,6 +26061,16 @@ var require_discord_ai_translator = __commonJS({
             );
             return;
           }
+          if (this.isManualTranslationInFlight(target.content, this.getAutoTranslationTargetDomText(target))) {
+            this.logAutoTranslationMessageState(
+              "auto.message.state",
+              "render-skip",
+              { ...target, cacheKey, requestOptions },
+              DIAGNOSTIC_MESSAGE_STATES.CACHED,
+              DIAGNOSTIC_REASON_CODES.MANUAL_LINE_PRESENT
+            );
+            return;
+          }
           if (this.isAutoTranslationCacheTargetDrawable(target)) {
             this.queueAutoTranslationRenderTask({
               kind: "cache",
@@ -19433,7 +26079,7 @@ var require_discord_ai_translator = __commonJS({
               cacheKey,
               requestOptions,
               priority: target.priority,
-              run: () => this.renderAutoTranslationCacheTarget(target, translated, cacheKey, requestOptions)
+              run: () => this.renderAutoTranslationCacheTarget(target, translated, cacheKey, requestOptions, renderMeta ? { renderMeta } : {})
             });
           } else {
             this.logAutoTranslationMessageState(
@@ -19584,7 +26230,10 @@ var require_discord_ai_translator = __commonJS({
       // top to bottom: a binary search finds the first one not above the chat, then the walk goes outward.
       getCachedDrawMessageNodes(context = null) {
         const firstMessage = document.querySelector?.(DISCORD_MESSAGE_NODE_SELECTOR);
-        if (!firstMessage) return { nodes: [], band: null };
+        if (!firstMessage) {
+          this.cachedDrawScroller = null;
+          return { nodes: [], band: null };
+        }
         let scroller = this.cachedDrawScroller;
         if (!scroller?.isConnected || !scroller.contains?.(firstMessage)) {
           scroller = this.getTranslationScrollContainer(firstMessage);
@@ -19632,13 +26281,15 @@ var require_discord_ai_translator = __commonJS({
         return { nodes: nearby.slice(0, AUTO_TRANSLATE_CACHE_DRAW_MAX_MESSAGES).map((entry) => entry.node), band };
       }
       // Outcome statuses: drawn (already shows a finished line), nothing (memoised skip or miss),
-      // queued, deferred (evaluation cap reached) or pending (a hit that cannot be drawn yet).
+      // queued, deferred (evaluation cap reached) or pending (a hit that cannot be drawn yet, or a
+      // translation the user asked for is still in flight).
       queueCachedDrawForCandidate(candidate, baseOptions, context = null, allowEvaluation = true) {
         const messageNode = candidate?.messageNode;
         const content = candidate?.content;
         const text = String(candidate?.text || "");
         if (!text || !messageNode?.isConnected || !content?.isConnected) return { status: "nothing" };
         if (this.hasFinishedTranslationLine(content)) return { status: "drawn" };
+        if (this.isManualTranslationInFlight(content, candidate.domText || text)) return { status: "pending" };
         const memoKey = this.getCachedDrawMemoKey(candidate, text);
         let entry = this.getCachedDrawMemoEntry(memoKey);
         const evaluated = !entry;
@@ -19655,6 +26306,7 @@ var require_discord_ai_translator = __commonJS({
           messageNode,
           content,
           text,
+          domText: candidate.domText || "",
           textOptions: candidate.textOptions || null,
           targetKind: candidate.targetKind || "message",
           cacheKey: entry.cacheKey,
@@ -19907,7 +26559,7 @@ var require_discord_ai_translator = __commonJS({
           );
           return false;
         }
-        if (this.getElementText(target.content, target.textOptions) !== target.text) {
+        if (!this.isAutoTranslationTargetDomTextCurrent(target)) {
           this.removeAutoTranslationNode(target, cacheKey);
           this.logAutoTranslationMessageState(
             "auto.message.state",
@@ -19929,6 +26581,16 @@ var require_discord_ai_translator = __commonJS({
           );
           return false;
         }
+        if (this.isManualTranslationInFlight(target.content, this.getAutoTranslationTargetDomText(target))) {
+          this.logAutoTranslationMessageState(
+            "auto.message.state",
+            "render-skip",
+            { ...target, cacheKey, requestOptions },
+            DIAGNOSTIC_MESSAGE_STATES.CACHED,
+            DIAGNOSTIC_REASON_CODES.MANUAL_LINE_PRESENT
+          );
+          return false;
+        }
         if (!this.isAutoTranslationCacheTargetDrawable(target)) {
           if (options.drawPass) return false;
           this.logAutoTranslationMessageState(
@@ -19942,9 +26604,19 @@ var require_discord_ai_translator = __commonJS({
           this.scheduleAutoTranslationRetryScan(AUTO_TRANSLATE_VIEWPORT_STABLE_RESCAN_MS, { minDelayMs: AUTO_TRANSLATE_VIEWPORT_STABLE_RESCAN_MS });
           return false;
         }
-        const renderedLine = this.renderTranslation(target.messageNode, target.content, translated, cacheKey, target.text, { allowScrollCorrectionWhilePaused: true });
+        const renderMeta = options.renderMeta || null;
+        const renderedLine = this.renderTranslation(target.messageNode, target.content, translated, cacheKey, this.getAutoTranslationTargetDomText(target), {
+          allowScrollCorrectionWhilePaused: true,
+          ...renderMeta?.partial ? {
+            partial: true,
+            validationQuality: renderMeta.validationQuality || TRANSLATION_VALIDATION_QUALITIES.PARTIAL,
+            validationReason: renderMeta.validationReason || "",
+            ...renderMeta.partialInfo ? { partialInfo: renderMeta.partialInfo } : {}
+          } : {}
+        });
         if (!renderedLine) {
           this.deleteTranslationCacheCandidates(cacheKey, ...options.deleteKeys || []);
+          this.markAutoTranslationUndrawableResult(cacheKey, "emoji-restore-failed", { text: target.text, requestOptions });
           this.logAutoTranslationMessageState(
             "auto.message.state",
             "render-skip",
@@ -19956,7 +26628,8 @@ var require_discord_ai_translator = __commonJS({
           return false;
         }
         this.rememberRecentAutoTranslationRender(cacheKey, target.text, requestOptions, {
-          validationQuality: TRANSLATION_VALIDATION_QUALITIES.GOOD
+          validationQuality: renderMeta?.partial ? renderMeta.validationQuality || TRANSLATION_VALIDATION_QUALITIES.PARTIAL : TRANSLATION_VALIDATION_QUALITIES.GOOD,
+          validationReason: renderMeta?.partial ? renderMeta.validationReason || "" : ""
         });
         this.logAutoTranslationMessageState(
           "auto.message.state",
@@ -20021,6 +26694,7 @@ var require_discord_ai_translator = __commonJS({
           messageNode: target.messageNode,
           content: target.content,
           text: target.text,
+          domText: target.domText || "",
           textOptions: target.textOptions,
           targetKind: target.targetKind,
           priority: target.priority
@@ -20062,15 +26736,17 @@ var require_discord_ai_translator = __commonJS({
       normalizeMessageButtonVisibility(value) {
         return value === MESSAGE_BUTTON_VISIBILITY_HOVER ? MESSAGE_BUTTON_VISIBILITY_HOVER : MESSAGE_BUTTON_VISIBILITY_ALWAYS;
       }
-      renderAutoTranslationResult(item, translated) {
+      renderAutoTranslationResult(item, translated, resultMeta = {}) {
         if (!this.isAutoTranslationRenderRequestCurrent(item.requestOptions)) return;
-        translated = this.sanitizeAutoTranslationOutput(item.text, translated, this.getAutoTranslationTargetLanguage(item.requestOptions), this.getAutoTranslationOutputValidationOptions(item.text, translated, item.requestOptions));
+        const partialInfo = resultMeta?.partialInfo || null;
+        const validationRequestOptions = partialInfo ? { ...item.requestOptions, longTextPartial: true } : item.requestOptions;
+        translated = this.sanitizeAutoTranslationOutput(item.text, translated, this.getAutoTranslationTargetLanguage(item.requestOptions), this.getAutoTranslationOutputValidationOptions(item.text, translated, validationRequestOptions));
         const validation = this.getAutoTranslationOutputValidationResult(
           item.text,
           translated,
           this.getAutoTranslationTargetLanguage(item.requestOptions),
-          this.getAutoTranslationOutputValidationOptions(item.text, translated, item.requestOptions),
-          item.requestOptions
+          this.getAutoTranslationOutputValidationOptions(item.text, translated, validationRequestOptions),
+          validationRequestOptions
         );
         if (!validation.renderable) {
           const error = this.createFinalInvalidAutoTranslationError(validation.reasonCode || "invalid-output");
@@ -20135,10 +26811,9 @@ var require_discord_ai_translator = __commonJS({
                 this.logAutoTranslationRenderSkip(item, target, "disconnected");
                 return;
               }
-              if (this.getElementText(target.content, target.textOptions) !== target.text) {
+              if (!this.isAutoTranslationTargetDomTextCurrent(target)) {
                 this.removeAutoTranslationNode(target, item.cacheKey);
                 this.logAutoTranslationRenderSkip(item, target, "text-changed");
-                sawInvalidTarget = true;
                 return;
               }
               const identityUpgrade = this.getAutoTranslationTargetIdentityUpgrade(target, item);
@@ -20148,10 +26823,10 @@ var require_discord_ai_translator = __commonJS({
                 sawInvalidTarget = true;
                 return;
               }
-              const renderCacheKey = identityUpgrade?.cacheKey || item.cacheKey;
+              const renderCacheKey = identityUpgrade?.cacheKey || this.getServedModelTranslationCacheKey(item.cacheKey, item.requestOptions);
               if (identityUpgrade?.cacheKey) upgradedCacheTargets.set(identityUpgrade.cacheKey, identityUpgrade);
               cacheable = true;
-              if (this.hasManualTranslationLine(target.content, target.text)) {
+              if (this.hasManualTranslationLine(target.content, this.getAutoTranslationTargetDomText(target))) {
                 this.logAutoTranslationRenderSkip(item, target, "manual-line");
                 return;
               }
@@ -20163,7 +26838,7 @@ var require_discord_ai_translator = __commonJS({
                   cacheKey: renderCacheKey,
                   requestOptions: target?.requestOptions || item?.requestOptions,
                   priority: target.priority,
-                  run: () => this.renderAutoTranslationRequestTarget(item, target, translated, validation)
+                  run: () => this.renderAutoTranslationRequestTarget(item, target, translated, validation, partialInfo ? { partialInfo } : {})
                 });
               } else {
                 this.logAutoTranslationRenderSkip(item, target, "outside-viewport");
@@ -20182,12 +26857,22 @@ var require_discord_ai_translator = __commonJS({
         if (validation.cacheable && (cacheable || !sawInvalidTarget && this.shouldCacheAutoTranslationResultFromRequest(item))) {
           this.cacheAutoTranslationResult(item, translated);
           upgradedCacheTargets.forEach((upgrade) => this.cacheAutoTranslationResultWithOptions(upgrade.cacheKey, item.text, upgrade.requestOptions, translated));
+        } else if (!validation.cacheable && (cacheable || !sawInvalidTarget && this.shouldCacheAutoTranslationResultFromRequest(item))) {
+          const partialMeta = {
+            validationQuality: validation.quality,
+            validationReason: validation.reasonCode || "",
+            partialInfo
+          };
+          this.rememberAutoTranslationPartialResult(item.cacheKey, item.text, translated, partialMeta);
+          const servedCacheKey = this.getServedModelTranslationCacheKey(item.cacheKey, item.requestOptions);
+          if (servedCacheKey !== item.cacheKey) this.rememberAutoTranslationPartialResult(servedCacheKey, item.text, translated, partialMeta);
+          upgradedCacheTargets.forEach((upgrade) => this.rememberAutoTranslationPartialResult(upgrade.cacheKey, item.text, translated, partialMeta));
         }
         if (this.isAutoTranslateEnabled()) {
           this.queueScan({ delayMs: AUTO_TRANSLATE_VIEWPORT_STABLE_RESCAN_MS });
         }
       }
-      renderAutoTranslationRequestTarget(item, target, translated, validation = null) {
+      renderAutoTranslationRequestTarget(item, target, translated, validation = null, resultMeta = {}) {
         const requestOptions = target?.requestOptions || item?.requestOptions;
         const validationResult = validation || this.getAutoTranslationOutputValidationResult(
           target?.text || item?.text || "",
@@ -20212,7 +26897,7 @@ var require_discord_ai_translator = __commonJS({
           this.logAutoTranslationRenderSkip(item, target, "disconnected");
           return false;
         }
-        if (this.getElementText(target.content, target.textOptions) !== target.text) {
+        if (!this.isAutoTranslationTargetDomTextCurrent(target)) {
           this.removeAutoTranslationNode(target, item.cacheKey);
           this.logAutoTranslationRenderSkip(item, target, "text-changed");
           return false;
@@ -20223,9 +26908,10 @@ var require_discord_ai_translator = __commonJS({
           this.logAutoTranslationRenderSkip(item, target, "identity-changed");
           return false;
         }
-        const renderCacheKey = identityUpgrade?.cacheKey || item.cacheKey;
+        const renderCacheKey = identityUpgrade?.cacheKey || this.getServedModelTranslationCacheKey(item.cacheKey, item.requestOptions);
         if (identityUpgrade?.cacheKey && validationResult.cacheable) this.cacheAutoTranslationResultWithOptions(identityUpgrade.cacheKey, item.text, identityUpgrade.requestOptions, translated);
-        if (this.hasManualTranslationLine(target.content, target.text)) {
+        const domText = this.getAutoTranslationTargetDomText(target);
+        if (this.hasManualTranslationLine(target.content, domText)) {
           this.logAutoTranslationRenderSkip(item, target, "manual-line");
           return false;
         }
@@ -20233,14 +26919,17 @@ var require_discord_ai_translator = __commonJS({
           this.logAutoTranslationRenderSkip(item, target, "outside-viewport");
           return false;
         }
-        const renderedLine = this.renderTranslation(target.messageNode, target.content, translated, renderCacheKey, target.text, {
+        const renderedLine = this.renderTranslation(target.messageNode, target.content, translated, renderCacheKey, domText, {
           partial: validationResult.quality === TRANSLATION_VALIDATION_QUALITIES.PARTIAL,
           validationQuality: validationResult.quality,
-          validationReason: validationResult.reasonCode || ""
+          validationReason: validationResult.reasonCode || "",
+          ...resultMeta?.partialInfo ? { partialInfo: resultMeta.partialInfo } : {}
         });
         if (!renderedLine) {
           this.deleteTranslationCacheCandidates(renderCacheKey);
           if (item?.cacheKey && item.cacheKey !== renderCacheKey) this.deleteTranslationCacheCandidates(item.cacheKey);
+          this.markAutoTranslationUndrawableResult(renderCacheKey, "emoji-restore-failed", { text: item?.text || target.text, requestOptions: item?.requestOptions || requestOptions });
+          if (item?.cacheKey && item.cacheKey !== renderCacheKey) this.markAutoTranslationUndrawableResult(item.cacheKey, "emoji-restore-failed");
           this.logAutoTranslationRenderSkip(item, target, "emoji-restore-failed");
           return false;
         }
@@ -20319,7 +27008,7 @@ var require_discord_ai_translator = __commonJS({
       }
       getCurrentFallbackTranslationIdentitySummary(target, ids = {}) {
         if (!target?.messageNode || !target?.content) return null;
-        const text = target.text || this.getElementText(target.content, target.textOptions);
+        const text = this.getAutoTranslationTargetDomText(target) || this.getElementText(target.content, target.textOptions);
         const identity = this.messageTracker.getFallbackIdentity(target.messageNode, target.content, text, ids);
         return this.getTranslationIdentitySummary(identity);
       }
@@ -20383,9 +27072,9 @@ var require_discord_ai_translator = __commonJS({
           reasonCode
         );
       }
-      renderAutoTranslationResultSafely(item, translated) {
+      renderAutoTranslationResultSafely(item, translated, resultMeta) {
         try {
-          this.renderAutoTranslationResult(item, translated);
+          this.renderAutoTranslationResult(item, translated, resultMeta);
           return true;
         } catch (error) {
           this.warnSanitized("Failed to render auto translation", error);
@@ -20415,6 +27104,11 @@ var require_discord_ai_translator = __commonJS({
         if (!line || line.dataset?.daitMode !== "manual") return false;
         const text = sourceText ?? this.getElementText(content);
         return this.isTranslationLineSourceMatch(line, text);
+      }
+      // A translation the user asked for (translate, retranslate, retry) owns its line until it settles:
+      // the cached-draw pass and the scan must not draw the old cached translation over its loading line.
+      isManualTranslationInFlight(content, sourceText = null) {
+        return Boolean(this.getTranslationLine(content)?.classList?.contains?.("dait-translation-loading")) && this.hasManualTranslationLine(content, sourceText);
       }
       clearAutoTextTranslationFailure(text, requestOptions = this.getAutoTranslationOptions()) {
         const key = this.getAutoTextTranslationFailureKey(text, requestOptions);
@@ -20510,7 +27204,7 @@ var require_discord_ai_translator = __commonJS({
           this.removeAutoTranslationNode(target, cacheKey);
           return;
         }
-        if (this.getElementText(target.content, target.textOptions) !== target.text) {
+        if (!this.isAutoTranslationTargetDomTextCurrent(target)) {
           this.logAutoTranslationMessageState(
             "auto.message.state",
             "render-skip",
@@ -20535,7 +27229,7 @@ var require_discord_ai_translator = __commonJS({
           this.removeAutoTranslationNode(target, cacheKey);
           return;
         }
-        this.renderTranslationError(target.messageNode, target.content, error, cacheKey, target.text);
+        this.renderTranslationError(target.messageNode, target.content, error, cacheKey, this.getAutoTranslationTargetDomText(target));
         this.logAutoTranslationMessageState(
           "auto.message.state",
           "failure-rendered",
@@ -20568,8 +27262,8 @@ var require_discord_ai_translator = __commonJS({
             );
             return;
           }
-          if (target.messageNode.isConnected && target.content.isConnected && this.isElementVisibleInViewport(target.messageNode) && this.isElementVisibleInViewport(target.content) && this.getElementText(target.content, target.textOptions) === target.text) {
-            this.renderTranslationLoading(target.messageNode, target.content, item.cacheKey, target.text);
+          if (target.messageNode.isConnected && target.content.isConnected && this.isElementVisibleInViewport(target.messageNode) && this.isElementVisibleInViewport(target.content) && this.isAutoTranslationTargetDomTextCurrent(target)) {
+            this.renderTranslationLoading(target.messageNode, target.content, item.cacheKey, this.getAutoTranslationTargetDomText(target));
             this.logAutoTranslationMessageState(
               "auto.message.state",
               "loading",
@@ -20946,7 +27640,8 @@ var require_discord_ai_translator = __commonJS({
           configOverrides: options.configOverrides,
           translateAsArray: true,
           timeoutMs: AUTO_TRANSLATE_REQUEST_TIMEOUT_MS,
-          mode: options.mode || "direct-translate-batch"
+          mode: options.mode || "direct-translate-batch",
+          ...taskOptions?.signal ? { signal: taskOptions.signal } : {}
         });
         const resultArray = Array.isArray(uniqueResults) ? uniqueResults : [uniqueResults];
         return uniqueIndexes.map((index) => String(resultArray[index] || "").trim());
@@ -21332,12 +28027,16 @@ var require_discord_ai_translator = __commonJS({
         return true;
       }
       showAutoTranslateError(error) {
+        if (this.isTranslationAttentionError(error)) {
+          this.notifyTranslationNeedsAttention(error);
+          return;
+        }
         if (this.settings.ui?.showAutoTranslateToasts === false) return;
         if (!this.shouldShowAutoTranslationWarning(error)) return;
         const now = Date.now();
         if (now - this.autoTranslationLastToastAt < 1e4) return;
         this.autoTranslationLastToastAt = now;
-        this.showToast(this.t("autoTranslateFailed", { error: this.formatError(error) }), "error");
+        this.showToast(this.t("autoTranslateFailed", { error: this.formatError(error, { includeRetry: true }) }), "error");
       }
       isElementVisibleInViewport(element, rect = null) {
         if (!element?.isConnected) return false;
@@ -21731,7 +28430,7 @@ var require_discord_ai_translator = __commonJS({
       isCommonTargetShortText(text, targetLanguage) {
         const target = this.normalizeLanguageName(targetLanguage);
         if (!["英语", "English"].includes(target)) return false;
-        const normalized = String(text || "").trim().toLocaleLowerCase();
+        const normalized = removeStandardEmoji(text).trim().toLocaleLowerCase();
         if (!/^[a-z0-9\s'’.,!?-]+$/.test(normalized)) return false;
         const compact = normalized.replace(/[^\w'’]+/g, " ").trim();
         const common = /* @__PURE__ */ new Set(["hi", "hello", "hey", "ok", "okay", "yes", "no", "thanks", "thank you", "lol", "bro", "same", "sure", "done", "nice", "good", "bad", "why", "what"]);
@@ -21757,7 +28456,9 @@ var require_discord_ai_translator = __commonJS({
         const secondarySignals = ["必要", "確認", "最高", "場合", "了解"];
         return secondarySignals.filter((signal) => compact.includes(signal)).length >= 2;
       }
-      hasCurrentTranslationLine(content, cacheKey, sourceText = null, cacheAliases = [], requestOptions = null) {
+      // sourceText is the text on screen (the line's source signature); requestText, when it differs
+      // (store-full), is what was translated and what the drawn translation is validated against.
+      hasCurrentTranslationLine(content, cacheKey, sourceText = null, cacheAliases = [], requestOptions = null, requestText = null) {
         let line = this.getTranslationLine(content);
         if (!line) line = this.findTranslationLineByMetadata(content, cacheKey, sourceText, cacheAliases);
         if (!line) return false;
@@ -21778,7 +28479,7 @@ var require_discord_ai_translator = __commonJS({
         if (line.classList?.contains?.("dait-translation-loading")) return false;
         if (line.dataset.daitMode === "manual" && this.isAutoTranslationCacheMode(requestedMode)) return true;
         if (line.dataset.daitMode === "auto-text" && this.isAutoTranslationCacheMode(requestedMode)) {
-          if (this.removeInvalidCurrentAutoTranslationLine(line, content, sourceText, cacheKey, cacheAliases, requestOptions)) return false;
+          if (this.removeInvalidCurrentAutoTranslationLine(line, content, requestText ?? sourceText, cacheKey, cacheAliases, requestOptions)) return false;
           return true;
         }
         const identityFingerprint = this.getTranslationIdentityFingerprintFromCacheKey(cacheKey);
@@ -21792,11 +28493,11 @@ var require_discord_ai_translator = __commonJS({
           return false;
         }
         if (line.dataset.daitCacheSig && requestSignatures.has(line.dataset.daitCacheSig)) {
-          if (this.removeInvalidCurrentAutoTranslationLine(line, content, sourceText, cacheKey, cacheAliases, requestOptions)) return false;
+          if (this.removeInvalidCurrentAutoTranslationLine(line, content, requestText ?? sourceText, cacheKey, cacheAliases, requestOptions)) return false;
           return true;
         }
         if (line.dataset.daitCacheKey && requestFingerprints.has(line.dataset.daitCacheKey)) {
-          if (this.removeInvalidCurrentAutoTranslationLine(line, content, sourceText, cacheKey, cacheAliases, requestOptions)) return false;
+          if (this.removeInvalidCurrentAutoTranslationLine(line, content, requestText ?? sourceText, cacheKey, cacheAliases, requestOptions)) return false;
           return true;
         }
         if (this.isAutoTranslationRenderPaused() && this.isAutoTranslationCacheMode(line.dataset?.daitMode)) return false;
@@ -21845,12 +28546,15 @@ var require_discord_ai_translator = __commonJS({
         const renderedText = this.getTranslationLineRenderedText(line);
         if (!renderedText) return false;
         const text = sourceText ?? this.getElementText(content);
+        const partialLine = line.classList?.contains?.("dait-translation-partial") === true;
+        if (partialLine && this.touchAutoTranslationPartialResult(cacheKey, text)) return false;
+        const validationOptions = partialLine ? { ...options, longTextPartial: true } : options;
         const validation = this.getAutoTranslationOutputValidationResult(
           text,
           renderedText,
           this.getAutoTranslationTargetLanguage(options),
-          this.getAutoTranslationOutputValidationOptions(text, renderedText, options),
-          options
+          this.getAutoTranslationOutputValidationOptions(text, renderedText, validationOptions),
+          validationOptions
         );
         if (validation.cacheable || validation.renderable && this.isAcceptedNonCacheableCurrentTranslationLine(line, validation)) {
           this.rememberRecentAutoTranslationRender(cacheKey, text, options, {
@@ -22288,8 +28992,10 @@ var require_discord_ai_translator = __commonJS({
       areComparableTextsEqual(left, right) {
         return this.normalizeExtractedText(left) === this.normalizeExtractedText(right);
       }
+      // Only Slate's U+FEFF placeholders are dropped. U+200B is the user's own text (for example
+      // "@\u200beveryone", which does not ping), so the draft, the spoiler and Restore keep it.
       normalizeDraftRawText(text) {
-        return String(text ?? "").replace(/\u200b/g, "").replace(/\r\n?/g, "\n");
+        return String(text ?? "").replace(/\ufeff/g, "").replace(/\r\n?/g, "\n");
       }
       areDraftTextsEqualStrict(left, right) {
         return this.normalizeDraftRawText(left) === this.normalizeDraftRawText(right);
@@ -22301,6 +29007,57 @@ var require_discord_ai_translator = __commonJS({
       }
       isCurrentDraftText(textbox, expectedText) {
         return this.areDraftTextsEqualStrict(this.getTextboxDraftText(textbox), expectedText);
+      }
+      isComposerWriteSuperseded(writeToken) {
+        return Boolean(writeToken?.cancelled && writeToken.reason === "superseded");
+      }
+      // Why a finished polish/bilingual result must not be written now ("" when it may be).
+      getComposerWriteStaleReason(textbox, writeToken, expectedText) {
+        if (!textbox || textbox.isConnected === false) return "remounted";
+        if (writeToken && !this.composerWriter.isWriteTokenCurrent(writeToken)) return writeToken.reason || "cancelled";
+        if (!this.isCurrentDraftText(textbox, expectedText)) return "draft-changed";
+        if (this.isComposerFocusElsewhere(textbox)) return "focus-moved";
+        return "";
+      }
+      // Writing focuses and selects the target composer, so a late result must not land while the
+      // user is typing in another field (thread panel, search box, another composer).
+      isComposerFocusElsewhere(textbox) {
+        if (typeof document === "undefined" || !textbox) return false;
+        const active = document.activeElement;
+        if (!active || active === document.body || active === document.documentElement) return false;
+        if (active === textbox || textbox.contains?.(active)) return false;
+        return this.isEditableFocusTarget(active);
+      }
+      isEditableFocusTarget(element) {
+        if (!element) return false;
+        const tagName = String(element.tagName || "").toUpperCase();
+        if (tagName === "TEXTAREA") return !element.readOnly && !element.disabled;
+        if (tagName === "INPUT") {
+          const type = String(element.type || element.getAttribute?.("type") || "text").toLowerCase();
+          const nonText = ["button", "checkbox", "color", "file", "hidden", "image", "radio", "range", "reset", "submit"];
+          return !element.readOnly && !element.disabled && !nonText.includes(type);
+        }
+        if (element.isContentEditable === true) return true;
+        const contentEditable = String(element.getAttribute?.("contenteditable") ?? "").toLowerCase();
+        return contentEditable === "true" || contentEditable === "plaintext-only" || element.getAttribute?.("role") === "textbox";
+      }
+      getComposerResultPanelAnchor(textbox) {
+        if (textbox && textbox.isConnected !== false) return textbox;
+        if (typeof document === "undefined") return textbox;
+        try {
+          return this.getActiveTextbox() || this.getTextbox() || textbox;
+        } catch {
+          return textbox;
+        }
+      }
+      isPolishInputButtonEnabled(options = {}) {
+        return this.settings.polish?.enabled !== false && Boolean(options.forcePolish || this.settings.ui?.injectInputButton);
+      }
+      isPublicBilingualFeatureEnabled() {
+        return this.settings.translation?.enabled !== false;
+      }
+      isPublicBilingualInputButtonEnabled() {
+        return this.isPublicBilingualFeatureEnabled() && Boolean(this.settings.ui?.publicBilingualInputButton);
       }
       getPublicBilingualTargetLanguage() {
         return this.normalizeLanguageName(this.settings.polish?.targetLanguage || this.settings.translation?.targetLanguage);
@@ -22342,6 +29099,7 @@ var require_discord_ai_translator = __commonJS({
           model: baseConfig.model,
           sourceLanguage: AUTO_LANGUAGE_VALUE,
           targetLanguage,
+          targetLanguageCode: this.getTargetLanguageCode(targetLanguageValue),
           temperature: 0,
           maxTokens,
           enableThinking: false,
@@ -22418,32 +29176,113 @@ var require_discord_ai_translator = __commonJS({
         if (!this.isInvalidAutoTranslationOutput(text, finalText, this.getAutoTranslationTargetLanguage(finalOptions))) return finalText;
         throw this.createFinalInvalidAutoTranslationError();
       }
-      async getPublicBilingualTranslation(text, options = this.getPublicBilingualTranslationOptions()) {
+      async getPublicBilingualTranslation(text, options = this.getPublicBilingualTranslationOptions(), behavior = {}) {
         const cacheKey = this.getTranslationCacheKey(text, options);
-        const cached = this.getTranslationCacheValue(cacheKey, this.getTranslationCacheAliases(text, options));
+        const cached = behavior.bypassCache ? null : this.getTranslationCacheValue(cacheKey, this.getTranslationCacheAliases(text, options));
         if (cached !== null) return { text: cached, cacheKey, cached: true };
         const translated = await this.runPublicBilingualTranslationTask(text, options);
         const usedFallback = Boolean(options.requestContext?.fallbackProvider);
         if (!usedFallback) this.setTranslationCache(cacheKey, translated);
         return { text: translated, cacheKey, cached: false, fallbackProvider: options.requestContext?.fallbackProvider || "" };
       }
+      // Text inside ||…||. Outside code every "|" is escaped and the user's own escapes are kept; a
+      // lone trailing "\" is doubled so it cannot escape the closing "||". Discord shows code literally,
+      // so a backslash there would be visible: "||" inside code is split with a zero-width space instead.
       escapeDiscordSpoilerText(text) {
-        return String(text || "").replace(/\|/g, "\\|");
+        return this.splitDiscordCodeSegments(text).map((segment) => segment.code ? segment.text.replace(/\|(?=\|)/g, "|​") : this.escapeDiscordPlainText(segment.text, { escapeEveryPipe: true })).join("");
       }
+      // Visible translation: only "||" outside code could open a spoiler.
       escapeDiscordVisibleText(text) {
-        return String(text || "").replace(/\|\|/g, "\\|\\|");
+        return this.splitDiscordCodeSegments(text).map((segment) => segment.code ? segment.text : this.escapeDiscordPlainText(segment.text, { escapeEveryPipe: false })).join("");
+      }
+      escapeDiscordPlainText(text, options = {}) {
+        const value = String(text || "");
+        let output = "";
+        for (let index = 0; index < value.length; index++) {
+          const char = value[index];
+          if (char === "\\") {
+            if (index + 1 < value.length) {
+              output += char + value[index + 1];
+              index++;
+            } else {
+              output += "\\\\";
+            }
+            continue;
+          }
+          if (char === "|" && (options.escapeEveryPipe || value[index + 1] === "|")) {
+            if (options.escapeEveryPipe) {
+              output += "\\|";
+            } else {
+              output += "\\|\\|";
+              index++;
+            }
+            continue;
+          }
+          output += char;
+        }
+        return output;
+      }
+      // Splits Discord markdown into code (`inline`, ``inline``, ```fenced```) and plain segments.
+      // A backslash escapes the next character outside code, so "\`" never opens a code span.
+      splitDiscordCodeSegments(text) {
+        const value = String(text || "");
+        const segments = [];
+        let plainStart = 0;
+        let index = 0;
+        while (index < value.length) {
+          const char = value[index];
+          if (char === "\\") {
+            index += 2;
+            continue;
+          }
+          if (char !== "`") {
+            index++;
+            continue;
+          }
+          let runEnd = index;
+          while (value[runEnd] === "`") runEnd++;
+          const close = this.findDiscordCodeClose(value, runEnd, runEnd - index);
+          if (close < 0) {
+            index = runEnd;
+            continue;
+          }
+          if (index > plainStart) segments.push({ code: false, text: value.slice(plainStart, index) });
+          const end = close + (runEnd - index);
+          segments.push({ code: true, text: value.slice(index, end) });
+          index = plainStart = end;
+        }
+        if (plainStart < value.length) segments.push({ code: false, text: value.slice(plainStart) });
+        return segments;
+      }
+      findDiscordCodeClose(value, from, length) {
+        let index = from;
+        while (index < value.length) {
+          const start = value.indexOf("`", index);
+          if (start < 0) return -1;
+          let end = start;
+          while (value[end] === "`") end++;
+          if (end - start === length && start > from) return start;
+          index = end;
+        }
+        return -1;
       }
       formatPublicBilingualMessage(translated, original) {
         const translation = this.escapeDiscordVisibleText(String(translated || "").trim());
-        const source = this.normalizeDraftRawText(original);
         return `${translation}
 
-||${this.escapeDiscordSpoilerText(source)}||`;
+||${this.getPublicBilingualSpoilerText(original)}||`;
       }
       getPublicBilingualReservedLength(original) {
         return `
 
-||${this.escapeDiscordSpoilerText(this.normalizeDraftRawText(original))}||`.length;
+||${this.getPublicBilingualSpoilerText(original)}||`.length;
+      }
+      // Discord's spoiler rule is non-greedy and ignores backslashes, so a trailing "|" (written "\|")
+      // would join the closing "||" and end the spoiler one character early: a zero-width space
+      // separates them.
+      getPublicBilingualSpoilerText(original) {
+        const escaped = this.escapeDiscordSpoilerText(this.normalizeDraftRawText(original));
+        return escaped.endsWith("|") ? `${escaped}​` : escaped;
       }
       isPolishSessionAlreadyPolished(session, text) {
         if (!session?.lastResult) return false;
@@ -22457,7 +29296,9 @@ var require_discord_ai_translator = __commonJS({
       }
       async preparePublicBilingualDraft(textbox, draft, options = {}) {
         const session = this.getPolishSession(textbox, draft);
-        let translationSource = draft;
+        const isBilingualOutput = Boolean(session.lastBilingualRawText && session.lastBilingualSourceRawText) && this.areDraftTextsEqualStrict(draft, session.lastBilingualRawText);
+        const baseDraft = isBilingualOutput ? this.normalizeDraftRawText(session.lastBilingualSourceRawText) : draft;
+        let translationSource = baseDraft;
         let usedPolish = false;
         let skippedPolish = false;
         const hasLifecycleToken = options.lifecycleToken !== void 0 && options.lifecycleToken !== null;
@@ -22465,7 +29306,7 @@ var require_discord_ai_translator = __commonJS({
         if (!options.skipAutoPolish && this.isPublicBilingualPolishBeforeTranslateEnabled()) {
           if (!this.settings.polish.enabled) {
             skippedPolish = true;
-          } else if (!this.isPolishSessionAlreadyPolished(session, draft)) {
+          } else if (!this.isPolishSessionAlreadyPolished(session, baseDraft)) {
             const sourceText = this.getPolishSourceText(session) || draft;
             const polished = await this.runModelTask("polish", sourceText);
             if (!String(polished || "").trim()) throw new Error(this.t("emptyResult"));
@@ -22484,13 +29325,19 @@ var require_discord_ai_translator = __commonJS({
           stale: false,
           session,
           translationSource,
-          spoilerOriginal: this.getPublicBilingualSpoilerOriginal(session, draft, translationSource),
+          spoilerOriginal: this.getPublicBilingualSpoilerOriginal(session, baseDraft, translationSource),
           expectedCurrentText: draft,
+          // A bilingual result already exists in this session, so this click asks for a fresh one.
+          rerun: Boolean(session.lastBilingualRawText),
           usedPolish,
           skippedPolish
         };
       }
       async publicBilingualCurrentDraft(button = null, behaviorOptions = {}) {
+        if (!this.isPublicBilingualFeatureEnabled()) {
+          if (!behaviorOptions.skipAutoPolish) this.showToast(this.t("translationDisabled"), "info");
+          return { ok: false, wrote: false, reason: "disabled" };
+        }
         const textbox = this.resolveInputActionTextbox(button, behaviorOptions);
         if (!textbox) {
           this.showToast(this.t("textboxMissing"), "error");
@@ -22499,7 +29346,7 @@ var require_discord_ai_translator = __commonJS({
         const expectedComposerKey = behaviorOptions.composerKey || button?.dataset?.daitComposerKey || "";
         if (!this.isInputActionTextboxCurrent(textbox, expectedComposerKey)) {
           this.queueInputButtonScan({ delayMs: 120, trailing: true });
-          this.showToast(this.t("publicBilingualInputChanged"), "info");
+          this.showToast(this.t("composerChanged"), "info");
           return { ok: false, wrote: false, reason: "stale-composer" };
         }
         const draft = this.getTextboxDraftText(textbox);
@@ -22525,10 +29372,11 @@ var require_discord_ai_translator = __commonJS({
         });
         try {
           const payload = await this.preparePublicBilingualDraft(textbox, draft, { ...behaviorOptions, lifecycleToken, writeToken });
-          if (!this.isLifecycleTokenCurrent(lifecycleToken) || !this.composerWriter.isWriteTokenCurrent(writeToken)) {
+          if (!this.isLifecycleTokenCurrent(lifecycleToken)) {
             return { ok: false, wrote: false, stale: true, phase: "lifecycle" };
           }
-          if (payload.stale) {
+          if (this.isComposerWriteSuperseded(writeToken)) return { ok: false, wrote: false, stale: true, phase: "superseded" };
+          if (payload.stale || !this.composerWriter.isWriteTokenCurrent(writeToken)) {
             this.logDiagnostic("public.bilingual", "stale-input", {
               ...this.getDiagnosticBaseMeta("public-bilingual", "public-bilingual", DIAGNOSTIC_REASON_CODES.STALE_DOM, {
                 messageState: DIAGNOSTIC_MESSAGE_STATES.STALE,
@@ -22548,16 +29396,22 @@ var require_discord_ai_translator = __commonJS({
           if (reservedLength >= DISCORD_MESSAGE_MAX_LENGTH) {
             throw new Error(this.t("publicBilingualTooLong", { length: reservedLength, limit: DISCORD_MESSAGE_MAX_LENGTH }));
           }
-          const result = await this.getPublicBilingualTranslation(payload.translationSource, requestOptions);
-          if (!this.isLifecycleTokenCurrent(lifecycleToken) || !this.composerWriter.isWriteTokenCurrent(writeToken)) {
+          const result = await this.getPublicBilingualTranslation(payload.translationSource, requestOptions, { bypassCache: payload.rerun });
+          if (!this.isLifecycleTokenCurrent(lifecycleToken)) {
             return { ok: false, wrote: false, stale: true, phase: "lifecycle" };
           }
+          if (this.isComposerWriteSuperseded(writeToken)) return { ok: false, wrote: false, stale: true, phase: "superseded" };
           if (!String(result.text || "").trim()) throw new Error(this.t("emptyResult"));
           const composed = this.formatPublicBilingualMessage(result.text, payload.spoilerOriginal);
           if (composed.length > DISCORD_MESSAGE_MAX_LENGTH) {
             throw new Error(this.t("publicBilingualTooLong", { length: composed.length, limit: DISCORD_MESSAGE_MAX_LENGTH }));
           }
-          if (textbox?.isConnected === false || !this.composerWriter.isWriteTokenCurrent(writeToken) || !this.isCurrentDraftText(textbox, payload.expectedCurrentText)) {
+          const recordPanelInsert = (target) => {
+            payload.session.composerKey = this.getTextboxComposerKey(target);
+            this.updatePolishSessionAfterBilingual(payload.session, target, composed, payload.translationSource, true);
+          };
+          const staleReason = this.getComposerWriteStaleReason(textbox, writeToken, payload.expectedCurrentText);
+          if (staleReason) {
             this.logDiagnostic("public.bilingual", "stale-input", {
               ...this.getDiagnosticBaseMeta("public-bilingual", "public-bilingual", DIAGNOSTIC_REASON_CODES.STALE_DOM, {
                 messageState: DIAGNOSTIC_MESSAGE_STATES.STALE,
@@ -22568,13 +29422,18 @@ var require_discord_ai_translator = __commonJS({
               sourceHash: this.getStrongTextFingerprint(draft),
               cached: Boolean(result.cached),
               phase: "translation",
+              reason: staleReason,
               ms: Date.now() - startedAt
             });
-            this.showToast(this.t("publicBilingualInputChanged"), "info");
-            return { ok: false, wrote: false, stale: true, phase: "translation" };
-          }
-          if (!this.isLifecycleTokenCurrent(lifecycleToken) || !this.composerWriter.isWriteTokenCurrent(writeToken)) {
-            return { ok: false, wrote: false, stale: true, phase: "lifecycle" };
+            this.showPolishResultPanel(this.getComposerResultPanelAnchor(textbox), composed, {
+              sourceButton: button,
+              title: this.t("publicBilingualButton"),
+              ariaLabel: this.t("publicBilingualTitleAttr", { targetLanguage: this.getDisplayLanguage(this.getPublicBilingualTargetLanguage()) }),
+              adjustTextboxSelection: false,
+              onApplied: recordPanelInsert
+            });
+            this.showToast(this.t("composerResultHeld"), "info");
+            return { ok: false, wrote: false, stale: true, phase: "translation", reason: staleReason, fallbackText: composed };
           }
           const writeResult = await this.composerWriter.replaceTextSafely(textbox, composed, {
             blurAfterReplace: false,
@@ -22602,9 +29461,14 @@ var require_discord_ai_translator = __commonJS({
               sourceButton: button,
               title: this.t("publicBilingualButton"),
               ariaLabel: this.t("publicBilingualTitleAttr", { targetLanguage: this.getDisplayLanguage(this.getPublicBilingualTargetLanguage()) }),
-              adjustTextboxSelection: false
+              adjustTextboxSelection: false,
+              onApplied: recordPanelInsert
             });
-            this.showToast(this.t("publicBilingualFailed", { error: this.formatError(new Error(writeResult.reason || "verification-failed")) }), "error");
+            if (["write-cancelled", "stale-input", "superseded", "user-input"].includes(writeResult.reason)) {
+              this.showToast(this.t("composerResultHeld"), "info");
+            } else {
+              this.showToast(this.t("publicBilingualFailed", { error: this.t("errorComposerWriteFailed") }), "error");
+            }
             return { ok: false, wrote: false, reason: writeResult.reason || "verification-failed", fallbackText: composed };
           }
           this.updatePolishSessionAfterBilingual(payload.session, textbox, composed, payload.translationSource, true);
@@ -22660,7 +29524,7 @@ var require_discord_ai_translator = __commonJS({
         const expectedComposerKey = behaviorOptions.composerKey || button?.dataset?.daitComposerKey || "";
         if (!this.isInputActionTextboxCurrent(textbox, expectedComposerKey)) {
           this.queueInputButtonScan({ delayMs: 120, trailing: true });
-          this.showToast(this.t("publicBilingualInputChanged"), "info");
+          this.showToast(this.t("composerChanged"), "info");
           return;
         }
         const draft = this.getTextboxDraftText(textbox);
@@ -22670,6 +29534,9 @@ var require_discord_ai_translator = __commonJS({
         }
         const writeToken = this.composerWriter.beginWrite(textbox, draft);
         this.setButtonBusy(button, true, this.t("polishBusy"));
+        if ((behaviorOptions.fromHotkey || behaviorOptions.fromMenu) && !this.isInputActionButtonShown(button)) {
+          this.showToast(this.t("polishRunning"), "info");
+        }
         const lifecycleToken = this.getLifecycleToken();
         const startedAt = Date.now();
         this.logDiagnostic("polish", "start", {
@@ -22682,6 +29549,7 @@ var require_discord_ai_translator = __commonJS({
           sourceHash: this.getStrongTextFingerprint(draft),
           length: String(draft || "").length
         });
+        let pendingSend = null;
         try {
           const session = this.getPolishSession(textbox, draft);
           const sourceText = this.getPolishSourceText(session);
@@ -22690,9 +29558,16 @@ var require_discord_ai_translator = __commonJS({
             return;
           }
           const polished = await this.runModelTask("polish", sourceText);
-          if (!this.isLifecycleTokenCurrent(lifecycleToken) || !this.composerWriter.isWriteTokenCurrent(writeToken)) return;
+          if (!this.isLifecycleTokenCurrent(lifecycleToken)) return;
+          if (this.isComposerWriteSuperseded(writeToken)) return;
           const action = this.getPolishAfterAction();
-          if (textbox?.isConnected === false || !this.composerWriter.isWriteTokenCurrent(writeToken) || !this.isCurrentDraftText(textbox, draft)) {
+          const recordPanelInsert = (target) => {
+            session.composerKey = this.getTextboxComposerKey(target);
+            this.updatePolishSessionAfterResult(session, target, polished, true);
+            this.showRestoreOriginalControl(target, session, button);
+          };
+          const staleReason = this.getComposerWriteStaleReason(textbox, writeToken, draft);
+          if (staleReason) {
             this.updatePolishSessionAfterResult(session, textbox, polished, false);
             this.logDiagnostic("polish", "stale-input", {
               ...this.getDiagnosticBaseMeta("polish", "polish", DIAGNOSTIC_REASON_CODES.STALE_DOM, {
@@ -22702,12 +29577,13 @@ var require_discord_ai_translator = __commonJS({
                 textLength: String(sourceText || "").length
               }),
               sourceHash: this.getStrongTextFingerprint(sourceText),
+              reason: staleReason,
               ms: Date.now() - startedAt
             });
-            if (textbox?.isConnected !== false) this.showPolishResultPanel(textbox, polished, { sourceButton: button });
+            this.showPolishResultPanel(this.getComposerResultPanelAnchor(textbox), polished, { sourceButton: button, onApplied: recordPanelInsert });
+            this.showToast(this.t("composerResultHeld"), "info");
             return;
           }
-          if (!this.isLifecycleTokenCurrent(lifecycleToken) || !this.composerWriter.isWriteTokenCurrent(writeToken)) return;
           const writeResult = await this.composerWriter.replaceTextSafely(textbox, polished, {
             blurAfterReplace: false,
             extraBlurTarget: button,
@@ -22727,7 +29603,7 @@ var require_discord_ai_translator = __commonJS({
               sourceHash: this.getStrongTextFingerprint(sourceText),
               ms: Date.now() - startedAt
             });
-            this.showPolishResultPanel(textbox, polished, { sourceButton: button });
+            this.showPolishResultPanel(textbox, polished, { sourceButton: button, onApplied: recordPanelInsert });
             return;
           }
           this.logDiagnostic("polish", "success", {
@@ -22740,6 +29616,7 @@ var require_discord_ai_translator = __commonJS({
             sourceHash: this.getStrongTextFingerprint(sourceText),
             ms: Date.now() - startedAt
           });
+          if (writeResult.userEditedAfter) return;
           if (this.isPublicBilingualAfterPolishEnabled()) {
             const bilingualResult = await this.publicBilingualCurrentDraft(button, { skipAutoPolish: true });
             if (!this.isLifecycleTokenCurrent(lifecycleToken)) return;
@@ -22747,13 +29624,11 @@ var require_discord_ai_translator = __commonJS({
           }
           this.showRestoreOriginalControl(textbox, session, button);
           if (action === "confirmSend") {
-            if (window.confirm(this.t("confirmSend"))) {
-              this.clearPolishSubmitTimer();
-              this.polishSubmitTimer = setTimeout(() => {
-                this.polishSubmitTimer = null;
-                if (this.isLifecycleTokenCurrent(lifecycleToken)) this.composerWriter.submit(textbox);
-              }, 80);
-            }
+            pendingSend = {
+              textbox,
+              text: this.getTextboxDraftText(textbox),
+              composerKey: this.getTextboxComposerKey(textbox)
+            };
           }
         } catch (error) {
           if (!this.isLifecycleTokenCurrent(lifecycleToken)) return;
@@ -22773,6 +29648,35 @@ var require_discord_ai_translator = __commonJS({
           this.composerWriter.finishWriteToken(writeToken);
           if (this.isLifecycleTokenCurrent(lifecycleToken)) this.setButtonBusy(button, false, this.t("polishButton"));
         }
+        if (pendingSend) await this.confirmPolishedSend(pendingSend, lifecycleToken);
+      }
+      // "Ask before sending": the polished text is already in the input box. Sends only when, after the dialog,
+      // the plugin is still running and the same composer is still connected and holds exactly that text.
+      async confirmPolishedSend(pending, lifecycleToken) {
+        const confirmed = await this.confirmAction({
+          title: this.t("confirmSend"),
+          preview: pending?.text || "",
+          confirmText: this.t("confirmSendAction"),
+          cancelText: this.t("dialogCancel")
+        });
+        if (!confirmed || !this.isLifecycleTokenCurrent(lifecycleToken)) return false;
+        if (!this.isPolishedSendStillCurrent(pending, lifecycleToken)) {
+          this.showToast(this.t("confirmSendDraftChanged"), "info");
+          return false;
+        }
+        this.clearPolishSubmitTimer();
+        this.polishSubmitTimer = setTimeout(() => {
+          this.polishSubmitTimer = null;
+          if (this.isPolishedSendStillCurrent(pending, lifecycleToken)) this.composerWriter.submit(pending.textbox);
+        }, 80);
+        return true;
+      }
+      isPolishedSendStillCurrent(pending, lifecycleToken) {
+        const textbox = pending?.textbox;
+        if (!this.isLifecycleTokenCurrent(lifecycleToken)) return false;
+        if (!textbox || textbox.isConnected === false) return false;
+        if (pending.composerKey && this.getTextboxComposerKey(textbox) !== pending.composerKey) return false;
+        return this.isCurrentDraftText(textbox, pending.text);
       }
       clearPolishSubmitTimer() {
         if (!this.polishSubmitTimer) return;
@@ -22788,7 +29692,7 @@ var require_discord_ai_translator = __commonJS({
         }
         const panel = document.createElement("div");
         panel.className = "dait-polish-result-panel";
-        this.syncDiscordThemeClasses(panel, textbox || options.sourceButton);
+        this.applyPanelTheme(panel);
         panel.setAttribute("role", "dialog");
         panel.setAttribute("aria-label", options.ariaLabel || options.title || this.t("polishResultTitle"));
         const header = document.createElement("div");
@@ -22800,8 +29704,9 @@ var require_discord_ai_translator = __commonJS({
         const close = document.createElement("button");
         close.className = "dait-polish-result-icon";
         close.type = "button";
-        close.textContent = "x";
+        close.appendChild(this.createWindowIcon("close"));
         close.title = this.t("polishResultClose");
+        close.setAttribute("aria-label", this.t("polishResultClose"));
         close.addEventListener("click", (event) => {
           event.preventDefault();
           event.stopPropagation();
@@ -22816,6 +29721,24 @@ var require_discord_ai_translator = __commonJS({
         panel.appendChild(output);
         const actions = document.createElement("div");
         actions.className = "dait-polish-result-actions";
+        if (textbox && options.allowApply !== false) {
+          const apply = document.createElement("button");
+          apply.className = "dait-polish-result-action dait-polish-result-apply";
+          apply.type = "button";
+          apply.textContent = this.t("polishResultReplace");
+          apply.addEventListener("click", async (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            if (apply.disabled) return;
+            apply.disabled = true;
+            try {
+              await this.applyPolishResultPanelText(textbox, String(text || ""), { onApplied: options.onApplied });
+            } finally {
+              apply.disabled = false;
+            }
+          });
+          actions.appendChild(apply);
+        }
         const copy = document.createElement("button");
         copy.className = "dait-polish-result-action primary";
         copy.type = "button";
@@ -22839,7 +29762,7 @@ var require_discord_ai_translator = __commonJS({
         document.body.appendChild(panel);
         this.polishResultPanel = panel;
         const reposition = () => {
-          this.syncDiscordThemeClasses(panel, textbox || options.sourceButton);
+          this.applyPanelTheme(panel);
           this.positionPolishResultPanel(panel, textbox, options.sourceButton);
         };
         const outsidePointerDown = (event) => {
@@ -22906,6 +29829,35 @@ var require_discord_ai_translator = __commonJS({
         this.polishResultPanel?.remove?.();
         this.polishResultPanel = null;
       }
+      // The panel's "Insert into input" action: an explicit user request, so it replaces whatever the
+      // composer holds now (Discord's undo brings the previous draft back). `options.onApplied(target)`
+      // runs after a verified write so the run that produced the text can record it.
+      async applyPolishResultPanelText(textbox, text, options = {}) {
+        const target = textbox && textbox.isConnected !== false ? textbox : this.resolveInputActionTextbox(null, {});
+        if (!target) {
+          this.showToast(this.t("textboxMissing"), "error");
+          return false;
+        }
+        const currentText = this.getTextboxDraftText(target);
+        const writeToken = this.composerWriter.beginWrite(target, currentText);
+        let result = null;
+        try {
+          result = await this.composerWriter.replaceTextSafely(target, text, {
+            blurAfterReplace: false,
+            expectedPreviousText: currentText,
+            writeToken
+          });
+        } finally {
+          this.composerWriter.finishWriteToken(writeToken);
+        }
+        if (result?.ok) {
+          this.removePolishResultPanel();
+          options.onApplied?.(target);
+          return true;
+        }
+        if (result?.reason !== "write-cancelled") this.showToast(this.t("polishResultApplyFailed"), "error");
+        return false;
+      }
       showRestoreOriginalControl(textbox, session, sourceButton = null) {
         const originalText = session?.originalRawText ?? session?.originalText;
         if (typeof document === "undefined" || !originalText) return;
@@ -22962,7 +29914,7 @@ var require_discord_ai_translator = __commonJS({
           this.removePolishRestoreControl();
           this.removeInputActionMenu();
           this.injectInputButtons();
-          this.showToast(this.t("publicBilingualInputChanged"), "info");
+          this.showToast(this.t("restoreOriginalChanged"), "info");
           return false;
         }
         const currentText = this.getTextboxDraftText(textbox);
@@ -22974,9 +29926,9 @@ var require_discord_ai_translator = __commonJS({
             expectedPreviousText: currentText,
             writeToken
           });
-          if (result.ok && this.composerWriter.isWriteTokenCurrent(writeToken)) {
-            session.lastWrittenText = this.normalizeExtractedText(originalText);
-            session.lastWrittenRawText = this.normalizeDraftRawText(originalText);
+          if (result.ok && (result.userEditedAfter || this.composerWriter.isWriteTokenCurrent(writeToken))) {
+            session.lastWrittenText = "";
+            session.lastWrittenRawText = "";
             session.updatedAt = Date.now();
             this.polishSession = session;
             this.removePolishRestoreControl();
@@ -22994,6 +29946,7 @@ var require_discord_ai_translator = __commonJS({
         if (!textbox || textbox.isConnected === false || !session) return false;
         if (session.composerKey && this.getTextboxComposerKey(textbox) !== session.composerKey) return false;
         const current = this.getTextboxDraftText(textbox);
+        if (this.areDraftTextsEqualStrict(current, session.originalRawText ?? session.originalText)) return false;
         const candidates = [
           session.lastWrittenRawText,
           session.lastResultRawText,
@@ -23047,7 +30000,7 @@ var require_discord_ai_translator = __commonJS({
           } catch {
           }
           const storeCandidate = this.getManualTranslationStoreSourceCandidate(messageNode, content, domText);
-          if (storeCandidate?.text) pushCandidate(storeCandidate.source, storeCandidate.text, storeCandidate.confidence || "store");
+          if (this.isStoreFullRequestText(storeCandidate?.text, domText)) pushCandidate(storeCandidate.source, storeCandidate.text, storeCandidate.confidence || "store");
         }
         const selected = this.selectManualTranslationSourceCandidate(candidates, domText) || candidates[0] || { source: "dom-content", text: domText, length: domText.length };
         this.logDiagnostic("manual.source", selected.source === "dom-content" ? "dom" : "resolved", {
@@ -23152,8 +30105,7 @@ var require_discord_ai_translator = __commonJS({
         if (!plan?.messageNode?.isConnected || !plan?.content?.isConnected) return false;
         const currentText = this.normalizeExtractedText(this.getElementText(plan.content, plan.textOptions));
         if (!currentText) return false;
-        const expectedTexts = [plan.text, plan.domText].map((text) => this.normalizeExtractedText(text)).filter(Boolean);
-        return expectedTexts.includes(currentText);
+        return currentText === this.normalizeExtractedText(plan.domText ?? plan.text);
       }
       beginManualTranslationRequest(content) {
         const token = ++this.manualTranslationRequestCounter;
@@ -23174,9 +30126,12 @@ var require_discord_ai_translator = __commonJS({
         const providerKey = String(options.providerKey || "");
         return !providerKey || this.isAutoTranslationProviderSnapshotCurrent(providerKey, options);
       }
+      // text is the request text; domText is what the message shows, which keys the message identity
+      // and the line (as in auto translation, so both share cache entries).
       createManualTranslationPlan(messageNode, content, text, textOptions = null, sourceMeta = null) {
-        const requestOptions = this.withMessageIdentity(this.getManualTranslationRequestOptions(), messageNode, content, text);
-        const autoRequestOptions = this.withMessageIdentity(this.getAutoTranslationRequestOptionsForText(text, this.getAutoTranslationOptions()), messageNode, content, text);
+        const domText = sourceMeta?.domText ?? text;
+        const requestOptions = this.withMessageIdentity(this.getManualTranslationRequestOptions(), messageNode, content, domText);
+        const autoRequestOptions = this.withMessageIdentity(this.getAutoTranslationRequestOptionsForText(text, this.getAutoTranslationOptions()), messageNode, content, domText);
         const cacheKey = this.getTranslationCacheKey(text, requestOptions);
         const autoCacheKey = this.getTranslationCacheKey(text, autoRequestOptions);
         return {
@@ -23189,7 +30144,7 @@ var require_discord_ai_translator = __commonJS({
           autoRequestOptions,
           cacheKey,
           autoCacheKey,
-          domText: sourceMeta?.domText ?? text,
+          domText,
           sourceKind: sourceMeta?.source || "dom-content",
           sourceConfidence: sourceMeta?.confidence || "",
           sourceHash: this.getStrongTextFingerprint(text),
@@ -23207,6 +30162,7 @@ var require_discord_ai_translator = __commonJS({
         if (text) this.clearAutoTextTranslationFailure(text, options);
         this.clearAutoTranslationPendingTargets(cacheKey);
         this.removeQueuedAutoTranslationItem(cacheKey);
+        this.clearAutoTranslationPartialResult(cacheKey, plan?.cacheKey);
         if (plan?.cacheKey && plan.cacheKey !== cacheKey) {
           this.clearAutoTranslationFailure(plan.cacheKey, plan.requestOptions || options);
           this.clearAutoTranslationPendingTargets(plan.cacheKey);
@@ -23215,7 +30171,7 @@ var require_discord_ai_translator = __commonJS({
         return true;
       }
       renderManualLoading(plan) {
-        return this.renderTranslationLoading(plan.messageNode, plan.content, plan.cacheKey, plan.text);
+        return this.renderTranslationLoading(plan.messageNode, plan.content, plan.cacheKey, plan.domText ?? plan.text);
       }
       runManualTranslationPlan(plan) {
         return this.runManualRescueTranslationPlan(plan);
@@ -23229,11 +30185,14 @@ var require_discord_ai_translator = __commonJS({
         }
         return plan.requestOptions;
       }
-      async runManualRescueModelAttempt(plan, requestOptions) {
+      // requestOptions is this attempt's own copy: a partial long result is recorded on it for
+      // validation and for the partial note (longTextPartialInfo).
+      async runManualRescueModelAttempt(plan, requestOptions, requestBudget = null) {
         if (this.isLongAutoTranslationText(plan.text)) {
           const taskOptions = {
             retryInvalidOutput: false,
-            manualRescue: true
+            manualRescue: true,
+            ...requestBudget ? { requestBudget } : {}
           };
           const wholePass = await this.runManualLongTextWholePass(plan, requestOptions, taskOptions);
           if (wholePass !== null) return wholePass;
@@ -23242,9 +30201,11 @@ var require_discord_ai_translator = __commonJS({
             requestOptions.longTextPartial = true;
             requestOptions.longTextFailedChunks = Number(taskOptions.longTextFailedChunks || 0);
             requestOptions.longTextSuccessfulChunks = Number(taskOptions.longTextSuccessfulChunks || 0);
+            if (taskOptions.longTextPartialInfo) requestOptions.longTextPartialInfo = taskOptions.longTextPartialInfo;
           }
           return translated;
         }
+        this.consumeAutoTranslationRequestBudget({ requestBudget });
         return this.runAutoTranslationModelAttempt(plan.text, requestOptions);
       }
       getManualRescueValidation(plan, translated, requestOptions) {
@@ -23285,6 +30246,18 @@ var require_discord_ai_translator = __commonJS({
       isManualRescueRetryableError(error) {
         return Boolean(error?.autoTranslationFinalInvalidOutput || error?.modelOutputTruncated);
       }
+      // True when a manual partial result leaves out a smaller share of the message than the kept
+      // one (or either share is unknown).
+      isManualPartialResultBetter(manualInfo, keptInfo) {
+        const missingShare = (info) => {
+          const total = Number(info?.totalSegments || 0);
+          return total > 0 && Array.isArray(info?.missingSegments) ? info.missingSegments.length / total : null;
+        };
+        const manualShare = missingShare(manualInfo);
+        const keptShare = missingShare(keptInfo);
+        if (manualShare === null || keptShare === null) return true;
+        return manualShare < keptShare;
+      }
       createManualRescueFailureError(reason = "invalid-output", validationQuality = "", attempts = []) {
         const error = this.createFinalInvalidAutoTranslationError(reason || "invalid-output", {
           terminal: false,
@@ -23302,13 +30275,23 @@ var require_discord_ai_translator = __commonJS({
         let previousReason = "";
         let lastValidation = null;
         let lastError = null;
+        const requestBudget = this.createAutoTranslationRequestBudget(this.getManualTranslationRequestBudgetLimit(plan.text, plan.requestOptions));
         for (let index = 0; index < attemptNames.length; index++) {
           const attemptName = attemptNames[index];
-          const requestOptions = this.getManualRescueAttemptOptions(plan, attemptName, previousOutput, previousReason);
+          if (this.isAutoTranslationRequestBudgetExhausted(requestBudget)) {
+            this.logDiagnostic("manual.rescue", "budget-exhausted", {
+              key: this.getTextFingerprint(plan.cacheKey),
+              sourceHash: plan.sourceHash,
+              attemptName,
+              requestCount: requestBudget.used
+            });
+            break;
+          }
+          const requestOptions = { ...this.getManualRescueAttemptOptions(plan, attemptName, previousOutput, previousReason) };
           let translated = "";
           let validation = null;
           try {
-            translated = await this.runManualRescueModelAttempt(plan, requestOptions);
+            translated = await this.runManualRescueModelAttempt(plan, requestOptions, requestBudget);
             validation = this.getManualRescueValidation(plan, translated, requestOptions);
             this.logManualRescueAttempt(plan, attemptName, index, requestOptions, translated, validation, null);
             attempts.push({
@@ -23329,6 +30312,7 @@ var require_discord_ai_translator = __commonJS({
               validationQuality: validation.quality
             });
           } catch (error) {
+            if (this.isAutoTranslationRequestBudgetError(error)) break;
             lastError = error;
             previousReason = error?.autoTranslationInvalidReason || error?.autoTranslationCancelReason || this.getAutoTranslationFailureType(error) || "invalid-output";
             this.logManualRescueAttempt(plan, attemptName, index, requestOptions, previousOutput, null, error);
@@ -23348,18 +30332,42 @@ var require_discord_ai_translator = __commonJS({
         throw this.createManualRescueFailureError(finalReason, finalQuality, attempts);
       }
       renderManualFailure(plan, error) {
-        return this.renderTranslationError(plan.messageNode, plan.content, error, plan.cacheKey, plan.text);
+        return this.renderTranslationError(plan.messageNode, plan.content, error, plan.cacheKey, plan.domText ?? plan.text);
       }
-      async translateMessage(messageNode, content, button, textOptions = null) {
+      // What a finished translation line shows, so a failed Retranslate can draw it again.
+      getRestorableTranslationLineState(content) {
+        const line = this.getTranslationLine(content);
+        if (!line || line.classList?.contains?.("dait-translation-loading") || line.classList?.contains?.("dait-translation-error")) return null;
+        const text = String(this.translationLineTexts?.get?.(line) ?? this.getTranslationLineRenderedText(line) ?? "");
+        if (!text.trim()) return null;
+        return {
+          text,
+          partial: line.classList?.contains?.("dait-translation-partial") === true,
+          validationQuality: String(line.dataset?.daitValidationQuality || ""),
+          validationReason: String(line.dataset?.daitValidationReason || "")
+        };
+      }
+      restoreTranslationLineState(plan, state, keptAutoPartial = null) {
+        const partialInfo = state.partial && keptAutoPartial?.translated === state.text ? keptAutoPartial.partialInfo : null;
+        if (partialInfo) this.rememberAutoTranslationPartialResult(plan.autoCacheKey, plan.text, keptAutoPartial.translated, keptAutoPartial);
+        return this.renderTranslation(plan.messageNode, plan.content, state.text, plan.cacheKey, plan.domText ?? plan.text, {
+          partial: state.partial,
+          validationQuality: state.validationQuality,
+          validationReason: state.validationReason,
+          ...partialInfo ? { partialInfo } : {}
+        });
+      }
+      async translateMessage(messageNode, content, button, textOptions = null, translateOptions = {}) {
         if (!this.settings.translation.enabled) {
           this.showToast(this.t("translationDisabled"), "info");
           return;
         }
         const initialText = this.getElementText(content, textOptions);
-        if (!initialText) {
+        if (!this.hasTranslatableMessageText(initialText)) {
           this.showToast(this.t("noTranslatableText"), "info");
           return;
         }
+        this.clearTranslationLineDismissal(messageNode, content, textOptions);
         const source = this.resolveManualTranslationSource(messageNode, content, textOptions, initialText);
         const text = source.text || initialText;
         if (this.isLowInformationRepeatedText(text)) {
@@ -23371,6 +30379,7 @@ var require_discord_ai_translator = __commonJS({
         const cacheKey = plan.cacheKey;
         const startedAt = plan.startedAt;
         const lifecycleToken = plan.lifecycleToken;
+        const keptAutoPartial = this.getAutoTranslationPartialResult(plan.autoCacheKey, text);
         this.clearManualBlockingState(plan);
         this.logDiagnostic("manual.translate", "start", {
           ...this.getTranslationDiagnosticMeta("manual", {
@@ -23388,7 +30397,7 @@ var require_discord_ai_translator = __commonJS({
           sourceKind: plan.sourceKind,
           sourceConfidence: plan.sourceConfidence
         });
-        const cachedTranslation = this.getTranslationCacheValue(cacheKey, this.getTranslationCacheAliases(text, requestOptions));
+        const cachedTranslation = translateOptions?.bypassCache ? null : this.getTranslationCacheValue(cacheKey, this.getTranslationCacheAliases(text, requestOptions));
         if (cachedTranslation !== null) {
           if (this.isInvalidAutoTranslationCacheValue(text, cachedTranslation, requestOptions)) {
             this.deleteTranslationCacheCandidates(cacheKey, ...this.getTranslationCacheAliases(text, requestOptions));
@@ -23405,11 +30414,12 @@ var require_discord_ai_translator = __commonJS({
               key: this.getTextFingerprint(cacheKey),
               ms: Date.now() - startedAt
             });
-            this.syncManualTranslationToAutoCache(messageNode, content, text, cachedTranslation, textOptions);
-            this.renderTranslation(messageNode, content, cachedTranslation, cacheKey, text);
+            this.syncManualTranslationToAutoCache(messageNode, content, text, cachedTranslation, textOptions, plan.domText);
+            this.renderTranslation(messageNode, content, cachedTranslation, cacheKey, plan.domText);
             return;
           }
         }
+        const previousLineState = translateOptions?.bypassCache ? this.getRestorableTranslationLineState(content) : null;
         this.renderManualLoading(plan);
         this.setButtonBusy(button, true, this.t("translateBusy"));
         try {
@@ -23451,15 +30461,31 @@ var require_discord_ai_translator = __commonJS({
             });
             return;
           }
-          const usedProviderFallback = Boolean(resultRequestOptions.requestContext?.fallbackProvider);
-          if (validation.cacheable && !usedProviderFallback) {
-            this.setTranslationCache(cacheKey, translated);
-            this.syncManualTranslationToAutoCache(messageNode, content, text, translated, textOptions);
+          if (keptAutoPartial && validation.quality === TRANSLATION_VALIDATION_QUALITIES.PARTIAL && !this.isManualPartialResultBetter(resultRequestOptions.longTextPartialInfo, keptAutoPartial.partialInfo)) {
+            this.rememberAutoTranslationPartialResult(plan.autoCacheKey, text, keptAutoPartial.translated, keptAutoPartial);
+            this.renderTranslation(messageNode, content, keptAutoPartial.translated, cacheKey, plan.domText, {
+              partial: true,
+              validationQuality: keptAutoPartial.validationQuality || TRANSLATION_VALIDATION_QUALITIES.PARTIAL,
+              validationReason: keptAutoPartial.validationReason || "",
+              ...keptAutoPartial.partialInfo ? { partialInfo: keptAutoPartial.partialInfo } : {}
+            });
+            this.logDiagnostic("manual.translate", "kept-auto-partial", {
+              key: this.getTextFingerprint(cacheKey),
+              ms: Date.now() - startedAt
+            });
+            return;
           }
-          this.renderTranslation(messageNode, content, translated, cacheKey, text, {
+          const usedProviderFallback = Boolean(resultRequestOptions.requestContext?.fallbackProvider);
+          const resultCacheKey = this.getServedModelTranslationCacheKey(cacheKey, requestOptions);
+          if (validation.cacheable && !usedProviderFallback) {
+            this.setTranslationCache(resultCacheKey, translated);
+            this.syncManualTranslationToAutoCache(messageNode, content, text, translated, textOptions, plan.domText);
+          }
+          this.renderTranslation(messageNode, content, translated, resultCacheKey, plan.domText, {
             partial: validation.quality === TRANSLATION_VALIDATION_QUALITIES.PARTIAL,
             validationQuality: validation.quality,
-            validationReason: validation.reasonCode || ""
+            validationReason: validation.reasonCode || "",
+            ...resultRequestOptions.longTextPartialInfo ? { partialInfo: resultRequestOptions.longTextPartialInfo } : {}
           });
           this.rememberRecentAutoTranslationRender(plan.autoCacheKey, text, plan.autoRequestOptions, {
             validationQuality: validation.quality,
@@ -23506,27 +30532,31 @@ var require_discord_ai_translator = __commonJS({
             ms: Date.now() - startedAt
           });
           const silentManualFailure = Boolean(error?.manualTranslationRescueFailed || error?.autoTranslationFinalInvalidOutput);
+          if (!silentManualFailure) this.rememberTranslationAttentionNotice(error, this.getTranslationAttentionProviderKey(error, requestOptions));
           if (!error?.autoTranslationFinalInvalidOutput) this.markAutoTranslationProviderFailure(requestOptions, error);
-          if (this.isManualTranslationSourceStillCurrent(plan)) {
+          const restorePreviousLine = silentManualFailure && Boolean(previousLineState) && this.isManualTranslationSourceStillCurrent(plan);
+          if (restorePreviousLine) {
+            this.restoreTranslationLineState(plan, previousLineState, keptAutoPartial);
+          } else if (this.isManualTranslationSourceStillCurrent(plan)) {
             if (silentManualFailure) this.removeTranslationNode(messageNode, content);
             else this.renderManualFailure(plan, error);
           } else {
             this.removeTranslationNode(messageNode, content);
           }
-          if (!silentManualFailure) this.showToast(this.formatError(error), "error");
+          if (!silentManualFailure || translateOptions?.bypassCache) this.showToast(this.formatError(error), "error");
         } finally {
           if (this.isLifecycleTokenCurrent(lifecycleToken) && this.isManualTranslationRequestCurrent(plan)) {
             this.setButtonBusy(button, false, this.t("translateButton"));
           }
         }
       }
-      syncManualTranslationToAutoCache(messageNode, content, text, translated, textOptions = null) {
+      syncManualTranslationToAutoCache(messageNode, content, text, translated, textOptions = null, domText = text) {
         if (!messageNode || !content || !text || !translated) return false;
         const requestOptions = this.withMessageIdentity(
           this.getAutoTranslationRequestOptionsForText(text, this.getAutoTranslationOptions()),
           messageNode,
           content,
-          text
+          domText || text
         );
         if (this.isInvalidAutoTranslationCacheValue(text, translated, requestOptions)) return false;
         const cacheKey = this.getTranslationCacheKey(text, requestOptions);
@@ -23581,17 +30611,18 @@ var require_discord_ai_translator = __commonJS({
       annotateTranslateProviderApiError(error, raw = "", request = {}) {
         if (!error || !["microsoft", "deepl", "baidu"].includes(String(request?.provider || ""))) return error;
         error.providerKey = request.providerKey || "";
-        const signal = `${Number(error.status || 0)} ${String(raw || "").slice(0, 4e3)}`;
-        if (/quota|limit exceeded|daily limit|monthly limit|character limit|456|54003|54004|54005/i.test(signal)) {
+        const status = Number(error.status || 0);
+        const text = String(raw || "").slice(0, 4e3);
+        if (status === 456 || /\b(?:quota|limit exceeded|daily limit|monthly limit|character limit)\b/i.test(text)) {
           error.providerQuotaExceeded = true;
         }
-        if (/invalid key|unauthorized|forbidden|401|403|52003|54001/i.test(signal)) {
+        if (status === 401 || status === 403 || /\b(?:invalid (?:auth(?:entication)? )?key|unauthorized|forbidden)\b/i.test(text)) {
           error.providerAuthFailed = true;
         }
-        if (/too many|rate.?limit|429|54003/i.test(signal)) {
+        if (status === 429 || /\b(?:too many requests|rate.?limit(?:ed)?)\b/i.test(text)) {
           error.providerRateLimited = true;
         }
-        if (Number(error.status || 0) >= 500) {
+        if (status >= 500) {
           error.providerServerError = true;
         }
         return error;
@@ -23642,6 +30673,8 @@ var require_discord_ai_translator = __commonJS({
         if (line.classList?.contains?.("dait-translation-loading")) return false;
         if (line.classList?.contains?.("dait-translation-error")) return false;
         if (line.classList?.contains?.("dait-translation-masked")) return false;
+        if (line.classList?.contains?.("dait-translation-partial")) return false;
+        if (line.classList?.contains?.("dait-translation-dismissed")) return false;
         return line.classList?.contains?.("dait-translation-revealed") !== false;
       }
       syncTranslationSourceVisibility(line, content, sourceText = null) {
@@ -23693,17 +30726,39 @@ var require_discord_ai_translator = __commonJS({
       }
       syncAllTranslationDisplaySettings() {
         if (typeof document === "undefined" || !document.querySelectorAll) return;
-        document.querySelectorAll(".dait-translation-line[data-dait-owner]").forEach((line) => {
+        const lines = [...document.querySelectorAll(".dait-translation-line[data-dait-owner]")];
+        if (!lines.length) return;
+        this.withTranslationScrollStability(this.getTranslationRestyleScrollAnchor(lines), () => lines.forEach((line) => {
           const content = this.getTranslationContentForLine(line);
           if (!content?.isConnected) return;
           const isStateLine = line.classList?.contains?.("dait-translation-loading") || line.classList?.contains?.("dait-translation-error");
           if (!isStateLine) {
             line.classList?.toggle?.("dait-translation-masked", Boolean(this.settings.ui?.maskTranslations));
             line.classList?.toggle?.("dait-translation-revealed", !this.settings.ui?.maskTranslations);
+            this.applyTranslationLineMaskState(line);
+            this.applyTranslationLineDisplayClasses(line);
           }
           this.positionExistingTranslationLine(line, content);
           this.syncTranslationSourceVisibility(line, content);
-        });
+        }), { allowScrollCorrectionWhilePaused: true, keepAnchorTop: true });
+      }
+      // The first message whose top is inside the visible chat (else the one partly in view): lines
+      // above its top may change height, and keeping that top in place keeps what the user reads in place.
+      getTranslationRestyleScrollAnchor(lines) {
+        const first = lines.find((line) => line?.isConnected);
+        const scroller = first ? this.getTranslationScrollContainer(first) : null;
+        const band = scroller ? this.getScrollContainerBand(scroller) : null;
+        if (!band) return null;
+        const root = this.isDocumentScroller(scroller) ? document : scroller;
+        let partlyVisible = null;
+        for (const message of root.querySelectorAll?.(DISCORD_MESSAGE_NODE_SELECTOR) || []) {
+          const rect = message.getBoundingClientRect?.();
+          if (!rect || !(Number(rect.bottom) > band.top)) continue;
+          if (Number(rect.top) >= band.bottom) break;
+          if (Number(rect.top) >= band.top) return message;
+          if (!partlyVisible) partlyVisible = message;
+        }
+        return partlyVisible;
       }
       positionExistingTranslationLine(line, content) {
         if (!line || !content) return;
@@ -23726,9 +30781,16 @@ var require_discord_ai_translator = __commonJS({
       }
       getTranslationEmojiDescriptors(content) {
         const images = Array.from(content?.querySelectorAll?.("img[alt]") || []);
+        const skippedSelector = [
+          "[aria-hidden='true']",
+          "[hidden]",
+          ...this.getForeignTranslationExcludedSelectors()
+        ].filter(Boolean).join(", ");
         return images.map((image) => {
           try {
             if (image.closest?.(".dait-translation-line, .dait-translation-box")) return null;
+            const skipped = image.closest?.(skippedSelector);
+            if (skipped && (skipped === content || content?.contains?.(skipped))) return null;
           } catch {
           }
           const alt = String(image.getAttribute?.("alt") || "").trim();
@@ -23759,7 +30821,7 @@ var require_discord_ai_translator = __commonJS({
         descriptors.forEach((descriptor) => descriptorCounts.set(descriptor.name, Number(descriptorCounts.get(descriptor.name) || 0) + 1));
         const outputCounts = this.getDiscordEmojiTokenCounts(translatedText);
         for (const [name, count] of descriptorCounts) {
-          if (Number(outputCounts.get(name) || 0) !== count) return false;
+          if (Number(outputCounts.get(name) || 0) < count) return false;
         }
         const queues = /* @__PURE__ */ new Map();
         descriptors.forEach((descriptor) => {
@@ -23808,9 +30870,14 @@ var require_discord_ai_translator = __commonJS({
           else delete line.dataset.daitValidationQuality;
           if (renderOptions?.validationReason) line.dataset.daitValidationReason = String(renderOptions.validationReason);
           else delete line.dataset.daitValidationReason;
+          this.resetTranslationLineState(line);
+          this.applyTranslationLineDisplayClasses(line);
+          this.applyTranslationLineMaskState(line);
+          this.applyTranslationLineDismissal(line, messageNode, content);
           line.textContent = "";
           const text = document.createElement("span");
           text.className = "dait-translation-text";
+          this.applyTranslationLineLanguage(text);
           const emojiDescriptors = this.getTranslationEmojiDescriptors(content);
           if (emojiDescriptors.length && !this.appendTranslationTextWithDiscordEmoji(text, translatedText, content, emojiDescriptors)) {
             this.removeTranslationNode(messageNode, content);
@@ -23820,6 +30887,12 @@ var require_discord_ai_translator = __commonJS({
             text.textContent = translatedText;
           }
           line.appendChild(text);
+          this.translationLineTexts?.set?.(line, String(translatedText ?? ""));
+          if (!line.classList?.contains?.("dait-translation-preview")) {
+            line.appendChild(this.createTranslationLineActionsAnchor(messageNode, content));
+            const note = this.createTranslationPartialNote(line, messageNode, content, renderOptions?.partialInfo);
+            if (note) line.appendChild(note);
+          }
           this.syncTranslationSourceVisibility(line, content, sourceText);
           return line;
         }, scrollOptions);
@@ -23835,7 +30908,11 @@ var require_discord_ai_translator = __commonJS({
           delete line.dataset.daitValidationQuality;
           delete line.dataset.daitValidationReason;
           line.dataset.daitLoadingAt = String(Date.now());
-          line.textContent = "";
+          this.resetTranslationLineState(line);
+          this.applyTranslationLineDismissal(line, messageNode, content);
+          line.setAttribute?.("role", "status");
+          line.setAttribute?.("aria-busy", "true");
+          line.textContent = this.t("translationLoading");
           return line;
         });
       }
@@ -23850,37 +30927,541 @@ var require_discord_ai_translator = __commonJS({
           delete line.dataset.daitLoadingAt;
           delete line.dataset.daitValidationQuality;
           delete line.dataset.daitValidationReason;
-          line.textContent = "";
-          const message = document.createElement("span");
-          message.className = "dait-translation-error-message";
-          message.textContent = this.t("translationFailedInline", { error: this.formatError(error) });
-          line.appendChild(message);
-          const retry = document.createElement("button");
-          retry.className = "dait-translation-retry";
-          retry.type = "button";
-          retry.textContent = this.t("translateRetry");
-          retry.title = this.t("translateRetryTitle");
-          retry.addEventListener("click", (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            const currentContent = this.getTranslationContentForLine(line) || content;
-            const textOptions = line.classList?.contains?.("dait-translation-preview") ? { includeReplyPreview: true } : null;
-            if (!messageNode?.isConnected || !currentContent?.isConnected) {
-              line.remove();
-              this.showToast(this.t("messageMissing"), "error");
-              return;
-            }
-            const currentText = this.getElementText(currentContent, textOptions);
-            if (!currentText || !this.isTranslationLineSourceMatch(line, currentText)) {
-              line.remove();
-              this.showToast(this.t("messageMissing"), "error");
-              return;
-            }
-            this.translateMessage(messageNode, currentContent, null, textOptions);
-          });
-          line.appendChild(retry);
+          this.resetTranslationLineState(line);
+          this.applyTranslationLineDismissal(line, messageNode, content);
+          this.fillTranslationErrorLine(line, messageNode, content, error);
           return line;
         });
+      }
+      // Error lines say what went wrong in plain words and offer the action that fixes it:
+      // settings for configuration problems, a connection test for a local service that is down,
+      // the wait time for rate limits, and Retry for everything else.
+      fillTranslationErrorLine(line, messageNode, content, error) {
+        const presentation = this.getTranslationErrorPresentation(error);
+        line.dataset.daitErrorAction = presentation.action;
+        if (presentation.action !== "retry") line.title = this.formatError(error);
+        line.textContent = "";
+        const message = document.createElement("span");
+        message.className = "dait-translation-error-message";
+        message.textContent = presentation.message;
+        line.appendChild(message);
+        if (presentation.action === "settings") {
+          line.appendChild(this.createTranslationErrorButton("translationOpenSettings", "translationOpenSettingsTitle", (button) => this.openTranslationSettingsFromChat(button)));
+        } else if (presentation.action === "test") {
+          line.appendChild(this.createTranslationErrorButton("translationTestConnection", "translationTestConnectionTitle", (button) => this.testTranslationConnectionFromChat(button)));
+          line.appendChild(this.createTranslationRetryButton(line, messageNode, content));
+        } else if (presentation.action === "wait") {
+          this.scheduleTranslationErrorWaitEnd(line, messageNode, content, presentation.waitMs);
+        } else {
+          line.appendChild(this.createTranslationRetryButton(line, messageNode, content));
+        }
+        return presentation;
+      }
+      getTranslationErrorPresentation(error) {
+        const attention = this.getTranslationAttentionType(error);
+        if (attention === "config-endpoint") return { action: "settings", reason: attention, message: this.t("translationErrorMissingEndpoint") };
+        if (attention === "config-model") return { action: "settings", reason: attention, message: this.t("translationErrorMissingModel") };
+        if (attention === "config-key") return { action: "settings", reason: attention, message: this.t("translationErrorMissingKey") };
+        if (attention === "endpoint") return { action: "settings", reason: attention, message: this.t(API_ENDPOINT_ERROR_MESSAGE_KEYS[error.code]) };
+        if (attention === "auth") {
+          const rejection = this.getTranslationRejectionMessageKey(error);
+          const text = rejection ? this.t(rejection).replace(/[。.]\s*$/, "") : this.t("translationErrorAuth");
+          return { action: "settings", reason: attention, message: `${text}${this.formatTranslationErrorStatus(error)}` };
+        }
+        if (attention === "quota") {
+          return { action: "settings", reason: attention, message: `${this.t("translationErrorQuota")}${this.formatTranslationErrorStatus(error)}` };
+        }
+        if (attention === "local-unavailable") {
+          const host = this.getTranslationEndpointHost(error);
+          return {
+            action: "test",
+            reason: attention,
+            message: host ? this.t("translationErrorLocalAt", { host }) : this.t("translationErrorLocal")
+          };
+        }
+        const type = this.getAutoTranslationFailureType(error);
+        if (error?.googleTranslateKeysCooling) {
+          const until = Number(error.googleTranslateCooldownUntil || 0);
+          const waitMs = Math.max(0, until - Date.now());
+          const message = this.formatGoogleTranslateCooldownMessage(until).replace(/[。.]\s*$/, "");
+          return waitMs > AUTO_TRANSLATE_FAILURE_MAX_TTL ? { action: "settings", reason: type, message } : { action: "wait", reason: type, waitMs, message };
+        }
+        if (type === "rate-limit") {
+          const waitMs = this.getTranslationErrorWaitMs(error);
+          return {
+            action: "wait",
+            reason: type,
+            waitMs,
+            message: waitMs > 0 ? this.t("translationErrorRateLimitWait", { seconds: String(Math.ceil(waitMs / 1e3)) }) : this.t("translationErrorRateLimit")
+          };
+        }
+        return { action: "retry", reason: type, message: this.t("translationFailedInline", { error: this.formatError(error) }) };
+      }
+      // The HTTP status and, for Baidu (which answers HTTP 200), its own error code.
+      formatTranslationErrorStatus(error) {
+        const codes = [Number(error?.status || 0) || "", String(error?.baiduErrorCode || "")].filter(Boolean);
+        if (!codes.length) return "";
+        const text = codes.join(", ");
+        return this.getLocale() === "en" ? ` (${text})` : `（${text}）`;
+      }
+      getTranslationRejectionMessageKey(error) {
+        if (error?.providerLanguageUnsupported) return "errorLanguageUnsupported";
+        if (error?.providerIpRejected) return "errorIpNotAllowed";
+        if (error?.providerRequestRejected) return "errorProviderRequestRejected";
+        return "";
+      }
+      // The local service that did not answer when the error says which; else the translation service set up now.
+      getTranslationEndpointHost(error = null) {
+        try {
+          const endpoint = String(error?.localProviderEndpoint || this.getEffectiveTaskConfig("translation")?.endpoint || this.settings.translation?.endpoint || "").trim();
+          return endpoint ? new URL(endpoint).host : "";
+        } catch {
+          return "";
+        }
+      }
+      getTranslationErrorWaitMs(error, now = Date.now()) {
+        const direct = Number(error?.retryAfterMs || 0);
+        if (direct > 0) return direct;
+        const failure = this.autoTranslationProviderFailures?.get?.(this.getTranslationAttentionProviderKey(error));
+        const remaining = Number(failure?.retryAt || 0) - now;
+        return remaining > 0 ? remaining : 0;
+      }
+      // Missing configuration shows up as plain errors thrown while building the request.
+      getTranslationConfigMissingKind(error) {
+        if (error?.googleTranslateNoKey) return "key";
+        const message = String(error?.message || "");
+        if (!message) return "";
+        const matches = (key) => Object.values(I18N).some((table) => table?.[key] === message);
+        if (matches("apiKeyMissingTranslation")) return "key";
+        if (matches("endpointMissing")) return "endpoint";
+        if (matches("modelMissing")) return "model";
+        return "";
+      }
+      // Errors only the user can fix; they get a settings or test action and one notice per episode.
+      getTranslationAttentionType(error) {
+        if (!error || this.isRequestCancelled(error)) return "";
+        const missing = this.getTranslationConfigMissingKind(error);
+        if (missing) return `config-${missing}`;
+        if (Object.hasOwn(API_ENDPOINT_ERROR_MESSAGE_KEYS, error?.code)) return "endpoint";
+        const type = this.getAutoTranslationFailureType(error);
+        if (!["auth", "quota", "local-unavailable"].includes(type)) return "";
+        return this.isGoogleTranslatePoolServing(error) ? "" : type;
+      }
+      isTranslationAttentionError(error) {
+        return Boolean(this.getTranslationAttentionType(error));
+      }
+      getTranslationAttentionProviderKey(error, requestOptions = void 0) {
+        try {
+          return String(error?.providerKey || this.getAutoTranslationProviderKey(requestOptions) || "");
+        } catch {
+          return "";
+        }
+      }
+      // An episode lasts until a request to that provider succeeds, the connection test passes or
+      // its settings change; each error type is announced once per episode, whatever the toast switch says.
+      rememberTranslationAttentionNotice(error, providerKey = "", type = this.getTranslationAttentionType(error)) {
+        if (!type) return false;
+        const key = this.getTranslationAttentionEpisodeKey(providerKey || this.getTranslationAttentionProviderKey(error));
+        const notices = this.autoTranslationProviderNoticeAt;
+        if (!notices?.set) return false;
+        const episode = notices.get(key);
+        if (episode?.types?.has?.(type)) return false;
+        const types = episode?.types instanceof Set ? episode.types : /* @__PURE__ */ new Set();
+        types.add(type);
+        notices.set(key, { at: Date.now(), types });
+        while (notices.size > 32) notices.delete(notices.keys().next().value);
+        return true;
+      }
+      notifyTranslationNeedsAttention(error, providerKey = "") {
+        const type = this.getTranslationAttentionType(error);
+        if (!type || !this.rememberTranslationAttentionNotice(error, providerKey, type)) return false;
+        this.showToast(this.t("autoTranslateNeedsAttention", { error: this.getTranslationErrorPresentation(error).message }), "error");
+        return true;
+      }
+      endTranslationAttentionEpisode(providerKey) {
+        if (!providerKey || !this.autoTranslationProviderNoticeAt?.size) return false;
+        return this.autoTranslationProviderNoticeAt.delete(this.getTranslationAttentionEpisodeKey(providerKey));
+      }
+      // Google errors carry the key that failed; for the user the whole key pool is one provider.
+      getTranslationAttentionEpisodeKey(providerKey) {
+        const key = String(providerKey || "");
+        return key.startsWith("googleCloud\n---\n") ? this.getGoogleTranslateProviderKey() : key;
+      }
+      createTranslationErrorButton(labelKey, titleKey, run) {
+        const button = document.createElement("button");
+        button.className = "dait-translation-error-button";
+        button.type = "button";
+        button.textContent = this.t(labelKey);
+        button.title = this.t(titleKey);
+        button.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          run(button);
+        });
+        return button;
+      }
+      createTranslationRetryButton(line, messageNode, content) {
+        const retry = document.createElement("button");
+        retry.className = "dait-translation-retry";
+        retry.type = "button";
+        retry.textContent = this.t("translateRetry");
+        retry.title = this.t("translateRetryTitle");
+        retry.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          const currentContent = this.getTranslationContentForLine(line) || content;
+          const textOptions = line.classList?.contains?.("dait-translation-preview") ? { includeReplyPreview: true } : null;
+          if (!messageNode?.isConnected || !currentContent?.isConnected) {
+            this.removeTranslationLineStably(line, currentContent);
+            this.showToast(this.t("messageMissing"), "error");
+            return;
+          }
+          const currentText = this.getElementText(currentContent, textOptions);
+          if (!currentText || !this.isTranslationLineSourceMatch(line, currentText)) {
+            this.removeTranslationLineStably(line, currentContent);
+            this.showToast(this.t("messageMissing"), "error");
+            return;
+          }
+          this.translateMessage(messageNode, currentContent, null, textOptions);
+        });
+        return retry;
+      }
+      removeTranslationLineStably(line, anchor = null) {
+        if (!line) return;
+        this.withTranslationScrollStability(anchor?.isConnected ? anchor : line, () => {
+          if (anchor) this.restoreTranslationSourceVisibility(anchor);
+          line.remove?.();
+        });
+      }
+      // A rate-limit line has no button while the wait lasts; afterwards it offers Retry. One timer per line: a new
+      // wait, a re-render, removing the line and stop() clear it, so it never holds a gone line for up to two minutes.
+      scheduleTranslationErrorWaitEnd(line, messageNode, content, waitMs) {
+        this.clearTranslationErrorWaitTimer(line);
+        const delay = Number(waitMs || 0);
+        if (!(delay > 0) || typeof setTimeout !== "function") return;
+        const token = `${Date.now()}:${Math.random().toString(36).slice(2)}`;
+        line.dataset.daitErrorToken = token;
+        const lifecycleToken = this.getLifecycleToken();
+        const timer = setTimeout(() => {
+          this.translationErrorWaitTimers?.delete?.(timer);
+          if (line.__daitWaitTimer === timer) line.__daitWaitTimer = null;
+          if (!this.isLifecycleTokenCurrent(lifecycleToken) || !line.isConnected) return;
+          if (line.dataset?.daitErrorToken !== token || line.dataset?.daitErrorAction !== "wait") return;
+          const currentContent = this.getTranslationContentForLine(line) || content;
+          this.withTranslationScrollStability(currentContent, () => {
+            line.dataset.daitErrorAction = "retry";
+            const message = line.querySelector?.(".dait-translation-error-message");
+            if (message) message.textContent = this.t("translationErrorRateLimit");
+            line.appendChild(this.createTranslationRetryButton(line, messageNode, currentContent));
+          });
+        }, Math.min(delay, AUTO_TRANSLATE_FAILURE_MAX_TTL) + 250);
+        timer?.unref?.();
+        line.__daitWaitTimer = timer;
+        if (!this.translationErrorWaitTimers) this.translationErrorWaitTimers = /* @__PURE__ */ new Set();
+        this.translationErrorWaitTimers.add(timer);
+      }
+      clearTranslationErrorWaitTimer(line) {
+        const timer = line?.__daitWaitTimer;
+        if (!timer) return;
+        clearTimeout(timer);
+        this.translationErrorWaitTimers?.delete?.(timer);
+        line.__daitWaitTimer = null;
+      }
+      clearTranslationErrorWaitTimers() {
+        (this.translationErrorWaitTimers || []).forEach((timer) => clearTimeout(timer));
+        this.translationErrorWaitTimers?.clear?.();
+      }
+      openTranslationSettingsFromChat(source = null) {
+        if (this.settings?.ui) this.settings.ui.settingsActiveTab = SETTINGS_TAB_TRANSLATE;
+        this.saveSettings({ debounce: true });
+        return this.openQuickSettingsPanel("chat-line", source);
+      }
+      async testTranslationConnectionFromChat(button = null) {
+        if (button?.disabled) return false;
+        const label = button?.textContent || this.t("translationTestConnection");
+        this.rememberTranslationAttentionNotice(null, this.getTranslationAttentionProviderKey(null), "local-unavailable");
+        this.setButtonBusy(button, true, this.t("apiTestBusy"));
+        try {
+          await this.testApiConnection("translation", null, null);
+        } finally {
+          this.setButtonBusy(button, false, label);
+        }
+        return true;
+      }
+      resetTranslationLineState(line) {
+        if (!line) return;
+        this.clearTranslationErrorWaitTimer(line);
+        ["role", "aria-busy", "aria-label", "aria-expanded", "tabindex", "title", "lang", "dir"].forEach((name) => line.removeAttribute?.(name));
+        if (line.dataset) {
+          delete line.dataset.daitErrorAction;
+          delete line.dataset.daitErrorToken;
+          delete line.dataset.daitTag;
+        }
+        ["dait-translation-style-tint", "dait-translation-style-muted", "dait-translation-style-tag", "dait-translation-scale-90", "dait-translation-dismissed"].forEach((name) => line.classList?.remove?.(name));
+        this.translationLineTexts?.delete?.(line);
+      }
+      getTranslationLineLanguage(targetLanguage = this.settings.translation?.targetLanguage) {
+        const raw = String(targetLanguage || "").trim();
+        if (this.translationLineLanguageMemo?.key === raw) return this.translationLineLanguageMemo.value;
+        const normalized = this.normalizeLanguageName(raw);
+        let code = LANGUAGE_PRESETS.find((item) => item.value === normalized)?.code || "";
+        if (!code && /^[a-z]{2,3}(?:-[a-z0-9]{2,8})*$/i.test(raw)) code = raw;
+        if (!code) {
+          const named = [
+            [/arab|阿拉伯/i, "ar"],
+            [/hebrew|希伯来/i, "he"],
+            [/persian|farsi|波斯/i, "fa"],
+            [/urdu|乌尔都/i, "ur"],
+            [/pashto|普什图/i, "ps"],
+            [/yiddish|意第绪/i, "yi"]
+          ].find(([pattern]) => pattern.test(raw));
+          code = named?.[1] || "";
+        }
+        if (code === "zh") code = "zh-CN";
+        const primary = code.split("-")[0].toLowerCase();
+        const value = { lang: code, dir: RTL_LANGUAGE_CODES.includes(primary) ? "rtl" : "auto" };
+        this.translationLineLanguageMemo = { key: raw, value };
+        return value;
+      }
+      // The translated text is in the target language: give it that language and a direction of its own,
+      // so right-to-left targets read and align correctly. Only the text span gets them: the toolbar and
+      // the partial note are in the interface language and follow the page's direction.
+      applyTranslationLineLanguage(textElement) {
+        const { lang, dir } = this.getTranslationLineLanguage();
+        if (lang) textElement.setAttribute?.("lang", lang);
+        textElement.setAttribute?.("dir", dir);
+      }
+      // Laid out right to left: the computed direction where there is layout, else the nearest dir attribute.
+      isRightToLeftElement(element) {
+        if (!element) return false;
+        try {
+          if (typeof getComputedStyle === "function" && element.nodeType === 1) return getComputedStyle(element)?.direction === "rtl";
+        } catch {
+        }
+        return element.closest?.("[dir]")?.getAttribute?.("dir") === "rtl";
+      }
+      applyTranslationLineDisplayClasses(line) {
+        if (!line) return;
+        const style = ["tint", "muted", "tag"].includes(this.settings.ui?.translationStyle) ? this.settings.ui.translationStyle : "tint";
+        ["tint", "muted", "tag"].forEach((name) => line.classList?.toggle?.(`dait-translation-style-${name}`, name === style));
+        line.classList?.toggle?.("dait-translation-scale-90", Number(this.settings.ui?.translationTextScale) === 90);
+        if (!line.dataset) return;
+        if (style === "tag") line.dataset.daitTag = this.t("translationTag");
+        else delete line.dataset.daitTag;
+      }
+      // A masked translation is a real button: focusable, and Enter or Space reveals it.
+      applyTranslationLineMaskState(line) {
+        if (!line) return;
+        if (line.classList?.contains?.("dait-translation-masked")) {
+          line.setAttribute?.("role", "button");
+          line.setAttribute?.("tabindex", "0");
+          line.setAttribute?.("aria-expanded", "false");
+          line.setAttribute?.("aria-label", this.t("translationRevealLabel"));
+          return;
+        }
+        if (line.getAttribute?.("role") !== "button") return;
+        ["role", "aria-expanded", "aria-label"].forEach((name) => line.removeAttribute?.(name));
+        if (typeof document !== "undefined" && document?.activeElement === line) line.setAttribute?.("tabindex", "-1");
+        else line.removeAttribute?.("tabindex");
+      }
+      revealMaskedTranslationLine(line, content = null) {
+        if (!line?.classList?.contains?.("dait-translation-masked")) return false;
+        line.classList.remove("dait-translation-masked");
+        line.classList.add("dait-translation-revealed");
+        this.applyTranslationLineMaskState(line);
+        this.syncTranslationSourceVisibility(line, content || this.getTranslationContentForLine(line));
+        return true;
+      }
+      // Stands where the toolbar goes until the line is first hovered or focused: an empty span that keeps the
+      // toolbar's one tab stop, so keyboard users reach it too.
+      createTranslationLineActionsAnchor(messageNode, content) {
+        const anchor = document.createElement("span");
+        anchor.className = "dait-translation-actions-anchor";
+        anchor.setAttribute?.("tabindex", "0");
+        anchor.setAttribute?.("role", "toolbar");
+        anchor.setAttribute?.("aria-label", this.t("translationActionsLabel"));
+        anchor.__daitActionTarget = { messageNode, content };
+        return anchor;
+      }
+      // Builds the toolbar in place of the anchor on the line's first pointerenter or focusin; keyboard focus that
+      // landed on the anchor moves to the toolbar's first button.
+      ensureTranslationLineActions(line) {
+        const existing = line?.querySelector?.(":scope > .dait-translation-actions");
+        if (existing) return existing;
+        const anchor = line?.querySelector?.(":scope > .dait-translation-actions-anchor");
+        if (!anchor) return null;
+        const target = anchor.__daitActionTarget || {};
+        const content = target.content || this.getTranslationContentForLine(line);
+        const toolbar = this.createTranslationLineActions(line, target.messageNode || content?.closest?.(DISCORD_MESSAGE_NODE_SELECTOR) || null, content);
+        const focused = typeof document !== "undefined" && document.activeElement === anchor;
+        line.insertBefore(toolbar, anchor);
+        anchor.remove?.();
+        if (focused) toolbar.querySelector?.(".dait-translation-action")?.focus?.();
+        return toolbar;
+      }
+      createTranslationLineActions(line, messageNode, content) {
+        const toolbar = document.createElement("span");
+        toolbar.className = "dait-translation-actions";
+        toolbar.setAttribute?.("role", "toolbar");
+        toolbar.setAttribute?.("aria-label", this.t("translationActionsLabel"));
+        const currentContent = () => this.getTranslationContentForLine(line) || content;
+        [
+          ["copy", "translationActionCopy", () => this.copyTranslationLineText(line)],
+          ["retranslate", "translationActionRetranslate", () => this.retranslateMessage(messageNode, currentContent())],
+          ["hide", "translationActionHide", () => this.dismissTranslationLine(line, messageNode, currentContent())]
+        ].forEach(([name, labelKey, run], index) => {
+          const button = document.createElement("button");
+          const label = this.t(labelKey);
+          button.className = `dait-translation-action dait-translation-action-${name}`;
+          button.type = "button";
+          button.title = label;
+          button.setAttribute?.("aria-label", label);
+          button.setAttribute?.("tabindex", index === 0 ? "0" : "-1");
+          button.addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            run();
+          });
+          toolbar.appendChild(button);
+        });
+        toolbar.addEventListener("keydown", (event) => this.handleTranslationActionsKeydown(toolbar, event));
+        return toolbar;
+      }
+      handleTranslationActionsKeydown(toolbar, event) {
+        const forward = this.isRightToLeftElement(toolbar) ? "ArrowLeft" : "ArrowRight";
+        const keys = { [forward]: 1, [forward === "ArrowRight" ? "ArrowLeft" : "ArrowRight"]: -1, Home: "first", End: "last" };
+        const move = keys[event?.key];
+        if (move === void 0) return;
+        const buttons = [...toolbar?.querySelectorAll?.(".dait-translation-action") || []];
+        if (!buttons.length) return;
+        const current = Math.max(0, buttons.indexOf(event.target));
+        const next = move === "first" ? 0 : move === "last" ? buttons.length - 1 : (current + move + buttons.length) % buttons.length;
+        event.preventDefault?.();
+        event.stopPropagation?.();
+        buttons.forEach((button, index) => button.setAttribute?.("tabindex", index === next ? "0" : "-1"));
+        buttons[next].focus?.();
+      }
+      // The toolbar sits after the end of a short line; when the line fills the message width it moves
+      // inside the line's bottom-right corner so it is never cut off.
+      placeTranslationLineActions(line) {
+        const toolbar = line?.querySelector?.(":scope > .dait-translation-actions");
+        if (!toolbar?.dataset || !line.getBoundingClientRect) return;
+        const lineRect = line.getBoundingClientRect();
+        const bounds = (line.closest?.(DISCORD_MESSAGE_NODE_SELECTOR) || line.parentElement)?.getBoundingClientRect?.();
+        if (!lineRect || !bounds) return;
+        const width = Number(toolbar.offsetWidth || 0) || 96;
+        const room = this.isRightToLeftElement(line) ? lineRect.left - bounds.left : bounds.right - lineRect.right;
+        const placement = room >= width + 8 ? "end" : "inside";
+        if (toolbar.dataset.daitPlacement !== placement) toolbar.dataset.daitPlacement = placement;
+      }
+      // Contract with the long-text pipeline: renderOptions.partialInfo = { missingSegments: [1-based], totalSegments }.
+      createTranslationPartialNote(line, messageNode, content, partialInfo) {
+        if (!partialInfo || typeof partialInfo !== "object") return null;
+        const total = Number(partialInfo.totalSegments);
+        const hasTotal = Number.isInteger(total) && total > 0;
+        const missing = Array.isArray(partialInfo.missingSegments) ? [...new Set(partialInfo.missingSegments.map(Number))].filter((index) => Number.isInteger(index) && index > 0 && (!hasTotal || index <= total)).sort((left, right) => left - right) : [];
+        const text = missing.length && hasTotal ? this.t(missing.length === 1 ? "translationPartialOne" : "translationPartialMany", {
+          parts: this.formatTranslationPartList(missing),
+          total: String(total)
+        }) : this.t("translationPartialUnknown");
+        const note = document.createElement("div");
+        note.className = "dait-translation-note";
+        note.setAttribute?.("role", "note");
+        const message = document.createElement("span");
+        message.className = "dait-translation-note-message";
+        message.textContent = text;
+        note.appendChild(message);
+        const button = document.createElement("button");
+        button.className = "dait-translation-note-button";
+        button.type = "button";
+        button.textContent = this.t("translationRetranslate");
+        button.title = this.t("translationRetranslateTitle");
+        button.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          this.retranslateMessage(messageNode, this.getTranslationContentForLine(line) || content);
+        });
+        note.appendChild(button);
+        return note;
+      }
+      formatTranslationPartList(parts) {
+        const values = parts.map(String);
+        if (this.getLocale() !== "en") return values.join("、");
+        if (values.length < 2) return values.join("");
+        return `${values.slice(0, -1).join(", ")} and ${values[values.length - 1]}`;
+      }
+      retranslateMessage(messageNode, content, textOptions = null) {
+        if (!messageNode || !content?.isConnected) {
+          this.showToast(this.t("messageMissing"), "error");
+          return null;
+        }
+        return this.translateMessage(messageNode, content, null, textOptions, { bypassCache: true });
+      }
+      async copyTranslationLineText(line) {
+        const text = this.translationLineTexts?.get?.(line) ?? this.getTranslationLineRenderedText(line);
+        if (!text) return false;
+        try {
+          await this.copyTextToClipboard(text);
+          this.showToast(this.t("translationCopied"), "success");
+          return true;
+        } catch (error) {
+          this.showToast(this.t("promptCopyFailed", { error: this.formatError(error) }), "error");
+          return false;
+        }
+      }
+      getTranslatedLineForContextTarget(target) {
+        const messageNode = target?.closest?.("[id^='chat-messages-'], [data-list-item-id*='chat-messages']");
+        const content = messageNode ? this.getMessageContentElement(messageNode) : null;
+        const line = content ? this.getTranslationLine(content) : null;
+        if (!line || ["dait-translation-loading", "dait-translation-error", "dait-translation-dismissed"].some((name) => line.classList?.contains?.(name))) return null;
+        return { messageNode, content, line };
+      }
+      // "Hide" keeps a hidden line for that message (so nothing redraws it) until the user translates it again.
+      getTranslationDismissKey(messageNode, content, textOptions = null) {
+        const kind = this.isReplyPreviewElement(content) ? "reply-preview" : "message";
+        const ids = this.messageTracker?.getNodeMessageIds?.(messageNode) || {};
+        if (ids.messageId) return `${ids.channelId || ""}:${ids.messageId}:${kind}`;
+        const text = content ? this.getElementText(content, textOptions || (kind === "reply-preview" ? { includeReplyPreview: true } : null)) : "";
+        return text ? `text:${kind}:${this.getStrongTextFingerprint(text)}` : "";
+      }
+      isTranslationLineDismissed(messageNode, content, textOptions = null) {
+        if (!this.dismissedTranslationMessages?.size) return false;
+        const key = this.getTranslationDismissKey(messageNode, content, textOptions);
+        return Boolean(key && this.dismissedTranslationMessages.has(key));
+      }
+      clearTranslationLineDismissal(messageNode, content, textOptions = null) {
+        if (!this.dismissedTranslationMessages?.size) return false;
+        const key = this.getTranslationDismissKey(messageNode, content, textOptions);
+        return Boolean(key && this.dismissedTranslationMessages.delete(key));
+      }
+      applyTranslationLineDismissal(line, messageNode, content) {
+        line?.classList?.toggle?.("dait-translation-dismissed", this.isTranslationLineDismissed(messageNode, content));
+      }
+      dismissTranslationLine(line, messageNode = null, content = null) {
+        if (!line) return false;
+        const target = content || this.getTranslationContentForLine(line);
+        const owner = messageNode || line.closest?.(DISCORD_MESSAGE_NODE_SELECTOR) || null;
+        const key = this.getTranslationDismissKey(owner, target);
+        if (key) {
+          this.dismissedTranslationMessages.delete(key);
+          this.dismissedTranslationMessages.set(key, Date.now());
+          while (this.dismissedTranslationMessages.size > 500) {
+            this.dismissedTranslationMessages.delete(this.dismissedTranslationMessages.keys().next().value);
+          }
+        }
+        const hadFocus = typeof document !== "undefined" && Boolean(document?.activeElement && line.contains?.(document.activeElement));
+        this.withTranslationScrollStability(target?.isConnected ? target : line, () => {
+          line.classList?.add?.("dait-translation-dismissed");
+          if (target) this.restoreTranslationSourceVisibility(target);
+        });
+        if (hadFocus) {
+          const focusTarget = line.closest?.("[data-list-item-id][tabindex]") || owner?.querySelector?.("[data-list-item-id][tabindex]") || owner;
+          try {
+            focusTarget?.focus?.({ preventScroll: true });
+          } catch {
+          }
+        }
+        return true;
       }
       withTranslationScrollStability(anchor, render, options = {}) {
         const snapshot = this.getTranslationScrollSnapshot(anchor, options);
@@ -23900,6 +31481,7 @@ var require_discord_ai_translator = __commonJS({
         const scrollTop = this.getScrollContainerTop(scroller);
         if (!Number.isFinite(scrollTop) || !rect) return null;
         const atBottom = this.isScrollContainerAtBottom(scroller, scrollTop);
+        if (options.keepAnchorTop) return { anchor, edge: "top", top: Number(rect.top || 0), scroller, scrollTop, atBottom };
         const band = this.getScrollContainerBand(scroller);
         const insertY = Number(this.settings.ui?.translationPosition === "after" ? rect.bottom : rect.top);
         const placement = !band ? "visible" : insertY <= band.top ? "above" : insertY >= band.bottom ? "below" : "visible";
@@ -24064,13 +31646,26 @@ var require_discord_ai_translator = __commonJS({
           line = document.createElement(this.isReplyPreviewElement(content) ? "span" : "div");
           line.className = "dait-translation-line";
           line.dataset.daitOwner = this.ensureTranslationOwnerId(content);
+          line.addEventListener("keydown", (event) => {
+            if (event.target !== line || !line.classList.contains("dait-translation-masked")) return;
+            if (event.key !== "Enter" && event.key !== " " && event.key !== "Spacebar") return;
+            event.preventDefault();
+            event.stopPropagation();
+            this.withTranslationScrollStability(content, () => this.revealMaskedTranslationLine(line, content));
+          });
+          line.addEventListener("pointerenter", () => {
+            this.ensureTranslationLineActions(line);
+            this.placeTranslationLineActions(line);
+          });
+          line.addEventListener("focusin", () => {
+            this.ensureTranslationLineActions(line);
+            this.placeTranslationLineActions(line);
+          });
           line.addEventListener("click", (event) => {
             if (!line.classList.contains("dait-translation-masked")) return;
             event.preventDefault();
             event.stopPropagation();
-            line.classList.remove("dait-translation-masked");
-            line.classList.add("dait-translation-revealed");
-            this.syncTranslationSourceVisibility(line, content);
+            this.withTranslationScrollStability(content, () => this.revealMaskedTranslationLine(line, content));
           });
         }
         const anchor = this.getTranslationAnchor(messageNode, content);
@@ -24153,11 +31748,13 @@ var require_discord_ai_translator = __commonJS({
         if (content) {
           this.getTranslationLines(content).forEach((line2) => {
             this.restoreTranslationSourceVisibility(content);
+            this.clearTranslationErrorWaitTimer(line2);
             line2.remove();
           });
           const childLine = content.querySelector(":scope > .dait-translation-line");
           if (childLine) {
             this.restoreTranslationSourceVisibility(content);
+            this.clearTranslationErrorWaitTimer(childLine);
             childLine.remove();
           }
           return;
@@ -24165,6 +31762,7 @@ var require_discord_ai_translator = __commonJS({
         const line = messageNode.querySelector(".dait-translation-line");
         if (line) {
           this.restoreTranslationSourceVisibility(this.getTranslationContentForLine(line));
+          this.clearTranslationErrorWaitTimer(line);
           line.remove();
         }
       }
@@ -24183,12 +31781,27 @@ var require_discord_ai_translator = __commonJS({
         if (!this.isStarted) return;
         if (event.target?.closest?.(".dait-settings")) return;
         if (!this.settings.ui.enablePolishHotkey) return;
+        if (!this.settings.polish?.enabled) return;
+        if (!this.isAllowedPolishHotkey(this.settings.ui.polishHotkey || DEFAULT_SETTINGS.ui.polishHotkey)) return;
         if (!this.isHotkeyEvent(event, this.settings.ui.polishHotkey)) return;
         const textbox = this.getActiveTextbox();
         if (!textbox) return;
         event.preventDefault();
         event.stopPropagation();
-        this.polishCurrentDraft();
+        const button = this.getComposerPolishButton(textbox);
+        this.polishCurrentDraft(button, { textbox, composerKey: this.getTextboxComposerKey(textbox), fromHotkey: true });
+      }
+      // Minimal density hides the direct buttons behind the "AI" menu button.
+      isInputActionButtonShown(button) {
+        if (!button || button.isConnected === false) return false;
+        const group = button.parentElement?.dataset?.daitDensity ? button.parentElement : button.closest?.(".dait-input-action-group");
+        return !this.isInputActionDirectButton(button) || group?.dataset?.daitDensity !== "minimal";
+      }
+      getComposerPolishButton(textbox) {
+        const root = textbox?.closest?.("form, [class*='channelTextArea']");
+        const button = root?.querySelector?.(".dait-input-action-group .dait-polish-button") || null;
+        if (!button || button.isConnected === false) return null;
+        return !button.__daitTextbox || button.__daitTextbox === textbox ? button : null;
       }
       recordHotkey(button) {
         if (!button || button.dataset.recording === "true") return;
@@ -24196,15 +31809,29 @@ var require_discord_ai_translator = __commonJS({
         const original = this.getHotkeyLabel();
         button.dataset.recording = "true";
         button.textContent = this.t("hotkeyRecording");
+        let listening = false;
         const cleanup = (shortcut) => {
           if (this.hotkeyRecordTimer) clearTimeout(this.hotkeyRecordTimer);
           this.hotkeyRecordTimer = null;
-          this.hotkeyRecordCleanup = null;
-          document.removeEventListener("keydown", onKeydown, true);
+          if (this.hotkeyRecordTimeout) clearTimeout(this.hotkeyRecordTimeout);
+          this.hotkeyRecordTimeout = null;
+          if (this.hotkeyRecordCleanup === cleanup) {
+            this.hotkeyRecordCleanup = null;
+            this.hotkeyRecordButton = null;
+          }
+          if (listening && typeof document !== "undefined") {
+            document.removeEventListener("keydown", onKeydown, true);
+            document.removeEventListener("pointerdown", onPointerDown, true);
+          }
+          listening = false;
           delete button.dataset.recording;
           button.textContent = shortcut || original;
         };
         const onKeydown = (event) => {
+          if (!this.isStarted || button.isConnected === false) {
+            cleanup();
+            return;
+          }
           event.preventDefault();
           event.stopPropagation();
           if (event.key === "Escape") {
@@ -24213,7 +31840,7 @@ var require_discord_ai_translator = __commonJS({
           }
           if (this.isModifierOnlyKey(event.key)) return;
           const shortcut = this.shortcutFromEvent(event);
-          if (!shortcut) {
+          if (!shortcut || !this.isAllowedPolishHotkey(shortcut)) {
             cleanup();
             this.showToast(this.t("hotkeyInvalid"), "error");
             return;
@@ -24222,24 +31849,56 @@ var require_discord_ai_translator = __commonJS({
           cleanup(shortcut);
           this.showToast(this.t("hotkeySaved", { shortcut }), "success");
         };
+        const onPointerDown = (event) => {
+          if (event?.target === button || button.contains?.(event?.target)) return;
+          cleanup();
+        };
         this.hotkeyRecordCleanup = cleanup;
+        this.hotkeyRecordButton = button;
         this.hotkeyRecordTimer = setTimeout(() => {
           this.hotkeyRecordTimer = null;
           if (!this.isStarted || this.hotkeyRecordCleanup !== cleanup) return;
           document.addEventListener("keydown", onKeydown, true);
+          document.addEventListener("pointerdown", onPointerDown, true);
+          listening = true;
         }, 0);
+        const recordTimeoutMs = 1e4;
+        this.hotkeyRecordTimeout = setTimeout(() => {
+          this.hotkeyRecordTimeout = null;
+          if (this.hotkeyRecordCleanup === cleanup) cleanup();
+        }, recordTimeoutMs);
       }
       clearHotkeyRecording() {
         if (this.hotkeyRecordTimer) clearTimeout(this.hotkeyRecordTimer);
         this.hotkeyRecordTimer = null;
+        if (this.hotkeyRecordTimeout) clearTimeout(this.hotkeyRecordTimeout);
+        this.hotkeyRecordTimeout = null;
         const cleanup = this.hotkeyRecordCleanup;
         this.hotkeyRecordCleanup = null;
+        this.hotkeyRecordButton = null;
         if (typeof cleanup === "function") {
           try {
             cleanup();
           } catch {
           }
         }
+      }
+      // Ends a recording whose button lives inside `root` (a settings panel or modal being closed).
+      clearHotkeyRecordingWithin(root) {
+        const button = this.hotkeyRecordButton;
+        if (!this.hotkeyRecordCleanup) return;
+        if (!root || !button || button.isConnected === false || root === button || root.contains?.(button)) this.clearHotkeyRecording();
+      }
+      // Shift alone would turn ordinary typing (capital letters, symbols, selection keys) into the
+      // hotkey, and Ctrl+A/C/V/X/Y/Z would take over editing, so neither can be the polish shortcut.
+      isAllowedPolishHotkey(shortcut) {
+        const parts = String(shortcut || "").split("+").map((part) => part.trim()).filter(Boolean);
+        const key = parts.pop();
+        if (!key || !parts.length) return false;
+        const commandModifiers = parts.filter((part) => part === "Ctrl" || part === "Alt" || part === "Win");
+        if (!commandModifiers.length) return /^F\d{1,2}$/.test(key);
+        const editingShortcut = commandModifiers.length === 1 && commandModifiers[0] === "Ctrl" && /^[ACVXYZ]$/.test(key);
+        return !editingShortcut;
       }
       isModifierOnlyKey(key) {
         return ["Control", "Alt", "Shift", "Meta"].includes(String(key || ""));
@@ -24320,9 +31979,13 @@ var require_discord_ai_translator = __commonJS({
           this.setElementTextCacheValue(element, cacheKey, "");
           return "";
         }
-        const directText = this.extractElementTextWithoutClone(element, excludedSelectors);
+        const emojiTrace = this.hasLegacyTranslationCacheEntries() ? { parts: null, emoji: /* @__PURE__ */ new Set() } : null;
+        const directText = this.extractElementTextWithoutClone(element, excludedSelectors, emojiTrace);
         if (directText !== null) {
           const normalized2 = this.normalizeExtractedText(directText);
+          if (emojiTrace?.emoji.size) {
+            this.rememberPreEmojiSourceText(normalized2, this.normalizeExtractedText(emojiTrace.parts.filter((part, index) => !emojiTrace.emoji.has(index)).join("")));
+          }
           this.setElementTextCacheValue(element, cacheKey, normalized2);
           return normalized2;
         }
@@ -24331,8 +31994,8 @@ var require_discord_ai_translator = __commonJS({
         clone.querySelectorAll?.(excludedSelectors.join(",")).forEach((node2) => node2.remove());
         if (typeof document !== "undefined") {
           clone.querySelectorAll?.("img[alt]").forEach((image) => {
-            const alt = String(image.getAttribute?.("alt") || "").trim();
-            if (!/^:.+:$/.test(alt)) return;
+            const alt = this.getExtractedImageAltText(image);
+            if (!alt) return;
             image.replaceWith(document.createTextNode(` ${alt} `));
           });
         }
@@ -24381,7 +32044,21 @@ var require_discord_ai_translator = __commonJS({
         if (!this.elementTextCache?.get || !element || element.nodeType !== 1 || element.isConnected === false) return false;
         return Boolean(this.isDiscordMessageElement(element) || element.closest?.(DISCORD_MESSAGE_NODE_SELECTOR));
       }
-      extractElementTextWithoutClone(element, excludedSelectors = []) {
+      // A message of standard emoji alone reads as text now, but there is nothing to translate in it.
+      hasTranslatableMessageText(text) {
+        return /[\p{L}\p{N}]/u.test(String(text || ""));
+      }
+      // Discord draws emoji as images: custom emoji carry ":name:" as alt text, standard emoji the
+      // emoji itself. Both are part of what the message says; other images are not text.
+      getExtractedImageAltText(image) {
+        const alt = String(image?.getAttribute?.("alt") || "").trim();
+        if (!alt) return "";
+        if (/^:.+:$/.test(alt)) return alt;
+        if (/^[\p{Extended_Pictographic}\p{Emoji_Component}\p{Regional_Indicator}\u200d\ufe0e\ufe0f\u20e3]+$/u.test(alt) && /[\p{Extended_Pictographic}\p{Regional_Indicator}\u20e3]/u.test(alt)) return alt;
+        return "";
+      }
+      // emojiTrace (optional): receives the parts and the indexes of the standard emoji among them.
+      extractElementTextWithoutClone(element, excludedSelectors = [], emojiTrace = null) {
         if (!element?.childNodes || typeof element.childNodes[Symbol.iterator] !== "function") return null;
         const blockedSelector = excludedSelectors.filter(Boolean).join(",");
         const blockTags = /* @__PURE__ */ new Set(["ADDRESS", "ARTICLE", "ASIDE", "BLOCKQUOTE", "DIV", "FIGCAPTION", "FIGURE", "FOOTER", "H1", "H2", "H3", "H4", "H5", "H6", "HEADER", "LI", "MAIN", "NAV", "OL", "P", "PRE", "SECTION", "TABLE", "TR", "UL"]);
@@ -24410,8 +32087,9 @@ var require_discord_ai_translator = __commonJS({
           }
           const tagName = String(node.tagName || node.nodeName || "").toUpperCase();
           if (tagName === "IMG") {
-            const alt = String(node.getAttribute?.("alt") || "").trim();
-            if (/^:.+:$/.test(alt)) parts.push(` ${alt} `);
+            const alt = this.getExtractedImageAltText(node);
+            if (alt && emojiTrace && !/^:.+:$/.test(alt)) emojiTrace.emoji.add(parts.length);
+            if (alt) parts.push(` ${alt} `);
             continue;
           }
           if (tagName === "BR") {
@@ -24426,6 +32104,7 @@ var require_discord_ai_translator = __commonJS({
             stack.push({ node: children[index], root: false });
           }
         }
+        if (emojiTrace) emojiTrace.parts = parts;
         return parts.join("");
       }
       getElementRawText(element, options = {}) {
@@ -24453,17 +32132,174 @@ var require_discord_ai_translator = __commonJS({
           excludedSelectors.push("[class*='repliedMessage']", "[class*='repliedTextPreview']", "[class*='quotedChatMessage']");
         }
         if (this.isExcludedExtractedTextRoot(element, excludedSelectors)) return "";
-        const clone = element.cloneNode?.(true);
-        if (!clone) return this.normalizeDraftRawText(element.value ?? element.textContent ?? "");
-        clone.querySelectorAll?.(excludedSelectors.join(",")).forEach((node) => node.remove());
-        if (typeof document !== "undefined") {
-          clone.querySelectorAll?.("img[alt]").forEach((image) => {
-            const alt = String(image.getAttribute?.("alt") || "").trim();
-            if (!/^:.+:$/.test(alt)) return;
-            image.replaceWith(document.createTextNode(` ${alt} `));
-          });
+        if (!element.childNodes || typeof element.childNodes[Symbol.iterator] !== "function") {
+          return this.normalizeDraftRawText(element.value ?? element.textContent ?? "");
         }
-        return this.normalizeDraftRawText(clone.innerText ?? clone.textContent ?? "");
+        return this.normalizeDraftRawText(this.readComposerDomText(element, excludedSelectors.filter(Boolean).join(",")));
+      }
+      // One reader for the draft snapshot, the stale check and write verification. Slate renders each
+      // line as a block element; blocks are joined with "\n". Void inlines (mentions, emoji) become the
+      // Discord token they stand for when their Slate node is reachable, otherwise their visible text.
+      readComposerDomText(root, blockedSelector = "") {
+        const lines = [];
+        if (this.collectSlateComposerLines(root, blockedSelector, lines, false)) return lines.join("\n");
+        return this.readComposerInlineText(root, blockedSelector, { blockBreaks: true });
+      }
+      collectSlateComposerLines(container, blockedSelector, lines, quoted) {
+        let found = false;
+        for (const child of container?.childNodes || []) {
+          if (child?.nodeType !== 1 || this.isComposerReadExcluded(child, blockedSelector)) continue;
+          const slateNode = child.getAttribute?.("data-slate-node");
+          if (slateNode === "element" && child.getAttribute?.("data-slate-inline") !== "true") {
+            found = true;
+            const childQuoted = quoted || this.getSlateElementFromDom(child)?.type === "blockQuote";
+            if (!this.collectSlateComposerLines(child, blockedSelector, lines, childQuoted)) {
+              const text = this.readComposerInlineText(child, blockedSelector);
+              lines.push(childQuoted ? `> ${text}` : text);
+            }
+            continue;
+          }
+          if (slateNode || child.getAttribute?.("data-slate-inline") === "true" || child.getAttribute?.("data-slate-leaf") === "true") continue;
+          if (this.collectSlateComposerLines(child, blockedSelector, lines, quoted)) found = true;
+        }
+        return found;
+      }
+      readComposerInlineText(root, blockedSelector = "", options = {}) {
+        const BREAK = null;
+        const parts = [];
+        let lastFromSlateString = false;
+        const blockTags = /* @__PURE__ */ new Set(["ADDRESS", "ARTICLE", "ASIDE", "BLOCKQUOTE", "DIV", "FIGCAPTION", "FIGURE", "FOOTER", "H1", "H2", "H3", "H4", "H5", "H6", "HEADER", "LI", "MAIN", "NAV", "OL", "P", "PRE", "SECTION", "TABLE", "TR", "UL"]);
+        const push = (text, fromSlateString = false) => {
+          parts.push(text);
+          lastFromSlateString = fromSlateString;
+        };
+        const visit = (node, isRoot, inSlateString) => {
+          if (!node) return;
+          if (node.nodeType === 3) {
+            push(String(node.nodeValue || "").replace(/\uFEFF/g, ""), inSlateString);
+            return;
+          }
+          if (node.nodeType !== 1) return;
+          if (!isRoot && this.isComposerReadExcluded(node, blockedSelector)) return;
+          const zeroWidth = node.getAttribute?.("data-slate-zero-width");
+          if (zeroWidth !== null && zeroWidth !== void 0 || node.getAttribute?.("data-slate-spacer") === "true") return;
+          if (!isRoot && node.getAttribute?.("data-slate-void") === "true") {
+            push(this.serializeSlateVoidElement(node, blockedSelector));
+            return;
+          }
+          const tagName = String(node.tagName || node.nodeName || "").toUpperCase();
+          if (tagName === "BR") {
+            push("\n");
+            return;
+          }
+          if (tagName === "IMG") {
+            push(this.getComposerImageText(node, false));
+            return;
+          }
+          const isBlock = Boolean(options.blockBreaks) && !isRoot && blockTags.has(tagName);
+          if (isBlock) push(BREAK);
+          const childInSlateString = inSlateString || node.getAttribute?.("data-slate-string") === "true";
+          for (const child of node.childNodes || []) visit(child, false, childInSlateString);
+          if (isBlock) push(BREAK);
+        };
+        visit(root, true, false);
+        if (!options.blockBreaks && lastFromSlateString && String(parts[parts.length - 1] || "").endsWith("\n")) {
+          parts[parts.length - 1] = parts[parts.length - 1].slice(0, -1);
+        }
+        let output = "";
+        let pendingBreak = false;
+        for (const part of parts) {
+          if (part === BREAK) {
+            pendingBreak = output.length > 0;
+            continue;
+          }
+          if (!part) continue;
+          if (pendingBreak && !output.endsWith("\n")) output += "\n";
+          pendingBreak = false;
+          output += part;
+        }
+        return output;
+      }
+      isComposerReadExcluded(node, blockedSelector = "") {
+        let excluded = false;
+        try {
+          excluded = Boolean(blockedSelector && node.matches?.(blockedSelector));
+        } catch {
+        }
+        return excluded || this.isForeignTranslationElement(node);
+      }
+      serializeSlateVoidElement(node, blockedSelector = "") {
+        const token = this.serializeSlateElementToken(this.getSlateElementFromDom(node));
+        if (token !== null) return token;
+        const image = this.findComposerVoidImage(node);
+        const imageText = image ? this.getComposerImageText(image, true) : "";
+        if (imageText) return imageText;
+        const label = [...node.childNodes || []].map((child) => this.readComposerInlineText(child, blockedSelector)).join("");
+        if (label) return label;
+        return String(node.textContent || "").replace(/[\uFEFF\u200b]/g, "");
+      }
+      findComposerVoidImage(node) {
+        for (const child of node?.childNodes || []) {
+          if (child?.nodeType !== 1 || child.getAttribute?.("data-slate-spacer") === "true") continue;
+          if (String(child.tagName || "").toUpperCase() === "IMG") return child;
+          const nested = this.findComposerVoidImage(child);
+          if (nested) return nested;
+        }
+        return null;
+      }
+      getComposerImageText(image, insideVoid = false) {
+        const alt = String(image?.getAttribute?.("alt") || "").trim();
+        if (/^:[^:\s]+:$/.test(alt)) {
+          const src = String(image.getAttribute?.("src") || "");
+          const emojiId = [image.getAttribute?.("data-id"), src.match(/\/emojis\/(\d{5,25})\./)?.[1]].map((value) => String(value || "").trim()).find((value) => /^\d{5,25}$/.test(value));
+          if (!emojiId) return alt;
+          const animated = image.getAttribute?.("data-animated") === "true" || /\.gif(?:[?#]|$)|[?&]animated=true/i.test(src);
+          return `<${animated ? "a" : ""}${alt}${emojiId}>`;
+        }
+        return insideVoid ? alt : "";
+      }
+      getSlateElementFromDom(node) {
+        if (!node || typeof node !== "object") return null;
+        try {
+          const key = Object.keys(node).find((name) => name.startsWith("__reactFiber$") || name.startsWith("__reactInternalInstance$"));
+          let fiber = key ? node[key] : null;
+          for (let depth = 0; fiber && depth < 6; depth++) {
+            const element = fiber.memoizedProps?.element;
+            if (element && typeof element === "object" && typeof element.type === "string" && Array.isArray(element.children)) return element;
+            fiber = fiber.return;
+          }
+        } catch {
+        }
+        return null;
+      }
+      // Discord's message tokens for Slate void inlines; null when the node is not one we know.
+      serializeSlateElementToken(element) {
+        if (!element || typeof element !== "object") return null;
+        const id = (value) => {
+          const text = String(value ?? "").trim();
+          return /^\d{5,25}$/.test(text) ? text : "";
+        };
+        const type = String(element.type || "");
+        const userId = id(element.userId);
+        if (userId) return `<@${userId}>`;
+        const roleId = id(element.roleId);
+        if (roleId) return `<@&${roleId}>`;
+        const channelId = id(element.channelId);
+        if (channelId && /channel/i.test(type)) return `<#${channelId}>`;
+        const emoji = element.emoji;
+        if (emoji && typeof emoji === "object") {
+          const name = String(emoji.name || "").replace(/^:+|:+$/g, "").trim();
+          const emojiId = id(emoji.id ?? emoji.emojiId);
+          if (emojiId && name) return `<${emoji.animated ? "a" : ""}:${name}:${emojiId}>`;
+          const surrogate = [emoji.surrogate, emoji.surrogates, emoji.optionallyDiverseSequence].find((value) => typeof value === "string" && value);
+          if (surrogate) return surrogate;
+          if (name) return `:${name}:`;
+        }
+        if (type === "textMention" && typeof element.name === "string" && element.name.trim()) {
+          const name = element.name.trim();
+          return name.startsWith("@") ? name : `@${name}`;
+        }
+        return null;
       }
       isExcludedExtractedTextRoot(element, excludedSelectors = []) {
         if (!element || element.nodeType !== 1) return false;
@@ -24528,11 +32364,99 @@ var require_discord_ai_translator = __commonJS({
         }
         return [];
       }
+      // The display text of a MessageStore message: its markup converted to what the chat shows, or ""
+      // when that cannot be rebuilt (see convertDiscordMarkupToDisplayText). Raw store markup never
+      // leaves this method.
       getDiscordStoreMessageText(message) {
-        if (typeof message?.content === "string") return this.normalizeExtractedText(message.content);
-        if (typeof message?.message === "string") return this.normalizeExtractedText(message.message);
-        if (typeof message?.text === "string") return this.normalizeExtractedText(message.text);
-        return "";
+        let raw = null;
+        if (typeof message?.content === "string") raw = message.content;
+        else if (typeof message?.message === "string") raw = message.message;
+        else if (typeof message?.text === "string") raw = message.text;
+        if (!raw) return "";
+        const guildId = raw.includes("<@") ? this.getDiscordStoreMessageGuildId(message) : "";
+        return this.normalizeExtractedText(this.getDiscordMarkupDisplayText(raw, guildId));
+      }
+      getDiscordStoreMessageGuildId(message) {
+        const channelId = this.messageTracker.getStoreMessageChannelId(message);
+        const guildId = this.messageTracker.getStoreMessageGuildId(message) || String(this.getDiscordNamedStore("ChannelStore")?.getChannel?.(channelId)?.guild_id || "") || this.messageTracker.getRouteIds?.().guildId || "";
+        return guildId === "@me" ? "" : guildId;
+      }
+      getDiscordMarkupDisplayText(raw, guildId = "") {
+        const memoKey = `${guildId}
+${raw}`;
+        if (!this.discordMarkupDisplayTextMemo) this.discordMarkupDisplayTextMemo = /* @__PURE__ */ new Map();
+        if (this.discordMarkupDisplayTextMemo.has(memoKey)) return this.discordMarkupDisplayTextMemo.get(memoKey);
+        const displayText = convertDiscordMarkupToDisplayText(raw, {
+          user: (userId) => this.getDiscordMentionUserName(userId, guildId),
+          role: (roleId) => this.getDiscordMentionRoleName(roleId, guildId),
+          channel: (channelId) => this.getDiscordNamedStore("ChannelStore")?.getChannel?.(channelId)?.name || "",
+          emoji: (name) => this.getDiscordUnicodeEmojiSurrogate(name)
+        });
+        if (!displayText) return displayText;
+        this.discordMarkupDisplayTextMemo.set(memoKey, displayText);
+        while (this.discordMarkupDisplayTextMemo.size > DISCORD_MARKUP_DISPLAY_TEXT_MEMO_MAX) {
+          this.discordMarkupDisplayTextMemo.delete(this.discordMarkupDisplayTextMemo.keys().next().value);
+        }
+        return displayText;
+      }
+      // Discord shows a user mention as the member's server nickname, else the display name, else the username.
+      getDiscordMentionUserName(userId, guildId = "") {
+        const member = guildId ? this.getDiscordNamedStore("GuildMemberStore")?.getMember?.(guildId, userId) : null;
+        const user = this.getDiscordNamedStore("UserStore")?.getUser?.(userId);
+        return String(member?.nick || user?.globalName || user?.global_name || user?.username || "").trim();
+      }
+      getDiscordMentionRoleName(roleId, guildId = "") {
+        if (!guildId) return "";
+        const role = this.getDiscordNamedStore("GuildRoleStore")?.getRole?.(guildId, roleId) || this.getDiscordNamedStore("GuildStore")?.getRole?.(guildId, roleId) || this.getDiscordNamedStore("GuildStore")?.getRoles?.(guildId)?.[roleId] || this.getDiscordNamedStore("GuildStore")?.getGuild?.(guildId)?.roles?.[roleId];
+        return String(role?.name || "").trim();
+      }
+      // Discord draws a standard emoji written as its name (":white_check_mark:", as bots send it) as
+      // the emoji itself. "" when the name is unknown or Discord's emoji utils cannot be found.
+      getDiscordUnicodeEmojiSurrogate(name) {
+        const emojiUtils = this.getDiscordUnicodeEmojiUtils();
+        try {
+          return String(emojiUtils?.convertNameToSurrogate?.(name) || "");
+        } catch {
+          return "";
+        }
+      }
+      getDiscordUnicodeEmojiUtils() {
+        const cached = this.discordUnicodeEmojiUtils;
+        if (cached?.module) return cached.module;
+        const now = Date.now();
+        if (cached && now < cached.retryAt) return null;
+        let module3 = null;
+        try {
+          module3 = globalThis.BdApi?.Webpack?.getByKeys?.("convertNameToSurrogate") || null;
+        } catch (error) {
+          this.warnSanitized("Failed to locate Discord emoji utils", error);
+        }
+        this.discordUnicodeEmojiUtils = typeof module3?.convertNameToSurrogate === "function" ? { module: module3 } : { module: null, retryAt: now + 6e4 };
+        return this.discordUnicodeEmojiUtils.module;
+      }
+      getDiscordNamedStore(name) {
+        if (!this.discordNamedStores) this.discordNamedStores = /* @__PURE__ */ new Map();
+        const cached = this.discordNamedStores.get(name);
+        if (cached?.store) return cached.store;
+        const now = Date.now();
+        if (cached && now < cached.retryAt) return null;
+        let store = null;
+        try {
+          store = globalThis.BdApi?.Webpack?.getStore?.(name) || null;
+        } catch (error) {
+          this.warnSanitized(`Failed to locate Discord ${name}`, error);
+        }
+        this.discordNamedStores.set(name, store ? { store } : { store: null, retryAt: now + 6e4 });
+        return store;
+      }
+      // MessageStore text replaces the text on screen only as the request text, and only when it holds
+      // more than the target element shows (a message whose content element shows part of it). Each
+      // emoji counts as one character, drawn or written as a shortcode, so a content element that shows
+      // the whole message is never taken for part of it.
+      isStoreFullRequestText(storeText, domText) {
+        const store = String(storeText || "");
+        const dom = String(domText || "");
+        return Boolean(store && dom && getEmojiNeutralTextLength(store) > getEmojiNeutralTextLength(dom) + 4 && this.isManualTranslationSourceCompatible(store, dom));
       }
       getCachedElementText(element, context = null, options = {}) {
         if (options?.includeReplyPreview) {
@@ -24580,6 +32504,17 @@ var require_discord_ai_translator = __commonJS({
           return { ok: false, reason: this.getTextboxReplacementBlockedReason(options), actual: this.getTextboxTextSafe(textbox) };
         }
         const previousRawText = this.getTextboxRawTextSafe(textbox);
+        const writeOptions = { ...options, rollback: { undoAttempted: false }, writeState: { userEditedAfter: false } };
+        const failAfterAttempt = async () => {
+          if (writeOptions.writeState.userEditedAfter) {
+            return { ok: true, method: "written-then-edited", userEditedAfter: true, actual: this.getTextboxTextSafe(textbox) };
+          }
+          if (!this.isTextboxReplacementWriteAllowed(textbox, writeOptions)) {
+            return { ok: false, reason: "write-cancelled", actual: this.getTextboxTextSafe(textbox) };
+          }
+          await this.restoreTextboxSnapshotAfterFailedReplace(textbox, previousRawText, value, writeOptions);
+          return { ok: false, reason: "verification-failed", actual: this.getTextboxTextSafe(textbox) };
+        };
         if (this.isPlainTextTextbox(textbox)) {
           const result = this.replaceTextboxTextSafely(textbox, value, options);
           if (result.ok || result.reason === "missing-textbox") return result;
@@ -24596,23 +32531,20 @@ var require_discord_ai_translator = __commonJS({
             this.finishTextboxReplacement(textbox, options);
             return { ok: true, method: "async-retry", actual: value };
           }
-          await this.restoreTextboxSnapshotAfterFailedReplace(textbox, previousRawText, value);
-          return { ok: false, reason: "verification-failed", actual: this.getTextboxTextSafe(textbox) };
+          return failAfterAttempt();
         }
         if (this.isRichDiscordTextbox(textbox)) {
-          if (await this.replaceDiscordRichTextboxTextAtomically(textbox, value, options)) {
+          if (await this.replaceDiscordRichTextboxTextAtomically(textbox, value, writeOptions)) {
             this.finishTextboxReplacement(textbox, options);
             return { ok: true, method: "slate-atomic", actual: value };
           }
-          await this.restoreTextboxSnapshotAfterFailedReplace(textbox, previousRawText, value);
-          return { ok: false, reason: "verification-failed", actual: this.getTextboxTextSafe(textbox) };
+          return failAfterAttempt();
         }
-        if (await this.replaceRichTextboxTextAsync(textbox, value)) {
+        if (await this.replaceRichTextboxTextAsync(textbox, value, writeOptions)) {
           this.finishTextboxReplacement(textbox, options);
           return { ok: true, method: "async-rich", actual: value };
         }
-        await this.restoreTextboxSnapshotAfterFailedReplace(textbox, previousRawText, value);
-        return { ok: false, reason: "verification-failed", actual: this.getTextboxTextSafe(textbox) };
+        return failAfterAttempt();
       }
       replaceTextboxTextSafely(textbox, text, options = {}) {
         const value = String(text || "");
@@ -24724,16 +32656,16 @@ var require_discord_ai_translator = __commonJS({
           return false;
         }
       }
-      async replaceRichTextboxTextAsync(textbox, text) {
-        if (this.isRichDiscordTextbox(textbox)) return this.replaceDiscordRichTextboxTextAtomically(textbox, text);
-        if (!await this.clearRichTextboxTextAsync(textbox)) return false;
-        return this.insertRichTextboxTextAsync(textbox, text);
+      async replaceRichTextboxTextAsync(textbox, text, options = {}) {
+        if (this.isRichDiscordTextbox(textbox)) return this.replaceDiscordRichTextboxTextAtomically(textbox, text, options);
+        if (!await this.clearRichTextboxTextAsync(textbox, options)) return false;
+        return this.insertRichTextboxTextAsync(textbox, text, options);
       }
       async replaceDiscordRichTextboxTextAtomically(textbox, text, options = {}) {
         const value = String(text || "");
         const previousText = Object.prototype.hasOwnProperty.call(options, "expectedPreviousText") ? this.normalizeDraftRawText(options.expectedPreviousText) : this.getTextboxRawTextSafe(textbox);
         if (!this.isTextboxReplacementWriteAllowed(textbox, options, { checkExpected: true })) return false;
-        if (this.normalizeExtractedText(previousText) === this.normalizeExtractedText(value)) {
+        if (previousText === this.normalizeDraftRawText(value)) {
           return await this.waitForTextboxStableTextEqual(textbox, value) && this.isTextboxReplacementWriteAllowed(textbox, options);
         }
         const attempts = [
@@ -24746,18 +32678,23 @@ var require_discord_ai_translator = __commonJS({
           if (!await this.prepareTextboxFullReplacementSelection(textbox, previousText)) return false;
           attempt();
           if (!this.isTextboxReplacementWriteAllowed(textbox, options)) return false;
-          if (await this.waitForTextboxStableTextEqual(textbox, value)) {
-            return this.isTextboxReplacementWriteAllowed(textbox, options);
+          const observed = { equal: false };
+          const stable = await this.waitForTextboxStableTextEqual(textbox, value, observed);
+          if (stable && this.isTextboxReplacementWriteAllowed(textbox, options)) return true;
+          if (observed.equal && this.isComposerWriteTakenOverByUser(textbox, options)) {
+            if (options.writeState) options.writeState.userEditedAfter = true;
+            return false;
           }
-          const actual = this.getTextboxTextSafe(textbox);
-          if (actual && actual !== previousText && actual !== value) {
-            await this.tryUndoTextboxEdit(textbox, previousText);
+          if (stable) return false;
+          const actual = this.getTextboxRawTextSafe(textbox);
+          if (actual && actual !== previousText && actual !== this.normalizeDraftRawText(value)) {
+            if (this.isTextboxReplacementWriteAllowed(textbox, options)) await this.tryUndoTextboxEdit(textbox, previousText, options);
             return false;
           }
         }
         return false;
       }
-      async clearRichTextboxTextAsync(textbox) {
+      async clearRichTextboxTextAsync(textbox, options = {}) {
         if (this.isTextboxEmpty(textbox)) return true;
         const attempts = [
           () => {
@@ -24770,11 +32707,7 @@ var require_discord_ai_translator = __commonJS({
           },
           () => {
             this.selectTextboxContents(textbox);
-            try {
-              return Boolean(document.execCommand?.("delete", false, null));
-            } catch {
-              return false;
-            }
+            return this.runComposerExecCommand("delete");
           },
           () => {
             this.clearRichTextboxTextWithKeyboard(textbox);
@@ -24782,63 +32715,71 @@ var require_discord_ai_translator = __commonJS({
           },
           () => {
             this.selectTextboxContents(textbox);
-            try {
-              return Boolean(document.execCommand?.("insertText", false, ""));
-            } catch {
-              return false;
-            }
+            return this.runComposerExecCommand("insertText", "");
           }
         ];
         for (const attempt of attempts) {
+          if (!this.isTextboxReplacementWriteAllowed(textbox, options)) return false;
           attempt();
           if (await this.waitForTextboxStableEmpty(textbox)) return true;
         }
         return false;
       }
-      async insertRichTextboxTextAsync(textbox, text) {
+      // document.execCommand fires trusted "input" events: they are the plugin's own edit, not the user
+      // typing, so they must not cancel the write (or rollback) in progress.
+      runComposerExecCommand(command, value = null) {
+        return this.composerWriter.runOwnEdit(() => {
+          try {
+            return Boolean(document.execCommand?.(command, false, value));
+          } catch {
+            return false;
+          }
+        });
+      }
+      async insertRichTextboxTextAsync(textbox, text, options = {}) {
         const attempts = [
           () => this.dispatchTextboxPaste(textbox, text),
           () => this.dispatchTextboxBeforeInput(textbox, text, "insertFromPaste"),
           () => this.dispatchTextboxBeforeInput(textbox, text, "insertText"),
-          () => {
-            try {
-              return Boolean(document.execCommand?.("insertText", false, text));
-            } catch {
-              return false;
-            }
-          }
+          () => this.runComposerExecCommand("insertText", text)
         ];
         for (const attempt of attempts) {
-          if (!this.isTextboxEmpty(textbox) && !await this.clearRichTextboxTextAsync(textbox)) return false;
+          if (!this.isTextboxEmpty(textbox) && !await this.clearRichTextboxTextAsync(textbox, options)) return false;
+          if (!this.isTextboxReplacementWriteAllowed(textbox, options)) return false;
           attempt();
           if (await this.waitForTextboxStableTextEqual(textbox, text)) return true;
           if (!this.isTextboxEmpty(textbox) && !this.isTextboxTextEqual(textbox, text)) {
-            if (!await this.clearRichTextboxTextAsync(textbox)) return false;
+            if (!await this.clearRichTextboxTextAsync(textbox, options)) return false;
           }
         }
         return false;
       }
-      async tryRestoreTextboxTextAfterFailedReplace(textbox, text) {
+      async tryRestoreTextboxTextAfterFailedReplace(textbox, text, options = {}) {
         if (!text) return;
-        if (!await this.clearRichTextboxTextAsync(textbox)) return;
-        await this.insertRichTextboxTextAsync(textbox, text);
+        if (!await this.clearRichTextboxTextAsync(textbox, options)) return;
+        if (!this.isTextboxReplacementWriteAllowed(textbox, options)) return;
+        await this.insertRichTextboxTextAsync(textbox, text, options);
       }
-      async restoreTextboxSnapshotAfterFailedReplace(textbox, previousText, attemptedText = "") {
+      // Stops as soon as options.writeToken is no longer current (user input, a newer write, remount).
+      async restoreTextboxSnapshotAfterFailedReplace(textbox, previousText, attemptedText = "", options = {}) {
         if (!textbox || textbox.isConnected === false) return false;
-        const previous = String(previousText || "");
+        const previous = this.normalizeDraftRawText(previousText);
         if (!previous) return false;
+        if (!this.isTextboxReplacementWriteAllowed(textbox, options)) return false;
         const current = this.getTextboxRawTextSafe(textbox);
-        if (current === previous || current === String(attemptedText || "")) return false;
+        if (current === previous || current === this.normalizeDraftRawText(attemptedText)) return false;
         if (this.isPlainTextTextbox(textbox)) {
           this.replacePlainTextTextboxValue(textbox, previous);
           return this.isTextboxTextEqual(textbox, previous);
         }
         if (this.isRichDiscordTextbox(textbox)) {
-          if (await this.tryUndoTextboxEdit(textbox, previous)) return true;
-          await this.tryRestoreTextboxTextAfterFailedReplace(textbox, previous);
+          if (!options.rollback?.undoAttempted && await this.tryUndoTextboxEdit(textbox, previous, options)) return true;
+          if (!this.isTextboxReplacementWriteAllowed(textbox, options)) return false;
+          if (this.isTextboxTextEqual(textbox, previous)) return true;
+          await this.tryRestoreTextboxTextAfterFailedReplace(textbox, previous, options);
           return this.isTextboxTextEqual(textbox, previous);
         }
-        await this.tryRestoreTextboxTextAfterFailedReplace(textbox, previous);
+        await this.tryRestoreTextboxTextAfterFailedReplace(textbox, previous, options);
         return this.isTextboxTextEqual(textbox, previous);
       }
       clearRichTextboxText(textbox) {
@@ -24929,10 +32870,17 @@ var require_discord_ai_translator = __commonJS({
         }
         return false;
       }
-      async waitForTextboxStableTextEqual(textbox, text) {
+      // `observed.equal` is set once the text was seen equal, even if it changes before it settles.
+      async waitForTextboxStableTextEqual(textbox, text, observed = null) {
         if (!await this.waitForTextboxTextEqual(textbox, text)) return false;
+        if (observed) observed.equal = true;
         await this.waitForTextboxSettle(120);
         return this.isTextboxTextEqual(textbox, text);
+      }
+      // The write token was cancelled by the user's own input (not a newer write or a remount).
+      isComposerWriteTakenOverByUser(textbox, options = {}) {
+        const token = options.writeToken;
+        return Boolean(textbox && textbox.isConnected !== false && token?.cancelled && token.reason === "user-input");
       }
       async waitForTextboxEmpty(textbox) {
         if (this.isTextboxEmpty(textbox)) return true;
@@ -24974,23 +32922,21 @@ var require_discord_ai_translator = __commonJS({
         if (previousText && this.getTextboxRawTextSafe(textbox) !== this.normalizeDraftRawText(previousText)) return false;
         return true;
       }
-      async tryUndoTextboxEdit(textbox, expectedText = "") {
-        const expected = this.normalizeExtractedText(expectedText);
-        if (!expected) return false;
+      async tryUndoTextboxEdit(textbox, expectedText = "", options = {}) {
+        const expected = this.normalizeDraftRawText(expectedText);
+        if (!this.normalizeExtractedText(expected)) return false;
+        if (options.rollback) options.rollback.undoAttempted = true;
         const attempts = [
           () => this.dispatchTextboxBeforeInput(textbox, "", "historyUndo"),
           () => this.dispatchTextboxKeyboardShortcut(textbox, "z", "KeyZ", { ctrlKey: true }),
-          () => {
-            try {
-              return Boolean(document.execCommand?.("undo", false, null));
-            } catch {
-              return false;
-            }
-          }
+          () => this.runComposerExecCommand("undo")
         ];
         for (const attempt of attempts) {
+          if (!this.isTextboxReplacementWriteAllowed(textbox, options)) return false;
+          const before = this.getTextboxRawTextSafe(textbox);
           attempt();
           if (await this.waitForTextboxStableTextEqual(textbox, expected)) return true;
+          if (this.getTextboxRawTextSafe(textbox) !== before) return false;
         }
         return false;
       }
@@ -25281,13 +33227,12 @@ var require_discord_ai_translator = __commonJS({
           }
         }
       }
+      // Sends the way the user does: Enter on the focused composer, which Discord's editor turns into a send.
+      // Never clicks a button: Discord shows no send button by default, and the toolbar in the same form holds
+      // controls such as "Send a gift", GIF, stickers and emoji that must never be pressed for the user.
       submitTextbox(textbox) {
-        const form = textbox.closest("form");
-        const sendButton = form?.querySelector("button[aria-label*='Send'], button[type='submit']");
-        if (sendButton && !sendButton.disabled) {
-          sendButton.click();
-          return;
-        }
+        if (!textbox || textbox.isConnected === false || typeof textbox.dispatchEvent !== "function") return false;
+        if (typeof KeyboardEvent !== "function") return false;
         textbox.focus?.();
         ["keydown", "keypress", "keyup"].forEach((type) => {
           textbox.dispatchEvent(new KeyboardEvent(type, {
@@ -25299,14 +33244,23 @@ var require_discord_ai_translator = __commonJS({
             which: 13
           }));
         });
+        return true;
       }
       setButtonBusy(button, busy, text) {
         if (!button) return;
+        if (button.dataset?.daitFullLabel || button.classList?.contains?.("dait-input-action-menu-button")) {
+          button.disabled = Boolean(busy);
+          button.classList?.toggle?.("dait-busy", Boolean(busy));
+          if (busy) button.setAttribute?.("aria-busy", "true");
+          else button.removeAttribute?.("aria-busy");
+          this.renderInputActionButtonLabel(button);
+          return;
+        }
         button.disabled = busy;
         button.textContent = text;
       }
       getTranslationLineCacheAliases(text, options = {}) {
-        return this.getTranslationCacheAliases(text, options, { includePreMessageIdentity: false });
+        return this.getTranslationCacheAliases(text, options, { includePreMessageIdentity: false, includePlaceholderModel: true });
       }
       getAutoTextTranslationFailureKey(text, options = {}) {
         return this.getAutoTextTranslationCacheKey(text, options);
@@ -25333,27 +33287,54 @@ var require_discord_ai_translator = __commonJS({
       getMessageIdentity(messageNode, content, text) {
         return this.messageTracker.getIdentity(messageNode, content, text);
       }
-      formatError(error) {
-        const message = this.getFriendlyErrorMessage(error);
+      formatError(error, options = {}) {
+        const message = this.getFriendlyErrorMessage(error, options);
         return message.length > 480 ? `${message.slice(0, 480)}...` : message;
       }
-      getFriendlyErrorMessage(error) {
+      // options.includeRetry: add the automatic retry wait; only auto-translation notices
+      // want it (for polish or manual translation it is an internal scheduling detail).
+      getFriendlyErrorMessage(error, options = {}) {
         const status = Number(error?.status || 0);
+        const rawMessage = String(error?.message || "");
+        const providerCoded = rawMessage === "API_ERROR" || Boolean(error?.baiduApiError);
+        const internalMessageKeys = {
+          MODEL_OUTPUT_TRUNCATED: "errorOutputTruncated",
+          DATA_SAVE_FAILED: "errorSaveFailed",
+          DATA_SAVE_UNAVAILABLE: "errorSaveFailed"
+        };
         let message = "";
         if (this.isRequestCancelled(error)) message = this.t("errorCancelled");
         else if (Object.hasOwn(API_ENDPOINT_ERROR_MESSAGE_KEYS, error?.code)) message = this.t(API_ENDPOINT_ERROR_MESSAGE_KEYS[error.code]);
+        else if (error?.code === "CLIPBOARD_UNAVAILABLE") message = this.t("clipboardUnavailable");
         else if (error?.manualTranslationRescueFailed) message = this.t("manualTranslateRescueFailed");
+        else if (error?.modelOutputTruncated) message = this.t("errorOutputTruncated");
         else if (this.isTimeoutError(error)) message = this.t("errorTimeout");
         else if (error?.localProviderUnavailable) message = this.t("errorLocalProviderUnavailable");
+        else if (providerCoded && error?.providerLanguageUnsupported) message = this.t("errorLanguageUnsupported");
+        else if (providerCoded && error?.providerIpRejected) message = this.t("errorIpNotAllowed");
+        else if (providerCoded && error?.providerRequestRejected) message = this.t("errorProviderRequestRejected");
+        else if (providerCoded && (error?.providerRateLimited || status === 429)) message = this.t("errorRateLimited");
+        else if (providerCoded && (error?.providerQuotaExceeded || error?.googleTranslateQuotaExceeded || status === 402)) message = this.t("errorQuotaExceeded");
+        else if (providerCoded && (error?.providerAuthFailed || status === 401 || status === 403)) message = this.t("errorUnauthorized");
+        else if (providerCoded && (error?.providerServerError || status >= 500)) message = this.t("errorServer");
         else if (status === 401 || status === 403) message = this.t("errorUnauthorized");
         else if (status === 429) message = this.t("errorRateLimited");
         else if (status >= 500) message = this.t("errorServer");
         else if (this.isNetworkError(error)) message = this.t("errorNetwork");
-        else if (String(error?.message || "") === "API_ERROR") message = status ? `API ${status}` : this.t("unknownError");
+        else if (error?.baiduApiError) message = this.t("errorProviderRequestRejected");
+        else if (rawMessage === "API_ERROR") {
+          if (status === 404 || status === 405 || error?.providerModelNotFound) message = this.t("errorEndpointNotFound");
+          else message = status >= 400 && status < 500 ? this.t("errorProviderRequestRejected") : status ? `API ${status}` : this.t("unknownError");
+        } else if (Object.hasOwn(internalMessageKeys, rawMessage)) message = this.t(internalMessageKeys[rawMessage]);
+        else if (/^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/.test(rawMessage)) message = this.t("unknownError");
         else message = String(error?.message || error || this.t("unknownError"));
         const details = [];
         if (status) details.push(String(status));
-        if (Number(error?.retryAfterMs) > 0) details.push(`${Math.ceil(Number(error.retryAfterMs) / 1e3)}s`);
+        if (error?.baiduErrorCode) details.push(String(error.baiduErrorCode));
+        const retryAfterMs = Number(error?.retryAfterMs) || 0;
+        if (options.includeRetry && retryAfterMs > 0 && retryAfterMs <= 60 * 60 * 1e3 && !error?.modelOutputTruncated) {
+          details.push(`${Math.ceil(retryAfterMs / 1e3)}s`);
+        }
         if (error?.requestId) details.push(`id:${error.requestId}`);
         else if (error?.bodyHash) details.push(`ref:${error.bodyHash}`);
         return details.length ? `${message} (${details.join(", ")})` : message;
@@ -25364,6 +33345,288 @@ var require_discord_ai_translator = __commonJS({
           return;
         }
         console.log(`[${PLUGIN_NAME}] ${message}`);
+      }
+      // The one confirmation helper: BetterDiscord's confirmation modal (danger style for destructive actions),
+      // window.confirm only when that API is missing. Resolves true only when the user confirmed and the plugin
+      // is still running. body is a string or a list of paragraphs; preview is quoted text shown as typed;
+      // content (a React element) replaces both.
+      confirmAction({ title = "", body = "", preview = "", content = null, confirmText = "", cancelText = "", danger = false } = {}) {
+        const ui = globalThis.BdApi?.UI;
+        const lifecycleToken = this.getLifecycleToken();
+        const paragraphs = (Array.isArray(body) ? body : [body]).map((text) => String(text ?? "").trim()).filter(Boolean);
+        const previewText = String(preview ?? "").trim();
+        const confirmNatively = () => {
+          const text = [String(title || "").trim(), ...paragraphs, previewText].filter(Boolean).join("\n\n");
+          try {
+            return typeof window !== "undefined" && typeof window.confirm === "function" && Boolean(window.confirm(text));
+          } catch {
+            return false;
+          }
+        };
+        if (typeof ui?.showConfirmationModal !== "function") {
+          return Promise.resolve(confirmNatively() && this.isLifecycleTokenCurrent(lifecycleToken));
+        }
+        return new Promise((resolve) => {
+          let settled = false;
+          let stopWatching = null;
+          const release = this.holdConfirmDialogLayer();
+          const pending = this.pendingConfirmDialogs || (this.pendingConfirmDialogs = /* @__PURE__ */ new Set());
+          const settle = (confirmed) => {
+            if (settled) return;
+            settled = true;
+            pending.delete(settle);
+            stopWatching?.();
+            release();
+            resolve(Boolean(confirmed) && this.isLifecycleTokenCurrent(lifecycleToken));
+          };
+          pending.add(settle);
+          const dialogsBefore = this.getOpenDialogElements();
+          try {
+            ui.showConfirmationModal(title, content ?? this.createConfirmDialogContent(paragraphs, previewText), {
+              danger: Boolean(danger),
+              confirmText: confirmText || this.t("dialogConfirm"),
+              cancelText: cancelText || this.t("dialogCancel"),
+              onConfirm: () => settle(true),
+              onCancel: () => settle(false),
+              // Reported by newer BetterDiscord builds on Escape or a backdrop click. Deferred so a close
+              // that follows the confirm callback in the same click cannot turn it into a cancel. When the
+              // content failed to render, BetterDiscord closes this dialog and shows its fallback modal
+              // with the same callbacks instead; that close is not a cancel while the fallback is open.
+              onClose: () => setTimeout(() => {
+                if (!this.getNewConfirmDialogElements(dialogsBefore, ".bd-modal-wrapper").length) settle(false);
+              }, 0)
+            });
+          } catch (error) {
+            this.logDiagnostic("dialog.confirm", "error", { error: this.formatError(error) });
+            settle(confirmNatively());
+            return;
+          }
+          if (!settled) stopWatching = this.watchConfirmDialogDismiss(dialogsBefore, () => settle(false), release);
+        });
+      }
+      // Plugin stop: every open confirmation resolves false and the settings window leaves its paused state.
+      cancelPendingConfirmDialogs() {
+        [...this.pendingConfirmDialogs || []].forEach((settle) => settle(false));
+        this.pendingConfirmDialogs?.clear();
+        this.openConfirmDialogCount = 0;
+        this.syncConfirmDialogLayer();
+      }
+      // Paragraphs plus an optional quoted preview. React elements when BetterDiscord exposes React (the preview
+      // then stays plain text instead of going through Discord's Markdown), otherwise one string.
+      createConfirmDialogContent(paragraphs = [], preview = "") {
+        const React = globalThis.BdApi?.React;
+        if (typeof React?.createElement !== "function") {
+          return [...paragraphs, preview].filter(Boolean).join("\n\n");
+        }
+        const h = React.createElement;
+        return h(
+          "div",
+          { className: "dait-dialog", ...this.getDialogPanelThemeProps() },
+          ...paragraphs.map((text, index) => h("p", { className: "dait-dialog-text", key: `p${index}` }, text)),
+          preview ? h("div", { className: "dait-dialog-preview", key: "preview", tabIndex: 0 }, preview) : null
+        );
+      }
+      // Dialog content sits inside Discord's modal, between Discord's own title and buttons: it takes the palette of
+      // that modal, whatever ui.panelTheme says, so the dialog is one piece and its text always reads. Until the
+      // content is in the page it goes by Discord's theme; once mounted (the ref) it goes by the modal's actual
+      // background, and PanelTheme.refresh() checks it again when Discord's theme changes. Without a Discord theme or
+      // a readable modal background it brings its own background in the current palette (css/08-dialogs).
+      getDialogPanelThemeProps() {
+        const discordTheme = this.panelTheme.getDiscordTheme();
+        const props = {
+          "data-dait-panel-theme": discordTheme || this.resolvePanelTheme(),
+          ref: (node) => this.syncDialogPanelTheme(node)
+        };
+        if (!discordTheme) props["data-dait-dialog-surface"] = "true";
+        return props;
+      }
+      syncDialogPanelTheme(node) {
+        if (!node) return "";
+        try {
+          return this.panelTheme.syncDialog(node);
+        } catch (error) {
+          this.logDiagnostic?.("dialog.theme", "warn", { error: this.formatError?.(error) });
+          return "";
+        }
+      }
+      // Where a confirmation can show up: Discord's modal layer (role=dialog), BetterDiscord's modal root, and
+      // BetterDiscord's fallback modal (.bd-modal-wrapper, no role), used when Discord's modal API is missing or
+      // the dialog content failed to render.
+      getOpenDialogElements(selectors = ["[role='dialog']", ".bd-modal-root", ".bd-modal-wrapper"]) {
+        if (typeof document === "undefined" || !document.querySelectorAll) return /* @__PURE__ */ new Set();
+        const found = /* @__PURE__ */ new Set();
+        for (const selector of [].concat(selectors)) {
+          try {
+            document.querySelectorAll(selector).forEach((node) => found.add(node));
+          } catch {
+          }
+        }
+        return found;
+      }
+      // Dialog elements that opened after dialogsBefore was taken and are still in the document.
+      getNewConfirmDialogElements(dialogsBefore, selectors = void 0) {
+        return [...this.getOpenDialogElements(selectors)].filter((node) => !dialogsBefore?.has?.(node) && node.isConnected !== false && !node.closest?.(".dait-quick-settings-modal-root, .dait-settings"));
+      }
+      // Older BetterDiscord builds report neither Escape nor a backdrop click, and the fallback modal never reports
+      // a backdrop click. Once the dialog showed up, the confirmation counts as cancelled when no dialog that opened
+      // with it is left, so a dismissed dialog never leaves the settings window lowered. When no dialog shows up
+      // within 10 s, onNotFound gives the settings window its layer and keys back; the dialog's buttons still answer.
+      watchConfirmDialogDismiss(dialogsBefore, onDismiss, onNotFound = null) {
+        if (typeof document === "undefined" || typeof setInterval !== "function") return () => {
+        };
+        let seen = false;
+        let polls = 0;
+        let timer = null;
+        const stop = () => {
+          if (timer) clearInterval(timer);
+          timer = null;
+        };
+        timer = this.unrefTimer(setInterval(() => {
+          if (!this.isStarted) {
+            stop();
+            onDismiss();
+            return;
+          }
+          if (this.getNewConfirmDialogElements(dialogsBefore).length) {
+            seen = true;
+            return;
+          }
+          if (seen) {
+            stop();
+            onDismiss();
+            return;
+          }
+          if (++polls > 40) {
+            stop();
+            onNotFound?.();
+          }
+        }, 250));
+        return stop;
+      }
+      // The settings window sits above Discord's layers. While a BetterDiscord dialog is open it steps below
+      // them (see css/08-dialogs.js) and its own Escape and Tab handling pauses.
+      holdConfirmDialogLayer() {
+        this.openConfirmDialogCount = (Number(this.openConfirmDialogCount) || 0) + 1;
+        this.syncConfirmDialogLayer();
+        let released = false;
+        return () => {
+          if (released) return;
+          released = true;
+          this.openConfirmDialogCount = Math.max(0, (Number(this.openConfirmDialogCount) || 0) - 1);
+          this.syncConfirmDialogLayer();
+        };
+      }
+      isConfirmDialogOpen() {
+        return (Number(this.openConfirmDialogCount) || 0) > 0;
+      }
+      syncConfirmDialogLayer() {
+        if (typeof document === "undefined" || !document.querySelectorAll) return;
+        const open = this.isConfirmDialogOpen();
+        document.querySelectorAll(".dait-quick-settings-modal-root")?.forEach((root) => {
+          if (open) root.setAttribute?.("data-dait-confirm-open", "true");
+          else root.removeAttribute?.("data-dait-confirm-open");
+        });
+      }
+      // Reset dialog: says what returns to defaults and offers "keep API keys, key pool and templates" (ticked by
+      // default). The checkbox needs BdApi.React; without it the plain confirmation always keeps them.
+      async openResetSettingsDialog(options = {}) {
+        const bdApi = globalThis.BdApi;
+        const choice = { keepCredentials: true };
+        const canUseCheckbox = typeof bdApi?.React?.createElement === "function" && typeof bdApi?.UI?.showConfirmationModal === "function";
+        const confirmed = await this.confirmAction({
+          title: this.t("resetDialogTitle"),
+          ...canUseCheckbox ? { content: this.createResetDialogContent(bdApi.React, choice) } : { body: this.t("resetConfirm") },
+          confirmText: this.t("reset"),
+          danger: true
+        });
+        if (!confirmed) return false;
+        const keepCredentials = canUseCheckbox ? choice.keepCredentials !== false : true;
+        this.resetSettingsToDefaults({ keepCredentials });
+        this.refreshOpenSettingsPanels(options.panel || null);
+        return true;
+      }
+      createResetDialogContent(React, choice) {
+        const h = React.createElement;
+        const checkboxId = `dait-reset-keep-${Date.now().toString(36)}`;
+        const lead = this.t("resetDialogLead");
+        const items = ["resetDialogItemSettings", "resetDialogItemChannelRules", "resetDialogItemDisplay"].map((key) => this.t(key));
+        const credentials = this.t("resetDialogItemCredentials");
+        const credentialsNote = this.t("resetDialogItemCredentialsNote");
+        const keepLabel = this.t("resetKeepCredentials");
+        const useState = typeof React.useState === "function" ? React.useState : null;
+        const themeProps = this.getDialogPanelThemeProps();
+        const ResetDialogBody = () => {
+          const [keep, setKeep] = useState ? useState(choice.keepCredentials) : [choice.keepCredentials, null];
+          const onChange = (event) => {
+            choice.keepCredentials = Boolean(event?.target?.checked);
+            if (setKeep) setKeep(choice.keepCredentials);
+          };
+          return h(
+            "div",
+            { className: "dait-dialog", ...themeProps },
+            h("p", { className: "dait-dialog-text" }, lead),
+            h(
+              "ul",
+              { className: "dait-dialog-list" },
+              ...items.map((text, index) => h("li", { key: `i${index}` }, text)),
+              h(
+                "li",
+                { key: "credentials", className: `dait-dialog-list-conditional${keep ? "" : " dait-dialog-list-erased"}` },
+                credentials,
+                h("span", { className: "dait-dialog-note" }, credentialsNote)
+              )
+            ),
+            h(
+              "label",
+              { className: "dait-dialog-check", htmlFor: checkboxId },
+              h("input", setKeep ? { id: checkboxId, type: "checkbox", checked: keep, onChange } : { id: checkboxId, type: "checkbox", defaultChecked: true, onChange }),
+              h("span", null, keepLabel)
+            )
+          );
+        };
+        return h(ResetDialogBody);
+      }
+      // Rebuilds every open settings panel (BetterDiscord's plugin settings and the settings window) so they
+      // show the values after a reset. Each one opens on the tab it showed, and the stored tab is the one of the
+      // panel the reset came from, whose new reset button takes the focus.
+      refreshOpenSettingsPanels(sourcePanel = null) {
+        if (typeof document === "undefined") return 0;
+        const panels = /* @__PURE__ */ new Set();
+        if (sourcePanel) panels.add(sourcePanel);
+        document.querySelectorAll?.(".dait-settings")?.forEach((panel) => panels.add(panel));
+        const sourceTab = sourcePanel?.__daitSettingsUi?.activeTab;
+        let replaced = 0;
+        let rebuiltSource = null;
+        panels.forEach((panel) => {
+          if (!panel || panel.isConnected === false) return;
+          const quickSettings = Boolean(panel.closest?.(".dait-quick-settings-modal-root"));
+          const activeTab = panel.__daitSettingsUi?.activeTab;
+          if (activeTab && this.settings?.ui) this.settings.ui.settingsActiveTab = activeTab;
+          const next = this.replaceSettingsPanelElement(panel, this.getSettingsPanel({ quickSettings }));
+          if (!next) return;
+          replaced++;
+          if (panel === sourcePanel) rebuiltSource = next;
+        });
+        if (sourceTab && this.settings?.ui) this.settings.ui.settingsActiveTab = sourceTab;
+        if (rebuiltSource) this.focusSettingsResetControl(rebuiltSource);
+        return replaced;
+      }
+      // The focused reset button left with the old panel. BetterDiscord's dialog hands the focus back to it once it
+      // has finished closing, which leaves the focus nowhere, so the new button is focused again then.
+      focusSettingsResetControl(panel) {
+        const target = () => {
+          const button = panel?.querySelector?.("[data-dait-action='resetSettings']");
+          if (button && !button.closest?.("[hidden]")) return button;
+          const state = panel?.__daitSettingsUi;
+          return state?.tabs?.find((tab) => tab.id === state.activeTab)?.button || null;
+        };
+        this.focusSettingsElement(target());
+        if (typeof setTimeout !== "function") return;
+        [300, 1e3].forEach((delay) => this.unrefTimer(setTimeout(() => {
+          if (!panel?.isConnected || typeof document === "undefined") return;
+          const active = document.activeElement;
+          if (!active || active === document.body || active.isConnected === false) this.focusSettingsElement(target());
+        }, delay)));
       }
       injectStyles() {
         const css = PLUGIN_CSS;
@@ -25397,6 +33660,27 @@ var require_discord_ai_translator = __commonJS({
       }
       saveData(...args) {
         return this.settingsStore.saveData(...args);
+      }
+      getDataStoreName(...args) {
+        return this.settingsStore.getDataStoreName(...args);
+      }
+      migrateLegacyDataStores(...args) {
+        return this.settingsStore.migrateLegacyDataStores(...args);
+      }
+      migrateLegacyDataStoreKey(...args) {
+        return this.settingsStore.migrateLegacyDataStoreKey(...args);
+      }
+      mergeLegacyDataPayload(...args) {
+        return this.settingsStore.mergeLegacyDataPayload(...args);
+      }
+      resetSettingsToDefaults(...args) {
+        return this.settingsStore.resetSettingsToDefaults(...args);
+      }
+      applySettingsResetEffects(...args) {
+        return this.settingsStore.applySettingsResetEffects(...args);
+      }
+      syncAllSettingControls(...args) {
+        return this.settingsStore.syncAllSettingControls(...args);
       }
       recordDataIoFailure(...args) {
         return this.settingsStore.recordDataIoFailure(...args);
@@ -25507,6 +33791,12 @@ var require_discord_ai_translator = __commonJS({
       setCachedLocalProviderDetectedModel(...args) {
         return this.providerLayer.setCachedLocalProviderDetectedModel(...args);
       }
+      getPersistableLocalProviderDetectedModels(...args) {
+        return this.providerLayer.getPersistableLocalProviderDetectedModels(...args);
+      }
+      restoreLocalProviderDetectedModels(...args) {
+        return this.providerLayer.restoreLocalProviderDetectedModels(...args);
+      }
       getEffectiveChatCompletionModel(...args) {
         return this.providerLayer.getEffectiveChatCompletionModel(...args);
       }
@@ -25521,6 +33811,12 @@ var require_discord_ai_translator = __commonJS({
       }
       parseLocalProviderModelsResponse(...args) {
         return this.providerLayer.parseLocalProviderModelsResponse(...args);
+      }
+      detectProviderModels(...args) {
+        return this.providerLayer.detectProviderModels(...args);
+      }
+      isModelDetectionProvider(...args) {
+        return this.providerLayer.isModelDetectionProvider(...args);
       }
       normalizeLocalProviderModelId(...args) {
         return this.providerLayer.normalizeLocalProviderModelId(...args);
@@ -25558,8 +33854,29 @@ var require_discord_ai_translator = __commonJS({
       createGoogleTranslateNoKeyError(...args) {
         return this.providerLayer.createGoogleTranslateNoKeyError(...args);
       }
+      getGoogleTranslateCoolingKeyReadyAt(...args) {
+        return this.providerLayer.getGoogleTranslateCoolingKeyReadyAt(...args);
+      }
+      createGoogleTranslateCooldownError(...args) {
+        return this.providerLayer.createGoogleTranslateCooldownError(...args);
+      }
+      formatGoogleTranslateCooldownMessage(...args) {
+        return this.providerLayer.formatGoogleTranslateCooldownMessage(...args);
+      }
+      formatGoogleTranslateKeyError(...args) {
+        return this.providerLayer.formatGoogleTranslateKeyError(...args);
+      }
+      getGoogleTranslateKeyDisplayLabel(...args) {
+        return this.providerLayer.getGoogleTranslateKeyDisplayLabel(...args);
+      }
+      isGoogleTranslatePoolServing(...args) {
+        return this.providerLayer.isGoogleTranslatePoolServing(...args);
+      }
       getGoogleTranslateQuotaRetryAfterMs(...args) {
         return this.providerLayer.getGoogleTranslateQuotaRetryAfterMs(...args);
+      }
+      getGoogleTranslateDailyQuotaRetryAfterMs(...args) {
+        return this.providerLayer.getGoogleTranslateDailyQuotaRetryAfterMs(...args);
       }
       releaseGoogleTranslateRequestReservation(...args) {
         return this.providerLayer.releaseGoogleTranslateRequestReservation(...args);
@@ -25591,6 +33908,9 @@ var require_discord_ai_translator = __commonJS({
       getGoogleLanguageCode(...args) {
         return this.providerLayer.getGoogleLanguageCode(...args);
       }
+      getTargetLanguageCode(...args) {
+        return this.providerLayer.getTargetLanguageCode(...args);
+      }
       getEffectiveRequestApiKey(...args) {
         return this.providerLayer.getEffectiveRequestApiKey(...args);
       }
@@ -25601,10 +33921,16 @@ var require_discord_ai_translator = __commonJS({
         return this.providerLayer.hasUsableApiConfig(...args);
       }
       setApiStatus(...args) {
-        return this.providerLayer.setApiStatus(...args);
+        const result = this.providerLayer.setApiStatus(...args);
+        this.quickPanel?.noteApiStatus?.(args[4] ?? args[0]?.dataset?.daitKind, args[1]);
+        this.quickPanel?.requestStatusUpdate();
+        return result;
       }
       setApiRuntimeStatus(...args) {
-        return this.providerLayer.setApiRuntimeStatus(...args);
+        const result = this.providerLayer.setApiRuntimeStatus(...args);
+        this.quickPanel?.noteApiStatus?.(args[0], args[1]);
+        this.quickPanel?.requestStatusUpdate();
+        return result;
       }
       markLocalProviderHealthy(...args) {
         return this.providerLayer.markLocalProviderHealthy(...args);
@@ -25626,6 +33952,25 @@ var require_discord_ai_translator = __commonJS({
       }
       getApiStatus(...args) {
         return this.providerLayer.getApiStatus(...args);
+      }
+      // Contract (settings + quick panel): { ok, model, latencyMs, at, message } of the last connection test, or null.
+      getLastApiTestResult(...args) {
+        return this.providerLayer.getLastApiTestResult(...args);
+      }
+      recordApiTestResult(...args) {
+        return this.providerLayer.recordApiTestResult(...args);
+      }
+      clearLastApiTestResult(...args) {
+        return this.providerLayer.clearLastApiTestResult(...args);
+      }
+      isApiTestRunning(...args) {
+        return this.providerLayer.isApiTestRunning(...args);
+      }
+      getReportedResponseModel(...args) {
+        return this.providerLayer.getReportedResponseModel(...args);
+      }
+      getApiTestModel(...args) {
+        return this.providerLayer.getApiTestModel(...args);
       }
       getProviderFallbackOrder(...args) {
         return this.providerLayer.getProviderFallbackOrder(...args);
@@ -25654,6 +33999,9 @@ var require_discord_ai_translator = __commonJS({
       normalizeGoogleTranslateKeyPool(...args) {
         return this.providerLayer.normalizeGoogleTranslateKeyPool(...args);
       }
+      getGoogleTranslateUsageLedger(...args) {
+        return this.providerLayer.getGoogleTranslateUsageLedger(...args);
+      }
       getAutoTranslationProviderKey(...args) {
         return this.providerLayer.getAutoTranslationProviderKey(...args);
       }
@@ -25664,7 +34012,9 @@ var require_discord_ai_translator = __commonJS({
         return this.providerLayer.runModelTask(...args);
       }
       runModelTaskWithResult(...args) {
-        return this.providerLayer.runModelTaskWithResult(...args);
+        const result = this.providerLayer.runModelTaskWithResult(...args);
+        this.quickPanel?.watchRequestResult?.(args[0], args[2], result);
+        return result;
       }
       adoptSharedModelResult(...args) {
         return this.providerLayer.adoptSharedModelResult(...args);
@@ -25707,6 +34057,9 @@ var require_discord_ai_translator = __commonJS({
       }
       annotateGoogleTranslateApiError(...args) {
         return this.providerLayer.annotateGoogleTranslateApiError(...args);
+      }
+      annotateChatCompletionApiError(...args) {
+        return this.providerLayer.annotateChatCompletionApiError(...args);
       }
       getModelRequestKey(...args) {
         return this.providerLayer.getModelRequestKey(...args);
@@ -25868,6 +34221,15 @@ var require_discord_ai_translator = __commonJS({
       buildTranslationCacheKey(...args) {
         return this.translationCacheStore.buildTranslationCacheKey(...args);
       }
+      getServedModelTranslationCacheKey(...args) {
+        return this.translationCacheStore.getServedModelTranslationCacheKey(...args);
+      }
+      hasLegacyTranslationCacheEntries(...args) {
+        return this.translationCacheStore.hasLegacyTranslationCacheEntries(...args);
+      }
+      rememberPreEmojiSourceText(...args) {
+        return this.translationCacheStore.rememberPreEmojiSourceText(...args);
+      }
       getCompactTranslationCacheConfigParts(...args) {
         return this.translationCacheStore.getCompactTranslationCacheConfigParts(...args);
       }
@@ -25921,6 +34283,12 @@ var require_discord_ai_translator = __commonJS({
       }
       createPersistedTranslationCachePayload(...args) {
         return this.translationCacheStore.createPersistedTranslationCachePayload(...args);
+      }
+      mergePersistedTranslationCachePayloads(...args) {
+        return this.translationCacheStore.mergePersistedTranslationCachePayloads(...args);
+      }
+      getTranslationCacheMessageCount(...args) {
+        return this.translationCacheStore.getTranslationCacheMessageCount(...args);
       }
       scheduleTranslationCachePersist(...args) {
         return this.translationCacheStore.scheduleTranslationCachePersist(...args);
@@ -26077,6 +34445,9 @@ var require_discord_ai_translator = __commonJS({
       createPersistedDiagnosticLogsPayload(...args) {
         return this.diagnosticsRecorder.createPersistedDiagnosticLogsPayload(...args);
       }
+      mergePersistedDiagnosticLogsPayloads(...args) {
+        return this.diagnosticsRecorder.mergePersistedDiagnosticLogsPayloads(...args);
+      }
       scheduleDiagnosticLogsPersist(...args) {
         return this.diagnosticsRecorder.scheduleDiagnosticLogsPersist(...args);
       }
@@ -26097,7 +34468,9 @@ var require_discord_ai_translator = __commonJS({
         return this.autoQueueCore.shouldInvalidateAutoTranslationForSetting(...args);
       }
       invalidateAutoTranslationQueue(...args) {
-        return this.autoQueueCore.invalidateAutoTranslationQueue(...args);
+        const result = this.autoQueueCore.invalidateAutoTranslationQueue(...args);
+        this.quickPanel?.requestStatusUpdate();
+        return result;
       }
       getAutoTranslationQueueSnapshot(...args) {
         return this.autoQueueCore.getAutoTranslationQueueSnapshot(...args);
@@ -26136,7 +34509,9 @@ var require_discord_ai_translator = __commonJS({
         return this.autoQueueCore.getLastAutoTranslationDecisionsSnapshot(...args);
       }
       clearAutoTranslationProviderFailureForCurrentConfig(...args) {
-        return this.autoQueueCore.clearAutoTranslationProviderFailureForCurrentConfig(...args);
+        const result = this.autoQueueCore.clearAutoTranslationProviderFailureForCurrentConfig(...args);
+        if ((args[0] ?? "translation") === "translation") this.quickPanel?.clearConfigError?.();
+        return result;
       }
       releaseProviderBlockedAutoTranslationItems(...args) {
         return this.autoQueueCore.releaseProviderBlockedAutoTranslationItems(...args);
@@ -26193,7 +34568,9 @@ var require_discord_ai_translator = __commonJS({
         return this.autoQueueCore.pruneAutoTranslationQueue(...args);
       }
       drainAutoTranslationQueue(...args) {
-        return this.autoQueueCore.drainAutoTranslationQueue(...args);
+        const result = this.autoQueueCore.drainAutoTranslationQueue(...args);
+        this.quickPanel?.requestStatusUpdate();
+        return result;
       }
       retainProviderBlockedVisibleAutoTranslationBatch(...args) {
         return this.autoQueueCore.retainProviderBlockedVisibleAutoTranslationBatch(...args);
@@ -26321,6 +34698,12 @@ var require_discord_ai_translator = __commonJS({
       isCurrentChannelAutoTranslateAllowed(...args) {
         return this.autoQueueCore.isCurrentChannelAutoTranslateAllowed(...args);
       }
+      getChannelAutoTranslateAllowListCount(...args) {
+        return this.autoQueueCore.getChannelAutoTranslateAllowListCount(...args);
+      }
+      refreshChannelRuleControls(...args) {
+        return this.autoQueueCore.refreshChannelRuleControls(...args);
+      }
       isAutoTranslationRequestCurrent(...args) {
         return this.autoQueueCore.isAutoTranslationRequestCurrent(...args);
       }
@@ -26336,6 +34719,12 @@ var require_discord_ai_translator = __commonJS({
       autoTranslateQueuedBatch(...args) {
         return this.autoQueueCore.autoTranslateQueuedBatch(...args);
       }
+      settleFailedAutoTranslationBatchRequest(...args) {
+        return this.autoQueueCore.settleFailedAutoTranslationBatchRequest(...args);
+      }
+      isAutoTranslationBatchFormatError(...args) {
+        return this.autoQueueCore.isAutoTranslationBatchFormatError(...args);
+      }
       requeueAutoTranslationItem(...args) {
         return this.autoQueueCore.requeueAutoTranslationItem(...args);
       }
@@ -26344,6 +34733,9 @@ var require_discord_ai_translator = __commonJS({
       }
       hasActiveAutoTranslationKey(...args) {
         return this.autoQueueCore.hasActiveAutoTranslationKey(...args);
+      }
+      resolveActiveAutoTranslationKey(...args) {
+        return this.autoQueueCore.resolveActiveAutoTranslationKey(...args);
       }
       pruneAutoTranslationActiveState(...args) {
         return this.autoQueueCore.pruneAutoTranslationActiveState(...args);
@@ -26362,6 +34754,27 @@ var require_discord_ai_translator = __commonJS({
       }
       pruneRecentAutoTranslationRenders(...args) {
         return this.autoQueueCore.pruneRecentAutoTranslationRenders(...args);
+      }
+      rememberAutoTranslationPartialResult(...args) {
+        return this.autoQueueCore.rememberAutoTranslationPartialResult(...args);
+      }
+      getAutoTranslationPartialResult(...args) {
+        return this.autoQueueCore.getAutoTranslationPartialResult(...args);
+      }
+      touchAutoTranslationPartialResult(...args) {
+        return this.autoQueueCore.touchAutoTranslationPartialResult(...args);
+      }
+      clearAutoTranslationPartialResult(...args) {
+        return this.autoQueueCore.clearAutoTranslationPartialResult(...args);
+      }
+      pruneAutoTranslationPartialResults(...args) {
+        return this.autoQueueCore.pruneAutoTranslationPartialResults(...args);
+      }
+      getAutoTranslationAbortSignal(...args) {
+        return this.autoQueueCore.getAutoTranslationAbortSignal(...args);
+      }
+      abortAutoTranslationRequests(...args) {
+        return this.autoQueueCore.abortAutoTranslationRequests(...args);
       }
       createAutoTranslationInFlightToken(...args) {
         return this.autoQueueCore.createAutoTranslationInFlightToken(...args);
@@ -26438,6 +34851,9 @@ var require_discord_ai_translator = __commonJS({
       markAutoTranslationFailure(...args) {
         return this.autoQueueCore.markAutoTranslationFailure(...args);
       }
+      markAutoTranslationUndrawableResult(...args) {
+        return this.autoQueueCore.markAutoTranslationUndrawableResult(...args);
+      }
       getAutoTranslationStorageErrorForItem(...args) {
         return this.autoQueueCore.getAutoTranslationStorageErrorForItem(...args);
       }
@@ -26454,13 +34870,19 @@ var require_discord_ai_translator = __commonJS({
         return this.autoQueueCore.isProviderWideAutoTranslationPrefetchFailure(...args);
       }
       markAutoTranslationProviderFailure(...args) {
-        return this.autoQueueCore.markAutoTranslationProviderFailure(...args);
+        const result = this.autoQueueCore.markAutoTranslationProviderFailure(...args);
+        this.quickPanel?.noteRequestFailure?.(args[0], args[1]);
+        this.quickPanel?.requestStatusUpdate();
+        return result;
       }
       getAutoTranslationProviderFailure(...args) {
         return this.autoQueueCore.getAutoTranslationProviderFailure(...args);
       }
       isAutoTranslationProviderCoolingDown(...args) {
         return this.autoQueueCore.isAutoTranslationProviderCoolingDown(...args);
+      }
+      getNextAutoTranslationFailureCount(...args) {
+        return this.autoQueueCore.getNextAutoTranslationFailureCount(...args);
       }
       createAutoTranslationFailure(...args) {
         return this.autoQueueCore.createAutoTranslationFailure(...args);
@@ -26619,6 +35041,12 @@ var require_discord_ai_translator = __commonJS({
       runLongAutoTranslationTask(...args) {
         return this.autoRequestPipeline.runLongAutoTranslationTask(...args);
       }
+      shouldStopLongAutoTranslationOnChunkError(...args) {
+        return this.autoRequestPipeline.shouldStopLongAutoTranslationOnChunkError(...args);
+      }
+      shouldKeepLongAutoTranslationChunksOnError(...args) {
+        return this.autoRequestPipeline.shouldKeepLongAutoTranslationChunksOnError(...args);
+      }
       runLongAutoTranslationChunkManualRescue(...args) {
         return this.autoRequestPipeline.runLongAutoTranslationChunkManualRescue(...args);
       }
@@ -26667,8 +35095,29 @@ var require_discord_ai_translator = __commonJS({
       runAutoTranslationTaskWithOptions(...args) {
         return this.autoRequestPipeline.runAutoTranslationTaskWithOptions(...args);
       }
+      runTruncatedAutoTranslationRetry(...args) {
+        return this.autoRequestPipeline.runTruncatedAutoTranslationRetry(...args);
+      }
+      createAutoTranslationRequestBudget(...args) {
+        return this.autoRequestPipeline.createAutoTranslationRequestBudget(...args);
+      }
+      getManualTranslationRequestBudgetLimit(...args) {
+        return this.autoRequestPipeline.getManualTranslationRequestBudgetLimit(...args);
+      }
+      consumeAutoTranslationRequestBudget(...args) {
+        return this.autoRequestPipeline.consumeAutoTranslationRequestBudget(...args);
+      }
+      isAutoTranslationRequestBudgetExhausted(...args) {
+        return this.autoRequestPipeline.isAutoTranslationRequestBudgetExhausted(...args);
+      }
+      isAutoTranslationRequestBudgetError(...args) {
+        return this.autoRequestPipeline.isAutoTranslationRequestBudgetError(...args);
+      }
       shouldRunLocalAutoTranslationRepairRetry(...args) {
         return this.autoRequestPipeline.shouldRunLocalAutoTranslationRepairRetry(...args);
+      }
+      getTruncatedAutoTranslationRetryTimeoutMs(...args) {
+        return this.autoRequestPipeline.getTruncatedAutoTranslationRetryTimeoutMs(...args);
       }
       getAutoTranslationRequestTimeoutMs(...args) {
         return this.autoRequestPipeline.getAutoTranslationRequestTimeoutMs(...args);

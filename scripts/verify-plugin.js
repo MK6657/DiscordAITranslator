@@ -217,7 +217,8 @@ assert.equal(startIdempotencePlugin.start(), false);
 assert.equal(startIdempotenceObserverStarts, 1);
 assert.equal(startIdempotencePatches, 1);
 assert.equal(startIdempotenceDocumentListeners, 2);
-assert.equal(startIdempotenceWindowListeners, 3);
+// scroll, resize, focus, plus pagehide and beforeunload (save pending data on reload or quit).
+assert.equal(startIdempotenceWindowListeners, 5);
 if (savedDocumentForStartIdempotence === undefined) delete global.document;
 else global.document = savedDocumentForStartIdempotence;
 if (savedWindowForStartIdempotence === undefined) delete global.window;
@@ -226,8 +227,8 @@ assert.equal(plugin.t("polishBusy").includes("..."), false);
 plugin.settings.interfaceLanguage = "en";
 assert.equal(plugin.t("polishBusy").includes("..."), false);
 plugin.settings.interfaceLanguage = "zh-CN";
-assert.equal(plugin.getSettingsNavItems().length, 10);
-assert.equal(plugin.getSettingsNavItems()[0].id, "general");
+assert.deepEqual(plugin.getSettingsNavItems().map(item => item.id), ["overview", "translate", "compose", "display", "advanced", "data"]);
+assert.deepEqual(plugin.getSettingsNavItems().map(item => item.label), ["概览", "翻译消息", "输入框工具", "显示", "高级", "数据与诊断"]);
 assert.equal(plugin.getProviderOptionsForTask("polish").some(([provider]) => provider === "googleCloud"), false);
 assert.equal(plugin.getProviderOptionsForTask("translation").some(([provider]) => provider === "googleCloud"), true);
 assert.equal(plugin.getProviderOptionsForTask("translation").some(([provider]) => provider === "microsoft"), true);
@@ -614,6 +615,8 @@ global.setTimeout = callback => {
     return quickOpenCallbacks.length;
 };
 global.clearTimeout = id => quickOpenCleared.push(id);
+// The launcher's timer opens the quick panel (which can then open the full settings window).
+quickOpenTimerPlugin.toggleQuickPopover = () => { quickOpenCount++; };
 quickOpenTimerPlugin.openQuickSettingsPanel = () => { quickOpenCount++; };
 quickOpenTimerPlugin.handleQuickSettingsButtonEvent({
     type: "click",
@@ -704,125 +707,132 @@ assert.equal(panelQuickSettings.dataset.daitDiscordTheme, "light");
 quickSettingsPlugin.injectQuickSettingsButtons();
 assert.equal(quickSettingsButtonQueryCount, 1);
 global.document.activeElement = discordSettingsButton;
+// The launcher carries a status badge and says what the translator is doing.
+assert.ok(panelQuickSettings.children.some(child => fakeElementHasClass(child, "dait-launcher-status")));
+assert.ok(["ok", "busy", "waiting", "needs-you", "off"].includes(panelQuickSettings.dataset.daitStatus));
+assert.match(panelQuickSettings.getAttribute("aria-label"), /^AI 翻译助手：/);
 panelQuickSettings.listeners.pointerup({ currentTarget: panelQuickSettings, preventDefault() {}, stopPropagation() {}, stopImmediatePropagation() {} });
+// v0.4.0: the launcher opens the compact quick panel, not the full settings window.
+const launcherQuickPopover = findByClass("dait-quick-popover");
+assert.ok(launcherQuickPopover);
+assert.equal(findByClass("dait-quick-settings-modal-root"), null);
+assert.equal(launcherQuickPopover.parentElement, quickSettingsBody);
+assert.equal(launcherQuickPopover.getAttribute("role"), "dialog");
+// The quick panel is a plugin window: Discord's light theme gives it the light panel palette, and none of Discord's
+// variables are copied onto it (the launcher itself, inside Discord's user panel, still follows Discord).
+assert.equal(launcherQuickPopover.dataset.daitPanelTheme, "light");
+assert.equal(launcherQuickPopover.dataset.daitDiscordTheme, undefined);
+assert.equal(launcherQuickPopover.style.getPropertyValue("--text-normal"), "");
+assert.equal(panelQuickSettings.getAttribute("aria-expanded"), "true");
+assert.equal(fakeElementHasClass(panelQuickSettings, "dait-quick-settings-button-active"), true);
+assert.equal(findByClass("dait-qp-header-open-full").focused, true);
+assert.equal(quickSettingsDocumentListeners.has("keydown"), true);
+assert.equal(quickSettingsDocumentListeners.has("pointerdown"), true);
+// Its "open full settings" opens the full settings window from the launcher.
+findByClass("dait-qp-footer-open-full").listeners.click({ preventDefault() {}, stopPropagation() {} });
+assert.equal(launcherQuickPopover.removed, true);
+assert.equal(quickSettingsDocumentListeners.has("pointerdown"), false);
 const quickSettingsRoot = findByClass("dait-quick-settings-modal-root");
 assert.ok(quickSettingsRoot);
 assert.equal(panelQuickSettings.getAttribute("aria-expanded"), "true");
 assert.equal(fakeElementHasClass(panelQuickSettings, "dait-quick-settings-button-active"), true);
-assert.equal(quickSettingsRoot.dataset.daitQuickSettingsSource, "panel");
-assert.equal(fakeElementHasClass(quickSettingsRoot, "theme-light"), true);
-assert.equal(quickSettingsRoot.dataset.daitDiscordTheme, "light");
+assert.equal(quickSettingsRoot.dataset.daitQuickSettingsSource, "quick-panel");
+assert.equal(quickSettingsRoot.dataset.daitPanelTheme, "light");
+assert.equal(fakeElementHasClass(quickSettingsRoot, "theme-light"), false);
+assert.equal(quickSettingsRoot.dataset.daitDiscordTheme, undefined);
 const quickSettingsDialog = findByClass("dait-quick-settings-dialog");
 assert.ok(quickSettingsDialog);
 assert.equal(quickSettingsDialog.parentElement, quickSettingsRoot);
 assert.equal(quickSettingsRoot.children.includes(quickSettingsDialog), true);
-assert.equal(fakeElementHasClass(quickSettingsDialog, "theme-light"), true);
-assert.equal(quickSettingsDialog.dataset.daitDiscordTheme, "light");
+// The window's frame, backdrop and body inherit the palette from the root.
+assert.equal(fakeElementHasClass(quickSettingsDialog, "theme-light"), false);
+assert.equal(quickSettingsDialog.dataset.daitDiscordTheme, undefined);
 const quickSettingsBackdrop = findByClass("dait-quick-settings-backdrop");
-const quickSettingsHeader = findByClass("dait-quick-settings-header");
-const quickSettingsTitle = findByClass("dait-quick-settings-title");
 const quickSettingsBodyNode = findByClass("dait-quick-settings-body");
-const quickSettingsFooter = findByClass("dait-quick-settings-footer");
-const quickSettingsDone = findByClass("dait-quick-settings-done");
-const quickSettingsClose = findByClass("dait-quick-settings-close");
-assert.ok(quickSettingsHeader);
-assert.ok(quickSettingsTitle);
+// v0.4.0: one title bar. The window has no header or footer of its own; the tabbed panel fills it and shows the
+// title and the only close button.
+assert.equal(findByClass("dait-quick-settings-header"), null);
+assert.equal(findByClass("dait-quick-settings-footer"), null);
+assert.equal(findByClass("dait-quick-settings-done"), null);
+const quickSettingsTitle = findByClass("dait-settings-title");
+const quickSettingsClose = findByClass("dait-settings-close");
 assert.ok(quickSettingsBodyNode);
-assert.ok(quickSettingsFooter);
-assert.ok(quickSettingsDone);
+assert.ok(quickSettingsTitle);
 assert.ok(quickSettingsClose);
-assert.equal(fakeElementHasClass(quickSettingsBackdrop, "theme-light"), true);
-assert.equal(quickSettingsBackdrop.dataset.daitDiscordTheme, "light");
-assert.equal(fakeElementHasClass(quickSettingsHeader, "theme-light"), true);
-assert.equal(quickSettingsHeader.dataset.daitDiscordTheme, "light");
-assert.equal(fakeElementHasClass(quickSettingsBodyNode, "theme-light"), true);
-assert.equal(quickSettingsBodyNode.dataset.daitDiscordTheme, "light");
-assert.equal(fakeElementHasClass(quickSettingsFooter, "theme-light"), true);
-assert.equal(quickSettingsFooter.dataset.daitDiscordTheme, "light");
-assert.equal(fakeElementHasClass(quickSettingsDone, "theme-light"), true);
-assert.equal(quickSettingsDone.dataset.daitDiscordTheme, "light");
-assert.equal(fakeElementHasClass(quickSettingsClose, "theme-light"), true);
-assert.equal(quickSettingsClose.dataset.daitDiscordTheme, "light");
-assert.equal(quickSettingsRoot.style.getPropertyValue("--text-normal"), "#243040");
-assert.equal(quickSettingsDialog.style.getPropertyValue("--bg-base-primary"), "#fbfcff");
-assert.equal(quickSettingsFooter.style.getPropertyValue("--modal-footer-background"), "#eef1f6");
-assert.equal(quickSettingsHeader.style.getPropertyValue("--elevation-high"), "0 16px 40px rgba(24, 36, 61, 0.16)");
+assert.equal(findAllByClass("dait-settings-title").length, 1);
+assert.equal(findAllByClass("dait-settings-close").length, 1);
+assert.equal(quickSettingsBackdrop.dataset.daitDiscordTheme, undefined);
+assert.equal(quickSettingsBodyNode.dataset.daitDiscordTheme, undefined);
+// v0.4.0 theme follow-up: Discord's variables are no longer copied inline onto the window (mixing variables from
+// differently themed parts of Discord drew dark inputs on a light window); the panel palette is complete.
+assert.equal(quickSettingsRoot.style.getPropertyValue("--text-normal"), "");
+assert.equal(quickSettingsDialog.style.getPropertyValue("--bg-base-primary"), "");
+assert.equal(quickSettingsBodyNode.style.getPropertyValue("--modal-footer-background"), "");
+assert.equal(quickSettingsBodyNode.style.getPropertyValue("--elevation-high"), "");
 assert.equal(quickSettingsTitle.textContent, quickSettingsPlugin.t("settingsTitle"));
+assert.equal(quickSettingsDialog.getAttribute("aria-label"), quickSettingsPlugin.t("settingsTitle"));
 assert.equal(quickSettingsDialog.dataset.daitSettingsModal, undefined);
 assert.equal(quickSettingsClose.focused, true);
-assert.equal(quickSettingsHeader.parentElement, quickSettingsDialog);
 assert.equal(quickSettingsBodyNode.parentElement, quickSettingsDialog);
-assert.equal(quickSettingsFooter.parentElement, quickSettingsDialog);
-assert.equal(quickSettingsDone.textContent, "完成");
+assert.equal(quickSettingsDialog.children.length, 1);
+assert.equal(quickSettingsDialog.children[0], quickSettingsBodyNode);
 const quickSettingsSettingsPanel = findByClass("dait-settings");
 assert.ok(quickSettingsSettingsPanel);
-assert.equal(fakeElementHasClass(quickSettingsSettingsPanel, "theme-light"), true);
-assert.equal(quickSettingsSettingsPanel.dataset.daitDiscordTheme, "light");
-assert.equal(quickSettingsSettingsPanel.style.getPropertyValue("--background-surface-high"), "#f1f3f8");
+assert.equal(quickSettingsSettingsPanel.dataset.daitPanelTheme, "light");
+assert.equal(quickSettingsSettingsPanel.dataset.daitDiscordTheme, undefined);
+assert.equal(quickSettingsSettingsPanel.style.getPropertyValue("--background-surface-high"), "");
 assert.ok(quickSettingsPlugin.quickSettingsDiagnosticLogs.some(entry => entry.action === "quick.settings.dom.attach" && entry.status === "success"));
-const settingsScrollPlugin = new Plugin();
-const settingsScrollCreated = [];
-const settingsScrollPanel = createFakeElement("div", settingsScrollCreated);
-settingsScrollPanel.className = "dait-settings";
-const settingsScrollNavGeneral = createFakeElement("button", settingsScrollCreated);
-settingsScrollNavGeneral.className = "dait-settings-nav-button";
-settingsScrollNavGeneral.dataset.daitSettingsAnchor = "general";
-const settingsScrollNavDisplay = createFakeElement("button", settingsScrollCreated);
-settingsScrollNavDisplay.className = "dait-settings-nav-button";
-settingsScrollNavDisplay.dataset.daitSettingsAnchor = "display";
-const settingsScrollSectionGeneral = createFakeElement("section", settingsScrollCreated);
-settingsScrollSectionGeneral.className = "dait-settings-section";
-settingsScrollSectionGeneral.dataset.daitSettingsSection = "general";
-settingsScrollSectionGeneral.getBoundingClientRect = () => ({ top: -120 });
-const settingsScrollSectionDisplay = createFakeElement("section", settingsScrollCreated);
-settingsScrollSectionDisplay.className = "dait-settings-section";
-settingsScrollSectionDisplay.dataset.daitSettingsSection = "display";
-settingsScrollSectionDisplay.getBoundingClientRect = () => ({ top: 112 });
-settingsScrollPanel.appendChild(settingsScrollNavGeneral);
-settingsScrollPanel.appendChild(settingsScrollNavDisplay);
-settingsScrollPanel.appendChild(settingsScrollSectionGeneral);
-settingsScrollPanel.appendChild(settingsScrollSectionDisplay);
-const settingsScrollScroller = createFakeElement("div", settingsScrollCreated);
-settingsScrollScroller.getBoundingClientRect = () => ({ top: 100 });
-let settingsScrollSaved = 0;
-settingsScrollPlugin.saveSettings = () => { settingsScrollSaved++; return true; };
-settingsScrollPlugin.settings.ui.settingsActiveTab = "display";
-settingsScrollPlugin.bindSettingsScrollTracking(settingsScrollPanel, settingsScrollScroller);
-assert.deepEqual(settingsScrollSectionDisplay.scrolledIntoView, { block: "start", behavior: "auto" });
-let settingsScrollDomWrites = 0;
-const countSettingsScrollWrites = element => {
-    const originalToggle = element.classList.toggle;
-    element.classList.toggle = (...args) => {
-        settingsScrollDomWrites++;
-        return originalToggle(...args);
-    };
-    const originalSetAttribute = element.setAttribute;
-    element.setAttribute = function(...args) {
-        settingsScrollDomWrites++;
-        return originalSetAttribute.apply(this, args);
-    };
+// Settings tabs: one page shown at a time; a click or the arrow keys switch pages and save the tab (UI-SPEC Q4).
+const settingsTabsPlugin = new Plugin();
+const settingsTabsCreated = [];
+const savedDocumentForSettingsTabsUi = global.document;
+global.document = { createElement: tag => createFakeElement(tag, settingsTabsCreated) };
+let settingsTabsSaves = 0;
+settingsTabsPlugin.saveSettings = () => { settingsTabsSaves++; return true; };
+// A v0.3.0 scroll-spy section id opens the tab that now holds it.
+settingsTabsPlugin.settings.ui.settingsActiveTab = "autoTranslate";
+const settingsTabsPanel = settingsTabsPlugin.getSettingsPanel({ quickSettings: true });
+const settingsTabButtons = settingsTabsCreated.filter(element => element.getAttribute?.("role") === "tab");
+const settingsTabPanels = settingsTabsCreated.filter(element => element.getAttribute?.("role") === "tabpanel");
+const settingsTablist = settingsTabsCreated.find(element => element.getAttribute?.("role") === "tablist");
+assert.deepEqual(settingsTabButtons.map(button => button.dataset.daitSettingsTab), ["overview", "translate", "compose", "display", "advanced", "data"]);
+assert.deepEqual(settingsTabButtons.map(button => button.getAttribute("aria-selected")), ["false", "true", "false", "false", "false", "false"]);
+assert.deepEqual(settingsTabButtons.map(button => button.getAttribute("tabindex")), ["-1", "0", "-1", "-1", "-1", "-1"]);
+assert.deepEqual(settingsTabPanels.map(tabpanel => tabpanel.hidden), [true, false, true, true, true, true]);
+settingsTabButtons.forEach((button, index) => {
+    assert.equal(button.getAttribute("aria-controls"), settingsTabPanels[index].id);
+    assert.equal(settingsTabPanels[index].getAttribute("aria-labelledby"), button.id);
+});
+assert.equal(settingsTablist.getAttribute("aria-orientation"), "vertical");
+assert.equal(settingsTabsPlugin.getQuickSettingsPanelSectionCount({ querySelectorAll: selector => selector === "[data-dait-settings-section]" ? settingsTabPanels : [] }), 6);
+settingsTabButtons[5].listeners.click();
+assert.equal(settingsTabsPlugin.settings.ui.settingsActiveTab, "data");
+assert.deepEqual(settingsTabPanels.map(tabpanel => tabpanel.hidden), [true, true, true, true, true, false]);
+assert.equal(settingsTabsSaves, 1);
+const pressSettingsTabKey = key => {
+    let prevented = false;
+    settingsTablist.listeners.keydown({ key, preventDefault() { prevented = true; }, stopPropagation() {} });
+    return prevented;
 };
-[
-    settingsScrollNavGeneral,
-    settingsScrollNavDisplay,
-    settingsScrollSectionGeneral,
-    settingsScrollSectionDisplay
-].forEach(countSettingsScrollWrites);
-settingsScrollSectionGeneral.getBoundingClientRect = () => ({ top: 112 });
-settingsScrollSectionDisplay.getBoundingClientRect = () => ({ top: 260 });
-settingsScrollPlugin.settings.ui.settingsActiveTab = "cache";
-settingsScrollScroller.listeners.scroll();
-assert.equal(settingsScrollPlugin.settings.ui.settingsActiveTab, "cache");
-assert.equal(settingsScrollPanel.__daitSettingsAppliedAnchor, "general");
-assert.equal(fakeElementHasClass(settingsScrollNavGeneral, "dait-settings-nav-active"), true);
-assert.equal(settingsScrollNavGeneral.getAttribute("aria-current"), "true");
-assert.equal(fakeElementHasClass(settingsScrollSectionGeneral, "dait-settings-section-active"), true);
-assert.ok(settingsScrollDomWrites > 0);
-const settingsScrollWritesAfterFirstUpdate = settingsScrollDomWrites;
-settingsScrollScroller.listeners.scroll();
-assert.equal(settingsScrollDomWrites, settingsScrollWritesAfterFirstUpdate);
-assert.equal(settingsScrollSaved, 0);
-settingsScrollPlugin.cleanupSettingsScrollTracking(settingsScrollPanel);
+assert.equal(pressSettingsTabKey("ArrowDown"), true);
+assert.equal(settingsTabsPlugin.settings.ui.settingsActiveTab, "overview");
+assert.equal(settingsTabButtons[0].focused, true);
+pressSettingsTabKey("ArrowUp");
+assert.equal(settingsTabsPlugin.settings.ui.settingsActiveTab, "data");
+pressSettingsTabKey("Home");
+assert.equal(settingsTabsPlugin.settings.ui.settingsActiveTab, "overview");
+pressSettingsTabKey("End");
+assert.equal(settingsTabsPlugin.settings.ui.settingsActiveTab, "data");
+assert.equal(pressSettingsTabKey("a"), false);
+assert.deepEqual(settingsTabPanels.map(tabpanel => tabpanel.hidden), [true, true, true, true, true, false]);
+// Quick settings calls the old scroll-spy entry points after inserting the panel; they now show the saved tab.
+settingsTabsPlugin.settings.ui.settingsActiveTab = "display";
+settingsTabsPlugin.bindSettingsScrollTracking(settingsTabsPanel, null);
+assert.deepEqual(settingsTabPanels.map(tabpanel => tabpanel.hidden), [true, true, true, false, true, true]);
+settingsTabsPlugin.settings.ui.settingsActiveTab = "compose";
+settingsTabsPlugin.syncSettingsScrollPosition(settingsTabsPanel, null);
+assert.deepEqual(settingsTabPanels.map(tabpanel => tabpanel.hidden), [true, true, false, true, true, true]);
+global.document = savedDocumentForSettingsTabsUi;
 const settingsLazyReplacePlugin = new Plugin();
 let settingsLazyPanelBuilt = false;
 settingsLazyReplacePlugin.getSettingsPanel = () => {
@@ -831,92 +841,31 @@ settingsLazyReplacePlugin.getSettingsPanel = () => {
 };
 assert.equal(settingsLazyReplacePlugin.replaceSettingsPanelElement(null), null);
 assert.equal(settingsLazyPanelBuilt, false);
+// Test mode is replaced by "Try a sentence" / "Try polishing" in the connection cards; the data tab has no test area.
 const settingsTestModeLocalPlugin = new Plugin();
-const settingsTestModeCreated = [];
-const settingsTestModePanel = createFakeElement("div", settingsTestModeCreated);
-settingsTestModePanel.className = "dait-settings";
-const settingsTestModePage = createFakeElement("div", settingsTestModeCreated);
-settingsTestModePage.className = "dait-settings-page dait-settings-page-all";
-const settingsTestModeDiagnostics = createFakeElement("section", settingsTestModeCreated);
-settingsTestModeDiagnostics.className = "dait-settings-section dait-section-diagnostics";
-settingsTestModeDiagnostics.dataset.daitSettingsSection = "diagnostics";
-settingsTestModePage.appendChild(settingsTestModeDiagnostics);
-settingsTestModePanel.appendChild(settingsTestModePage);
-let settingsTestModePanelBuilds = 0;
-settingsTestModeLocalPlugin.getSettingsPanel = () => {
-    settingsTestModePanelBuilds++;
-    return createFakeElement("div", settingsTestModeCreated);
-};
-settingsTestModeLocalPlugin.updateTestModeVisibility(settingsTestModePanel, true);
-const settingsTestModeSection = settingsTestModePage.querySelector(".dait-test-mode-section");
-assert.ok(settingsTestModeSection);
-assert.equal(settingsTestModePanelBuilds, 0);
-assert.deepEqual(settingsTestModeSection.scrolledIntoView, { block: "nearest", behavior: "smooth" });
-settingsTestModeLocalPlugin.updateTestModeVisibility(settingsTestModePanel, false);
-assert.equal(settingsTestModePage.querySelector(".dait-test-mode-section"), null);
-assert.equal(settingsTestModePanelBuilds, 0);
-const quickScrollPlugin = new Plugin();
-const quickScrollCreated = [];
-const quickScrollPanel = createFakeElement("div", quickScrollCreated);
-quickScrollPanel.className = "dait-settings";
-const quickScrollNavGeneral = createFakeElement("button", quickScrollCreated);
-quickScrollNavGeneral.className = "dait-settings-nav-button";
-quickScrollNavGeneral.dataset.daitSettingsAnchor = "general";
-const quickScrollNavDisplay = createFakeElement("button", quickScrollCreated);
-quickScrollNavDisplay.className = "dait-settings-nav-button";
-quickScrollNavDisplay.dataset.daitSettingsAnchor = "display";
-const quickScrollSectionGeneral = createFakeElement("section", quickScrollCreated);
-quickScrollSectionGeneral.className = "dait-settings-section";
-quickScrollSectionGeneral.dataset.daitSettingsSection = "general";
-quickScrollSectionGeneral.getBoundingClientRect = () => ({ top: 112 });
-const quickScrollSectionDisplay = createFakeElement("section", quickScrollCreated);
-quickScrollSectionDisplay.className = "dait-settings-section";
-quickScrollSectionDisplay.dataset.daitSettingsSection = "display";
-quickScrollSectionDisplay.getBoundingClientRect = () => ({ top: 260 });
-quickScrollPanel.appendChild(quickScrollNavGeneral);
-quickScrollPanel.appendChild(quickScrollNavDisplay);
-quickScrollPanel.appendChild(quickScrollSectionGeneral);
-quickScrollPanel.appendChild(quickScrollSectionDisplay);
-const quickScrollScroller = createFakeElement("div", quickScrollCreated);
-quickScrollScroller.className = "dait-quick-settings-body";
-quickScrollScroller.getBoundingClientRect = () => ({ top: 100 });
-const savedSetTimeoutForQuickScroll = global.setTimeout;
-const savedClearTimeoutForQuickScroll = global.clearTimeout;
-const quickScrollTimers = [];
-const quickScrollClearedTimers = [];
-global.setTimeout = (callback, delay) => {
-    quickScrollTimers.push({ callback, delay });
-    return quickScrollTimers.length;
-};
-global.clearTimeout = id => quickScrollClearedTimers.push(id);
-quickScrollPlugin.settings.ui.settingsActiveTab = "display";
-quickScrollPlugin.bindSettingsScrollTracking(quickScrollPanel, quickScrollScroller);
-assert.equal(quickScrollPanel.__daitSettingsAppliedAnchor, "display");
-quickScrollScroller.listeners.scroll();
-assert.equal(quickScrollPanel.__daitSettingsAppliedAnchor, "display");
-assert.equal(quickScrollTimers.at(-1).delay, 140);
-quickScrollScroller.listeners.scroll();
-assert.equal(quickScrollClearedTimers.includes(1), true);
-quickScrollTimers.at(-1).callback();
-assert.equal(quickScrollPanel.__daitSettingsAppliedAnchor, "general");
-assert.equal(fakeElementHasClass(quickScrollNavGeneral, "dait-settings-nav-active"), true);
-quickScrollPlugin.cleanupSettingsScrollTracking(quickScrollPanel);
-global.setTimeout = savedSetTimeoutForQuickScroll;
-global.clearTimeout = savedClearTimeoutForQuickScroll;
+assert.equal(typeof settingsTestModeLocalPlugin.updateTestModeVisibility, "undefined");
+assert.equal(typeof settingsTestModeLocalPlugin.createTestModeSection, "undefined");
+assert.equal(typeof settingsTestModeLocalPlugin.createTryTaskRow, "function");
 assert.equal(quickSettingsDocumentListeners.has("keydown"), true);
+// Tab stays inside the window: the panel's close button is its first stop, the panel's last control its last.
+const quickSettingsFocusables = quickSettingsPlugin.getQuickSettingsFocusableElements(quickSettingsDialog);
+const quickSettingsLastFocusable = quickSettingsFocusables[quickSettingsFocusables.length - 1];
+assert.equal(quickSettingsFocusables[0], quickSettingsClose);
+assert.notEqual(quickSettingsLastFocusable, quickSettingsClose);
 let quickSettingsTabPrevented = false;
 quickSettingsClose.focused = false;
-global.document.activeElement = quickSettingsDone;
+global.document.activeElement = quickSettingsLastFocusable;
 quickSettingsDocumentListeners.get("keydown")({ key: "Tab", shiftKey: false, preventDefault() { quickSettingsTabPrevented = true; }, stopPropagation() {} });
 assert.equal(quickSettingsTabPrevented, true);
 assert.equal(quickSettingsClose.focused, true);
 let quickSettingsShiftTabPrevented = false;
-quickSettingsDone.focused = false;
+quickSettingsLastFocusable.focused = false;
 global.document.activeElement = quickSettingsClose;
 quickSettingsDocumentListeners.get("keydown")({ key: "Tab", shiftKey: true, preventDefault() { quickSettingsShiftTabPrevented = true; }, stopPropagation() {} });
 assert.equal(quickSettingsShiftTabPrevented, true);
-assert.equal(quickSettingsDone.focused, true);
-quickSettingsDone.listeners.click({ preventDefault() {}, stopPropagation() {} });
+assert.equal(quickSettingsLastFocusable.focused, true);
+// The panel's close button closes the window through closeSettingsWindow (the fake DOM has no closest()).
+quickSettingsPlugin.closeQuickSettingsPanel(quickSettingsRoot, "button");
 assert.equal(quickSettingsRoot.removed, true);
 assert.equal(quickSettingsDocumentListeners.has("keydown"), false);
 assert.equal(panelQuickSettings.focused, true);
@@ -929,12 +878,12 @@ quickSettingsReuseDialog.className = "dait-quick-settings-dialog";
 const quickSettingsReusePanel = createFakeElement("div", quickSettingsCreated);
 quickSettingsReusePanel.className = "dait-settings";
 const quickSettingsReuseClose = createFakeElement("button", quickSettingsCreated);
-quickSettingsReuseClose.className = "dait-quick-settings-close";
+quickSettingsReuseClose.className = "dait-settings-close";
 const quickSettingsReuseDone = createFakeElement("button", quickSettingsCreated);
-quickSettingsReuseDone.className = "dait-quick-settings-done";
+quickSettingsReuseDone.className = "dait-small-button";
+quickSettingsReusePanel.appendChild(quickSettingsReuseClose);
+quickSettingsReusePanel.appendChild(quickSettingsReuseDone);
 quickSettingsReuseDialog.appendChild(quickSettingsReusePanel);
-quickSettingsReuseDialog.appendChild(quickSettingsReuseClose);
-quickSettingsReuseDialog.appendChild(quickSettingsReuseDone);
 quickSettingsReuseRoot.appendChild(quickSettingsReuseDialog);
 quickSettingsBody.appendChild(quickSettingsReuseRoot);
 quickSettingsPlugin.quickSettingsModalKeydown = null;
@@ -984,8 +933,12 @@ global.document = { body: sizingBody, documentElement: { clientWidth: 1100 } };
 settingsSizingPlugin.applySettingsModalSizing(sizingPanel);
 assert.equal(sizingInner.dataset.daitSettingsModal, "true");
 assert.equal(sizingOuter.dataset.daitSettingsModalRoot, "true");
-assert.equal(sizingInner.dataset.daitDiscordTheme, "dark");
-assert.notEqual(sizingInner.style.getPropertyValue("--background-secondary"), undefined);
+// BetterDiscord's modal frame keeps Discord's colours: no theme marker and no copied Discord variables on it.
+assert.equal(sizingInner.dataset.daitDiscordTheme, undefined);
+assert.equal(sizingInner.dataset.daitPanelTheme, undefined);
+assert.equal(sizingInner.style.getPropertyValue("--background-secondary"), "");
+sizingInner.dataset.daitDiscordTheme = "dark";
+sizingInner.style.setProperty("--background-secondary", "#2b2d31");
 sizingPanel.isConnected = false;
 sizingPanel.parentElement = null;
 settingsSizingPlugin.cleanupSettingsModalSizing(sizingPanel);
@@ -1083,12 +1036,19 @@ finally {
     console.warn = savedWarnForQuickSettingsFailure;
 }
 assert.ok(quickSettingsFailureRoot);
-assert.ok(findByClass("dait-quick-settings-error"));
-assert.ok(findByClass("dait-quick-settings-footer"));
-assert.ok(findByClass("dait-quick-settings-done"));
+// Without the panel (and its title bar) the error card carries the window's close button.
+const quickSettingsFailureCard = findByClass("dait-quick-settings-error");
+assert.ok(quickSettingsFailureCard);
+assert.equal(findByClass("dait-quick-settings-footer"), null);
+const quickSettingsFailureDone = findByClass("dait-quick-settings-done");
+assert.ok(quickSettingsFailureDone);
+assert.equal(quickSettingsFailureDone.parentElement, quickSettingsFailureCard);
+assert.equal(quickSettingsFailureDone.focused, true);
 assert.ok(quickSettingsFailurePlugin.quickSettingsDiagnosticLogs.some(entry => entry.action === "quick.settings.panel.build" && entry.status === "error"));
 assert.equal(quickSettingsFailureWarnings.length, 1);
 assert.equal(quickSettingsFailureToasts.some(toast => toast.type === "error"), true);
+quickSettingsFailureDone.listeners.click({ preventDefault() {}, stopPropagation() {} });
+assert.equal(quickSettingsFailureRoot.removed, true);
 quickSettingsFailurePlugin.closeQuickSettingsPanel();
 quickSettingsPlugin.isStarted = false;
 quickSettingsPlugin.setSetting("ui.showQuickSettingsRailButton", false);
@@ -1119,6 +1079,7 @@ assert.equal(quickSettingsDisableTimerPlugin.quickSettingsOpenTimer, 2);
 let quickDisableInjected = false;
 let quickDisableOpened = false;
 quickSettingsDisableTimerPlugin.injectQuickSettingsPanelButton = () => { quickDisableInjected = true; };
+quickSettingsDisableTimerPlugin.toggleQuickPopover = () => { quickDisableOpened = true; };
 quickSettingsDisableTimerPlugin.openQuickSettingsPanel = () => { quickDisableOpened = true; };
 quickSettingsDisableTimerPlugin.settings.ui.showQuickSettingsPanelButton = false;
 quickSettingsDisableTimerPlugin.injectQuickSettingsButtons();
@@ -1372,18 +1333,23 @@ themeProbeBody.appendChild(themeRefreshMessage);
 themeProbeBody.appendChild(themeRefreshWrapper);
 themeProbeBody.appendChild(themeRefreshWrapperRoot);
 themeProbePlugin.refreshDiscordThemeClasses();
+// The buttons that sit inside Discord's UI copy Discord's theme (here #app-mount's midnight)...
 assert.equal(fakeElementHasClass(themeRefreshButton, "theme-midnight"), true);
-assert.equal(fakeElementHasClass(themeRefreshSettings, "theme-midnight"), true);
-assert.equal(fakeElementHasClass(themeRefreshModal, "theme-midnight"), true);
-assert.equal(fakeElementHasClass(themeRefreshPanel, "theme-midnight"), true);
 assert.equal(fakeElementHasClass(themeRefreshRestore, "theme-midnight"), true);
 assert.equal(fakeElementHasClass(themeRefreshPolish, "theme-midnight"), true);
 assert.equal(fakeElementHasClass(themeRefreshBilingual, "theme-midnight"), true);
 assert.equal(fakeElementHasClass(themeRefreshMessage, "theme-midnight"), true);
-assert.equal(fakeElementHasClass(themeRefreshWrapper, "theme-midnight"), true);
-assert.equal(fakeElementHasClass(themeRefreshWrapperRoot, "theme-midnight"), true);
-assert.equal(themeRefreshWrapper.dataset.daitDiscordTheme, "midnight");
-assert.equal(themeRefreshWrapperRoot.dataset.daitDiscordTheme, "midnight");
+// ...while the plugin's own windows take the panel palette of the page theme (<body class="theme-light">), with no
+// Discord theme classes or markers, and BetterDiscord's modal frame is left to Discord.
+[themeRefreshSettings, themeRefreshModal, themeRefreshPanel].forEach(node => {
+    assert.equal(node.dataset.daitPanelTheme, "light");
+    assert.equal(fakeElementHasClass(node, "theme-midnight"), false);
+    assert.equal(node.dataset.daitDiscordTheme, undefined);
+});
+assert.equal(fakeElementHasClass(themeRefreshWrapper, "theme-midnight"), false);
+assert.equal(fakeElementHasClass(themeRefreshWrapperRoot, "theme-midnight"), false);
+assert.equal(themeRefreshWrapper.dataset.daitDiscordTheme, undefined);
+assert.equal(themeRefreshWrapperRoot.dataset.daitPanelTheme, undefined);
 themeProbeBody.className = "theme-midnight";
 assert.equal(themeProbePlugin.hasDiscordThemeMutation([{ type: "attributes", attributeName: "class", target: themeProbeBody }]), true);
 discordAppMount.className = "";
@@ -1396,16 +1362,15 @@ delete discordAppMount.dataset.theme;
 themeProbePlugin.refreshDiscordThemeClasses();
 assert.equal(fakeElementHasClass(themeRefreshButton, "theme-light"), false);
 assert.equal(fakeElementHasClass(themeRefreshButton, "theme-midnight"), true);
-assert.equal(fakeElementHasClass(themeRefreshSettings, "theme-light"), false);
-assert.equal(fakeElementHasClass(themeRefreshSettings, "theme-midnight"), true);
-assert.equal(fakeElementHasClass(themeRefreshModal, "theme-midnight"), true);
-assert.equal(fakeElementHasClass(themeRefreshPanel, "theme-midnight"), true);
 assert.equal(fakeElementHasClass(themeRefreshRestore, "theme-midnight"), true);
 assert.equal(fakeElementHasClass(themeRefreshPolish, "theme-midnight"), true);
 assert.equal(fakeElementHasClass(themeRefreshBilingual, "theme-midnight"), true);
 assert.equal(fakeElementHasClass(themeRefreshMessage, "theme-midnight"), true);
-assert.equal(fakeElementHasClass(themeRefreshWrapper, "theme-midnight"), true);
-assert.equal(fakeElementHasClass(themeRefreshWrapperRoot, "theme-midnight"), true);
+// Discord's page theme is midnight now: the open plugin windows switch to the dark palette in place.
+[themeRefreshSettings, themeRefreshModal, themeRefreshPanel].forEach(node => {
+    assert.equal(node.dataset.daitPanelTheme, "dark");
+    assert.equal(fakeElementHasClass(node, "theme-midnight"), false);
+});
 
 const quickThemeRoot = createFakeElement("div", themeProbeCreated);
 quickThemeRoot.className = "dait-quick-settings-modal-root";
@@ -1414,27 +1379,19 @@ const quickThemeBackdrop = createFakeElement("div", themeProbeCreated);
 quickThemeBackdrop.className = "dait-quick-settings-backdrop";
 const quickThemeDialog = createFakeElement("div", themeProbeCreated);
 quickThemeDialog.className = "dait-quick-settings-dialog";
-const quickThemeHeader = createFakeElement("div", themeProbeCreated);
-quickThemeHeader.className = "dait-quick-settings-header";
-const quickThemeTitle = createFakeElement("h2", themeProbeCreated);
-quickThemeTitle.className = "dait-quick-settings-title";
-const quickThemeClose = createFakeElement("button", themeProbeCreated);
-quickThemeClose.className = "dait-quick-settings-close";
+// The window: a body holding the settings panel (or, when the panel cannot be built, the error card with its button).
 const quickThemeBody = createFakeElement("div", themeProbeCreated);
 quickThemeBody.className = "dait-quick-settings-body";
-const quickThemeFooter = createFakeElement("div", themeProbeCreated);
-quickThemeFooter.className = "dait-quick-settings-footer";
+const quickThemeError = createFakeElement("div", themeProbeCreated);
+quickThemeError.className = "dait-quick-settings-error";
 const quickThemeDone = createFakeElement("button", themeProbeCreated);
 quickThemeDone.className = "dait-quick-settings-done";
 const quickThemeSettings = createFakeElement("div", themeProbeCreated);
 quickThemeSettings.className = "dait-settings";
-quickThemeHeader.appendChild(quickThemeTitle);
-quickThemeHeader.appendChild(quickThemeClose);
+quickThemeError.appendChild(quickThemeDone);
 quickThemeBody.appendChild(quickThemeSettings);
-quickThemeFooter.appendChild(quickThemeDone);
-quickThemeDialog.appendChild(quickThemeHeader);
+quickThemeBody.appendChild(quickThemeError);
 quickThemeDialog.appendChild(quickThemeBody);
-quickThemeDialog.appendChild(quickThemeFooter);
 quickThemeRoot.appendChild(quickThemeBackdrop);
 quickThemeRoot.appendChild(quickThemeDialog);
 themeProbeBody.appendChild(quickThemeRoot);
@@ -1442,27 +1399,29 @@ const quickThemeNodes = [
     quickThemeRoot,
     quickThemeBackdrop,
     quickThemeDialog,
-    quickThemeHeader,
-    quickThemeTitle,
-    quickThemeClose,
     quickThemeBody,
-    quickThemeFooter,
+    quickThemeError,
     quickThemeDone,
     quickThemeSettings
 ];
-for (const themeClass of ["theme-light", "theme-dark", "theme-darker", "theme-midnight"]) {
+// Every Discord theme maps to one of the two panel palettes. The window root and the panel inside it carry it; the
+// frame's other nodes inherit it and get no Discord theme class of their own.
+quickThemeRoot.classList.remove("theme-light");
+for (const [themeClass, panelTheme] of [["theme-light", "light"], ["theme-dark", "dark"], ["theme-darker", "dark"], ["theme-midnight", "dark"]]) {
+    themeProbeBody.className = themeClass;
     discordAppMount.className = themeClass;
-    themeProbePlugin.syncQuickSettingsThemeTree(quickThemeRoot);
+    assert.equal(themeProbePlugin.syncQuickSettingsThemeTree(quickThemeRoot), panelTheme);
+    assert.equal(quickThemeRoot.dataset.daitPanelTheme, panelTheme);
+    assert.equal(quickThemeSettings.dataset.daitPanelTheme, panelTheme);
     for (const node of quickThemeNodes) {
-        assert.equal(fakeElementHasClass(node, themeClass), true);
-        assert.equal(node.dataset.daitDiscordTheme, themeClass.replace(/^theme-/, ""));
+        assert.equal(node.dataset.daitDiscordTheme, undefined);
         for (const otherThemeClass of ["theme-light", "theme-dark", "theme-darker", "theme-midnight"]) {
-            if (otherThemeClass !== themeClass) assert.equal(fakeElementHasClass(node, otherThemeClass), false);
+            assert.equal(fakeElementHasClass(node, otherThemeClass), false);
         }
     }
 }
-assert.equal(themeProbePlugin.isPluginThemeCandidate(quickThemeHeader), true);
-assert.equal(themeProbePlugin.isPluginThemeCandidate(quickThemeFooter), true);
+assert.equal(themeProbePlugin.isPluginThemeCandidate(quickThemeBody), true);
+assert.equal(themeProbePlugin.isPluginThemeCandidate(quickThemeError), true);
 assert.equal(themeProbePlugin.isPluginThemeCandidate(quickThemeDone), true);
 global.document = savedDocumentForThemeProbe;
 
@@ -1505,13 +1464,21 @@ global.document = {
 const themeVarsPlugin = new Plugin();
 const themeVarsRoot = createFakeElement("div", themeVarsCreated);
 themeVarsRoot.className = "dait-quick-settings-modal-root";
+// Mixed sources (a light page, a darker #app-mount, variables spread over several nodes) used to be copied onto the
+// window one variable at a time. Now the page theme picks one complete palette and nothing is copied.
 themeVarsPlugin.syncQuickSettingsThemeTree(themeVarsRoot);
-assert.equal(fakeElementHasClass(themeVarsRoot, "theme-darker"), true);
-assert.equal(themeVarsRoot.dataset.daitDiscordTheme, "darker");
-assert.equal(themeVarsRoot.style.getPropertyValue("--text-normal"), "#body-text");
-assert.equal(themeVarsRoot.style.getPropertyValue("--background-surface-high"), "#body-surface");
-assert.equal(themeVarsRoot.style.getPropertyValue("--modal-background"), "#body-modal");
-assert.equal(themeVarsRoot.style.getPropertyValue("--scrollbar-thin-thumb"), "rgba(1, 2, 3, 0.4)");
+assert.equal(themeVarsRoot.dataset.daitPanelTheme, "light");
+assert.equal(fakeElementHasClass(themeVarsRoot, "theme-darker"), false);
+assert.equal(themeVarsRoot.dataset.daitDiscordTheme, undefined);
+assert.equal(themeVarsRoot.style.getPropertyValue("--text-normal"), "");
+assert.equal(themeVarsRoot.style.getPropertyValue("--background-surface-high"), "");
+assert.equal(themeVarsRoot.style.getPropertyValue("--modal-background"), "");
+assert.equal(themeVarsRoot.style.getPropertyValue("--scrollbar-thin-thumb"), "");
+// The buttons inside Discord's UI still copy Discord's variables.
+const themeVarsButton = createFakeElement("button", themeVarsCreated);
+themeVarsButton.className = "dait-message-button";
+themeVarsPlugin.syncDiscordThemeClasses(themeVarsButton);
+assert.equal(themeVarsButton.style.getPropertyValue("--text-normal"), "#body-text");
 global.window = savedWindowForThemeVars;
 global.document = savedDocumentForThemeVars;
 
@@ -1553,13 +1520,13 @@ polishPanelPlugin.showPolishResultPanel(polishPanelTextbox, "polished text");
 const polishPanel = polishPanelBody.children[0];
 const polishPanelOutput = polishPanelCreated.find(element => element.className === "dait-polish-result-output");
 assert.equal(polishPanel.className, "dait-polish-result-panel");
-assert.equal(fakeElementHasClass(polishPanel, "theme-light"), true);
-assert.equal(polishPanel.dataset.daitDiscordTheme, "light");
+// A plugin window: the panel palette of the page theme, re-checked when the panel is placed again.
+assert.equal(polishPanel.dataset.daitPanelTheme, "light");
+assert.equal(polishPanel.dataset.daitDiscordTheme, undefined);
 polishPanelBody.className = "theme-midnight";
 polishPanelWindowListeners.get("resize")();
-assert.equal(fakeElementHasClass(polishPanel, "theme-light"), false);
-assert.equal(fakeElementHasClass(polishPanel, "theme-midnight"), true);
-assert.equal(polishPanel.dataset.daitDiscordTheme, "midnight");
+assert.equal(polishPanel.dataset.daitPanelTheme, "dark");
+assert.equal(fakeElementHasClass(polishPanel, "theme-midnight"), false);
 assert.equal(polishPanelOutput.tagName, "DIV");
 assert.equal(polishPanelOutput.textContent, "polished text");
 assert.equal(polishPanelTextboxBlurred, false);
@@ -1567,7 +1534,8 @@ assert.equal(polishPanelOutput.tabIndex, 0);
 assert.equal(polishPanelOutput.focused, undefined);
 assert.equal(polishPanelOutput.selected, undefined);
 const polishPanelActionButtons = polishPanelCreated.filter(element => String(element.className || "").split(/\s+/).includes("dait-polish-result-action"));
-assert.equal(polishPanelActionButtons.length, 1);
+// "Insert into input" (a held result can still be applied) and "Copy".
+assert.deepEqual(polishPanelActionButtons.map(element => element.textContent), [polishPanelPlugin.t("polishResultReplace"), polishPanelPlugin.t("polishResultCopy")]);
 assert.equal(typeof polishPanelDocumentListeners.get("pointerdown"), "function");
 polishPanelDocumentListeners.get("pointerdown")({ target: {} });
 assert.equal(polishPanel.removed, true);
@@ -1661,7 +1629,7 @@ assert.equal(plugin.settings.ui.showAutoTranslateToasts, false);
 assert.equal(plugin.settings.ui.diagnosticsEnabled, false);
 assert.equal(plugin.settings.ui.messageButtonVisibility, "always");
 assert.equal(plugin.settings.ui.settingsVersion, 2);
-assert.equal(plugin.settings.ui.settingsActiveTab, "general");
+assert.equal(plugin.settings.ui.settingsActiveTab, "overview");
 assert.equal(plugin.settings.ui.translationCacheTtlHours, 48);
 assert.equal(plugin.settings.ui.translationCacheMaxEntries, 4000);
 assert.deepEqual(plugin.settings.polish.providerProfiles, {});
@@ -1850,7 +1818,8 @@ const savedDocumentForPolishSection = global.document;
 const polishSectionCreated = [];
 global.document = { createElement: tag => createFakeElement(tag, polishSectionCreated) };
 const polishSectionPlugin = new Plugin();
-polishSectionPlugin.createTaskSection("polish", "Polish", "Desc");
+const polishTaskSection = polishSectionPlugin.createTaskSection("polish", "Polish", "Desc");
+const polishPromptSection = polishSectionPlugin.createTaskPromptSection("polish");
 const polishProviderControl = polishSectionCreated.find(element => element.dataset?.daitPath === "polish.provider");
 assert.deepEqual(polishProviderControl.children.map(option => option.value), ["deepseek", "openaiCompatible", "sakuraLocal"]);
 assert.ok(polishSectionCreated.some(element => element.dataset?.daitPath === "polish.apiKey"));
@@ -1865,13 +1834,18 @@ assert.equal(polishProviderBlock.dataset.daitProvider, "deepseek");
 assert.equal(polishProviderBlock.contains(polishProviderControl), false);
 assert.ok(polishProviderBlock.contains(polishSectionCreated.find(element => element.dataset?.daitPath === "polish.apiKey")));
 assert.ok(polishProviderBlock.contains(polishSectionCreated.find(element => element.dataset?.daitPath === "polish.model")));
-assert.ok(polishProviderBlock.contains(polishSectionCreated.find(element => element.dataset?.daitPath === "polish.prompt")));
+// Prompts belong to the task: their own group after the connection card, not inside it.
+assert.equal(polishProviderBlock.contains(polishSectionCreated.find(element => element.dataset?.daitPath === "polish.prompt")), false);
+assert.equal(polishTaskSection.contains(polishSectionCreated.find(element => element.dataset?.daitPath === "polish.prompt")), false);
+assert.ok(polishPromptSection.contains(polishSectionCreated.find(element => element.dataset?.daitPath === "polish.prompt")));
 const translationSectionCreated = [];
 global.document = { createElement: tag => createFakeElement(tag, translationSectionCreated) };
 const translationSectionPlugin = new Plugin();
 translationSectionPlugin.createTaskSection("translation", "Translation", "Desc");
 const translationProviderControl = translationSectionCreated.find(element => element.dataset?.daitPath === "translation.provider");
-assert.deepEqual(translationProviderControl.children.map(option => option.value), ["deepseek", "openaiCompatible", "sakuraLocal", "googleCloud", "microsoft", "deepl", "baidu"]);
+// Translation providers come in two <optgroup>s: AI models, then machine translation.
+assert.deepEqual(translationProviderControl.children.map(group => group.tagName), ["OPTGROUP", "OPTGROUP"]);
+assert.deepEqual(translationProviderControl.children.map(group => group.children.map(option => option.value)), [["deepseek", "openaiCompatible", "sakuraLocal"], ["googleCloud", "microsoft", "deepl", "baidu"]]);
 assert.equal(translationSectionCreated.some(element => element.dataset?.daitPath === "googleTranslate.keyPoolText"), false);
 const translationProviderBlock = translationSectionCreated.find(element => element.className === "dait-provider-settings-block");
 assert.ok(translationProviderBlock);
@@ -1883,9 +1857,13 @@ global.document = { createElement: tag => createFakeElement(tag, sakuraSectionCr
 const sakuraSectionPlugin = new Plugin();
 sakuraSectionPlugin.settings.polish.provider = "sakuraLocal";
 sakuraSectionPlugin.createTaskSection("polish", "Polish", "Desc");
-const localModelPresetControl = sakuraSectionCreated.find(element => element.tagName === "SELECT" && element.children.some(option => option.value === "HY-MT1.5-7B-Q4_K_M.gguf"));
+// Sakura's model presets live in the model field's picker (with "use the loaded model" first), not in a row of their own.
+const localModelPresetOptions = select => select.children.flatMap(child => child.tagName === "OPTGROUP" ? child.children : [child]);
+const localModelPresetControl = sakuraSectionCreated.find(element => element.tagName === "SELECT" && localModelPresetOptions(element).some(option => option.value === "HY-MT1.5-7B-Q4_K_M.gguf"));
 assert.ok(localModelPresetControl);
-assert.ok(localModelPresetControl.children.some(option => option.value === "Qwen3-8B-Q4_K_M_2.gguf"));
+assert.equal(localModelPresetControl.dataset.daitModelPreset, "polish");
+assert.equal(localModelPresetOptions(localModelPresetControl)[0].value, "local-model");
+assert.ok(localModelPresetOptions(localModelPresetControl).some(option => option.value === "Qwen3-8B-Q4_K_M_2.gguf"));
 assert.equal(sakuraSectionCreated.some(element => element.dataset?.daitPath === "polish.enableThinking"), false);
 const sakuraTranslationSectionCreated = [];
 global.document = { createElement: tag => createFakeElement(tag, sakuraTranslationSectionCreated) };
@@ -1996,37 +1974,17 @@ global.document = { createElement: tag => createFakeElement(tag, settingsPanelCr
 const settingsPanelPlugin = new Plugin();
 settingsPanelPlugin.settings.ui.settingsActiveTab = "translation";
 settingsPanelPlugin.getSettingsPanel();
-assert.ok(settingsPanelCreated.some(element => element.className === "dait-settings-layout"));
-assert.ok(settingsPanelCreated.some(element => element.className === "dait-settings-sidebar"));
-assert.ok(settingsPanelCreated.some(element => element.className === "dait-settings-nav-list"));
-assert.ok(settingsPanelCreated.some(element => element.className === "dait-settings-sidebar-reset"));
+assert.ok(settingsPanelCreated.some(element => element.className === "dait-settings-header"));
+assert.ok(settingsPanelCreated.some(element => element.className === "dait-settings-body"));
+assert.ok(settingsPanelCreated.some(element => element.className === "dait-settings-rail"));
+assert.ok(settingsPanelCreated.some(element => element.className === "dait-settings-tabs"));
+assert.ok(settingsPanelCreated.some(element => element.className === "dait-settings-search-input"));
+// Reset left the navigation: it is the danger-zone button at the end of the data tab.
+assert.equal(settingsPanelCreated.some(element => fakeElementHasClass(element, "dait-settings-sidebar-reset")), false);
 const tabValues = settingsPanelCreated.map(element => element.dataset?.daitSettingsTab).filter(Boolean);
-assert.deepEqual(tabValues, [
-    "general",
-    "polish",
-    "polishControls",
-    "translation",
-    "translationControls",
-    "autoTranslate",
-    "publicBilingual",
-    "display",
-    "cache",
-    "diagnostics"
-]);
+assert.deepEqual(tabValues, ["overview", "translate", "compose", "display", "advanced", "data"]);
 const anchorValues = settingsPanelCreated.map(element => element.dataset?.daitSettingsSection).filter(Boolean);
-assert.deepEqual(anchorValues, [
-    "general",
-    "polish",
-    "polishControls",
-    "translation",
-    "translationControls",
-    "autoTranslate",
-    "publicBilingual",
-    "display",
-    "cache",
-    "diagnostics"
-]);
-assert.deepEqual(tabValues, anchorValues);
+assert.deepEqual(anchorValues, tabValues);
 const settingsPanelPaths = new Set(settingsPanelCreated.map(element => element.dataset?.daitPath).filter(Boolean));
 assert.equal(settingsPanelPaths.has("polish.provider"), true);
 assert.equal(settingsPanelPaths.has("ui.injectInputButton"), true);
@@ -2036,11 +1994,79 @@ assert.equal(settingsPanelPaths.has("translation.provider"), true);
 assert.equal(settingsPanelPaths.has("ui.publicBilingualInputButton"), true);
 assert.equal(settingsPanelPaths.has("ui.translationCacheTtlHours"), true);
 global.document = savedDocumentForSettingsTabs;
+// Every setting lives on the tab UI-SPEC's information architecture gives it.
+const settingsTabPanelPaths = Object.fromEntries(settingsPanelCreated
+    .filter(element => element.getAttribute?.("role") === "tabpanel")
+    .map(tabpanel => {
+        const paths = new Set();
+        const visit = node => (node.children || []).forEach(child => {
+            if (child.dataset?.daitPath) paths.add(child.dataset.daitPath);
+            visit(child);
+        });
+        visit(tabpanel);
+        return [tabpanel.dataset.daitSettingsTabPanel, paths];
+    }));
+const settingsTabLayout = {
+    overview: ["ui.autoTranslateMessages", "ui.currentChannelAutoTranslatePolicy", "ui.language"],
+    translate: [
+        "translation.enabled",
+        "translation.provider",
+        "translation.apiKey",
+        "translation.endpoint",
+        "translation.model",
+        "translation.temperature",
+        "translation.maxTokens",
+        "translation.enableThinking",
+        "ui.autoTranslateMessages",
+        "ui.autoTranslatePrefetch",
+        "ui.autoTranslatePrefetchRange",
+        "ui.currentChannelAutoTranslatePolicy",
+        "ui.messageButtonMode",
+        "ui.injectMessageContextMenu",
+        "translation.prompt"
+    ],
+    compose: [
+        "polish.enabled",
+        "polish.provider",
+        "polish.apiKey",
+        "polish.afterAction",
+        "polish.repolishSource",
+        "polish.prompt",
+        "ui.injectInputButton",
+        "ui.enablePolishHotkey",
+        "ui.publicBilingualInputButton",
+        "ui.publicBilingualUseInitialOriginal",
+        "ui.publicBilingualAfterPolish",
+        "ui.publicBilingualPolishBeforeTranslate"
+    ],
+    display: [
+        "ui.translationPosition",
+        "ui.translationStyle",
+        "ui.translationTextScale",
+        "ui.maskTranslations",
+        "ui.hideOriginalAfterTranslation",
+        "ui.showAutoTranslateWarnings",
+        "ui.showAutoTranslateToasts",
+        "ui.showQuickSettingsPanelButton"
+    ],
+    advanced: [
+        "ui.autoTranslateConcurrency",
+        "ui.autoTranslateIntakeMode",
+        "ui.autoTranslateStrictRetry",
+        "ui.historyBackfillEnabled",
+        "ui.historyBackfillLimit",
+        "ui.providerFallbackEnabled",
+        "ui.providerFallbackOrder"
+    ],
+    data: ["ui.translationCacheTtlHours", "ui.translationCacheMaxEntries", "ui.diagnosticsEnabled"]
+};
+Object.entries(settingsTabLayout).forEach(([tab, paths]) => {
+    paths.forEach(path => assert.equal(settingsTabPanelPaths[tab].has(path), true, `${path} on ${tab}`));
+});
 const translationTabPaths = settingsPanelPaths;
 [
     "translation.provider",
-    "ui.injectMessageButtons",
-    "ui.messageButtonVisibility",
+    "ui.messageButtonMode",
     "ui.injectMessageContextMenu",
     "ui.autoTranslateMessages",
     "ui.autoTranslatePrefetch",
@@ -2074,7 +2100,11 @@ global.document = { createElement: tag => createFakeElement(tag, uiCreatedElemen
 const uiSectionPlugin = new Plugin();
 const translationControlsSection = uiSectionPlugin.createTranslationControlsSection();
 const autoTranslateSection = uiSectionPlugin.createAutoTranslateSection();
+const advancedSection = uiSectionPlugin.createAdvancedSection();
+const historyBackfillSection = uiSectionPlugin.createHistoryBackfillSection();
+const providerFallbackSection = uiSectionPlugin.createProviderFallbackSection(false);
 const displaySection = uiSectionPlugin.createDisplayBehaviorSection();
+const displayNoticesSection = uiSectionPlugin.createDisplayNoticesSection();
 const cacheSection = uiSectionPlugin.createCacheSection();
 const diagnosticsSection = uiSectionPlugin.createDiagnosticsSection();
 const uiPaths = new Set(uiCreatedElements.map(element => element.dataset?.daitPath).filter(Boolean));
@@ -2093,22 +2123,29 @@ const uiPaths = new Set(uiCreatedElements.map(element => element.dataset?.daitPa
     "ui.showAutoTranslateWarnings",
     "ui.showAutoTranslateToasts",
     "ui.diagnosticsEnabled",
-    "ui.messageButtonVisibility",
+    "ui.messageButtonMode",
     "ui.translationCacheTtlHours",
     "ui.translationCacheMaxEntries",
     "ui.hideOriginalAfterTranslation"
 ].forEach(path => assert.equal(uiPaths.has(path), true));
-const messageButtonVisibilityControl = uiCreatedElements.find(element => element.dataset?.daitPath === "ui.messageButtonVisibility");
-assert.deepEqual(messageButtonVisibilityControl.children.map(option => option.value), ["always", "hover"]);
+// One select for the message Translate button: on hover / always / off.
+const messageButtonModeControl = uiCreatedElements.find(element => element.dataset?.daitPath === "ui.messageButtonMode");
+assert.deepEqual(messageButtonModeControl.children.map(option => option.value), ["hover", "always", "off"]);
+assert.equal(messageButtonModeControl.children.find(option => option.selected).value, "always");
 const cacheLimitControl = uiCreatedElements.find(element => element.dataset?.daitPath === "ui.translationCacheMaxEntries");
 assert.equal(cacheLimitControl.attributes.max, "15000");
 assert.equal(cacheLimitControl.attributes.min, "100");
 const ttlControl = uiCreatedElements.find(element => element.dataset?.daitPath === "ui.translationCacheTtlHours");
 assert.deepEqual(ttlControl.children.map(option => option.value), ["3", "6", "12", "24", "48", "168"]);
+// The channel rule is a segmented control of three radio buttons.
 const channelPolicyControl = uiCreatedElements.find(element => element.dataset?.daitPath === "ui.currentChannelAutoTranslatePolicy");
-assert.deepEqual(channelPolicyControl.children.map(option => option.value), ["inherit", "enabled", "disabled"]);
+assert.equal(channelPolicyControl.getAttribute("role"), "radiogroup");
+assert.deepEqual(channelPolicyControl.children.map(button => button.dataset.daitValue), ["inherit", "enabled", "disabled"]);
+assert.deepEqual(channelPolicyControl.children.map(button => button.getAttribute("role")), ["radio", "radio", "radio"]);
 const historyBackfillButton = uiCreatedElements.find(element => element.dataset?.daitAction === "historyBackfillRun");
 assert.ok(historyBackfillButton);
+// Backfill is off by default, so its run button is disabled until the switch is on.
+assert.equal(historyBackfillButton.disabled, true);
 let historyBackfillButtonCalled = false;
 uiSectionPlugin.requestExplicitHistoryBackfill = () => {
     historyBackfillButtonCalled = true;
@@ -2117,34 +2154,71 @@ uiSectionPlugin.requestExplicitHistoryBackfill = () => {
 uiSectionPlugin.showToast = () => {};
 historyBackfillButton.listeners.click({ preventDefault() {}, stopPropagation() {} });
 assert.equal(historyBackfillButtonCalled, true);
-const cacheStatsControls = uiCreatedElements.find(element => element.className === "dait-cache-actions");
-assert.ok(cacheStatsControls);
-assert.equal(cacheStatsControls.children.length, 2);
+// Every data-tab action has a row of its own: clear stats, then clear cache (destructive, alone in its row).
+const cacheActionControls = uiCreatedElements.filter(element => element.className === "dait-cache-actions");
+assert.deepEqual(cacheActionControls.map(element => element.children.length), [1, 1]);
+// Copy, export JSON and export TXT share one row; clearing the logs has a row of its own.
 const diagnosticControls = uiCreatedElements.find(element => element.className === "dait-diagnostic-actions");
 assert.ok(diagnosticControls);
-assert.equal(diagnosticControls.children.length, 4);
-assert.ok(translationControlsSection.children.length > 0);
-assert.ok(autoTranslateSection.children.length > 0);
-assert.ok(displaySection.children.length > 0);
-assert.ok(cacheSection.children.length > 0);
-assert.ok(diagnosticsSection.children.length > 0);
-const getUiRowDescription = (elements, path) => elements.find(element => element.dataset?.daitPath === path)
-    ?.parentElement?.children.find(child => child.className === "dait-row-description")?.textContent;
+assert.equal(diagnosticControls.children.length, 3);
+[translationControlsSection, autoTranslateSection, advancedSection, historyBackfillSection, providerFallbackSection, displaySection, displayNoticesSection, cacheSection, diagnosticsSection]
+    .forEach(section => assert.ok(section.children.length > 0));
+// The description sits in the row's text column (div.dait-settings-row > div.dait-row-text > p.dait-row-description).
+const getUiRow = (elements, path) => {
+    let node = elements.find(element => element.dataset?.daitPath === path);
+    while (node && !String(node.className || "").split(/\s+/).includes("dait-settings-row")) node = node.parentElement;
+    return node;
+};
+const getUiRowDescription = (elements, path) => getUiRow(elements, path)?.children[0]?.children.find(child => child.className === "dait-row-description")?.textContent;
+// A form field is disabled itself; a composite control (the fallback order list) through every button and box in it.
+const isUiControlDisabled = element => {
+    const isField = node => ["INPUT", "SELECT", "TEXTAREA", "BUTTON"].includes(node.tagName);
+    if (isField(element)) return element.disabled === true;
+    const fields = [];
+    const visit = node => (node.children || []).forEach(child => {
+        if (isField(child)) fields.push(child);
+        visit(child);
+    });
+    visit(element);
+    return fields.length > 0 && fields.every(field => field.disabled === true);
+};
 assert.match(getUiRowDescription(uiCreatedElements, "ui.autoTranslateConcurrency"), /默认 4，范围 1-10/);
-["ui.autoTranslatePrefetch", "ui.autoTranslateIntakeMode", "ui.providerFallbackEnabled", "ui.providerFallbackOrder"]
+["ui.autoTranslatePrefetch", "ui.autoTranslateIntakeMode", "ui.providerFallbackEnabled"]
     .forEach(path => assert.notEqual(uiCreatedElements.find(element => element.dataset?.daitPath === path).disabled, true, path));
+// Dependent rows are disabled and say which switch to turn on while their parent is off.
+[
+    ["ui.autoTranslatePrefetchRange", "autoTranslatePrefetch"],
+    ["ui.historyBackfillLimit", "historyBackfillEnabled"],
+    ["ui.providerFallbackOrder", "providerFallbackEnabled"]
+].forEach(([path, parentKey]) => {
+    assert.equal(isUiControlDisabled(uiCreatedElements.find(element => element.dataset?.daitPath === path)), true, path);
+    assert.equal(getUiRowDescription(uiCreatedElements, path), uiSectionPlugin.t("settingsRequiresParent", { parent: uiSectionPlugin.t(parentKey) }), path);
+    assert.equal(fakeElementHasClass(getUiRow(uiCreatedElements, path), "dait-settings-row-dependent"), true, path);
+});
+uiSectionPlugin.settings.ui.providerFallbackEnabled = true;
+uiSectionPlugin.syncSettingsDependentRows(providerFallbackSection, "ui.providerFallbackEnabled");
+const providerFallbackOrderList = uiCreatedElements.find(element => element.dataset?.daitPath === "ui.providerFallbackOrder");
+// The order is an ordered list of the cloud services (no typed ids): a tick box and up/down buttons per service.
+assert.deepEqual(providerFallbackOrderList.children.map(item => item.dataset.daitProvider), ["deepseek", "openaiCompatible", "googleCloud", "microsoft", "deepl", "baidu"]);
+assert.equal(providerFallbackOrderList.children.every(item => item.children.some(child => child.className === "dait-order-include")), true);
+assert.equal(isUiControlDisabled(providerFallbackOrderList), false);
+assert.equal(getUiRowDescription(uiCreatedElements, "ui.providerFallbackOrder"), uiSectionPlugin.t("providerFallbackOrderListDesc"));
+uiSectionPlugin.settings.ui.providerFallbackEnabled = false;
 const localUiCreatedElements = [];
 global.document = { createElement: tag => createFakeElement(tag, localUiCreatedElements) };
 const localUiSectionPlugin = new Plugin();
 localUiSectionPlugin.settings.translation.provider = "sakuraLocal";
+localUiSectionPlugin.settings.ui.autoTranslatePrefetch = true;
 localUiSectionPlugin.createAutoTranslateSection();
+localUiSectionPlugin.createAdvancedSection();
+localUiSectionPlugin.createProviderFallbackSection();
 // Locked local-provider controls are disabled and explain why instead of their normal description.
 [
     ["ui.autoTranslateIntakeMode", "localIntakeFixed"],
     ["ui.providerFallbackEnabled", "localFallbackUnavailable"],
     ["ui.providerFallbackOrder", "localFallbackUnavailable"]
 ].forEach(([path, reasonKey]) => {
-    assert.equal(localUiCreatedElements.find(element => element.dataset?.daitPath === path).disabled, true, path);
+    assert.equal(isUiControlDisabled(localUiCreatedElements.find(element => element.dataset?.daitPath === path)), true, path);
     assert.equal(getUiRowDescription(localUiCreatedElements, path), localUiSectionPlugin.t(reasonKey), path);
 });
 // Local providers can prefetch nearby messages like cloud providers.
@@ -2155,7 +2229,8 @@ localUiSectionPlugin.createAutoTranslateSection();
     assert.notEqual(localUiCreatedElements.find(element => element.dataset?.daitPath === path).disabled, true, path);
     assert.equal(getUiRowDescription(localUiCreatedElements, path), localUiSectionPlugin.t(descriptionKey), path);
 });
-assert.match(getUiRowDescription(localUiCreatedElements, "ui.autoTranslateConcurrency"), /1-10 个并发请求/);
+assert.equal(getUiRowDescription(localUiCreatedElements, "ui.autoTranslateConcurrency"), localUiSectionPlugin.t("localConcurrencyDesc", { min: 1, max: 10 }));
+assert.match(getUiRowDescription(localUiCreatedElements, "ui.autoTranslateConcurrency"), /1-10/);
 const versionHero = uiSectionPlugin.createSettingsHero();
 const versionChip = [...uiCreatedElements, ...localUiCreatedElements].find(element => element.dataset?.daitVersion);
 assert.ok(versionHero && versionChip);
@@ -2768,62 +2843,106 @@ assert.equal(domStyleRemoved, true);
 global.document = savedDocumentForStyleFallback;
 if (savedBdApiForStyles === undefined) delete global.BdApi;
 else global.BdApi = savedBdApiForStyles;
-assert.match(injectedCss, /--dait-danger: #d83c3e/);
-assert.match(injectedCss, /var\(--dait-danger, #d83c3e\)/);
+// v0.4.0 theme follow-up (THEME-SPEC): the plugin's windows get one of two complete palettes from
+// data-dait-panel-theme; no token of these windows reads a Discord variable, so differently themed parts of Discord
+// cannot mix into them (the report: dark inputs and dark-grey text on a light window).
+const panelDarkBlock = injectedCss.match(/\[data-dait-panel-theme="dark"\],\n:is\([^)]*\):not\(\[data-dait-panel-theme\]\) \{([\s\S]*?)\n\}/)?.[1] || "";
+const panelLightBlock = injectedCss.match(/\n\[data-dait-panel-theme="light"\] \{([\s\S]*?)\n\}/)?.[1] || "";
+const panelSharedBlock = injectedCss.match(/\n\.dait-settings,\n\.dait-quick-settings-modal-root,\n\.dait-quick-popover,\n\.dait-polish-result-panel,\n\.dait-input-action-menu,\n\.dait-dialog \{([\s\S]*?)\n\}/)?.[1] || "";
+assert.match(panelDarkBlock, /--dait-bg: #2b2d31;[\s\S]*?--dait-rail: #232428;[\s\S]*?--dait-surface: #313338;[\s\S]*?--dait-input-bg: #1e1f22;[\s\S]*?--dait-text: #e3e5e8;[\s\S]*?--dait-heading: #f2f3f5;[\s\S]*?--dait-placeholder: #949ba4;[\s\S]*?--dait-brand: #4f5bd5;/);
+// Control edges reach 3:1 against the window surfaces (theme audit; the spec asked for #4e5058 / #c4c9ce).
+assert.match(panelDarkBlock, /--dait-input-border: #7a7e86;/);
+assert.match(panelDarkBlock, /color-scheme: dark;/);
+assert.match(panelLightBlock, /--dait-bg: #ffffff;[\s\S]*?--dait-rail: #f2f3f5;[\s\S]*?--dait-surface: #f6f7f8;[\s\S]*?--dait-input-bg: #ffffff;[\s\S]*?--dait-input-border: #868a91;[\s\S]*?--dait-text: #2e3035;[\s\S]*?--dait-heading: #1f2124;[\s\S]*?--dait-placeholder: #6d6f78;/);
+assert.match(panelLightBlock, /--dait-danger: #c42b2f;/);
+assert.match(panelLightBlock, /color-scheme: light;/);
+[panelDarkBlock, panelLightBlock, panelSharedBlock].forEach(block => {
+    assert.ok(block.length > 0);
+    assert.doesNotMatch(block, /var\(--(background|input|text|header|interactive|button|brand|status|border|focus|elevation|scrollbar)-/);
+});
+// One type scale: body 15 / 1.55, small 13, headings 16 / 18 / 20; 36 px controls; the shared control width stays.
+assert.match(panelSharedBlock, /--dait-font-window: 18px;[\s\S]*?--dait-font-page: 20px;[\s\S]*?--dait-font-group: 16px;[\s\S]*?--dait-font-body: 15px;[\s\S]*?--dait-font-small: 13px;[\s\S]*?--dait-line: 1\.55;/);
+assert.match(panelSharedBlock, /--dait-control-w: 240px;[\s\S]*?--dait-control-h: 36px;/);
+// The v0.3.0 alias tokens and the per-theme Discord blocks of these windows are gone.
+["--dait-card:", "--dait-muted-readable:", "--dait-disabled-text:", "--dait-text-muted:", "--dait-font-label:", "--dait-font-caption:", "--dait-font-chip:"].forEach(token => {
+    assert.equal(injectedCss.includes(token), false, token);
+});
+["--dait-text:", "--dait-heading:", "--dait-input-bg:", "--dait-bg:"].forEach(token => {
+    assert.equal(injectedCss.split(token).length - 1, 2, token + " once per palette");
+});
+assert.equal(/\.theme-light\.dait-(settings|quick-settings-modal-root|polish-result-panel|input-action-menu)/.test(injectedCss), false);
+assert.equal(/\.dait-(settings|quick-settings-modal-root|quick-popover|polish-result-panel|input-action-menu)\[data-dait-discord-theme/.test(injectedCss), false);
+// Chat error lines use Discord's readable danger text colour instead of the fixed brand red.
+assert.match(injectedCss, /--dait-line-danger: var\(--text-danger, #fa777c\)/);
+assert.match(injectedCss, /\.dait-translation-line\.dait-translation-error \{[\s\S]*?color: var\(--dait-line-danger\);/);
 assert.equal(injectedCss.includes("opacity: 0.28"), false);
 assert.equal(injectedCss.includes("background: transparent;\n    border: 1px solid transparent"), false);
-assert.match(injectedCss, /\.dait-settings \{[\s\S]*?--dait-card: var\(--bg-base-primary, var\(--background-base-low, var\(--background-primary, #252832\)\)\);[\s\S]*?--dait-control: var\(--input-background, var\(--background-base-lowest, var\(--background-secondary, #171a22\)\)\);/);
-assert.match(injectedCss, /\.theme-light\.dait-settings,[\s\S]*?\.dait-settings\[data-dait-discord-theme="light"\][\s\S]*?--dait-card: var\(--bg-base-primary, var\(--background-base-low, var\(--background-primary, #ffffff\)\)\);[\s\S]*?--dait-text: #2e3338;[\s\S]*?--dait-heading: #1f232b;[\s\S]*?color: var\(--dait-text\);/);
-assert.match(injectedCss, /\.theme-dark\.dait-settings,[\s\S]*?\.dait-settings\[data-dait-discord-theme="dark"\][\s\S]*?--dait-card: var\(--bg-base-primary, var\(--background-base-low, var\(--background-primary, #313338\)\)\);[\s\S]*?--dait-text: var\(--text-normal, #dbdee1\);[\s\S]*?color: var\(--dait-text\);/);
-assert.match(injectedCss, /\.theme-darker\.dait-settings,[\s\S]*?\.dait-settings\[data-dait-discord-theme="darker"\][\s\S]*?--dait-card: var\(--bg-base-primary, var\(--background-base-low, var\(--background-primary, #1f2128\)\)\);/);
-assert.match(injectedCss, /\.theme-midnight\.dait-settings,[\s\S]*?\.dait-settings\[data-dait-discord-theme="midnight"\][\s\S]*?--dait-card: var\(--bg-base-primary, var\(--background-base-low, var\(--background-primary, #15171d\)\)\);/);
-assert.match(injectedCss, /\.dait-settings-row input:disabled,[\s\S]*?\.dait-test-panel select:disabled[\s\S]*?color: var\(--dait-disabled-text\);[\s\S]*?-webkit-text-fill-color: var\(--dait-disabled-text\);/);
-assert.match(injectedCss, /\[data-dait-settings-modal="true"\] \{[\s\S]*?1280px/);
+assert.match(injectedCss, /@media \(prefers-reduced-motion: reduce\) \{\n    \.dait-settings,[\s\S]*?transition: none !important;/);
+assert.match(injectedCss, /\.dait-settings :focus-visible,[\s\S]*?outline: 2px solid var\(--dait-focus\);/);
+// Disabled controls fade as a whole (55 %) instead of turning a dim grey.
+assert.match(injectedCss, /\.dait-settings-row input:disabled,[\s\S]*?\.dait-prompt-tools select:disabled \{\n    cursor: not-allowed;\n    opacity: 0\.55;\n\}/);
+// BetterDiscord's modal becomes a moderate window: min(920px, 100vw - 48px) wide, min(760px, 100vh - 64px) high.
+const settingsModalBlock = injectedCss.match(/\[data-dait-settings-modal="true"\] \{([\s\S]*?)\n\}/)?.[1] || "";
+assert.match(settingsModalBlock, /max-height: min\(760px, calc\(100vh - 64px\)\) !important;/);
+assert.match(settingsModalBlock, /width: min\(920px, calc\(100vw - 48px\)\) !important;/);
+assert.equal(settingsModalBlock.includes("1280px"), false);
+assert.match(injectedCss, /\.dait-settings \{[\s\S]*?height: calc\(min\(760px, 100vh - 64px, var\(--dait-host-max, 100vh\)\) - var\(--dait-host-chrome, 140px\)\);/);
 assert.match(injectedCss, /\[data-dait-settings-modal="true"\] \{[\s\S]*?margin-left: auto !important;[\s\S]*?margin-right: auto !important;/);
-assert.match(injectedCss, /\[data-dait-settings-modal-root="true"\] \{[\s\S]*?margin-bottom: clamp\(18px, 4vh, 42px\) !important;[\s\S]*?margin-top: clamp\(18px, 4vh, 42px\) !important;/);
+assert.match(injectedCss, /\[data-dait-settings-modal-root="true"\] \{[\s\S]*?margin-bottom: clamp\(16px, 4vh, 32px\) !important;[\s\S]*?margin-top: clamp\(16px, 4vh, 32px\) !important;/);
 assert.match(injectedCss, /\.dait-settings \{[\s\S]*?margin-left: auto;[\s\S]*?margin-right: auto;/);
-assert.match(injectedCss, /\[data-dait-settings-modal="true"\],[\s\S]*?\.dait-quick-settings-body,[\s\S]*?\.dait-settings-sidebar,[\s\S]*?\.dait-settings-row textarea[\s\S]*?scrollbar-width: thin;/);
-assert.match(injectedCss, /\.dait-prompt-editor textarea,[\s\S]*?\.dait-test-panel textarea,[\s\S]*?\.dait-test-output[\s\S]*?scrollbar-width: thin;/);
-assert.match(injectedCss, /--dait-scrollbar-thumb: var\(--scrollbar-thin-thumb, rgba\(180, 186, 199, 0\.28\)\);/);
-assert.match(injectedCss, /\[data-dait-settings-modal="true"\],[\s\S]*?\.dait-quick-settings-modal-root,[\s\S]*?\.dait-quick-settings-body,[\s\S]*?\.dait-polish-result-panel,[\s\S]*?\.dait-settings \{[\s\S]*?--dait-scrollbar-thumb:/);
-assert.match(injectedCss, /\.theme-light \[data-dait-settings-modal="true"\],[\s\S]*?\[data-dait-settings-modal="true"\]\[data-dait-discord-theme="light"\][\s\S]*?--dait-scrollbar-thumb: var\(--scrollbar-thin-thumb, rgba\(76, 86, 106, 0\.3\)\);/);
-assert.match(injectedCss, /\.theme-dark \[data-dait-settings-modal="true"\],[\s\S]*?\.dait-quick-settings-body\[data-dait-discord-theme="dark"\][\s\S]*?--dait-scrollbar-thumb: var\(--scrollbar-thin-thumb, rgba\(180, 186, 199, 0\.28\)\);/);
-assert.match(injectedCss, /\.theme-darker \[data-dait-settings-modal="true"\],[\s\S]*?\[data-dait-settings-modal="true"\]\[data-dait-discord-theme="darker"\][\s\S]*?--dait-scrollbar-thumb: var\(--scrollbar-thin-thumb, rgba\(176, 183, 196, 0\.24\)\);/);
-assert.match(injectedCss, /\.theme-midnight \[data-dait-settings-modal="true"\],[\s\S]*?\[data-dait-settings-modal="true"\]\[data-dait-discord-theme="midnight"\][\s\S]*?--dait-scrollbar-thumb: var\(--scrollbar-thin-thumb, rgba\(175, 184, 200, 0\.22\)\);/);
-assert.match(injectedCss, /\.dait-polish-result-panel,[\s\S]*?\.dait-settings \{[\s\S]*?--dait-scrollbar-thumb:/);
+// Thin standard scrollbars only where ::-webkit-scrollbar does not exist: in Chromium they would switch off the 8 px rules.
+assert.match(injectedCss, /@supports not selector\(::-webkit-scrollbar\) \{\n    \[data-dait-settings-modal="true"\],[\s\S]*?\.dait-quick-settings-body,[\s\S]*?\.dait-settings-rail,[\s\S]*?\.dait-settings-content,[\s\S]*?\.dait-settings-row textarea[\s\S]*?scrollbar-width: thin;/);
+assert.match(injectedCss, /\.dait-prompt-editor textarea,[\s\S]*?\.dait-polish-result-output \{[\s\S]*?scrollbar-width: thin;/);
+assert.equal(injectedCss.includes(".dait-test-panel") || injectedCss.includes(".dait-test-output"), false);
+assert.match(panelSharedBlock, /--dait-scrollbar-thumb: color-mix\(in srgb, var\(--dait-placeholder\) 55%, transparent\);/);
+assert.match(injectedCss, /\[data-dait-settings-modal="true"\] \{\n    --dait-scrollbar-thumb: rgba\(128, 132, 142, 0\.45\);/);
 assert.match(injectedCss, /\.dait-quick-settings-body::-webkit-scrollbar[\s\S]*?width: 8px;/);
 assert.match(injectedCss, /\.dait-settings-row textarea::-webkit-scrollbar[\s\S]*?width: 8px;/);
 assert.match(injectedCss, /\.dait-prompt-editor textarea::-webkit-scrollbar[\s\S]*?width: 8px;/);
-assert.match(injectedCss, /\.dait-test-panel textarea::-webkit-scrollbar[\s\S]*?width: 8px;/);
 assert.match(injectedCss, /\.dait-quick-settings-body::-webkit-scrollbar-thumb[\s\S]*?background: var\(--dait-scrollbar-thumb\);/);
 assert.match(injectedCss, /\.dait-settings-row textarea::-webkit-scrollbar-thumb[\s\S]*?background: var\(--dait-scrollbar-thumb\);/);
 assert.match(injectedCss, /\.dait-prompt-editor textarea::-webkit-scrollbar-thumb[\s\S]*?background: var\(--dait-scrollbar-thumb\);/);
-assert.match(injectedCss, /\.dait-test-panel textarea::-webkit-scrollbar-thumb[\s\S]*?background: var\(--dait-scrollbar-thumb\);/);
 assert.match(injectedCss, /\[data-dait-settings-modal="true"\]::-webkit-scrollbar-track[\s\S]*?background: var\(--dait-scrollbar-track\);/);
-assert.match(injectedCss, /\.dait-settings-layout \{[\s\S]*?grid-template-columns: 220px minmax\(0, 1fr\)/);
-assert.match(injectedCss, /\.dait-settings-sidebar \{[\s\S]*?overflow-y: auto;[\s\S]*?position: sticky;/);
-assert.match(injectedCss, /\.dait-settings-nav-secondary \{/);
-assert.match(injectedCss, /\.dait-settings-sidebar-reset \{/);
-assert.match(injectedCss, /\.dait-settings-section-active \{[\s\S]*?border-color: color-mix\(in srgb, var\(--dait-accent\) 34%, var\(--dait-border\)\);/);
-assert.match(injectedCss, /\.dait-quick-settings-modal-root \{[\s\S]*?--dait-quick-dialog-bg:[\s\S]*?background: var\(--dait-quick-backdrop\);[\s\S]*?overflow: hidden;/);
-assert.match(injectedCss, /\.theme-light\.dait-quick-settings-modal-root,[\s\S]*?\.dait-quick-settings-modal-root\[data-dait-discord-theme="light"\][\s\S]*?--dait-quick-backdrop: rgba\(6, 6, 7, 0\.34\);/);
-assert.match(injectedCss, /\.theme-light\.dait-quick-settings-modal-root,[\s\S]*?\.dait-quick-settings-modal-root\[data-dait-discord-theme="light"\][\s\S]*?color-scheme: light;/);
-assert.match(injectedCss, /\.theme-dark\.dait-quick-settings-modal-root,[\s\S]*?\.dait-quick-settings-modal-root\[data-dait-discord-theme="dark"\][\s\S]*?--dait-quick-backdrop: rgba\(0, 0, 0, 0\.42\);/);
-assert.match(injectedCss, /\.theme-dark\.dait-quick-settings-modal-root,[\s\S]*?\.dait-quick-settings-modal-root\[data-dait-discord-theme="dark"\][\s\S]*?color-scheme: dark;/);
-assert.match(injectedCss, /\.theme-darker\.dait-quick-settings-modal-root,[\s\S]*?\.dait-quick-settings-modal-root\[data-dait-discord-theme="darker"\][\s\S]*?--dait-quick-backdrop: rgba\(0, 0, 0, 0\.5\);/);
-assert.match(injectedCss, /\.theme-darker\.dait-quick-settings-modal-root,[\s\S]*?\.dait-quick-settings-modal-root\[data-dait-discord-theme="darker"\][\s\S]*?color-scheme: dark;/);
-assert.match(injectedCss, /\.theme-midnight\.dait-quick-settings-modal-root,[\s\S]*?\.dait-quick-settings-modal-root\[data-dait-discord-theme="midnight"\][\s\S]*?--dait-quick-backdrop: rgba\(0, 0, 0, 0\.58\);/);
-assert.match(injectedCss, /\.theme-midnight\.dait-quick-settings-modal-root,[\s\S]*?\.dait-quick-settings-modal-root\[data-dait-discord-theme="midnight"\][\s\S]*?color-scheme: dark;/);
-assert.match(injectedCss, /\.dait-quick-settings-dialog \{[\s\S]*?background: var\(--dait-quick-dialog-bg\);[\s\S]*?grid-template-rows: auto minmax\(0, 1fr\) auto;[\s\S]*?overflow: hidden;/);
-assert.match(injectedCss, /\.dait-quick-settings-header \{[\s\S]*?border-bottom: 1px solid var\(--dait-quick-border\);/);
-assert.match(injectedCss, /\.dait-quick-settings-body \{[\s\S]*?background: var\(--dait-quick-dialog-bg\);[\s\S]*?overflow-y: auto;/);
-assert.match(injectedCss, /\.dait-quick-settings-footer \{[\s\S]*?background: var\(--dait-quick-footer-bg\);[\s\S]*?border-top: 1px solid var\(--dait-quick-border\);/);
-assert.match(injectedCss, /\.dait-quick-settings-done \{/);
-assert.match(injectedCss, /\.dait-quick-settings-modal-root,[\s\S]*?\[data-dait-settings-modal="true"\],[\s\S]*?\.dait-polish-result-panel \{[\s\S]*?--dait-card: var\(--bg-base-primary, var\(--background-base-low, var\(--background-primary, #252832\)\)\);/);
-assert.match(injectedCss, /\.theme-light\.dait-quick-settings-modal-root,[\s\S]*?\.dait-quick-settings-modal-root\[data-dait-discord-theme="light"\][\s\S]*?--dait-card: var\(--bg-base-primary, var\(--background-base-low, var\(--background-primary, #ffffff\)\)\);/);
-assert.match(injectedCss, /\.theme-dark\.dait-quick-settings-modal-root,[\s\S]*?\.dait-quick-settings-modal-root\[data-dait-discord-theme="dark"\][\s\S]*?--dait-card: var\(--bg-base-primary, var\(--background-base-low, var\(--background-primary, #313338\)\)\);/);
-assert.match(injectedCss, /\.theme-darker\.dait-quick-settings-modal-root,[\s\S]*?\.dait-quick-settings-modal-root\[data-dait-discord-theme="darker"\][\s\S]*?--dait-card: var\(--bg-base-primary, var\(--background-base-low, var\(--background-primary, #1f2128\)\)\);/);
-assert.match(injectedCss, /\.theme-midnight\.dait-quick-settings-modal-root,[\s\S]*?\.dait-quick-settings-modal-root\[data-dait-discord-theme="midnight"\][\s\S]*?--dait-card: var\(--bg-base-primary, var\(--background-base-low, var\(--background-primary, #15171d\)\)\);/);
+// Tab rail (184 px, with search) and a content pane that scrolls on its own; rows share one control width.
+assert.match(injectedCss, /\.dait-settings \{[\s\S]*?--dait-rail-w: 184px;[\s\S]*?--dait-content-max: 680px;/);
+assert.match(injectedCss, /\.dait-settings-body \{[\s\S]*?grid-template-columns: var\(--dait-rail-w\) minmax\(0, 1fr\);/);
+assert.match(injectedCss, /\.dait-settings-row \{[\s\S]*?column-gap: var\(--dait-space-5\);[\s\S]*?grid-template-columns: minmax\(0, 1fr\) auto;/);
+assert.match(injectedCss, /\.dait-row-control > select,\n\.dait-row-control > input:not\(\[type="checkbox"\]\),\n\.dait-row-control > \.dait-segmented,\n\.dait-row-control > \.dait-language-controls \{\n    width: var\(--dait-control-w\);/);
+assert.match(injectedCss, /\.dait-settings input\.dait-switch \{[\s\S]*?height: 24px;[\s\S]*?width: 40px;/);
+// Segmented options are as wide as their labels, the spare width shared out (theme audit).
+assert.match(injectedCss, /\.dait-segmented \{[\s\S]*?grid-auto-columns: auto;[\s\S]*?height: var\(--dait-control-h\);/);
+// Labels and descriptions: the same size and colour, the label at 600.
+assert.match(injectedCss, /\.dait-row-label \{\n    color: var\(--dait-text\);\n    font-size: var\(--dait-font-body\);\n    font-weight: 600;/);
+assert.match(injectedCss, /\.dait-row-description \{\n    color: var\(--dait-text\);\n    font-size: var\(--dait-font-body\);\n    font-weight: 400;/);
+assert.match(injectedCss, /\.dait-settings-rail \{[\s\S]*?overflow-y: auto;/);
+assert.match(injectedCss, /\.dait-settings-content \{[\s\S]*?min-height: 0;[\s\S]*?overflow-y: auto;/);
+assert.match(injectedCss, /\.dait-settings-tab\[aria-selected="true"\] \{/);
+assert.match(injectedCss, /\.dait-settings-danger-zone \.dait-settings-group-title \{/);
+// The plugin's own settings window: a moderate window that the tabbed panel fills (one title bar, no footer);
+// colours come from the shared tokens, with no per-theme palette copies.
+const quickDialogBlock = injectedCss.match(/\.dait-quick-settings-dialog \{([\s\S]*?)\n\}/)?.[1] || "";
+assert.match(quickDialogBlock, /width: min\(920px, calc\(100vw - 48px\)\);/);
+assert.match(quickDialogBlock, /height: min\(760px, calc\(100vh - 64px\)\);/);
+assert.match(quickDialogBlock, /background: var\(--dait-bg\);/);
+assert.match(quickDialogBlock, /overflow: hidden;/);
+assert.equal(injectedCss.includes("1280px"), false);
+assert.match(injectedCss, /\.dait-quick-settings-modal-root \{[\s\S]*?background: var\(--dait-backdrop\);[\s\S]*?overflow: hidden;/);
+assert.match(panelLightBlock, /--dait-backdrop: rgba\(0, 0, 0, 0\.36\);/);
+assert.equal(/\.theme-(dark|darker|midnight)\.dait-quick-settings-modal-root/.test(injectedCss), false);
+assert.equal(injectedCss.includes("--dait-quick-dialog-bg"), false);
+const quickBodyBlock = injectedCss.match(/\.dait-quick-settings-body \{([\s\S]*?)\n\}/)?.[1] || "";
+assert.match(quickBodyBlock, /min-height: 0;/);
+assert.match(quickBodyBlock, /overflow-y: auto;/);
+assert.equal(quickBodyBlock.includes("padding"), false);
+assert.match(injectedCss, /\.dait-quick-settings-body > \.dait-settings \{[\s\S]*?flex: 1 1 auto;[\s\S]*?height: auto;[\s\S]*?min-height: 0;/);
+["header", "footer", "title", "close"].forEach(part => assert.equal(injectedCss.includes(".dait-quick-settings-" + part + " {"), false, part));
+assert.match(injectedCss, /\.dait-quick-settings-done \{[\s\S]*?background: var\(--dait-brand\);[\s\S]*?height: var\(--dait-control-h\);/);
+// The v0.3.0 settings layout rules (sidebar, hero, nav, 2-column sections) and their modal width override are gone.
+["dait-settings-sidebar", "dait-settings-layout", "dait-settings-hero", "dait-settings-nav", "dait-settings-mark", "dait-section-", "dait-api-key-row", "dait-api-controls", "dait-settings-row-wide"].forEach(name => {
+    assert.equal(injectedCss.includes(name), false, name);
+});
+assert.equal(injectedCss.includes("@media (min-width: 760px)"), false);
+assert.equal(injectedCss.includes("100vw - 28px"), false);
 assert.equal(injectedCss.includes(".dait-quick-settings-rail {"), false);
 assert.match(injectedCss, /\.dait-quick-settings-panel \{/);
 assert.match(injectedCss, /\.theme-light\.dait-quick-settings-button,[\s\S]*?\.theme-light \.dait-quick-settings-button,[\s\S]*?\[data-dait-discord-theme="light"\] \.dait-quick-settings-button \{/);
@@ -2835,10 +2954,11 @@ assert.match(injectedCss, /\.dait-quick-settings-button\[data-dait-discord-theme
 assert.match(injectedCss, /\[data-dait-discord-theme="dark"\] \.dait-quick-settings-button,[\s\S]*?\[data-dait-discord-theme="darker"\] \.dait-quick-settings-button,[\s\S]*?\[data-dait-discord-theme="midnight"\] \.dait-quick-settings-button/);
 assert.match(injectedCss, /\.dait-quick-settings-button \{[\s\S]*?--dait-quick-button-bg:[\s\S]*?background: var\(--dait-quick-button-bg\);[\s\S]*?color: var\(--dait-quick-button-text\);/);
 assert.match(injectedCss, /\.dait-quick-settings-button:hover,[\s\S]*?background: var\(--dait-quick-button-hover-bg\);[\s\S]*?color: var\(--dait-quick-button-hover-text\);/);
-assert.match(injectedCss, /\.dait-quick-settings-close \{/);
 assert.match(injectedCss, /\.dait-quick-settings-error \{/);
-assert.match(injectedCss, /@media \(max-width: 860px\) \{[\s\S]*?\.dait-settings-layout \{[\s\S]*?grid-template-columns: 1fr;/);
-assert.match(injectedCss, /@media \(max-width: 860px\) \{[\s\S]*?\.dait-settings-sidebar \{[\s\S]*?overflow-x: auto;[\s\S]*?overflow-y: hidden;/);
+// A narrow panel (BetterDiscord's own modal width) turns the tab rail into a scrolling row and stacks rows.
+assert.match(injectedCss, /@container dait-settings \(max-width: 760px\) \{[\s\S]*?\.dait-settings-body \{[\s\S]*?grid-template-columns: minmax\(0, 1fr\);/);
+assert.match(injectedCss, /@container dait-settings \(max-width: 760px\) \{[\s\S]*?\.dait-settings-tabs \{[\s\S]*?flex-direction: row;[\s\S]*?overflow-x: auto;/);
+assert.match(injectedCss, /@container dait-settings \(max-width: 600px\) \{[\s\S]*?\.dait-settings-row:not\(\.dait-settings-row-switch\) \{[\s\S]*?grid-template-columns: minmax\(0, 1fr\);/);
 assert.match(injectedCss, /\.dait-message-button \{[\s\S]*?border: 1px solid color-mix/);
 assert.match(injectedCss, /\.theme-light\.dait-polish-button,[\s\S]*?\.dait-polish-button\[data-dait-discord-theme="light"\]/);
 assert.match(injectedCss, /\.theme-dark\.dait-polish-button,[\s\S]*?\.theme-darker\.dait-polish-button,[\s\S]*?\.theme-midnight\.dait-polish-button/);
@@ -2853,9 +2973,11 @@ assert.match(injectedCss, /\[class\*="markup"\]:hover \.dait-message-button[\s\S
 assert.match(injectedCss, /\[id\^="chat-messages-"\]:hover \.dait-message-button[\s\S]*?pointer-events: auto;/);
 assert.match(injectedCss, /\.dait-translation-line \{[\s\S]*?overflow-anchor: none;/);
 assert.match(injectedCss, /\.dait-polish-result-panel \{/);
-assert.match(injectedCss, /\.theme-light\.dait-polish-result-panel,[\s\S]*?\.dait-polish-result-panel\[data-dait-discord-theme="light"\]/);
-assert.match(injectedCss, /\.theme-darker\.dait-polish-result-panel,[\s\S]*?\.dait-polish-result-panel\[data-dait-discord-theme="darker"\]/);
-assert.match(injectedCss, /\.theme-midnight\.dait-polish-result-panel,[\s\S]*?\.dait-polish-result-panel\[data-dait-discord-theme="midnight"\]/);
+// The polish result panel reads the shared tokens instead of four per-theme colour blocks.
+assert.match(injectedCss, /\.dait-polish-result-panel \{[\s\S]*?background: var\(--dait-surface\);[\s\S]*?border: 1px solid var\(--dait-divider\);[\s\S]*?box-shadow: var\(--dait-shadow\);[\s\S]*?color: var\(--dait-text\);/);
+assert.match(injectedCss, /\.dait-polish-result-output \{[\s\S]*?background: var\(--dait-input-bg\);[\s\S]*?color: var\(--dait-text\);/);
+assert.equal(/\.theme-(dark|darker|midnight)\.dait-polish-result-panel/.test(injectedCss), false);
+assert.equal(/\[data-dait-discord-theme="(light|darker|midnight)"\] \.dait-polish-result-output/.test(injectedCss), false);
 assert.match(injectedCss, /\.dait-polish-result-output \{/);
 assert.match(injectedCss, /\.dait-polish-result-action\.primary \{/);
 assert.match(injectedCss, /\.dait-polish-restore-control \{/);
@@ -4302,7 +4424,8 @@ googlePlugin.settings.googleTranslate.keyPoolText = "main|AIza-main|450000\nback
 googlePlugin.settings.googleTranslate.keys = googlePlugin.normalizeGoogleTranslateKeyPool(googlePlugin.settings.googleTranslate).keys;
 assert.equal(googlePlugin.hasUsableApiConfig("translation"), true);
 const googleRequest = googlePlugin.buildModelRequest("translation", "bonjour");
-assert.match(googleRequest.endpoint, /^https:\/\/translation\.googleapis\.com\/language\/translate\/v2\?key=AIza-main$/);
+assert.equal(googleRequest.endpoint, "https://translation.googleapis.com/language/translate/v2");
+assert.equal(googleRequest.request.headers["X-Goog-Api-Key"], "AIza-main");
 assert.equal(googleRequest.request.provider, "googleCloud");
 assert.equal(googleRequest.request.responseParser, "googleTranslate");
 assert.equal(googleRequest.request.headers.Authorization, undefined);
@@ -4369,7 +4492,7 @@ assert.equal(
 );
 googlePlugin.settings.googleTranslate.keys[0].usedChars = 449998;
 const googleSwitchRequest = googlePlugin.buildGoogleTranslateRequest("bonjour", googlePlugin.settings.translation);
-assert.match(googleSwitchRequest.endpoint, /key=AIza-backup$/);
+assert.equal(googleSwitchRequest.request.headers["X-Goog-Api-Key"], "AIza-backup");
 googlePlugin.settings.googleTranslate.keys[1].usedChars = 449998;
 expectThrowsMessage(() => googlePlugin.buildGoogleTranslateRequest("bonjour", googlePlugin.settings.translation), "Google");
 
@@ -4420,7 +4543,8 @@ const deeplFreeRequest = deeplPlugin.buildModelRequest("translation", ["hello", 
 assert.equal(deeplFreeRequest.endpoint, "https://api-free.deepl.com/v2/translate");
 assert.equal(deeplFreeRequest.request.provider, "deepl");
 assert.equal(deeplFreeRequest.request.headers.Authorization, "DeepL-Auth-Key deepl-key");
-assert.deepEqual(deeplFreeRequest.request.body, { text: ["hello", "world"], target_lang: "ZH" });
+// As a target DeepL needs the explicit variant; plain "ZH" is only valid as source_lang.
+assert.deepEqual(deeplFreeRequest.request.body, { text: ["hello", "world"], target_lang: "ZH-HANS" });
 deeplPlugin.settings.translation.deeplPlan = "pro";
 const deeplProRequest = deeplPlugin.buildModelRequest("translation", "hello");
 assert.equal(deeplProRequest.endpoint, "https://api.deepl.com/v2/translate");
@@ -4493,10 +4617,10 @@ googleReservationPlugin.settings.googleTranslate.keyPoolText = "main|AIza-main|5
 googleReservationPlugin.settings.googleTranslate.keys = googleReservationPlugin.normalizeGoogleTranslateKeyPool(googleReservationPlugin.settings.googleTranslate).keys;
 googleReservationPlugin.settings.googleTranslate.keys[0].usedChars = 3;
 const googleReservedMain = googleReservationPlugin.buildGoogleTranslateRequest("ab", googleReservationPlugin.settings.translation, { reserve: true });
-assert.match(googleReservedMain.endpoint, /key=AIza-main$/);
+assert.equal(googleReservedMain.request.headers["X-Goog-Api-Key"], "AIza-main");
 assert.equal(googleReservationPlugin.getGoogleTranslateReservedChars(googleReservedMain.request.googleTranslate.keyId), 2);
 const googleReservedBackup = googleReservationPlugin.buildGoogleTranslateRequest("c", googleReservationPlugin.settings.translation, { reserve: true });
-assert.match(googleReservedBackup.endpoint, /key=AIza-backup$/);
+assert.equal(googleReservedBackup.request.headers["X-Goog-Api-Key"], "AIza-backup");
 googleReservationPlugin.releaseGoogleTranslateRequestReservation(googleReservedMain.request);
 googleReservationPlugin.releaseGoogleTranslateRequestReservation(googleReservedBackup.request);
 assert.equal([...googleReservationPlugin.googleTranslateReservedChars.values()].reduce((sum, value) => sum + value, 0), 0);
@@ -5326,8 +5450,13 @@ warningToastPlugin.settings.ui.showAutoTranslateToasts = true;
 warningToastPlugin.showAutoTranslateError(new Error("invalid output"));
 assert.equal(warningToasts, 1);
 warningToastPlugin.settings.ui.showAutoTranslateToasts = false;
-warningToastPlugin.showAutoTranslateError(Object.assign(new Error("API_ERROR"), { status: 401 }));
+warningToastPlugin.showAutoTranslateError(Object.assign(new Error("API_ERROR"), { status: 500 }));
 assert.equal(warningToasts, 1);
+// An error only the user can fix (auth) is announced once per episode even with failure toasts off.
+warningToastPlugin.showAutoTranslateError(Object.assign(new Error("API_ERROR"), { status: 401 }));
+assert.equal(warningToasts, 2);
+warningToastPlugin.showAutoTranslateError(Object.assign(new Error("API_ERROR"), { status: 401 }));
+assert.equal(warningToasts, 2);
 
 const networkFailurePlugin = new Plugin();
 let networkFailureRemoved = false;
@@ -5461,6 +5590,9 @@ assert.deepEqual(providerFallbackFeaturePlugin.getProviderFallbackOrder("transla
 providerFallbackFeaturePlugin.settings.translation.provider = "deepseek";
 assert.deepEqual(providerFallbackFeaturePlugin.getProviderFallbackOrder("translation"), ["microsoft", "deepl"]);
 providerFallbackFeaturePlugin.getCurrentRouteKey = () => "guild-shell:channel-shell:";
+// 'inherit' follows the main auto-translate switch (off by default); 'enabled' works as an allow-list.
+assert.equal(providerFallbackFeaturePlugin.isCurrentChannelAutoTranslateAllowed(), false);
+providerFallbackFeaturePlugin.settings.ui.autoTranslateMessages = true;
 assert.equal(providerFallbackFeaturePlugin.isCurrentChannelAutoTranslateAllowed(), true);
 providerFallbackFeaturePlugin.settings.ui.channelAutoTranslatePolicies = {
     "guild-shell:channel-shell": { mode: "disabled" }
@@ -9038,9 +9170,14 @@ const savedDocumentForRenderWrapper = global.document;
 global.document = { createElement: tag => createFakeElement(tag) };
 renderTextWrapperPlugin.renderTranslation({}, {}, "wrapped translation", "cache-key", "source");
 global.document = savedDocumentForRenderWrapper;
-assert.equal(renderChildren.length, 1);
+// The text span first, then the empty anchor of the hover toolbar (copy / retranslate / hide), which adds no text;
+// the toolbar itself is built on the line's first pointerenter or focusin.
+assert.equal(renderChildren.length, 2);
 assert.equal(renderChildren[0].className, "dait-translation-text");
 assert.equal(renderChildren[0].textContent, "wrapped translation");
+assert.equal(renderChildren[1].className, "dait-translation-actions-anchor");
+assert.equal(renderChildren[1].children.length, 0);
+assert.equal(renderChildren[1].getAttribute("tabindex"), "0");
 
 const emojiRenderPlugin = new Plugin();
 const sourceEmoji = createFakeElement("img");
@@ -9072,9 +9209,11 @@ assert.equal(emojiRenderPlugin.appendTranslationTextWithDiscordEmoji(markupEmoji
 assert.equal(markupEmojiContainer.children.length, 2);
 assert.equal(markupEmojiContainer.children[1].getAttribute("alt"), ":emoji_12:");
 
+// A second ":emoji_12:" (literal text in the message) stays text instead of vetoing the line.
 const duplicateEmojiContainer = createFakeElement("span");
-assert.equal(emojiRenderPlugin.appendTranslationTextWithDiscordEmoji(duplicateEmojiContainer, "A :emoji_12: :emoji_12:", emojiContent), false);
-assert.equal(duplicateEmojiContainer.children.length, 0);
+assert.equal(emojiRenderPlugin.appendTranslationTextWithDiscordEmoji(duplicateEmojiContainer, "A :emoji_12: :emoji_12:", emojiContent), true);
+assert.equal(duplicateEmojiContainer.children.filter(child => child.getAttribute?.("alt") === ":emoji_12:").length, 1);
+assert.equal(duplicateEmojiContainer.children[duplicateEmojiContainer.children.length - 1].textContent, " :emoji_12:");
 
 const uncloneableEmoji = { ...sourceEmoji, cloneNode: () => { throw new Error("clone failed"); } };
 const uncloneableContent = { querySelectorAll: () => [uncloneableEmoji] };
@@ -9150,7 +9289,15 @@ const maskedHideLine = {
 };
 const maskedHideContent = { dataset: {}, style: { setProperty() {}, removeProperty() {} }, parentElement: { insertBefore(node) { node.parentElement = this; } } };
 const savedDocumentForMaskedHide = global.document;
-global.document = { createElement: () => maskedHideLine };
+let maskedHideLineCreated = false;
+// The first element created is the line; the text span and toolbar get their own elements.
+global.document = {
+    createElement: tag => {
+        if (maskedHideLineCreated) return createFakeElement(tag);
+        maskedHideLineCreated = true;
+        return maskedHideLine;
+    }
+};
 maskedHideOriginalPlugin.getTranslationLine = () => null;
 maskedHideOriginalPlugin.getTranslationLines = () => [];
 maskedHideOriginalPlugin.isReplyPreviewElement = () => false;
@@ -9856,7 +10003,8 @@ const errorRenderLine = {
 errorRenderPlugin.ensureTranslationNode = () => errorRenderLine;
 errorRenderPlugin.setTranslationLineMetadata = () => {};
 const inlineError = new Error("API_ERROR");
-inlineError.status = 401;
+// A server error: Retry can fix it. (Auth errors offer "Open settings" instead; see tests/core/chat-lines.test.js.)
+inlineError.status = 500;
 errorRenderPlugin.renderTranslationError({ isConnected: true }, { isConnected: true }, inlineError, "manual\n---\ncache", "source");
 assert.equal(errorRenderLine.children.length, 2);
 assert.equal(errorRenderLine.children[0].className, "dait-translation-error-message");
@@ -10970,6 +11118,8 @@ assert.equal(menuTree.props.children[0], menuItem);
 
     const sakuraHealthFailurePlugin = new Plugin();
     sakuraHealthFailurePlugin.settings.translation.provider = "sakuraLocal";
+    // Its own endpoint, as picking the provider in the settings sets it (not DeepSeek's default).
+    sakuraHealthFailurePlugin.settings.translation.endpoint = "http://127.0.0.1:8080/v1/chat/completions";
     sakuraHealthFailurePlugin.settings.translation.apiKey = "";
     sakuraHealthFailurePlugin.settings.translation.apiStatus = { state: "untested", message: "" };
     sakuraHealthFailurePlugin.fetchApiResponseText = async () => {
@@ -11013,7 +11163,7 @@ assert.equal(menuTree.props.children[0], menuItem);
     const googleRunReservationEndpoints = [];
     let googleRunReservationReleaseFirst = null;
     googleRunReservationPlugin.fetchApiResponseText = (endpoint, request) => {
-        googleRunReservationEndpoints.push(endpoint);
+        googleRunReservationEndpoints.push(request.headers["X-Goog-Api-Key"]);
         if (request.body.q === "abc") {
             return new Promise(resolve => {
                 googleRunReservationReleaseFirst = () => resolve(JSON.stringify({ data: { translations: [{ translatedText: "first" }] } }));
@@ -11022,11 +11172,11 @@ assert.equal(menuTree.props.children[0], menuItem);
         return Promise.resolve(JSON.stringify({ data: { translations: [{ translatedText: "second" }] } }));
     };
     const googleRunReservationFirst = googleRunReservationPlugin.runModelTask("translation", "abc");
-    assert.match(googleRunReservationEndpoints[0], /key=AIza-main$/);
+    assert.equal(googleRunReservationEndpoints[0], "AIza-main");
     assert.equal(googleRunReservationPlugin.getGoogleTranslateReservedChars(googleRunReservationPlugin.settings.googleTranslate.keys[0]), 3);
     const googleRunReservationSecond = await googleRunReservationPlugin.runModelTask("translation", "d");
     assert.equal(googleRunReservationSecond, "second");
-    assert.match(googleRunReservationEndpoints[1], /key=AIza-backup$/);
+    assert.equal(googleRunReservationEndpoints[1], "AIza-backup");
     assert.equal(googleRunReservationPlugin.settings.googleTranslate.keys[1].usedChars, 1);
     googleRunReservationReleaseFirst();
     assert.equal(await googleRunReservationFirst, "first");
@@ -11913,7 +12063,10 @@ global.document = {
     assert.equal(publicWriteFailurePanelTitle, publicWriteFailurePlugin.t("publicBilingualButton"));
     assert.equal(publicWriteFailureResult.fallbackText, publicWriteFailurePanelText);
     assert.equal(publicWriteFailureResult.wrote, false);
-    assert.equal(publicWriteFailureToasts.some(toast => toast.type === "error" && /verification-failed/.test(toast.text)), true);
+    // The toast explains the failure in words; the internal reason code stays out of it.
+    assert.equal(publicWriteFailureToasts.some(toast => toast.type === "error"
+        && toast.text === publicWriteFailurePlugin.t("publicBilingualFailed", { error: publicWriteFailurePlugin.t("errorComposerWriteFailed") })), true);
+    assert.equal(publicWriteFailureToasts.some(toast => /verification-failed/.test(toast.text)), false);
 
     const appendGuardPlugin = new Plugin();
     const appendGuardTextbox = {
@@ -12524,6 +12677,8 @@ global.document = {
 
     const sakuraSingleFailurePlugin = new Plugin();
     sakuraSingleFailurePlugin.settings.translation.provider = "sakuraLocal";
+    // Its own endpoint, as picking the provider in the settings sets it (not DeepSeek's default).
+    sakuraSingleFailurePlugin.settings.translation.endpoint = "http://127.0.0.1:8080/v1/chat/completions";
     sakuraSingleFailurePlugin.settings.ui.autoTranslateMessages = true;
     sakuraSingleFailurePlugin.settings.translation.apiKey = "";
     sakuraSingleFailurePlugin.settings.translation.apiStatus = { state: "success", message: "" };
@@ -13220,7 +13375,8 @@ global.document = {
     const manualSourceContent = { dataset: {}, isConnected: true, text: manualSourceShort };
     await manualSourcePlugin.translateMessage(manualSourceMessage, manualSourceContent, null);
     assert.equal(manualSourceRequestedText, manualSourceFull);
-    assert.equal(manualSourceRendered.sourceText, manualSourceFull);
+    // The store text is only the request text: the line is keyed on the text on screen.
+    assert.equal(manualSourceRendered.sourceText, manualSourceShort);
 
     const manualPartialPlugin = new Plugin();
     manualPartialPlugin.settings.translation.enabled = true;

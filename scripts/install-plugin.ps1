@@ -6,6 +6,11 @@ Installs the generated DiscordAITranslator BetterDiscord plugin on Windows.
 Validates JavaScript syntax, creates a timestamped backup, verifies SHA256, and
 optionally enables the plugin in each BetterDiscord profile using atomic JSON replacement.
 
+Before installing (also with -WhatIf), it writes and removes a small probe file in %APPDATA% to
+detect a window running inside a packaged app (for example an AI desktop app). Such a window's new
+AppData files are redirected to %LOCALAPPDATA%\Packages\<app>\LocalCache\Roaming, which a normally
+started Discord never reads, so the script then stops with exit code 2 and changes nothing.
+
 .PARAMETER PluginPath
 Path to the generated .plugin.js file. Defaults to the repository root artifact.
 
@@ -18,6 +23,10 @@ Skips the Node.js syntax check.
 .PARAMETER NoEnable
 Installs the plugin without changing BetterDiscord profile enable state.
 
+.PARAMETER AllowRedirectedAppData
+Installs even when this window's AppData writes are redirected into an app package. The plugin then
+lands in that app's private copy, which only a Discord started from inside that app loads.
+
 .EXAMPLE
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-plugin.ps1 -WhatIf
 
@@ -29,7 +38,8 @@ param(
     [string]$PluginPath = "",
     [string]$PluginsDir = "",
     [switch]$SkipSyntaxCheck,
-    [switch]$NoEnable
+    [switch]$NoEnable,
+    [switch]$AllowRedirectedAppData
 )
 
 Set-StrictMode -Version Latest
@@ -142,6 +152,36 @@ function Get-PluginVersion {
     return "unknown"
 }
 
+# Packaged desktop apps redirect files that a process inside them creates under %APPDATA% to
+# %LOCALAPPDATA%\Packages\<app>\LocalCache\Roaming (the same probe as check-installed-plugin.ps1).
+# Returns that package name, or "" when writes reach the real folder or the probe cannot run.
+function Get-AppDataRedirectPackage {
+    if (-not $env:LOCALAPPDATA) { return "" }
+    $packagesRoot = Join-Path $env:LOCALAPPDATA "Packages"
+    if (-not (Test-Path -LiteralPath $packagesRoot -PathType Container)) { return "" }
+    $probeName = "dait-redirect-probe-$([guid]::NewGuid().ToString('N')).tmp"
+    $probe = Join-Path $env:APPDATA $probeName
+    # .NET file calls, because Set-Content and Remove-Item do nothing under -WhatIf.
+    try {
+        [System.IO.File]::WriteAllText($probe, "probe")
+    }
+    catch {
+        Write-Verbose "Could not write the AppData redirect probe: $($_.Exception.Message)"
+        return ""
+    }
+    try {
+        foreach ($package in @(Get-ChildItem -LiteralPath $packagesRoot -Directory -ErrorAction SilentlyContinue)) {
+            if (Test-Path -LiteralPath (Join-Path $package.FullName "LocalCache\Roaming\$probeName") -PathType Leaf) {
+                return $package.Name
+            }
+        }
+        return ""
+    }
+    finally {
+        try { [System.IO.File]::Delete($probe) } catch { }
+    }
+}
+
 if (-not $env:APPDATA) {
     throw "APPDATA is not set. Cannot locate the BetterDiscord plugins folder."
 }
@@ -168,6 +208,19 @@ $pluginsRoot = [System.IO.Path]::GetFullPath($resolvedPluginsDir).TrimEnd([Syste
 $destinationFull = [System.IO.Path]::GetFullPath($destination)
 if (-not $destinationFull.StartsWith($pluginsRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
     throw "Refusing to write outside the BetterDiscord plugins folder: $destinationFull"
+}
+
+# The hash check below reads through the same redirected view, so it cannot catch this case.
+$redirectPackage = Get-AppDataRedirectPackage
+if ($redirectPackage) {
+    $privateRoaming = Join-Path $env:LOCALAPPDATA "Packages\$redirectPackage\LocalCache\Roaming"
+    Write-Warning "This window runs inside app package $redirectPackage, which redirects its AppData writes to $privateRoaming."
+    Write-Warning "A normally started Discord will not see an install made from here; only a Discord started from inside that app would load it."
+    if (-not $AllowRedirectedAppData) {
+        Write-Warning "Nothing was installed. Run 'npm run plugin:install' from a normal PowerShell window (open it from the Start menu), then confirm with 'npm run plugin:check'. To install into the app's private copy anyway, add -AllowRedirectedAppData."
+        exit 2
+    }
+    Write-Warning "-AllowRedirectedAppData is set: installing into the private copy of app package $redirectPackage."
 }
 
 $timestamp = Get-Date -Format "yyyyMMdd-HHmmss-fff"
@@ -263,4 +316,7 @@ if ($PSCmdlet.ShouldProcess($target, "Install DiscordAITranslator plugin")) {
     }
     Write-Host "SHA256:"
     Write-Host $destinationHash
+    if ($redirectPackage) {
+        Write-Warning "This install is in the private copy of app package $redirectPackage. A normally started Discord will not load it."
+    }
 }
