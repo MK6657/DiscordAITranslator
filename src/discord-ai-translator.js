@@ -680,7 +680,10 @@ class TranslationScheduler {
         if (previous && plugin.isAutoTranslationFailureExpired(previous)) plugin.autoTranslationProviderFailures.delete(key);
         const previousCount = previous && !plugin.isAutoTranslationFailureExpired(previous) ? Number(previous.count || 0) : 0;
         const count = Math.min(5, previousCount + 1);
-        const retryAfterMs = Math.max(itemFailure?.retryAfterMs || 0, plugin.getAutoTranslationRetryAfter(error, count));
+        // The cooldown blocks every message on this provider, so it grows only with provider-level
+        // evidence: the provider's own count, or a server hint (Retry-After) carried by the error.
+        // One message's growing failure count (itemFailure) backs off that message alone.
+        const retryAfterMs = plugin.getAutoTranslationRetryAfter(error, count);
         plugin.autoTranslationProviderFailures.set(key, {
             at: Date.now(),
             count,

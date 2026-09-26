@@ -168,6 +168,34 @@ test("retained visible failures keep counting, so repeated timeouts back off", t
     assert.ok(secondDelay > firstDelay + 5000, `${firstDelay} -> ${secondDelay}`);
 });
 
+test("one message that keeps timing out does not grow the provider-wide cooldown", t => {
+    const plugin = createQueuePlugin(t);
+    const item = makeItem(plugin, "provider-escalation");
+    const providerCooldowns = [];
+    const itemFailureCounts = [];
+    for (let round = 0; round < 4; round++) {
+        plugin.autoTranslationQueue = [];
+        plugin.autoTranslationQueuedKeys.clear();
+        // The previous provider cooldown and the item's own delay have run out before it is sent again.
+        plugin.autoTranslationProviderFailures.forEach(failure => { failure.retryAt = Date.now() - 1; });
+        const recorded = plugin.autoTranslationFailures.get(item.cacheKey);
+        if (recorded) recorded.retryAt = Date.now() - 1;
+        plugin.getAutoTranslationFailure(item.cacheKey);
+        plugin.markAutoTranslationFailure(item, timeoutError());
+        const providerFailure = plugin.getAutoTranslationProviderFailure(item.requestOptions);
+        providerCooldowns.push(providerFailure.retryAfterMs);
+        itemFailureCounts.push(Math.max(plugin.getAutoTranslationFailureHistoryCount(item.cacheKey), Number(plugin.autoTranslationFailures.get(item.cacheKey)?.count || 0)));
+    }
+    assert.deepEqual(itemFailureCounts, [1, 2, 3, 4], "the item's own count keeps growing");
+    assert.deepEqual(providerCooldowns, [10000, 10000, 10000, 10000], "the provider cooldown follows the provider's own count");
+
+    // A server hint (Retry-After) still sets the provider cooldown.
+    const hinted = Object.assign(statusError(429), { retryAfterMs: 30000 });
+    plugin.autoTranslationProviderFailures.clear();
+    plugin.markAutoTranslationFailure(makeItem(plugin, "provider-hint"), hinted);
+    assert.equal(plugin.getAutoTranslationProviderFailure(item.requestOptions).retryAfterMs, 30000);
+});
+
 test("a truncated prefetch result keeps its truncated type and growing backoff", t => {
     const plugin = createQueuePlugin(t);
     const item = makeItem(plugin, "truncated-prefetch", { daitPrefetchRequest: true });
