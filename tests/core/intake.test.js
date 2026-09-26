@@ -322,7 +322,7 @@ const discordStores = {
     GuildRoleStore: { getRole: (guildId, id) => (guildId === GUILD && id === ROLE ? { id: ROLE, name: "Testers" } : null) }
 };
 
-function createIntakePlugin(t, { domParts, storeContent, autoTranslate = true }) {
+function createIntakePlugin(t, { domParts, storeContent, autoTranslate = true, targetLanguage = "Chinese" }) {
     const document = createFakeDocument();
     useGlobals(t, {
         document,
@@ -330,7 +330,7 @@ function createIntakePlugin(t, { domParts, storeContent, autoTranslate = true })
     });
     const plugin = new Plugin();
     plugin.isStarted = true;
-    Object.assign(plugin.settings.translation, { enabled: true, apiKey: "sk-fake-1", targetLanguage: "Chinese" });
+    Object.assign(plugin.settings.translation, { enabled: true, apiKey: "sk-fake-1", targetLanguage });
     Object.assign(plugin.settings.ui, { autoTranslateMessages: autoTranslate, autoTranslateIntakeMode: "auto" });
     const { messageNode, content } = buildMessage(document, domParts);
     plugin.getDiscordMessageStore = () => ({
@@ -664,6 +664,30 @@ test("a message of standard emoji alone gets no Translate button and sends no re
     plugin.runManualRescueModelAttempt = async () => { throw new Error("must not request"); };
     await plugin.translateMessage(messageNode, content, null);
     assert.deepEqual(toasts, [plugin.t("noTranslatableText")]);
+});
+
+test("with an English target, a common short reply followed by emoji is still skipped", async t => {
+    const plugin = new Plugin();
+    for (const text of ["thanks 🙏", "ok 👍", "lol 😂", "nice 🔥", "❤️ thank you ❤️", "Thanks! ✌🏽", "same 👨‍💻"]) {
+        assert.equal(plugin.isCommonTargetShortText(text, "English"), true, text);
+        assert.equal(plugin.shouldAutoTranslateText(text, "English"), false, text);
+        assert.ok(plugin.computeAutoTranslationPrecheckSkipReason(text, "English"), text);
+    }
+    assert.equal(plugin.computeAutoTranslationPrecheckSkipReason("ok 👍", "English"), "common-target-short");
+    assert.equal(plugin.isCommonTargetShortText("ok 👍", "Chinese"), false, "only an English target has common short replies");
+    assert.equal(plugin.isCommonTargetShortText("thanks 🙏 for the help", "English"), false);
+
+    for (const parts of [["thanks ", unicodeEmoji("🙏", "pray")], ["ok ", unicodeEmoji("👍", "thumbsup")], ["lol ", unicodeEmoji("😂", "joy")], ["nice ", unicodeEmoji("🔥", "fire")]]) {
+        const { plugin: scanPlugin, content, scan } = createIntakePlugin(t, { domParts: parts, storeContent: "", targetLanguage: "English" });
+        const requests = [];
+        scanPlugin.runAutoTranslationTask = async text => {
+            requests.push(text);
+            return text;
+        };
+        scan();
+        assert.equal(scanPlugin.autoTranslationQueue.length, 0, scanPlugin.getElementText(content));
+        assert.deepEqual(requests, []);
+    }
 });
 
 test("only real translator widgets count as foreign translation elements", () => {

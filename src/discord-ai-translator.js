@@ -14,6 +14,7 @@ const { PLUGIN_VERSION } = require("./version");
 const { ProviderLayer } = require("./providers/provider-layer");
 const { SettingsStore } = require("./settings/settings-store");
 const { convertDiscordMarkupToDisplayText, DISCORD_MARKUP_DISPLAY_TEXT_MEMO_MAX } = require("./intake/discord-markup");
+const { removeStandardEmoji } = require("./intake/emoji-text");
 
 const {
     PLUGIN_NAME,
@@ -9915,7 +9916,8 @@ module.exports = class DiscordAITranslator {
     isCommonTargetShortText(text, targetLanguage) {
         const target = this.normalizeLanguageName(targetLanguage);
         if (!["英语", "English"].includes(target)) return false;
-        const normalized = String(text || "").trim().toLocaleLowerCase();
+        // "thanks 🙏" is as common a reply as "thanks": emoji do not count.
+        const normalized = removeStandardEmoji(text).trim().toLocaleLowerCase();
         if (!/^[a-z0-9\s'’.,!?-]+$/.test(normalized)) return false;
         const compact = normalized.replace(/[^\w'’]+/g, " ").trim();
         const common = new Set(["hi", "hello", "hey", "ok", "okay", "yes", "no", "thanks", "thank you", "lol", "bro", "same", "sure", "done", "nice", "good", "bad", "why", "what"]);
