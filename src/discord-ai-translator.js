@@ -12571,13 +12571,13 @@ module.exports = class DiscordAITranslator {
             if (renderOptions?.validationReason) line.dataset.daitValidationReason = String(renderOptions.validationReason);
             else delete line.dataset.daitValidationReason;
             this.resetTranslationLineState(line);
-            this.applyTranslationLineLanguage(line);
             this.applyTranslationLineDisplayClasses(line);
             this.applyTranslationLineMaskState(line);
             this.applyTranslationLineDismissal(line, messageNode, content);
             line.textContent = "";
             const text = document.createElement("span");
             text.className = "dait-translation-text";
+            this.applyTranslationLineLanguage(text);
             const emojiDescriptors = this.getTranslationEmojiDescriptors(content);
             if (emojiDescriptors.length && !this.appendTranslationTextWithDiscordEmoji(text, translatedText, content, emojiDescriptors)) {
                 this.removeTranslationNode(messageNode, content);
@@ -12916,12 +12916,23 @@ module.exports = class DiscordAITranslator {
         return value;
     }
 
-    // The line is in the target language: give it that language and a direction of its own,
-    // so right-to-left targets read and align correctly.
-    applyTranslationLineLanguage(line) {
+    // The translated text is in the target language: give it that language and a direction of its own,
+    // so right-to-left targets read and align correctly. Only the text span gets them: the toolbar and
+    // the partial note are in the interface language and follow the page's direction.
+    applyTranslationLineLanguage(textElement) {
         const { lang, dir } = this.getTranslationLineLanguage();
-        if (lang) line.setAttribute?.("lang", lang);
-        line.setAttribute?.("dir", dir);
+        if (lang) textElement.setAttribute?.("lang", lang);
+        textElement.setAttribute?.("dir", dir);
+    }
+
+    // Laid out right to left: the computed direction where there is layout, else the nearest dir attribute.
+    isRightToLeftElement(element) {
+        if (!element) return false;
+        try {
+            if (typeof getComputedStyle === "function" && element.nodeType === 1) return getComputedStyle(element)?.direction === "rtl";
+        }
+        catch {}
+        return element.closest?.("[dir]")?.getAttribute?.("dir") === "rtl";
     }
 
     applyTranslationLineDisplayClasses(line) {
@@ -12990,7 +13001,9 @@ module.exports = class DiscordAITranslator {
     }
 
     handleTranslationActionsKeydown(toolbar, event) {
-        const keys = { ArrowRight: 1, ArrowLeft: -1, Home: "first", End: "last" };
+        // The arrow keys follow the visual order: in a right-to-left toolbar the next button is to the left.
+        const forward = this.isRightToLeftElement(toolbar) ? "ArrowLeft" : "ArrowRight";
+        const keys = { [forward]: 1, [forward === "ArrowRight" ? "ArrowLeft" : "ArrowRight"]: -1, Home: "first", End: "last" };
         const move = keys[event?.key];
         if (move === undefined) return;
         const buttons = [...(toolbar?.querySelectorAll?.(".dait-translation-action") || [])];
@@ -13012,7 +13025,8 @@ module.exports = class DiscordAITranslator {
         const bounds = (line.closest?.(DISCORD_MESSAGE_NODE_SELECTOR) || line.parentElement)?.getBoundingClientRect?.();
         if (!lineRect || !bounds) return;
         const width = Number(toolbar.offsetWidth || 0) || 96;
-        const room = line.getAttribute?.("dir") === "rtl" ? lineRect.left - bounds.left : bounds.right - lineRect.right;
+        // The toolbar goes after the line's inline end: on the left when the line runs right to left.
+        const room = this.isRightToLeftElement(line) ? lineRect.left - bounds.left : bounds.right - lineRect.right;
         const placement = room >= width + 8 ? "end" : "inside";
         if (toolbar.dataset.daitPlacement !== placement) toolbar.dataset.daitPlacement = placement;
     }

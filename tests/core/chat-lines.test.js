@@ -260,22 +260,33 @@ function getCssRule(selector) {
 
 // --- render-8: language and direction ---
 
-test("translation lines carry the target language and a direction; right-to-left targets get dir=rtl", t => {
+test("the translated text carries the target language and a direction; right-to-left targets get dir=rtl", t => {
     const { plugin, doc } = createChatPlugin(t, { targetLanguage: "阿拉伯语" });
     const { messageNode, content } = createMessage(doc, "See you tomorrow");
-    const line = plugin.renderTranslation(messageNode, content, "أراك غدا @user", "cache-key", content.text);
-    assert.equal(line.getAttribute("lang"), "ar");
-    assert.equal(line.getAttribute("dir"), "rtl");
+    const line = plugin.renderTranslation(messageNode, content, "أراك غدا @user", "cache-key", content.text, {
+        partialInfo: { missingSegments: [2], totalSegments: 4 }
+    });
+    const textOf = () => line.querySelector(".dait-translation-text");
+    assert.equal(textOf().getAttribute("lang"), "ar");
+    assert.equal(textOf().getAttribute("dir"), "rtl");
+    // The toolbar and the partial note are in the interface language and follow the page's direction.
+    assert.equal(line.getAttribute("lang"), null);
+    assert.equal(line.getAttribute("dir"), null);
+    assert.equal(line.querySelector(".dait-translation-note").closest("[lang]"), null);
+    assert.equal(line.querySelector(".dait-translation-actions").closest("[dir]"), null);
+    // A right-to-left translation is a box of its own, so wrapped lines align right to left.
+    assert.match(getCssRule('.dait-translation-text[dir="rtl"]'), /display: inline-block;/);
 
     plugin.settings.translation.targetLanguage = "Chinese";
     plugin.renderTranslation(messageNode, content, "明天见", "cache-key", content.text);
-    assert.equal(line.getAttribute("lang"), "zh-CN");
-    assert.equal(line.getAttribute("dir"), "auto");
+    assert.equal(textOf().getAttribute("lang"), "zh-CN");
+    assert.equal(textOf().getAttribute("dir"), "auto");
 
-    // State lines are in the interface language, so they drop the translation's language and direction.
+    // State lines are in the interface language: no translation language or direction anywhere.
     plugin.renderTranslationLoading(messageNode, content, "cache-key", content.text);
     assert.equal(line.getAttribute("lang"), null);
     assert.equal(line.getAttribute("dir"), null);
+    assert.equal(line.querySelector("[lang]"), null);
 
     assert.deepEqual(plugin.getTranslationLineLanguage("Hebrew"), { lang: "he", dir: "rtl" });
     assert.deepEqual(plugin.getTranslationLineLanguage("fa-IR"), { lang: "fa-IR", dir: "rtl" });
@@ -770,6 +781,37 @@ test("a translated line has a keyboard-operable toolbar that never takes layout 
     messageNode.appendChild(preview);
     const previewLine = plugin.renderTranslation(messageNode, preview, "引用", "preview-key", preview.text);
     assert.equal(previewLine.querySelector(".dait-translation-actions"), null, "reply previews get no toolbar");
+});
+
+test("a short right-to-left translation gets its toolbar beside it, and the arrow keys follow the toolbar's direction", t => {
+    const { plugin, doc } = createChatPlugin(t, { targetLanguage: "阿拉伯语" });
+    const { messageNode, content } = createMessage(doc, "See you tomorrow");
+    const line = plugin.renderTranslation(messageNode, content, "أراك غدا", "cache-key", content.text);
+    const toolbar = line.querySelector(".dait-translation-actions");
+    const buttons = toolbar.querySelectorAll("button");
+    // Discord's chat is left to right: the short line sits at the left, next to the avatar gutter.
+    messageNode.rect = { left: 0, right: 600, top: 0, bottom: 40 };
+    toolbar.offsetWidth = 92;
+    line.rect = { left: 72, right: 136, top: 10, bottom: 32 };
+    line.dispatch("pointerenter");
+    assert.equal(toolbar.dataset.daitPlacement, "end", "the toolbar goes after the line, not over the text");
+
+    buttons[0].focus();
+    toolbar.dispatch("keydown", { key: "ArrowRight", target: buttons[0] });
+    assert.equal(doc.activeElement, buttons[1], "a left-to-right toolbar: ArrowRight moves right");
+
+    // On a right-to-left page the buttons run right to left, and so do the arrow keys.
+    messageNode.setAttribute("dir", "rtl");
+    toolbar.dispatch("keydown", { key: "ArrowRight", target: buttons[1] });
+    assert.equal(doc.activeElement, buttons[0]);
+    toolbar.dispatch("keydown", { key: "ArrowLeft", target: buttons[0] });
+    assert.equal(doc.activeElement, buttons[1]);
+    line.rect = { left: 464, right: 528, top: 10, bottom: 32 };
+    line.dispatch("pointerenter");
+    assert.equal(toolbar.dataset.daitPlacement, "end", "room is measured on the left");
+    line.rect = { left: 40, right: 528, top: 10, bottom: 32 };
+    line.dispatch("pointerenter");
+    assert.equal(toolbar.dataset.daitPlacement, "inside");
 });
 
 test("hiding a line from the keyboard moves focus to the message, not to the page", t => {
