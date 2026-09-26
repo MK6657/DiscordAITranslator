@@ -1843,6 +1843,9 @@ module.exports = class DiscordAITranslator {
         while (current && current !== document.body && marked < 5) {
             const rect = current.getBoundingClientRect?.();
             const width = Number(rect?.width || 0);
+            // A layer as wide as the window (BetterDiscord's .bd-modal-wrapper, Discord's modal layer) holds the modal;
+            // sizing it would shrink the real frame inside it to its content. The modal frame is the last node below it.
+            if (viewportWidth && width >= viewportWidth - 1) break;
             if (!width || width <= desiredWidth + 80) {
                 if (current.dataset.daitSettingsModal !== "true") current.dataset.daitSettingsModal = "true";
                 this.applyDiscordThemeData(current, panel);
