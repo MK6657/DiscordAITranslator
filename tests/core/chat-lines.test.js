@@ -591,6 +591,27 @@ test("translation style and text size have defaults, are normalized and restyle 
     assert.match(getCssRule(".dait-translation-line.dait-translation-scale-90:not(.dait-translation-preview)"), /font-size: 0\.9rem/);
 });
 
+test("resetting the settings restyles lines already on screen to the default style and text size", t => {
+    const { plugin, doc } = createChatPlugin(t);
+    plugin.settings.ui.translationStyle = "tag";
+    plugin.settings.ui.translationTextScale = 90;
+    const { messageNode, content } = createMessage(doc, "See you tomorrow");
+    // No cache key: a manual line, which the reset's queue invalidation keeps.
+    const line = plugin.renderTranslation(messageNode, content, "明天见", "", content.text);
+    assert.equal(line.dataset.daitMode, "manual");
+    assert.equal(line.classList.contains("dait-translation-style-tag"), true);
+    assert.equal(line.classList.contains("dait-translation-scale-90"), true);
+
+    assert.equal(plugin.resetSettingsToDefaults(), true);
+    assert.equal(plugin.settings.ui.translationStyle, "tint");
+    assert.equal(plugin.settings.ui.translationTextScale, 100);
+    assert.equal(line.isConnected, true, "a manual line survives the reset");
+    assert.equal(line.classList.contains("dait-translation-style-tint"), true, "the line follows the reset style");
+    assert.equal(line.classList.contains("dait-translation-style-tag"), false);
+    assert.equal(line.classList.contains("dait-translation-scale-90"), false, "the line follows the reset text size");
+    assert.equal(line.dataset.daitTag, undefined);
+});
+
 test("the Display section offers the style and text size selects", t => {
     const { plugin } = createChatPlugin(t);
     const selects = [];
