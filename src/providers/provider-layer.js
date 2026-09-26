@@ -31,6 +31,9 @@ const {
 class ProviderLayer {
     constructor(plugin) {
         this.plugin = plugin;
+        // The last connection test per task (in memory only): what the settings and the quick panel show next to
+        // the status, e.g. "Hy-MT2 · 820 ms · just now".
+        this.lastApiTestResults = new Map();
     }
 
     getProviderDefaults(provider) {
@@ -256,7 +259,9 @@ class ProviderLayer {
         }
     }
 
-    parseLocalProviderModelsResponse(raw) {
+    // The model the server serves: the first .gguf id, else the first id. With { all: true }, every id the server
+    // lists, in its order (for the settings' "Detect models" picker).
+    parseLocalProviderModelsResponse(raw, options = {}) {
         const data = typeof raw === "string" ? this.plugin.parseApiJson(raw) : raw;
         const candidates = [];
         const addModel = value => {
@@ -284,7 +289,59 @@ class ProviderLayer {
         add(data?.models);
         add(data?.items);
         if (!candidates.length) add(data);
+        if (options?.all) return candidates;
         return candidates.find(model => /\.gguf(?:$|[?#])/i.test(model)) || candidates[0] || "";
+    }
+
+    // "Detect models" in the settings: lists the models a Sakura local or OpenAI-compatible server reports. It runs
+    // only on that explicit click (automatic detection stays limited to loopback servers). For a local server whose
+    // model is left on local-model, the loaded model also refreshes the detection cache.
+    async detectProviderModels(kind, options = {}) {
+        const config = this.plugin.clone(this.plugin.getTaskConfig(kind));
+        const defaultConfig = DEFAULT_SETTINGS[kind] || {};
+        if (!this.plugin.isModelDetectionProvider(config.provider)) {
+            const error = new Error(this.plugin.t("modelDetectUnsupported"));
+            error.code = "MODEL_DETECTION_UNSUPPORTED";
+            throw error;
+        }
+        const endpoint = this.plugin.getEffectiveChatCompletionEndpoint(config, defaultConfig);
+        const modelsEndpoint = this.plugin.getLocalProviderModelsEndpoint(endpoint);
+        const local = this.plugin.isLocalTranslationProvider(config);
+        const timeoutMs = Math.max(1000, Number(options.timeoutMs || (local ? LOCAL_PROVIDER_MODEL_DETECTION_TIMEOUT_MS : API_TEST_REQUEST_TIMEOUT_MS)) || API_TEST_REQUEST_TIMEOUT_MS);
+        const startedAt = Date.now();
+        try {
+            const raw = await this.plugin.fetchApiResponseText(modelsEndpoint, {
+                method: "GET",
+                provider: config.provider,
+                headers: this.plugin.getRequestHeaders(config, this.plugin.getEffectiveRequestApiKey(config))
+            }, timeoutMs);
+            const models = this.plugin.parseLocalProviderModelsResponse(raw, { all: true });
+            const loaded = local ? this.plugin.parseLocalProviderModelsResponse(raw) : "";
+            if (loaded && this.plugin.shouldAutoDetectLocalProviderModel(config, defaultConfig)) {
+                this.plugin.setCachedLocalProviderDetectedModel(config, loaded, { defaultConfig });
+            }
+            this.plugin.logDiagnostic("provider.models.detect", "success", {
+                kind,
+                provider: config.provider,
+                count: models.length,
+                ms: Date.now() - startedAt
+            });
+            return { models, loaded };
+        }
+        catch (error) {
+            this.plugin.logDiagnostic("provider.models.detect", "failed", {
+                kind,
+                provider: config.provider,
+                failureType: this.plugin.getAutoTranslationFailureType(error),
+                status: Number(error?.status || 0),
+                ms: Date.now() - startedAt
+            });
+            throw error;
+        }
+    }
+
+    isModelDetectionProvider(provider) {
+        return ["sakuraLocal", "openaiCompatible"].includes(String(provider || ""));
     }
 
     normalizeLocalProviderModelId(value) {
@@ -665,6 +722,8 @@ class ProviderLayer {
         if (previous.state !== next.state || previous.message !== next.message) {
             this.plugin.settings[kind].apiStatus = next;
             this.plugin.saveSettings({ debounce: true, delayMs: SETTINGS_WRITE_DEBOUNCE_MS });
+            // An open overview's checklist and cards follow the new state.
+            this.plugin.scheduleOverviewStatusRefresh?.(`${kind}.apiStatus`);
         }
         if (typeof document === "undefined") return;
         document.querySelectorAll(`.dait-api-status[data-dait-kind='${kind}']`).forEach(status => {
@@ -776,7 +835,52 @@ class ProviderLayer {
         this.plugin.localProviderHealthChecks.set(providerKey, promise);
     }
 
+    // { ok, model, latencyMs, at, message } of the last connection test of this task, or null when none ran since
+    // the service settings last changed. model is the model the server reported (Sakura local, OpenAI-compatible),
+    // else the configured one; "" for machine-translation services. latencyMs is the test request's round trip.
+    getLastApiTestResult(kind) {
+        const result = this.lastApiTestResults.get(kind);
+        return result ? { ...result } : null;
+    }
+
+    recordApiTestResult(kind, result = {}) {
+        if (!kind) return null;
+        const latency = Number(result.latencyMs);
+        const entry = {
+            ok: Boolean(result.ok),
+            model: String(result.model || ""),
+            latencyMs: Number.isFinite(latency) && latency >= 0 ? Math.round(latency) : null,
+            at: Number(result.at) || Date.now(),
+            message: String(result.message || "")
+        };
+        this.lastApiTestResults.set(kind, entry);
+        return { ...entry };
+    }
+
+    clearLastApiTestResult(kind) {
+        return this.lastApiTestResults.delete(kind);
+    }
+
+    // The model named in a chat-completions reply ("model": "..."), shortened to its file name.
+    getReportedResponseModel(raw) {
+        try {
+            const data = typeof raw === "string" ? this.plugin.parseApiJson(raw) : raw;
+            const model = typeof data?.model === "string" ? data.model.trim() : "";
+            return model ? this.plugin.getDiagnosticModelLabel(model) : "";
+        }
+        catch {
+            return "";
+        }
+    }
+
+    getApiTestModel(config = {}, request = {}, reportedModel = "") {
+        if (this.plugin.isDirectTranslateProvider(config)) return "";
+        if (reportedModel && (this.plugin.isLocalTranslationProvider(config) || config?.provider === "openaiCompatible")) return reportedModel;
+        return this.plugin.getDiagnosticModelLabel(String(request?.body?.model || config?.model || ""));
+    }
+
     resetApiStatus(kind, options = {}) {
+        this.plugin.clearLastApiTestResult?.(kind);
         if (this.plugin.settings[kind]) {
             this.plugin.settings[kind].apiStatus = { state: "untested", message: "" };
             if (options.save === "debounce") this.plugin.saveSettings({ debounce: true });
@@ -1222,6 +1326,11 @@ class ProviderLayer {
     async fetchModelResponse(endpoint, request, timeoutMs = MODEL_REQUEST_TIMEOUT_MS, options = {}) {
         try {
             const raw = await this.plugin.fetchApiResponseText(endpoint, request, timeoutMs, options.signal ? { signal: options.signal } : undefined);
+            // The connection test reads the model the server names in its reply.
+            if (typeof options.onRawResponse === "function") {
+                try { options.onRawResponse(raw); }
+                catch {}
+            }
             if (request?.responseParser === "googleTranslate") {
                 const result = this.plugin.parseGoogleTranslateResponse(raw, request?.googleTranslate?.expectedCount || 1, {
                     asArray: Boolean(options.googleTranslateAsArray || options.translateAsArray),
@@ -1534,6 +1643,16 @@ class ProviderLayer {
         let endpoint = "";
         let providerSnapshotKey = "";
         let testConfig = null;
+        // Round trip of the test request, and the model the server named in its reply.
+        let testRequest = null;
+        let requestStartedAt = 0;
+        let reportedModel = "";
+        const record = (ok, message = "") => this.plugin.recordApiTestResult?.(kind, {
+            ok,
+            model: this.plugin.getApiTestModel(testConfig || this.plugin.getTaskConfig(kind), testRequest, reportedModel),
+            latencyMs: requestStartedAt ? Date.now() - requestStartedAt : null,
+            message
+        });
 
         try {
             testConfig = this.plugin.clone(this.plugin.getTaskConfig(kind));
@@ -1545,11 +1664,18 @@ class ProviderLayer {
             }
             const test = this.plugin.buildConnectionTestRequest(kind);
             endpoint = test.endpoint;
-            await this.plugin.fetchModelResponse(test.endpoint, test.request, API_TEST_REQUEST_TIMEOUT_MS, { lifecycleToken, connectionTest: true });
+            testRequest = test.request;
+            requestStartedAt = Date.now();
+            await this.plugin.fetchModelResponse(test.endpoint, test.request, API_TEST_REQUEST_TIMEOUT_MS, {
+                lifecycleToken,
+                connectionTest: true,
+                onRawResponse: raw => { reportedModel = this.plugin.getReportedResponseModel(raw); }
+            });
             if (!this.plugin.isLifecycleTokenCurrent(lifecycleToken)
                 || (kind === "translation" && !this.plugin.isAutoTranslationProviderSnapshotCurrent(providerSnapshotKey, { configOverrides: testConfig }))) return;
             this.plugin.clearAutoTranslationProviderFailureForCurrentConfig(kind);
             if (kind === "translation" && this.plugin.isLocalTranslationProvider(testConfig)) this.plugin.markLocalProviderHealthy(providerSnapshotKey);
+            record(true);
             this.plugin.setApiStatus(status, "success", this.plugin.t("apiStatusSuccess"));
             if (kind === "translation") this.plugin.queueScan();
             this.plugin.showToast(this.plugin.t("apiTestSuccess", { name: this.plugin.getTaskDisplayName(kind) }), "success");
@@ -1569,6 +1695,7 @@ class ProviderLayer {
                     this.plugin.markLocalProviderHealthy(providerSnapshotKey);
                     this.plugin.queueScan();
                 }
+                record(true);
                 this.plugin.setApiStatus(status, "success", this.plugin.t("apiStatusSuccess"));
                 this.plugin.showToast(this.plugin.t("apiTestSuccess", { name: this.plugin.getTaskDisplayName(kind) }), "success");
                 return;
@@ -1580,6 +1707,7 @@ class ProviderLayer {
                 if (error.localProviderUnavailable) this.plugin.markAutoTranslationProviderFailure(this.plugin.getAutoTranslationOptions(), error);
             }
             const message = this.plugin.formatGoogleTranslateKeyError(error);
+            record(false, message);
             this.plugin.setApiStatus(status, "failed", this.plugin.t("apiStatusFailed"), message);
             this.plugin.showToast(this.plugin.t("apiTestFailed", { name: this.plugin.getTaskDisplayName(kind), error: message }), "error");
         }

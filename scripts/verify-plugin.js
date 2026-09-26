@@ -842,27 +842,11 @@ settingsLazyReplacePlugin.getSettingsPanel = () => {
 };
 assert.equal(settingsLazyReplacePlugin.replaceSettingsPanelElement(null), null);
 assert.equal(settingsLazyPanelBuilt, false);
+// Test mode is replaced by "Try a sentence" / "Try polishing" in the connection cards; the data tab has no test area.
 const settingsTestModeLocalPlugin = new Plugin();
-const settingsTestModeCreated = [];
-const settingsTestModePanel = createFakeElement("div", settingsTestModeCreated);
-settingsTestModePanel.className = "dait-settings";
-// The test-mode tools appear under their switch, in a slot of the data tab's diagnostics group.
-const settingsTestModeSlot = createFakeElement("div", settingsTestModeCreated);
-settingsTestModeSlot.className = "dait-test-mode-slot";
-settingsTestModePanel.appendChild(settingsTestModeSlot);
-let settingsTestModePanelBuilds = 0;
-settingsTestModeLocalPlugin.getSettingsPanel = () => {
-    settingsTestModePanelBuilds++;
-    return createFakeElement("div", settingsTestModeCreated);
-};
-settingsTestModeLocalPlugin.updateTestModeVisibility(settingsTestModePanel, true);
-const settingsTestModeSection = settingsTestModeSlot.querySelector(".dait-test-mode-section");
-assert.ok(settingsTestModeSection);
-assert.equal(settingsTestModePanelBuilds, 0);
-assert.deepEqual(settingsTestModeSection.scrolledIntoView, { block: "nearest", behavior: "smooth" });
-settingsTestModeLocalPlugin.updateTestModeVisibility(settingsTestModePanel, false);
-assert.equal(settingsTestModeSlot.querySelector(".dait-test-mode-section"), null);
-assert.equal(settingsTestModePanelBuilds, 0);
+assert.equal(typeof settingsTestModeLocalPlugin.updateTestModeVisibility, "undefined");
+assert.equal(typeof settingsTestModeLocalPlugin.createTestModeSection, "undefined");
+assert.equal(typeof settingsTestModeLocalPlugin.createTryTaskRow, "function");
 assert.equal(quickSettingsDocumentListeners.has("keydown"), true);
 let quickSettingsTabPrevented = false;
 quickSettingsClose.focused = false;
@@ -1851,9 +1835,13 @@ global.document = { createElement: tag => createFakeElement(tag, sakuraSectionCr
 const sakuraSectionPlugin = new Plugin();
 sakuraSectionPlugin.settings.polish.provider = "sakuraLocal";
 sakuraSectionPlugin.createTaskSection("polish", "Polish", "Desc");
-const localModelPresetControl = sakuraSectionCreated.find(element => element.tagName === "SELECT" && element.children.some(option => option.value === "HY-MT1.5-7B-Q4_K_M.gguf"));
+// Sakura's model presets live in the model field's picker (with "use the loaded model" first), not in a row of their own.
+const localModelPresetOptions = select => select.children.flatMap(child => child.tagName === "OPTGROUP" ? child.children : [child]);
+const localModelPresetControl = sakuraSectionCreated.find(element => element.tagName === "SELECT" && localModelPresetOptions(element).some(option => option.value === "HY-MT1.5-7B-Q4_K_M.gguf"));
 assert.ok(localModelPresetControl);
-assert.ok(localModelPresetControl.children.some(option => option.value === "Qwen3-8B-Q4_K_M_2.gguf"));
+assert.equal(localModelPresetControl.dataset.daitModelPreset, "polish");
+assert.equal(localModelPresetOptions(localModelPresetControl)[0].value, "local-model");
+assert.ok(localModelPresetOptions(localModelPresetControl).some(option => option.value === "Qwen3-8B-Q4_K_M_2.gguf"));
 assert.equal(sakuraSectionCreated.some(element => element.dataset?.daitPath === "polish.enableThinking"), false);
 const sakuraTranslationSectionCreated = [];
 global.document = { createElement: tag => createFakeElement(tag, sakuraTranslationSectionCreated) };
@@ -2048,7 +2036,7 @@ const settingsTabLayout = {
         "ui.providerFallbackEnabled",
         "ui.providerFallbackOrder"
     ],
-    data: ["ui.translationCacheTtlHours", "ui.translationCacheMaxEntries", "ui.diagnosticsEnabled", "ui.testModeEnabled"]
+    data: ["ui.translationCacheTtlHours", "ui.translationCacheMaxEntries", "ui.diagnosticsEnabled"]
 };
 Object.entries(settingsTabLayout).forEach(([tab, paths]) => {
     paths.forEach(path => assert.equal(settingsTabPanelPaths[tab].has(path), true, `${path} on ${tab}`));

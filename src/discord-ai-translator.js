@@ -22,6 +22,7 @@ const { AutoTranslationTaskState } = require("./auto-translation/task-state");
 const { AutoTranslationRequestPipeline } = require("./auto-translation/request-pipeline");
 const { AutoTranslationQueueCore } = require("./auto-translation/queue-core");
 const { DiagnosticsRecorder } = require("./diagnostics/diagnostics-recorder");
+const { getDiagnosticCodeLabel } = require("./diagnostics/diagnostic-labels");
 const { OutputGuard } = require("./validation/output-guard");
 const { TranslationCacheStore } = require("./cache/translation-cache-store");
 const { PLUGIN_VERSION } = require("./version");
@@ -1271,7 +1272,6 @@ module.exports = class DiscordAITranslator {
         if (!quickSettings) this.scheduleSettingsModalSizing(panel);
         this.logSlowOperation("settings.panel.build", startedAt, {
             tabs: SETTINGS_TAB_IDS.length,
-            testMode: Boolean(this.settings.ui?.testModeEnabled),
             quickSettings
         });
         return panel;
@@ -1400,6 +1400,8 @@ module.exports = class DiscordAITranslator {
             if (tab.tabpanel) tab.tabpanel.hidden = !active || Boolean(state.searchQuery);
         });
         if (options.resetScroll !== false && state.content) state.content.scrollTop = 0;
+        // The overview's checklist and service cards may be out of date after work on another tab.
+        if (target.id === SETTINGS_TAB_OVERVIEW) this.refreshOverviewStatusSection(target.tabpanel);
         if (options.focusTab) this.focusSettingsElement(target.button);
         if (options.save !== false && this.settings?.ui && this.settings.ui.settingsActiveTab !== target.id) {
             this.settings.ui.settingsActiveTab = target.id;
@@ -2002,9 +2004,417 @@ module.exports = class DiscordAITranslator {
         return [this.createOverviewStatusSection(), this.createGeneralSection()];
     }
 
-    // Setup checklist and service status cards go here (a later change fills this in).
+    // Setup checklist (hidden once everything is done) and the status of the two services, each with a Test button.
+    // Rebuilt in place when the overview is shown, after a test and when a setting it reports on changes.
     createOverviewStatusSection() {
-        return null;
+        const section = document.createElement("section");
+        section.className = "dait-settings-group dait-overview-status";
+        section.dataset.daitSettingsGroup = "overview-status";
+        section.dataset.daitSearchGroup = "";
+
+        const items = this.getOverviewSetupItems();
+        const done = items.filter(item => item.done).length;
+        if (done < items.length) section.appendChild(this.createOverviewSetupCard(items, done));
+
+        const title = document.createElement("h3");
+        title.className = "dait-settings-group-title";
+        title.textContent = this.t("overviewServicesTitle");
+        section.appendChild(title);
+        const cards = document.createElement("div");
+        cards.className = "dait-service-cards";
+        ["translation", "polish"].forEach(kind => cards.appendChild(this.createOverviewServiceCard(kind)));
+        section.appendChild(cards);
+        return section;
+    }
+
+    // One entry per setup step: { id, label, state, done, detail, action }. state is the icon: done, todo, error,
+    // busy or off (a step that does not apply, which counts as done). action: { key, text, run } or
+    // { key, text, tab, path } (opens that tab and focuses the control).
+    getOverviewSetupItems() {
+        const translation = this.settings.translation || {};
+        const providerName = this.getProviderDisplayName(translation.provider);
+        const enabled = translation.enabled !== false;
+        const configured = enabled && this.hasUsableApiConfig("translation");
+        const status = this.getApiStatus("translation");
+        const routeKey = this.getCurrentRouteKey();
+        const hasChannel = Boolean(this.getChannelAutoTranslatePolicyStorageKey(routeKey));
+        const rule = hasChannel ? this.getCurrentChannelAutoTranslatePolicyMode(routeKey) : "";
+        const autoOn = Boolean(this.settings.ui?.autoTranslateMessages);
+        const target = String(translation.targetLanguage || "").trim();
+        const items = [];
+
+        items.push({
+            id: "service",
+            label: this.t("overviewSetupService"),
+            done: configured,
+            state: configured ? "done" : "todo",
+            detail: !enabled ? this.t("overviewSetupServiceOff") : configured ? providerName : this.t("overviewSetupServiceMissing", { provider: providerName }),
+            action: configured ? null : { key: "setup", text: this.t("overviewSetUp"), tab: SETTINGS_TAB_TRANSLATE, path: enabled ? this.getMissingServiceSettingPath("translation") : "translation.enabled" }
+        });
+
+        const tested = status.state === "success";
+        items.push({
+            id: "test",
+            label: this.t("overviewSetupTest"),
+            done: tested,
+            state: tested ? "done" : status.state === "failed" ? "error" : status.state === "testing" ? "busy" : "todo",
+            detail: !configured && !tested ? this.t("overviewSetupTestBlocked") : this.getApiTestSummaryText("translation"),
+            action: tested || !configured ? null : { key: "test", text: this.t("apiTest"), run: "test" }
+        });
+
+        items.push({
+            id: "target",
+            label: this.t("overviewSetupTarget"),
+            done: Boolean(target),
+            state: target ? "done" : "todo",
+            detail: target ? this.getDisplayLanguage(target) : "",
+            action: target ? null : { key: "setup", text: this.t("overviewSetUp"), tab: SETTINGS_TAB_TRANSLATE, path: "translation.targetLanguage" }
+        });
+
+        const autoDone = autoOn || rule === "enabled";
+        items.push({
+            id: "auto",
+            label: this.t("overviewSetupAuto"),
+            done: autoDone,
+            state: autoDone ? "done" : "todo",
+            detail: autoOn ? this.t("overviewSetupAutoOn") : autoDone ? this.t("overviewSetupAutoChannel") : this.t("overviewSetupAutoOff"),
+            action: autoDone ? null : { key: "auto", text: this.t("overviewTurnOn"), run: "autoTranslate" }
+        });
+
+        const channelLabel = hasChannel ? this.getSettingsChannelLabel(routeKey) : "";
+        const channelDetail = !hasChannel
+            ? this.t("overviewSetupChannelNone")
+            : rule === "disabled"
+                ? this.t("overviewSetupChannelNever")
+                : rule === "enabled" ? this.t("channelRuleAlways") : this.t("channelRuleFollow");
+        items.push({
+            id: "channel",
+            label: this.t("overviewSetupChannel"),
+            done: rule !== "disabled",
+            state: !hasChannel ? "off" : rule === "disabled" ? "todo" : "done",
+            detail: channelLabel ? `${channelLabel} · ${channelDetail}` : channelDetail,
+            action: rule === "disabled" ? { key: "channel", text: this.t("overviewChange"), tab: SETTINGS_TAB_OVERVIEW, path: "ui.currentChannelAutoTranslatePolicy" } : null
+        });
+        return items;
+    }
+
+    createOverviewSetupCard(items, done) {
+        const card = document.createElement("div");
+        card.className = "dait-setup-card";
+        const titleId = this.createSettingsControlId("dait-setup-title");
+        card.setAttribute("role", "region");
+        card.setAttribute("aria-labelledby", titleId);
+
+        const head = document.createElement("div");
+        head.className = "dait-setup-head";
+        const title = document.createElement("h3");
+        title.className = "dait-setup-title";
+        title.id = titleId;
+        title.textContent = this.t("overviewSetupTitle", { count: items.length - done });
+        head.appendChild(title);
+        const progress = document.createElement("span");
+        progress.className = "dait-setup-progress";
+        progress.textContent = this.t("overviewSetupProgress", { done, total: items.length });
+        head.appendChild(progress);
+        card.appendChild(head);
+
+        const list = document.createElement("ul");
+        list.className = "dait-setup-list";
+        items.forEach(item => {
+            const entry = document.createElement("li");
+            entry.className = `dait-setup-item dait-setup-item-${item.state}`;
+            entry.dataset.daitSetupItem = item.id;
+
+            const icon = document.createElement("span");
+            icon.className = "dait-setup-icon";
+            const iconText = document.createElement("span");
+            iconText.className = "dait-visually-hidden";
+            iconText.textContent = this.t(item.done ? "overviewStateDone" : "overviewStateTodo");
+            icon.appendChild(iconText);
+            entry.appendChild(icon);
+
+            const label = document.createElement("span");
+            label.className = "dait-setup-label";
+            label.textContent = item.label;
+            entry.appendChild(label);
+
+            const detail = document.createElement("span");
+            detail.className = "dait-setup-detail";
+            detail.textContent = item.detail || "";
+            detail.title = item.detail || "";
+            entry.appendChild(detail);
+
+            if (item.action) entry.appendChild(this.createOverviewActionButton(item.action, item.label));
+            list.appendChild(entry);
+        });
+        card.appendChild(list);
+        return card;
+    }
+
+    createOverviewActionButton(action, context = "") {
+        const button = this.createSmallButton(action.text, action.run === "autoTranslate" || action.run === "test" ? "primary" : "outline");
+        button.dataset.daitOverviewAction = action.key;
+        if (context) button.setAttribute("aria-label", `${action.text}: ${context}`);
+        button.addEventListener("click", event => {
+            event?.preventDefault?.();
+            if (action.run === "test") {
+                this.runOverviewApiTest("translation", button);
+                return;
+            }
+            if (action.run === "autoTranslate") {
+                this.setSetting("ui.autoTranslateMessages", true);
+                this.refreshOverviewStatusSection(button.closest?.(".dait-settings") || null);
+                return;
+            }
+            this.openSettingsControl(button, action.tab, action.path);
+        });
+        return button;
+    }
+
+    // Service card: task and service name, the connection state (the same live badge as the connection card), a
+    // detail line and Test, or "Set up" while the service is off or missing a field.
+    createOverviewServiceCard(kind) {
+        const task = this.settings[kind] || {};
+        const card = document.createElement("div");
+        card.className = "dait-service-card";
+        card.dataset.daitKind = kind;
+
+        const text = document.createElement("div");
+        text.className = "dait-service-card-text";
+        const title = document.createElement("div");
+        title.className = "dait-service-card-title";
+        title.textContent = `${this.t(kind === "polish" ? "overviewCardPolish" : "overviewCardTranslation")} · ${this.getProviderDisplayName(task.provider)}`;
+        text.appendChild(title);
+
+        const line = document.createElement("div");
+        line.className = "dait-service-card-status";
+        const enabled = task.enabled !== false;
+        const configured = enabled && this.hasUsableApiConfig(kind);
+        let action = null;
+        if (!enabled || !configured) {
+            const mark = document.createElement("span");
+            mark.className = `dait-status-mark dait-status-mark-${enabled ? "needs" : "off"}`;
+            mark.textContent = enabled ? this.t("overviewServiceMissing", { field: this.getSettingLabelForPath(this.getMissingServiceSettingPath(kind)) }) : this.t("overviewServiceOff");
+            line.appendChild(mark);
+            action = { key: "setup", text: this.t("overviewSetUp"), tab: kind === "polish" ? SETTINGS_TAB_COMPOSE : SETTINGS_TAB_TRANSLATE, path: enabled ? this.getMissingServiceSettingPath(kind) : `${kind}.enabled` };
+        }
+        else {
+            line.appendChild(this.createApiStatusBadge(kind));
+            line.appendChild(this.createApiTestDetail(kind));
+        }
+        text.appendChild(line);
+        card.appendChild(text);
+
+        if (action) {
+            const setup = this.createOverviewActionButton(action, title.textContent);
+            card.appendChild(setup);
+        }
+        else {
+            const test = this.createSmallButton(this.t("apiTest"));
+            test.dataset.daitAction = "apiTest";
+            test.dataset.daitKind = kind;
+            test.setAttribute("aria-label", `${this.t("apiTest")}: ${title.textContent}`);
+            test.addEventListener("click", event => {
+                event?.preventDefault?.();
+                this.runOverviewApiTest(kind, test, line.querySelector?.(".dait-api-status"));
+            });
+            card.appendChild(test);
+        }
+        return card;
+    }
+
+    // A test started from the overview: the card's badge shows it, then every view of this task's status follows.
+    runOverviewApiTest(kind, button, badge = null) {
+        const status = badge || this.createApiStatusBadge(kind);
+        const run = Promise.resolve(this.testApiConnection(kind, button, status));
+        return run.finally(() => this.refreshApiTestViews(kind));
+    }
+
+    // The first field a task's service still needs, or its provider select.
+    getMissingServiceSettingPath(kind) {
+        const config = this.getTaskConfig(kind) || {};
+        const provider = String(config.provider || "");
+        const defaults = this.getProviderDefaults(provider) || {};
+        const ui = this.getProviderCapabilities(provider)?.ui || {};
+        if (provider === "baidu") {
+            if (!String(config.appId || "").trim()) return `${kind}.appId`;
+            if (!String(config.secretKey || "").trim()) return `${kind}.secretKey`;
+        }
+        if (provider === "googleCloud" && !this.getEffectiveRequestApiKey(config)) return "googleTranslate.keyPoolText";
+        if (ui.apiKey && !this.isProviderApiKeyOptional(provider) && !String(config.apiKey || "").trim()) return `${kind}.apiKey`;
+        if (ui.endpoint && !String(config.endpoint || defaults.endpoint || "").trim()) return `${kind}.endpoint`;
+        if (ui.model && !String(config.model || defaults.model || "").trim()) return `${kind}.model`;
+        return `${kind}.provider`;
+    }
+
+    getSettingLabelForPath(path) {
+        const field = String(path || "").split(".").pop();
+        const keys = {
+            apiKey: "apiKey",
+            endpoint: "endpoint",
+            model: "model",
+            appId: "baiduAppId",
+            secretKey: "baiduSecretKey",
+            keyPoolText: "googleTranslateKeys",
+            provider: "provider",
+            enabled: "enabled"
+        };
+        return this.t(keys[field] || "provider");
+    }
+
+    // "#general" for the current channel when Discord's store knows it.
+    getSettingsChannelLabel(routeKey = this.getCurrentRouteKey()) {
+        const channelId = String(routeKey || "").split(":")[1] || "";
+        if (!channelId) return "";
+        try {
+            const name = String(this.getDiscordNamedStore?.("ChannelStore")?.getChannel?.(channelId)?.name || "").trim();
+            return name ? `#${name}` : "";
+        }
+        catch {
+            return "";
+        }
+    }
+
+    // Opens a tab and brings one control into view with focus (the overview's "Set up" / "Change" buttons).
+    openSettingsControl(source, tabId, path) {
+        const panel = source?.closest?.(".dait-settings");
+        const state = panel?.__daitSettingsUi;
+        if (!state) return false;
+        const tab = state.tabs.find(item => item.id === normalizeSettingsTabId(tabId)) || state.tabs[0];
+        const control = [...(tab.tabpanel?.querySelectorAll?.(`[data-dait-path='${path}']`) || [])][0] || null;
+        const row = control?.closest?.(".dait-settings-row") || null;
+        if (!row) {
+            this.showSettingsTab(state, tab.id);
+            return false;
+        }
+        return this.openSettingsSearchResult(state, { row, tabId: tab.id });
+    }
+
+    // Rebuilds the overview status sections under root (a panel, a tab page, or the whole document), keeping the
+    // keyboard focus on the same kind of button when it was inside.
+    refreshOverviewStatusSection(root = null) {
+        const scope = root || (typeof document !== "undefined" ? document : null);
+        let sections = [];
+        try {
+            sections = [...(scope?.querySelectorAll?.(".dait-overview-status") || [])];
+        }
+        catch {
+            sections = [];
+        }
+        // Only sections still on a page, each once (a replaced section may linger in a detached tree).
+        sections = sections.filter(section => section?.replaceWith && !section.__daitReplaced && section.isConnected !== false);
+        sections.forEach(section => {
+            section.__daitReplaced = true;
+            const active = typeof document !== "undefined" ? document.activeElement : null;
+            const hadFocus = Boolean(active && section.contains?.(active));
+            const focusAction = hadFocus ? String(active.dataset?.daitOverviewAction || active.dataset?.daitAction || "") : "";
+            const focusKind = hadFocus ? String(active.closest?.(".dait-service-card")?.dataset?.daitKind || "") : "";
+            const next = this.createOverviewStatusSection();
+            section.replaceWith(next);
+            if (!hadFocus) return;
+            const candidates = [...(next.querySelectorAll?.("button") || [])];
+            const target = candidates.find(button => (button.dataset?.daitOverviewAction || button.dataset?.daitAction) === focusAction
+                && String(button.closest?.(".dait-service-card")?.dataset?.daitKind || "") === focusKind)
+                || candidates.find(button => !button.disabled);
+            this.focusSettingsElement(target);
+        });
+        return sections.length;
+    }
+
+    // Setting writes the overview reports on refresh it once, after the current event.
+    scheduleOverviewStatusRefresh(path = "") {
+        if (!/^(translation|polish|googleTranslate)\./.test(path) && !["ui.autoTranslateMessages", "ui.currentChannelAutoTranslatePolicy"].includes(path)) return;
+        if (this.overviewStatusRefreshTimer || typeof setTimeout !== "function") return;
+        this.overviewStatusRefreshTimer = setTimeout(() => {
+            this.overviewStatusRefreshTimer = null;
+            if (!this.isStarted || typeof document === "undefined") return;
+            this.refreshOverviewStatusSection();
+        }, 0);
+        this.unrefTimer(this.overviewStatusRefreshTimer);
+    }
+
+    // After a connection test: every badge, detail line and overview of this task shows the new state.
+    refreshApiTestViews(kind) {
+        if (typeof document === "undefined") return;
+        const status = this.getApiStatus(kind);
+        let badges = [];
+        let details = [];
+        try {
+            badges = [...(document.querySelectorAll?.(`.dait-api-status[data-dait-kind='${kind}']`) || [])];
+            details = [...(document.querySelectorAll?.(`.dait-api-test-detail[data-dait-kind='${kind}']`) || [])];
+        }
+        catch {}
+        badges.forEach(badge => {
+            badge.className = `dait-api-status dait-api-status-${status.state}`;
+            badge.textContent = this.getApiStatusText(status.state);
+            badge.title = status.message || "";
+        });
+        details.forEach(detail => this.syncApiTestDetail(detail, kind));
+        this.refreshOverviewStatusSection();
+    }
+
+    // Text after the status badge: "Hy-MT2 · 820 ms · just now" after a passed test, the error after a failed one.
+    createApiTestDetail(kind) {
+        const detail = document.createElement("span");
+        detail.className = "dait-api-test-detail";
+        detail.dataset.daitKind = kind;
+        this.syncApiTestDetail(detail, kind);
+        return detail;
+    }
+
+    syncApiTestDetail(detail, kind) {
+        if (!detail) return;
+        const status = this.getApiStatus(kind);
+        const result = this.getLastApiTestResult(kind);
+        let text = "";
+        if (status.state === "success") text = result?.ok ? this.formatApiTestResult(result) : this.t("apiTestLastPassed");
+        else if (status.state === "failed") text = status.message || result?.message || "";
+        else if (status.state === "untested") text = "";
+        detail.dataset.daitFor = status.state;
+        detail.textContent = text;
+        detail.title = text;
+        detail.hidden = !text;
+    }
+
+    // "Hy-MT2 · 820 ms · just now"
+    formatApiTestResult(result) {
+        if (!result) return "";
+        return [
+            result.model || "",
+            this.formatLatency(result.latencyMs),
+            this.formatTimeAgo(result.at)
+        ].filter(Boolean).join(" · ");
+    }
+
+    // One line for the overview checklist: the result of the last test, or that none ran.
+    getApiTestSummaryText(kind) {
+        const status = this.getApiStatus(kind);
+        const result = this.getLastApiTestResult(kind);
+        if (status.state === "success") {
+            const details = result?.ok ? this.formatApiTestResult(result) : "";
+            return details ? `${this.t("apiStatusSuccess")} · ${details}` : this.t("apiTestLastPassed");
+        }
+        if (status.state === "failed") return status.message || this.t("apiStatusFailed");
+        if (status.state === "testing") return this.t("apiStatusTesting");
+        return this.t("apiTestNotYet");
+    }
+
+    formatLatency(ms) {
+        if (ms === null || ms === undefined || ms === "") return "";
+        const value = Number(ms);
+        if (!Number.isFinite(value) || value < 0) return "";
+        if (value < 1000) return `${Math.round(value)} ms`;
+        return `${(value / 1000).toFixed(1)} s`;
+    }
+
+    formatTimeAgo(at, now = Date.now()) {
+        const time = Number(at);
+        if (!Number.isFinite(time) || time <= 0) return "";
+        const elapsed = Math.max(0, now - time);
+        if (elapsed < 60 * 1000) return this.t("apiTestJustNow");
+        if (elapsed < 60 * 60 * 1000) return this.t("apiTestMinutesAgo", { count: Math.floor(elapsed / 60000) });
+        if (elapsed < 24 * 60 * 60 * 1000) return this.t("apiTestHoursAgo", { count: Math.floor(elapsed / 3600000) });
+        return this.formatDiagnosticSummaryTime(new Date(time).toISOString());
     }
 
     createGeneralSection() {
@@ -2122,7 +2532,7 @@ module.exports = class DiscordAITranslator {
         const apiKeyOptional = Boolean(ui.apiKey && this.isProviderApiKeyOptional(provider));
 
         if (ui.apiKey && !apiKeyOptional) append(this.createApiKeyRow(kind));
-        if (ui.endpoint) append(this.createInputRow(`${kind}.endpoint`, this.t("endpoint"), "text", defaults.endpoint || "https://api.example.com/v1/chat/completions", {}, { description: this.t("endpointDesc"), stacked: true }));
+        if (ui.endpoint) append(this.createInputRow(`${kind}.endpoint`, this.t("endpoint"), "text", defaults.endpoint || "", {}, { description: this.getProviderFieldHelp("endpoint", provider), stacked: true }));
         if (ui.region) append(this.createInputRow(`${kind}.region`, this.t("providerRegion"), "text", "eastus", {}, { description: this.t("providerRegionDesc") }));
         if (ui.deeplPlan) append(this.createSelectRow(`${kind}.deeplPlan`, this.t("deeplPlan"), [
             ["free", this.t("deeplPlanFree")],
@@ -2133,8 +2543,10 @@ module.exports = class DiscordAITranslator {
             append(this.createInputRow(`${kind}.secretKey`, this.t("baiduSecretKey"), "password", "", {}, { description: this.t("baiduSecretKeyDesc"), stacked: true }));
         }
         if (ui.deepseekPreset) append(this.createDeepSeekModelRow(kind));
-        if (ui.localModelPreset) append(this.createLocalModelRow(kind));
-        if (ui.model) append(this.createInputRow(`${kind}.model`, this.t("model"), "text", defaults.model || "", {}, { description: this.t("modelDesc"), stacked: true }));
+        // Sakura local and OpenAI-compatible: the model field has "Detect models" and a picker (Sakura's presets
+        // live in that picker, so there is no separate preset row).
+        if (ui.model && this.isModelDetectionProvider(provider)) append(this.createModelFieldRow(kind));
+        else if (ui.model) append(this.createInputRow(`${kind}.model`, this.t("model"), "text", defaults.model || "", {}, { description: this.getProviderFieldHelp("model", provider), stacked: true }));
         if (kind === "translation" && ui.googleTranslateSettings) append(this.createGoogleTranslateSettings());
 
         if (ui.enableThinking || ui.temperature || ui.maxTokens) {
@@ -2151,8 +2563,256 @@ module.exports = class DiscordAITranslator {
             append(this.createApiKeyRow(kind), details);
             block.appendChild(details);
         }
+        if (hasRows) block.appendChild(this.createTryTaskRow(kind));
 
         return hasRows ? block : null;
+    }
+
+    // Help text that fits the selected service (endpoint, model, API key); other services use the general text.
+    getProviderFieldHelp(field, provider) {
+        const keys = {
+            endpoint: { deepseek: "endpointDeepSeekDesc", openaiCompatible: "endpointOpenAIDesc", sakuraLocal: "endpointLocalDesc", microsoft: "endpointMicrosoftDesc", baidu: "endpointBaiduDesc" },
+            model: { deepseek: "modelDesc", openaiCompatible: "modelOpenAIDesc", sakuraLocal: "modelLocalDesc" },
+            apiKey: { deepseek: "apiKeyDeepSeekDesc", openaiCompatible: "apiKeyOpenAIDesc", sakuraLocal: "apiKeyLocalDesc", microsoft: "apiKeyMicrosoftDesc", deepl: "apiKeyDeepLDesc" }
+        };
+        const fallback = { endpoint: "endpointDesc", model: "modelDesc", apiKey: "apiKeyDesc" }[field] || "";
+        const key = keys[field]?.[String(provider || "")] || fallback;
+        return key ? this.t(key) : "";
+    }
+
+    // The model field of Sakura local and OpenAI-compatible: the name, "Detect models", and a picker below with the
+    // server's models (after detection) and, for Sakura, "use the loaded model" plus common models. The picker
+    // follows the field (data-dait-model-preset), and picking writes the field.
+    createModelFieldRow(kind) {
+        const provider = String(this.settings[kind]?.provider || "");
+        const defaults = this.getProviderDefaults(provider) || {};
+        const local = this.isLocalTranslationProvider(provider);
+        const field = document.createElement("div");
+        field.className = "dait-model-field";
+
+        const line = document.createElement("div");
+        line.className = "dait-model-field-line";
+        const input = document.createElement("input");
+        input.type = "text";
+        input.dataset.daitPath = `${kind}.model`;
+        input.placeholder = defaults.model || "";
+        input.spellcheck = false;
+        input.autocomplete = "off";
+        input.value = this.getSetting(`${kind}.model`) ?? "";
+        input.addEventListener("change", () => this.setSetting(`${kind}.model`, input.value, { save: "immediate", retryOnError: false }));
+        line.appendChild(input);
+        const detect = this.createSmallButton(this.t("modelDetect"), "outline");
+        detect.dataset.daitAction = "detectModels";
+        detect.dataset.daitKind = kind;
+        line.appendChild(detect);
+        field.appendChild(line);
+
+        const picker = document.createElement("select");
+        picker.className = "dait-model-picker";
+        picker.dataset.daitModelPreset = kind;
+        picker.setAttribute("aria-label", this.t("modelPicker"));
+        this.renderModelPickerOptions(picker, kind, []);
+        // OpenAI-compatible services have no presets: the picker appears once the server has listed its models.
+        picker.hidden = !local;
+        picker.addEventListener("change", () => {
+            if (!picker.value) {
+                this.focusSettingsElement(input);
+                return;
+            }
+            this.setSetting(`${kind}.model`, picker.value);
+        });
+        field.appendChild(picker);
+
+        let description = this.getProviderFieldHelp("model", provider);
+        if (local && this.isLocalProviderAutoModelValue(this.settings[kind]?.model)) {
+            const snapshot = this.getLocalProviderDetectedModelSnapshot(this.settings[kind]);
+            if (snapshot?.model) description = this.t("modelLocalLoadedDesc", { model: snapshot.model });
+        }
+        const row = this.createRow(this.t("model"), field, { description, stacked: true, labelFor: input });
+        row.classList.add("dait-model-field-row");
+        const status = row.__daitDescription;
+        status?.setAttribute?.("aria-live", "polite");
+        detect.addEventListener("click", event => {
+            event?.preventDefault?.();
+            this.runModelDetection(kind, { button: detect, picker, status });
+        });
+        return row;
+    }
+
+    renderModelPickerOptions(picker, kind, detected = [], loaded = "") {
+        if (!picker) return;
+        const provider = String(this.settings[kind]?.provider || "");
+        const local = this.isLocalTranslationProvider(provider);
+        const current = String(this.settings[kind]?.model || "");
+        [...(picker.children || [])].forEach(child => child.remove?.());
+        picker.textContent = "";
+        const option = (parent, value, text) => {
+            const node = document.createElement("option");
+            node.value = value;
+            node.textContent = text;
+            node.selected = value === current;
+            parent.appendChild(node);
+            return node;
+        };
+        const group = label => {
+            const node = document.createElement("optgroup");
+            node.label = label;
+            node.setAttribute("label", label);
+            picker.appendChild(node);
+            return node;
+        };
+        const listed = new Set();
+        if (local) {
+            option(picker, LOCAL_PROVIDER_AUTO_MODEL_VALUE, this.t("modelPickerServerLoaded"));
+            listed.add(LOCAL_PROVIDER_AUTO_MODEL_VALUE);
+        }
+        const fresh = detected.filter(model => model && !listed.has(model));
+        if (fresh.length) {
+            const parent = group(this.t("modelPickerDetected"));
+            fresh.forEach(model => {
+                listed.add(model);
+                option(parent, model, model === loaded ? this.t("modelPickerLoadedTag", { model: this.getDiagnosticModelLabel(model) }) : model);
+            });
+        }
+        if (local) {
+            const presets = LOCAL_MODEL_PRESETS.filter(([value]) => !listed.has(value));
+            if (presets.length) {
+                const parent = group(this.t("modelPickerPresets"));
+                presets.forEach(([value, text]) => option(parent, value, text));
+            }
+        }
+        const other = option(picker, "", this.t("modelPickerOther"));
+        const known = [...(picker.querySelectorAll?.("option") || [])].some(node => node.value && node.value === current);
+        if (!known) other.selected = true;
+        picker.value = known ? current : "";
+    }
+
+    // "Detect models": asks the server for its models (only on this click), fills the picker and says what it found.
+    async runModelDetection(kind, { button = null, picker = null, status = null } = {}) {
+        const lifecycleToken = this.getLifecycleToken();
+        this.setButtonBusy(button, true, this.t("modelDetectBusy"));
+        try {
+            const { models, loaded } = await this.detectProviderModels(kind);
+            if (!this.isLifecycleTokenCurrent(lifecycleToken)) return null;
+            this.renderModelPickerOptions(picker, kind, models, loaded);
+            if (picker && models.length) picker.hidden = false;
+            const text = !models.length
+                ? this.t("modelDetectNone")
+                : loaded
+                    ? this.t("modelDetectFoundLoaded", { count: models.length, model: this.getDiagnosticModelLabel(loaded) })
+                    : this.t("modelDetectFound", { count: models.length });
+            if (status) {
+                status.textContent = text;
+                status.hidden = false;
+                status.classList?.remove?.("dait-row-description-error");
+            }
+            return { models, loaded };
+        }
+        catch (error) {
+            if (!this.isLifecycleTokenCurrent(lifecycleToken)) return null;
+            const text = this.t("modelDetectFailed", { error: this.formatError(error) });
+            if (status) {
+                status.textContent = text;
+                status.hidden = false;
+                status.classList?.add?.("dait-row-description-error");
+            }
+            return null;
+        }
+        finally {
+            if (this.isLifecycleTokenCurrent(lifecycleToken)) this.setButtonBusy(button, false, this.t("modelDetect"));
+        }
+    }
+
+    // "Try a sentence" (translation) / "Try polishing" (composer), at the end of the connection card: runs one
+    // sentence through the task with the settings as they are now (like the old test mode) and shows the result with
+    // the time it took. Nothing is sent to Discord.
+    createTryTaskRow(kind) {
+        const polish = kind === "polish";
+        const wrap = document.createElement("div");
+        wrap.className = "dait-try-field";
+
+        const line = document.createElement("div");
+        line.className = "dait-try-line";
+        const input = document.createElement("input");
+        input.type = "text";
+        input.className = "dait-try-input";
+        input.placeholder = this.t(polish ? "tryPolishPlaceholder" : "tryTranslatePlaceholder");
+        input.autocomplete = "off";
+        line.appendChild(input);
+        const run = this.createSmallButton(this.t(polish ? "tryPolishRun" : "tryTranslateRun"));
+        run.dataset.daitAction = "tryTask";
+        run.dataset.daitKind = kind;
+        line.appendChild(run);
+        wrap.appendChild(line);
+
+        const result = document.createElement("p");
+        result.className = "dait-try-result";
+        result.setAttribute("aria-live", "polite");
+        result.hidden = true;
+        const output = document.createElement("span");
+        output.className = "dait-try-output";
+        result.appendChild(output);
+        const time = document.createElement("span");
+        time.className = "dait-try-time";
+        result.appendChild(time);
+        wrap.appendChild(result);
+
+        const start = () => this.runTryTask(kind, input.value, { button: run, result, output, time });
+        run.addEventListener("click", event => {
+            event?.preventDefault?.();
+            start();
+        });
+        input.addEventListener("keydown", event => {
+            if (event?.key !== "Enter" || event.isComposing) return;
+            event.preventDefault?.();
+            start();
+        });
+
+        const row = this.createRow(this.t(polish ? "tryPolish" : "tryTranslate"), wrap, {
+            description: this.t(polish ? "tryPolishDesc" : "tryTranslateDesc"),
+            stacked: true,
+            labelFor: input
+        });
+        // The result shows under the help text (its own grid area in CSS), so the help stays next to the field.
+        row.classList.add("dait-try-row");
+        return row;
+    }
+
+    async runTryTask(kind, text, { button = null, result = null, output = null, time = null } = {}) {
+        const sample = String(text || "").trim();
+        const show = (value, seconds = "", failed = false) => {
+            if (output) output.textContent = value;
+            if (time) {
+                time.textContent = seconds ? this.t("tryResultTime", { time: seconds }) : "";
+                time.hidden = !seconds;
+            }
+            if (result) {
+                result.hidden = !value;
+                result.classList?.toggle?.("dait-try-result-error", Boolean(failed));
+            }
+        };
+        if (!sample) {
+            show(this.t("tryInputRequired"), "", true);
+            return null;
+        }
+        const lifecycleToken = this.getLifecycleToken();
+        const label = button?.textContent || "";
+        this.setButtonBusy(button, true, this.t("tryBusy"));
+        const startedAt = Date.now();
+        try {
+            const translated = await this.runModelTask(kind, sample, { mode: "test" });
+            if (!this.isLifecycleTokenCurrent(lifecycleToken)) return null;
+            show(String(translated ?? ""), this.formatLatency(Date.now() - startedAt));
+            return translated;
+        }
+        catch (error) {
+            if (!this.isLifecycleTokenCurrent(lifecycleToken)) return null;
+            show(this.formatError(error), this.formatLatency(Date.now() - startedAt), true);
+            return null;
+        }
+        finally {
+            if (this.isLifecycleTokenCurrent(lifecycleToken)) this.setButtonBusy(button, false, label);
+        }
     }
 
     createSettingsDetails(summaryText, key) {
@@ -2165,18 +2825,20 @@ module.exports = class DiscordAITranslator {
         return details;
     }
 
+    // Status badge, the last test's details ("Hy-MT2 · 820 ms · just now") and Test.
     createProviderConnectionStatus(kind) {
         const wrap = document.createElement("span");
         wrap.className = "dait-provider-connection";
         const status = this.createApiStatusBadge(kind);
         wrap.appendChild(status);
+        wrap.appendChild(this.createApiTestDetail(kind));
         const test = this.createSmallButton(this.t("apiTest"));
         test.dataset.daitAction = "apiTest";
         test.dataset.daitKind = kind;
         test.addEventListener("click", event => {
             event?.preventDefault?.();
             event?.stopPropagation?.();
-            this.testApiConnection(kind, test, status);
+            Promise.resolve(this.testApiConnection(kind, test, status)).finally(() => this.refreshApiTestViews(kind));
         });
         wrap.appendChild(test);
         return wrap;
@@ -2515,18 +3177,14 @@ module.exports = class DiscordAITranslator {
         return section;
     }
 
-    createDiagnosticsSection(state = null) {
+    // Test mode is gone: "Try a sentence" / "Try polishing" in the connection cards replace it. ui.testModeEnabled
+    // still loads from old settings and simply shows nothing.
+    createDiagnosticsSection() {
         const section = this.createSettingsGroup(this.t("diagnosticsSettingsTitle"), "diagnostics");
         section.appendChild(this.createCheckboxRow("ui.diagnosticsEnabled", this.t("diagnosticLogs"), { description: this.t("diagnosticLogsDesc") }));
         section.appendChild(this.createDiagnosticLogsRow());
         section.appendChild(this.createSettingsSnapshotRow());
         section.appendChild(this.createDiagnosticSummaryRow());
-        section.appendChild(this.createCheckboxRow("ui.testModeEnabled", this.t("testMode"), { description: this.t("testModeDesc"), refreshPanel: true }));
-        const slot = document.createElement("div");
-        slot.className = "dait-test-mode-slot";
-        if (this.settings.ui?.testModeEnabled) slot.appendChild(this.createTestModeSection());
-        if (state) state.testModeSlot = slot;
-        section.appendChild(slot);
         return section;
     }
 
@@ -2557,33 +3215,8 @@ module.exports = class DiscordAITranslator {
         input.setAttribute("role", "switch");
         input.dataset.daitPath = path;
         input.checked = Boolean(this.getSetting(path));
-        input.addEventListener("change", () => {
-            this.setSetting(path, input.checked);
-            if (rowOptions.refreshPanel) {
-                const panel = input.closest?.(".dait-settings");
-                if (panel) this.updateTestModeVisibility(panel, input.checked);
-            }
-        });
+        input.addEventListener("change", () => this.setSetting(path, input.checked));
         return this.createRow(labelText, input, { ...rowOptions, checkbox: true });
-    }
-
-    updateTestModeVisibility(panel, enabled) {
-        const slot = panel?.__daitSettingsUi?.testModeSlot || panel?.querySelector?.(".dait-test-mode-slot");
-        if (!slot?.appendChild) {
-            const nextPanel = this.replaceSettingsPanelElement(panel);
-            if (enabled) nextPanel?.querySelector?.(".dait-test-mode-section")?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
-            return;
-        }
-        let section = slot.querySelector?.(".dait-test-mode-section") || null;
-        if (!enabled) {
-            section?.remove?.();
-            return;
-        }
-        if (!section) {
-            section = this.createTestModeSection();
-            slot.appendChild(section);
-        }
-        section.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
     }
 
     createApiKeyRow(kind) {
@@ -2591,12 +3224,14 @@ module.exports = class DiscordAITranslator {
         const input = document.createElement("input");
         input.type = "password";
         input.dataset.daitPath = `${kind}.apiKey`;
-        input.placeholder = ["deepseek", "openaiCompatible"].includes(provider) ? "sk-..." : "";
+        input.placeholder = this.isProviderApiKeyOptional(provider)
+            ? this.t("apiKeyOptionalPlaceholder")
+            : ["deepseek", "openaiCompatible"].includes(provider) ? "sk-..." : "";
         input.autocomplete = "off";
         input.spellcheck = false;
         input.value = this.getSetting(`${kind}.apiKey`) ?? "";
         input.addEventListener("change", () => this.setSetting(`${kind}.apiKey`, input.value));
-        const row = this.createRow(this.t("apiKey"), input, { description: this.t("apiKeyDesc"), stacked: true });
+        const row = this.createRow(this.t("apiKey"), input, { description: this.getProviderFieldHelp("apiKey", provider), stacked: true });
         row.className = `${row.className} dait-api-key-field`;
         return row;
     }
@@ -2764,6 +3399,13 @@ module.exports = class DiscordAITranslator {
         return panel;
     }
 
+    // A chip shows a short label for its code (service names for services); the code stays in the tooltip.
+    getDiagnosticChipLabel(code) {
+        const value = String(code ?? "");
+        if (PROVIDER_ORDER.includes(value)) return this.getProviderDisplayName(value);
+        return getDiagnosticCodeLabel(value, this.getLocale());
+    }
+
     createDiagnosticSummaryGroup(label, items = []) {
         const group = document.createElement("div");
         group.className = "dait-diagnostic-summary-group";
@@ -2778,7 +3420,9 @@ module.exports = class DiscordAITranslator {
         items.slice(0, 8).forEach(item => {
             const chip = document.createElement("span");
             chip.className = "dait-diagnostic-chip";
-            chip.textContent = `${item.key}: ${item.count}`;
+            chip.dataset.daitCode = String(item.key ?? "");
+            chip.textContent = `${this.getDiagnosticChipLabel(item.key)}: ${item.count}`;
+            chip.title = String(item.key ?? "");
             chips.appendChild(chip);
         });
         group.appendChild(chips);
@@ -2915,174 +3559,6 @@ module.exports = class DiscordAITranslator {
         return labels[value] || `${value}h`;
     }
 
-    createTestModeSection() {
-        const section = document.createElement("section");
-        section.className = "dait-settings-section dait-test-mode-section";
-
-        const title = document.createElement("h3");
-        title.textContent = this.t("testModeTitle");
-        section.appendChild(title);
-
-        const note = document.createElement("p");
-        note.className = "dait-note";
-        note.textContent = this.t("testModeNote");
-        section.appendChild(note);
-
-        const panel = document.createElement("div");
-        panel.className = "dait-test-panel";
-
-        const toolbar = document.createElement("div");
-        toolbar.className = "dait-test-toolbar";
-
-        const kindSelect = document.createElement("select");
-        kindSelect.className = "dait-test-kind";
-        [
-            ["polish", this.t("polishTitle")],
-            ["translation", this.t("translationTitle")]
-        ].forEach(([value, text]) => {
-            const option = document.createElement("option");
-            option.value = value;
-            option.textContent = text;
-            option.selected = value === this.getTestModeKind();
-            kindSelect.appendChild(option);
-        });
-        toolbar.appendChild(kindSelect);
-
-        const config = document.createElement("span");
-        config.className = "dait-test-config";
-        toolbar.appendChild(config);
-        panel.appendChild(toolbar);
-
-        const inputBlock = this.createTestBlock(this.t("testModeInput"), this.t("testModeInputDesc"), { compactHeader: true });
-        const copyInput = this.createSmallButton(this.t("testModeCopyInput"));
-        inputBlock.querySelector(".dait-test-block-header")?.appendChild(copyInput);
-        const input = document.createElement("textarea");
-        input.className = "dait-test-input";
-        input.placeholder = this.t("testModeInputPlaceholder");
-        input.rows = 5;
-        inputBlock.appendChild(input);
-        panel.appendChild(inputBlock);
-
-        const promptBlock = this.createTestBlock(this.t("testModePrompt"), this.t("testModePromptDesc"), { compactHeader: true });
-        const copyPrompt = this.createSmallButton(this.t("testModeCopyPrompt"));
-        promptBlock.querySelector(".dait-test-block-header")?.appendChild(copyPrompt);
-        const prompt = document.createElement("textarea");
-        prompt.className = "dait-test-prompt";
-        prompt.rows = 6;
-        this.bindSettingsTextarea(prompt);
-        promptBlock.appendChild(prompt);
-        panel.appendChild(promptBlock);
-
-        const actionBar = document.createElement("div");
-        actionBar.className = "dait-test-actions";
-        const run = this.createSmallButton(this.t("testModeRun"));
-        const savePrompt = this.createSmallButton(this.t("testModeSavePrompt"));
-        const clear = this.createSmallButton(this.t("testModeClear"));
-        actionBar.appendChild(run);
-        actionBar.appendChild(savePrompt);
-        actionBar.appendChild(clear);
-        panel.appendChild(actionBar);
-
-        const outputBlock = this.createTestBlock(this.t("testModeOutput"), "", { compactHeader: true });
-        const copyOutput = this.createSmallButton(this.t("testModeCopyOutput"));
-        copyOutput.classList.add("dait-test-copy-output");
-        outputBlock.querySelector(".dait-test-block-header")?.appendChild(copyOutput);
-        const output = document.createElement("pre");
-        output.className = "dait-test-output";
-        output.textContent = this.t("testModeOutputPlaceholder");
-        outputBlock.appendChild(output);
-        panel.appendChild(outputBlock);
-
-        const syncKind = () => {
-            const kind = kindSelect.value;
-            this.settings.ui.testModeKind = kind;
-            this.saveSettings({ debounce: true });
-            prompt.value = this.settings[kind]?.prompt || "";
-            config.textContent = this.t("testModeConfig", {
-                provider: PROVIDER_DEFAULTS[this.settings[kind]?.provider]?.label || this.settings[kind]?.provider || "",
-                model: this.settings[kind]?.model || "",
-                targetLanguage: this.getDisplayLanguage(this.settings[kind]?.targetLanguage)
-            });
-        };
-
-        kindSelect.addEventListener("change", () => {
-            syncKind();
-            output.textContent = this.t("testModeOutputPlaceholder");
-        });
-
-        savePrompt.addEventListener("click", () => {
-            const kind = kindSelect.value;
-            this.preserveSettingsScroll(prompt, () => {
-                this.setSetting(`${kind}.prompt`, prompt.value);
-                this.showToast(this.t("testModePromptSaved", { name: this.getTaskDisplayName(kind) }), "success");
-            });
-        });
-
-        copyInput.addEventListener("click", () => this.copyPromptText(input, "copiedToClipboard"));
-        copyPrompt.addEventListener("click", () => this.copyPromptText(prompt));
-        copyOutput.addEventListener("click", () => this.copyTextFromNode(output));
-
-        clear.addEventListener("click", () => {
-            input.value = "";
-            output.textContent = this.t("testModeOutputPlaceholder");
-        });
-
-        run.addEventListener("click", async () => {
-            const kind = kindSelect.value;
-            const sample = input.value.trim();
-            if (!sample) {
-                this.showToast(this.t("testModeInputRequired"), "error");
-                return;
-            }
-
-            output.textContent = "";
-            this.setButtonBusy(run, true, this.t("testModeRunning"));
-            try {
-                // Pass the test prompt as a per-request override; mutating live settings
-                // would leak the test prompt into concurrent requests and debounced saves.
-                output.textContent = await this.runModelTask(kind, sample, {
-                    configOverrides: { prompt: prompt.value },
-                    mode: "test"
-                });
-                this.showToast(this.t("testModeOutputReady"), "success");
-            }
-            catch (error) {
-                output.textContent = this.formatError(error);
-                this.showToast(this.formatError(error), "error");
-            }
-            finally {
-                this.setButtonBusy(run, false, this.t("testModeRun"));
-            }
-        });
-
-        syncKind();
-        section.appendChild(panel);
-        return section;
-    }
-
-    createTestBlock(labelText, descriptionText, options = {}) {
-        const block = document.createElement("div");
-        block.className = "dait-test-block";
-
-        const header = document.createElement("div");
-        header.className = "dait-test-block-header";
-        if (options.compactHeader) header.classList.add("dait-test-block-header-compact");
-
-        const label = document.createElement("span");
-        label.textContent = labelText;
-        header.appendChild(label);
-        block.appendChild(header);
-
-        if (descriptionText) {
-            const description = document.createElement("p");
-            description.className = "dait-row-description";
-            description.textContent = descriptionText;
-            block.appendChild(description);
-        }
-
-        return block;
-    }
-
     createInputRow(path, labelText, type, placeholder, attrs = {}, rowOptions = {}) {
         const input = document.createElement("input");
         input.type = type;
@@ -3208,7 +3684,9 @@ module.exports = class DiscordAITranslator {
         customInput.type = "text";
         customInput.className = "dait-language-custom";
         customInput.placeholder = this.t("customLanguagePlaceholder");
+        // The custom-language note is the custom field's own description, not a second sentence under the row.
         customInput.title = this.t("customLanguageDesc");
+        customInput.setAttribute("aria-description", this.t("customLanguageDesc"));
         customInput.setAttribute("aria-label", `${labelText}: ${this.t("customLanguage")}`);
         customInput.value = isCustom ? current : "";
         customInput.hidden = !isCustom;
@@ -3540,34 +4018,6 @@ module.exports = class DiscordAITranslator {
         });
 
         return this.createRow(this.t("deepseekPreset"), select, { description: this.t("deepseekPresetDesc") });
-    }
-
-    createLocalModelRow(kind) {
-        const select = document.createElement("select");
-        select.dataset.daitModelPreset = kind;
-        const current = this.settings[kind]?.model;
-
-        const custom = document.createElement("option");
-        custom.value = "";
-        custom.textContent = this.t("customModel");
-        custom.selected = !LOCAL_MODEL_PRESETS.some(([value]) => value === current);
-        select.appendChild(custom);
-
-        LOCAL_MODEL_PRESETS.forEach(([value, text]) => {
-            const option = document.createElement("option");
-            option.value = value;
-            option.textContent = text;
-            option.selected = value === current;
-            select.appendChild(option);
-        });
-
-        select.addEventListener("change", () => {
-            if (!select.value) return;
-            this.setSetting(`${kind}.model`, select.value);
-            this.showToast(this.t("modelSet", { model: select.options[select.selectedIndex].textContent }), "success");
-        });
-
-        return this.createRow(this.t("localModelPreset"), select, { description: this.t("localModelPresetDesc") });
     }
 
     // One settings row (UI-SPEC): a div with the label and a one-line description on the left and the control on
@@ -4041,6 +4491,8 @@ module.exports = class DiscordAITranslator {
             this.syncSettingControls("ui.messageButtonMode", this.getMessageButtonMode(), { includeActive: true });
         }
         this.syncSettingsDependentRows(null, path);
+        // The overview's checklist and service cards report on the service, auto-translate and channel settings.
+        this.scheduleOverviewStatusRefresh(path);
     }
 
     commitSettingsControls(root = null) {
@@ -16614,6 +17066,8 @@ module.exports = class DiscordAITranslator {
     fetchLocalProviderDetectedModel(...args) { return this.providerLayer.fetchLocalProviderDetectedModel(...args); }
     getLocalProviderModelsEndpoint(...args) { return this.providerLayer.getLocalProviderModelsEndpoint(...args); }
     parseLocalProviderModelsResponse(...args) { return this.providerLayer.parseLocalProviderModelsResponse(...args); }
+    detectProviderModels(...args) { return this.providerLayer.detectProviderModels(...args); }
+    isModelDetectionProvider(...args) { return this.providerLayer.isModelDetectionProvider(...args); }
     normalizeLocalProviderModelId(...args) { return this.providerLayer.normalizeLocalProviderModelId(...args); }
     getLocalProviderDetectedModelSnapshot(...args) { return this.providerLayer.getLocalProviderDetectedModelSnapshot(...args); }
     getGoogleTranslateKeys(...args) { return this.providerLayer.getGoogleTranslateKeys(...args); }
@@ -16656,6 +17110,12 @@ module.exports = class DiscordAITranslator {
     startLocalProviderHealthProbe(...args) { return this.providerLayer.startLocalProviderHealthProbe(...args); }
     resetApiStatus(...args) { return this.providerLayer.resetApiStatus(...args); }
     getApiStatus(...args) { return this.providerLayer.getApiStatus(...args); }
+    // Contract (settings + quick panel): { ok, model, latencyMs, at, message } of the last connection test, or null.
+    getLastApiTestResult(...args) { return this.providerLayer.getLastApiTestResult(...args); }
+    recordApiTestResult(...args) { return this.providerLayer.recordApiTestResult(...args); }
+    clearLastApiTestResult(...args) { return this.providerLayer.clearLastApiTestResult(...args); }
+    getReportedResponseModel(...args) { return this.providerLayer.getReportedResponseModel(...args); }
+    getApiTestModel(...args) { return this.providerLayer.getApiTestModel(...args); }
     getProviderFallbackOrder(...args) { return this.providerLayer.getProviderFallbackOrder(...args); }
     shouldTryProviderFallback(...args) { return this.providerLayer.shouldTryProviderFallback(...args); }
     getProviderFallbackConfig(...args) { return this.providerLayer.getProviderFallbackConfig(...args); }

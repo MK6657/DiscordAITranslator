@@ -797,9 +797,15 @@ module.exports = `.dait-settings {
 .dait-provider-connection {
     align-items: center;
     display: inline-flex;
-    flex: 0 0 auto;
-    gap: var(--dait-space-3);
+    flex: 0 1 auto;
+    gap: var(--dait-space-2);
     margin-left: auto;
+    max-width: 100%;
+    min-width: 0;
+}
+
+.dait-provider-connection > .dait-small-button {
+    margin-left: var(--dait-space-1);
 }
 
 .dait-provider-settings-block > .dait-settings-details:last-child,
@@ -877,91 +883,373 @@ module.exports = `.dait-settings {
     justify-self: start;
 }
 
-/* Test mode (shown under its switch in the data tab). */
-.dait-test-mode-section {
+/* Text only screen readers get (the state words of the setup checklist). */
+.dait-settings .dait-visually-hidden {
+    border: 0;
+    clip: rect(0 0 0 0);
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    padding: 0;
+    position: absolute;
+    white-space: nowrap;
+    width: 1px;
+}
+
+/* Overview: setup checklist (hidden once complete), then the two service status cards. */
+.dait-setup-card {
     background: var(--dait-surface);
     border-radius: var(--dait-radius-card);
     display: grid;
-    gap: var(--dait-space-3);
-    margin-top: var(--dait-space-2);
+    gap: var(--dait-space-2);
+    margin-bottom: var(--dait-space-6);
     padding: var(--dait-space-4);
 }
 
-.dait-test-mode-section h3 {
+.dait-setup-head {
+    align-items: baseline;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--dait-space-1) var(--dait-space-3);
+}
+
+.dait-setup-title {
     color: var(--dait-heading);
     font-size: var(--dait-font-heading);
     font-weight: 700;
+    line-height: 1.3;
 }
 
-.dait-note {
-    color: var(--dait-text-muted);
-    font-size: var(--dait-font-body);
-    line-height: 1.5;
-}
-
-.dait-test-panel {
-    display: grid;
-    gap: var(--dait-space-4);
-    min-width: 0;
-}
-
-.dait-test-toolbar {
-    align-items: center;
-    display: grid;
-    gap: var(--dait-space-3);
-    grid-template-columns: var(--dait-control-w) minmax(0, 1fr);
-    min-width: 0;
-}
-
-.dait-test-config {
+.dait-setup-progress {
     color: var(--dait-text-muted);
     font-size: var(--dait-font-caption);
-    line-height: 1.45;
+    line-height: 1.4;
+}
+
+.dait-setup-list {
+    display: grid;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.dait-setup-item {
+    align-items: center;
+    column-gap: var(--dait-space-3);
+    display: grid;
+    grid-template-areas: "icon label detail action";
+    grid-template-columns: 18px minmax(112px, 168px) minmax(0, 1fr) auto;
+    min-height: 44px;
+    padding: 6px 0;
+}
+
+.dait-setup-item + .dait-setup-item {
+    border-top: 1px solid var(--dait-divider);
+}
+
+.dait-setup-icon {
+    border-radius: var(--dait-radius-pill);
+    box-sizing: border-box;
+    grid-area: icon;
+    height: 18px;
+    position: relative;
+    width: 18px;
+}
+
+.dait-setup-item-done .dait-setup-icon {
+    background: var(--dait-success);
+    border-radius: 0;
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6L9 17l-5-5'/%3E%3C/svg%3E") center / contain no-repeat;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6L9 17l-5-5'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+.dait-setup-item-todo .dait-setup-icon,
+.dait-setup-item-busy .dait-setup-icon {
+    border: 2px solid var(--dait-text-muted);
+    height: 16px;
+    margin: 1px;
+    width: 16px;
+}
+
+.dait-setup-item-busy .dait-setup-icon {
+    border-color: var(--dait-warning);
+    border-style: dashed;
+}
+
+.dait-setup-item-error .dait-setup-icon {
+    background: var(--dait-danger-fill);
+}
+
+.dait-setup-item-error .dait-setup-icon::after {
+    color: var(--dait-on-fill);
+    content: "!";
+    font-size: 12px;
+    font-weight: 700;
+    left: 0;
+    line-height: 18px;
+    position: absolute;
+    right: 0;
+    text-align: center;
+    top: 0;
+}
+
+.dait-setup-item-off .dait-setup-icon::after {
+    background: var(--dait-text-muted);
+    border-radius: 1px;
+    content: "";
+    height: 2px;
+    left: 4px;
+    position: absolute;
+    right: 4px;
+    top: 8px;
+}
+
+.dait-setup-label {
+    color: var(--dait-heading);
+    font-size: var(--dait-font-label);
+    font-weight: 500;
+    grid-area: label;
+    line-height: 1.4;
     min-width: 0;
+}
+
+.dait-setup-detail {
+    color: var(--dait-text-muted);
+    font-size: var(--dait-font-body);
+    grid-area: detail;
+    line-height: 1.5;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dait-setup-item-error .dait-setup-detail {
+    color: var(--dait-danger);
+    white-space: normal;
+}
+
+.dait-setup-item > .dait-small-button {
+    grid-area: action;
+    justify-self: end;
+}
+
+.dait-service-cards {
+    display: grid;
+    gap: var(--dait-space-3);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin-bottom: var(--dait-space-2);
+}
+
+.dait-service-card {
+    align-items: center;
+    background: var(--dait-surface);
+    border-radius: var(--dait-radius-card);
+    display: flex;
+    gap: var(--dait-space-3);
+    min-width: 0;
+    padding: 14px var(--dait-space-4);
+}
+
+.dait-service-card-text {
+    display: grid;
+    flex: 1 1 auto;
+    gap: var(--dait-space-1);
+    min-width: 0;
+}
+
+.dait-service-card-title {
+    color: var(--dait-heading);
+    font-size: var(--dait-font-label);
+    font-weight: 500;
+    line-height: 1.35;
     overflow-wrap: anywhere;
 }
 
-.dait-test-block {
+.dait-service-card-status {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px 6px;
+    min-width: 0;
+}
+
+/* In a card the last test's details get their own line. */
+.dait-settings .dait-service-card .dait-api-test-detail {
+    flex-basis: 100%;
+    white-space: normal;
+}
+
+.dait-settings .dait-service-card .dait-api-test-detail::before {
+    content: none;
+}
+
+.dait-service-card > .dait-small-button {
+    flex: 0 0 auto;
+}
+
+/* Status without a connection to show: dash = off, "!" = needs you. */
+.dait-status-mark {
+    align-items: center;
+    color: var(--dait-text);
+    display: inline-flex;
+    font-size: var(--dait-font-caption);
+    gap: 6px;
+    line-height: 1.3;
+    min-width: 0;
+}
+
+.dait-status-mark::before {
+    background: var(--dait-text-muted);
+    border-radius: 1px;
+    content: "";
+    flex: 0 0 auto;
+    height: 2px;
+    width: 10px;
+}
+
+.dait-status-mark-needs {
+    color: var(--dait-danger);
+}
+
+.dait-status-mark-needs::before {
+    align-items: center;
+    background: var(--dait-danger-fill);
+    border-radius: var(--dait-radius-pill);
+    color: var(--dait-on-fill);
+    content: "!";
+    display: inline-flex;
+    font-size: 12px;
+    font-weight: 700;
+    height: 14px;
+    justify-content: center;
+    line-height: 1;
+    width: 14px;
+}
+
+/* The last test's details after a status badge; hidden as soon as the badge shows another state. */
+.dait-settings .dait-api-test-detail {
+    color: var(--dait-text-muted);
+    font-size: var(--dait-font-caption);
+    line-height: 1.3;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dait-settings .dait-api-test-detail::before {
+    content: "·";
+    margin-right: 6px;
+}
+
+.dait-settings .dait-api-status:not(.dait-api-status-success) + .dait-api-test-detail[data-dait-for="success"],
+.dait-settings .dait-api-status:not(.dait-api-status-failed) + .dait-api-test-detail[data-dait-for="failed"] {
+    display: none;
+}
+
+.dait-provider-connection .dait-api-test-detail {
+    max-width: 260px;
+}
+
+/* An error is worth reading in full: it wraps instead of being cut off. */
+.dait-settings .dait-api-test-detail[data-dait-for="failed"] {
+    white-space: normal;
+}
+
+.dait-provider-connection .dait-api-test-detail[data-dait-for="failed"] {
+    max-width: 300px;
+}
+
+/* With an error to read, the status takes its own full-width line under the card title. */
+.dait-provider-settings-header:has(.dait-api-status-failed + .dait-api-test-detail[data-dait-for="failed"]:not([hidden])) > .dait-provider-connection {
+    flex-basis: 100%;
+    margin-left: 0;
+}
+
+.dait-provider-settings-header:has(.dait-api-status-failed + .dait-api-test-detail[data-dait-for="failed"]:not([hidden])) .dait-api-test-detail {
+    flex: 1 1 auto;
+    max-width: none;
+}
+
+/* Model field (Sakura local, OpenAI-compatible): name + "Detect models", the picker below. */
+.dait-model-field,
+.dait-try-field {
     display: grid;
     gap: 6px;
     min-width: 0;
 }
 
-.dait-test-block-header {
+.dait-model-field-line,
+.dait-try-line {
     align-items: center;
     display: flex;
     gap: var(--dait-space-2);
-    justify-content: space-between;
     min-width: 0;
 }
 
-.dait-test-block-header > span {
-    color: var(--dait-heading);
-    font-size: var(--dait-font-label);
-    font-weight: 500;
-}
-
-.dait-test-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--dait-space-2);
+.dait-settings .dait-model-field-line > input,
+.dait-settings .dait-try-line > input {
+    flex: 1 1 auto;
     min-width: 0;
+    width: auto;
 }
 
-.dait-test-output {
-    background: var(--dait-input-bg);
-    border: 1px solid var(--dait-input-border);
-    border-radius: var(--dait-radius-control);
+.dait-settings .dait-model-picker {
+    width: 100%;
+}
+
+.dait-settings .dait-row-description.dait-row-description-error {
+    color: var(--dait-danger);
+}
+
+/* "Try a sentence" / "Try polishing": the result goes under the help text, with the time it took. */
+.dait-settings-row-stacked.dait-try-row {
+    grid-template-areas:
+        "label"
+        "control"
+        "desc"
+        "result";
+}
+
+.dait-settings-row-stacked.dait-try-row > .dait-row-control,
+.dait-settings-row-stacked.dait-try-row .dait-try-field {
+    display: contents;
+}
+
+.dait-try-row .dait-try-line {
+    grid-area: control;
+}
+
+.dait-try-result {
+    border-left: 3px solid var(--dait-divider);
     color: var(--dait-text);
-    font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
-    font-size: 13px;
-    line-height: 1.55;
-    margin: 0;
-    min-height: 96px;
-    overflow: auto;
-    padding: 8px 10px;
+    font-size: var(--dait-font-body);
+    grid-area: result;
+    line-height: 1.5;
+    margin: 2px 0 0;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    padding: 2px 0 2px 10px;
     white-space: pre-wrap;
-    word-break: break-word;
+}
+
+.dait-try-time {
+    color: var(--dait-text-muted);
+    font-size: var(--dait-font-caption);
+    white-space: nowrap;
+}
+
+.dait-try-time::before {
+    content: " · ";
+}
+
+.dait-try-result-error {
+    border-left-color: var(--dait-danger);
+}
+
+.dait-try-result-error .dait-try-output {
+    color: var(--dait-danger);
 }
 
 /* Prompt templates and the prompt editor (their own group on the translate and composer tabs). */
@@ -1152,8 +1440,23 @@ module.exports = `.dait-settings {
         max-width: 100%;
     }
 
-    .dait-prompt-tools,
-    .dait-test-toolbar {
+    .dait-prompt-tools {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .dait-setup-item {
+        grid-template-areas:
+            "icon label action"
+            ". detail action";
+        grid-template-columns: 18px minmax(0, 1fr) auto;
+        row-gap: 2px;
+    }
+
+    .dait-setup-detail {
+        white-space: normal;
+    }
+
+    .dait-service-cards {
         grid-template-columns: minmax(0, 1fr);
     }
 }
