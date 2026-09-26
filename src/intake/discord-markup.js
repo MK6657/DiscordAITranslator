@@ -13,9 +13,9 @@ const PLACEHOLDER_START = "\uE000";
 const PLACEHOLDER_END = "\uE001";
 const PLACEHOLDER_PATTERN = /\uE000(\d+)\uE001/g;
 
-const CODE_BLOCK_PATTERN = /```(?:[A-Za-z0-9_+.#-]{1,32}\n)?([\s\S]*?)```/g;
-const INLINE_CODE_PATTERN = /``([\s\S]+?)``|`([^`]+?)`/g;
-const ESCAPED_CHARACTER_PATTERN = /\\([^A-Za-z0-9\s])/g;
+// Code blocks, inline code and backslash escapes, read left to right in one pass as Discord does:
+// an escaped backtick opens no code span, and a backslash inside code is shown as written.
+const CODE_OR_ESCAPE_PATTERN = /```(?:[A-Za-z0-9_+.#-]{1,32}\n)?([\s\S]*?)```|``([\s\S]+?)``|`([^`]+?)`|\\([^A-Za-z0-9\s])/g;
 const BARE_URL_PATTERN = /(?:https?|steam|discord):\/\/[^\s<>]*[^\s<>.,:;"')\]]/g;
 
 const SPOILER_PATTERN = /\|\|[\s\S]+?\|\|/;
@@ -43,9 +43,11 @@ function convertDiscordMarkupToDisplayText(text, resolvers = {}) {
     };
 
     // Code keeps its content verbatim; the fences and the language line are not shown.
-    value = value.replace(CODE_BLOCK_PATTERN, (match, code) => `\n${protect(code)}\n`);
-    value = value.replace(INLINE_CODE_PATTERN, (match, doubled, single) => protect(doubled ?? single ?? ""));
-    value = value.replace(ESCAPED_CHARACTER_PATTERN, (match, character) => protect(character));
+    value = value.replace(CODE_OR_ESCAPE_PATTERN, (match, block, doubled, single, escaped) => {
+        if (block !== undefined) return `\n${protect(block)}\n`;
+        if (escaped !== undefined) return protect(escaped);
+        return protect(doubled ?? single ?? "");
+    });
 
     // A hidden spoiler is not on screen, so its text must not reach a translation line.
     if (SPOILER_PATTERN.test(value)) return "";
@@ -88,7 +90,11 @@ function convertDiscordMarkupToDisplayText(text, resolvers = {}) {
         value = value.replace(/(^|[^A-Za-z0-9_])_(?=\S)([^_]*?\S)_(?![A-Za-z0-9_])/g, "$1$2");
     }
 
-    return value.replace(PLACEHOLDER_PATTERN, (match, index) => protectedParts[Number(index)] ?? "");
+    value = value.replace(PLACEHOLDER_PATTERN, (match, index) => protectedParts[Number(index)] ?? "");
+    // A protected part caught inside another one (code inside a bare URL) is not restored: rather
+    // than show placeholder characters, keep the text on screen.
+    if (value.includes(PLACEHOLDER_START) || value.includes(PLACEHOLDER_END)) return "";
+    return value;
 }
 
 // Converted store texts kept per plugin instance (a channel's loaded messages, with room to spare).

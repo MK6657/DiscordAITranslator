@@ -418,6 +418,21 @@ test("store markup converts to the text Discord shows", () => {
     assert.equal(convert(`ask <@555555555555555556>`), "");
 });
 
+test("store markup: an escaped backtick opens no code span, and no placeholder leaks into the text", () => {
+    const convert = text => convertDiscordMarkupToDisplayText(text);
+    const PLACEHOLDER = /[\uE000\uE001]/;
+    // Discord reads left to right: "\`" is a literal backtick, so the later backtick has no partner.
+    assert.equal(convert("a \\`code` b"), "a `code` b");
+    assert.equal(convert("\\`x`"), "`x`");
+    assert.equal(convert("\\`a\\` and `b`"), "`a` and b");
+    // A backslash inside code is shown as written.
+    assert.equal(convert("run `a\\*b` now"), "run a\\*b now");
+    assert.equal(convert("```\nx = \\`y`\n```"), "\n\nx = \\`y`\n\n");
+    for (const text of ["a \\`code` b", "\\``x``", "see https://example.com/`x` now", "`a` \\`b` `c`", "\\```js\nx\n```"]) {
+        assert.doesNotMatch(convert(text), PLACEHOLDER, JSON.stringify(text));
+    }
+});
+
 // ---------------------------------------------------------------- render-1: auto translation
 
 test("auto: a message with a mention, custom emoji and masked link is requested once, drawn and cached", async t => {
