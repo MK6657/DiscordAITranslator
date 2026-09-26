@@ -820,6 +820,42 @@ test("retranslating a kept auto partial keeps it unless the manual result misses
     assert.deepEqual(rendered[1][5].partialInfo, { missingSegments: [5], totalSegments: 5 });
 });
 
+test("a failed Retranslate puts the line back and says so instead of removing it silently", async t => {
+    const { plugin, messageNode, content, rendered, removed, toasts } = manualTranslateFixture(t);
+    const previousLine = {
+        classList: { contains: () => false },
+        dataset: { daitValidationQuality: "good" },
+        querySelector: () => ({ textContent: "明天见" })
+    };
+    plugin.getTranslationLine = () => previousLine;
+    plugin.runManualTranslationPlan = async () => { throw plugin.createManualRescueFailureError("same-as-source"); };
+    await plugin.retranslateMessage(messageNode, content);
+    assert.equal(removed.length, 0, "the line the user was reading is not removed");
+    assert.equal(rendered.length, 1);
+    assert.equal(rendered[0][2], "明天见", "it is drawn again");
+    assert.equal(toasts.length, 1);
+    assert.equal(toasts[0][1], "error");
+    assert.equal(toasts[0][0], plugin.t("manualTranslateRescueFailed"));
+
+    // A kept auto partial line comes back with its note and stays kept for redraw.
+    const { plugin: partialPlugin, messageNode: node, content: element, rendered: drawn, autoKey } = manualTranslateFixture(t);
+    const kept = "第一部分。第四部分。第五部分。";
+    const keptInfo = { missingSegments: [2, 3], totalSegments: 5 };
+    partialPlugin.rememberAutoTranslationPartialResult(autoKey, SOURCE, kept, { validationQuality: "partial", partialInfo: keptInfo });
+    partialPlugin.getTranslationLine = () => ({
+        classList: { contains: name => name === "dait-translation-partial" },
+        dataset: { daitValidationQuality: "partial" },
+        querySelector: () => ({ textContent: kept })
+    });
+    partialPlugin.runManualTranslationPlan = async () => { throw partialPlugin.createManualRescueFailureError("same-as-source"); };
+    await partialPlugin.retranslateMessage(node, element);
+    assert.equal(drawn.length, 1);
+    assert.equal(drawn[0][2], kept);
+    assert.equal(drawn[0][5].partial, true);
+    assert.deepEqual(drawn[0][5].partialInfo, keptInfo);
+    assert.ok(partialPlugin.getAutoTranslationPartialResult(autoKey, SOURCE));
+});
+
 test("manual rescue stops at the first non-retryable provider error", async () => {
     const plugin = new Plugin();
     const line = "Service log: request 42 finished with status ok and a retry was scheduled. ";

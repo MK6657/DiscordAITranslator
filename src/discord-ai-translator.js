@@ -11997,6 +11997,32 @@ module.exports = class DiscordAITranslator {
         return this.renderTranslationError(plan.messageNode, plan.content, error, plan.cacheKey, plan.domText ?? plan.text);
     }
 
+    // What a finished translation line shows, so a failed Retranslate can draw it again.
+    getRestorableTranslationLineState(content) {
+        const line = this.getTranslationLine(content);
+        if (!line || line.classList?.contains?.("dait-translation-loading") || line.classList?.contains?.("dait-translation-error")) return null;
+        const text = String(this.translationLineTexts?.get?.(line) ?? this.getTranslationLineRenderedText(line) ?? "");
+        if (!text.trim()) return null;
+        return {
+            text,
+            partial: line.classList?.contains?.("dait-translation-partial") === true,
+            validationQuality: String(line.dataset?.daitValidationQuality || ""),
+            validationReason: String(line.dataset?.daitValidationReason || "")
+        };
+    }
+
+    restoreTranslationLineState(plan, state, keptAutoPartial = null) {
+        // A kept auto partial that was on screen also goes back into memory for redraw.
+        const partialInfo = state.partial && keptAutoPartial?.translated === state.text ? keptAutoPartial.partialInfo : null;
+        if (partialInfo) this.rememberAutoTranslationPartialResult(plan.autoCacheKey, plan.text, keptAutoPartial.translated, keptAutoPartial);
+        return this.renderTranslation(plan.messageNode, plan.content, state.text, plan.cacheKey, plan.domText ?? plan.text, {
+            partial: state.partial,
+            validationQuality: state.validationQuality,
+            validationReason: state.validationReason,
+            ...(partialInfo ? { partialInfo } : {})
+        });
+    }
+
     async translateMessage(messageNode, content, button, textOptions = null, translateOptions = {}) {
         if (!this.settings.translation.enabled) {
             this.showToast(this.t("translationDisabled"), "info");
@@ -12068,6 +12094,9 @@ module.exports = class DiscordAITranslator {
             }
         }
 
+        // Retranslate replaces a line the user was reading: keep what it showed in case the new
+        // request produces nothing usable.
+        const previousLineState = translateOptions?.bypassCache ? this.getRestorableTranslationLineState(content) : null;
         this.renderManualLoading(plan);
         this.setButtonBusy(button, true, this.t("translateBusy"));
         try {
@@ -12187,14 +12216,19 @@ module.exports = class DiscordAITranslator {
             // The manual toast below already tells the user; do not repeat it as an auto-translate notice.
             if (!silentManualFailure) this.rememberTranslationAttentionNotice(error, this.getTranslationAttentionProviderKey(error, requestOptions));
             if (!error?.autoTranslationFinalInvalidOutput) this.markAutoTranslationProviderFailure(requestOptions, error);
-            if (this.isManualTranslationSourceStillCurrent(plan)) {
+            // A failed Retranslate puts back the line the user was reading and says why.
+            const restorePreviousLine = silentManualFailure && Boolean(previousLineState) && this.isManualTranslationSourceStillCurrent(plan);
+            if (restorePreviousLine) {
+                this.restoreTranslationLineState(plan, previousLineState, keptAutoPartial);
+            }
+            else if (this.isManualTranslationSourceStillCurrent(plan)) {
                 if (silentManualFailure) this.removeTranslationNode(messageNode, content);
                 else this.renderManualFailure(plan, error);
             }
             else {
                 this.removeTranslationNode(messageNode, content);
             }
-            if (!silentManualFailure) this.showToast(this.formatError(error), "error");
+            if (!silentManualFailure || translateOptions?.bypassCache) this.showToast(this.formatError(error), "error");
         }
         finally {
             if (this.isLifecycleTokenCurrent(lifecycleToken) && this.isManualTranslationRequestCurrent(plan)) {
