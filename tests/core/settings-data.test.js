@@ -653,6 +653,8 @@ test("migration merges an old copy left next to a new one (downgrade and upgrade
         { key: "k-shared", value: "older", c: now, t: now + 5, e: now + 40 * HOUR },
         { key: "k-legacy", value: "legacy only", c: now, t: now + 30, e: now + 40 * HOUR }
     ]);
+    // Saved at the same time: neither copy is newer, so the entries of both are kept.
+    legacy.savedAt = current.savedAt;
     const bdApi = createFakeDataApi({
         DiscordAITranslator: { translationCache: legacy, diagnosticLogs: { logs: [{ ts: 5, action: "b", status: "ok", count: 1 }, { ts: 1, action: "a", status: "ok", count: 1 }], compressed: 1 } },
         "DiscordAITranslator.cache": { translationCache: current },
@@ -882,6 +884,40 @@ test("merging the old and new cache copies keeps the detected local models", t =
     // A 0.3.0 copy has no list; the current one is kept as it is.
     const merged = plugin.mergePersistedTranslationCachePayloads(current, cachePayload([]));
     assert.deepEqual(merged.localModels, current.localModels);
+});
+
+// --- review 1: SD-8 (a cache cleared in the other version stays cleared) ---------------------------
+
+test("a cache cleared in 0.3.0 after a downgrade stays cleared on the next upgrade", t => {
+    const now = Date.now();
+    const current = cachePayload([{ key: "k-before-downgrade", value: "cleared translation", c: now - 3 * HOUR, t: now - 2 * HOUR, e: now + 40 * HOUR }]);
+    current.savedAt = now - 2 * HOUR;
+    // 0.3.0 cannot see the new file; its "Clear translation cache" writes an empty payload to the old key.
+    const cleared = cachePayload([]);
+    cleared.savedAt = now - HOUR;
+    const bdApi = createFakeDataApi({
+        DiscordAITranslator: { translationCache: cleared },
+        "DiscordAITranslator.cache": { translationCache: current }
+    });
+    useGlobals(t, { BdApi: bdApi });
+    const plugin = quietPlugin();
+    assert.equal(plugin.migrateLegacyDataStoreKey("translationCache"), "merged");
+    assert.deepEqual(bdApi.files["DiscordAITranslator.cache"].translationCache.entries, []);
+    plugin.loadTranslationCache();
+    assert.equal(plugin.translationCache.size, 0);
+
+    // What 0.3.0 translated after the clear is kept; nothing from before it comes back.
+    const usedAfterClear = cachePayload([{ key: "k-after-clear", value: "new translation", c: now - 50 * 60 * 1000, t: now - 40 * 60 * 1000, e: now + 40 * HOUR }]);
+    usedAfterClear.savedAt = now - 30 * 60 * 1000;
+    const merged = plugin.mergePersistedTranslationCachePayloads(current, usedAfterClear);
+    assert.deepEqual(merged.entries.map(entry => merged.strings[entry.v]), ["new translation"]);
+
+    // The same holds the other way: a cache cleared here while the old copy could not be deleted yet.
+    const oldCopy = cachePayload([{ key: "k-old-copy", value: "old copy", c: now - 5 * HOUR, t: now - 4 * HOUR, e: now + 40 * HOUR }]);
+    oldCopy.savedAt = now - 4 * HOUR;
+    const clearedHere = cachePayload([]);
+    clearedHere.savedAt = now - HOUR;
+    assert.deepEqual(plugin.mergePersistedTranslationCachePayloads(clearedHere, oldCopy).entries, []);
 });
 
 test("start() still writes diagnostics a previous stop() could not save before it reloads the log", t => {
