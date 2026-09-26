@@ -2850,8 +2850,10 @@ const panelDarkBlock = injectedCss.match(/\[data-dait-panel-theme="dark"\],\n:is
 const panelLightBlock = injectedCss.match(/\n\[data-dait-panel-theme="light"\] \{([\s\S]*?)\n\}/)?.[1] || "";
 const panelSharedBlock = injectedCss.match(/\n\.dait-settings,\n\.dait-quick-settings-modal-root,\n\.dait-quick-popover,\n\.dait-polish-result-panel,\n\.dait-input-action-menu,\n\.dait-dialog \{([\s\S]*?)\n\}/)?.[1] || "";
 assert.match(panelDarkBlock, /--dait-bg: #2b2d31;[\s\S]*?--dait-rail: #232428;[\s\S]*?--dait-surface: #313338;[\s\S]*?--dait-input-bg: #1e1f22;[\s\S]*?--dait-text: #e3e5e8;[\s\S]*?--dait-heading: #f2f3f5;[\s\S]*?--dait-placeholder: #949ba4;[\s\S]*?--dait-brand: #4f5bd5;/);
+// Control edges reach 3:1 against the window surfaces (theme audit; the spec asked for #4e5058 / #c4c9ce).
+assert.match(panelDarkBlock, /--dait-input-border: #7a7e86;/);
 assert.match(panelDarkBlock, /color-scheme: dark;/);
-assert.match(panelLightBlock, /--dait-bg: #ffffff;[\s\S]*?--dait-rail: #f2f3f5;[\s\S]*?--dait-surface: #f6f7f8;[\s\S]*?--dait-input-bg: #ffffff;[\s\S]*?--dait-input-border: #c4c9ce;[\s\S]*?--dait-text: #2e3035;[\s\S]*?--dait-heading: #1f2124;[\s\S]*?--dait-placeholder: #6d6f78;/);
+assert.match(panelLightBlock, /--dait-bg: #ffffff;[\s\S]*?--dait-rail: #f2f3f5;[\s\S]*?--dait-surface: #f6f7f8;[\s\S]*?--dait-input-bg: #ffffff;[\s\S]*?--dait-input-border: #868a91;[\s\S]*?--dait-text: #2e3035;[\s\S]*?--dait-heading: #1f2124;[\s\S]*?--dait-placeholder: #6d6f78;/);
 assert.match(panelLightBlock, /--dait-danger: #c42b2f;/);
 assert.match(panelLightBlock, /color-scheme: light;/);
 [panelDarkBlock, panelLightBlock, panelSharedBlock].forEach(block => {

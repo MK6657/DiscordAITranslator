@@ -82,7 +82,9 @@ module.exports = `
     --dait-surface: #313338;
     --dait-raised: #383a40;
     --dait-input-bg: #1e1f22;
-    --dait-input-border: #4e5058;
+    /* Control edges (inputs, selects, segmented controls, secondary buttons) reach 3:1 against the window, rail and
+       card surfaces (WCAG 1.4.11); the spec's #4e5058 reached 1.6-1.9:1. */
+    --dait-input-border: #7a7e86;
     --dait-divider: #3f4147;
     --dait-text: #e3e5e8;
     --dait-heading: #f2f3f5;
@@ -109,7 +111,9 @@ module.exports = `
     --dait-surface: #f6f7f8;
     --dait-raised: #ebedef;
     --dait-input-bg: #ffffff;
-    --dait-input-border: #c4c9ce;
+    /* White inputs sit on the white window: their edge is the only thing that shows them, so it reaches 3:1 on the
+       window, rail and card surfaces (WCAG 1.4.11); the spec's #c4c9ce reached 1.5-1.7:1. */
+    --dait-input-border: #868a91;
     --dait-divider: #e3e5e8;
     --dait-text: #2e3035;
     --dait-heading: #1f2124;

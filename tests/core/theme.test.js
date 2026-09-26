@@ -959,3 +959,48 @@ test("controls and single-line text use the body line height too", () => {
     const controls = cssRules().find(item => item.selector.startsWith(".dait-settings :where(input:not([type=\"checkbox\"]):not([type=\"radio\"]), select, textarea)") && !item.context);
     assert.equal(declarations(controls.body).get("line-height"), "var(--dait-line)");
 });
+
+test("control edges reach 3:1 against every window surface in both palettes", () => {
+    for (const theme of ["light", "dark"]) {
+        const token = panelTokens([".dait-settings", `[data-dait-panel-theme="${theme}"]`]);
+        for (const surface of ["--dait-bg", "--dait-rail", "--dait-surface"]) {
+            const ratio = contrast(token("--dait-input-border"), token(surface));
+            assert.ok(ratio >= 3, `${theme} input border on ${surface}: ${ratio.toFixed(2)}`);
+        }
+    }
+    // Every input, select, textarea and segmented control draws its edge with that token.
+    const rule = selector => declarations(cssRules().find(item => item.selector === selector && !item.context)?.body || "");
+    assert.equal(rule(".dait-segmented").get("border"), "1px solid var(--dait-input-border)");
+    assert.equal(rule(".dait-qp-select").get("border"), "1px solid var(--dait-input-border)");
+    assert.equal(rule(".dait-qp-segmented").get("border"), "1px solid var(--dait-input-border)");
+});
+
+test("inactive rows keep their label readable; only the disabled controls fade", t => {
+    assert.equal(cssRules().some(rule => /row-inactive/.test(rule.selector) && /opacity/.test(rule.body)), false);
+    const { plugin, doc } = createPlugin(t, { discord: "theme-light", tab: "advanced" });
+    plugin.settings.ui.historyBackfillEnabled = false;
+    const panel = plugin.getSettingsPanel({ quickSettings: true });
+    doc.body.appendChild(panel);
+    const inactive = panel.querySelectorAll(".dait-settings-row-inactive");
+    assert.ok(inactive.length > 0, "a dependent row is off");
+    inactive.forEach(row => {
+        const controls = plugin.getSettingsRowControls(row.children[1]);
+        assert.ok(controls.length > 0 && controls.every(control => control.disabled), "its controls are disabled (and fade)");
+    });
+    plugin.destroySettingsModalSizing(panel);
+});
+
+test("one secondary button style, and the danger zone heading in the heading colour with a danger mark", () => {
+    assert.equal(cssRules().some(rule => /small-button-outline/.test(rule.selector)), false, "outline buttons look like every secondary button");
+    const rule = selector => declarations(cssRules().find(item => item.selector === selector && !item.context)?.body || "");
+    assert.equal(rule(".dait-small-button").get("background"), "var(--dait-raised)");
+    assert.equal(rule(".dait-small-button").get("border"), "1px solid var(--dait-input-border)");
+    assert.equal(rule(".dait-polish-result-action").get("background"), "var(--dait-raised)");
+    assert.equal(rule(".dait-qp-button-secondary").get("background"), "var(--dait-raised)");
+    const heading = rule(".dait-settings-danger-zone .dait-settings-group-title");
+    assert.equal(heading.has("color"), false, "the heading colour of every group title");
+    const mark = rule(".dait-settings-danger-zone .dait-settings-group-title::before");
+    assert.match(mark.get("background"), /var\(--dait-danger-fill\)$/);
+    // Group headings carry a rule, so a heading does not read like the row label right under it.
+    assert.equal(rule(".dait-settings-group-title").get("border-bottom"), "1px solid var(--dait-divider)");
+});

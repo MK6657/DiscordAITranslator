@@ -305,12 +305,15 @@ module.exports = `.dait-settings {
     margin-top: var(--dait-space-4);
 }
 
+/* A group heading has a rule under it, so it reads as the start of a section and not as one more row label. */
 .dait-settings-group-title {
+    border-bottom: 1px solid var(--dait-divider);
     color: var(--dait-heading);
     font-size: var(--dait-font-group);
     font-weight: 600;
     line-height: 1.3;
     margin-bottom: var(--dait-space-2);
+    padding-bottom: var(--dait-space-2);
 }
 
 .dait-settings-group-note {
@@ -409,14 +412,10 @@ module.exports = `.dait-settings {
     width: 100%;
 }
 
-/* A dependent option sits right under its parent, indented, and is disabled while the parent is off. */
+/* A dependent option sits right under its parent, indented, and is disabled while the parent is off. Only its
+   controls fade (55 %, below); the label and the reason under it stay fully readable. */
 .dait-settings-row-dependent {
     padding-left: var(--dait-space-4);
-}
-
-/* Disabled: the label and the controls fade to 55 %; the reason under the label stays fully readable. */
-.dait-settings-row-inactive .dait-row-label {
-    opacity: 0.55;
 }
 
 .dait-settings-row-found {
@@ -589,7 +588,8 @@ module.exports = `.dait-settings {
     opacity: 0.55;
 }
 
-/* Buttons: 36 px high, body size at 500. Default is the grey secondary button. */
+/* Buttons: 36 px high, body size at 500. Default is the grey secondary button, the one style for every button that
+   is neither primary nor dangerous (buttons created as "outline" look the same). */
 .dait-small-button {
     align-items: center;
     background: var(--dait-raised);
@@ -626,16 +626,6 @@ module.exports = `.dait-settings {
 
 .dait-small-button-primary:hover:not(:disabled) {
     background: var(--dait-brand-hover);
-}
-
-.dait-small-button-outline {
-    background: transparent;
-    border-color: var(--dait-input-border);
-    color: var(--dait-text);
-}
-
-.dait-small-button-outline:hover:not(:disabled) {
-    background: var(--dait-raised);
 }
 
 .dait-small-button-danger {
@@ -1375,9 +1365,24 @@ module.exports = `.dait-settings {
     white-space: nowrap;
 }
 
-/* Danger zone at the end of the data tab. */
+/* Danger zone at the end of the data tab: the heading colour like every other heading, with the danger mark in
+   front (the same drawn "!" as a failed connection). */
 .dait-settings-danger-zone .dait-settings-group-title {
-    color: var(--dait-danger);
+    align-items: center;
+    display: flex;
+    gap: var(--dait-space-2);
+}
+
+.dait-settings-danger-zone .dait-settings-group-title::before {
+    background:
+        linear-gradient(var(--dait-on-fill), var(--dait-on-fill)) 50% 4px / 2px 6px no-repeat,
+        linear-gradient(var(--dait-on-fill), var(--dait-on-fill)) 50% 11px / 2px 2px no-repeat,
+        var(--dait-danger-fill);
+    border-radius: var(--dait-radius-pill);
+    content: "";
+    flex: 0 0 auto;
+    height: 16px;
+    width: 16px;
 }
 
 /* Narrower panel (BetterDiscord's own plugin-settings modal, small windows): the tab rail becomes a scrolling row
