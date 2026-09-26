@@ -14515,12 +14515,7 @@ module.exports = class DiscordAITranslator {
             },
             () => {
                 this.selectTextboxContents(textbox);
-                try {
-                    return Boolean(document.execCommand?.("delete", false, null));
-                }
-                catch {
-                    return false;
-                }
+                return this.runComposerExecCommand("delete");
             },
             () => {
                 this.clearRichTextboxTextWithKeyboard(textbox);
@@ -14528,12 +14523,7 @@ module.exports = class DiscordAITranslator {
             },
             () => {
                 this.selectTextboxContents(textbox);
-                try {
-                    return Boolean(document.execCommand?.("insertText", false, ""));
-                }
-                catch {
-                    return false;
-                }
+                return this.runComposerExecCommand("insertText", "");
             }
         ];
 
@@ -14546,19 +14536,25 @@ module.exports = class DiscordAITranslator {
         return false;
     }
 
+    // document.execCommand fires trusted "input" events: they are the plugin's own edit, not the user
+    // typing, so they must not cancel the write (or rollback) in progress.
+    runComposerExecCommand(command, value = null) {
+        return this.composerWriter.runOwnEdit(() => {
+            try {
+                return Boolean(document.execCommand?.(command, false, value));
+            }
+            catch {
+                return false;
+            }
+        });
+    }
+
     async insertRichTextboxTextAsync(textbox, text, options = {}) {
         const attempts = [
             () => this.dispatchTextboxPaste(textbox, text),
             () => this.dispatchTextboxBeforeInput(textbox, text, "insertFromPaste"),
             () => this.dispatchTextboxBeforeInput(textbox, text, "insertText"),
-            () => {
-                try {
-                    return Boolean(document.execCommand?.("insertText", false, text));
-                }
-                catch {
-                    return false;
-                }
-            }
+            () => this.runComposerExecCommand("insertText", text)
         ];
 
         for (const attempt of attempts) {
@@ -14775,14 +14771,7 @@ module.exports = class DiscordAITranslator {
         const attempts = [
             () => this.dispatchTextboxBeforeInput(textbox, "", "historyUndo"),
             () => this.dispatchTextboxKeyboardShortcut(textbox, "z", "KeyZ", { ctrlKey: true }),
-            () => {
-                try {
-                    return Boolean(document.execCommand?.("undo", false, null));
-                }
-                catch {
-                    return false;
-                }
-            }
+            () => this.runComposerExecCommand("undo")
         ];
 
         for (const attempt of attempts) {

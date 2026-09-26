@@ -614,6 +614,63 @@ test("a wrong write is undone by exactly one step, keeping the user's earlier ty
     assert.equal(plugin.getTextboxDraftText(editor), "好的 ");
 });
 
+// CMP-R5: document.execCommand fires trusted "input" events; the plugin's own fallbacks must not
+// read as the user typing and cancel the plugin's own write.
+test("the composer writer ignores trusted input fired by the plugin's own edits", () => {
+    const listeners = new Map();
+    const textbox = {
+        isConnected: true,
+        addEventListener(type, handler) { listeners.set(type, handler); },
+        removeEventListener(type) { listeners.delete(type); }
+    };
+    const writer = new ComposerWriter({ getTextboxComposerKey: () => "composer", normalizeDraftRawText: String });
+    const token = writer.beginWrite(textbox, "draft");
+    assert.equal(writer.runOwnEdit(() => {
+        listeners.get("input")({ isTrusted: true, inputType: "deleteContentBackward" });
+        return "done";
+    }), "done");
+    assert.equal(token.cancelled, false);
+    assert.throws(() => writer.runOwnEdit(() => { throw new Error("boom"); }), /boom/);
+    listeners.get("input")({ isTrusted: true, inputType: "insertText" });
+    assert.equal(token.cancelled, true, "the user's own typing still cancels once the plugin's edit is over");
+    assert.equal(token.reason, "user-input");
+});
+
+test("a failed write's rollback that clears with execCommand still re-inserts the draft", async t => {
+    const browser = useComposerBrowser(t);
+    const plugin = new Plugin();
+    const editor = createSlateEditor(["draft"]);
+    browser.document.activeElement = editor;
+    let pastes = 0;
+    const behaviour = attachSlateBehaviour(editor, {
+        initialText: "draft",
+        // Discord mangles the write and its history cannot undo it; synthetic deletes are ignored.
+        pasteResult: text => (++pastes === 1 ? "WRONG" : text),
+        afterPaste: () => { if (pastes === 1) behaviour.history.length = 0; }
+    });
+    const commands = [];
+    browser.document.execCommand = (command, _ui, value) => {
+        commands.push(command);
+        // Chromium fires a trusted "input" event for every execCommand edit.
+        const edit = (text, inputType) => {
+            editor.__text = text;
+            renderSlateLines(editor, text);
+            editor.dispatchEvent({ type: "input", isTrusted: true, inputType });
+            return true;
+        };
+        if (command === "delete") return edit("", "deleteContentBackward");
+        if (command === "insertText") return edit(String(value ?? ""), "insertText");
+        return false;
+    };
+    const token = plugin.composerWriter.beginWrite(editor, "draft");
+    const result = await plugin.replaceTextboxTextSafelyAsync(editor, "polished", { expectedPreviousText: "draft", writeToken: token });
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, "verification-failed");
+    assert.equal(commands.includes("delete"), true, "the rollback reached the execCommand clear");
+    assert.equal(token.cancelled, false, "the plugin's own clear did not cancel its write");
+    assert.equal(plugin.getTextboxDraftText(editor), "draft", "the draft is back, not an empty composer");
+});
+
 // ---------------------------------------------------------------------------------------------
 // composer-2 / composer-4: late results, focus, cancellation and feedback
 // ---------------------------------------------------------------------------------------------
