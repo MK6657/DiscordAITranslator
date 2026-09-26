@@ -690,6 +690,50 @@ test("with an English target, a common short reply followed by emoji is still sk
     }
 });
 
+test("the skip rules decide without standard emoji; a message that is sent keeps them", async t => {
+    const plugin = new Plugin();
+    const cases = [
+        [":pepe: ❤️", "link-only"],
+        ["❤️ :pepe: :party:", "link-only"],
+        ["https://example.com/page ❤️", "link-only"],
+        ["https://example.com/page 👨‍💻", "link-only"],
+        ["https://example.com/page 1️⃣ 🇺🇸 ❤️‍🔥 ✌🏽", "link-only"],
+        ["a 👍", "too-short"],
+        ["v1.2.3 👍", "preserved-token"],
+        ["lol lol lol 1️⃣", "low-information-repeat"]
+    ];
+    for (const [text, reason] of cases) {
+        assert.equal(plugin.computeAutoTranslationPrecheckSkipReason(text, "Chinese"), reason, text);
+    }
+    assert.equal(plugin.computeAutoTranslationPrecheckSkipReason("👍 🎉", "Chinese"), "no-letters");
+    assert.equal(plugin.computeAutoTranslationPrecheckSkipReason("hola a todos ❤️", "Chinese"), "");
+
+    const url = "https://example.com/page";
+    for (const parts of [
+        [customEmoji("pepe"), " ", unicodeEmoji("❤️", "heart")],
+        [link(url, url), " ", unicodeEmoji("❤️", "heart")],
+        [link(url, url), " ", unicodeEmoji("👨‍💻", "technologist")]
+    ]) {
+        const { plugin: scanPlugin, content, scan } = createIntakePlugin(t, { domParts: parts, storeContent: "" });
+        const requests = [];
+        scanPlugin.runAutoTranslationTask = async text => {
+            requests.push(text);
+            return text;
+        };
+        scan();
+        assert.equal(scanPlugin.autoTranslationQueue.length, 0, scanPlugin.getElementText(content));
+        assert.deepEqual(requests, []);
+    }
+
+    const { plugin: sending, scan } = createIntakePlugin(t, {
+        domParts: ["hola a todos ", unicodeEmoji("❤️", "heart"), " nos vemos mañana en la reunión"],
+        storeContent: ""
+    });
+    scan();
+    assert.equal(sending.autoTranslationQueue.length, 1);
+    assert.equal(sending.autoTranslationQueue[0].text, "hola a todos ❤️ nos vemos mañana en la reunión", "the request text keeps the emoji");
+});
+
 test("only real translator widgets count as foreign translation elements", () => {
     const plugin = new Plugin();
     const foreign = [
