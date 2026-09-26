@@ -907,6 +907,45 @@ test("error, loading and reply-preview lines get no toolbar anchor; the anchor h
     assert.match(PLUGIN_CSS, /\.dait-translation-line\.dait-translation-masked > \.dait-translation-actions,\n\.dait-translation-line\.dait-translation-masked > \.dait-translation-actions-anchor,/);
 });
 
+// --- LP-2: the settings-search Escape listener never outlives its panel or the plugin ---
+
+test("settings search: a panel left open after stop() adds no window listener, and a detached panel's listener removes itself", t => {
+    const { plugin, doc, win } = createPlugin(t);
+    const panel = plugin.getSettingsPanel();
+    doc.body.appendChild(panel);
+    const state = panel.__daitSettingsUi;
+    const escapeListeners = () => win.listeners.filter(item => item.type === "keydown" && item.capture).length;
+
+    // Running: focusing the search box binds the listener once.
+    state.searchInput.dispatch("focus");
+    state.searchInput.dispatch("focus");
+    assert.equal(escapeListeners(), 1);
+    plugin.destroySettingsModalSizing(panel);
+    assert.equal(escapeListeners(), 0);
+
+    // BetterDiscord reloads the plugin while its settings modal stays open: stop() cleaned up, the stale panel is
+    // still on the page and the user clicks its search box.
+    plugin.isStarted = false;
+    state.searchInput.dispatch("focus");
+    assert.equal(escapeListeners(), 0, "a stopped plugin binds nothing");
+    assert.equal(state.searchEscapeListener || null, null);
+
+    // Running again, but the panel is already gone from the page.
+    plugin.isStarted = true;
+    panel.remove();
+    state.searchInput.dispatch("focus");
+    assert.equal(escapeListeners(), 0, "a detached panel binds nothing");
+
+    // A listener whose panel was detached later (without the cleanup observer) removes itself on the next key.
+    doc.body.appendChild(panel);
+    state.searchInput.dispatch("focus");
+    assert.equal(escapeListeners(), 1);
+    panel.remove();
+    win.dispatchEvent("keydown", { key: "a" }, true);
+    assert.equal(escapeListeners(), 0);
+    assert.equal(state.searchEscapeListener, null);
+});
+
 test("settings window: a key that ends an IME composition does not close the window", t => {
     const { doc, isOpen } = openHotkeyRecorder(t);
     doc.dispatchEvent("keydown", { key: "Escape", isComposing: true });

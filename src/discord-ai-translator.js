@@ -1654,9 +1654,17 @@ module.exports = class DiscordAITranslator {
 
     // Esc with a query clears the search instead of closing the window. The quick-settings window listens on the
     // document in the capture phase, so this listener sits one step earlier, on window, while the panel is open.
+    // Only a running plugin with the panel on the page binds it: a BetterDiscord settings panel left open across a
+    // plugin reload would otherwise keep the listener (and the panel) alive with nothing left to remove them.
     bindSettingsSearchEscape(state) {
         if (!state || state.searchEscapeListener || typeof window === "undefined" || typeof window.addEventListener !== "function") return;
+        if (!this.isStarted || (state.panel && state.panel.isConnected === false)) return;
         state.searchEscapeListener = event => {
+            // The panel left the page without its cleanup running: remove this listener (and the panel's others).
+            if (state.panel && state.panel.isConnected === false) {
+                this.cleanupSettingsPanelListeners(state.panel);
+                return;
+            }
             if (event?.key !== "Escape" || !(state.searchQuery || state.searchInput?.value)) return;
             const active = typeof document !== "undefined" ? document.activeElement : null;
             if (!active || !(active === state.searchInput || state.results?.contains?.(active))) return;
