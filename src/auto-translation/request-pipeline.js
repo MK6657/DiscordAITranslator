@@ -1528,6 +1528,7 @@ class AutoTranslationRequestPipeline {
             requestContext: options.requestContext,
             longTextChunk: Boolean(options.longTextChunk),
             longTextSourceLength: Number(options.longTextSourceLength || String(text || "").length) || 0,
+            ...(options.truncationRetry ? { truncationRetry: true } : {}),
             ...(taskOptions?.signal ? { signal: taskOptions.signal } : {})
         });
         return this.plugin.sanitizeAutoTranslationOutput(text, translated, this.plugin.getAutoTranslationTargetLanguage(options), this.plugin.getAutoTranslationOutputValidationOptions(text, translated, options));
@@ -1817,7 +1818,7 @@ class AutoTranslationRequestPipeline {
         }
         catch (error) {
             if (!error?.modelOutputTruncated || taskOptions.retryInvalidOutput === false) throw error;
-            if (!this.plugin.isAutoTranslationStrictRetryEnabled()) return this.plugin.runTruncatedAutoTranslationRetry(text, options, taskOptions);
+            if (!this.plugin.isAutoTranslationStrictRetryEnabled()) return this.plugin.runTruncatedAutoTranslationRetry(text, options, taskOptions, error);
             firstInvalidReason = "truncated";
         }
         if (firstValidation?.renderable) {
@@ -1877,15 +1878,33 @@ class AutoTranslationRequestPipeline {
 
     // With strict retry off, a cut-off output still gets one retry with a larger max_tokens. If
     // that is cut off too, its truncation error ends the task and the failure layer backs off.
-    async runTruncatedAutoTranslationRetry(text, options = this.plugin.getAutoTranslationOptions(), taskOptions = {}) {
-        const raisedOptions = this.plugin.withRaisedAutoTranslationMaxTokens(options, text, 1.8);
+    // The retry may generate more tokens, so its timeout grows with max_tokens (bounded). A
+    // looping model that is still too slow for it ends as the first truncation, never as a
+    // timeout that would mark a healthy local service unavailable.
+    async runTruncatedAutoTranslationRetry(text, options = this.plugin.getAutoTranslationOptions(), taskOptions = {}, truncatedError = null) {
+        const raisedOptions = {
+            ...this.plugin.withRaisedAutoTranslationMaxTokens(options, text, 1.8),
+            truncationRetry: true
+        };
+        raisedOptions.requestTimeoutMs = this.plugin.getTruncatedAutoTranslationRetryTimeoutMs(options, raisedOptions, text);
         this.plugin.logDiagnostic("auto.truncated", "retry", {
             sourceHash: this.plugin.getStrongTextFingerprint(text),
             mode: options?.mode || "auto",
-            maxTokens: Number(raisedOptions?.configOverrides?.maxTokens || 0)
+            maxTokens: Number(raisedOptions?.configOverrides?.maxTokens || 0),
+            timeoutMs: raisedOptions.requestTimeoutMs
         });
         this.plugin.consumeAutoTranslationRequestBudget(taskOptions);
-        const retried = await this.plugin.runAutoTranslationModelAttempt(text, raisedOptions, taskOptions);
+        let retried = "";
+        try {
+            retried = await this.plugin.runAutoTranslationModelAttempt(text, raisedOptions, taskOptions);
+        }
+        catch (error) {
+            if (truncatedError && !this.plugin.isAbandonedTranslationError(error) && this.plugin.isTimeoutError(error)) {
+                truncatedError.truncationRetryTimedOut = true;
+                throw truncatedError;
+            }
+            throw error;
+        }
         const validation = this.plugin.getAutoTranslationOutputValidationResult(
             text,
             retried,
@@ -1954,7 +1973,22 @@ class AutoTranslationRequestPipeline {
         return String(translated || "").trim().length > 0;
     }
 
+    // The truncation retry's timeout: the normal one scaled by how much max_tokens grew, capped at
+    // the long-text maximum (and never shorter than the normal timeout).
+    getTruncatedAutoTranslationRetryTimeoutMs(options, raisedOptions, text = "") {
+        const baseTimeoutMs = this.plugin.getAutoTranslationRequestTimeoutMs(options, text);
+        const currentMaxTokens = this.plugin.normalizeRequestNumber(
+            this.plugin.getEffectiveTaskConfig("translation", options?.configOverrides).maxTokens,
+            DEFAULT_SETTINGS.translation.maxTokens,
+            { min: 1, integer: true }
+        );
+        const raisedMaxTokens = Number(raisedOptions?.configOverrides?.maxTokens || 0) || currentMaxTokens;
+        const scaled = Math.ceil(baseTimeoutMs * Math.max(1, raisedMaxTokens / currentMaxTokens));
+        return Math.max(baseTimeoutMs, Math.min(AUTO_TRANSLATE_LONG_TEXT_TIMEOUT_MAX_MS, scaled));
+    }
+
     getAutoTranslationRequestTimeoutMs(options = this.plugin.getAutoTranslationOptions(), text = "") {
+        if (Number(options?.requestTimeoutMs) > 0) return Number(options.requestTimeoutMs);
         const config = this.plugin.getEffectiveTaskConfig("translation", options?.configOverrides);
         const longLength = Math.max(String(text || "").length, Number(options?.longTextSourceLength || 0) || 0);
         if (options?.mode === "long-text" || options?.longTextChunk || longLength >= AUTO_TRANSLATE_FORCE_SINGLE_TEXT_LENGTH) {

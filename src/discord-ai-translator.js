@@ -15709,6 +15709,7 @@ module.exports = class DiscordAITranslator {
     isAutoTranslationRequestBudgetExhausted(...args) { return this.autoRequestPipeline.isAutoTranslationRequestBudgetExhausted(...args); }
     isAutoTranslationRequestBudgetError(...args) { return this.autoRequestPipeline.isAutoTranslationRequestBudgetError(...args); }
     shouldRunLocalAutoTranslationRepairRetry(...args) { return this.autoRequestPipeline.shouldRunLocalAutoTranslationRepairRetry(...args); }
+    getTruncatedAutoTranslationRetryTimeoutMs(...args) { return this.autoRequestPipeline.getTruncatedAutoTranslationRetryTimeoutMs(...args); }
     getAutoTranslationRequestTimeoutMs(...args) { return this.autoRequestPipeline.getAutoTranslationRequestTimeoutMs(...args); }
     createFinalInvalidAutoTranslationError(...args) { return this.autoRequestPipeline.createFinalInvalidAutoTranslationError(...args); }
     createAutoTranslationStaleError(...args) { return this.autoRequestPipeline.createAutoTranslationStaleError(...args); }

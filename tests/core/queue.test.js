@@ -98,6 +98,46 @@ test("strict retry off: a second truncation ends the task instead of looping", a
     assert.equal(calls, 2);
 });
 
+const LOCAL_ENDPOINT = "http://127.0.0.1:18080/v1/chat/completions";
+
+function useLocalProvider(plugin) {
+    Object.assign(plugin.settings.translation, { provider: "sakuraLocal", endpoint: LOCAL_ENDPOINT, apiKey: "", model: "local-model" });
+}
+
+test("strict retry off: the larger truncation retry gets a longer timeout, and its timeout stays a truncation, not a local outage", async t => {
+    const plugin = createQueuePlugin(t);
+    useLocalProvider(plugin);
+    plugin.settings.ui.autoTranslateStrictRetry = false;
+    const timeouts = [];
+    const maxTokens = [];
+    plugin.fetchApiResponseText = async (endpoint, request, timeoutMs) => {
+        if (/\/models$/.test(endpoint)) return JSON.stringify({ data: [{ id: "fake-model.gguf" }] });
+        timeouts.push(timeoutMs);
+        maxTokens.push(Number(request?.body?.max_tokens || 0));
+        // A looping model: cut off at max_tokens first, then too slow for the larger limit.
+        if (timeouts.length === 1) return JSON.stringify({ choices: [{ message: { content: "重复重复重复" }, finish_reason: "length" }] });
+        throw timeoutError();
+    };
+    const options = plugin.getAutoTranslationOptions();
+    let thrown = null;
+    await assert.rejects(plugin.runAutoTranslationTask("привет", options), error => {
+        thrown = error;
+        return true;
+    });
+    assert.equal(timeouts.length, 2);
+    assert.ok(maxTokens[1] > maxTokens[0]);
+    assert.ok(timeouts[1] > timeouts[0], `retry timeout ${timeouts[0]} -> ${timeouts[1]}`);
+    assert.ok(timeouts[1] >= Math.floor(timeouts[0] * maxTokens[1] / maxTokens[0]) || timeouts[1] >= 90000, "the timeout scales with max_tokens (capped)");
+    assert.ok(timeouts[1] <= 90000, "the raised timeout stays bounded");
+    assert.equal(Boolean(thrown.localProviderUnavailable), false, "a slow retry is not a local outage");
+    assert.equal(plugin.getAutoTranslationFailureType(thrown), "truncated");
+
+    const item = makeItem(plugin, "truncation-retry-timeout", { text: "привет", requestOptions: options });
+    plugin.markAutoTranslationFailure(item, thrown);
+    assert.equal(plugin.getAutoTranslationProviderFailure(options) || null, null, "no provider-wide cooldown");
+    assert.equal(plugin.getAutoTranslationFailure(item.cacheKey)?.type, "truncated");
+});
+
 test("a truncated visible message gets a failure record whose backoff grows instead of a 4 s requeue", t => {
     const plugin = createQueuePlugin(t);
     const item = makeItem(plugin, "truncated");

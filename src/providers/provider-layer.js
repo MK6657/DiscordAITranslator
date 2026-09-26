@@ -1212,7 +1212,9 @@ class ProviderLayer {
         if (error?.localProviderUnavailable) return true;
         if (!this.plugin.isLocalTranslationProvider(config) || !this.plugin.isLoopbackEndpoint(endpoint || config?.endpoint)) return false;
         const status = Number(error?.status || 0);
-        if (this.plugin.isTimeoutError(error)) return !this.plugin.isLongAutoTranslationRequestOptions(options);
+        // A long request, or the larger retry after a cut-off output, can time out on a healthy
+        // service that is just generating slowly.
+        if (this.plugin.isTimeoutError(error)) return !options?.truncationRetry && !this.plugin.isLongAutoTranslationRequestOptions(options);
         if (this.plugin.isNetworkError(error)) return true;
         // An empty or unparseable reply to a successful HTTP request is a bad answer to
         // this one message, not a sign that the service is down.
