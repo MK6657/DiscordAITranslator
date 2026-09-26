@@ -596,6 +596,11 @@ label.dait-qp-label {
         animation-name: dait-qp-enter-below;
     }
 
+    /* Rebuilt in place (a language switch): it is already open, so it does not slide in again. */
+    .dait-quick-popover[data-dait-rerendered="true"] {
+        animation: none;
+    }
+
     .dait-qp-switch,
     .dait-qp-segment,
     .dait-qp-icon-button {

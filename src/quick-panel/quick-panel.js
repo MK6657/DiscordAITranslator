@@ -185,6 +185,7 @@ class QuickPanel {
             return false;
         }
         if (previous.classList?.contains?.(POINTER_OPENED_CLASS)) root.classList.add(POINTER_OPENED_CLASS);
+        root.dataset.daitRerendered = "true";
         this.plugin.syncDiscordThemeClasses(root, this.plugin.isNodeConnected(this.launcher) ? this.launcher : document.body);
         // Start where the old panel was; position() then only moves it if the new text changes its height.
         if (root.style && previous.style) {

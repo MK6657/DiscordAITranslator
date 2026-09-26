@@ -475,6 +475,8 @@ test("changing the interface language re-renders the open quick panel in place",
     assert.equal(after.querySelector(".dait-qp-title").textContent, "AI Translator");
     assert.equal(after.querySelector(".dait-qp-footer-open-full").textContent, plugin.t("quickPanelOpenFull"));
     assert.deepEqual([after.style.left, after.style.top], position, "same place, although the launcher is being re-created");
+    assert.equal(after.dataset.daitRerendered, "true", "it does not slide in again");
+    assert.match(PLUGIN_CSS, /@media \(prefers-reduced-motion: no-preference\) \{[\s\S]*?\.dait-quick-popover\[data-dait-rerendered="true"\] \{\n        animation: none;/);
     assert.ok(doc.activeElement === after.querySelector(".dait-qp-select"), "focus stays on the same control");
 
     // Keyboard handling moved to the new panel: Escape closes it.
