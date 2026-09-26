@@ -8,7 +8,8 @@ const PLUGIN_CSS = [
     require("./css/03-chat-line-base"),
     require("./css/04-settings"),
     require("./css/05-composer"),
-    require("./css/06-messages-and-lines")
+    require("./css/06-messages-and-lines"),
+    require("./css/08-dialogs")
 ].join("");
 
 module.exports = { PLUGIN_CSS };

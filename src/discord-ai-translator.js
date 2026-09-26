@@ -1314,12 +1314,7 @@ module.exports = class DiscordAITranslator {
         reset.className = "dait-settings-sidebar-reset";
         reset.type = "button";
         reset.textContent = this.t("reset");
-        reset.addEventListener("click", () => {
-            if (!window.confirm(this.t("resetConfirm"))) return;
-            this.resetSettingsToDefaults({ keepCredentials: true });
-            const currentPanel = panel || reset.closest?.(".dait-settings");
-            this.replaceSettingsPanelElement(currentPanel);
-        });
+        reset.addEventListener("click", () => this.openResetSettingsDialog({ panel: reset.closest?.(".dait-settings") || panel }));
         tabs.appendChild(reset);
 
         return tabs;
@@ -1965,14 +1960,32 @@ module.exports = class DiscordAITranslator {
     createPublicBilingualDependencyRow() {
         const summary = document.createElement("div");
         summary.className = "dait-provider-summary";
-        summary.textContent = this.t("publicBilingualDependencyStatus", {
-            polishProvider: this.getProviderDisplayName(this.settings.polish?.provider),
-            translationProvider: this.getProviderDisplayName(this.settings.translation?.provider),
-            targetLanguage: this.getDisplayLanguage(this.settings.translation?.targetLanguage)
-        });
+        summary.textContent = this.getPublicBilingualFlowText();
+        // Follow the switches on the same panel (auto-polish options, polish on/off) without a rebuild.
+        if (typeof setTimeout === "function") {
+            this.unrefTimer(setTimeout(() => {
+                const root = summary.closest?.(".dait-settings") || summary.closest?.(".dait-settings-section");
+                root?.addEventListener?.("change", () => {
+                    summary.textContent = this.getPublicBilingualFlowText();
+                });
+            }, 0));
+        }
         return this.createRow(this.t("publicBilingualDependencyTitle"), summary, {
-            description: this.t("publicBilingualDependencyDesc"),
+            description: this.t("publicBilingualDependencyFlowDesc"),
             wide: true
+        });
+    }
+
+    // What a bilingual message really goes through: the polish step only when a bilingual option runs it and
+    // polishing is on, the service picked by getPublicBilingualBaseConfig (the polish service when it is set up)
+    // and the language from getPublicBilingualTargetLanguage (the polish output language first).
+    getPublicBilingualFlowText() {
+        const polishRuns = Boolean(this.settings.polish?.enabled)
+            && (this.isPublicBilingualPolishBeforeTranslateEnabled() || this.isPublicBilingualAfterPolishEnabled());
+        return this.t("publicBilingualDependencyStatus", {
+            polishProvider: polishRuns ? this.getProviderDisplayName(this.settings.polish?.provider) : this.t("publicBilingualDependencyPolishOff"),
+            translationProvider: this.getProviderDisplayName(this.getPublicBilingualBaseConfig()?.provider),
+            targetLanguage: this.getDisplayLanguage(this.getPublicBilingualTargetLanguage())
         });
     }
 
@@ -2202,8 +2215,14 @@ module.exports = class DiscordAITranslator {
             this.clearTranslationCacheStats();
             refreshDescription(clearStats);
         });
-        clearCache.addEventListener("click", () => {
-            if (!window.confirm(this.t("clearTranslationCacheConfirm"))) return;
+        clearCache.addEventListener("click", async () => {
+            const confirmed = await this.confirmAction({
+                title: this.t("clearTranslationCache"),
+                body: this.t("clearTranslationCacheConfirm"),
+                confirmText: this.t("clearTranslationCache"),
+                danger: true
+            });
+            if (!confirmed) return;
             this.clearTranslationCache();
             refreshDescription(clearCache);
         });
@@ -2231,7 +2250,14 @@ module.exports = class DiscordAITranslator {
             this.refreshDiagnosticSummary(button.closest(".dait-settings-section"));
         };
 
-        clear.addEventListener("click", () => {
+        clear.addEventListener("click", async () => {
+            const confirmed = await this.confirmAction({
+                title: this.t("clearDiagnosticLogs"),
+                body: this.t("clearDiagnosticLogsConfirm"),
+                confirmText: this.t("clearDiagnosticLogs"),
+                danger: true
+            });
+            if (!confirmed) return;
             this.clearDiagnosticLogs();
             refreshDiagnostics(clear);
         });
@@ -2298,8 +2324,8 @@ module.exports = class DiscordAITranslator {
             [this.t("diagnosticSummaryQueues"), this.getDiagnosticSummaryQueueItems(summary)],
             [this.t("diagnosticSummaryProviders"), summary.top?.providers || []],
             [this.t("diagnosticSummaryFailures"), summary.top?.failureClasses?.length ? summary.top.failureClasses : summary.top?.failureTypes || []],
-            ["failureLayer", summary.top?.failureLayers || []],
-            ["flowStage", summary.top?.flowStages || []]
+            [this.t("diagnosticSummaryFailureLayers"), summary.top?.failureLayers || []],
+            [this.t("diagnosticSummaryFlowStages"), summary.top?.flowStages || []]
         ].filter(([, items]) => Array.isArray(items) && items.length);
 
         if (!groups.length) {
@@ -2381,8 +2407,14 @@ module.exports = class DiscordAITranslator {
         const controls = document.createElement("div");
         controls.className = "dait-cache-actions";
         const reset = this.createSmallButton(this.t("googleTranslateResetStats"), "danger");
-        reset.addEventListener("click", () => {
-            if (!window.confirm(this.t("googleTranslateResetConfirm"))) return;
+        reset.addEventListener("click", async () => {
+            const confirmed = await this.confirmAction({
+                title: this.t("googleTranslateResetStats"),
+                body: this.t("googleTranslateResetConfirm"),
+                confirmText: this.t("googleTranslateResetStats"),
+                danger: true
+            });
+            if (!confirmed) return;
             this.resetGoogleTranslateUsageStats();
             const row = reset.closest(".dait-settings-row");
             const description = row?.querySelector?.(".dait-row-description");
@@ -2562,7 +2594,7 @@ module.exports = class DiscordAITranslator {
             });
         });
 
-        copyInput.addEventListener("click", () => this.copyPromptText(input));
+        copyInput.addEventListener("click", () => this.copyPromptText(input, "copiedToClipboard"));
         copyPrompt.addEventListener("click", () => this.copyPromptText(prompt));
         copyOutput.addEventListener("click", () => this.copyTextFromNode(output));
 
@@ -2780,9 +2812,13 @@ module.exports = class DiscordAITranslator {
         );
     }
 
+    // Template picker (select only previews), read-only preview, the prompt editor and an inline "save as
+    // template" name field. Only "Use template" replaces the prompt, after a confirmation when the current
+    // prompt has edits that no template holds.
     createPromptManager(kind) {
         const manager = document.createElement("div");
         manager.className = "dait-prompt-manager";
+        const idBase = `dait-prompt-${kind}-${Math.random().toString(36).slice(2, 8)}`;
 
         const header = document.createElement("div");
         header.className = "dait-prompt-manager-header";
@@ -2803,37 +2839,50 @@ module.exports = class DiscordAITranslator {
         const search = document.createElement("input");
         search.type = "search";
         search.placeholder = this.t("promptSearch");
+        search.setAttribute("aria-label", this.t("promptSearch"));
         tools.appendChild(search);
 
         const select = document.createElement("select");
         select.className = "dait-prompt-select";
+        select.setAttribute("aria-label", this.t("promptTemplateSelect"));
         tools.appendChild(select);
 
         const actions = document.createElement("div");
         actions.className = "dait-prompt-actions";
-
-        const apply = this.createSmallButton(this.t("promptApply"));
-        const save = this.createSmallButton(this.t("promptSave"));
-        const update = this.createSmallButton(this.t("promptUpdate"));
-        const copy = this.createSmallButton(this.t("promptCopy"));
+        const apply = this.createSmallButton(this.t("promptApply"), "primary");
+        apply.dataset.daitAction = "promptApply";
         const remove = this.createSmallButton(this.t("promptDelete"), "danger");
+        remove.dataset.daitAction = "promptDelete";
         actions.appendChild(apply);
-        actions.appendChild(save);
-        actions.appendChild(update);
-        actions.appendChild(copy);
         actions.appendChild(remove);
         tools.appendChild(actions);
         manager.appendChild(tools);
+
+        const previewBlock = document.createElement("div");
+        previewBlock.className = "dait-prompt-preview-block";
+        const previewLabel = document.createElement("span");
+        previewLabel.className = "dait-prompt-preview-label";
+        previewLabel.id = `${idBase}-preview-label`;
+        previewBlock.appendChild(previewLabel);
+        const preview = document.createElement("div");
+        preview.className = "dait-prompt-preview";
+        preview.tabIndex = 0;
+        preview.setAttribute("role", "region");
+        preview.setAttribute("aria-labelledby", previewLabel.id);
+        previewBlock.appendChild(preview);
+        manager.appendChild(previewBlock);
 
         const promptBlock = document.createElement("div");
         promptBlock.className = "dait-prompt-editor";
 
         const promptLabel = document.createElement("span");
+        promptLabel.id = `${idBase}-label`;
         promptLabel.textContent = this.t("prompt");
         promptBlock.appendChild(promptLabel);
 
         const promptDesc = document.createElement("p");
         promptDesc.className = "dait-row-description";
+        promptDesc.id = `${idBase}-desc`;
         promptDesc.textContent = this.t("promptDesc");
         promptBlock.appendChild(promptDesc);
 
@@ -2841,15 +2890,75 @@ module.exports = class DiscordAITranslator {
         textarea.dataset.daitPath = `${kind}.prompt`;
         textarea.rows = 6;
         textarea.value = this.getSetting(`${kind}.prompt`) ?? "";
+        textarea.setAttribute("aria-labelledby", promptLabel.id);
+        textarea.setAttribute("aria-describedby", `${promptDesc.id} ${idBase}-status`);
         this.bindSettingsTextarea(textarea);
-        textarea.addEventListener("change", () => this.preserveSettingsScroll(textarea, () => this.setSetting(`${kind}.prompt`, textarea.value)));
         promptBlock.appendChild(textarea);
+
+        const footer = document.createElement("div");
+        footer.className = "dait-prompt-editor-footer";
+        const status = document.createElement("span");
+        status.className = "dait-prompt-status";
+        status.id = `${idBase}-status`;
+        footer.appendChild(status);
+        const editorActions = document.createElement("div");
+        editorActions.className = "dait-prompt-actions";
+        const update = this.createSmallButton(this.t("promptUpdate"));
+        update.dataset.daitAction = "promptUpdate";
+        const copy = this.createSmallButton(this.t("promptCopy"));
+        editorActions.appendChild(update);
+        editorActions.appendChild(copy);
+        footer.appendChild(editorActions);
+        promptBlock.appendChild(footer);
+
+        const saveRow = document.createElement("div");
+        saveRow.className = "dait-prompt-tools dait-prompt-save";
+        const nameInput = document.createElement("input");
+        nameInput.type = "text";
+        nameInput.maxLength = 80;
+        nameInput.placeholder = this.t("promptNamePlaceholder");
+        nameInput.setAttribute("aria-label", this.t("promptSaveNameLabel"));
+        saveRow.appendChild(nameInput);
+        const save = this.createSmallButton(this.t("promptSave"));
+        save.dataset.daitAction = "promptSave";
+        saveRow.appendChild(save);
+        promptBlock.appendChild(saveRow);
         manager.appendChild(promptBlock);
 
-        const renderOptions = () => {
-            const query = search.value.trim().toLowerCase();
+        const normalize = value => String(value ?? "").replace(/\r\n?/g, "\n").trim();
+        const getPromptValue = () => textarea.value ?? this.settings[kind]?.prompt ?? "";
+        const findTemplate = id => (id ? this.getPromptTemplates(kind).find(template => template.id === id) : null) || null;
+        // Nothing is lost when the prompt is empty or some template already holds exactly this text.
+        const hasUnsavedEdits = prompt => Boolean(normalize(prompt))
+            && !this.getPromptTemplates(kind).some(template => normalize(template.prompt) === normalize(prompt));
+
+        const syncStatus = () => {
+            const prompt = getPromptValue();
+            const active = findTemplate(this.settings[kind]?.activePromptTemplate);
+            const matching = active && normalize(active.prompt) === normalize(prompt)
+                ? active
+                : this.getPromptTemplates(kind).find(template => normalize(template.prompt) === normalize(prompt)) || null;
+            status.textContent = matching
+                ? this.t("promptUsingTemplate", { code: matching.serial, name: matching.name })
+                : this.t("promptTemplateCustom");
+            update.disabled = !active || !normalize(prompt) || normalize(active.prompt) === normalize(prompt);
+            update.title = active ? this.t("promptUpdateTitle", { code: active.serial, name: active.name }) : "";
+        };
+
+        const syncPreview = () => {
+            const template = findTemplate(select.value);
+            const inUse = Boolean(template) && template.id === this.settings[kind]?.activePromptTemplate;
+            previewLabel.textContent = inUse ? `${this.t("promptPreview")} · ${this.t("promptPreviewActive")}` : this.t("promptPreview");
+            preview.textContent = template ? String(template.prompt || "") : this.t("promptNoTemplate");
+            apply.disabled = !template;
+            remove.disabled = !template;
+        };
+
+        const renderOptions = (preferredId = "") => {
+            const query = String(search.value || "").trim().toLowerCase();
             const templates = this.getPromptTemplates(kind)
                 .filter(template => !query || this.getPromptTemplateSearchText(template).includes(query));
+            const previous = preferredId || select.value;
 
             select.textContent = "";
             if (!templates.length) {
@@ -2857,59 +2966,99 @@ module.exports = class DiscordAITranslator {
                 option.value = "";
                 option.textContent = this.t("promptNoTemplate");
                 select.appendChild(option);
+                syncPreview();
                 return;
             }
 
+            const activeId = this.settings[kind]?.activePromptTemplate;
+            const selectedId = [previous, activeId].find(id => id && templates.some(template => template.id === id)) || templates[0].id;
             templates.forEach(template => {
                 const option = document.createElement("option");
                 option.value = template.id;
                 option.textContent = this.getPromptTemplateLabel(template);
-                option.selected = template.id === this.settings[kind].activePromptTemplate;
+                option.selected = template.id === selectedId;
                 select.appendChild(option);
             });
+            syncPreview();
         };
 
-        const getPromptValue = () => {
-            const textarea = manager.querySelector(`[data-dait-path='${kind}.prompt']`);
-            return textarea?.value ?? this.settings[kind].prompt;
+        const commitPrompt = prompt => {
+            if (prompt !== this.settings[kind]?.prompt) this.setSetting(`${kind}.prompt`, prompt);
         };
 
-        const applySelected = () => {
-            if (!select.value) return;
-            this.applyPromptTemplate(kind, select.value);
-            renderOptions();
-        };
-
-        search.addEventListener("input", renderOptions);
-        select.addEventListener("change", applySelected);
-        apply.addEventListener("click", applySelected);
-        save.addEventListener("click", () => {
-            const name = window.prompt(this.t("promptNamePlaceholder"), "");
-            if (!name || !name.trim()) {
+        const saveTemplate = () => {
+            const name = String(nameInput.value || "").trim();
+            if (!name) {
                 this.showToast(this.t("promptNameRequired"), "error");
+                nameInput.focus?.();
                 return;
             }
             const prompt = getPromptValue();
-            this.settings[kind].prompt = prompt;
-            this.savePromptTemplate(kind, name.trim(), prompt);
+            commitPrompt(prompt);
+            this.savePromptTemplate(kind, name, prompt);
+            nameInput.value = "";
             search.value = "";
-            renderOptions();
+            renderOptions(this.settings[kind]?.activePromptTemplate);
+            syncStatus();
+        };
+
+        textarea.addEventListener("change", () => this.preserveSettingsScroll(textarea, () => this.setSetting(`${kind}.prompt`, textarea.value)));
+        textarea.addEventListener("input", syncStatus);
+        search.addEventListener("input", () => renderOptions());
+        select.addEventListener("change", syncPreview);
+        apply.addEventListener("click", async () => {
+            const template = findTemplate(select.value);
+            if (!template) return;
+            const current = getPromptValue();
+            if (normalize(current) !== normalize(template.prompt) && hasUnsavedEdits(current)) {
+                const confirmed = await this.confirmAction({
+                    title: this.t("promptApplyUnsavedTitle"),
+                    body: this.t("promptApplyUnsavedConfirm", { code: template.serial, name: template.name }),
+                    confirmText: this.t("promptApply"),
+                    danger: true
+                });
+                if (!confirmed || !findTemplate(template.id)) return;
+            }
+            this.applyPromptTemplate(kind, template.id);
+            textarea.value = this.settings[kind]?.prompt ?? template.prompt;
+            renderOptions(template.id);
+            syncStatus();
+        });
+        save.addEventListener("click", saveTemplate);
+        nameInput.addEventListener("keydown", event => {
+            if (event.key !== "Enter" || event.isComposing) return;
+            event.preventDefault?.();
+            saveTemplate();
         });
         update.addEventListener("click", () => {
-            if (!select.value) return;
+            const active = findTemplate(this.settings[kind]?.activePromptTemplate);
+            if (!active) return;
             const prompt = getPromptValue();
-            this.settings[kind].prompt = prompt;
-            this.updatePromptTemplate(kind, select.value, prompt);
+            commitPrompt(prompt);
+            this.updatePromptTemplate(kind, active.id, prompt);
             renderOptions();
+            syncStatus();
         });
         copy.addEventListener("click", () => this.copyPromptText(textarea));
-        remove.addEventListener("click", () => {
-            if (!select.value || !window.confirm(this.t("promptDeleteConfirm"))) return;
-            this.deletePromptTemplate(kind, select.value);
+        remove.addEventListener("click", async () => {
+            const template = findTemplate(select.value);
+            if (!template) return;
+            const confirmed = await this.confirmAction({
+                title: this.t("promptDeleteConfirm"),
+                body: this.getPromptTemplateLabel(template),
+                confirmText: this.t("promptDelete"),
+                danger: true
+            });
+            if (!confirmed || !findTemplate(template.id)) return;
+            const wasActive = this.settings[kind]?.activePromptTemplate === template.id;
+            this.deletePromptTemplate(kind, template.id);
+            if (wasActive) textarea.value = this.settings[kind]?.prompt ?? "";
             renderOptions();
+            syncStatus();
         });
 
         renderOptions();
+        syncStatus();
         return manager;
     }
 
@@ -3292,13 +3441,13 @@ module.exports = class DiscordAITranslator {
         this.restoreSettingsScroll(snapshot);
     }
 
-    async copyPromptText(textarea) {
+    async copyPromptText(textarea, successKey = "promptCopied") {
         const text = String(textarea?.value || "");
         const snapshot = this.getSettingsScrollSnapshot(textarea);
         try {
             await this.copyTextToClipboard(text);
             this.restoreSettingsScroll(snapshot);
-            this.showToast(this.t("promptCopied"), "success");
+            this.showToast(this.t(successKey), "success");
         }
         catch (error) {
             this.restoreSettingsScroll(snapshot);
@@ -3306,13 +3455,13 @@ module.exports = class DiscordAITranslator {
         }
     }
 
-    async copyTextFromNode(node) {
+    async copyTextFromNode(node, successKey = "copiedToClipboard") {
         const text = String(node?.textContent || "");
         const snapshot = this.getSettingsScrollSnapshot(node);
         try {
             await this.copyTextToClipboard(text);
             this.restoreSettingsScroll(snapshot);
-            this.showToast(this.t("promptCopied"), "success");
+            this.showToast(this.t(successKey), "success");
         }
         catch (error) {
             this.restoreSettingsScroll(snapshot);
@@ -5789,6 +5938,8 @@ module.exports = class DiscordAITranslator {
             document.removeEventListener?.("keydown", this.quickSettingsModalKeydown, true);
         }
         this.quickSettingsModalKeydown = event => {
+            // A BetterDiscord dialog opened from these settings handles its own Escape and Tab.
+            if (this.isConfirmDialogOpen()) return;
             if (event.key === "Escape") {
                 event.preventDefault();
                 event.stopPropagation();
@@ -10953,7 +11104,7 @@ module.exports = class DiscordAITranslator {
         const expectedComposerKey = behaviorOptions.composerKey || button?.dataset?.daitComposerKey || "";
         if (!this.isInputActionTextboxCurrent(textbox, expectedComposerKey)) {
             this.queueInputButtonScan({ delayMs: 120, trailing: true });
-            this.showToast(this.t("publicBilingualInputChanged"), "info");
+            this.showToast(this.t("composerChanged"), "info");
             return { ok: false, wrote: false, reason: "stale-composer" };
         }
 
@@ -11165,6 +11316,7 @@ module.exports = class DiscordAITranslator {
             sourceHash: this.getStrongTextFingerprint(draft),
             length: String(draft || "").length
         });
+        let pendingSend = null;
         try {
             const session = this.getPolishSession(textbox, draft);
             const sourceText = this.getPolishSourceText(session);
@@ -11235,13 +11387,13 @@ module.exports = class DiscordAITranslator {
             this.showRestoreOriginalControl(textbox, session, button);
 
             if (action === "confirmSend") {
-                if (window.confirm(this.t("confirmSend"))) {
-                    this.clearPolishSubmitTimer();
-                    this.polishSubmitTimer = setTimeout(() => {
-                        this.polishSubmitTimer = null;
-                        if (this.isLifecycleTokenCurrent(lifecycleToken)) this.composerWriter.submit(textbox);
-                    }, 80);
-                }
+                // Asked after the busy state and the write token are released (below), so an open dialog
+                // never holds the button or blocks a newer run.
+                pendingSend = {
+                    textbox,
+                    text: this.getTextboxDraftText(textbox),
+                    composerKey: this.getTextboxComposerKey(textbox)
+                };
             }
         }
         catch (error) {
@@ -11263,6 +11415,37 @@ module.exports = class DiscordAITranslator {
             this.composerWriter.finishWriteToken(writeToken);
             if (this.isLifecycleTokenCurrent(lifecycleToken)) this.setButtonBusy(button, false, this.t("polishButton"));
         }
+        if (pendingSend) await this.confirmPolishedSend(pendingSend, lifecycleToken);
+    }
+
+    // "Ask before sending": the polished text is already in the input box. Sends only when, after the dialog,
+    // the plugin is still running and the same composer is still connected and holds exactly that text.
+    async confirmPolishedSend(pending, lifecycleToken) {
+        const confirmed = await this.confirmAction({
+            title: this.t("confirmSend"),
+            preview: pending?.text || "",
+            confirmText: this.t("confirmSendAction"),
+            cancelText: this.t("dialogCancel")
+        });
+        if (!confirmed || !this.isLifecycleTokenCurrent(lifecycleToken)) return false;
+        if (!this.isPolishedSendStillCurrent(pending, lifecycleToken)) {
+            this.showToast(this.t("confirmSendDraftChanged"), "info");
+            return false;
+        }
+        this.clearPolishSubmitTimer();
+        this.polishSubmitTimer = setTimeout(() => {
+            this.polishSubmitTimer = null;
+            if (this.isPolishedSendStillCurrent(pending, lifecycleToken)) this.composerWriter.submit(pending.textbox);
+        }, 80);
+        return true;
+    }
+
+    isPolishedSendStillCurrent(pending, lifecycleToken) {
+        const textbox = pending?.textbox;
+        if (!this.isLifecycleTokenCurrent(lifecycleToken)) return false;
+        if (!textbox || textbox.isConnected === false) return false;
+        if (pending.composerKey && this.getTextboxComposerKey(textbox) !== pending.composerKey) return false;
+        return this.isCurrentDraftText(textbox, pending.text);
     }
 
     clearPolishSubmitTimer() {
@@ -11520,7 +11703,7 @@ module.exports = class DiscordAITranslator {
             this.removePolishRestoreControl();
             this.removeInputActionMenu();
             this.injectInputButtons();
-            this.showToast(this.t("publicBilingualInputChanged"), "info");
+            this.showToast(this.t("restoreOriginalChanged"), "info");
             return false;
         }
         const currentText = this.getTextboxDraftText(textbox);
@@ -15208,6 +15391,211 @@ module.exports = class DiscordAITranslator {
             return;
         }
         console.log(`[${PLUGIN_NAME}] ${message}`);
+    }
+
+    // The one confirmation helper: BetterDiscord's confirmation modal (danger style for destructive actions),
+    // window.confirm only when that API is missing. Resolves true only when the user confirmed and the plugin
+    // is still running. body is a string or a list of paragraphs; preview is quoted text shown as typed;
+    // content (a React element) replaces both.
+    confirmAction({ title = "", body = "", preview = "", content = null, confirmText = "", cancelText = "", danger = false } = {}) {
+        const ui = globalThis.BdApi?.UI;
+        const lifecycleToken = this.getLifecycleToken();
+        const paragraphs = (Array.isArray(body) ? body : [body]).map(text => String(text ?? "").trim()).filter(Boolean);
+        const previewText = String(preview ?? "").trim();
+        const confirmNatively = () => {
+            const text = [String(title || "").trim(), ...paragraphs, previewText].filter(Boolean).join("\n\n");
+            try {
+                return typeof window !== "undefined" && typeof window.confirm === "function" && Boolean(window.confirm(text));
+            }
+            catch {
+                return false;
+            }
+        };
+        if (typeof ui?.showConfirmationModal !== "function") {
+            return Promise.resolve(confirmNatively() && this.isLifecycleTokenCurrent(lifecycleToken));
+        }
+        return new Promise(resolve => {
+            let settled = false;
+            let stopWatching = null;
+            const release = this.holdConfirmDialogLayer();
+            const settle = confirmed => {
+                if (settled) return;
+                settled = true;
+                stopWatching?.();
+                release();
+                resolve(Boolean(confirmed) && this.isLifecycleTokenCurrent(lifecycleToken));
+            };
+            const dialogsBefore = this.getOpenDialogElements();
+            try {
+                ui.showConfirmationModal(title, content ?? this.createConfirmDialogContent(paragraphs, previewText), {
+                    danger: Boolean(danger),
+                    confirmText: confirmText || this.t("dialogConfirm"),
+                    cancelText: cancelText || this.t("dialogCancel"),
+                    onConfirm: () => settle(true),
+                    onCancel: () => settle(false),
+                    // Reported by newer BetterDiscord builds on Escape or a backdrop click. Deferred so a close
+                    // that follows the confirm callback in the same click cannot turn it into a cancel.
+                    onClose: () => setTimeout(() => settle(false), 0)
+                });
+            }
+            catch (error) {
+                this.logDiagnostic("dialog.confirm", "error", { error: this.formatError(error) });
+                settle(confirmNatively());
+                return;
+            }
+            if (!settled) stopWatching = this.watchConfirmDialogDismiss(dialogsBefore, () => settle(false));
+        });
+    }
+
+    // Paragraphs plus an optional quoted preview. React elements when BetterDiscord exposes React (the preview
+    // then stays plain text instead of going through Discord's Markdown), otherwise one string.
+    createConfirmDialogContent(paragraphs = [], preview = "") {
+        const React = globalThis.BdApi?.React;
+        if (typeof React?.createElement !== "function") {
+            return [...paragraphs, preview].filter(Boolean).join("\n\n");
+        }
+        const h = React.createElement;
+        return h("div", { className: "dait-dialog" },
+            ...paragraphs.map((text, index) => h("p", { className: "dait-dialog-text", key: `p${index}` }, text)),
+            preview ? h("div", { className: "dait-dialog-preview", key: "preview", tabIndex: 0 }, preview) : null
+        );
+    }
+
+    getOpenDialogElements() {
+        if (typeof document === "undefined" || !document.querySelectorAll) return new Set();
+        try {
+            return new Set(document.querySelectorAll("[role='dialog']"));
+        }
+        catch {
+            return new Set();
+        }
+    }
+
+    // Older BetterDiscord builds report neither Escape nor a backdrop click. Find the dialog that opened and
+    // treat its removal as a cancel, so a dismissed dialog never leaves the settings window lowered.
+    watchConfirmDialogDismiss(dialogsBefore, onDismiss) {
+        if (typeof document === "undefined" || typeof setInterval !== "function") return () => {};
+        let dialog = null;
+        let polls = 0;
+        let timer = null;
+        const stop = () => {
+            if (timer) clearInterval(timer);
+            timer = null;
+        };
+        timer = this.unrefTimer(setInterval(() => {
+            if (!this.isStarted) {
+                stop();
+                onDismiss();
+                return;
+            }
+            if (!dialog) {
+                dialog = [...this.getOpenDialogElements()].find(node => !dialogsBefore.has(node)
+                    && !node.closest?.(".dait-quick-settings-modal-root, .dait-settings")) || null;
+                if (!dialog && ++polls > 40) stop();
+                return;
+            }
+            if (dialog.isConnected === false) {
+                stop();
+                onDismiss();
+            }
+        }, 250));
+        return stop;
+    }
+
+    // The settings window sits above Discord's layers. While a BetterDiscord dialog is open it steps below
+    // them (see css/08-dialogs.js) and its own Escape and Tab handling pauses.
+    holdConfirmDialogLayer() {
+        this.openConfirmDialogCount = (Number(this.openConfirmDialogCount) || 0) + 1;
+        this.syncConfirmDialogLayer();
+        let released = false;
+        return () => {
+            if (released) return;
+            released = true;
+            this.openConfirmDialogCount = Math.max(0, (Number(this.openConfirmDialogCount) || 0) - 1);
+            this.syncConfirmDialogLayer();
+        };
+    }
+
+    isConfirmDialogOpen() {
+        return (Number(this.openConfirmDialogCount) || 0) > 0;
+    }
+
+    syncConfirmDialogLayer() {
+        if (typeof document === "undefined" || !document.querySelectorAll) return;
+        const open = this.isConfirmDialogOpen();
+        document.querySelectorAll(".dait-quick-settings-modal-root")?.forEach(root => {
+            if (open) root.setAttribute?.("data-dait-confirm-open", "true");
+            else root.removeAttribute?.("data-dait-confirm-open");
+        });
+    }
+
+    // Reset dialog: says what returns to defaults and offers "keep API keys, key pool and templates" (ticked by
+    // default). The checkbox needs BdApi.React; without it the plain confirmation always keeps them.
+    async openResetSettingsDialog(options = {}) {
+        const bdApi = globalThis.BdApi;
+        const choice = { keepCredentials: true };
+        const canUseCheckbox = typeof bdApi?.React?.createElement === "function" && typeof bdApi?.UI?.showConfirmationModal === "function";
+        const confirmed = await this.confirmAction({
+            title: this.t("resetDialogTitle"),
+            ...(canUseCheckbox ? { content: this.createResetDialogContent(bdApi.React, choice) } : { body: this.t("resetConfirm") }),
+            confirmText: this.t("reset"),
+            danger: true
+        });
+        if (!confirmed) return false;
+        const keepCredentials = canUseCheckbox ? choice.keepCredentials !== false : true;
+        this.resetSettingsToDefaults({ keepCredentials });
+        this.refreshOpenSettingsPanels(options.panel || null);
+        return true;
+    }
+
+    createResetDialogContent(React, choice) {
+        const h = React.createElement;
+        const checkboxId = `dait-reset-keep-${Date.now().toString(36)}`;
+        const lead = this.t("resetDialogLead");
+        const items = ["resetDialogItemSettings", "resetDialogItemChannelRules", "resetDialogItemDisplay"].map(key => this.t(key));
+        const credentials = this.t("resetDialogItemCredentials");
+        const credentialsNote = this.t("resetDialogItemCredentialsNote");
+        const keepLabel = this.t("resetKeepCredentials");
+        const useState = typeof React.useState === "function" ? React.useState : null;
+        const ResetDialogBody = () => {
+            const [keep, setKeep] = useState ? useState(choice.keepCredentials) : [choice.keepCredentials, null];
+            const onChange = event => {
+                choice.keepCredentials = Boolean(event?.target?.checked);
+                if (setKeep) setKeep(choice.keepCredentials);
+            };
+            return h("div", { className: "dait-dialog" },
+                h("p", { className: "dait-dialog-text" }, lead),
+                h("ul", { className: "dait-dialog-list" },
+                    ...items.map((text, index) => h("li", { key: `i${index}` }, text)),
+                    h("li", { key: "credentials", className: `dait-dialog-list-conditional${keep ? "" : " dait-dialog-list-erased"}` },
+                        credentials,
+                        h("span", { className: "dait-dialog-note" }, credentialsNote))
+                ),
+                h("label", { className: "dait-dialog-check", htmlFor: checkboxId },
+                    h("input", setKeep
+                        ? { id: checkboxId, type: "checkbox", checked: keep, onChange }
+                        : { id: checkboxId, type: "checkbox", defaultChecked: true, onChange }),
+                    h("span", null, keepLabel)
+                )
+            );
+        };
+        return h(ResetDialogBody);
+    }
+
+    // Rebuilds every open settings panel (BetterDiscord's plugin settings and the settings window) so they
+    // show the values after a reset.
+    refreshOpenSettingsPanels(sourcePanel = null) {
+        if (typeof document === "undefined") return 0;
+        const panels = new Set();
+        if (sourcePanel) panels.add(sourcePanel);
+        document.querySelectorAll?.(".dait-settings")?.forEach(panel => panels.add(panel));
+        let replaced = 0;
+        panels.forEach(panel => {
+            if (!panel || panel.isConnected === false) return;
+            const quickSettings = Boolean(panel.closest?.(".dait-quick-settings-modal-root"));
+            if (this.replaceSettingsPanelElement(panel, this.getSettingsPanel({ quickSettings }))) replaced++;
+        });
+        return replaced;
     }
 
     injectStyles() {
