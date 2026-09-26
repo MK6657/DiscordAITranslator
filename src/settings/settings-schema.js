@@ -38,6 +38,14 @@ const LEGACY_SETTINGS_TAB_MAP = {
     diagnostics: SETTINGS_TAB_DATA
 };
 
+// The full settings window is at most this wide (UI-SPEC: min(920px, 100vw - 48px)); every right-hand control shares
+// one width so their edges line up (keep in step with --dait-control-w in src/css/01-theme-tokens.js).
+const SETTINGS_WINDOW_MAX_WIDTH = 920;
+const SETTINGS_CONTROL_WIDTH = 240;
+
+// The message Translate button select: hover / always (ui.messageButtonVisibility) or off (ui.injectMessageButtons).
+const MESSAGE_BUTTON_MODE_OFF = "off";
+
 function normalizeSettingsTabId(value) {
     const id = String(value || "").trim();
     if (SETTINGS_TAB_IDS.includes(id)) return id;
@@ -88,5 +96,8 @@ module.exports = {
     SETTINGS_TAB_IDS,
     SETTINGS_TABS_DEFINITION,
     LEGACY_SETTINGS_TAB_MAP,
+    SETTINGS_WINDOW_MAX_WIDTH,
+    SETTINGS_CONTROL_WIDTH,
+    MESSAGE_BUTTON_MODE_OFF,
     normalizeSettingsTabId
 };

@@ -2,7 +2,21 @@
 
 const { TranslationRenderer } = require("./auto-translation/translation-renderer");
 const { ComposerWriter } = require("./composer/composer-writer");
-const { SettingsSchema } = require("./settings/settings-schema");
+const {
+    SettingsSchema,
+    SETTINGS_TAB_OVERVIEW,
+    SETTINGS_TAB_TRANSLATE,
+    SETTINGS_TAB_COMPOSE,
+    SETTINGS_TAB_APPEARANCE,
+    SETTINGS_TAB_ADVANCED,
+    SETTINGS_TAB_DATA,
+    SETTINGS_TAB_IDS,
+    SETTINGS_TABS_DEFINITION,
+    SETTINGS_WINDOW_MAX_WIDTH,
+    SETTINGS_CONTROL_WIDTH,
+    MESSAGE_BUTTON_MODE_OFF,
+    normalizeSettingsTabId
+} = require("./settings/settings-schema");
 const { PLUGIN_CSS } = require("./styles");
 const { AutoTranslationTaskState } = require("./auto-translation/task-state");
 const { AutoTranslationRequestPipeline } = require("./auto-translation/request-pipeline");
@@ -31,23 +45,6 @@ const {
     DISCORD_MEDIA_MUTATION_SELECTOR,
     DISCORD_THEME_VARIABLES,
     PROVIDER_DEFAULTS,
-    SETTINGS_TAB_POLISH,
-    SETTINGS_TAB_TRANSLATION,
-    SETTINGS_TAB_PUBLIC_BILINGUAL,
-    SETTINGS_TAB_DISPLAY,
-    SETTINGS_TAB_DEFAULT,
-    SETTINGS_TABS,
-    SETTINGS_SECTION_GENERAL,
-    SETTINGS_SECTION_POLISH,
-    SETTINGS_SECTION_POLISH_CONTROLS,
-    SETTINGS_SECTION_TRANSLATION,
-    SETTINGS_SECTION_TRANSLATION_CONTROLS,
-    SETTINGS_SECTION_AUTO_TRANSLATE,
-    SETTINGS_SECTION_PUBLIC_BILINGUAL,
-    SETTINGS_SECTION_DISPLAY,
-    SETTINGS_SECTION_CACHE,
-    SETTINGS_SECTION_DIAGNOSTICS,
-    SETTINGS_SECTION_IDS,
     PROVIDER_ORDER,
     PROVIDER_PROFILE_FIELDS,
     PROVIDER_CAPABILITIES,
@@ -836,18 +833,7 @@ module.exports = class DiscordAITranslator {
         });
         this.composerWriter = new ComposerWriter(this);
         this.settingsSchema = new SettingsSchema({
-            sections: [
-                { id: SETTINGS_SECTION_GENERAL, labelKey: "generalTitle", level: "primary" },
-                { id: SETTINGS_SECTION_POLISH, labelKey: "settingsTabPolish", level: "primary" },
-                { id: SETTINGS_SECTION_POLISH_CONTROLS, labelKey: "polishControlsTitle", level: "secondary" },
-                { id: SETTINGS_SECTION_TRANSLATION, labelKey: "settingsTabTranslation", level: "primary" },
-                { id: SETTINGS_SECTION_TRANSLATION_CONTROLS, labelKey: "translationControlsTitle", level: "secondary" },
-                { id: SETTINGS_SECTION_AUTO_TRANSLATE, labelKey: "autoTranslateSettingsTitle", level: "secondary" },
-                { id: SETTINGS_SECTION_PUBLIC_BILINGUAL, labelKey: "settingsTabPublicBilingual", level: "primary" },
-                { id: SETTINGS_SECTION_DISPLAY, labelKey: "displaySettingsTitle", level: "primary" },
-                { id: SETTINGS_SECTION_CACHE, labelKey: "cacheSettingsTitle", level: "secondary" },
-                { id: SETTINGS_SECTION_DIAGNOSTICS, labelKey: "diagnosticsSettingsTitle", level: "secondary" }
-            ],
+            tabs: SETTINGS_TABS_DEFINITION,
             providerCapabilities: PROVIDER_CAPABILITIES,
             providerOrder: PROVIDER_ORDER,
             defaultProvider: "deepseek"
@@ -1257,338 +1243,536 @@ module.exports = class DiscordAITranslator {
         const quickSettings = Boolean(options.quickSettings);
         const panel = document.createElement("div");
         panel.className = "dait-settings";
+        if (quickSettings) panel.dataset.daitQuickSettings = "true";
         this.syncDiscordThemeClasses(panel);
 
-        panel.appendChild(this.createSettingsHero());
-
+        panel.appendChild(this.createSettingsHeader({ quickSettings }));
         panel.appendChild(this.createSettingsLayout(panel));
 
-        if (!quickSettings) {
-            this.scheduleSettingsModalSizing(panel);
-            this.scheduleSettingsScrollTracking(panel);
-        }
+        if (!quickSettings) this.scheduleSettingsModalSizing(panel);
         this.logSlowOperation("settings.panel.build", startedAt, {
-            sections: SETTINGS_SECTION_IDS.length,
+            tabs: SETTINGS_TAB_IDS.length,
             testMode: Boolean(this.settings.ui?.testModeEnabled),
             quickSettings
         });
         return panel;
     }
 
+    // Tab rail (search + tabs) on the left, one tab page at a time on the right. Every page is built up front so
+    // search and syncSettingControls see all controls; inactive pages are hidden.
     createSettingsLayout(panel) {
+        const uid = this.createSettingsControlId("dait-settings");
+        const activeTab = this.getSettingsActiveTab();
+        const state = {
+            panel,
+            activeTab,
+            searchQuery: "",
+            tabs: this.getSettingsNavItems().map(tab => ({ ...tab, tabId: `${uid}-tab-${tab.id}`, panelId: `${uid}-panel-${tab.id}` })),
+            resultsId: `${uid}-results`
+        };
+        if (panel) panel.__daitSettingsUi = state;
+
         const layout = document.createElement("div");
-        layout.className = "dait-settings-layout";
-        layout.appendChild(this.createSettingsSidebar(panel));
-        layout.appendChild(this.createSettingsContentList());
+        layout.className = "dait-settings-body";
+
+        const content = document.createElement("div");
+        content.className = "dait-settings-content";
+        state.content = content;
+        content.appendChild(this.createSettingsSearchResults(state));
+        state.tabs.forEach(tab => {
+            tab.tabpanel = this.createSettingsTabPanel(state, tab, tab.id === activeTab);
+            content.appendChild(tab.tabpanel);
+        });
+
+        layout.appendChild(this.createSettingsRail(state));
+        layout.appendChild(content);
         return layout;
     }
 
     getSettingsActiveTab() {
-        const tab = String(this.settings.ui?.settingsActiveTab || "");
-        return SETTINGS_SECTION_IDS.includes(tab) || SETTINGS_TABS.includes(tab) ? tab : SETTINGS_SECTION_GENERAL;
-    }
-
-    createSettingsSidebar(panel = null) {
-        const tabs = document.createElement("aside");
-        tabs.className = "dait-settings-sidebar";
-        tabs.setAttribute("role", "navigation");
-
-        const nav = document.createElement("div");
-        nav.className = "dait-settings-nav-list";
-        const activeAnchor = this.getSettingsActiveTab();
-        this.getSettingsNavItems().forEach(item => {
-            const button = document.createElement("button");
-            const active = item.id === activeAnchor;
-            button.className = `dait-settings-nav-button dait-settings-nav-${item.level || "primary"}${active ? " dait-settings-nav-active" : ""}`;
-            button.type = "button";
-            button.dataset.daitSettingsTab = item.id;
-            button.dataset.daitSettingsAnchor = item.id;
-            button.setAttribute("aria-current", active ? "true" : "false");
-            button.textContent = item.label;
-            button.addEventListener("click", () => this.scrollToSettingsSection(item.id, button));
-            nav.appendChild(button);
-        });
-        tabs.appendChild(nav);
-
-        const reset = document.createElement("button");
-        reset.className = "dait-settings-sidebar-reset";
-        reset.type = "button";
-        reset.textContent = this.t("reset");
-        reset.addEventListener("click", () => {
-            if (!window.confirm(this.t("resetConfirm"))) return;
-            this.resetSettingsToDefaults({ keepCredentials: true });
-            const currentPanel = panel || reset.closest?.(".dait-settings");
-            this.replaceSettingsPanelElement(currentPanel);
-        });
-        tabs.appendChild(reset);
-
-        return tabs;
+        return normalizeSettingsTabId(this.settings.ui?.settingsActiveTab);
     }
 
     getSettingsNavItems() {
-        return this.settingsSchema.getSections().map(section => ({
-            id: section.id,
-            label: this.t(section.labelKey),
-            level: section.level
+        return this.settingsSchema.getTabs().map(tab => ({
+            id: tab.id,
+            label: this.t(tab.labelKey)
         }));
     }
 
-    setSettingsActiveTab(tab, source = null) {
-        const activeTab = SETTINGS_SECTION_IDS.includes(tab) || SETTINGS_TABS.includes(tab) ? tab : SETTINGS_SECTION_GENERAL;
-        this.settings.ui.settingsActiveTab = activeTab;
-        this.saveSettings({ debounce: true });
-        this.replaceSettingsPanelFrom(source);
+    createSettingsControlId(prefix = "dait-control") {
+        this.settingsControlIdCounter = (Number(this.settingsControlIdCounter) || 0) + 1;
+        return `${prefix}-${this.settingsControlIdCounter}`;
     }
+
+    createSettingsRail(state) {
+        const rail = document.createElement("div");
+        rail.className = "dait-settings-rail";
+        rail.appendChild(this.createSettingsSearch(state));
+
+        const tablist = document.createElement("div");
+        tablist.className = "dait-settings-tabs";
+        tablist.setAttribute("role", "tablist");
+        tablist.setAttribute("aria-orientation", "vertical");
+        tablist.setAttribute("aria-label", this.t("settingsTabsLabel"));
+        state.tabs.forEach(tab => {
+            const active = tab.id === state.activeTab;
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "dait-settings-tab";
+            button.id = tab.tabId;
+            button.setAttribute("role", "tab");
+            button.setAttribute("aria-controls", tab.panelId);
+            button.setAttribute("aria-selected", active ? "true" : "false");
+            button.setAttribute("tabindex", active ? "0" : "-1");
+            button.dataset.daitSettingsTab = tab.id;
+            button.textContent = tab.label;
+            button.addEventListener("click", () => this.showSettingsTab(state, tab.id));
+            tab.button = button;
+            tablist.appendChild(button);
+        });
+        tablist.addEventListener("keydown", event => this.handleSettingsTabKeydown(state, event));
+        state.tablist = tablist;
+        rail.appendChild(tablist);
+        return rail;
+    }
+
+    createSettingsTabPanel(state, tab, active) {
+        const tabpanel = document.createElement("div");
+        tabpanel.className = "dait-settings-tabpanel";
+        tabpanel.id = tab.panelId;
+        tabpanel.setAttribute("role", "tabpanel");
+        tabpanel.setAttribute("aria-labelledby", tab.tabId);
+        tabpanel.dataset.daitSettingsTabPanel = tab.id;
+        // Quick settings counts and locates pages by this attribute.
+        tabpanel.dataset.daitSettingsSection = tab.id;
+        tabpanel.hidden = !active;
+
+        const heading = document.createElement("h2");
+        heading.className = "dait-settings-page-title";
+        heading.textContent = tab.label;
+        tabpanel.appendChild(heading);
+
+        const builders = {
+            [SETTINGS_TAB_OVERVIEW]: () => this.createOverviewTabContent(),
+            [SETTINGS_TAB_TRANSLATE]: () => this.createTranslateTabContent(),
+            [SETTINGS_TAB_COMPOSE]: () => this.createComposeTabContent(),
+            [SETTINGS_TAB_APPEARANCE]: () => this.createDisplayTabContent(),
+            [SETTINGS_TAB_ADVANCED]: () => this.createAdvancedTabContent(),
+            [SETTINGS_TAB_DATA]: () => this.createDataTabContent(state)
+        };
+        (builders[tab.id]?.() || []).forEach(node => {
+            if (node) tabpanel.appendChild(node);
+        });
+        return tabpanel;
+    }
+
+    // Shows one tab page. Saving is debounced; a rebuilt panel opens on the same tab.
+    showSettingsTab(state, tabId, options = {}) {
+        if (!state?.tabs?.length) return null;
+        const id = normalizeSettingsTabId(tabId);
+        const target = state.tabs.find(tab => tab.id === id) || state.tabs[0];
+        if (options.clearSearch !== false && state.searchQuery) this.clearSettingsSearch(state, { focus: false, showTab: false });
+        state.activeTab = target.id;
+        state.tabs.forEach(tab => {
+            const active = tab === target;
+            tab.button?.setAttribute?.("aria-selected", active ? "true" : "false");
+            tab.button?.setAttribute?.("tabindex", active ? "0" : "-1");
+            if (tab.tabpanel) tab.tabpanel.hidden = !active || Boolean(state.searchQuery);
+        });
+        if (options.resetScroll !== false && state.content) state.content.scrollTop = 0;
+        if (options.focusTab) this.focusSettingsElement(target.button);
+        if (options.save !== false && this.settings?.ui && this.settings.ui.settingsActiveTab !== target.id) {
+            this.settings.ui.settingsActiveTab = target.id;
+            this.saveSettings({ debounce: true });
+        }
+        return target.id;
+    }
+
+    // Arrow keys move along the rail (up/down, or left/right when it is a horizontal row); Home/End jump to the ends.
+    handleSettingsTabKeydown(state, event) {
+        const count = state?.tabs?.length || 0;
+        if (!count) return;
+        const steps = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 };
+        const current = Math.max(0, state.tabs.findIndex(tab => tab.id === state.activeTab));
+        let next = null;
+        if (steps[event?.key]) next = (current + steps[event.key] + count) % count;
+        else if (event?.key === "Home") next = 0;
+        else if (event?.key === "End") next = count - 1;
+        if (next === null) return;
+        event.preventDefault?.();
+        event.stopPropagation?.();
+        this.showSettingsTab(state, state.tabs[next].id, { focusTab: true });
+    }
+
+    setSettingsActiveTab(tab, source = null) {
+        const id = normalizeSettingsTabId(tab);
+        const state = source?.closest?.(".dait-settings")?.__daitSettingsUi;
+        if (state) return this.showSettingsTab(state, id);
+        if (this.settings?.ui) this.settings.ui.settingsActiveTab = id;
+        this.saveSettings({ debounce: true });
+        return id;
+    }
+
+    focusSettingsElement(element) {
+        if (!element?.focus) return false;
+        try {
+            element.focus({ preventScroll: true });
+        }
+        catch {
+            try { element.focus(); }
+            catch { return false; }
+        }
+        return true;
+    }
+
+    // --- Settings search: filters rows of every tab by label and description in the current UI language. ---
+
+    createSettingsSearch(state) {
+        const wrap = document.createElement("div");
+        wrap.className = "dait-settings-search";
+        const input = document.createElement("input");
+        input.type = "search";
+        input.className = "dait-settings-search-input";
+        input.placeholder = this.t("settingsSearchPlaceholder");
+        input.autocomplete = "off";
+        input.spellcheck = false;
+        input.setAttribute("aria-label", this.t("settingsSearchPlaceholder"));
+        input.setAttribute("aria-controls", state.resultsId);
+        input.addEventListener("input", () => this.runSettingsSearch(state, input.value));
+        input.addEventListener("keydown", event => this.handleSettingsSearchKeydown(state, event));
+        input.addEventListener("focus", () => this.bindSettingsSearchEscape(state));
+        state.searchInput = input;
+        wrap.appendChild(input);
+        return wrap;
+    }
+
+    createSettingsSearchResults(state) {
+        const results = document.createElement("div");
+        results.className = "dait-settings-search-results";
+        results.id = state.resultsId;
+        results.setAttribute("role", "region");
+        results.setAttribute("aria-label", this.t("settingsSearchPlaceholder"));
+        results.hidden = true;
+
+        const summary = document.createElement("p");
+        summary.className = "dait-settings-search-summary";
+        summary.setAttribute("aria-live", "polite");
+        results.appendChild(summary);
+
+        const list = document.createElement("ul");
+        list.className = "dait-settings-search-list";
+        results.appendChild(list);
+
+        state.results = results;
+        state.resultsSummary = summary;
+        state.resultsList = list;
+        return results;
+    }
+
+    // Every searchable row with the tab it lives on. Group titles take part in matching but are not shown.
+    getSettingsSearchEntries(state) {
+        const entries = [];
+        const visit = (node, tab, groupTitle) => {
+            for (const child of node?.children || []) {
+                const group = child.dataset?.daitSearchGroup;
+                const nextGroup = group !== undefined ? group : groupTitle;
+                const classes = String(child.className || "").split(/\s+/);
+                if (classes.includes("dait-settings-row") || classes.includes("dait-settings-search-target")) {
+                    const label = String(child.dataset?.daitSearchLabel || "").trim();
+                    if (label) {
+                        const description = String(child.dataset?.daitSearchDescription || "").trim();
+                        entries.push({
+                            row: child,
+                            tabId: tab.id,
+                            tabLabel: tab.label,
+                            label,
+                            description,
+                            haystack: `${label} ${description} ${nextGroup || ""} ${tab.label}`.toLocaleLowerCase()
+                        });
+                    }
+                }
+                visit(child, tab, nextGroup);
+            }
+        };
+        (state?.tabs || []).forEach(tab => visit(tab.tabpanel, tab, ""));
+        return entries;
+    }
+
+    runSettingsSearch(state, rawQuery) {
+        if (!state) return [];
+        const query = String(rawQuery || "").trim().toLocaleLowerCase();
+        state.searchQuery = query;
+        if (!query) {
+            this.clearSettingsSearch(state, { focus: false, keepInput: true });
+            return [];
+        }
+        const terms = query.split(/\s+/).filter(Boolean);
+        const entries = this.getSettingsSearchEntries(state).filter(entry => terms.every(term => entry.haystack.includes(term)));
+        state.searchEntries = entries;
+        state.tabs.forEach(tab => {
+            if (tab.tabpanel) tab.tabpanel.hidden = true;
+        });
+        if (state.results) state.results.hidden = false;
+        if (state.resultsSummary) {
+            state.resultsSummary.textContent = entries.length
+                ? this.t("settingsSearchResults", { count: entries.length })
+                : this.t("settingsSearchEmpty", { query: String(rawQuery || "").trim() });
+        }
+        if (state.resultsList) {
+            state.resultsList.textContent = "";
+            entries.forEach((entry, index) => {
+                const item = document.createElement("li");
+                item.className = "dait-settings-search-item";
+                const button = document.createElement("button");
+                button.type = "button";
+                button.className = "dait-settings-search-result";
+                const label = document.createElement("span");
+                label.className = "dait-settings-search-result-label";
+                label.textContent = entry.label;
+                button.appendChild(label);
+                const tab = document.createElement("span");
+                tab.className = "dait-settings-search-result-tab";
+                tab.textContent = entry.tabLabel;
+                button.appendChild(tab);
+                if (entry.description) {
+                    const description = document.createElement("span");
+                    description.className = "dait-settings-search-result-description";
+                    description.textContent = entry.description;
+                    button.appendChild(description);
+                }
+                button.addEventListener("click", () => this.openSettingsSearchResult(state, entry));
+                button.addEventListener("keydown", event => this.handleSettingsSearchResultKeydown(state, event, index));
+                entry.button = button;
+                item.appendChild(button);
+                state.resultsList.appendChild(item);
+            });
+        }
+        if (state.content) state.content.scrollTop = 0;
+        return entries;
+    }
+
+    clearSettingsSearch(state, options = {}) {
+        if (!state) return;
+        state.searchQuery = "";
+        state.searchEntries = [];
+        if (state.searchInput && !options.keepInput) state.searchInput.value = "";
+        if (state.results) state.results.hidden = true;
+        if (state.resultsList) state.resultsList.textContent = "";
+        if (state.resultsSummary) state.resultsSummary.textContent = "";
+        if (options.showTab !== false) {
+            state.tabs.forEach(tab => {
+                if (tab.tabpanel) tab.tabpanel.hidden = tab.id !== state.activeTab;
+            });
+        }
+        if (options.focus) this.focusSettingsElement(state.searchInput);
+    }
+
+    handleSettingsSearchKeydown(state, event) {
+        const entries = state?.searchEntries || [];
+        if (event?.key === "Enter") {
+            event.preventDefault?.();
+            if (entries.length) this.openSettingsSearchResult(state, entries[0]);
+            return;
+        }
+        if (event?.key === "ArrowDown" && entries.length) {
+            event.preventDefault?.();
+            this.focusSettingsElement(entries[0].button);
+            return;
+        }
+        if (event?.key === "Escape" && (state.searchQuery || state.searchInput?.value)) {
+            event.preventDefault?.();
+            event.stopPropagation?.();
+            this.clearSettingsSearch(state, { focus: true });
+        }
+    }
+
+    handleSettingsSearchResultKeydown(state, event, index) {
+        const entries = state?.searchEntries || [];
+        if (event?.key === "ArrowDown" || event?.key === "ArrowUp") {
+            event.preventDefault?.();
+            const next = index + (event.key === "ArrowDown" ? 1 : -1);
+            if (next < 0) this.focusSettingsElement(state.searchInput);
+            else if (entries[next]) this.focusSettingsElement(entries[next].button);
+            return;
+        }
+        if (event?.key === "Escape") {
+            event.preventDefault?.();
+            event.stopPropagation?.();
+            this.clearSettingsSearch(state, { focus: true });
+        }
+    }
+
+    // Esc with a query clears the search instead of closing the window. The quick-settings window listens on the
+    // document in the capture phase, so this listener sits one step earlier, on window, while the panel is open.
+    bindSettingsSearchEscape(state) {
+        if (!state || state.searchEscapeListener || typeof window === "undefined" || typeof window.addEventListener !== "function") return;
+        state.searchEscapeListener = event => {
+            if (event?.key !== "Escape" || !(state.searchQuery || state.searchInput?.value)) return;
+            const active = typeof document !== "undefined" ? document.activeElement : null;
+            if (!active || !(active === state.searchInput || state.results?.contains?.(active))) return;
+            event.preventDefault?.();
+            event.stopPropagation?.();
+            event.stopImmediatePropagation?.();
+            this.clearSettingsSearch(state, { focus: true });
+        };
+        window.addEventListener("keydown", state.searchEscapeListener, true);
+    }
+
+    openSettingsSearchResult(state, entry) {
+        if (!state || !entry?.row) return false;
+        this.clearSettingsSearch(state, { focus: false, showTab: false });
+        this.showSettingsTab(state, entry.tabId, { clearSearch: false });
+        // A row inside a collapsed <details> (more model parameters, optional API key) needs it open.
+        for (let node = entry.row.parentElement; node && node !== entry.row.closest?.(".dait-settings-tabpanel"); node = node.parentElement) {
+            if (String(node.tagName || "").toUpperCase() === "DETAILS") node.open = true;
+        }
+        entry.row.scrollIntoView?.({ block: "center", behavior: "auto" });
+        entry.row.classList?.add?.("dait-settings-row-found");
+        const timer = setTimeout(() => entry.row.classList?.remove?.("dait-settings-row-found"), 1600);
+        this.unrefTimer(timer);
+        const target = this.getSettingsRowControls(entry.row).find(control => !control.disabled && !control.hidden && control.getAttribute?.("tabindex") !== "-1")
+            || this.getSettingsRowControls(entry.row).find(control => !control.disabled && !control.hidden);
+        if (target) return this.focusSettingsElement(target);
+        entry.row.setAttribute?.("tabindex", "-1");
+        return this.focusSettingsElement(entry.row);
+    }
+
+    // --- Header ---
+
+    createSettingsHeader(options = {}) {
+        const header = document.createElement("div");
+        header.className = options.quickSettings ? "dait-settings-header dait-settings-header-embedded" : "dait-settings-header";
+
+        // The quick-settings window already shows the title and a close button above the panel.
+        if (!options.quickSettings) {
+            const logo = document.createElement("div");
+            logo.className = "dait-settings-logo";
+            logo.setAttribute("aria-hidden", "true");
+            logo.textContent = "AI";
+            header.appendChild(logo);
+
+            const title = document.createElement("h2");
+            title.className = "dait-settings-title";
+            title.textContent = this.t("settingsTitle");
+            header.appendChild(title);
+        }
+
+        const versionChip = document.createElement("span");
+        versionChip.className = "dait-settings-version";
+        versionChip.dataset.daitVersion = PLUGIN_VERSION;
+        versionChip.textContent = `v${PLUGIN_VERSION}`;
+        header.appendChild(versionChip);
+
+        header.appendChild(this.createSettingsHeaderStatus());
+
+        if (!options.quickSettings) {
+            const close = document.createElement("button");
+            close.type = "button";
+            close.className = "dait-settings-close";
+            close.title = this.t("settingsClose");
+            close.setAttribute("aria-label", this.t("settingsClose"));
+            close.textContent = "×";
+            close.addEventListener("click", event => {
+                event?.preventDefault?.();
+                this.closeSettingsWindow(close);
+            });
+            header.appendChild(close);
+        }
+        return header;
+    }
+
+    createSettingsHero(options = {}) {
+        return this.createSettingsHeader(options);
+    }
+
+    // "<status> · <translation service>" for the header; the status badge updates live after a test.
+    createSettingsHeaderStatus() {
+        const wrap = document.createElement("span");
+        wrap.className = "dait-settings-header-status";
+        wrap.title = this.t("translationTitle");
+        wrap.appendChild(this.createApiStatusBadge("translation"));
+        const provider = document.createElement("span");
+        provider.className = "dait-settings-header-provider";
+        provider.textContent = this.getProviderDisplayName(this.settings.translation?.provider);
+        wrap.appendChild(provider);
+        return wrap;
+    }
+
+    createApiStatusBadge(kind) {
+        const status = document.createElement("span");
+        const savedStatus = this.getApiStatus(kind);
+        status.className = `dait-api-status dait-api-status-${savedStatus.state}`;
+        status.dataset.daitKind = kind;
+        status.textContent = this.getApiStatusText(savedStatus.state);
+        status.title = savedStatus.message || "";
+        return status;
+    }
+
+    // The close button closes whichever window holds the panel: the plugin's own settings window, or
+    // BetterDiscord's plugin-settings modal (through its own footer button, or Escape as a last resort).
+    closeSettingsWindow(source) {
+        const quickRoot = source?.closest?.(".dait-quick-settings-modal-root");
+        if (quickRoot) {
+            this.closeQuickSettingsPanel(quickRoot, "button");
+            return true;
+        }
+        const modal = source?.closest?.("[data-dait-settings-modal-root='true']") || source?.closest?.("[role='dialog']");
+        const hostButtons = [...(modal?.querySelectorAll?.("button") || [])].filter(button => !button.closest?.(".dait-settings"));
+        const hostClose = hostButtons[hostButtons.length - 1];
+        if (hostClose?.click) {
+            hostClose.click();
+            return true;
+        }
+        if (typeof document === "undefined" || typeof KeyboardEvent !== "function") return false;
+        const target = document.activeElement || document.body;
+        target?.dispatchEvent?.(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", keyCode: 27, which: 27, bubbles: true, cancelable: true }));
+        return true;
+    }
+
+    // --- Panel replacement and sizing ---
 
     replaceSettingsPanelFrom(source) {
         const panel = source?.closest?.(".dait-settings");
         if (panel) this.replaceSettingsPanelElement(panel);
     }
 
+    // Rebuilds the panel in place (provider or language change, reset) and keeps the tab, the scroll position and
+    // the focused control.
     replaceSettingsPanelElement(panel, nextPanel = null) {
         if (!panel) return null;
-        nextPanel = nextPanel || this.getSettingsPanel();
+        const scrollTop = Number(panel.__daitSettingsUi?.content?.scrollTop || 0);
+        const active = typeof document !== "undefined" ? document.activeElement : null;
+        const focusPath = active && panel.contains?.(active) ? String(active.dataset?.daitPath || "") : "";
+        nextPanel = nextPanel || this.getSettingsPanel({ quickSettings: panel.dataset?.daitQuickSettings === "true" });
+        ["--dait-host-chrome", "--dait-host-max"].forEach(name => {
+            const value = panel.style?.getPropertyValue?.(name);
+            if (value) nextPanel.style?.setProperty?.(name, value);
+        });
         this.destroySettingsModalSizing(panel);
         panel.replaceWith?.(nextPanel);
+        const content = nextPanel.__daitSettingsUi?.content;
+        if (content && scrollTop) content.scrollTop = scrollTop;
+        if (focusPath) {
+            const control = [...(nextPanel.querySelectorAll?.(`[data-dait-path='${focusPath}']`) || [])].find(node => !node.closest?.("[hidden]"));
+            this.focusSettingsElement(control);
+        }
+        if (nextPanel.dataset?.daitQuickSettings === "true") this.syncSettingsPanelHeight(nextPanel);
         return nextPanel;
     }
 
-    scrollToSettingsSection(tab, source = null) {
-        const anchor = String(tab || SETTINGS_SECTION_GENERAL);
-        this.settings.ui.settingsActiveTab = anchor;
-        const panel = source?.closest?.(".dait-settings");
-        const target = panel?.querySelector?.(`[data-dait-settings-section='${anchor}']`);
-        if (!target) return;
-        this.applySettingsActiveSection(panel, anchor, { force: true });
-        target.scrollIntoView?.({ block: "start", behavior: "smooth" });
+    // Kept for the quick-settings window, which calls it after inserting the panel. The tabbed window has no
+    // scroll-spy; this shows the saved tab and fits the panel to its host.
+    bindSettingsScrollTracking(panel, scroller = null) {
+        const state = panel?.__daitSettingsUi;
+        if (state) this.showSettingsTab(state, this.getSettingsActiveTab(), { save: false, resetScroll: false });
+        this.syncSettingsPanelHeight(panel, scroller);
     }
 
-    applySettingsActiveSection(panel, anchor, options = {}) {
-        if (!panel?.querySelectorAll) return false;
-        const activeAnchor = String(anchor || SETTINGS_SECTION_GENERAL);
-        const force = Boolean(options?.force);
-        if (!force && panel.__daitSettingsAppliedAnchor === activeAnchor) return false;
-        panel.__daitSettingsAppliedAnchor = activeAnchor;
-        const setClass = (node, className, active) => {
-            if (!node?.classList?.toggle) return;
-            if (this.elementHasClassName(node, className) === active) return;
-            node.classList.toggle(className, active);
-        };
-        const setAttribute = (node, name, value) => {
-            if (!node?.setAttribute) return;
-            if (node.getAttribute?.(name) === value) return;
-            node.setAttribute(name, value);
-        };
-        panel?.querySelectorAll?.(".dait-settings-nav-button")?.forEach(button => {
-            const active = button.dataset?.daitSettingsAnchor === activeAnchor;
-            setClass(button, "dait-settings-nav-active", active);
-            setAttribute(button, "aria-current", active ? "true" : "false");
-        });
-        panel?.querySelectorAll?.("[data-dait-settings-section]")?.forEach(section => {
-            const active = section.dataset?.daitSettingsSection === activeAnchor;
-            setClass(section, "dait-settings-section-active", active);
-        });
-        return true;
-    }
-
-    scheduleSettingsScrollTracking(panel) {
-        if (!panel) return;
-        this.clearSettingsScrollTrackingSchedule(panel);
-        const schedule = { raf: null, timers: [] };
-        panel.__daitSettingsScrollTrackingSchedule = schedule;
-        const bind = () => this.bindSettingsScrollTracking(panel);
-        if (typeof requestAnimationFrame === "function") {
-            schedule.raf = requestAnimationFrame(() => {
-                schedule.raf = null;
-                bind();
-            });
-        }
-        schedule.timers.push(setTimeout(bind, 80));
-        schedule.timers.push(setTimeout(bind, 260));
-    }
-
-    clearSettingsScrollTrackingSchedule(panel) {
-        const schedule = panel?.__daitSettingsScrollTrackingSchedule;
-        if (!schedule) return;
-        if (schedule.raf !== null && schedule.raf !== undefined && typeof cancelAnimationFrame === "function") {
-            cancelAnimationFrame(schedule.raf);
-        }
-        (schedule.timers || []).forEach(timer => clearTimeout(timer));
-        panel.__daitSettingsScrollTrackingSchedule = null;
-    }
-
-    bindSettingsScrollTracking(panel, explicitScroller = null) {
-        if (!panel?.querySelectorAll || panel.isConnected === false) return;
-        const scroller = explicitScroller || this.getSettingsScrollTrackingContainer(panel);
-        if (!scroller?.addEventListener) return;
-        if (panel.__daitSettingsScrollTracking?.scroller === scroller) return;
-        this.cleanupSettingsScrollTracking(panel);
-
-        const isQuickSettingsScroller = this.elementHasClassName(scroller, "dait-quick-settings-body")
-            || panel.closest?.(".dait-quick-settings-body") === scroller;
-        const state = {
-            scroller,
-            raf: null,
-            saveTimer: null,
-            scrollIdleTimer: null,
-            quickSettingsScroller: isQuickSettingsScroller,
-            sections: this.getSettingsTrackedSections(panel)
-        };
-        const updateActiveSection = () => this.updateSettingsActiveSectionFromScroll(panel, scroller);
-        const onScroll = () => {
-            if (state.quickSettingsScroller) {
-                if (state.scrollIdleTimer) clearTimeout(state.scrollIdleTimer);
-                state.scrollIdleTimer = setTimeout(() => {
-                    state.scrollIdleTimer = null;
-                    updateActiveSection();
-                }, 140);
-                return;
-            }
-            const schedule = typeof requestAnimationFrame === "function" ? requestAnimationFrame : callback => setTimeout(callback, 0);
-            if (state.raf !== null && state.raf !== undefined) return;
-            state.raf = schedule(() => {
-                state.raf = null;
-                updateActiveSection();
-            });
-        };
-        state.onScroll = onScroll;
-        panel.__daitSettingsScrollTracking = state;
-        scroller.addEventListener("scroll", onScroll, { passive: true });
-        this.syncSettingsScrollPosition(panel, scroller, "auto");
-    }
-
-    syncSettingsScrollPosition(panel, scroller = null, behavior = "auto") {
-        if (!panel?.querySelector) return;
-        const active = this.getSettingsActiveTab();
-        const target = panel.querySelector?.(`[data-dait-settings-section='${active}']`);
-        this.applySettingsActiveSection(panel, active, { force: true });
-        if (!target) return;
-
-        const container = scroller || this.getSettingsScrollTrackingContainer(panel);
-        if (container) {
-            const offset = Number(target.offsetTop);
-            if (Number.isFinite(offset)) {
-                container.scrollTop = Math.max(0, offset - 12);
-                return;
-            }
-        }
-
-        if (typeof target.scrollIntoView === "function") {
-            target.scrollIntoView({ block: "start", behavior });
-        }
-    }
-
-    getSettingsScrollTrackingContainer(panel) {
-        const quickBody = panel?.closest?.(".dait-quick-settings-body");
-        if (quickBody) return quickBody;
-        try {
-            return this.getSettingsScrollContainer(panel);
-        }
-        catch {
-            return null;
-        }
-    }
-
-    updateSettingsActiveSectionFromScroll(panel, scroller) {
-        const state = panel?.__daitSettingsScrollTracking;
-        const anchor = this.getSettingsSectionNearestScrollTop(panel, scroller, state?.sections);
-        if (!anchor) return;
-        if (panel.__daitSettingsAppliedAnchor === anchor) return;
-        this.applySettingsActiveSection(panel, anchor);
-    }
-
-    getSettingsTrackedSections(panel) {
-        return [...(panel?.querySelectorAll?.("[data-dait-settings-section]") || [])]
-            .filter(section => SETTINGS_SECTION_IDS.includes(section.dataset?.daitSettingsSection));
-    }
-
-    getSettingsSectionNearestScrollTop(panel, scroller, trackedSections = null) {
-        const sections = (Array.isArray(trackedSections) && trackedSections.length ? trackedSections : this.getSettingsTrackedSections(panel))
-            .filter(section => section?.isConnected !== false && SETTINGS_SECTION_IDS.includes(section.dataset?.daitSettingsSection));
-        if (!sections.length) return "";
-
-        const scrollerRect = scroller?.getBoundingClientRect?.();
-        const top = Number(scrollerRect?.top || 0);
-        let best = null;
-        sections.forEach(section => {
-            const rect = section.getBoundingClientRect?.();
-            const offsetTop = Number.isFinite(Number(rect?.top))
-                ? Number(rect.top) - top
-                : Number(section.offsetTop || 0) - Number(scroller?.scrollTop || 0);
-            const score = offsetTop <= 36 ? Math.abs(offsetTop - 12) : offsetTop + 48;
-            if (!best || score < best.score) best = { section, score };
-        });
-        return best?.section?.dataset?.daitSettingsSection || "";
-    }
-
-    flushSettingsActiveTabSave(panel) {
-        const state = panel?.__daitSettingsScrollTracking;
-        if (!state?.saveTimer) return;
-        clearTimeout(state.saveTimer);
-        state.saveTimer = null;
-    }
-
-    cleanupSettingsScrollTracking(panel) {
-        this.clearSettingsScrollTrackingSchedule(panel);
-        const state = panel?.__daitSettingsScrollTracking;
-        if (!state) return;
-        this.flushSettingsActiveTabSave(panel);
-        if (state.scrollIdleTimer) {
-            clearTimeout(state.scrollIdleTimer);
-            state.scrollIdleTimer = null;
-        }
-        if (state.raf !== null && state.raf !== undefined && typeof cancelAnimationFrame === "function") {
-            cancelAnimationFrame(state.raf);
-        }
-        state.scroller?.removeEventListener?.("scroll", state.onScroll, { passive: true });
-        panel.__daitSettingsScrollTracking = null;
-    }
-
-    createSettingsContentList() {
-        const page = document.createElement("div");
-        page.className = "dait-settings-page dait-settings-page-all";
-        page.dataset.daitSettingsPage = "all";
-
-        const general = this.createGeneralSection();
-        general.dataset.daitSettingsSection = SETTINGS_SECTION_GENERAL;
-        page.appendChild(general);
-
-        const polish = this.createTaskSection("polish", this.t("polishTitle"), this.t("polishDescription"));
-        polish.dataset.daitSettingsSection = SETTINGS_SECTION_POLISH;
-        page.appendChild(polish);
-        const polishControls = this.createPolishControlsSection();
-        polishControls.dataset.daitSettingsSection = SETTINGS_SECTION_POLISH_CONTROLS;
-        page.appendChild(polishControls);
-
-        const translation = this.createTaskSection("translation", this.t("translationTitle"), this.t("translationDescription"));
-        translation.dataset.daitSettingsSection = SETTINGS_SECTION_TRANSLATION;
-        page.appendChild(translation);
-        const translationControls = this.createTranslationControlsSection();
-        translationControls.dataset.daitSettingsSection = SETTINGS_SECTION_TRANSLATION_CONTROLS;
-        page.appendChild(translationControls);
-        const autoTranslate = this.createAutoTranslateSection();
-        autoTranslate.dataset.daitSettingsSection = SETTINGS_SECTION_AUTO_TRANSLATE;
-        page.appendChild(autoTranslate);
-
-        const publicBilingual = this.createPublicBilingualSection();
-        publicBilingual.dataset.daitSettingsSection = SETTINGS_SECTION_PUBLIC_BILINGUAL;
-        page.appendChild(publicBilingual);
-
-        const display = this.createDisplayBehaviorSection();
-        display.dataset.daitSettingsSection = SETTINGS_SECTION_DISPLAY;
-        page.appendChild(display);
-        const cache = this.createCacheSection();
-        cache.dataset.daitSettingsSection = SETTINGS_SECTION_CACHE;
-        page.appendChild(cache);
-        const diagnostics = this.createDiagnosticsSection();
-        diagnostics.dataset.daitSettingsSection = SETTINGS_SECTION_DIAGNOSTICS;
-        page.appendChild(diagnostics);
-        if (this.settings.ui.testModeEnabled) {
-            const testMode = this.createTestModeSection();
-            testMode.dataset.daitSettingsSection = SETTINGS_SECTION_DIAGNOSTICS;
-            page.appendChild(testMode);
-        }
-        return page;
+    syncSettingsScrollPosition(panel, scroller = null) {
+        const state = panel?.__daitSettingsUi;
+        if (state) this.showSettingsTab(state, this.getSettingsActiveTab(), { save: false });
+        this.syncSettingsPanelHeight(panel, scroller);
     }
 
     scheduleSettingsModalSizing(panel) {
@@ -1608,6 +1792,8 @@ module.exports = class DiscordAITranslator {
         if (panel?.isConnected) this.watchSettingsModalSizingCleanup(panel);
     }
 
+    // BetterDiscord's plugin-settings modal is narrow; widen it to a moderate window (at most 920 px). The
+    // panel works without this too: below 640 px its tab rail becomes a row and rows stack.
     applySettingsModalSizing(panel) {
         if (!this.isStarted || !panel?.isConnected || typeof window === "undefined") {
             this.cleanupSettingsModalSizing(panel);
@@ -1616,7 +1802,7 @@ module.exports = class DiscordAITranslator {
         if (panel.closest?.(".dait-quick-settings-dialog")) return;
         const documentWidth = typeof document !== "undefined" ? Number(document.documentElement?.clientWidth || 0) : 0;
         const viewportWidth = Number(window.innerWidth || documentWidth || 0);
-        const desiredWidth = Math.max(760, Math.min(1280, viewportWidth ? viewportWidth - 72 : 1280));
+        const desiredWidth = Math.min(SETTINGS_WINDOW_MAX_WIDTH, viewportWidth ? viewportWidth - 48 : SETTINGS_WINDOW_MAX_WIDTH);
         let current = panel.parentElement;
         let marked = 0;
         let root = null;
@@ -1644,7 +1830,77 @@ module.exports = class DiscordAITranslator {
             if (!nextNodes.has(node)) this.cleanupSettingsModalNode(node);
         });
         panel.__daitSettingsModalMarkedNodes = markedNodes;
+        this.syncSettingsPanelHeight(panel);
         this.watchSettingsModalSizingCleanup(panel);
+    }
+
+    // The panel is as tall as the window allows (min(760px, 100vh - 64px)) minus what its host draws around it:
+    // BetterDiscord's modal header and footer, or the quick-settings window's header and footer. The content pane
+    // scrolls inside, so the header and the tab rail stay put.
+    syncSettingsPanelHeight(panel, scroller = null) {
+        if (!panel?.isConnected || !panel.style?.setProperty || typeof getComputedStyle !== "function") return false;
+        const host = scroller || this.getSettingsHostScroller(panel);
+        const frame = panel.closest?.(".dait-quick-settings-dialog") || panel.closest?.("[data-dait-settings-modal-root='true']") || host;
+        if (!host || !frame?.getBoundingClientRect) return false;
+        try {
+            const hostStyle = getComputedStyle(host);
+            const hostRect = host.getBoundingClientRect();
+            const panelRect = panel.getBoundingClientRect();
+            const above = Math.max(0, panelRect.top - hostRect.top - Number(host.clientTop || 0) + Number(host.scrollTop || 0));
+            const below = Number.parseFloat(hostStyle.paddingBottom) || 0;
+            const chrome = frame.getBoundingClientRect().height - Number(host.clientHeight || 0) + above + below;
+            if (Number.isFinite(chrome) && chrome >= 0) panel.style.setProperty("--dait-host-chrome", `${Math.ceil(chrome)}px`);
+            const frameMax = Number.parseFloat(getComputedStyle(frame).maxHeight);
+            if (Number.isFinite(frameMax) && frameMax > 0) panel.style.setProperty("--dait-host-max", `${Math.floor(frameMax)}px`);
+            else panel.style.removeProperty?.("--dait-host-max");
+            this.bindSettingsPanelResize(panel);
+            return true;
+        }
+        catch {
+            return false;
+        }
+    }
+
+    getSettingsHostScroller(panel) {
+        for (let node = panel?.parentElement; node && node !== document.body; node = node.parentElement) {
+            try {
+                if (/(auto|scroll)/.test(getComputedStyle(node).overflowY)) return node;
+            }
+            catch {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    // A host whose max-height follows the viewport changes size with the window.
+    bindSettingsPanelResize(panel) {
+        if (!panel || panel.__daitSettingsResize || typeof window === "undefined" || typeof window.addEventListener !== "function") return;
+        const state = { raf: null };
+        state.listener = () => {
+            if (state.raf !== null || typeof requestAnimationFrame !== "function") return;
+            state.raf = requestAnimationFrame(() => {
+                state.raf = null;
+                if (panel.isConnected) this.syncSettingsPanelHeight(panel);
+                else this.cleanupSettingsPanelListeners(panel);
+            });
+        };
+        panel.__daitSettingsResize = state;
+        window.addEventListener("resize", state.listener, { passive: true });
+    }
+
+    cleanupSettingsPanelListeners(panel) {
+        const resize = panel?.__daitSettingsResize;
+        if (resize) {
+            if (resize.raf !== null && typeof cancelAnimationFrame === "function") cancelAnimationFrame(resize.raf);
+            if (typeof window !== "undefined") window.removeEventListener?.("resize", resize.listener, { passive: true });
+            panel.__daitSettingsResize = null;
+        }
+        const state = panel?.__daitSettingsUi;
+        if (state?.searchEscapeListener) {
+            if (typeof window !== "undefined") window.removeEventListener?.("keydown", state.searchEscapeListener, true);
+            state.searchEscapeListener = null;
+        }
     }
 
     cleanupSettingsModalSizing(panel) {
@@ -1674,7 +1930,7 @@ module.exports = class DiscordAITranslator {
 
     destroySettingsModalSizing(panel) {
         this.clearHotkeyRecordingWithin(panel);
-        this.cleanupSettingsScrollTracking(panel);
+        this.cleanupSettingsPanelListeners(panel);
         this.clearSettingsModalSizingSchedule(panel);
         if (panel?.__daitSettingsModalCleanupObserver) {
             panel.__daitSettingsModalCleanupObserver.disconnect?.();
@@ -1688,7 +1944,7 @@ module.exports = class DiscordAITranslator {
         const observer = new MutationObserver(() => {
             if (panel.isConnected) return;
             this.clearHotkeyRecordingWithin(panel);
-            this.cleanupSettingsScrollTracking(panel);
+            this.cleanupSettingsPanelListeners(panel);
             this.clearSettingsModalSizingSchedule(panel);
             this.cleanupSettingsModalSizing(panel);
             observer.disconnect?.();
@@ -1698,79 +1954,96 @@ module.exports = class DiscordAITranslator {
         panel.__daitSettingsModalCleanupObserver = observer;
     }
 
-    createSettingsHero() {
-        const hero = document.createElement("div");
-        hero.className = "dait-settings-hero";
+    // --- Tab pages (UI-SPEC information architecture) ---
 
-        const mark = document.createElement("div");
-        mark.className = "dait-settings-mark";
-        mark.textContent = "AI";
-        hero.appendChild(mark);
+    createSettingsGroup(titleText, key, options = {}) {
+        const group = document.createElement("section");
+        group.className = `dait-settings-group dait-settings-group-${key}${options.className ? ` ${options.className}` : ""}`;
+        group.dataset.daitSettingsGroup = key;
+        group.dataset.daitSearchGroup = titleText || "";
+        if (titleText) {
+            const title = document.createElement("h3");
+            title.className = "dait-settings-group-title";
+            title.textContent = titleText;
+            group.appendChild(title);
+        }
+        if (options.description) {
+            const note = document.createElement("p");
+            note.className = "dait-settings-group-note";
+            note.textContent = options.description;
+            group.appendChild(note);
+        }
+        return group;
+    }
 
-        const copy = document.createElement("div");
-        copy.className = "dait-settings-copy";
+    createOverviewTabContent() {
+        return [this.createOverviewStatusSection(), this.createGeneralSection()];
+    }
 
-        const title = document.createElement("h2");
-        title.textContent = this.t("settingsTitle");
-        copy.appendChild(title);
-
-        const note = document.createElement("p");
-        note.className = "dait-note";
-        note.textContent = this.t("settingsNote");
-        copy.appendChild(note);
-
-        const chips = document.createElement("div");
-        chips.className = "dait-settings-chips";
-        const versionChip = document.createElement("span");
-        versionChip.className = "dait-settings-version";
-        versionChip.dataset.daitVersion = PLUGIN_VERSION;
-        versionChip.textContent = `v${PLUGIN_VERSION}`;
-        chips.appendChild(versionChip);
-        [this.t("polishTitle"), this.t("translationTitle"), "DeepSeek V4"].forEach(text => {
-            const chip = document.createElement("span");
-            chip.textContent = text;
-            chips.appendChild(chip);
-        });
-        copy.appendChild(chips);
-
-        hero.appendChild(copy);
-        return hero;
+    // Setup checklist and service status cards go here (a later change fills this in).
+    createOverviewStatusSection() {
+        return null;
     }
 
     createGeneralSection() {
-        const section = document.createElement("section");
-        section.className = "dait-settings-section dait-section-general";
-
-        const title = document.createElement("h3");
-        title.textContent = this.t("generalTitle");
-        section.appendChild(title);
-
-        section.appendChild(this.createSelectRow("ui.language", this.t("interfaceLanguage"), [
+        const group = this.createSettingsGroup(this.t("settingsGroupCommon"), "general");
+        group.appendChild(this.createCheckboxRow("ui.autoTranslateMessages", this.t("autoTranslateMessages"), { description: this.t("autoTranslateMessagesDesc") }));
+        group.appendChild(this.createCurrentChannelPolicyRow());
+        group.appendChild(this.createSelectRow("ui.language", this.t("interfaceLanguage"), [
             ["zh-CN", this.t("languageZh")],
             ["en", this.t("languageEn")]
         ], { description: this.t("interfaceLanguageDesc") }));
+        return group;
+    }
 
-        return section;
+    createTranslateTabContent() {
+        return [
+            this.createTaskSection("translation", this.t("translationTitle"), this.t("translationDescription")),
+            this.createAutoTranslateSection(),
+            this.createTranslationControlsSection(),
+            this.createTaskPromptSection("translation")
+        ];
+    }
+
+    createComposeTabContent() {
+        return [
+            this.createTaskSection("polish", this.t("polishTitle"), this.t("polishDescription")),
+            this.createTaskPromptSection("polish"),
+            this.createPolishControlsSection(),
+            this.createPublicBilingualSection()
+        ];
+    }
+
+    createDisplayTabContent() {
+        return [this.createDisplayBehaviorSection(), this.createDisplayNoticesSection()];
+    }
+
+    createAdvancedTabContent() {
+        const local = this.isLocalTranslationProvider(this.settings.translation);
+        return [
+            this.createAdvancedSection(),
+            this.createHistoryBackfillSection(),
+            this.createProviderFallbackSection(local)
+        ];
+    }
+
+    createDataTabContent(state = null) {
+        return [
+            this.createCacheSection(),
+            this.createDiagnosticsSection(state),
+            this.createSettingsDangerZone()
+        ];
     }
 
     createTaskSection(kind, titleText, descriptionText) {
-        const section = document.createElement("section");
-        section.className = `dait-settings-section dait-section-${kind}`;
-
-        const title = document.createElement("h3");
-        title.textContent = titleText;
-        section.appendChild(title);
-
-        const description = document.createElement("p");
-        description.className = "dait-note";
-        description.textContent = descriptionText;
-        section.appendChild(description);
+        const section = this.createSettingsGroup(titleText, kind, { description: descriptionText });
 
         section.appendChild(this.createCheckboxRow(`${kind}.enabled`, this.t("enabled"), { description: this.t("enabledDesc") }));
-        const providerOptions = this.getProviderOptionsForTask(kind);
-        section.appendChild(this.createSelectRow(`${kind}.provider`, this.t("provider"), providerOptions, { description: this.t("providerDesc") }));
+        section.appendChild(this.createSelectRow(`${kind}.provider`, this.t("provider"), this.getGroupedProviderOptionsForTask(kind), { description: this.t("providerDesc") }));
         const capabilities = this.getProviderCapabilities(this.settings[kind]?.provider);
         const ui = capabilities.ui || {};
+        const providerSettings = this.createTaskProviderSettingsBlock(kind, ui);
+        if (providerSettings) section.appendChild(providerSettings);
         if (ui.sourceLanguage) section.appendChild(this.createLanguageRow(kind, "sourceLanguage", this.t("inputLanguage"), this.t("inputLanguageDesc"), { allowAuto: true }));
         if (ui.targetLanguage) section.appendChild(this.createLanguageRow(kind, "targetLanguage", kind === "polish" ? this.t("outputLanguage") : this.t("targetLanguage"), kind === "polish" ? this.t("outputLanguageDesc") : this.t("targetLanguageDesc")));
 
@@ -1784,39 +2057,50 @@ module.exports = class DiscordAITranslator {
                 [POLISH_REPOLISH_SOURCE_LAST_RESULT, this.t("repolishSourceLastResult")]
             ], { description: this.t("repolishSourceDesc") }));
         }
-
-        const providerSettings = this.createTaskProviderSettingsBlock(kind, ui);
-        if (providerSettings) section.appendChild(providerSettings);
         return section;
     }
 
+    // Translation providers are listed in two groups: AI models (also usable for polishing) and machine translation.
+    getGroupedProviderOptionsForTask(kind) {
+        const options = this.getProviderOptionsForTask(kind);
+        const machine = options.filter(([provider]) => this.isDirectTranslateProvider(provider));
+        if (!machine.length) return options;
+        const models = options.filter(([provider]) => !this.isDirectTranslateProvider(provider));
+        return [
+            { label: this.t("providerGroupAi"), options: models },
+            { label: this.t("providerGroupMachine"), options: machine }
+        ];
+    }
+
+    // The connection card: status and Test in its header, then only the fields the selected provider uses.
+    // Rarely changed model parameters and an optional API key sit behind <details>.
     createTaskProviderSettingsBlock(kind, ui = this.getProviderCapabilities(this.settings[kind]?.provider).ui || {}) {
+        const provider = String(this.settings[kind]?.provider || "");
+        const defaults = this.getProviderDefaults(provider) || {};
         const block = document.createElement("div");
         block.className = "dait-provider-settings-block";
-        block.dataset.daitProvider = String(this.settings[kind]?.provider || "");
+        block.dataset.daitProvider = provider;
 
         const header = document.createElement("div");
         header.className = "dait-provider-settings-header";
         const title = document.createElement("span");
         title.className = "dait-provider-settings-title";
-        title.textContent = `${this.t("providerSettingsTitle")} - ${this.getProviderDisplayName(this.settings[kind]?.provider)}`;
-        const description = document.createElement("p");
-        description.className = "dait-row-description";
-        description.textContent = this.t("providerSettingsDesc");
+        title.textContent = `${this.t("providerSettingsTitle")} · ${this.getProviderDisplayName(provider)}`;
+        title.title = this.t("providerSettingsDesc");
         header.appendChild(title);
-        header.appendChild(description);
+        if (ui.apiTest || ui.apiKey) header.appendChild(this.createProviderConnectionStatus(kind));
         block.appendChild(header);
 
         let hasRows = false;
-        const append = node => {
+        const append = (node, parent = block) => {
             if (!node) return;
             hasRows = true;
-            block.appendChild(node);
+            parent.appendChild(node);
         };
+        const apiKeyOptional = Boolean(ui.apiKey && this.isProviderApiKeyOptional(provider));
 
-        if (ui.apiKey) append(this.createApiKeyRow(kind));
-        else if (ui.apiTest) append(this.createProviderStatusRow(kind));
-        if (ui.endpoint) append(this.createInputRow(`${kind}.endpoint`, this.t("endpoint"), "text", "https://api.example.com/v1/chat/completions", {}, { description: this.t("endpointDesc") }));
+        if (ui.apiKey && !apiKeyOptional) append(this.createApiKeyRow(kind));
+        if (ui.endpoint) append(this.createInputRow(`${kind}.endpoint`, this.t("endpoint"), "text", defaults.endpoint || "https://api.example.com/v1/chat/completions", {}, { description: this.t("endpointDesc"), stacked: true }));
         if (ui.region) append(this.createInputRow(`${kind}.region`, this.t("providerRegion"), "text", "eastus", {}, { description: this.t("providerRegionDesc") }));
         if (ui.deeplPlan) append(this.createSelectRow(`${kind}.deeplPlan`, this.t("deeplPlan"), [
             ["free", this.t("deeplPlanFree")],
@@ -1824,93 +2108,169 @@ module.exports = class DiscordAITranslator {
         ], { description: this.t("deeplPlanDesc") }));
         if (ui.baiduCredentials) {
             append(this.createInputRow(`${kind}.appId`, this.t("baiduAppId"), "text", "", {}, { description: this.t("baiduAppIdDesc") }));
-            append(this.createInputRow(`${kind}.secretKey`, this.t("baiduSecretKey"), "password", "", {}, { description: this.t("baiduSecretKeyDesc") }));
+            append(this.createInputRow(`${kind}.secretKey`, this.t("baiduSecretKey"), "password", "", {}, { description: this.t("baiduSecretKeyDesc"), stacked: true }));
         }
         if (ui.deepseekPreset) append(this.createDeepSeekModelRow(kind));
         if (ui.localModelPreset) append(this.createLocalModelRow(kind));
-        if (ui.model) append(this.createInputRow(`${kind}.model`, this.t("model"), "text", "deepseek-v4-flash", {}, { description: this.t("modelDesc") }));
-        if (ui.enableThinking) append(this.createCheckboxRow(`${kind}.enableThinking`, this.t("thinkingMode"), { description: this.t("thinkingModeDesc") }));
-        if (ui.temperature) append(this.createInputRow(`${kind}.temperature`, this.t("temperature"), "number", "0.4", { min: "0", max: "2", step: "0.1" }, { description: this.t("temperatureDesc") }));
-        if (ui.maxTokens) append(this.createInputRow(`${kind}.maxTokens`, this.t("maxTokens"), "number", "800", { min: "1", step: "1" }, { description: this.t("maxTokensDesc") }));
+        if (ui.model) append(this.createInputRow(`${kind}.model`, this.t("model"), "text", defaults.model || "", {}, { description: this.t("modelDesc"), stacked: true }));
         if (kind === "translation" && ui.googleTranslateSettings) append(this.createGoogleTranslateSettings());
-        if (ui.promptManager) append(this.createPromptManager(kind));
+
+        if (ui.enableThinking || ui.temperature || ui.maxTokens) {
+            const details = this.createSettingsDetails(this.t("settingsMoreModelParams"), "model-params");
+            if (ui.enableThinking) append(this.createCheckboxRow(`${kind}.enableThinking`, this.t("thinkingMode"), { description: this.t("thinkingModeDesc") }), details);
+            if (ui.temperature) append(this.createInputRow(`${kind}.temperature`, this.t("temperature"), "number", "0.4", { min: "0", max: "2", step: "0.1" }, { description: this.t("temperatureDesc") }), details);
+            if (ui.maxTokens) append(this.createInputRow(`${kind}.maxTokens`, this.t("maxTokens"), "number", "800", { min: "1", step: "1" }, { description: this.t("maxTokensDesc") }), details);
+            block.appendChild(details);
+        }
+        if (apiKeyOptional) {
+            const details = this.createSettingsDetails(this.t("settingsApiKeyOptional"), "api-key");
+            // Open it when a key is already saved, so it is not forgotten.
+            details.open = Boolean(String(this.settings[kind]?.apiKey || "").trim());
+            append(this.createApiKeyRow(kind), details);
+            block.appendChild(details);
+        }
 
         return hasRows ? block : null;
     }
 
+    createSettingsDetails(summaryText, key) {
+        const details = document.createElement("details");
+        details.className = `dait-settings-details dait-settings-details-${key}`;
+        const summary = document.createElement("summary");
+        summary.className = "dait-settings-details-summary";
+        summary.textContent = summaryText;
+        details.appendChild(summary);
+        return details;
+    }
+
+    createProviderConnectionStatus(kind) {
+        const wrap = document.createElement("span");
+        wrap.className = "dait-provider-connection";
+        const status = this.createApiStatusBadge(kind);
+        wrap.appendChild(status);
+        const test = this.createSmallButton(this.t("apiTest"));
+        test.dataset.daitAction = "apiTest";
+        test.dataset.daitKind = kind;
+        test.addEventListener("click", event => {
+            event?.preventDefault?.();
+            event?.stopPropagation?.();
+            this.testApiConnection(kind, test, status);
+        });
+        wrap.appendChild(test);
+        return wrap;
+    }
+
+    // Prompt templates and the prompt editor belong to the task, not to the provider connection.
+    createTaskPromptSection(kind) {
+        const ui = this.getProviderCapabilities(this.settings[kind]?.provider)?.ui || {};
+        if (!ui.promptManager) return null;
+        const group = this.createSettingsGroup("", `${kind}-prompt`);
+        const manager = this.createPromptManager(kind);
+        manager.className = `${manager.className || ""} dait-settings-search-target`.trim();
+        manager.dataset.daitSearchLabel = this.t("promptTemplates");
+        manager.dataset.daitSearchDescription = this.t("promptTemplatesDesc");
+        group.appendChild(manager);
+        return group;
+    }
+
     createPolishControlsSection() {
-        const section = document.createElement("section");
-        section.className = "dait-settings-section dait-section-polish-controls";
-
-        const title = document.createElement("h3");
-        title.textContent = this.t("polishControlsTitle");
-        section.appendChild(title);
-
+        const section = this.createSettingsGroup(this.t("polishControlsTitle"), "polish-controls");
         section.appendChild(this.createCheckboxRow("ui.injectInputButton", this.t("showPolishButton"), { description: this.t("showPolishButtonDesc") }));
         section.appendChild(this.createCheckboxRow("ui.enablePolishHotkey", this.t("enableHotkey"), { description: this.t("enableHotkeyDesc") }));
-        section.appendChild(this.createHotkeyRow());
-
+        section.appendChild(this.createHotkeyRow({ dependsOn: { path: "ui.enablePolishHotkey", label: this.t("enableHotkey") } }));
         return section;
     }
 
     createTranslationControlsSection() {
-        const section = document.createElement("section");
-        section.className = "dait-settings-section dait-section-translation-controls";
-
-        const title = document.createElement("h3");
-        title.textContent = this.t("translationControlsTitle");
-        section.appendChild(title);
-
-        section.appendChild(this.createCheckboxRow("ui.injectMessageButtons", this.t("showMessageButtons"), { description: this.t("showMessageButtonsDesc") }));
-        section.appendChild(this.createSelectRow("ui.messageButtonVisibility", this.t("messageButtonVisibility"), [
-            [MESSAGE_BUTTON_VISIBILITY_ALWAYS, this.t("messageButtonVisibilityAlways")],
-            [MESSAGE_BUTTON_VISIBILITY_HOVER, this.t("messageButtonVisibilityHover")]
-        ], { description: this.t("messageButtonVisibilityDesc") }));
+        const section = this.createSettingsGroup(this.t("translationControlsTitle"), "translation-controls");
+        section.appendChild(this.createMessageButtonModeRow());
         section.appendChild(this.createCheckboxRow("ui.injectMessageContextMenu", this.t("showContextMenu"), { description: this.t("showContextMenuDesc") }));
-
         return section;
     }
 
+    // One select for the message Translate button: on hover / always / off.
+    createMessageButtonModeRow() {
+        return this.createSelectRow("ui.messageButtonMode", this.t("messageButtonMode"), [
+            [MESSAGE_BUTTON_VISIBILITY_HOVER, this.t("messageButtonModeHover")],
+            [MESSAGE_BUTTON_VISIBILITY_ALWAYS, this.t("messageButtonModeAlways")],
+            [MESSAGE_BUTTON_MODE_OFF, this.t("messageButtonModeOff")]
+        ], { description: this.t("messageButtonModeDesc") });
+    }
+
+    getMessageButtonMode() {
+        if (this.settings.ui?.injectMessageButtons === false) return MESSAGE_BUTTON_MODE_OFF;
+        return this.getMessageButtonVisibility();
+    }
+
+    // Stored as ui.injectMessageButtons + ui.messageButtonVisibility, each through setSetting so its own effects run.
+    setMessageButtonMode(mode, options = {}) {
+        const value = [MESSAGE_BUTTON_VISIBILITY_HOVER, MESSAGE_BUTTON_VISIBILITY_ALWAYS, MESSAGE_BUTTON_MODE_OFF].includes(mode)
+            ? mode
+            : MESSAGE_BUTTON_VISIBILITY_ALWAYS;
+        if (value === MESSAGE_BUTTON_MODE_OFF) {
+            this.setSetting("ui.injectMessageButtons", false, options);
+        }
+        else {
+            this.setSetting("ui.messageButtonVisibility", value, options);
+            this.setSetting("ui.injectMessageButtons", true, options);
+        }
+        this.syncSettingControls("ui.messageButtonMode", this.getMessageButtonMode(), { includeActive: true });
+        return value;
+    }
+
     createAutoTranslateSection() {
-        const section = document.createElement("section");
-        section.className = "dait-settings-section dait-section-auto-translate";
+        const section = this.createSettingsGroup(this.t("settingsGroupAutoTranslate"), "auto-translate");
+        section.appendChild(this.createCheckboxRow("ui.autoTranslateMessages", this.t("autoTranslateMessages"), { description: this.t("autoTranslateMessagesDesc") }));
+        section.appendChild(this.createCheckboxRow("ui.autoTranslatePrefetch", this.t("autoTranslatePrefetch"), { description: this.t("autoTranslatePrefetchDesc") }));
+        section.appendChild(this.createSelectRow("ui.autoTranslatePrefetchRange", this.t("autoTranslatePrefetchRange"), AUTO_TRANSLATE_PREFETCH_RANGES.map(value => [String(value), String(value)]), {
+            description: this.t("autoTranslatePrefetchRangeDesc"),
+            dependsOn: { path: "ui.autoTranslatePrefetch", label: this.t("autoTranslatePrefetch") }
+        }));
+        section.appendChild(this.createCurrentChannelPolicyRow());
+        return section;
+    }
+
+    // Tuning that rarely needs a change: concurrency, how messages are found, strict retry.
+    createAdvancedSection() {
+        const section = this.createSettingsGroup(this.t("autoTranslateSettingsTitle"), "advanced");
         const provider = this.getProviderDefaults(this.settings.translation.provider);
         const local = this.isLocalTranslationProvider(this.settings.translation);
         const concurrencyRange = { min: AUTO_TRANSLATE_MIN_CONCURRENCY, max: AUTO_TRANSLATE_MAX_CONCURRENCY, default: AUTO_TRANSLATE_DEFAULT_CONCURRENCY };
-
-        const title = document.createElement("h3");
-        title.textContent = this.t("autoTranslateSettingsTitle");
-        section.appendChild(title);
-
-        section.appendChild(this.createCheckboxRow("ui.autoTranslateMessages", this.t("autoTranslateMessages"), { description: this.t("autoTranslateMessagesDesc") }));
-        section.appendChild(this.createCheckboxRow("ui.autoTranslatePrefetch", this.t("autoTranslatePrefetch"), { description: this.t("autoTranslatePrefetchDesc") }));
-        section.appendChild(this.createSelectRow("ui.autoTranslatePrefetchRange", this.t("autoTranslatePrefetchRange"), AUTO_TRANSLATE_PREFETCH_RANGES.map(value => [String(value), String(value)]), { description: this.t("autoTranslatePrefetchRangeDesc") }));
+        section.appendChild(this.createInputRow("ui.autoTranslateConcurrency", this.t("autoTranslateConcurrency"), "number", String(AUTO_TRANSLATE_DEFAULT_CONCURRENCY), { min: String(AUTO_TRANSLATE_MIN_CONCURRENCY), max: String(AUTO_TRANSLATE_MAX_CONCURRENCY), step: "1" }, { description: this.t(local ? "localConcurrencyDesc" : "autoTranslateConcurrencyDesc", concurrencyRange) }));
         section.appendChild(this.createSelectRow("ui.autoTranslateIntakeMode", this.t("autoTranslateIntakeMode"), [
             ["auto", this.t("autoTranslateIntakeAuto")],
             ["dom", this.t("autoTranslateIntakeDom")],
             ["bdfdb", this.t("autoTranslateIntakeBdfdb")]
         ], { description: this.t("autoTranslateIntakeModeDesc"), disabledReason: provider?.autoTranslateIntakeMode && this.t("localIntakeFixed") }));
-        section.appendChild(this.createInputRow("ui.autoTranslateConcurrency", this.t("autoTranslateConcurrency"), "number", String(AUTO_TRANSLATE_DEFAULT_CONCURRENCY), { min: String(AUTO_TRANSLATE_MIN_CONCURRENCY), max: String(AUTO_TRANSLATE_MAX_CONCURRENCY), step: "1" }, { description: this.t(local ? "localConcurrencyDesc" : "autoTranslateConcurrencyDesc", concurrencyRange) }));
         section.appendChild(this.createCheckboxRow("ui.autoTranslateStrictRetry", this.t("autoTranslateStrictRetry"), { description: this.t("autoTranslateStrictRetryDesc") }));
-        section.appendChild(this.createCurrentChannelPolicyRow());
+        return section;
+    }
+
+    createHistoryBackfillSection() {
+        const section = this.createSettingsGroup(this.t("settingsGroupHistoryBackfill"), "history-backfill");
+        const dependsOn = { path: "ui.historyBackfillEnabled", label: this.t("historyBackfillEnabled") };
         section.appendChild(this.createCheckboxRow("ui.historyBackfillEnabled", this.t("historyBackfillEnabled"), { description: this.t("historyBackfillEnabledDesc") }));
-        section.appendChild(this.createInputRow("ui.historyBackfillLimit", this.t("historyBackfillLimit"), "number", String(DEFAULT_SETTINGS.ui.historyBackfillLimit), { min: "1", max: "100", step: "1" }, { description: this.t("historyBackfillLimitDesc") }));
-        section.appendChild(this.createHistoryBackfillActionRow());
+        section.appendChild(this.createInputRow("ui.historyBackfillLimit", this.t("historyBackfillLimit"), "number", String(DEFAULT_SETTINGS.ui.historyBackfillLimit), { min: "1", max: "100", step: "1" }, { description: this.t("historyBackfillLimitDesc"), dependsOn }));
+        section.appendChild(this.createHistoryBackfillActionRow({ dependsOn }));
+        return section;
+    }
+
+    createProviderFallbackSection(local = this.isLocalTranslationProvider(this.settings.translation)) {
+        const section = this.createSettingsGroup(this.t("settingsGroupFallback"), "provider-fallback");
         section.appendChild(this.createCheckboxRow("ui.providerFallbackEnabled", this.t("providerFallbackEnabled"), { description: this.t("providerFallbackEnabledDesc"), disabledReason: local && this.t("localFallbackUnavailable") }));
         section.appendChild(this.createProviderFallbackOrderRow(local));
-
         return section;
     }
 
     createCurrentChannelPolicyRow() {
-        return this.createSelectRow("ui.currentChannelAutoTranslatePolicy", this.t("currentChannelAutoTranslatePolicy"), [
-            ["inherit", this.t("channelPolicyInherit")],
-            ["enabled", this.t("channelPolicyEnabled")],
-            ["disabled", this.t("channelPolicyDisabled")]
+        return this.createSegmentedRow("ui.currentChannelAutoTranslatePolicy", this.t("currentChannelAutoTranslatePolicy"), [
+            ["inherit", this.t("channelRuleFollow")],
+            ["enabled", this.t("channelRuleAlways")],
+            ["disabled", this.t("channelRuleNever")]
         ], { description: this.t("currentChannelAutoTranslatePolicyDesc"), routeKey: this.getCurrentRouteKey() });
     }
 
-    createHistoryBackfillActionRow() {
+    createHistoryBackfillActionRow(rowOptions = {}) {
         const controls = document.createElement("div");
         controls.className = "dait-history-backfill-actions";
         const button = this.createSmallButton(this.t("historyBackfillRun"));
@@ -1921,7 +2281,7 @@ module.exports = class DiscordAITranslator {
             this.runExplicitHistoryBackfillFromUi(button, { source: "settings" });
         });
         controls.appendChild(button);
-        return this.createRow(this.t("historyBackfillRun"), controls, { description: this.t("historyBackfillRunDesc") });
+        return this.createRow(this.t("historyBackfillRun"), controls, { ...rowOptions, description: this.t("historyBackfillRunDesc") });
     }
 
     createProviderFallbackOrderRow(local) {
@@ -1936,60 +2296,42 @@ module.exports = class DiscordAITranslator {
         return this.createRow(this.t("providerFallbackOrder"), textarea, {
             description: this.t("providerFallbackOrderDesc", { providers: PROVIDER_ORDER.join(", ") }),
             disabledReason: local && this.t("localFallbackUnavailable"),
-            wide: true
+            dependsOn: { path: "ui.providerFallbackEnabled", label: this.t("providerFallbackEnabled") },
+            stacked: true
         });
     }
 
     createPublicBilingualSection() {
-        const section = document.createElement("section");
-        section.className = "dait-settings-section dait-section-public-bilingual";
-
-        const title = document.createElement("h3");
-        title.textContent = this.t("publicBilingualTitle");
-        section.appendChild(title);
-
-        const description = document.createElement("p");
-        description.className = "dait-note";
-        description.textContent = this.t("publicBilingualDependencyDesc");
-        section.appendChild(description);
-
+        const section = this.createSettingsGroup(this.t("publicBilingualTitle"), "public-bilingual");
         section.appendChild(this.createCheckboxRow("ui.publicBilingualInputButton", this.t("publicBilingualInputButton"), { description: this.t("publicBilingualInputButtonDesc") }));
         section.appendChild(this.createCheckboxRow("ui.publicBilingualUseInitialOriginal", this.t("publicBilingualUseInitialOriginal"), { description: this.t("publicBilingualUseInitialOriginalDesc") }));
         section.appendChild(this.createCheckboxRow("ui.publicBilingualAfterPolish", this.t("publicBilingualAfterPolish"), { description: this.t("publicBilingualAfterPolishDesc") }));
         section.appendChild(this.createCheckboxRow("ui.publicBilingualPolishBeforeTranslate", this.t("publicBilingualPolishBeforeTranslate"), { description: this.t("publicBilingualPolishBeforeTranslateDesc") }));
         section.appendChild(this.createPublicBilingualDependencyRow());
-
         return section;
     }
 
+    // Shows the service and target language the bilingual message really uses: the polish service when it is
+    // usable (otherwise the translation service), and the polish output language.
     createPublicBilingualDependencyRow() {
         const summary = document.createElement("div");
         summary.className = "dait-provider-summary";
         summary.textContent = this.t("publicBilingualDependencyStatus", {
             polishProvider: this.getProviderDisplayName(this.settings.polish?.provider),
-            translationProvider: this.getProviderDisplayName(this.settings.translation?.provider),
-            targetLanguage: this.getDisplayLanguage(this.settings.translation?.targetLanguage)
+            translationProvider: this.getProviderDisplayName(this.getPublicBilingualBaseConfig()?.provider),
+            targetLanguage: this.getDisplayLanguage(this.getPublicBilingualTargetLanguage())
         });
         return this.createRow(this.t("publicBilingualDependencyTitle"), summary, {
             description: this.t("publicBilingualDependencyDesc"),
-            wide: true
+            stacked: true
         });
     }
 
     createDisplayBehaviorSection() {
-        const section = document.createElement("section");
-        section.className = "dait-settings-section dait-section-display";
-
-        const title = document.createElement("h3");
-        title.textContent = this.t("displaySettingsTitle");
-        section.appendChild(title);
-
-        section.appendChild(this.createCheckboxRow("ui.showQuickSettingsPanelButton", this.t("showQuickSettingsPanelButton"), { description: this.t("showQuickSettingsPanelButtonDesc") }));
-        section.appendChild(this.createCheckboxRow("ui.showAutoTranslateWarnings", this.t("showAutoTranslateWarnings"), { description: this.t("showAutoTranslateWarningsDesc") }));
-        section.appendChild(this.createCheckboxRow("ui.showAutoTranslateToasts", this.t("showAutoTranslateToasts"), { description: this.t("showAutoTranslateToastsDesc") }));
-        section.appendChild(this.createSelectRow("ui.translationPosition", this.t("translationPosition"), [
-            ["before", this.t("translationBeforeOriginal")],
-            ["after", this.t("translationAfterOriginal")]
+        const section = this.createSettingsGroup(this.t("settingsGroupTranslatedText"), "display");
+        section.appendChild(this.createSegmentedRow("ui.translationPosition", this.t("translationPosition"), [
+            ["before", this.t("translationPositionAbove")],
+            ["after", this.t("translationPositionBelow")]
         ], { description: this.t("translationPositionDesc") }));
         section.appendChild(this.createSelectRow("ui.translationStyle", this.t("translationStyle"), [
             ["tint", this.t("translationStyleTint")],
@@ -2002,51 +2344,82 @@ module.exports = class DiscordAITranslator {
         ], { description: this.t("translationTextScaleDesc") }));
         section.appendChild(this.createCheckboxRow("ui.maskTranslations", this.t("maskTranslations"), { description: this.t("maskTranslationsDesc") }));
         section.appendChild(this.createCheckboxRow("ui.hideOriginalAfterTranslation", this.t("hideOriginalAfterTranslation"), { description: this.t("hideOriginalAfterTranslationDesc") }));
+        return section;
+    }
 
+    createDisplayNoticesSection() {
+        const section = this.createSettingsGroup(this.t("settingsGroupNotices"), "notices");
+        section.appendChild(this.createCheckboxRow("ui.showAutoTranslateWarnings", this.t("showAutoTranslateWarnings"), { description: this.t("showAutoTranslateWarningsDesc") }));
+        section.appendChild(this.createCheckboxRow("ui.showAutoTranslateToasts", this.t("showAutoTranslateToasts"), { description: this.t("showAutoTranslateToastsDesc") }));
+        section.appendChild(this.createCheckboxRow("ui.showQuickSettingsPanelButton", this.t("showQuickSettingsPanelButton"), { description: this.t("showQuickSettingsPanelButtonDesc") }));
         return section;
     }
 
     createCacheSection() {
-        const section = document.createElement("section");
-        section.className = "dait-settings-section dait-section-cache";
-
-        const title = document.createElement("h3");
-        title.textContent = this.t("cacheSettingsTitle");
-        section.appendChild(title);
-
+        const section = this.createSettingsGroup(this.t("cacheSettingsTitle"), "cache");
         section.appendChild(this.createSelectRow("ui.translationCacheTtlHours", this.t("translationCacheTtl"), TRANSLATION_CACHE_TTL_OPTIONS.map(value => [String(value), this.getTranslationCacheTtlLabel(value)]), { description: this.t("translationCacheTtlDesc") }));
         section.appendChild(this.createInputRow("ui.translationCacheMaxEntries", this.t("translationCacheMaxEntries"), "number", String(TRANSLATION_CACHE_DEFAULT_LIMIT), { min: String(TRANSLATION_CACHE_MIN_LIMIT), max: String(TRANSLATION_CACHE_MAX_LIMIT), step: "100" }, { description: this.t("translationCacheMaxEntriesDesc") }));
         section.appendChild(this.createTranslationCacheStatsRow());
-
         return section;
     }
 
-    createDiagnosticsSection() {
-        const section = document.createElement("section");
-        section.className = "dait-settings-section dait-section-diagnostics";
-
-        const title = document.createElement("h3");
-        title.textContent = this.t("diagnosticsSettingsTitle");
-        section.appendChild(title);
-
+    createDiagnosticsSection(state = null) {
+        const section = this.createSettingsGroup(this.t("diagnosticsSettingsTitle"), "diagnostics");
         section.appendChild(this.createCheckboxRow("ui.diagnosticsEnabled", this.t("diagnosticLogs"), { description: this.t("diagnosticLogsDesc") }));
         section.appendChild(this.createDiagnosticLogsRow());
         section.appendChild(this.createSettingsSnapshotRow());
         section.appendChild(this.createDiagnosticSummaryRow());
         section.appendChild(this.createCheckboxRow("ui.testModeEnabled", this.t("testMode"), { description: this.t("testModeDesc"), refreshPanel: true }));
-
+        const slot = document.createElement("div");
+        slot.className = "dait-test-mode-slot";
+        if (this.settings.ui?.testModeEnabled) slot.appendChild(this.createTestModeSection());
+        if (state) state.testModeSlot = slot;
+        section.appendChild(slot);
         return section;
+    }
+
+    // Reset lives at the end of the data tab, away from navigation.
+    createSettingsDangerZone() {
+        const section = this.createSettingsGroup(this.t("settingsDangerZone"), "danger", { className: "dait-settings-danger-zone" });
+        const button = this.createSmallButton(this.t("reset"), "danger");
+        button.className = `${button.className} dait-settings-reset-button`;
+        button.dataset.daitAction = "resetSettings";
+        button.addEventListener("click", event => {
+            event?.preventDefault?.();
+            this.runSettingsResetFromUi(button);
+        });
+        section.appendChild(this.createRow(this.t("reset"), button, { description: this.t("settingsResetDesc") }));
+        return section;
+    }
+
+    // Uses the reset dialog when one is available; otherwise confirms and keeps API keys, the Google key pool and
+    // the prompt templates.
+    runSettingsResetFromUi(source) {
+        const findPanel = () => source?.closest?.(".dait-settings") || null;
+        if (typeof this.openResetSettingsDialog === "function") {
+            return Promise.resolve(this.openResetSettingsDialog(source)).then(result => {
+                const panel = findPanel();
+                if (result === true && panel) this.replaceSettingsPanelElement(panel);
+                return result;
+            });
+        }
+        if (typeof window === "undefined" || typeof window.confirm !== "function" || !window.confirm(this.t("resetConfirm"))) return false;
+        this.resetSettingsToDefaults({ keepCredentials: true });
+        this.replaceSettingsPanelElement(findPanel());
+        return true;
     }
 
     createCheckboxRow(path, labelText, rowOptions = {}) {
         const input = document.createElement("input");
         input.type = "checkbox";
+        input.className = "dait-switch";
+        input.setAttribute("role", "switch");
         input.dataset.daitPath = path;
         input.checked = Boolean(this.getSetting(path));
         input.addEventListener("change", () => {
             this.setSetting(path, input.checked);
             if (rowOptions.refreshPanel) {
-                const panel = input.closest(".dait-settings");
+                const panel = input.closest?.(".dait-settings");
                 if (panel) this.updateTestModeVisibility(panel, input.checked);
             }
         });
@@ -2054,127 +2427,52 @@ module.exports = class DiscordAITranslator {
     }
 
     updateTestModeVisibility(panel, enabled) {
-        const page = panel?.querySelector?.(".dait-settings-page-all");
-        if (!page?.appendChild) {
-            const nextPanel = this.getSettingsPanel();
-            this.replaceSettingsPanelElement(panel, nextPanel);
-            if (enabled) {
-                nextPanel.querySelector?.(".dait-test-mode-section")?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
-            }
+        const slot = panel?.__daitSettingsUi?.testModeSlot || panel?.querySelector?.(".dait-test-mode-slot");
+        if (!slot?.appendChild) {
+            const nextPanel = this.replaceSettingsPanelElement(panel);
+            if (enabled) nextPanel?.querySelector?.(".dait-test-mode-section")?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
             return;
         }
-        let section = page.querySelector?.(".dait-test-mode-section");
+        let section = slot.querySelector?.(".dait-test-mode-section") || null;
         if (!enabled) {
             section?.remove?.();
-            this.applySettingsActiveSection(panel, this.getSettingsActiveTab(), { force: true });
             return;
         }
         if (!section) {
             section = this.createTestModeSection();
-            section.dataset.daitSettingsSection = SETTINGS_SECTION_DIAGNOSTICS;
-            const diagnostics = page.querySelector?.(".dait-section-diagnostics")
-                || page.querySelector?.(`[data-dait-settings-section='${SETTINGS_SECTION_DIAGNOSTICS}']`);
-            if (diagnostics?.parentElement === page && page.insertBefore) {
-                page.insertBefore(section, diagnostics.nextSibling || null);
-            }
-            else {
-                page.appendChild(section);
-            }
+            slot.appendChild(section);
         }
-        if (enabled) {
-            section.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
-        }
-        this.applySettingsActiveSection(panel, this.getSettingsActiveTab(), { force: true });
+        section.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
     }
 
     createApiKeyRow(kind) {
-        const row = document.createElement("div");
-        row.className = "dait-settings-row dait-api-key-row";
-
-        const label = document.createElement("span");
-        label.className = "dait-row-label";
-        label.textContent = this.t("apiKey");
-        row.appendChild(label);
-
-        const status = document.createElement("span");
-        const savedStatus = this.getApiStatus(kind);
-        status.className = `dait-api-status dait-api-status-${savedStatus.state}`;
-        status.dataset.daitKind = kind;
-        status.textContent = this.getApiStatusText(savedStatus.state);
-        status.title = savedStatus.message || "";
-        row.appendChild(status);
-
-        const description = document.createElement("p");
-        description.className = "dait-row-description";
-        description.textContent = this.t("apiKeyDesc");
-        row.appendChild(description);
-
-        const controls = document.createElement("div");
-        controls.className = "dait-api-controls";
-
+        const provider = String(this.settings[kind]?.provider || "");
         const input = document.createElement("input");
         input.type = "password";
         input.dataset.daitPath = `${kind}.apiKey`;
-        input.placeholder = "sk-...";
+        input.placeholder = ["deepseek", "openaiCompatible"].includes(provider) ? "sk-..." : "";
+        input.autocomplete = "off";
+        input.spellcheck = false;
         input.value = this.getSetting(`${kind}.apiKey`) ?? "";
         input.addEventListener("change", () => this.setSetting(`${kind}.apiKey`, input.value));
-        controls.appendChild(input);
-
-        const test = this.createSmallButton(this.t("apiTest"));
-        test.addEventListener("click", event => {
-            event.preventDefault();
-            event.stopPropagation();
-            this.testApiConnection(kind, test, status);
-        });
-        controls.appendChild(test);
-
-        row.appendChild(controls);
+        const row = this.createRow(this.t("apiKey"), input, { description: this.t("apiKeyDesc"), stacked: true });
+        row.className = `${row.className} dait-api-key-field`;
         return row;
     }
 
+    // Service status with its Test button, as a row (the connection card shows the same in its header).
     createProviderStatusRow(kind) {
-        const row = document.createElement("div");
-        row.className = "dait-settings-row dait-api-key-row dait-provider-status-row";
-
-        const label = document.createElement("span");
-        label.className = "dait-row-label";
-        label.textContent = this.t("providerStatus");
-        row.appendChild(label);
-
-        const status = document.createElement("span");
-        const savedStatus = this.getApiStatus(kind);
-        status.className = `dait-api-status dait-api-status-${savedStatus.state}`;
-        status.dataset.daitKind = kind;
-        status.textContent = this.getApiStatusText(savedStatus.state);
-        status.title = savedStatus.message || "";
-        row.appendChild(status);
-
-        const description = document.createElement("p");
-        description.className = "dait-row-description";
-        description.textContent = this.t("providerStatusDesc");
-        row.appendChild(description);
-
-        const controls = document.createElement("div");
-        controls.className = "dait-api-controls";
-        const test = this.createSmallButton(this.t("apiTest"));
-        test.addEventListener("click", event => {
-            event.preventDefault();
-            event.stopPropagation();
-            this.testApiConnection(kind, test, status);
-        });
-        controls.appendChild(test);
-        row.appendChild(controls);
-        return row;
+        return this.createRow(this.t("providerStatus"), this.createProviderConnectionStatus(kind), { description: this.t("providerStatusDesc") });
     }
 
-    createHotkeyRow() {
+    createHotkeyRow(rowOptions = {}) {
         const controls = document.createElement("div");
         controls.className = "dait-hotkey-controls";
 
         const record = this.createSmallButton(this.getHotkeyLabel());
         record.classList.add("dait-hotkey-recorder");
 
-        const reset = this.createSmallButton(this.t("hotkeyReset"));
+        const reset = this.createSmallButton(this.t("hotkeyReset"), "link");
         reset.addEventListener("click", () => {
             this.setSetting("ui.polishHotkey", DEFAULT_SETTINGS.ui.polishHotkey);
             record.textContent = this.getHotkeyLabel();
@@ -2185,7 +2483,7 @@ module.exports = class DiscordAITranslator {
 
         controls.appendChild(record);
         controls.appendChild(reset);
-        return this.createRow(this.t("polishHotkey"), controls, { description: this.t("polishHotkeyDesc") });
+        return this.createRow(this.t("polishHotkey"), controls, { ...rowOptions, description: this.t("polishHotkeyDesc") });
     }
 
     createTranslationCacheStatsRow() {
@@ -2356,7 +2654,7 @@ module.exports = class DiscordAITranslator {
         block.className = "dait-google-settings";
 
         const header = document.createElement("div");
-        header.className = "dait-prompt-manager-header";
+        header.className = "dait-settings-subheading";
         const title = document.createElement("span");
         title.textContent = this.t("googleTranslateTitle");
         header.appendChild(title);
@@ -2665,7 +2963,7 @@ module.exports = class DiscordAITranslator {
         textarea.value = this.getSetting(path) ?? "";
         this.bindSettingsTextarea(textarea);
         textarea.addEventListener("change", () => this.preserveSettingsScroll(textarea, () => this.setSetting(path, textarea.value)));
-        return this.createRow(labelText, textarea, { ...rowOptions, wide: true });
+        return this.createRow(labelText, textarea, { ...rowOptions, stacked: true });
     }
 
     createSelectRow(path, labelText, options, rowOptions = {}) {
@@ -2678,12 +2976,24 @@ module.exports = class DiscordAITranslator {
             ? this.getCurrentChannelAutoTranslatePolicyMode(routeKey)
             : this.getSetting(path);
 
-        options.forEach(([value, text]) => {
+        // Entries are [value, text] pairs, or { label, options } for an <optgroup>.
+        const appendOption = (parent, [value, text]) => {
             const option = document.createElement("option");
             option.value = value;
             option.textContent = text;
             option.selected = String(value) === String(current);
-            select.appendChild(option);
+            parent.appendChild(option);
+        };
+        options.forEach(entry => {
+            if (entry && !Array.isArray(entry) && Array.isArray(entry.options)) {
+                const group = document.createElement("optgroup");
+                group.label = entry.label;
+                group.setAttribute("label", entry.label);
+                entry.options.forEach(option => appendOption(group, option));
+                select.appendChild(group);
+                return;
+            }
+            appendOption(select, entry);
         });
 
         select.addEventListener("change", () => {
@@ -2694,7 +3004,7 @@ module.exports = class DiscordAITranslator {
             }
             this.setSetting(path, select.value, routeKey !== null ? { routeKey } : undefined);
             if (path === "ui.language") {
-                const panel = select.closest(".dait-settings");
+                const panel = select.closest?.(".dait-settings");
                 if (panel) this.replaceSettingsPanelElement(panel);
             }
         });
@@ -2740,6 +3050,8 @@ module.exports = class DiscordAITranslator {
         customInput.type = "text";
         customInput.className = "dait-language-custom";
         customInput.placeholder = this.t("customLanguagePlaceholder");
+        customInput.title = this.t("customLanguageDesc");
+        customInput.setAttribute("aria-label", `${labelText}: ${this.t("customLanguage")}`);
         customInput.value = isCustom ? current : "";
         customInput.hidden = !isCustom;
 
@@ -2771,13 +3083,8 @@ module.exports = class DiscordAITranslator {
         controls.appendChild(select);
         controls.appendChild(customInput);
 
-        return this.createRow(
-            labelText,
-            controls,
-            {
-                description: `${descriptionText} ${this.t("customLanguageDesc")}`
-            }
-        );
+        // The longer note about custom language names is the custom field's tooltip.
+        return this.createRow(labelText, controls, { description: descriptionText, labelFor: select });
     }
 
     createPromptManager(kind) {
@@ -2975,27 +3282,205 @@ module.exports = class DiscordAITranslator {
         return this.createRow(this.t("localModelPreset"), select, { description: this.t("localModelPresetDesc") });
     }
 
+    // One settings row (UI-SPEC): a div with the label and a one-line description on the left and the control on
+    // the right. Options:
+    //   description      help text under the label (aria-describedby on the control)
+    //   disabledReason   locks the control and shows the reason instead of the description
+    //   checkbox         the control is a switch
+    //   stacked / wide   label above a full-width control, help below (long values: URLs, keys, prompts)
+    //   dependsOn        { path, label }: indented under its parent switch and disabled, with the reason, while it is off
+    //   labelFor         the element inside a composite control that the <label> names
+    //   ariaTarget       a composite control (radiogroup) named through aria-labelledby
+    // Only form fields get a <label for>; rows of action buttons use a plain text label, so a click on the row text
+    // never presses a button.
     createRow(labelText, control, options = {}) {
-        // A locked control always shows why it is locked in place of its usual description.
-        if (options.disabledReason) control.disabled = true;
-        const descriptionText = options.disabledReason || options.description;
-        const row = document.createElement("label");
-        row.className = "dait-settings-row";
-        if (options.checkbox) row.classList.add("dait-settings-row-checkbox");
-        if (options.wide) row.classList.add("dait-settings-row-wide");
+        const id = this.createSettingsControlId();
+        const stacked = Boolean(options.stacked || options.wide);
+        const classes = ["dait-settings-row"];
+        if (options.checkbox) classes.push("dait-settings-row-switch");
+        if (stacked) classes.push("dait-settings-row-stacked");
+        if (options.dependsOn) classes.push("dait-settings-row-dependent");
+        if (options.disabledReason) classes.push("dait-settings-row-inactive");
+        const row = document.createElement("div");
+        row.className = classes.join(" ");
+        row.id = `${id}-row`;
 
-        const label = document.createElement("span");
+        const labelTarget = options.labelFor || (this.isSettingsLabelableControl(control) ? control : null);
+        const ariaTarget = labelTarget ? null : options.ariaTarget || null;
+        const text = document.createElement("div");
+        text.className = "dait-row-text";
+        const label = document.createElement(labelTarget ? "label" : "span");
+        label.className = "dait-row-label";
+        label.id = `${id}-label`;
         label.textContent = labelText;
-
-        row.appendChild(label);
-        if (descriptionText) {
-            const description = document.createElement("p");
-            description.className = "dait-row-description";
-            description.textContent = descriptionText;
-            row.appendChild(description);
+        if (labelTarget) {
+            if (!labelTarget.id) labelTarget.id = id;
+            label.setAttribute("for", labelTarget.id);
         }
-        row.appendChild(control);
+        else if (ariaTarget) {
+            ariaTarget.setAttribute("aria-labelledby", label.id);
+        }
+        text.appendChild(label);
+
+        const descriptionText = options.disabledReason || options.description || "";
+        let description = null;
+        if (descriptionText || options.dependsOn) {
+            description = document.createElement("p");
+            description.className = "dait-row-description";
+            description.id = `${id}-desc`;
+            description.textContent = descriptionText;
+            description.hidden = !descriptionText;
+            text.appendChild(description);
+            (labelTarget || ariaTarget)?.setAttribute("aria-describedby", description.id);
+        }
+
+        const cell = document.createElement("div");
+        cell.className = "dait-row-control";
+        cell.appendChild(control);
+        row.appendChild(text);
+        row.appendChild(cell);
+
+        // Search reads these, so a temporary "turn on X first" text does not change what the row is found by.
+        row.dataset.daitSearchLabel = String(labelText || "");
+        row.dataset.daitSearchDescription = String(options.description || "");
+        if (control?.dataset?.daitPath) row.dataset.daitRowPath = control.dataset.daitPath;
+        row.__daitDescription = description;
+
+        if (options.disabledReason) {
+            // A locked control always shows why it is locked in place of its usual description.
+            row.dataset.daitLocked = "true";
+            this.getSettingsRowControls(control).forEach(node => { node.disabled = true; });
+        }
+        if (options.dependsOn?.path) {
+            row.dataset.daitDependsOn = options.dependsOn.path;
+            row.dataset.daitDependsOnLabel = String(options.dependsOn.label || "");
+            this.applySettingsRowDependency(row);
+        }
         return row;
+    }
+
+    isSettingsLabelableControl(control) {
+        const tag = String(control?.tagName || "").toUpperCase();
+        if (tag === "SELECT" || tag === "TEXTAREA") return true;
+        return tag === "INPUT" && String(control.type || "").toLowerCase() !== "hidden";
+    }
+
+    // Form controls and buttons in a row (or the element itself when it is one), in document order.
+    getSettingsRowControls(root) {
+        const found = [];
+        const isControl = node => ["INPUT", "SELECT", "TEXTAREA", "BUTTON"].includes(String(node?.tagName || "").toUpperCase());
+        const visit = node => {
+            if (!node) return;
+            if (isControl(node)) found.push(node);
+            for (const child of node.children || []) visit(child);
+        };
+        visit(root);
+        return found;
+    }
+
+    // A dependent row is usable only while its parent switch is on; otherwise it says which switch to turn on.
+    applySettingsRowDependency(row) {
+        const path = row?.dataset?.daitDependsOn;
+        if (!path) return;
+        const inactive = !this.getSetting(path);
+        const locked = row.dataset.daitLocked === "true";
+        row.classList?.toggle?.("dait-settings-row-inactive", inactive || locked);
+        if (locked) return;
+        this.getSettingsRowControls(row.children?.[1] || row).forEach(node => { node.disabled = inactive; });
+        const description = row.__daitDescription;
+        if (!description) return;
+        const text = inactive
+            ? this.t("settingsRequiresParent", { parent: row.dataset.daitDependsOnLabel || "" })
+            : String(row.dataset.daitSearchDescription || "");
+        description.textContent = text;
+        description.hidden = !text;
+    }
+
+    syncSettingsDependentRows(root = null, changedPath = "") {
+        const scope = root || (typeof document !== "undefined" ? document : null);
+        let rows = [];
+        try {
+            rows = [...(scope?.querySelectorAll?.(".dait-settings-row-dependent") || [])];
+        }
+        catch {
+            rows = [];
+        }
+        rows.forEach(row => {
+            if (changedPath && row.dataset?.daitDependsOn !== changedPath) return;
+            this.applySettingsRowDependency(row);
+        });
+    }
+
+    // A segmented control (role=radiogroup) for a short list of exclusive choices. Arrow keys move the choice.
+    // Labels that do not fit the shared control width make the row a stacked one.
+    createSegmentedRow(path, labelText, choices, rowOptions = {}) {
+        const group = document.createElement("div");
+        group.className = "dait-segmented";
+        group.setAttribute("role", "radiogroup");
+        group.dataset.daitPath = path;
+        group.dataset.daitControl = "segmented";
+        // A route-scoped control (the channel rule) stays bound to the channel it was built for.
+        const routeKey = typeof rowOptions.routeKey === "string" ? rowOptions.routeKey : null;
+        if (routeKey !== null) group.dataset.daitRouteKey = routeKey;
+        const current = routeKey !== null && path === "ui.currentChannelAutoTranslatePolicy"
+            ? this.getCurrentChannelAutoTranslatePolicyMode(routeKey)
+            : this.getSetting(path);
+
+        const choose = (value, focus = false) => {
+            this.syncSegmentedControl(group, value);
+            if (focus) this.focusSettingsElement(group.__daitSegmentedButtons.find(button => button.dataset.daitValue === value));
+            this.setSetting(path, value, routeKey !== null ? { routeKey } : undefined);
+        };
+        group.__daitSegmentedButtons = choices.map(([value, text]) => {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "dait-segmented-option";
+            button.setAttribute("role", "radio");
+            button.dataset.daitValue = String(value);
+            button.textContent = text;
+            button.title = text;
+            button.addEventListener("click", () => choose(String(value)));
+            group.appendChild(button);
+            return button;
+        });
+        group.addEventListener("keydown", event => {
+            const buttons = group.__daitSegmentedButtons.filter(button => !button.disabled);
+            if (!buttons.length) return;
+            const steps = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 };
+            const index = Math.max(0, buttons.findIndex(button => button.getAttribute("aria-checked") === "true"));
+            let next = null;
+            if (steps[event?.key]) next = (index + steps[event.key] + buttons.length) % buttons.length;
+            else if (event?.key === "Home") next = 0;
+            else if (event?.key === "End") next = buttons.length - 1;
+            if (next === null) return;
+            event.preventDefault?.();
+            choose(buttons[next].dataset.daitValue, true);
+        });
+        this.syncSegmentedControl(group, current);
+        const stacked = rowOptions.stacked ?? !this.segmentedLabelsFit(choices.map(([, text]) => text));
+        return this.createRow(labelText, group, { ...rowOptions, ariaTarget: group, stacked });
+    }
+
+    syncSegmentedControl(group, value) {
+        const buttons = group?.__daitSegmentedButtons || [...(group?.children || [])];
+        const wanted = String(value ?? "");
+        const matched = buttons.some(button => button.dataset?.daitValue === wanted);
+        buttons.forEach((button, index) => {
+            const checked = matched ? button.dataset?.daitValue === wanted : index === 0;
+            button.setAttribute("aria-checked", checked ? "true" : "false");
+            button.setAttribute("tabindex", checked ? "0" : "-1");
+        });
+        if (group?.dataset) group.dataset.daitValue = wanted;
+    }
+
+    // Rough text width at the segmented control's 13 px font: CJK characters are 1em, other characters ~0.55em.
+    segmentedLabelsFit(labels, controlWidth = SETTINGS_CONTROL_WIDTH) {
+        const count = labels.length || 1;
+        const available = (controlWidth - 4 - 2 * (count - 1)) / count - 10;
+        return labels.every(label => {
+            const width = [...String(label || "")].reduce((sum, char) => sum + (/[⺀-鿿豈-﫿＀-￯]/.test(char) ? 13 : 7.2), 0);
+            return width <= available;
+        });
     }
 
     getLanguageLabel(language) {
@@ -3237,9 +3722,18 @@ module.exports = class DiscordAITranslator {
                 control.checked = Boolean(value);
                 return;
             }
+            if (control.dataset?.daitControl === "segmented") {
+                this.syncSegmentedControl(control, value);
+                return;
+            }
 
             control.value = value ?? "";
         });
+        // The message-button select shows both stored settings; rows that depend on a switch follow it.
+        if (path === "ui.injectMessageButtons" || path === "ui.messageButtonVisibility") {
+            this.syncSettingControls("ui.messageButtonMode", this.getMessageButtonMode(), { includeActive: true });
+        }
+        this.syncSettingsDependentRows(null, path);
     }
 
     commitSettingsControls(root = null) {
@@ -12806,7 +13300,7 @@ module.exports = class DiscordAITranslator {
     }
 
     openTranslationSettingsFromChat(source = null) {
-        if (this.settings?.ui) this.settings.ui.settingsActiveTab = SETTINGS_SECTION_TRANSLATION;
+        if (this.settings?.ui) this.settings.ui.settingsActiveTab = SETTINGS_TAB_TRANSLATE;
         this.saveSettings({ debounce: true });
         return this.openQuickSettingsPanel("chat-line", source);
     }

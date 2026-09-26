@@ -6,7 +6,7 @@ module.exports = `
     box-sizing: border-box !important;
     margin-left: auto !important;
     margin-right: auto !important;
-    max-height: calc(100vh - 64px) !important;
+    max-height: min(760px, calc(100vh - 64px)) !important;
     max-width: min(920px, calc(100vw - 48px)) !important;
     width: min(920px, calc(100vw - 48px)) !important;
 }
@@ -44,6 +44,7 @@ module.exports = `
     --dait-warning: var(--text-warning, #f0b232);
     --dait-success: var(--text-positive, #4ec183);
     --dait-focus: var(--focus-primary, #00a8fc);
+    --dait-link: var(--text-link, #00a8fc);
     --dait-shadow: var(--elevation-high, 0 8px 24px rgba(0, 0, 0, 0.24));
     --dait-scrollbar-thumb: var(--scrollbar-thin-thumb, rgba(128, 132, 142, 0.45));
     --dait-scrollbar-thumb-hover: var(--scrollbar-auto-thumb, rgba(128, 132, 142, 0.7));
@@ -102,6 +103,7 @@ module.exports = `
     --dait-danger: var(--text-danger, #c4323a);
     --dait-warning: var(--text-warning, #9a5b00);
     --dait-success: var(--text-positive, #1a7545);
+    --dait-link: var(--text-link, #006ce7);
     --dait-hover: var(--background-modifier-hover, rgba(116, 124, 138, 0.14));
     --dait-selected: var(--background-modifier-selected, rgba(116, 124, 138, 0.24));
     --dait-shadow: var(--elevation-high, 0 8px 24px rgba(24, 36, 61, 0.14));

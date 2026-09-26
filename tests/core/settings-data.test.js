@@ -194,23 +194,26 @@ test("channel rule control stays bound to the channel it was built for (quick se
 
     const root = doc.createElement("div");
     root.appendChild(plugin.createCurrentChannelPolicyRow());
-    const [select] = root.querySelectorAll("[data-dait-path='ui.currentChannelAutoTranslatePolicy']");
-    assert.equal(select.value, "inherit");
+    // The channel rule is a segmented control (role=radiogroup) of three radio buttons.
+    const [rule] = root.querySelectorAll("[data-dait-path='ui.currentChannelAutoTranslatePolicy']");
+    assert.equal(rule.getAttribute("role"), "radiogroup");
+    const checked = () => rule.children.filter(button => button.getAttribute("aria-checked") === "true").map(button => button.dataset.daitValue);
+    assert.deepEqual(checked(), ["inherit"]);
 
     // Discord moves to channel B while the modal is open; closing it commits every control.
     route = "g1:B:";
     plugin.commitSettingsControls(root);
     assert.deepEqual(plugin.settings.ui.channelAutoTranslatePolicies, { "g1:B": { mode: "disabled" } });
-    assert.equal(select.dataset.daitRouteKey, "g1:A:");
+    assert.equal(rule.dataset.daitRouteKey, "g1:A:");
 
     // Editing the control now changes A, the channel it shows.
-    select.value = "enabled";
-    select.dispatch("change");
+    rule.children.find(button => button.dataset.daitValue === "enabled").dispatch("click");
+    assert.deepEqual(checked(), ["enabled"]);
     assert.deepEqual(plugin.settings.ui.channelAutoTranslatePolicies, { "g1:B": { mode: "disabled" }, "g1:A": { mode: "enabled" } });
 
     // A change for B made elsewhere does not repaint the A-bound control, so a later commit cannot copy it.
     plugin.setSetting("ui.currentChannelAutoTranslatePolicy", "inherit");
-    assert.equal(select.value, "enabled");
+    assert.deepEqual(checked(), ["enabled"]);
     assert.deepEqual(plugin.settings.ui.channelAutoTranslatePolicies, { "g1:A": { mode: "enabled" } });
     plugin.commitSettingsControls(root);
     assert.deepEqual(plugin.settings.ui.channelAutoTranslatePolicies, { "g1:A": { mode: "enabled" } });
@@ -362,8 +365,9 @@ test("reset: the button keeps credentials, says so, and open controls cannot com
     mask.dataset.daitPath = "ui.maskTranslations";
     mask.checked = true;
 
-    const sidebar = plugin.createSettingsSidebar(null);
-    const [reset] = sidebar.querySelectorAll(".dait-settings-sidebar-reset");
+    // Reset sits in the danger zone at the end of the data tab.
+    const dangerZone = plugin.createSettingsDangerZone();
+    const [reset] = dangerZone.querySelectorAll(".dait-settings-reset-button");
     reset.dispatch("click");
     assert.equal(confirms.length, 1);
     assert.match(confirms[0], /API Key/);
