@@ -693,7 +693,7 @@ class TranslationScheduler {
             plugin.discardAutoTranslationProviderWork(key, { retryMs: retryAfterMs, skipCacheKeys: options.skipCacheKeys });
             plugin.setApiRuntimeStatus("translation", "failed", plugin.t("apiStatusFailed"), plugin.formatError(error));
         }
-        else if (type === "quota" || type === "auth") {
+        else if ((type === "quota" || type === "auth") && !plugin.isGoogleTranslatePoolServing?.(error)) {
             plugin.setApiRuntimeStatus("translation", "failed", plugin.t("apiStatusFailed"), plugin.formatError(error));
         }
         plugin.notifyTranslationNeedsAttention?.(error, key);
@@ -12618,9 +12618,14 @@ module.exports = class DiscordAITranslator {
         if (attention === "config-key") return { action: "settings", reason: attention, message: this.t("translationErrorMissingKey") };
         if (attention === "endpoint") return { action: "settings", reason: attention, message: this.t(API_ENDPOINT_ERROR_MESSAGE_KEYS[error.code]) };
         if (attention === "auth") {
-            return { action: "settings", reason: attention, message: `${this.t("translationErrorAuth")}${this.formatTranslationErrorStatus(error)}` };
+            // Some rejections pause the provider like a bad key, but the key is fine: say what is wrong.
+            const rejection = this.getTranslationRejectionMessageKey(error);
+            const text = rejection ? this.t(rejection).replace(/[。.]\s*$/, "") : this.t("translationErrorAuth");
+            return { action: "settings", reason: attention, message: `${text}${this.formatTranslationErrorStatus(error)}` };
         }
-        if (attention === "quota") return { action: "settings", reason: attention, message: this.t("translationErrorQuota") };
+        if (attention === "quota") {
+            return { action: "settings", reason: attention, message: `${this.t("translationErrorQuota")}${this.formatTranslationErrorStatus(error)}` };
+        }
         if (attention === "local-unavailable") {
             const host = this.getTranslationEndpointHost();
             return {
@@ -12630,6 +12635,16 @@ module.exports = class DiscordAITranslator {
             };
         }
         const type = this.getAutoTranslationFailureType(error);
+        if (error?.googleTranslateKeysCooling) {
+            // Say when the pool is back. A key cooling for hours (daily limit, rejected key) is not a
+            // short wait: the settings can add a key or reset the cooldowns.
+            const until = Number(error.googleTranslateCooldownUntil || 0);
+            const waitMs = Math.max(0, until - Date.now());
+            const message = this.formatGoogleTranslateCooldownMessage(until).replace(/[。.]\s*$/, "");
+            return waitMs > AUTO_TRANSLATE_FAILURE_MAX_TTL
+                ? { action: "settings", reason: type, message }
+                : { action: "wait", reason: type, waitMs, message };
+        }
         if (type === "rate-limit") {
             const waitMs = this.getTranslationErrorWaitMs(error);
             return {
@@ -12644,10 +12659,19 @@ module.exports = class DiscordAITranslator {
         return { action: "retry", reason: type, message: this.t("translationFailedInline", { error: this.formatError(error) }) };
     }
 
+    // The HTTP status and, for Baidu (which answers HTTP 200), its own error code.
     formatTranslationErrorStatus(error) {
-        const status = Number(error?.status || 0);
-        if (!status) return "";
-        return this.getLocale() === "en" ? ` (${status})` : `（${status}）`;
+        const codes = [Number(error?.status || 0) || "", String(error?.baiduErrorCode || "")].filter(Boolean);
+        if (!codes.length) return "";
+        const text = codes.join(", ");
+        return this.getLocale() === "en" ? ` (${text})` : `（${text}）`;
+    }
+
+    getTranslationRejectionMessageKey(error) {
+        if (error?.providerLanguageUnsupported) return "errorLanguageUnsupported";
+        if (error?.providerIpRejected) return "errorIpNotAllowed";
+        if (error?.providerRequestRejected) return "errorProviderRequestRejected";
+        return "";
     }
 
     getTranslationEndpointHost() {
@@ -12687,7 +12711,9 @@ module.exports = class DiscordAITranslator {
         if (missing) return `config-${missing}`;
         if (Object.hasOwn(API_ENDPOINT_ERROR_MESSAGE_KEYS, error?.code)) return "endpoint";
         const type = this.getAutoTranslationFailureType(error);
-        return ["auth", "quota", "local-unavailable"].includes(type) ? type : "";
+        if (!["auth", "quota", "local-unavailable"].includes(type)) return "";
+        // One Google key failing is not the user's problem while another key keeps translating.
+        return this.isGoogleTranslatePoolServing(error) ? "" : type;
     }
 
     isTranslationAttentionError(error) {
@@ -12707,7 +12733,7 @@ module.exports = class DiscordAITranslator {
     // its settings change; each error type is announced once per episode, whatever the toast switch says.
     rememberTranslationAttentionNotice(error, providerKey = "", type = this.getTranslationAttentionType(error)) {
         if (!type) return false;
-        const key = String(providerKey || this.getTranslationAttentionProviderKey(error));
+        const key = this.getTranslationAttentionEpisodeKey(providerKey || this.getTranslationAttentionProviderKey(error));
         const notices = this.autoTranslationProviderNoticeAt;
         if (!notices?.set) return false;
         const episode = notices.get(key);
@@ -12728,7 +12754,13 @@ module.exports = class DiscordAITranslator {
 
     endTranslationAttentionEpisode(providerKey) {
         if (!providerKey || !this.autoTranslationProviderNoticeAt?.size) return false;
-        return this.autoTranslationProviderNoticeAt.delete(providerKey);
+        return this.autoTranslationProviderNoticeAt.delete(this.getTranslationAttentionEpisodeKey(providerKey));
+    }
+
+    // Google errors carry the key that failed; for the user the whole key pool is one provider.
+    getTranslationAttentionEpisodeKey(providerKey) {
+        const key = String(providerKey || "");
+        return key.startsWith("googleCloud\n---\n") ? this.getGoogleTranslateProviderKey() : key;
     }
 
     createTranslationErrorButton(labelKey, titleKey, run) {
@@ -15183,7 +15215,9 @@ module.exports = class DiscordAITranslator {
         else if (this.isNetworkError(error)) message = this.t("errorNetwork");
         else if (error?.baiduApiError) message = this.t("errorProviderRequestRejected");
         else if (rawMessage === "API_ERROR") {
-            message = status >= 400 && status < 500 ? this.t("errorProviderRequestRejected") : status ? `API ${status}` : this.t("unknownError");
+            // A wrong base URL (404/405) or model name is fixed in the endpoint and model settings.
+            if (status === 404 || status === 405 || error?.providerModelNotFound) message = this.t("errorEndpointNotFound");
+            else message = status >= 400 && status < 500 ? this.t("errorProviderRequestRejected") : status ? `API ${status}` : this.t("unknownError");
         }
         else if (Object.hasOwn(internalMessageKeys, rawMessage)) message = this.t(internalMessageKeys[rawMessage]);
         // Any other ALL_CAPS code is internal; never show it to the user.
@@ -15309,6 +15343,11 @@ module.exports = class DiscordAITranslator {
     reserveGoogleTranslateRequest(...args) { return this.providerLayer.reserveGoogleTranslateRequest(...args); }
     createGoogleTranslateQuotaError(...args) { return this.providerLayer.createGoogleTranslateQuotaError(...args); }
     createGoogleTranslateNoKeyError(...args) { return this.providerLayer.createGoogleTranslateNoKeyError(...args); }
+    getGoogleTranslateCoolingKeyReadyAt(...args) { return this.providerLayer.getGoogleTranslateCoolingKeyReadyAt(...args); }
+    createGoogleTranslateCooldownError(...args) { return this.providerLayer.createGoogleTranslateCooldownError(...args); }
+    formatGoogleTranslateCooldownMessage(...args) { return this.providerLayer.formatGoogleTranslateCooldownMessage(...args); }
+    formatGoogleTranslateKeyError(...args) { return this.providerLayer.formatGoogleTranslateKeyError(...args); }
+    isGoogleTranslatePoolServing(...args) { return this.providerLayer.isGoogleTranslatePoolServing(...args); }
     getGoogleTranslateQuotaRetryAfterMs(...args) { return this.providerLayer.getGoogleTranslateQuotaRetryAfterMs(...args); }
     getGoogleTranslateDailyQuotaRetryAfterMs(...args) { return this.providerLayer.getGoogleTranslateDailyQuotaRetryAfterMs(...args); }
     releaseGoogleTranslateRequestReservation(...args) { return this.providerLayer.releaseGoogleTranslateRequestReservation(...args); }
@@ -15362,6 +15401,7 @@ module.exports = class DiscordAITranslator {
     fetchApiResponseText(...args) { return this.providerLayer.fetchApiResponseText(...args); }
     abortActiveApiRequests(...args) { return this.providerLayer.abortActiveApiRequests(...args); }
     annotateGoogleTranslateApiError(...args) { return this.providerLayer.annotateGoogleTranslateApiError(...args); }
+    annotateChatCompletionApiError(...args) { return this.providerLayer.annotateChatCompletionApiError(...args); }
     getModelRequestKey(...args) { return this.providerLayer.getModelRequestKey(...args); }
     testApiConnection(...args) { return this.providerLayer.testApiConnection(...args); }
     buildConnectionTestRequest(...args) { return this.providerLayer.buildConnectionTestRequest(...args); }
@@ -15417,6 +15457,7 @@ module.exports = class DiscordAITranslator {
     getFullConfigTranslationCacheKey(...args) { return this.translationCacheStore.getFullConfigTranslationCacheKey(...args); }
     getPreMessageIdentityTranslationCacheKey(...args) { return this.translationCacheStore.getPreMessageIdentityTranslationCacheKey(...args); }
     buildTranslationCacheKey(...args) { return this.translationCacheStore.buildTranslationCacheKey(...args); }
+    getServedModelTranslationCacheKey(...args) { return this.translationCacheStore.getServedModelTranslationCacheKey(...args); }
     getCompactTranslationCacheConfigParts(...args) { return this.translationCacheStore.getCompactTranslationCacheConfigParts(...args); }
     getCacheConfigSnapshot(...args) { return this.translationCacheStore.getCacheConfigSnapshot(...args); }
     getTranslationCacheValueCached(...args) { return this.translationCacheStore.getTranslationCacheValueCached(...args); }

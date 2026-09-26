@@ -236,6 +236,23 @@ class TranslationCacheStore {
         ].join("\n---\n");
     }
 
+    // A queued item's key names the local model detected when it was queued, but the request
+    // re-detects the model first. Its result belongs under the model that answered, so the model
+    // part of the key is swapped for the currently served one; everything else stays.
+    getServedModelTranslationCacheKey(cacheKey, options = {}) {
+        const key = String(cacheKey || "");
+        const config = this.plugin.getEffectiveTaskConfig("translation", options.configOverrides);
+        if (!key || !this.plugin.shouldAutoDetectLocalProviderModel(config, DEFAULT_SETTINGS.translation || {})) return key;
+        const parts = key.split("\n---\n");
+        const index = parts.findIndex((part, position) => position > 0 && part.startsWith("model:") && parts[position - 1].startsWith("endpoint:"));
+        if (index < 0) return key;
+        const servedModel = this.plugin.getCacheConfigSnapshot("translation", config, { servedModel: true }).model;
+        const servedPart = `model:${this.plugin.getStrongTextFingerprint(servedModel)}`;
+        if (parts[index] === servedPart) return key;
+        parts[index] = servedPart;
+        return parts.join("\n---\n");
+    }
+
     getCompactTranslationCacheConfigParts(config) {
         return [
             `provider:${this.plugin.getStrongTextFingerprint(config.provider)}`,

@@ -198,6 +198,176 @@ test("Google per-minute limits are rate limits with a short cooldown; daily and 
     assert.ok(cooldownUntil > before && cooldownUntil <= Date.now() + 120000, String(cooldownUntil - before));
 });
 
+// prov-6: Google answers a mistyped key with HTTP 400, not 401/403.
+test("a Google key Google calls invalid (HTTP 400 API_KEY_INVALID) is an auth failure that cools the key for long", () => {
+    for (const locale of ["zh-CN", "en"]) {
+        const plugin = createDirectPlugin("googleCloud");
+        plugin.settings.ui.language = locale;
+        plugin.saveSettings = () => true;
+        for (const body of [
+            { error: { code: 400, message: "API key not valid. Please pass a valid API key.", status: "INVALID_ARGUMENT", details: [{ "@type": "type.googleapis.com/google.rpc.ErrorInfo", reason: "API_KEY_INVALID", domain: "googleapis.com" }] } },
+            { error: { code: 400, message: "API key expired. Please renew the API key.", status: "INVALID_ARGUMENT", details: [{ reason: "API_KEY_EXPIRED" }] } }
+        ]) {
+            const error = googleApiError(plugin, 400, body);
+            assert.equal(plugin.getAutoTranslationFailureType(error), "auth", body.error.message);
+            assert.equal(plugin.formatError(error), `${plugin.t("errorUnauthorized")} (400)`);
+            const before = Date.now();
+            plugin.markGoogleTranslateKeyFailure(error.googleTranslateApiKey, error);
+            assert.ok(plugin.settings.googleTranslate.keys[0].cooldownUntil >= before + 29 * 60 * 1000, "cools like a rejected key");
+            plugin.settings.googleTranslate.keys[0].cooldownUntil = 0;
+        }
+        // Other 400s stay client errors.
+        const badRequest = googleApiError(plugin, 400, { error: { code: 400, message: "Invalid Value", status: "INVALID_ARGUMENT", errors: [{ reason: "invalid" }] } });
+        assert.equal(plugin.getAutoTranslationFailureType(badRequest), "client");
+    }
+});
+
+const GOOGLE_PER_MINUTE_BODY = { error: { code: 429, status: "RESOURCE_EXHAUSTED", message: "Quota exceeded for quota metric 'v2 and v3 general model characters' and limit 'v2 and v3 general model characters per minute per user' of service 'translate.googleapis.com'.", errors: [{ reason: "rateLimitExceeded" }] } };
+const GOOGLE_MONTHLY_BODY = { error: { code: 403, status: "RESOURCE_EXHAUSTED", message: "Quota exceeded for quota metric 'Characters per month'", errors: [{ reason: "quotaExceeded" }] } };
+
+function createGooglePoolPlugin(poolText, locale = "zh-CN") {
+    const plugin = new Plugin();
+    plugin.settings.ui.language = locale;
+    plugin.settings.ui.showAutoTranslateToasts = false;
+    plugin.settings.translation.provider = "googleCloud";
+    plugin.saveSettings = () => true;
+    plugin.setSetting("googleTranslate.keyPoolText", poolText, { save: false });
+    plugin.toasts = [];
+    plugin.showToast = (text, type) => plugin.toasts.push({ text, type });
+    return plugin;
+}
+
+// Sends one auto request through the real request path and lets it fail the way the queue would see it.
+async function failGoogleRequest(plugin, status, body) {
+    plugin.fetchApiResponseText = async (_endpoint, request) => {
+        const error = Object.assign(new Error("API_ERROR"), { status, retryAfterMs: 0 });
+        plugin.annotateGoogleTranslateApiError(error, JSON.stringify(body), request);
+        throw error;
+    };
+    const options = plugin.getAutoTranslationOptions();
+    let thrown = null;
+    try {
+        await plugin.runModelTask("translation", "hola amigos", { configOverrides: options.configOverrides, mode: "auto" });
+    }
+    catch (error) {
+        thrown = error;
+    }
+    assert.ok(thrown, "the request fails");
+    plugin.markAutoTranslationProviderFailure(options, thrown);
+    plugin.showAutoTranslateError(thrown);
+    return thrown;
+}
+
+// prov-2 / X1: a key that only waits out a per-minute limit is not "monthly quota exhausted".
+test("while the only Google key cools down after a rate limit, requests wait instead of reporting the monthly quota", async () => {
+    for (const locale of ["zh-CN", "en"]) {
+        const plugin = createGooglePoolPlugin("only|AIza-fake-only|450000", locale);
+        const limited = await failGoogleRequest(plugin, 429, GOOGLE_PER_MINUTE_BODY);
+        assert.equal(plugin.getAutoTranslationFailureType(limited), "rate-limit");
+        const cooldownUntil = plugin.settings.googleTranslate.keys[0].cooldownUntil;
+        assert.ok(cooldownUntil > Date.now());
+
+        let next = null;
+        try { plugin.buildModelRequest("translation", "second message"); }
+        catch (error) { next = error; }
+        assert.ok(next, "no key can take the request yet");
+        assert.equal(plugin.getAutoTranslationFailureType(next), "rate-limit", locale);
+        assert.equal(Boolean(next.googleTranslateQuotaExceeded), false);
+        assert.equal(next.providerKey, plugin.getGoogleTranslateProviderKey(), "the whole pool waits");
+        assert.ok(next.retryAfterMs > 0 && next.retryAfterMs <= cooldownUntil - Date.now() + 1000, String(next.retryAfterMs));
+        const monthly = plugin.t("googleTranslateQuotaExceeded");
+        assert.notEqual(plugin.formatError(next), monthly);
+        assert.match(plugin.formatError(next), locale === "en" ? /cooling down/ : /冷却/);
+
+        const presentation = plugin.getTranslationErrorPresentation(next);
+        assert.equal(presentation.action, "wait", JSON.stringify(presentation));
+        assert.match(presentation.message, locale === "en" ? /cooling down/ : /冷却/);
+
+        plugin.markAutoTranslationProviderFailure(plugin.getAutoTranslationOptions(), next);
+        plugin.showAutoTranslateError(next);
+        assert.deepEqual(plugin.toasts, [], "a short wait needs no attention toast");
+        assert.notEqual(plugin.getApiStatus("translation").state, "failed");
+        const gate = plugin.getAutoTranslationProviderFailure(plugin.getAutoTranslationOptions());
+        assert.ok(gate, "queued items wait for the pool");
+        assert.ok(gate.retryAt <= cooldownUntil + 1000, "no longer than the key's own cooldown");
+    }
+
+    // A key that is really over its monthly limit still reports the quota.
+    const full = createGooglePoolPlugin("full|AIza-fake-full|1000");
+    full.markGoogleTranslateKeyUsage("AIza-fake-full", 1000);
+    assert.throws(() => full.buildModelRequest("translation", "hello"), error => error.googleTranslateQuotaExceeded === true
+        && full.getAutoTranslationFailureType(error) === "quota");
+
+    // A key cooling until tomorrow (daily limit) says when it is back and points to the settings.
+    const daily = createGooglePoolPlugin("daily|AIza-fake-daily|450000");
+    daily.settings.googleTranslate.keys[0].cooldownUntil = Date.now() + 10 * 60 * 60 * 1000;
+    assert.throws(() => daily.buildModelRequest("translation", "hello"), error => {
+        const presentation = daily.getTranslationErrorPresentation(error);
+        return error.googleTranslateKeysCooling === true && presentation.action === "settings" && /冷却/.test(presentation.message);
+    });
+});
+
+// CL-4: the pool is one provider for the user: one notice per episode, and only when no key is left.
+test("a Google key pool raises one attention toast, only when no key in the pool can serve", async () => {
+    const plugin = createGooglePoolPlugin("one|AIza-fake-one|450000\ntwo|AIza-fake-two|450000\nthree|AIza-fake-three|450000");
+    const first = await failGoogleRequest(plugin, 403, GOOGLE_MONTHLY_BODY);
+    assert.equal(plugin.getAutoTranslationFailureType(first), "quota");
+    assert.deepEqual(plugin.toasts, [], "the pool rotates to the next key and keeps translating");
+    assert.notEqual(plugin.getApiStatus("translation").state, "failed");
+    assert.notEqual(plugin.getTranslationErrorPresentation(first).action, "settings");
+
+    await failGoogleRequest(plugin, 403, GOOGLE_MONTHLY_BODY);
+    assert.deepEqual(plugin.toasts, []);
+    const last = await failGoogleRequest(plugin, 403, GOOGLE_MONTHLY_BODY);
+    assert.equal(plugin.toasts.length, 1, JSON.stringify(plugin.toasts));
+    assert.match(plugin.toasts[0].text, /额度/);
+    assert.equal(plugin.getTranslationErrorPresentation(last).action, "settings");
+    assert.equal(plugin.getApiStatus("translation").state, "failed");
+
+    // Every key is cooling now; the next requests only wait and stay quiet.
+    let cooling = null;
+    try { plugin.buildModelRequest("translation", "hello"); }
+    catch (error) { cooling = error; }
+    plugin.markAutoTranslationProviderFailure(plugin.getAutoTranslationOptions(), cooling);
+    plugin.showAutoTranslateError(cooling);
+    assert.equal(plugin.toasts.length, 1);
+
+    // One success ends the pool's episode, whichever key it used.
+    plugin.settings.googleTranslate.keys = plugin.settings.googleTranslate.keys.map(key => ({ ...key, cooldownUntil: 0 }));
+    plugin.fetchApiResponseText = async () => JSON.stringify({ data: { translations: [{ translatedText: "hola" }] } });
+    await plugin.runModelTask("translation", "hello", { configOverrides: plugin.getAutoTranslationOptions().configOverrides, mode: "auto" });
+    assert.equal(plugin.autoTranslationProviderNoticeAt.size, 0);
+});
+
+// X4: an orphaned request is aborted, but Google already received (and counts) its characters.
+test("an aborted Google request that was already sent still counts its characters", async t => {
+    const plugin = createGooglePoolPlugin("main|AIza-fake-main|450000");
+    const text = "привет мир это тест";
+    let fetchCalls = 0;
+    t.mock.method(globalThis, "fetch", (_url, options) => new Promise((_resolve, reject) => {
+        fetchCalls++;
+        options.signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true });
+    }));
+    const options = plugin.getAutoTranslationOptions();
+    const expectedChars = plugin.buildModelRequest("translation", text).request.googleTranslate.charCount;
+
+    const controller = new AbortController();
+    const running = plugin.runModelTask("translation", text, { configOverrides: options.configOverrides, mode: "auto", signal: controller.signal });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(fetchCalls, 1);
+    controller.abort();
+    await assert.rejects(running, error => plugin.isRequestCancelled(error));
+    assert.equal(plugin.settings.googleTranslate.keys[0].usedChars, expectedChars);
+    assert.equal(plugin.getGoogleTranslateReservedChars(plugin.settings.googleTranslate.keys[0]), 0, "the reservation is released");
+
+    // A request cancelled before it was sent costs nothing.
+    const early = new AbortController();
+    early.abort();
+    await assert.rejects(plugin.runModelTask("translation", "другой текст", { configOverrides: options.configOverrides, mode: "auto", signal: early.signal }), error => plugin.isRequestCancelled(error));
+    assert.equal(fetchCalls, 1);
+    assert.equal(plugin.settings.googleTranslate.keys[0].usedChars, expectedChars);
+});
+
 test("resetting Google stats and a successful API test clear a key's cooldown; the stats row shows it", async () => {
     const plugin = createDirectPlugin("googleCloud");
     plugin.showToast = () => {};
@@ -222,6 +392,38 @@ test("resetting Google stats and a successful API test clear a key's cooldown; t
     assert.deepEqual(sent, ["AIza-fake-1"]);
     assert.equal(toasts.at(-1)?.type, "success", JSON.stringify(toasts));
     assert.equal(plugin.settings.googleTranslate.keys[0].cooldownUntil, 0);
+});
+
+// prov-3: the API test uses a key that auto-translation can use; a cooling key only when all are cooling.
+test("the Google API test prefers a key that is not cooling down and names the key that failed", async () => {
+    const plugin = createGooglePoolPlugin("main|AIza-fake-main|450000\nbackup|AIza-fake-backup|450000", "en");
+    const mainCooldown = Date.now() + 10 * 60 * 60 * 1000;
+    plugin.settings.googleTranslate.keys[0].cooldownUntil = mainCooldown;
+    const sent = [];
+    let failWith = null;
+    plugin.fetchApiResponseText = async (_endpoint, request) => {
+        sent.push(request.headers["X-Goog-Api-Key"]);
+        if (failWith) {
+            const error = Object.assign(new Error("API_ERROR"), { status: failWith.status, retryAfterMs: 0 });
+            plugin.annotateGoogleTranslateApiError(error, JSON.stringify(failWith.body), request);
+            throw error;
+        }
+        return JSON.stringify({ data: { translations: [{ translatedText: "hola" }] } });
+    };
+    await plugin.testApiConnection("translation", null, null);
+    assert.deepEqual(sent, ["AIza-fake-backup"]);
+    assert.equal(plugin.toasts.at(-1)?.type, "success", JSON.stringify(plugin.toasts));
+    assert.equal(plugin.settings.googleTranslate.keys[0].cooldownUntil, mainCooldown, "the cooling key is left alone");
+
+    failWith = { status: 403, body: { error: { code: 403, message: "Daily Limit Exceeded", errors: [{ reason: "dailyLimitExceeded" }] } } };
+    const statusElement = { dataset: { daitKind: "translation" } };
+    await plugin.testApiConnection("translation", null, statusElement);
+    assert.deepEqual(sent, ["AIza-fake-backup", "AIza-fake-backup"]);
+    const failure = plugin.toasts.at(-1);
+    assert.equal(failure.type, "error");
+    assert.match(failure.text, /backup/, failure.text);
+    assert.match(plugin.getApiStatus("translation").message, /backup/);
+    assert.equal(JSON.stringify(plugin.toasts).includes("AIza"), false, "never the key itself");
 });
 
 test("a Google key removed from the pool and added back keeps this month's usage", () => {
@@ -309,6 +511,51 @@ test("Baidu error codes map to provider-level failures with friendly messages", 
     assert.equal(plugin.parseBaiduTranslateResponse(JSON.stringify({ error_code: "52000", trans_result: [{ src: "a", dst: "b" }] })), "b");
 });
 
+// prov-1 / X2: Baidu's IP, language and parameter errors pause the provider like a bad key, but the
+// chat line, the one attention toast and the API status must name the real problem and the code.
+test("Baidu IP, language and parameter errors say what is wrong, with the Baidu code, on the line, toast and API status", () => {
+    const expected = {
+        "58000": "errorIpNotAllowed",
+        "58001": "errorLanguageUnsupported",
+        "54000": "errorProviderRequestRejected"
+    };
+    for (const locale of ["zh-CN", "en"]) {
+        for (const [code, key] of Object.entries(expected)) {
+            const plugin = createDirectPlugin("baidu");
+            plugin.settings.ui.language = locale;
+            plugin.settings.ui.showAutoTranslateToasts = false;
+            plugin.saveSettings = () => true;
+            const toasts = [];
+            plugin.showToast = (text, type) => toasts.push({ text, type });
+            const specific = plugin.t(key).replace(/[。.]$/, "");
+            const error = plugin.createBaiduTranslateError({ error_code: code, error_msg: "RAW BAIDU MESSAGE" });
+
+            const presentation = plugin.getTranslationErrorPresentation(error);
+            assert.equal(presentation.action, "settings", `${locale} ${code}`);
+            assert.ok(presentation.message.includes(specific), `${locale} ${code}: ${presentation.message}`);
+            assert.ok(presentation.message.includes(code), `${locale} ${code}: ${presentation.message}`);
+            assert.equal(presentation.message.includes(plugin.t("translationErrorAuth")), false, `${locale} ${code}: ${presentation.message}`);
+
+            plugin.markAutoTranslationProviderFailure(plugin.getAutoTranslationOptions(), error);
+            plugin.showAutoTranslateError(error);
+            assert.equal(toasts.length, 1, JSON.stringify(toasts));
+            assert.ok(toasts[0].text.includes(specific) && toasts[0].text.includes(code), `${locale} ${code}: ${toasts[0].text}`);
+            assert.equal(toasts[0].text.includes(plugin.t("translationErrorAuth")), false);
+
+            const status = plugin.getApiStatus("translation");
+            assert.equal(status.state, "failed");
+            assert.ok(status.message.includes(plugin.t(key)) && status.message.includes(code), `${locale} ${code}: ${status.message}`);
+        }
+        // A bad app id or key still says so, now with the Baidu code.
+        const plugin = createDirectPlugin("baidu");
+        plugin.settings.ui.language = locale;
+        const badKey = plugin.getTranslationErrorPresentation(plugin.createBaiduTranslateError({ error_code: "52003" }));
+        assert.ok(badKey.message.startsWith(plugin.t("translationErrorAuth")) && badKey.message.includes("52003"), badKey.message);
+        const quota = plugin.getTranslationErrorPresentation(plugin.createBaiduTranslateError({ error_code: "54004" }));
+        assert.ok(quota.message.startsWith(plugin.t("translationErrorQuota")) && quota.message.includes("54004"), quota.message);
+    }
+});
+
 test("HTTP errors: 402 is quota; digits inside a body never decide the type", () => {
     const plugin = createDirectPlugin("deepl");
     assert.equal(plugin.getAutoTranslationFailureType(Object.assign(new Error("API_ERROR"), { status: 402 })), "quota");
@@ -330,6 +577,42 @@ test("HTTP errors: 402 is quota; digits inside a body never decide the type", ()
     for (const locale of ["zh-CN", "en"]) {
         plugin.settings.ui.language = locale;
         assert.match(plugin.formatError(Object.assign(new Error("API_ERROR"), { status: 402 })), locale === "en" ? /quota|balance/i : /额度|余额/);
+    }
+});
+
+// prov-7: a wrong base URL or model name is not an account-permission problem.
+test("a 404 or an unknown model points to the endpoint and model, other 4xx keep the generic text", async t => {
+    for (const locale of ["zh-CN", "en"]) {
+        const plugin = new Plugin();
+        plugin.settings.ui.language = locale;
+        plugin.settings.translation.apiKey = "sk-fake-1";
+        const built = plugin.buildModelRequest("translation", "hello");
+        const send = async (status, body) => {
+            t.mock.method(globalThis, "fetch", async () => ({ ok: false, status, headers: { get: () => null }, text: async () => body }));
+            try {
+                await plugin.fetchApiResponseText(built.endpoint, built.request);
+            }
+            catch (error) {
+                return error;
+            }
+            finally {
+                globalThis.fetch.mock.restore();
+            }
+            throw new Error("the request did not fail");
+        };
+        const notFoundText = plugin.t("errorEndpointNotFound");
+        for (const [status, body] of [
+            [404, "{\"error\":{\"message\":\"Not Found\"}}"],
+            [405, "Method Not Allowed"],
+            [400, "{\"error\":{\"message\":\"Model Not Exist\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"invalid_request_error\"}}"],
+            [404, "{\"error\":{\"message\":\"The model `fake-model` does not exist or you do not have access to it.\",\"type\":\"invalid_request_error\",\"code\":\"model_not_found\"}}"]
+        ]) {
+            const text = plugin.formatError(await send(status, body));
+            assert.ok(text.startsWith(notFoundText), `${locale} ${status}: ${text}`);
+            assert.ok(text.includes(String(status)), text);
+        }
+        const other = plugin.formatError(await send(400, "{\"error\":{\"message\":\"This model's maximum context length is 8192 tokens\",\"type\":\"invalid_request_error\"}}"));
+        assert.ok(other.startsWith(plugin.t("errorProviderRequestRejected")), `${locale}: ${other}`);
     }
 });
 
@@ -370,6 +653,61 @@ test("the cache key follows the model the local server actually serves", () => {
     restarted.loadTranslationCache();
     assert.equal(restarted.getTranslationCacheKey("hello", restarted.getAutoTranslationOptions()), second);
     assert.equal(JSON.stringify(stored).includes("Qwen3-8B.gguf"), true);
+});
+
+// prov-4: the cached-draw memo remembers hits by cache key; a new served model retires them.
+test("a newly detected local model stops the cached-draw memo from drawing the old model's text", () => {
+    const plugin = new Plugin();
+    plugin.scheduleTranslationCachePersist = () => {};
+    Object.assign(plugin.settings.translation, { provider: "sakuraLocal", endpoint: LOCAL_ENDPOINT, apiKey: "", model: "local-model" });
+    const config = plugin.settings.translation;
+    plugin.setCachedLocalProviderDetectedModel(config, "HY-MT1.5-1.8B.gguf");
+    const key = plugin.getTranslationCacheKey("bonjour", plugin.getAutoTranslationOptions());
+    plugin.setTranslationCache(key, "old model text");
+    const memoKey = "route|message-1|message|fake-hash";
+    plugin.rememberCachedDrawMemoEntry(memoKey, { result: "hit", cacheKey: key, translated: "old model text", keys: [key] });
+    assert.ok(plugin.getCachedDrawMemoEntry(memoKey), "the memo serves the hit while the model is the same");
+
+    plugin.setCachedLocalProviderDetectedModel(config, "HY-MT1.5-1.8B.gguf");
+    assert.ok(plugin.getCachedDrawMemoEntry(memoKey), "re-detecting the same model keeps the memo");
+
+    plugin.setCachedLocalProviderDetectedModel(config, "Qwen3-8B.gguf");
+    assert.equal(plugin.getCachedDrawMemoEntry(memoKey), null);
+});
+
+// prov-5: a queued item's key names the model detected when it was queued; the request re-detects.
+test("a local result is cached under the model that answered, not the one detected when the item was queued", async () => {
+    const plugin = new Plugin();
+    plugin.scheduleTranslationCachePersist = () => {};
+    Object.assign(plugin.settings.translation, { provider: "sakuraLocal", endpoint: LOCAL_ENDPOINT, apiKey: "", model: "local-model" });
+    const config = plugin.settings.translation;
+    // Model A was restored from the cache file; the next request re-detects and finds model B.
+    plugin.restoreLocalProviderDetectedModels([{ key: plugin.getLocalProviderModelDetectionCacheKey(config, {}), model: "HY-MT1.5-1.8B.gguf" }]);
+    const text = "bonjour tout le monde, comment allez-vous";
+    const options = plugin.getAutoTranslationOptions();
+    const queuedKey = plugin.getTranslationCacheKey(text, options);
+
+    plugin.fetchLocalProviderDetectedModel = async () => "Qwen3-8B.gguf";
+    let bodyModel = "";
+    plugin.fetchApiResponseText = async (_endpoint, request) => {
+        bodyModel = request.body.model;
+        return JSON.stringify({ choices: [{ message: { content: "大家好，你们最近怎么样" }, finish_reason: "stop" }] });
+    };
+    const translated = await plugin.runModelTask("translation", text, { configOverrides: options.configOverrides, mode: "auto" });
+    assert.equal(bodyModel, "Qwen3-8B.gguf");
+    const servedKey = plugin.getTranslationCacheKey(text, plugin.getAutoTranslationOptions());
+    assert.notEqual(servedKey, queuedKey);
+
+    plugin.cacheAutoTranslationResultWithOptions(queuedKey, text, options, translated);
+    assert.equal(plugin.translationCache.get(servedKey), translated, "stored under the model that answered");
+    assert.equal(plugin.translationCache.has(queuedKey), false, "never under the other model's key");
+
+    // Nothing changes for keys whose model did not change, or for cloud providers.
+    assert.equal(plugin.getServedModelTranslationCacheKey(servedKey, options), servedKey);
+    const cloud = new Plugin();
+    cloud.settings.translation.apiKey = "sk-fake-1";
+    const cloudKey = cloud.getTranslationCacheKey(text, cloud.getAutoTranslationOptions());
+    assert.equal(cloud.getServedModelTranslationCacheKey(cloudKey, cloud.getAutoTranslationOptions()), cloudKey);
 });
 
 test("exports show only the model file name, not a local path", () => {
@@ -451,7 +789,7 @@ test("user-facing errors are localized and never show internal codes", async t =
 });
 
 test("new strings exist in both locales", () => {
-    for (const key of ["errorOutputTruncated", "errorQuotaExceeded", "errorLanguageUnsupported", "errorIpNotAllowed", "errorProviderRequestRejected", "errorSaveFailed", "errorComposerWriteFailed", "clipboardUnavailable", "googleTranslateStatsCooldown"]) {
+    for (const key of ["errorOutputTruncated", "errorQuotaExceeded", "errorLanguageUnsupported", "errorIpNotAllowed", "errorProviderRequestRejected", "errorSaveFailed", "errorComposerWriteFailed", "clipboardUnavailable", "googleTranslateStatsCooldown", "googleTranslateKeysCooling", "googleTranslateKeyError", "errorEndpointNotFound"]) {
         assert.equal(typeof I18N["zh-CN"][key], "string", key);
         assert.equal(typeof I18N.en[key], "string", key);
     }

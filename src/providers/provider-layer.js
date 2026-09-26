@@ -120,8 +120,12 @@ class ProviderLayer {
             expiresAt: now + Math.max(1000, Number(options.ttlMs || LOCAL_PROVIDER_MODEL_DETECTION_TTL_MS) || LOCAL_PROVIDER_MODEL_DETECTION_TTL_MS),
             retryAt: 0
         });
-        // The served model is part of the cache key, so it is saved with the cache.
-        if (previousModel !== normalized) this.plugin.scheduleTranslationCachePersist();
+        // The served model is part of the cache key, so it is saved with the cache, and hits the
+        // cached-draw memo remembered under the old model's keys must not be drawn again.
+        if (previousModel !== normalized) {
+            this.plugin.scheduleTranslationCachePersist();
+            this.plugin.cachedDrawMemo?.clear?.();
+        }
         return normalized;
     }
 
@@ -377,6 +381,53 @@ class ProviderLayer {
         }
         if (options.charCount !== undefined) error.googleTranslateCharCount = Math.max(0, Math.round(Number(options.charCount) || 0));
         return error;
+    }
+
+    // No key can take the request, but one with room this month only waits out a cooldown
+    // (a per-minute limit, a rejected request). Returns when the first of those comes back, or 0.
+    getGoogleTranslateCoolingKeyReadyAt(charCount = 1, options = {}) {
+        const now = Date.now();
+        const needed = Math.max(1, Math.round(Number(charCount) || 1));
+        const readyAt = this.plugin.getGoogleTranslateKeys()
+            .filter(key => key.enabled !== false
+                && Number(key.cooldownUntil || 0) > now
+                && Number(key.usedChars || 0) + (options.ignoreReservations ? 0 : this.plugin.getGoogleTranslateReservedChars(key)) + needed <= Number(key.monthlyLimit || GOOGLE_TRANSLATE_DEFAULT_MONTHLY_LIMIT))
+            .map(key => Number(key.cooldownUntil));
+        return readyAt.length ? Math.min(...readyAt) : 0;
+    }
+
+    // Every usable key is cooling down: the pool waits until the first one is back. This is a
+    // rate limit for the whole pool, not an exhausted quota.
+    createGoogleTranslateCooldownError(options = {}) {
+        const until = Math.max(Date.now() + 1000, Number(options.until) || 0);
+        const error = new Error(this.plugin.formatGoogleTranslateCooldownMessage(until));
+        error.googleTranslateKeysCooling = true;
+        error.googleTranslateCooldownUntil = until;
+        error.providerRateLimited = true;
+        error.providerKey = this.plugin.getGoogleTranslateProviderKey();
+        error.retryAfterMs = until - Date.now();
+        if (options.charCount !== undefined) error.googleTranslateCharCount = Math.max(0, Math.round(Number(options.charCount) || 0));
+        return error;
+    }
+
+    formatGoogleTranslateCooldownMessage(until) {
+        return this.plugin.t("googleTranslateKeysCooling", { time: this.plugin.formatDiagnosticSummaryTime(until) });
+    }
+
+    // Names the pool key a Google error came from (by its label, never the key itself).
+    formatGoogleTranslateKeyError(error, options = {}) {
+        const message = this.plugin.formatError(error, options);
+        const keyId = String(error?.googleTranslateKeyId || "");
+        const apiKey = String(error?.googleTranslateApiKey || "");
+        if (!keyId && !apiKey) return message;
+        const key = this.plugin.getGoogleTranslateKeys().find(item => (keyId && item.id === keyId) || (apiKey && item.apiKey === apiKey));
+        return key?.label ? this.plugin.t("googleTranslateKeyError", { label: key.label, error: message }) : message;
+    }
+
+    // A failure of one pool key needs the user only when no other key can take over.
+    isGoogleTranslatePoolServing(error) {
+        if (!error?.googleTranslateApiKey || error.googleTranslateKeysCooling) return false;
+        return Boolean(this.plugin.peekGoogleTranslateAvailableKey(1, { ignoreReservations: true }));
     }
 
     createGoogleTranslateNoKeyError() {
@@ -1193,6 +1244,14 @@ class ProviderLayer {
             }
             return this.plugin.parseModelResponse(raw);
         }
+        catch (error) {
+            // Queued work orphaned by a settings change is aborted, but Google already received the
+            // request and counts its characters: so does the key's monthly usage.
+            if (request?.responseParser === "googleTranslate" && error?.requestSent && this.plugin.isRequestCancelled(error)) {
+                this.plugin.markGoogleTranslateKeyUsage(request.googleTranslate?.apiKey, request.googleTranslate?.charCount || 0);
+            }
+            throw error;
+        }
         finally {
             this.plugin.releaseGoogleTranslateRequestReservation(request);
         }
@@ -1295,6 +1354,9 @@ class ProviderLayer {
             if (callerSignal.aborted) controller.abort();
             else callerSignal.addEventListener?.("abort", abortFromCaller, { once: true });
         }
+        // Whether the request left the plugin: a service may bill a request it received, even when
+        // the answer is thrown away.
+        let sent = false;
         try {
             if (this.plugin.apiRequestsClosed) throw new DOMException("API requests are closed until the plugin starts", "AbortError");
             controller?.signal.throwIfAborted();
@@ -1313,6 +1375,7 @@ class ProviderLayer {
                     ? new URLSearchParams(request.body || {}).toString()
                     : JSON.stringify(request.body);
             }
+            sent = true;
             const response = await fetch(endpoint, fetchOptions);
 
             const raw = await response.text();
@@ -1324,6 +1387,7 @@ class ProviderLayer {
                     this.plugin.annotateGoogleTranslateApiError(apiError, raw, request);
                 }
                 this.plugin.annotateTranslateProviderApiError(apiError, raw, request);
+                this.plugin.annotateChatCompletionApiError(apiError, raw, request);
                 throw apiError;
             }
 
@@ -1336,7 +1400,8 @@ class ProviderLayer {
                 ? `API request timed out after ${Math.round(timeoutMs / 1000)}s`
                 : "Request cancelled", { cause: error }), {
                 name: timedOut ? "TimeoutError" : "AbortError",
-                code: timedOut ? "REQUEST_TIMEOUT" : "REQUEST_CANCELLED"
+                code: timedOut ? "REQUEST_TIMEOUT" : "REQUEST_CANCELLED",
+                requestSent: sent
             });
         }
         finally {
@@ -1377,6 +1442,24 @@ class ProviderLayer {
         else if (/RESOURCE_EXHAUSTED|quota|limit exceeded|monthly limit/i.test(text)) {
             error.googleTranslateQuotaExceeded = true;
             error.retryAfterMs = Math.max(Number(error.retryAfterMs || 0), this.plugin.getGoogleTranslateQuotaRetryAfterMs());
+        }
+        else if (/API_KEY_INVALID|API_KEY_EXPIRED|API key not valid|API key expired|PERMISSION_DENIED/i.test(text)) {
+            // Google answers a mistyped or expired key with HTTP 400: the key is rejected, so it
+            // cools like one and the message says the key is invalid.
+            error.providerAuthFailed = true;
+            error.googleTranslateKeyInvalid = true;
+        }
+        return error;
+    }
+
+    // OpenAI-compatible services answer a model name they do not know with 400 or 404 (DeepSeek:
+    // "Model Not Exist"); the message then points to the model setting, not to account permissions.
+    annotateChatCompletionApiError(error, raw = "", request = {}) {
+        if (!error || !Array.isArray(request?.body?.messages)) return error;
+        if (![400, 404, 422].includes(Number(error.status || 0))) return error;
+        const text = String(raw || "").slice(0, 4000);
+        if (/model_not_found|no such model|\b(?:unknown|invalid|unsupported) model\b|\bmodel\b[^.]{0,80}?\b(?:not exists?|does not exist|not found|is not (?:available|supported))\b/i.test(text)) {
+            error.providerModelNotFound = true;
         }
         return error;
     }
@@ -1487,7 +1570,7 @@ class ProviderLayer {
                 if (error?.googleTranslateApiKey) this.plugin.markGoogleTranslateKeyFailure(error.googleTranslateApiKey, error);
                 if (error.localProviderUnavailable) this.plugin.markAutoTranslationProviderFailure(this.plugin.getAutoTranslationOptions(), error);
             }
-            const message = this.plugin.formatError(error);
+            const message = this.plugin.formatGoogleTranslateKeyError(error);
             this.plugin.setApiStatus(status, "failed", this.plugin.t("apiStatusFailed"), message);
             this.plugin.showToast(this.plugin.t("apiTestFailed", { name: this.plugin.getTaskDisplayName(kind), error: message }), "error");
         }
@@ -1500,8 +1583,8 @@ class ProviderLayer {
         const taskConfig = this.plugin.getTaskConfig(kind);
         if (this.plugin.isDirectTranslateProvider(taskConfig)) {
             // Test the language pair the user actually translates into: some targets are
-            // rejected by some services. A Google key that is only cooling down is tested
-            // as well, so a passing test can bring it back.
+            // rejected by some services. When every Google key is cooling down, a cooling key
+            // is tested, so a passing test can bring it back.
             const targetLanguage = taskConfig.targetLanguage || this.plugin.settings.translation?.targetLanguage;
             return this.plugin.buildModelRequest("translation", "hello", {
                 configOverrides: {
@@ -1606,15 +1689,19 @@ class ProviderLayer {
         const target = this.plugin.getGoogleLanguageCode(config.targetLanguageCode || config.targetLanguage);
         if (!target || target === AUTO_LANGUAGE_VALUE) throw new Error(this.plugin.t("targetLanguageDesc"));
         const source = this.plugin.getGoogleLanguageCode(config.sourceLanguage, { source: true });
-        const key = this.plugin.selectGoogleTranslateKey(charCount, {
-            ignoreReservations: Boolean(options.ignoreReservations),
-            ignoreCooldown: Boolean(options.ignoreCooldown)
-        });
+        const selectOptions = { ignoreReservations: Boolean(options.ignoreReservations) };
+        // ignoreCooldown (the API test) still prefers a key that is not cooling down; a cooling
+        // key is used only when every key is cooling, so a passing test can bring it back.
+        const key = options.ignoreCooldown
+            ? this.plugin.selectGoogleTranslateKey(charCount, { ...selectOptions, persist: false })
+                || this.plugin.selectGoogleTranslateKey(charCount, { ...selectOptions, ignoreCooldown: true })
+            : this.plugin.selectGoogleTranslateKey(charCount, selectOptions);
         if (!key) {
-            const hasKeys = this.plugin.getGoogleTranslateKeys().length > 0;
-            throw hasKeys
-                ? this.plugin.createGoogleTranslateQuotaError({ charCount })
-                : this.plugin.createGoogleTranslateNoKeyError();
+            if (!this.plugin.getGoogleTranslateKeys().length) throw this.plugin.createGoogleTranslateNoKeyError();
+            const coolingReadyAt = this.plugin.getGoogleTranslateCoolingKeyReadyAt(charCount, { ignoreReservations: Boolean(options.ignoreReservations) });
+            throw coolingReadyAt
+                ? this.plugin.createGoogleTranslateCooldownError({ until: coolingReadyAt, charCount })
+                : this.plugin.createGoogleTranslateQuotaError({ charCount });
         }
         const reservation = options.reserve ? this.plugin.reserveGoogleTranslateKey(key, charCount) : null;
         const body = {
