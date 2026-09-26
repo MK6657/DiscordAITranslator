@@ -758,7 +758,41 @@ test("public bilingual escaping leaves code alone and keeps the spoiler closed",
     assert.equal(plugin.formatPublicBilingualMessage("path", "path is C:\\temp\\"), "path\n\n||path is C:\\temp\\\\||", "a trailing backslash cannot escape the closing marker");
     assert.equal(plugin.formatPublicBilingualMessage("t", "a \\| b"), "t\n\n||a \\| b||", "the user's own escape is kept, not doubled");
     assert.equal(plugin.formatPublicBilingualMessage("t", "\\`not code | x\\`"), "t\n\n||\\`not code \\| x\\`||");
-    assert.equal(plugin.getPublicBilingualReservedLength("a|"), "\n\n||a\\|||".length);
+    assert.equal(plugin.getPublicBilingualReservedLength("a|"), "\n\n||a\\|\u200b||".length);
+});
+
+// CMP-R4: Discord's spoiler rule is non-greedy and ignores backslashes, so "\|||" closes one pipe early.
+test("a spoiler source ending in '|' keeps the whole source inside the spoiler", () => {
+    const plugin = new Plugin();
+    const discordSpoiler = message => {
+        const spoiler = message.slice(message.indexOf("\n\n||") + 2);
+        const match = /^\|\|([\s\S]+?)\|\|/.exec(spoiler);
+        return { content: match?.[1], leftOver: spoiler.slice(match ? match[0].length : 0) };
+    };
+    for (const source of ["a |", "x|", "table: x | y |", "ends with an escaped pipe \\|"]) {
+        const message = plugin.formatPublicBilingualMessage("T", source);
+        const { content, leftOver } = discordSpoiler(message);
+        assert.equal(leftOver, "", `${JSON.stringify(source)} -> ${JSON.stringify(message)}`);
+        assert.equal(content.endsWith("|\u200b"), true, "a zero-width space separates the last pipe from the closing marker");
+        assert.equal(plugin.getPublicBilingualReservedLength(source), message.length - "T".length);
+    }
+    assert.equal(plugin.formatPublicBilingualMessage("T", "a |"), "T\n\n||a \\|\u200b||");
+    assert.equal(plugin.formatPublicBilingualMessage("T", "a | b"), "T\n\n||a \\| b||", "no separator when the source does not end in a pipe");
+    assert.equal(plugin.formatPublicBilingualMessage("T", "`x|`"), "T\n\n||`x|`||", "code ends with a backtick");
+});
+
+test("a bilingual message whose spoiler ends in '|' is written and verified in a Slate composer", async t => {
+    const browser = useComposerBrowser(t);
+    const plugin = new Plugin();
+    const editor = createSlateEditor(["x |"]);
+    browser.document.activeElement = editor;
+    attachSlateBehaviour(editor, { initialText: "x |" });
+    plugin.isInvalidAutoTranslationOutput = () => false;
+    plugin.runModelTask = async () => "Hello";
+    plugin.showPolishResultPanel = () => { throw new Error("a verified write must not open the fallback panel"); };
+    const result = await plugin.publicBilingualCurrentDraft(null, { textbox: editor });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(plugin.getTextboxDraftText(editor), "Hello\n\n||x \\|\u200b||");
 });
 
 // ---------------------------------------------------------------------------------------------

@@ -10874,12 +10874,19 @@ module.exports = class DiscordAITranslator {
 
     formatPublicBilingualMessage(translated, original) {
         const translation = this.escapeDiscordVisibleText(String(translated || "").trim());
-        const source = this.normalizeDraftRawText(original);
-        return `${translation}\n\n||${this.escapeDiscordSpoilerText(source)}||`;
+        return `${translation}\n\n||${this.getPublicBilingualSpoilerText(original)}||`;
     }
 
     getPublicBilingualReservedLength(original) {
-        return `\n\n||${this.escapeDiscordSpoilerText(this.normalizeDraftRawText(original))}||`.length;
+        return `\n\n||${this.getPublicBilingualSpoilerText(original)}||`.length;
+    }
+
+    // Discord's spoiler rule is non-greedy and ignores backslashes, so a trailing "|" (written "\|")
+    // would join the closing "||" and end the spoiler one character early: a zero-width space
+    // separates them.
+    getPublicBilingualSpoilerText(original) {
+        const escaped = this.escapeDiscordSpoilerText(this.normalizeDraftRawText(original));
+        return escaped.endsWith("|") ? `${escaped}​` : escaped;
     }
 
     isPolishSessionAlreadyPolished(session, text) {
