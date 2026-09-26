@@ -254,6 +254,7 @@ module.exports = `.dait-message-button {
 }
 
 .dait-translation-line.dait-translation-masked > .dait-translation-actions,
+.dait-translation-line.dait-translation-masked > .dait-translation-actions-anchor,
 .dait-translation-line.dait-translation-preview > .dait-translation-actions {
     display: none;
 }

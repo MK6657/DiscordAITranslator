@@ -37,7 +37,7 @@ function parseCompound(selector) {
     if (!match) return null;
     const checks = [];
     if (match[1]) checks.push(element => element.tagName === match[1].toUpperCase());
-    const tokenPattern = /\.([\w-]+)|\[([\w-]+)(?:(=)(['"]?)(.*?)\4)?\]/g;
+    const tokenPattern = /\.([\w-]+)|\[([\w-]+)(?:([\^*]?=)(['"]?)(.*?)\4)?\]/g;
     let token;
     while ((token = tokenPattern.exec(match[2] || ""))) {
         const [, className, attribute, operator, , expected] = token;
@@ -48,6 +48,8 @@ function parseCompound(selector) {
         checks.push(element => {
             const value = element.getAttribute(attribute);
             if (value === null || value === undefined) return false;
+            if (operator === "^=") return value.startsWith(expected);
+            if (operator === "*=") return value.includes(expected);
             return !operator || value === expected;
         });
     }
@@ -806,6 +808,103 @@ test("the settings scrollbars use the ::-webkit-scrollbar rules; the standard pr
     }
     assert.match(supports[1], /scrollbar-color: var\(--dait-scrollbar-thumb\) var\(--dait-scrollbar-track\);\n        scrollbar-width: thin;/);
     assert.match(PLUGIN_CSS, /\.dait-polish-result-output::-webkit-scrollbar \{\n    height: 8px;\n    width: 8px;/);
+});
+
+// --- LP-1: the translation line's toolbar is built on first use ---
+
+function chatPlugin(t) {
+    const context = createPlugin(t);
+    const { plugin } = context;
+    plugin.getElementText = element => element?.text || "";
+    plugin.isReplyPreviewElement = element => Boolean(element?.isPreview);
+    plugin.getMessageContentElement = messageNode => messageNode.querySelector(".messageContent");
+    context.message = (text, id = "chat-messages-111111111111111111-222222222222222222") => {
+        const messageNode = context.doc.createElement("li");
+        messageNode.id = id;
+        const contents = messageNode.appendChild(context.doc.createElement("div"));
+        contents.className = "contents";
+        const content = contents.appendChild(context.doc.createElement("div"));
+        content.className = "messageContent";
+        content.text = text;
+        content.textContent = text;
+        context.doc.body.appendChild(messageNode);
+        return { messageNode, content };
+    };
+    return context;
+}
+
+test("a drawn translation line holds only its text and an empty toolbar anchor; the toolbar is built on first hover", t => {
+    const { plugin, doc, message } = chatPlugin(t);
+    const { messageNode, content } = message("See you tomorrow");
+    let built = 0;
+    const create = plugin.createTranslationLineActions.bind(plugin);
+    plugin.createTranslationLineActions = (...args) => { built++; return create(...args); };
+    const line = plugin.renderTranslation(messageNode, content, "明天见", "cache-key", content.text);
+    assert.equal(built, 0, "drawing a line builds no toolbar");
+    assert.equal(line.querySelector(".dait-translation-actions"), null);
+    assert.equal(line.querySelectorAll("button").length, 0);
+    assert.deepEqual(line.children.map(child => child.className), ["dait-translation-text", "dait-translation-actions-anchor"]);
+    const anchor = line.children[1];
+    assert.equal(anchor.textContent, "");
+    assert.equal(anchor.getAttribute("tabindex"), "0", "the toolbar's tab stop is there before the toolbar");
+    assert.equal(anchor.getAttribute("aria-label"), plugin.t("translationActionsLabel"));
+    assert.equal(line.textContent, "明天见");
+
+    line.dispatch("pointerenter");
+    assert.equal(built, 1);
+    const toolbar = line.querySelector(".dait-translation-actions");
+    assert.ok(toolbar);
+    assert.deepEqual(line.children.map(child => child.className), ["dait-translation-text", "dait-translation-actions"]);
+    assert.equal(toolbar.querySelectorAll("button").length, 3);
+    line.dispatch("pointerenter");
+    line.dispatch("focusin");
+    assert.equal(built, 1, "built once");
+    assert.equal(line.querySelectorAll(".dait-translation-actions").length, 1);
+
+    // The lazily built buttons act on the right message.
+    let retranslated = null;
+    plugin.translateMessage = (...args) => { retranslated = args; };
+    toolbar.querySelector(".dait-translation-action-retranslate").click();
+    assert.ok(retranslated[0] === messageNode);
+    assert.ok(retranslated[1] === content);
+
+    // Drawn again (a cached draw on scroll-back): the anchor again, no toolbar until the next hover.
+    plugin.renderTranslation(messageNode, content, "明天见！", "cache-key", content.text);
+    assert.equal(built, 1);
+    assert.equal(line.querySelector(".dait-translation-actions"), null);
+    assert.ok(line.querySelector(".dait-translation-actions-anchor"));
+    assert.ok(doc.body.contains(line));
+});
+
+test("keyboard: Tab onto the toolbar anchor builds the toolbar and focuses its first button", t => {
+    const { plugin, doc, message } = chatPlugin(t);
+    const { messageNode, content } = message("See you tomorrow");
+    const line = plugin.renderTranslation(messageNode, content, "明天见", "cache-key", content.text);
+    const anchor = line.querySelector(".dait-translation-actions-anchor");
+    anchor.focus();
+    line.dispatch("focusin", { target: anchor });
+    const copy = line.querySelector(".dait-translation-action-copy");
+    assert.ok(copy);
+    assert.ok(doc.activeElement === copy, "focus moves to Copy");
+    assert.equal(copy.getAttribute("tabindex"), "0");
+    assert.equal(line.querySelector(".dait-translation-actions-anchor"), null, "the anchor is gone");
+});
+
+test("error, loading and reply-preview lines get no toolbar anchor; the anchor hides with a masked line", t => {
+    const { plugin, doc, message } = chatPlugin(t);
+    const { messageNode, content } = message("See you tomorrow");
+    let line = plugin.renderTranslationLoading(messageNode, content, "cache-key", content.text);
+    assert.equal(line.querySelector(".dait-translation-actions-anchor"), null);
+    line = plugin.renderTranslationError(messageNode, content, Object.assign(new Error("API_ERROR"), { status: 500 }), "cache-key", content.text);
+    assert.equal(line.querySelector(".dait-translation-actions-anchor"), null);
+    line.dispatch("pointerenter");
+    assert.equal(line.querySelector(".dait-translation-actions"), null, "an error line gets no toolbar on hover either");
+    const preview = messageNode.appendChild(doc.createElement("div"));
+    preview.isPreview = true;
+    preview.text = "quoted reply";
+    const previewLine = plugin.renderTranslation(messageNode, preview, "引用", "preview-key", preview.text);
+    assert.equal(previewLine.querySelector(".dait-translation-actions-anchor"), null);
+    assert.match(PLUGIN_CSS, /\.dait-translation-line\.dait-translation-masked > \.dait-translation-actions,\n\.dait-translation-line\.dait-translation-masked > \.dait-translation-actions-anchor,/);
 });
 
 test("settings window: a key that ends an IME composition does not close the window", t => {

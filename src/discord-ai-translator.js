@@ -14160,7 +14160,9 @@ module.exports = class DiscordAITranslator {
             line.appendChild(text);
             this.translationLineTexts?.set?.(line, String(translatedText ?? ""));
             if (!line.classList?.contains?.("dait-translation-preview")) {
-                line.appendChild(this.createTranslationLineActions(line, messageNode, content));
+                // The toolbar is built on first use (see ensureTranslationLineActions), so drawing a line, e.g. the
+                // cached lines on scroll-back, costs no more layout than a line without one.
+                line.appendChild(this.createTranslationLineActionsAnchor(messageNode, content));
                 const note = this.createTranslationPartialNote(line, messageNode, content, renderOptions?.partialInfo);
                 if (note) line.appendChild(note);
             }
@@ -14574,6 +14576,35 @@ module.exports = class DiscordAITranslator {
         return true;
     }
 
+    // Stands where the toolbar goes until the line is first hovered or focused: an empty span that keeps the
+    // toolbar's one tab stop, so keyboard users reach it too.
+    createTranslationLineActionsAnchor(messageNode, content) {
+        const anchor = document.createElement("span");
+        anchor.className = "dait-translation-actions-anchor";
+        anchor.setAttribute?.("tabindex", "0");
+        anchor.setAttribute?.("role", "toolbar");
+        anchor.setAttribute?.("aria-label", this.t("translationActionsLabel"));
+        anchor.__daitActionTarget = { messageNode, content };
+        return anchor;
+    }
+
+    // Builds the toolbar in place of the anchor on the line's first pointerenter or focusin; keyboard focus that
+    // landed on the anchor moves to the toolbar's first button.
+    ensureTranslationLineActions(line) {
+        const existing = line?.querySelector?.(":scope > .dait-translation-actions");
+        if (existing) return existing;
+        const anchor = line?.querySelector?.(":scope > .dait-translation-actions-anchor");
+        if (!anchor) return null;
+        const target = anchor.__daitActionTarget || {};
+        const content = target.content || this.getTranslationContentForLine(line);
+        const toolbar = this.createTranslationLineActions(line, target.messageNode || content?.closest?.(DISCORD_MESSAGE_NODE_SELECTOR) || null, content);
+        const focused = typeof document !== "undefined" && document.activeElement === anchor;
+        line.insertBefore(toolbar, anchor);
+        anchor.remove?.();
+        if (focused) toolbar.querySelector?.(".dait-translation-action")?.focus?.();
+        return toolbar;
+    }
+
     createTranslationLineActions(line, messageNode, content) {
         const toolbar = document.createElement("span");
         toolbar.className = "dait-translation-actions";
@@ -14979,8 +15010,14 @@ module.exports = class DiscordAITranslator {
                 event.stopPropagation();
                 this.withTranslationScrollStability(content, () => this.revealMaskedTranslationLine(line, content));
             });
-            line.addEventListener("pointerenter", () => this.placeTranslationLineActions(line));
-            line.addEventListener("focusin", () => this.placeTranslationLineActions(line));
+            line.addEventListener("pointerenter", () => {
+                this.ensureTranslationLineActions(line);
+                this.placeTranslationLineActions(line);
+            });
+            line.addEventListener("focusin", () => {
+                this.ensureTranslationLineActions(line);
+                this.placeTranslationLineActions(line);
+            });
             line.addEventListener("click", event => {
                 if (!line.classList.contains("dait-translation-masked")) return;
                 event.preventDefault();

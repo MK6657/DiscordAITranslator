@@ -9134,12 +9134,14 @@ const savedDocumentForRenderWrapper = global.document;
 global.document = { createElement: tag => createFakeElement(tag) };
 renderTextWrapperPlugin.renderTranslation({}, {}, "wrapped translation", "cache-key", "source");
 global.document = savedDocumentForRenderWrapper;
-// The text span first, then the hover toolbar (copy / retranslate / hide), which adds no text.
+// The text span first, then the empty anchor of the hover toolbar (copy / retranslate / hide), which adds no text;
+// the toolbar itself is built on the line's first pointerenter or focusin.
 assert.equal(renderChildren.length, 2);
 assert.equal(renderChildren[0].className, "dait-translation-text");
 assert.equal(renderChildren[0].textContent, "wrapped translation");
-assert.equal(renderChildren[1].className, "dait-translation-actions");
-assert.equal(renderChildren[1].children.length, 3);
+assert.equal(renderChildren[1].className, "dait-translation-actions-anchor");
+assert.equal(renderChildren[1].children.length, 0);
+assert.equal(renderChildren[1].getAttribute("tabindex"), "0");
 
 const emojiRenderPlugin = new Plugin();
 const sourceEmoji = createFakeElement("img");
