@@ -275,7 +275,7 @@ test("the translated text carries the target language and a direction; right-to-
     assert.equal(line.querySelector(".dait-translation-note").closest("[lang]"), null);
     assert.equal(line.querySelector(".dait-translation-actions").closest("[dir]"), null);
     // A right-to-left translation is a box of its own, so wrapped lines align right to left.
-    assert.match(getCssRule('.dait-translation-text[dir="rtl"]'), /display: inline-block;/);
+    assert.match(getCssRule('.dait-translation-line:not(.dait-translation-preview) > .dait-translation-text[dir="rtl"]'), /display: inline-block;/);
 
     plugin.settings.translation.targetLanguage = "Chinese";
     plugin.renderTranslation(messageNode, content, "明天见", "cache-key", content.text);

@@ -442,8 +442,9 @@ module.exports = `.dait-message-button {
     position: relative;
 }
 
-/* A right-to-left translation in a left-to-right chat: as a box of its own, its wrapped lines align right to left. */
-.dait-translation-text[dir="rtl"] {
+/* A right-to-left translation in a left-to-right chat: as a box of its own, its wrapped lines align right
+   to left. Reply previews stay one inline run inside Discord's one-line reply bar. */
+.dait-translation-line:not(.dait-translation-preview) > .dait-translation-text[dir="rtl"] {
     display: inline-block;
     max-inline-size: 100%;
 }
