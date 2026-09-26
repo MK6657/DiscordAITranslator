@@ -350,6 +350,8 @@ const rect = width => ({ left: 0, top: 0, right: width, bottom: 600, width, heig
 const rowByLabel = (root, label) => root.querySelectorAll(".dait-settings-row").find(row => row.querySelector(".dait-row-label")?.textContent === label) || null;
 const buttonsOf = row => row.querySelectorAll("button");
 const labelsIn = root => root.querySelectorAll(".dait-settings-row").map(row => row.querySelector(".dait-row-label")?.textContent);
+// A short name for an element in assertion messages (the fake elements are circular).
+const describe = element => `${element.tagName.toLowerCase()}${element.dataset.daitPath ? `[${element.dataset.daitPath}]` : ""} ${String(element.textContent || "").slice(0, 20)}`.trim();
 
 // --- UI-1: BetterDiscord's plugin-settings modal in a Discord window 1000 px wide or narrower ---
 
@@ -407,3 +409,40 @@ for (const layout of ["bd", "discord"]) {
         });
     }
 }
+
+// --- UI-2: the settings window's focus trap only counts controls the user can see ---
+
+const insideHidden = (element, root) => {
+    for (let node = element; node && node !== root; node = node.parentNode) {
+        if (node.hidden) return true;
+    }
+    return false;
+};
+
+test("settings window: Tab and Shift+Tab wrap between the first and the last control of the tab on show", t => {
+    const { plugin, doc } = createPlugin(t, { tab: "overview" });
+    const root = plugin.openQuickSettingsPanel("test");
+    const dialog = root.querySelector(".dait-quick-settings-dialog");
+    const focusable = plugin.getQuickSettingsFocusableElements(dialog);
+    assert.ok(focusable.length > 3);
+    assert.deepEqual(focusable.filter(element => insideHidden(element, dialog)).map(describe), [], "no control of a hidden tab page");
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    assert.ok(first === dialog.querySelector(".dait-settings-close"));
+    assert.equal(last.dataset.daitPath, "ui.language", "the overview's last control");
+
+    last.focus();
+    let event = doc.dispatchEvent("keydown", { key: "Tab", shiftKey: false });
+    assert.equal(event.defaultPrevented, true);
+    assert.ok(doc.activeElement === first, "Tab from the last control goes back to the first");
+    event = doc.dispatchEvent("keydown", { key: "Tab", shiftKey: true });
+    assert.equal(event.defaultPrevented, true);
+    assert.ok(doc.activeElement === last, "Shift+Tab from the first control goes to the last visible one");
+
+    // Another tab: its own last control closes the loop.
+    plugin.showSettingsTab(dialog.querySelector(".dait-settings").__daitSettingsUi, "display");
+    const displayControls = plugin.getQuickSettingsFocusableElements(dialog);
+    assert.deepEqual(displayControls.filter(element => insideHidden(element, dialog)).map(describe), []);
+    assert.equal(displayControls[displayControls.length - 1].dataset.daitPath, "ui.showQuickSettingsPanelButton");
+    plugin.closeQuickSettingsPanel(root, "test");
+});

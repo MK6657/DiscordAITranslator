@@ -7205,11 +7205,17 @@ module.exports = class DiscordAITranslator {
             }
         };
         visit(root);
-        return [...new Set([...queried, ...fallback])].filter(element => this.isFocusableQuickSettingsElement(element));
+        return [...new Set([...queried, ...fallback])].filter(element => this.isFocusableQuickSettingsElement(element, root));
     }
 
-    isFocusableQuickSettingsElement(element) {
+    // Only controls the user can reach: not on a hidden tab page (or in another hidden part) and, where there is
+    // layout, rendered at all (a closed <details>, a display:none toolbar).
+    isFocusableQuickSettingsElement(element, root = null) {
         if (!element || element.disabled || element.hidden || element.removed) return false;
+        for (let node = element.parentElement; node && node !== root; node = node.parentElement) {
+            if (node.hidden === true) return false;
+        }
+        if (typeof element.getClientRects === "function" && element.isConnected && !element.getClientRects().length) return false;
         const tag = String(element.tagName || "").toLowerCase();
         if (["button", "input", "select", "textarea", "a"].includes(tag)) return true;
         const tabindex = element.getAttribute?.("tabindex");
