@@ -532,6 +532,15 @@ test("overview service cards: state, last test details, Test runs the test and e
     assert.match(testStep.querySelector(".dait-setup-detail").textContent, /^连接正常 · Hy-MT2\.gguf · \d+ ms · 刚刚$/);
 });
 
+test("a connected status without a test in this session shows no invented details", t => {
+    const { panel } = createShell(t, { translation: { apiKey: "sk-fake-1", apiStatus: { state: "success", message: "" } } });
+    const header = panel.querySelector("[data-dait-settings-tab-panel=translate] .dait-provider-settings-header");
+    const detail = header.querySelector(".dait-api-test-detail");
+    assert.equal(detail.textContent, "");
+    assert.equal(detail.hidden, true);
+    assert.equal(setupItem(panel, "test").querySelector(".dait-setup-detail").textContent, "连接正常");
+});
+
 test("a failed test shows its message next to the status; the detail follows the badge's state", async t => {
     const { plugin, panel } = createShell(t, { tab: "translate", translation: { apiKey: "sk-fake-1" } });
     plugin.fetchApiResponseText = async () => { throw Object.assign(new Error("Unauthorized"), { status: 401 }); };

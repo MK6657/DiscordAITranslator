@@ -2366,10 +2366,10 @@ module.exports = class DiscordAITranslator {
         if (!detail) return;
         const status = this.getApiStatus(kind);
         const result = this.getLastApiTestResult(kind);
+        // A "connected" state can come from a working request as well; details only come from a test.
         let text = "";
-        if (status.state === "success") text = result?.ok ? this.formatApiTestResult(result) : this.t("apiTestLastPassed");
+        if (status.state === "success") text = result?.ok ? this.formatApiTestResult(result) : "";
         else if (status.state === "failed") text = status.message || result?.message || "";
-        else if (status.state === "untested") text = "";
         detail.dataset.daitFor = status.state;
         detail.textContent = text;
         detail.title = text;
@@ -2392,7 +2392,7 @@ module.exports = class DiscordAITranslator {
         const result = this.getLastApiTestResult(kind);
         if (status.state === "success") {
             const details = result?.ok ? this.formatApiTestResult(result) : "";
-            return details ? `${this.t("apiStatusSuccess")} · ${details}` : this.t("apiTestLastPassed");
+            return details ? `${this.t("apiStatusSuccess")} · ${details}` : this.t("apiStatusSuccess");
         }
         if (status.state === "failed") return status.message || this.t("apiStatusFailed");
         if (status.state === "testing") return this.t("apiStatusTesting");
