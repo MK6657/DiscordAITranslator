@@ -22,6 +22,8 @@ const {
     AUTO_TRANSLATE_MAX_CONCURRENCY,
     AUTO_TRANSLATE_MIN_BATCH_SIZE,
     AUTO_TRANSLATE_MIN_CONCURRENCY,
+    AUTO_TRANSLATE_PARTIAL_RESULT_MAX,
+    AUTO_TRANSLATE_PARTIAL_RESULT_TTL_MS,
     AUTO_TRANSLATE_PREFETCH_RANGES,
     AUTO_TRANSLATE_PROVIDER_FAILURE_TTL,
     AUTO_TRANSLATE_PROVIDER_REQUEST_BATCH_MAX,
@@ -30,10 +32,13 @@ const {
     AUTO_TRANSLATE_RECENT_RENDER_TTL_MS,
     AUTO_TRANSLATE_REQUEST_BATCH_SIZE,
     AUTO_TRANSLATE_REQUEST_TIMEOUT_MS,
+    AUTO_TRANSLATE_RETAIN_MAX_FAILURE_COUNT,
     AUTO_TRANSLATE_SCROLL_RENDER_PAUSE_MS,
     AUTO_TRANSLATE_SCROLL_STILL_MS,
     AUTO_TRANSLATE_TERMINAL_FAILURE_TTL,
     AUTO_TRANSLATE_TRANSIENT_FAILURE_TTL,
+    AUTO_TRANSLATE_TRUNCATED_FAILURE_MAX_TTL,
+    AUTO_TRANSLATE_TRUNCATED_FAILURE_TTL,
     AUTO_TRANSLATE_VIEWPORT_JUMP_COOLDOWN_MS,
     AUTO_TRANSLATE_VIEWPORT_JUMP_SETTLE_MS,
     AUTO_TRANSLATE_VIEWPORT_SETTLE_MS,
@@ -46,6 +51,7 @@ const {
     LOCAL_PROVIDER_HEALTH_RETRY_MS,
     LOCAL_PROVIDER_UNAVAILABLE_RETRY_MS
 } = require("../constants");
+const { getChannelRuleKey } = require("./channel-rule");
 
 class AutoTranslationQueueCore {
     constructor(plugin) {
@@ -83,6 +89,10 @@ class AutoTranslationQueueCore {
         this.plugin.autoTranslationQueue = [];
         this.plugin.autoTranslationQueuedKeys.clear();
         if (!options.preserveVersion) {
+            // The in-flight work below is orphaned: stop its HTTP requests too, so they do not
+            // keep a local server busy while the next scan starts new ones.
+            this.plugin.abortAutoTranslationRequests("invalidated");
+            this.plugin.autoTranslationPartialResults?.clear?.();
             this.plugin.autoTranslationInFlight = 0;
             this.plugin.autoTranslationInFlightKeys.clear();
             this.plugin.autoTranslationVisibleLongInFlightKeys.clear();
@@ -97,7 +107,7 @@ class AutoTranslationQueueCore {
         if (!options.preserveFailures) {
             this.plugin.autoTranslationFailures.clear();
             this.plugin.autoTranslationProviderFailures.clear();
-            this.plugin.autoTranslationProviderNoticeAt.clear();
+            if (!options.preserveNotices) this.plugin.autoTranslationProviderNoticeAt.clear();
         }
         if (this.plugin.autoTranslationRetryTimer && !options.preserveFailures && !options.preserveRetry) {
             clearTimeout(this.plugin.autoTranslationRetryTimer);
@@ -752,10 +762,14 @@ class AutoTranslationQueueCore {
             && this.plugin.isAutoTranslationVisibleItem(item));
     }
 
-    shouldRetainAutoTranslationFailureItem(item, error) {
+    shouldRetainAutoTranslationFailureItem(item, error, failure = null) {
         if (!item?.cacheKey || item?.daitPrefetchRequest) return false;
         const type = this.plugin.getAutoTranslationFailureType(error);
-        if (!["local-unavailable", "timeout", "network", "server", "rate-limit", "truncated"].includes(type)) return false;
+        // A truncated output is not retained: it already had a retry with a larger limit, and
+        // requeueing it every few seconds re-sent a full-length generation forever.
+        if (!["local-unavailable", "timeout", "network", "server", "rate-limit"].includes(type)) return false;
+        // A message that keeps timing out stops holding a queue slot: its failure record paces it.
+        if (["timeout", "network"].includes(type) && Number(failure?.count || 0) >= AUTO_TRANSLATE_RETAIN_MAX_FAILURE_COUNT) return false;
         return this.plugin.shouldRetainAutoTranslationProviderBlockedItem(item);
     }
 
@@ -1009,18 +1023,17 @@ class AutoTranslationQueueCore {
     isAutoTranslationTargetReady(target, cacheKey = target?.cacheKey) {
         if (!target?.messageNode?.isConnected || !target?.content?.isConnected) return false;
         if (!this.plugin.isAutoTranslationTargetIdentityCurrent(target)) return false;
-        if (this.plugin.hasCurrentTranslationLine(target.content, cacheKey, target.text, this.plugin.getTranslationLineCacheAliases(target.text, target.requestOptions || {}))) return false;
+        const domText = this.plugin.getAutoTranslationTargetDomText(target);
+        if (this.plugin.hasCurrentTranslationLine(target.content, cacheKey, domText, this.plugin.getTranslationLineCacheAliases(target.text, target.requestOptions || {}), null, target.text)) return false;
         const messageInRange = this.plugin.isAutoTranslationTargetInScanRange(target.messageNode);
         const contentInRange = this.plugin.isAutoTranslationTargetInScanRange(target.content);
         if (!target.daitHistoryRequest) {
             if (!messageInRange && !contentInRange) return false;
             if (!contentInRange && !this.plugin.isAutoTranslationContentInsideMessage(target)) return false;
         }
-        const currentText = this.plugin.getElementText(target.content, target.textOptions);
-        if (currentText === target.text) return true;
-        if (target.sourceTextKind === "store-full" && this.plugin.isManualTranslationSourceCompatible(target.text, currentText)) return true;
-        if (target.domText && currentText === target.domText && this.plugin.isManualTranslationSourceCompatible(target.text, target.domText)) return true;
-        return false;
+        // The message must still show the text the target was built from; a store-full request text
+        // was checked against that text when the candidate was made.
+        return this.plugin.isAutoTranslationTargetDomTextCurrent(target);
     }
 
     getAutoTranslateConcurrency() {
@@ -1037,10 +1050,11 @@ class AutoTranslationQueueCore {
         return Boolean(this.plugin.settings.ui?.autoTranslatePrefetch);
     }
 
+    // Channel rule (v0.4.0): 'enabled' is an allow-list that works even while the main
+    // auto-translate switch is off, 'disabled' always wins, 'inherit' follows the main switch.
     isAutoTranslateEnabled() {
         return Boolean(this.plugin.isStarted
             && this.plugin.settings?.translation?.enabled
-            && this.plugin.settings?.ui?.autoTranslateMessages
             && this.plugin.isCurrentChannelAutoTranslateAllowed());
     }
 
@@ -1055,7 +1069,9 @@ class AutoTranslationQueueCore {
             || this.plugin.autoTranslationRenderQueue?.length
         );
         if (!hasRetryTimer && !hasWork) return false;
-        this.plugin.invalidateAutoTranslationQueue();
+        // Passing through a channel without auto-translate fixes nothing at the provider: the
+        // "needs you" episode goes on, so its notice is not shown again on the way back.
+        this.plugin.invalidateAutoTranslationQueue({ preserveNotices: true });
         this.plugin.logDiagnostic("auto.queue.cancel", "ok", { reason });
         return true;
     }
@@ -1109,19 +1125,18 @@ class AutoTranslationQueueCore {
         return this.plugin.normalizeChannelAutoTranslatePolicyMode(this.plugin.getCurrentChannelAutoTranslatePolicy(routeKey)?.mode);
     }
 
+    // "" on a screen that is not a channel (channel-rule.js decides): such a screen gets no rule.
     getChannelAutoTranslatePolicyStorageKey(routeKey = this.plugin.getCurrentRouteKey()) {
-        const parts = String(routeKey || "").split(":");
-        const guildId = parts[0] || "";
-        const channelId = parts[1] || "";
-        if (!channelId) return "";
-        return `${guildId}:${channelId}`;
+        return getChannelRuleKey(routeKey);
     }
 
     setCurrentChannelAutoTranslatePolicyMode(mode, routeKey = this.plugin.getCurrentRouteKey(), options = {}) {
         const normalized = this.plugin.normalizeChannelAutoTranslatePolicyMode(mode);
         const key = this.plugin.getChannelAutoTranslatePolicyStorageKey(routeKey);
+        // Controls bound to the rule carry the route they were built for; only those showing this channel are synced.
+        const syncOptions = { includeActive: true, routeKey };
         if (!key) {
-            this.plugin.syncSettingControls("ui.currentChannelAutoTranslatePolicy", "inherit", { includeActive: true });
+            this.plugin.syncSettingControls("ui.currentChannelAutoTranslatePolicy", "inherit", syncOptions);
             return false;
         }
         if (!this.plugin.settings.ui.channelAutoTranslatePolicies || typeof this.plugin.settings.ui.channelAutoTranslatePolicies !== "object" || Array.isArray(this.plugin.settings.ui.channelAutoTranslatePolicies)) {
@@ -1134,7 +1149,7 @@ class AutoTranslationQueueCore {
         if (normalized === "inherit") delete policies[key];
         else policies[key] = { mode: normalized };
         if (previous === normalized) {
-            this.plugin.syncSettingControls("ui.currentChannelAutoTranslatePolicy", normalized, { includeActive: true });
+            this.plugin.syncSettingControls("ui.currentChannelAutoTranslatePolicy", normalized, syncOptions);
             if (options.save === "immediate" || options.forceSave === true) this.plugin.saveSettings({ retryOnError: options.retryOnError });
             else if (options.save === "debounce") this.plugin.saveSettings({ debounce: true, delayMs: options.delayMs });
             return false;
@@ -1142,9 +1157,10 @@ class AutoTranslationQueueCore {
         if (options.save === false) {}
         else if (options.save === "immediate") this.plugin.saveSettings({ retryOnError: options.retryOnError });
         else this.plugin.saveSettings({ debounce: true, delayMs: options.delayMs });
-        this.plugin.syncSettingControls("ui.currentChannelAutoTranslatePolicy", normalized, { includeActive: true });
+        this.plugin.syncSettingControls("ui.currentChannelAutoTranslatePolicy", normalized, syncOptions);
         this.plugin.invalidateAutoTranslationQueue();
-        if (normalized === "disabled") this.plugin.cancelAutoTranslationRuntimeWork("channel-policy-disabled");
+        // 'inherit' with the main switch off stops auto-translation here as well as 'disabled' does.
+        if (!this.plugin.isAutoTranslateEnabled()) this.plugin.cancelAutoTranslationRuntimeWork("channel-policy-disabled");
         this.plugin.logDiagnostic("auto.channel-policy", "updated", {
             ...this.plugin.getDiagnosticBaseMeta("auto", "settings", normalized === "disabled" ? "channel-disabled" : "channel-policy"),
             routeKeyHash: this.plugin.getDiagnosticRouteKeyHash(routeKey),
@@ -1169,9 +1185,63 @@ class AutoTranslationQueueCore {
         };
     }
 
+    // Quick settings can stay open across a channel switch (a notification click or a keybind) while scans are
+    // held, so a "current channel" rule control would keep showing and editing the channel it was built for.
+    // Each control bound to another channel is rebuilt, row and all, for the channel open now; on a screen with
+    // no channel there is nothing to set a rule for, so the rebuilt control is disabled. Returns the rows rebuilt.
+    refreshChannelRuleControls(routeKey = this.plugin.getCurrentRouteKey()) {
+        const path = "ui.currentChannelAutoTranslatePolicy";
+        const selector = `[data-dait-path='${path}']`;
+        let controls = [];
+        try {
+            if (typeof document !== "undefined" && typeof document.querySelectorAll === "function") controls = [...document.querySelectorAll(selector)];
+        }
+        catch {}
+        const channel = this.plugin.getChannelAutoTranslatePolicyStorageKey(routeKey);
+        let rebuilt = 0;
+        controls.forEach(control => {
+            const bound = control?.dataset?.daitRouteKey;
+            if (typeof bound !== "string") return;
+            const boundChannel = this.plugin.getChannelAutoTranslatePolicyStorageKey(bound);
+            if (boundChannel === channel && (channel || this.plugin.isChannelRuleControlDisabled(control))) return;
+            const row = this.plugin.createCurrentChannelPolicyRow();
+            const fresh = row?.dataset?.daitPath === path ? row : row?.querySelectorAll?.(selector)?.[0];
+            if (!fresh) return;
+            // The old row holds its control as deep as the new row holds its own; swap the whole row when it matches.
+            // Only the first class is compared: a row without a channel is also locked (dait-settings-row-inactive).
+            let depth = 0;
+            for (let node = fresh; node && node !== row; node = node.parentNode) depth++;
+            let oldRow = control;
+            for (let step = 0; step < depth && oldRow; step++) oldRow = oldRow.parentNode;
+            const rowClass = node => String(node?.className || "").trim().split(/\s+/)[0];
+            if (oldRow && oldRow.tagName === row.tagName && rowClass(oldRow) === rowClass(row) && typeof oldRow.replaceWith === "function") {
+                oldRow.replaceWith(row);
+            }
+            else if (typeof control.replaceWith === "function") control.replaceWith(fresh);
+            else return;
+            rebuilt++;
+        });
+        return rebuilt;
+    }
+
+    // Channels whose rule is 'enabled': they auto-translate even while the main switch is off.
+    getChannelAutoTranslateAllowListCount(policies = this.plugin.settings.ui?.channelAutoTranslatePolicies) {
+        if (!policies || typeof policies !== "object" || Array.isArray(policies)) return 0;
+        const channels = new Set();
+        Object.entries(policies).forEach(([key, policy]) => {
+            if (!policy || typeof policy !== "object") return;
+            if (this.plugin.normalizeChannelAutoTranslatePolicyMode(policy.mode) !== "enabled") return;
+            const channel = this.plugin.getChannelAutoTranslatePolicyStorageKey(key);
+            if (channel) channels.add(channel);
+        });
+        return channels.size;
+    }
+
     isCurrentChannelAutoTranslateAllowed(routeKey = this.plugin.getCurrentRouteKey()) {
         const policy = this.plugin.getCurrentChannelAutoTranslatePolicy(routeKey);
-        return policy.enabled !== false;
+        if (policy.mode === "enabled") return true;
+        if (policy.mode === "disabled") return false;
+        return Boolean(this.plugin.settings?.ui?.autoTranslateMessages);
     }
 
     isAutoTranslationRequestCurrent(requestOptions) {
@@ -1206,9 +1276,11 @@ class AutoTranslationQueueCore {
         const startedAt = Date.now();
         try {
             if (this.plugin.isAutoTranslationWorkCurrent(item)) this.plugin.renderPendingAutoTranslationLoadingSafely(item);
-            const translated = await this.plugin.runAutoTranslationTask(item.text, item.requestOptions, {
-                heartbeat: () => this.plugin.heartbeatAutoTranslationInFlightItem(item)
-            });
+            const taskOptions = {
+                heartbeat: () => this.plugin.heartbeatAutoTranslationInFlightItem(item),
+                signal: this.plugin.getAutoTranslationAbortSignal()
+            };
+            const translated = await this.plugin.runAutoTranslationTask(item.text, item.requestOptions, taskOptions);
             if (this.plugin.isAutoTranslationWorkCurrent(item)) {
                 this.plugin.logDiagnostic("auto.message", "success", {
                     ...this.plugin.getAutoTranslationDiagnosticMeta(item, DIAGNOSTIC_MESSAGE_STATES.VALIDATING, DIAGNOSTIC_REASON_CODES.OUTPUT_RECEIVED),
@@ -1225,7 +1297,9 @@ class AutoTranslationQueueCore {
                     DIAGNOSTIC_REASON_CODES.OUTPUT_RECEIVED,
                     { ms: Date.now() - startedAt }
                 );
-                this.plugin.renderAutoTranslationResultSafely(item, translated);
+                this.plugin.renderAutoTranslationResultSafely(item, translated, taskOptions.longTextPartialInfo
+                    ? { partialInfo: taskOptions.longTextPartialInfo }
+                    : undefined);
             }
         }
         catch (error) {
@@ -1272,14 +1346,17 @@ class AutoTranslationQueueCore {
             });
 
             let translations = [];
+            let requestError = null;
+            const taskOptions = { signal: this.plugin.getAutoTranslationAbortSignal() };
             try {
-                translations = await this.plugin.runAutoTranslationBatchTask(items.map(item => item.text), items[0]?.requestOptions);
+                translations = await this.plugin.runAutoTranslationBatchTask(items.map(item => item.text), items[0]?.requestOptions, taskOptions);
             }
             catch (error) {
                 if (!items.some(item => this.plugin.isAutoTranslationWorkCurrent(item))) {
                     pending.clear();
                 }
                 else if (this.plugin.shouldFallbackAutoTranslationBatchRequestError(error)) {
+                    requestError = error;
                     this.plugin.logDiagnostic("auto.batch", "fallback", {
                         type: this.plugin.getAutoTranslationFailureType(error),
                         batchSize: items.length,
@@ -1358,7 +1435,10 @@ class AutoTranslationQueueCore {
                 });
             }
 
-            if (pending.size && !this.plugin.isAutoTranslationStrictRetryEnabled()) {
+            if (pending.size && requestError && !translations.length && !this.plugin.isAutoTranslationStrictRetryEnabled()) {
+                this.plugin.settleFailedAutoTranslationBatchRequest(pending, requestError);
+            }
+            else if (pending.size && !this.plugin.isAutoTranslationStrictRetryEnabled()) {
                 pending.forEach(item => {
                     if (this.plugin.isAutoTranslationWorkCurrent(item)) {
                         this.plugin.logAutoTranslationMessageState(
@@ -1375,8 +1455,8 @@ class AutoTranslationQueueCore {
                 });
             }
             else {
-                await this.plugin.runAutoTranslationBatchRetryItems(pending);
-                await this.plugin.runAutoTranslationFallbackItems(pending);
+                await this.plugin.runAutoTranslationBatchRetryItems(pending, taskOptions);
+                await this.plugin.runAutoTranslationFallbackItems(pending, taskOptions);
             }
 
             pending.forEach(item => {
@@ -1412,6 +1492,45 @@ class AutoTranslationQueueCore {
                 this.plugin.queueScan();
             }
         }
+    }
+
+    // A batch request that failed as a whole says nothing about each message's output, so it must
+    // not end as a final invalid-output failure. An unusable batch reply (unreadable, empty or cut
+    // off) is sent again as single requests; a request error (timeout, network, client error) gets
+    // that error's own backoff, with the provider marked once for the whole batch.
+    settleFailedAutoTranslationBatchRequest(pending, error) {
+        const current = [...pending].filter(item => this.plugin.isAutoTranslationWorkCurrent(item));
+        const formatError = this.plugin.isAutoTranslationBatchFormatError(error);
+        this.plugin.logDiagnostic("auto.batch", formatError ? "single-fallback" : "request-failed", {
+            type: this.plugin.getAutoTranslationFailureType(error),
+            batchSize: pending.size,
+            current: current.length
+        });
+        if (!formatError && current.length && this.plugin.shouldMarkAutoTranslationProviderFailureForItem(current[0], error)) {
+            this.plugin.markAutoTranslationProviderFailure(current[0]?.requestOptions, error);
+        }
+        current.forEach(item => {
+            pending.delete(item);
+            if (formatError) {
+                item.daitSingleRequest = true;
+                this.plugin.requeueAutoTranslationItem(item, { allowActiveRequeue: true, preserveLoading: true });
+                return;
+            }
+            this.plugin.logAutoTranslationMessageState(
+                "auto.message.state",
+                "failed",
+                item,
+                DIAGNOSTIC_MESSAGE_STATES.FAILED,
+                DIAGNOSTIC_REASON_CODES.FAILURE,
+                { type: this.plugin.getAutoTranslationFailureType(error), batchRequestFailed: true }
+            );
+            this.plugin.markAutoTranslationFailureSafely(item, error, { markProvider: false });
+        });
+    }
+
+    isAutoTranslationBatchFormatError(error) {
+        if (this.plugin.isAutoBatchFallbackError(error) || error?.modelOutputTruncated) return true;
+        return this.plugin.getAutoTranslationFailureType(error) === "invalid-output";
     }
 
     requeueAutoTranslationItem(item, options = {}) {
@@ -1499,11 +1618,44 @@ class AutoTranslationQueueCore {
 
     hasActiveAutoTranslationKey(cacheKey) {
         this.plugin.pruneAutoTranslationActiveState();
-        return Boolean(cacheKey && (
-            this.plugin.autoTranslationQueuedKeys.has(cacheKey)
-            || this.plugin.autoTranslationInFlightKeys.has(cacheKey)
-            || this.plugin.autoTranslationRenderPendingKeys?.has?.(cacheKey)
-        ));
+        return Boolean(this.findActiveAutoTranslationKey(cacheKey));
+    }
+
+    // The key this message's work is queued, in flight or waiting to render under: the key itself or, for a
+    // local server whose model is detected, the same key naming the model known when the work was queued.
+    // (Work queued before the first detection is keyed with the "local-model" placeholder, and a scan after
+    // it keys the same message with the served model.) "" when there is no such work.
+    resolveActiveAutoTranslationKey(cacheKey) {
+        this.plugin.pruneAutoTranslationActiveState();
+        return this.findActiveAutoTranslationKey(cacheKey);
+    }
+
+    findActiveAutoTranslationKey(cacheKey) {
+        if (!cacheKey) return "";
+        const activeSets = [
+            this.plugin.autoTranslationQueuedKeys,
+            this.plugin.autoTranslationInFlightKeys,
+            this.plugin.autoTranslationRenderPendingKeys
+        ].filter(keys => keys?.size);
+        if (activeSets.some(keys => keys.has(cacheKey))) return cacheKey;
+        if (!activeSets.length) return "";
+        if (!this.plugin.shouldAutoDetectLocalProviderModel(this.plugin.getEffectiveTaskConfig("translation"), DEFAULT_SETTINGS.translation || {})) return "";
+        const wanted = this.getModelAgnosticAutoTranslationKey(cacheKey);
+        if (!wanted) return "";
+        for (const keys of activeSets) {
+            for (const key of keys) {
+                if (key !== cacheKey && this.getModelAgnosticAutoTranslationKey(key) === wanted) return key;
+            }
+        }
+        return "";
+    }
+
+    getModelAgnosticAutoTranslationKey(cacheKey) {
+        const parts = String(cacheKey || "").split("\n---\n");
+        const index = parts.findIndex((part, position) => position > 0 && part.startsWith("model:") && parts[position - 1].startsWith("endpoint:"));
+        if (index < 0) return "";
+        parts[index] = "model:";
+        return parts.join("\n---\n");
     }
 
     pruneAutoTranslationActiveState(now = Date.now()) {
@@ -1614,6 +1766,97 @@ class AutoTranslationQueueCore {
         while (this.plugin.autoTranslationRecentRenders.size > AUTO_TRANSLATE_RECENT_RENDER_MAX) {
             this.plugin.autoTranslationRecentRenders.delete(this.plugin.autoTranslationRecentRenders.keys().next().value);
         }
+    }
+
+    // Partial results (for example a long message with a failed chunk) must not enter the
+    // persistent cache, but are kept here briefly so a rebuilt or prefetched message is redrawn
+    // instead of requested again. A complete cached result replaces them.
+    rememberAutoTranslationPartialResult(cacheKey, text, translated, meta = {}) {
+        const key = String(cacheKey || "");
+        const value = String(translated || "").trim();
+        if (!key || !value) return;
+        if (!this.plugin.autoTranslationPartialResults?.set) this.plugin.autoTranslationPartialResults = new Map();
+        const now = Date.now();
+        const partialInfo = meta.partialInfo && typeof meta.partialInfo === "object"
+            ? {
+                missingSegments: Array.isArray(meta.partialInfo.missingSegments) ? [...meta.partialInfo.missingSegments] : [],
+                totalSegments: Number(meta.partialInfo.totalSegments || 0) || 0
+            }
+            : null;
+        this.plugin.autoTranslationPartialResults.delete(key);
+        this.plugin.autoTranslationPartialResults.set(key, {
+            sourceSig: this.plugin.getStrongTextFingerprint(text),
+            translated: value,
+            partialInfo,
+            validationQuality: String(meta.validationQuality || ""),
+            validationReason: String(meta.validationReason || ""),
+            at: now,
+            expiresAt: now + AUTO_TRANSLATE_PARTIAL_RESULT_TTL_MS
+        });
+        this.plugin.pruneAutoTranslationPartialResults(now);
+    }
+
+    getAutoTranslationPartialResult(cacheKey, text, now = Date.now()) {
+        const key = String(cacheKey || "");
+        const entry = key ? this.plugin.autoTranslationPartialResults?.get?.(key) : null;
+        if (!entry) return null;
+        if (Number(entry.expiresAt || 0) <= now || entry.sourceSig !== this.plugin.getStrongTextFingerprint(text)) {
+            this.plugin.autoTranslationPartialResults.delete(key);
+            return null;
+        }
+        return entry;
+    }
+
+    // A partial line that is still shown keeps its kept result alive (and last to be pruned), so a
+    // rebuilt message is redrawn from it instead of requested again.
+    touchAutoTranslationPartialResult(cacheKey, text, now = Date.now()) {
+        const entry = this.plugin.getAutoTranslationPartialResult(cacheKey, text, now);
+        if (!entry) return null;
+        entry.expiresAt = now + AUTO_TRANSLATE_PARTIAL_RESULT_TTL_MS;
+        this.plugin.autoTranslationPartialResults.delete(String(cacheKey));
+        this.plugin.autoTranslationPartialResults.set(String(cacheKey), entry);
+        return entry;
+    }
+
+    clearAutoTranslationPartialResult(...cacheKeys) {
+        if (!this.plugin.autoTranslationPartialResults?.size) return;
+        cacheKeys.forEach(cacheKey => {
+            if (cacheKey) this.plugin.autoTranslationPartialResults.delete(String(cacheKey));
+        });
+    }
+
+    pruneAutoTranslationPartialResults(now = Date.now()) {
+        const results = this.plugin.autoTranslationPartialResults;
+        if (!results?.size) return;
+        for (const [key, entry] of [...results.entries()]) {
+            if (Number(entry?.expiresAt || 0) <= now) results.delete(key);
+        }
+        while (results.size > AUTO_TRANSLATE_PARTIAL_RESULT_MAX) {
+            results.delete(results.keys().next().value);
+        }
+    }
+
+    // Every request made for queued auto-translation work carries this signal. A full invalidation
+    // orphans that work and aborts the signal; work started afterwards gets a fresh one.
+    getAutoTranslationAbortSignal() {
+        if (typeof AbortController === "undefined") return undefined;
+        if (!this.plugin.autoTranslationAbortController || this.plugin.autoTranslationAbortController.signal.aborted) {
+            this.plugin.autoTranslationAbortController = new AbortController();
+        }
+        return this.plugin.autoTranslationAbortController.signal;
+    }
+
+    abortAutoTranslationRequests(reason = "invalidated") {
+        const controller = this.plugin.autoTranslationAbortController;
+        this.plugin.autoTranslationAbortController = null;
+        if (!controller || controller.signal.aborted) return false;
+        const inFlight = Number(this.plugin.autoTranslationInFlight || 0);
+        try {
+            controller.abort();
+        }
+        catch {}
+        if (inFlight) this.plugin.logDiagnostic("auto.queue.abort", "ok", { reason, inFlight });
+        return true;
     }
 
     createAutoTranslationInFlightToken(cacheKey = "") {
@@ -1737,7 +1980,8 @@ class AutoTranslationQueueCore {
             });
             return;
         }
-        this.plugin.setTranslationCache(cacheKey, translated);
+        this.plugin.setTranslationCache(this.plugin.getServedModelTranslationCacheKey(cacheKey, requestOptions), translated);
+        this.plugin.clearAutoTranslationPartialResult(cacheKey);
         if (this.plugin.shouldStoreAutoTextTranslationCache(text, requestOptions, translated)) {
             this.plugin.setAutoTextTranslationCache(text, requestOptions, translated);
         }
@@ -1763,7 +2007,7 @@ class AutoTranslationQueueCore {
     hasCacheableAutoTranslationTarget(item) {
         return this.plugin.getAutoTranslationPendingTargets(item).some(target => {
             if (!target?.messageNode?.isConnected || !target?.content?.isConnected) return false;
-            if (this.plugin.getElementText(target.content, target.textOptions) !== target.text) return false;
+            if (!this.plugin.isAutoTranslationTargetDomTextCurrent(target)) return false;
             return this.plugin.isAutoTranslationTargetIdentityCurrent(target, item)
                 || Boolean(this.plugin.getAutoTranslationTargetIdentityUpgrade(target, item));
         });
@@ -1772,7 +2016,9 @@ class AutoTranslationQueueCore {
     hasInvalidAutoTranslationTarget(item) {
         return this.plugin.getAutoTranslationPendingTargets(item).some(target => {
             if (!target?.messageNode?.isConnected || !target?.content?.isConnected) return false;
-            if (this.plugin.getElementText(target.content, target.textOptions) !== target.text) return true;
+            // A message that changed meanwhile does not make the result wrong: it is still the
+            // translation of item.text (renderAutoTranslationResult caches it too).
+            if (!this.plugin.isAutoTranslationTargetDomTextCurrent(target)) return false;
             return !this.plugin.isAutoTranslationTargetIdentityCurrent(target, item)
                 && !this.plugin.getAutoTranslationTargetIdentityUpgrade(target, item);
         });
@@ -1798,7 +2044,9 @@ class AutoTranslationQueueCore {
         const requestOptions = target?.requestOptions || item?.requestOptions || {};
         const expected = this.plugin.normalizeTranslationMessageIdentity(requestOptions.messageIdentity);
         if (!expected || !text) return null;
-        const current = this.plugin.normalizeTranslationMessageIdentity(this.plugin.getMessageIdentity(target.messageNode, target.content, text));
+        // The identity describes the message on screen; the cache key keeps the request text.
+        const domText = this.plugin.getAutoTranslationTargetDomText(target.text ? target : item);
+        const current = this.plugin.normalizeTranslationMessageIdentity(this.plugin.getMessageIdentity(target.messageNode, target.content, domText));
         if (!current || current === expected || !this.plugin.isSafeTranslationIdentityUpgrade(expected, current, target)) return null;
         const upgradedOptions = { ...requestOptions, messageIdentity: current };
         return {
@@ -1812,7 +2060,7 @@ class AutoTranslationQueueCore {
         const requestOptions = target?.requestOptions || item?.requestOptions || {};
         const expected = this.plugin.normalizeTranslationMessageIdentity(requestOptions.messageIdentity);
         if (!expected) return true;
-        const current = this.plugin.normalizeTranslationMessageIdentity(this.plugin.getMessageIdentity(target.messageNode, target.content, target.text));
+        const current = this.plugin.normalizeTranslationMessageIdentity(this.plugin.getMessageIdentity(target.messageNode, target.content, this.plugin.getAutoTranslationTargetDomText(target)));
         return current === expected;
     }
 
@@ -1825,7 +2073,7 @@ class AutoTranslationQueueCore {
             this.plugin.warnSanitized("Failed to render auto translation failure", renderError);
             const failure = this.plugin.createAutoTranslationFailure(item.cacheKey, error);
             let retained = false;
-            if (this.plugin.shouldRetainAutoTranslationFailureItem(item, error)) {
+            if (this.plugin.shouldRetainAutoTranslationFailureItem(item, error, failure)) {
                 retained = this.plugin.retainBlockedVisibleAutoTranslationItem(item, {
                     delayMs: failure.retryAfterMs,
                     allowActiveRequeue: true,
@@ -1838,6 +2086,9 @@ class AutoTranslationQueueCore {
                 this.plugin.autoTranslationFailures.set(item.cacheKey, failure);
                 this.plugin.pruneAutoTranslationFailureMapSize();
                 this.plugin.markAutoTextTranslationFailure(item, error, failure);
+            }
+            else {
+                this.plugin.rememberAutoTranslationFailureHistory(item.cacheKey, failure);
             }
             if (options.markProvider !== false) {
                 const retainedKeys = retained && item?.cacheKey ? new Set([item.cacheKey]) : new Set();
@@ -1925,7 +2176,7 @@ class AutoTranslationQueueCore {
         this.plugin.pruneAutoTranslationFailureMapSize();
         this.plugin.markAutoTextTranslationFailure(item, storageError, failure);
         const retainedKeys = new Set();
-        if (this.plugin.shouldRetainAutoTranslationFailureItem(item, error)) {
+        if (this.plugin.shouldRetainAutoTranslationFailureItem(item, error, failure)) {
             const retained = this.plugin.retainBlockedVisibleAutoTranslationItem(item, {
                 delayMs: failure.retryAfterMs,
                 allowActiveRequeue: true,
@@ -1936,12 +2187,35 @@ class AutoTranslationQueueCore {
             if (retained && item?.cacheKey) retainedKeys.add(item.cacheKey);
         }
         if (item?.cacheKey && retainedKeys.has(item.cacheKey)) {
+            // The retained item retries on its own delay, but its count must survive so the
+            // next failure backs off further.
+            this.plugin.rememberAutoTranslationFailureHistory(item.cacheKey, failure);
             this.plugin.autoTranslationFailures.delete(item.cacheKey);
             this.plugin.clearAutoTextTranslationFailure(item.text, item.requestOptions);
         }
         if (this.plugin.shouldMarkAutoTranslationProviderFailureForItem(item, error, options)) this.plugin.markAutoTranslationProviderFailure(item.requestOptions, error, failure, { skipCacheKeys: retainedKeys });
         if (!failure.terminal) this.plugin.scheduleAutoTranslationRetryScan(failure.retryAfterMs);
         if (!storageError?.autoTranslationWeakFailure) this.plugin.showAutoTranslateError(error);
+    }
+
+    // A result that cannot be drawn (its emoji images cannot be restored) is recorded as a final
+    // invalid output, so the scan does not request the same message again on every pass.
+    // The auto-text cache holds the same result under the text alone; it is dropped too, otherwise
+    // the scan would draw it again from there (clearing this failure) on every pass.
+    markAutoTranslationUndrawableResult(cacheKey, reason = "emoji-restore-failed", source = null) {
+        const key = String(cacheKey || "");
+        if (!key) return null;
+        if (source?.text && source?.requestOptions) {
+            this.plugin.deleteTranslationCacheCandidates(
+                this.plugin.getAutoTextTranslationCacheKey(source.text, source.requestOptions),
+                ...this.plugin.getAutoTextTranslationCacheAliases(source.text, source.requestOptions)
+            );
+        }
+        const failure = this.plugin.createAutoTranslationFailure(key, this.plugin.createFinalInvalidAutoTranslationError(reason));
+        this.plugin.autoTranslationFailures.set(key, failure);
+        this.plugin.pruneAutoTranslationFailureMapSize();
+        this.plugin.clearAutoTranslationPartialResult(key);
+        return failure;
     }
 
     getAutoTranslationStorageErrorForItem(item, error) {
@@ -1951,6 +2225,18 @@ class AutoTranslationQueueCore {
         storageError.autoTranslationTerminalFailure = Boolean(error?.autoTranslationTerminalFailure);
         storageError.autoTranslationInvalidReason = error?.autoTranslationInvalidReason || this.plugin.getAutoTranslationFailureType(error) || "invalid-output";
         storageError.autoTranslationWeakFailure = true;
+        // Keep the truncated type so its growing backoff applies to prefetch too.
+        if (error?.modelOutputTruncated) storageError.modelOutputTruncated = true;
+        if (["timeout", "network", "server"].includes(this.plugin.getAutoTranslationFailureType(error))) {
+            // A slow or failing provider is not a bad answer: the weak failure waits longer with each
+            // repeat instead of sending the same (billed) prefetch request again every few seconds.
+            const count = this.plugin.getNextAutoTranslationFailureCount(item.cacheKey);
+            storageError.retryAfterMs = Math.min(
+                AUTO_TRANSLATE_FAILURE_MAX_TTL,
+                Math.max(Number(error?.retryAfterMs || 0), AUTO_TRANSLATE_TRANSIENT_FAILURE_TTL * Math.pow(2, Math.max(0, count - 1)))
+            );
+            return storageError;
+        }
         storageError.retryAfterMs = Math.min(
             storageError.autoTranslationTerminalFailure ? AUTO_TRANSLATE_FINAL_INVALID_OUTPUT_FAILURE_TTL : AUTO_TRANSLATE_INVALID_OUTPUT_FAILURE_TTL,
             Math.max(1000, Number(error?.retryAfterMs || AUTO_TRANSLATE_INVALID_OUTPUT_FAILURE_TTL))
@@ -1995,11 +2281,17 @@ class AutoTranslationQueueCore {
         return this.plugin.translationScheduler.isProviderCoolingDown(requestOptions, now);
     }
 
-    createAutoTranslationFailure(cacheKey, error) {
+    // The count the next failure of this message gets: one more than its live record or its
+    // remembered history, capped.
+    getNextAutoTranslationFailureCount(cacheKey) {
         const previous = this.plugin.autoTranslationFailures.get(cacheKey);
         const previousCount = typeof previous === "object" ? Number(previous.count || 0) : 0;
         const historyCount = this.plugin.getAutoTranslationFailureHistoryCount(cacheKey);
-        const count = Math.min(5, Math.max(previousCount, historyCount) + 1);
+        return Math.min(5, Math.max(previousCount, historyCount) + 1);
+    }
+
+    createAutoTranslationFailure(cacheKey, error) {
+        const count = this.plugin.getNextAutoTranslationFailureCount(cacheKey);
         const retryAfterMs = this.plugin.getAutoTranslationRetryAfter(error, count);
         const now = Date.now();
         const terminal = Boolean(error?.autoTranslationTerminalFailure);
@@ -2095,8 +2387,13 @@ class AutoTranslationQueueCore {
     }
 
     getAutoTranslationRetryAfter(error, count = 1) {
-        if (Number(error?.retryAfterMs) > 0) return Math.min(AUTO_TRANSLATE_FAILURE_MAX_TTL, Number(error.retryAfterMs));
         const type = this.plugin.getAutoTranslationFailureType(error);
+        // A truncated output normally reaches this point after a retry with a larger max_tokens, so
+        // its fixed provider hint (a few seconds) is ignored and the wait doubles with each failure.
+        if (type === "truncated") {
+            return Math.min(AUTO_TRANSLATE_TRUNCATED_FAILURE_MAX_TTL, AUTO_TRANSLATE_TRUNCATED_FAILURE_TTL * Math.pow(2, Math.max(0, count - 1)));
+        }
+        if (Number(error?.retryAfterMs) > 0) return Math.min(AUTO_TRANSLATE_FAILURE_MAX_TTL, Number(error.retryAfterMs));
         if (type === "local-unavailable") return LOCAL_PROVIDER_UNAVAILABLE_RETRY_MS;
         if (["quota", "rate-limit", "server", "parse"].includes(type)) {
             return Math.min(AUTO_TRANSLATE_FAILURE_MAX_TTL, AUTO_TRANSLATE_PROVIDER_FAILURE_TTL * Math.pow(2, Math.max(0, count - 1)));
@@ -2125,6 +2422,8 @@ class AutoTranslationQueueCore {
         if (error?.googleTranslateQuotaExceeded) return "quota";
         if (error?.googleTranslateNoKey) return "auth";
         if (status === 401 || status === 403) return "auth";
+        // 402 Payment Required: e.g. DeepSeek "Insufficient Balance".
+        if (status === 402) return "quota";
         if (status === 429) return "rate-limit";
         if (status >= 500) return "server";
         if (this.plugin.isTimeoutError(error)) return "timeout";

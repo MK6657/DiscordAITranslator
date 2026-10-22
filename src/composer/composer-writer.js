@@ -5,6 +5,20 @@ class ComposerWriter {
         this.plugin = plugin;
         this.activeWriteTokens = new Map();
         this.writeTokenCounter = 0;
+        this.ownEditDepth = 0;
+    }
+
+    // Runs an edit the plugin makes itself. document.execCommand fires trusted "input" events, which
+    // must not read as the user typing and cancel the plugin's own write. The call is synchronous,
+    // so no real keystroke can arrive while it runs.
+    runOwnEdit(callback) {
+        this.ownEditDepth++;
+        try {
+            return callback();
+        }
+        finally {
+            this.ownEditDepth--;
+        }
     }
 
     replaceTextSafely(textbox, text, options = {}) {
@@ -73,10 +87,12 @@ class ComposerWriter {
         const textbox = token?.textbox;
         if (!textbox?.addEventListener) return null;
         const cancel = event => {
-            if (event?.isTrusted !== true) return;
+            if (event?.isTrusted !== true || this.ownEditDepth > 0) return;
             this.cancelWriteToken(token, "user-input");
         };
-        const events = ["beforeinput", "input", "paste", "drop", "compositionstart", "keydown"];
+        // Only events that change the draft cancel the write. Arrow keys, Shift or Ctrl+C must not
+        // throw a finished result away; other edits are caught by the stale-draft check before writing.
+        const events = ["beforeinput", "input", "paste", "cut", "drop", "compositionstart"];
         events.forEach(type => textbox.addEventListener(type, cancel, true));
         return () => events.forEach(type => textbox.removeEventListener?.(type, cancel, true));
     }

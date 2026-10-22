@@ -28,6 +28,16 @@ DiscordAITranslator-handoff-*.zip
 
 # Local agent state
 /.agents/
+/.claude/
+
+# Local browser profiles (headless Chrome/Edge user-data folders used for previews and smoke tests)
+/.chrome-*/
+/.chromium-*/
+/.edge-*/
+/.browser-profile*/
+# Store names such as History, Cookies or Local State are deliberately not ignored anywhere else: a
+# profile outside the folders above is then staged whole, so scripts/release-guards.js sees its login,
+# cookie and history stores and blocks the release, instead of the rest of the profile slipping through.
 
 # Editors and operating systems
 .idea/

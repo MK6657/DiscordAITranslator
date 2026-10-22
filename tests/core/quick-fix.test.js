@@ -1,0 +1,773 @@
+"use strict";
+const assert = require("node:assert/strict");
+const test = require("node:test");
+const Plugin = require("../../src");
+
+// v0.4.0 review fixes for the launcher and the quick panel: one toggle per press, a status that only says
+// "testing" while something is tested, a Test button that matches, a panel that follows its launcher, Tab that
+// stays with Discord once focus has left the panel, the channel rule's caption with translation off, and what
+// counts as a channel for the channel rule.
+
+function useGlobals(t, values) {
+    const saved = {};
+    for (const [key, value] of Object.entries(values)) {
+        saved[key] = Object.getOwnPropertyDescriptor(globalThis, key);
+        globalThis[key] = value;
+    }
+    t.after(() => {
+        for (const [key, descriptor] of Object.entries(saved)) {
+            if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+            else delete globalThis[key];
+        }
+    });
+}
+
+// --- The small DOM of quick-panel.test.js: elements, attributes, capture/bubble events, focus and layout rectangles. ---
+
+const toDatasetKey = name => name.slice(5).replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
+
+function parseCompound(text) {
+    const compound = { tag: "", classes: [], attributes: [] };
+    const pattern = /^([a-zA-Z][\w-]*)|\.([\w-]+)|\[([\w-]+)(?:([*^]?=)(['"])(.*?)\5)?\]/g;
+    let consumed = 0;
+    let match = pattern.exec(text);
+    while (match && match.index === consumed) {
+        if (match[1]) compound.tag = match[1].toUpperCase();
+        else if (match[2]) compound.classes.push(match[2]);
+        else compound.attributes.push({ name: match[3], op: match[4] || "", value: match[6] ?? "" });
+        consumed = pattern.lastIndex;
+        match = pattern.exec(text);
+    }
+    return consumed === text.length ? compound : null;
+}
+
+function matchesCompound(element, compound) {
+    if (!compound || element?.nodeType !== 1) return false;
+    if (compound.tag && element.tagName !== compound.tag) return false;
+    if (!compound.classes.every(name => element.classList.contains(name))) return false;
+    return compound.attributes.every(({ name, op, value }) => {
+        const actual = element.getAttribute(name);
+        if (actual === null) return false;
+        if (op === "=") return actual === value;
+        if (op === "^=") return actual.startsWith(value);
+        if (op === "*=") return actual.includes(value);
+        return true;
+    });
+}
+
+const parseSelectorList = selector => String(selector).split(",").map(part => parseCompound(part.trim()));
+
+class FakeClassList {
+    constructor() { this.names = new Set(); }
+    add(...names) { names.forEach(name => this.names.add(name)); }
+    remove(...names) { names.forEach(name => this.names.delete(name)); }
+    contains(name) { return this.names.has(name); }
+    toggle(name, force) {
+        const enabled = force === undefined ? !this.names.has(name) : Boolean(force);
+        if (enabled) this.names.add(name);
+        else this.names.delete(name);
+        return enabled;
+    }
+}
+
+class FakeEventTarget {
+    constructor() { this.listeners = new Map(); }
+    addEventListener(type, handler, options) {
+        const capture = options === true || Boolean(options?.capture);
+        if (!this.listeners.has(type)) this.listeners.set(type, []);
+        this.listeners.get(type).push({ handler, capture });
+    }
+    removeEventListener(type, handler, options) {
+        const capture = options === true || Boolean(options?.capture);
+        const list = this.listeners.get(type) || [];
+        const index = list.findIndex(entry => entry.handler === handler && entry.capture === capture);
+        if (index >= 0) list.splice(index, 1);
+    }
+    listenerCount(type) { return (this.listeners.get(type) || []).length; }
+}
+
+class FakeElement extends FakeEventTarget {
+    constructor(tag, doc) {
+        super();
+        this.nodeType = 1;
+        this.tagName = String(tag).toUpperCase();
+        this.ownerDocument = doc;
+        this.children = [];
+        this.parentElement = null;
+        this.dataset = {};
+        this.attributes = new Map();
+        this.classList = new FakeClassList();
+        this.style = { setProperty() {}, removeProperty() {}, getPropertyValue: () => "" };
+        this.ownText = "";
+        this.disabled = false;
+        this.hidden = false;
+        this.checked = false;
+        this.value = "";
+        this.type = "";
+        this.id = "";
+        this.rect = null;
+    }
+
+    get className() { return [...this.classList.names].join(" "); }
+    set className(value) { this.classList.names = new Set(String(value).split(/\s+/).filter(Boolean)); }
+    get title() { return this.getAttribute("title") || ""; }
+    set title(value) { this.setAttribute("title", value); }
+    get isConnected() {
+        let node = this;
+        while (node.parentElement) node = node.parentElement;
+        return node === this.ownerDocument.body;
+    }
+    get textContent() { return this.ownText + this.children.map(child => child.textContent).join(""); }
+    set textContent(value) {
+        this.children.forEach(child => { child.parentElement = null; });
+        this.children = [];
+        this.ownText = String(value ?? "");
+    }
+    get options() { return this.tagName === "SELECT" ? this.children.filter(child => child.tagName === "OPTION") : undefined; }
+
+    setAttribute(name, value) {
+        if (name.startsWith("data-")) this.dataset[toDatasetKey(name)] = String(value);
+        else if (name === "class") this.className = value;
+        else if (name === "id") this.id = String(value);
+        else this.attributes.set(name, String(value));
+    }
+    getAttribute(name) {
+        if (name.startsWith("data-")) return this.dataset[toDatasetKey(name)] ?? null;
+        if (name === "class") return this.className || null;
+        if (name === "id") return this.id || null;
+        return this.attributes.has(name) ? this.attributes.get(name) : null;
+    }
+    removeAttribute(name) {
+        if (name.startsWith("data-")) delete this.dataset[toDatasetKey(name)];
+        else this.attributes.delete(name);
+    }
+
+    appendChild(child) { return this.insertBefore(child, null); }
+    insertBefore(child, reference) {
+        child.remove();
+        const index = reference ? this.children.indexOf(reference) : -1;
+        if (index >= 0) this.children.splice(index, 0, child);
+        else this.children.push(child);
+        child.parentElement = this;
+        return child;
+    }
+    remove() {
+        if (!this.parentElement) return;
+        const siblings = this.parentElement.children;
+        siblings.splice(siblings.indexOf(this), 1);
+        this.parentElement = null;
+    }
+    contains(node) {
+        for (let current = node; current; current = current.parentElement) if (current === this) return true;
+        return false;
+    }
+    focus() { this.ownerDocument.activeElement = this; }
+    matches(selector) { return parseSelectorList(selector).some(compound => matchesCompound(this, compound)); }
+    closest(selector) {
+        for (let node = this; node; node = node.parentElement) if (node.matches(selector)) return node;
+        return null;
+    }
+    querySelectorAll(selector) {
+        const compounds = parseSelectorList(selector);
+        const results = [];
+        const visit = node => {
+            for (const child of node.children) {
+                if (compounds.some(compound => matchesCompound(child, compound))) results.push(child);
+                visit(child);
+            }
+        };
+        visit(this);
+        return results;
+    }
+    querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
+    getBoundingClientRect() {
+        const layout = this.ownerDocument.layout?.(this);
+        return this.rect || layout || { top: 0, bottom: 0, left: 0, right: 0, width: 0, height: 0 };
+    }
+}
+
+function createDocument() {
+    const doc = new FakeEventTarget();
+    doc.activeElement = null;
+    doc.documentElement = { clientWidth: 0, clientHeight: 0 };
+    doc.createElement = tag => new FakeElement(tag, doc);
+    doc.body = doc.createElement("body");
+    doc.querySelectorAll = selector => doc.body.querySelectorAll(selector);
+    doc.querySelector = selector => doc.body.querySelector(selector);
+    // The quick panel's own size, as the browser would lay it out.
+    doc.layout = element => element.classList.contains("dait-quick-popover") ? { top: 0, left: 0, width: 340, height: 520, right: 340, bottom: 520 } : null;
+    return doc;
+}
+
+// Capture on the document and ancestors, then target and bubble, then the document again.
+function dispatch(doc, target, type, init = {}) {
+    const event = {
+        type,
+        target,
+        defaultPrevented: false,
+        propagationStopped: false,
+        immediateStopped: false,
+        preventDefault() { this.defaultPrevented = true; },
+        stopPropagation() { this.propagationStopped = true; },
+        stopImmediatePropagation() { this.propagationStopped = true; this.immediateStopped = true; },
+        ...init
+    };
+    const path = [];
+    for (let node = target; node; node = node.parentElement) path.push(node);
+    const run = (node, capture) => {
+        for (const entry of [...(node.listeners.get(type) || [])]) {
+            if (entry.capture !== capture && node !== target) continue;
+            event.currentTarget = node;
+            entry.handler(event);
+            if (event.immediateStopped) return;
+        }
+    };
+    const phases = [[doc, true], ...[...path].reverse().map(node => [node, true]), ...path.map(node => [node, false]), [doc, false]];
+    const seenAtTarget = new Set();
+    for (const [node, capture] of phases) {
+        if (node === target) {
+            if (seenAtTarget.has(node)) continue;
+            seenAtTarget.add(node);
+        }
+        run(node, capture);
+        if (event.propagationStopped) break;
+    }
+    return event;
+}
+
+const key = (doc, name, init = {}) => dispatch(doc, doc.activeElement || doc.body, "keydown", { key: name, ...init });
+
+function createWindow(options = {}) {
+    const win = new FakeEventTarget();
+    win.innerWidth = options.width || 1280;
+    win.innerHeight = options.height || 900;
+    win.location = { pathname: options.pathname || "/channels/111/222" };
+    return win;
+}
+
+// A started plugin with a launcher in a Discord-like user panel at the bottom left.
+function createQuickPanelPlugin(t, options = {}) {
+    t.mock.timers.enable({ apis: ["setTimeout", "setInterval", "Date"], now: 1_000_000 });
+    const doc = createDocument();
+    const win = createWindow(options);
+    useGlobals(t, { document: doc, window: win });
+    const plugin = new Plugin();
+    plugin.isStarted = true;
+    plugin.settings.ui.language = options.locale || "zh-CN";
+    plugin.settings.translation.provider = options.provider || "sakuraLocal";
+    if (options.endpoint) plugin.settings.translation.endpoint = options.endpoint;
+    plugin.saveSettings = () => true;
+    // No chat to scan here (a scan would also start the local service's health probe).
+    plugin.queueScan = () => {};
+    plugin.toasts = [];
+    plugin.showToast = (message, type) => plugin.toasts.push({ message, type });
+    plugin.fullSettingsOpens = [];
+    plugin.openQuickSettingsPanel = (source, launcher) => { plugin.fullSettingsOpens.push({ source, launcher }); return null; };
+    plugin.getDiscordNamedStore = name => name === "ChannelStore"
+        ? { getChannel: id => ({ 222: { name: "general" }, 333: { name: "random" } })[id] || null }
+        : null;
+    const userPanel = doc.createElement("section");
+    doc.body.appendChild(userPanel);
+    const launcher = plugin.createQuickSettingsButton("panel", userPanel);
+    userPanel.appendChild(launcher);
+    launcher.rect = options.launcherRect || { left: 200, top: 850, width: 32, height: 32, right: 232, bottom: 882 };
+    const composer = doc.createElement("textarea");
+    composer.className = "composer";
+    doc.body.appendChild(composer);
+    return { plugin, doc, win, launcher, composer, userPanel };
+}
+
+const byClass = (root, className) => root.querySelector(`.${className}`);
+function byId(root, id) {
+    if (root.id === id) return root;
+    for (const child of root.children) {
+        const found = byId(child, id);
+        if (found) return found;
+    }
+    return null;
+}
+const segmentButton = (root, groupKey, value) => byId(root, `dait-quick-popover-${groupKey}`).children.find(button => button.dataset.daitValue === value);
+
+// A mouse press on the launcher as Chromium sends it: pointerdown, (held for holdMs), pointerup, then click.
+function press(t, doc, target, options = {}) {
+    const pointer = { pointerId: options.pointerId ?? 1, pointerType: options.pointerType || "mouse", isPrimary: true, button: options.button ?? 0 };
+    dispatch(doc, target, "pointerdown", pointer);
+    t.mock.timers.tick(options.holdMs ?? 80);
+    dispatch(doc, target, "pointerup", pointer);
+    if (pointer.button === 0) dispatch(doc, target, "click", { detail: 1, pointerId: pointer.pointerId, pointerType: pointer.pointerType });
+    t.mock.timers.tick(1);
+}
+
+// --- QP-2 / X1: one toggle per press ---
+
+test("a press on the launcher toggles the quick panel once, however long the button is held", t => {
+    const { plugin, doc, launcher } = createQuickPanelPlugin(t);
+    // A slow click (held 450 ms) opens the panel and leaves it open.
+    press(t, doc, launcher, { holdMs: 450 });
+    assert.equal(plugin.isQuickPopoverOpen(), true, "a slow click opens the panel");
+    t.mock.timers.tick(2000);
+    // A slow click on the open panel's launcher closes it and leaves it closed.
+    press(t, doc, launcher, { holdMs: 700 });
+    assert.equal(plugin.isQuickPopoverOpen(), false, "a slow click closes the panel");
+    // Quick clicks toggle as before, one toggle per click.
+    press(t, doc, launcher);
+    assert.equal(plugin.isQuickPopoverOpen(), true);
+    press(t, doc, launcher);
+    assert.equal(plugin.isQuickPopoverOpen(), false);
+    // A long touch press as well.
+    press(t, doc, launcher, { holdMs: 900, pointerType: "touch", pointerId: 7 });
+    assert.equal(plugin.isQuickPopoverOpen(), true);
+});
+
+test("the panel opens while the launcher is still held; release and click do not close it again", t => {
+    const { plugin, doc, launcher } = createQuickPanelPlugin(t);
+    const pointer = { pointerId: 1, pointerType: "mouse", isPrimary: true, button: 0 };
+    dispatch(doc, launcher, "pointerdown", pointer);
+    t.mock.timers.tick(1);
+    assert.equal(plugin.isQuickPopoverOpen(), true, "open on press");
+    t.mock.timers.tick(400);
+    const up = dispatch(doc, launcher, "pointerup", pointer);
+    const click = dispatch(doc, launcher, "click", { detail: 1, pointerId: 1 });
+    t.mock.timers.tick(1);
+    assert.equal(plugin.isQuickPopoverOpen(), true, "still open after release");
+    // Discord never sees any part of the press.
+    assert.equal(up.propagationStopped, true);
+    assert.equal(click.propagationStopped, true);
+});
+
+test("right and middle presses do not toggle the quick panel", t => {
+    const { plugin, doc, launcher } = createQuickPanelPlugin(t);
+    press(t, doc, launcher, { button: 2 });
+    assert.equal(plugin.isQuickPopoverOpen(), false, "right button");
+    press(t, doc, launcher, { button: 1 });
+    assert.equal(plugin.isQuickPopoverOpen(), false, "middle button");
+    // A second finger on a touch screen is not a press of its own.
+    dispatch(doc, launcher, "pointerdown", { pointerId: 9, pointerType: "touch", isPrimary: false, button: 0 });
+    t.mock.timers.tick(1);
+    assert.equal(plugin.isQuickPopoverOpen(), false, "secondary pointer");
+    press(t, doc, launcher);
+    assert.equal(plugin.isQuickPopoverOpen(), true);
+    press(t, doc, launcher, { button: 2 });
+    assert.equal(plugin.isQuickPopoverOpen(), true, "a right press leaves an open panel open");
+});
+
+test("Enter or Space, and a press whose first events Discord swallowed, still toggle once", t => {
+    const { plugin, doc, launcher } = createQuickPanelPlugin(t);
+    // Enter or Space: a click with detail 0 and no pointer events.
+    dispatch(doc, launcher, "click", { detail: 0 });
+    t.mock.timers.tick(1);
+    assert.equal(plugin.isQuickPopoverOpen(), true);
+    dispatch(doc, launcher, "click", { detail: 0 });
+    t.mock.timers.tick(1);
+    assert.equal(plugin.isQuickPopoverOpen(), false);
+    // A click from assistive technology arrives without pointer events.
+    dispatch(doc, launcher, "click", { detail: 1 });
+    t.mock.timers.tick(1);
+    assert.equal(plugin.isQuickPopoverOpen(), true);
+    // pointerdown never reached the launcher: its pointerup toggles, and the click that follows is the same press.
+    dispatch(doc, launcher, "pointerup", { pointerId: 1, pointerType: "mouse", isPrimary: true, button: 0 });
+    dispatch(doc, launcher, "click", { detail: 1, pointerId: 1 });
+    t.mock.timers.tick(1);
+    assert.equal(plugin.isQuickPopoverOpen(), false);
+    // A press that never produced a click (released outside the launcher) does not swallow the next keyboard click.
+    dispatch(doc, launcher, "pointerdown", { pointerId: 1, pointerType: "mouse", isPrimary: true, button: 0 });
+    t.mock.timers.tick(1);
+    assert.equal(plugin.isQuickPopoverOpen(), true);
+    dispatch(doc, launcher, "click", { detail: 0 });
+    t.mock.timers.tick(1);
+    assert.equal(plugin.isQuickPopoverOpen(), false);
+    // Nor a click that no pointer caused (Chromium gives it pointerId -1 and no pointer type).
+    dispatch(doc, launcher, "pointerdown", { pointerId: 1, pointerType: "mouse", isPrimary: true, button: 0 });
+    t.mock.timers.tick(1);
+    assert.equal(plugin.isQuickPopoverOpen(), true);
+    dispatch(doc, launcher, "click", { detail: 1, pointerId: -1, pointerType: "" });
+    t.mock.timers.tick(1);
+    assert.equal(plugin.isQuickPopoverOpen(), false);
+});
+
+// --- QP-3: "testing" means a test or probe is running ---
+
+const LOOPBACK_SAKURA = "http://127.0.0.1:8080/v1/chat/completions";
+const LAN_SAKURA = "http://192.168.1.10:8080/v1/chat/completions";
+
+function statusPlugin(t, options = {}) {
+    const context = createQuickPanelPlugin(t, { endpoint: LOOPBACK_SAKURA, ...options });
+    context.plugin.settings.translation.apiKey = "";
+    context.plugin.settings.ui.autoTranslateMessages = true;
+    context.plugin.settings.translation.apiStatus = { state: "success", message: "" };
+    context.options = () => context.plugin.getAutoTranslationOptions();
+    context.providerKey = () => context.plugin.getAutoTranslationProviderKey(context.options());
+    return context;
+}
+
+test("a health probe of a LAN http endpoint ends as a failed status the user has to fix, not as a test that never ends", async t => {
+    const { plugin, doc, launcher, options, providerKey } = statusPlugin(t, { endpoint: LAN_SAKURA });
+    plugin.startLocalProviderHealthProbe(providerKey(), options(), { reason: "test" });
+    assert.equal(plugin.getLauncherStatus().state, "busy", "busy while the probe runs");
+    await plugin.localProviderHealthChecks.get(providerKey());
+    assert.equal(plugin.localProviderHealthChecks.size, 0);
+    const api = plugin.getApiStatus("translation");
+    assert.equal(api.state, "failed", "the probe records its failure");
+    assert.equal(api.message, plugin.t("errorUnsafeEndpoint"));
+    const status = plugin.getLauncherStatus();
+    assert.equal(status.state, "needs-you");
+    assert.equal(status.title, "Sakura 本地 · 连接失败 · 需要处理：接口地址不可用");
+    assert.equal(status.testing, false);
+    // The panel's Test button is the way to see the error: it is not blocked.
+    dispatch(doc, launcher, "click", { detail: 0 });
+    t.mock.timers.tick(1);
+    const popover = doc.querySelector(".dait-quick-popover");
+    assert.equal(byClass(popover, "dait-qp-test").disabled, false);
+    assert.equal(launcher.dataset.daitStatus, "needs-you");
+});
+
+test("a saved 'testing' status with nothing running is not shown as a running test", t => {
+    const { plugin, doc, launcher } = statusPlugin(t);
+    plugin.settings.translation.apiStatus = { state: "testing", message: "" };
+    const status = plugin.getLauncherStatus();
+    assert.equal(status.testing, false);
+    assert.equal(status.state, "ok");
+    assert.equal(status.title, "Sakura 本地 · 未检测 · 本频道自动翻译中");
+    dispatch(doc, launcher, "click", { detail: 0 });
+    t.mock.timers.tick(1);
+    const popover = doc.querySelector(".dait-quick-popover");
+    assert.equal(byClass(popover, "dait-qp-test").disabled, false, "nothing runs, so the Test button works");
+    assert.equal(byClass(popover, "dait-qp-status-line").textContent, "Sakura 本地 · 未检测");
+});
+
+test("a connection test started in the full settings window shows as testing until it ends", async t => {
+    const { plugin, doc, launcher } = statusPlugin(t);
+    let fail = null;
+    plugin.fetchModelResponse = () => new Promise((resolve, reject) => { fail = reject; });
+    const statusNode = doc.createElement("span");
+    statusNode.dataset.daitKind = "translation";
+    const running = plugin.testApiConnection("translation", null, statusNode);
+    await Promise.resolve();
+    assert.equal(plugin.isApiTestRunning("translation"), true);
+    assert.equal(plugin.isApiTestRunning("polish"), false);
+    let status = plugin.getLauncherStatus();
+    assert.equal(status.state, "busy");
+    assert.equal(status.title, "Sakura 本地 · 检测中 · 正在测试连接…");
+    dispatch(doc, launcher, "click", { detail: 0 });
+    t.mock.timers.tick(1);
+    const popover = doc.querySelector(".dait-quick-popover");
+    assert.equal(byClass(popover, "dait-qp-test").disabled, true, "a second test waits for the first");
+    fail(Object.assign(new Error("fetch failed"), { cause: { code: "ECONNREFUSED" } }));
+    await running;
+    assert.equal(plugin.isApiTestRunning("translation"), false);
+    status = plugin.getLauncherStatus();
+    assert.equal(status.testing, false);
+    assert.equal(status.state, "needs-you");
+    t.mock.timers.tick(250);
+    assert.equal(byClass(popover, "dait-qp-test").disabled, false);
+});
+
+// --- QP-4: a panel reopened during its own test shows the test running ---
+
+test("reopened while its test runs, the quick panel shows a busy Test button until the test ends", async t => {
+    const { plugin, doc, launcher } = statusPlugin(t);
+    const calls = [];
+    let finish = null;
+    plugin.testApiConnection = (kind, button) => {
+        calls.push(button);
+        plugin.setButtonBusy(button, true, plugin.t("apiTestBusy"));
+        return new Promise(resolve => {
+            finish = () => {
+                plugin.setButtonBusy(button, false, plugin.t("apiTest"));
+                resolve();
+            };
+        });
+    };
+    dispatch(doc, launcher, "click", { detail: 0 });
+    t.mock.timers.tick(1);
+    const first = byClass(doc.querySelector(".dait-quick-popover"), "dait-qp-test");
+    dispatch(doc, first, "click");
+    assert.equal(calls.length, 1);
+    assert.equal(first.disabled, true);
+
+    // Escape, then open the panel again before the test is over.
+    key(doc, "Escape");
+    assert.equal(plugin.isQuickPopoverOpen(), false);
+    dispatch(doc, launcher, "click", { detail: 0 });
+    t.mock.timers.tick(1);
+    const popover = doc.querySelector(".dait-quick-popover");
+    const rebuilt = byClass(popover, "dait-qp-test");
+    assert.notEqual(rebuilt, first);
+    assert.equal(rebuilt.disabled, true, "the rebuilt Test button waits for the running test");
+    assert.equal(rebuilt.textContent, "检测中");
+    assert.equal(byClass(popover, "dait-qp-status-line").textContent, "Sakura 本地 · 检测中");
+    dispatch(doc, rebuilt, "click");
+    assert.equal(calls.length, 1, "no second test");
+
+    finish();
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.equal(rebuilt.disabled, false);
+    assert.equal(rebuilt.textContent, "测试");
+});
+
+// --- QP-5: the open panel stays with its launcher ---
+
+test("the open quick panel keeps its place while the launcher is gone or hidden, and follows a new launcher", t => {
+    const { plugin, doc, launcher, userPanel } = statusPlugin(t);
+    dispatch(doc, launcher, "click", { detail: 0 });
+    t.mock.timers.tick(1);
+    const popover = doc.querySelector(".dait-quick-popover");
+    assert.equal(popover.style.left, "46px");
+    assert.equal(popover.style.top, "322px");
+    // The note line makes the panel taller: a status change repositions it.
+    doc.layout = element => element.classList.contains("dait-quick-popover")
+        ? { top: 0, left: 0, width: 340, height: byClass(popover, "dait-qp-status-note").hidden ? 520 : 540, right: 340, bottom: 540 }
+        : null;
+
+    // Discord re-mounts the user panel: the launcher is gone for a moment while the queue moves on.
+    launcher.remove();
+    plugin.autoTranslationInFlight = 1;
+    plugin.autoTranslationInFlightItems = 2;
+    plugin.requestLauncherStatusUpdate();
+    t.mock.timers.tick(250);
+    assert.equal(byClass(popover, "dait-qp-status-detail").textContent, "正在翻译 2 条，排队 0 条");
+    assert.equal(popover.style.left, "46px", "not snapped to the left edge");
+    assert.equal(popover.style.top, "322px", "not snapped to the bottom over the user panel");
+
+    // The new launcher sits elsewhere: the panel moves above it.
+    const replacement = plugin.createQuickSettingsButton("panel", userPanel);
+    userPanel.appendChild(replacement);
+    replacement.rect = { left: 300, top: 700, width: 32, height: 32, right: 332, bottom: 732 };
+    t.mock.timers.tick(20);
+    assert.equal(popover.style.left, "146px");
+    assert.equal(popover.style.top, "172px");
+    assert.equal(replacement.getAttribute("aria-expanded"), "true");
+
+    // A launcher that is there but not laid out (zero size) keeps the last good place as well.
+    replacement.rect = { left: 0, top: 0, width: 0, height: 0, right: 0, bottom: 0 };
+    plugin.settings.translation.apiStatus = { state: "failed", message: "connect ECONNREFUSED 127.0.0.1:8080" };
+    plugin.requestLauncherStatusUpdate();
+    t.mock.timers.tick(250);
+    assert.equal(byClass(popover, "dait-qp-status-note").hidden, false, "the taller status was drawn");
+    assert.equal(popover.style.left, "146px");
+    assert.equal(popover.style.top, "152px", "moved up for the taller panel, above the last launcher place");
+});
+
+test("the open quick panel follows its launcher when Discord moves it without a window resize", t => {
+    const { plugin, doc, launcher } = statusPlugin(t);
+    dispatch(doc, launcher, "click", { detail: 0 });
+    t.mock.timers.tick(1);
+    const popover = doc.querySelector(".dait-quick-popover");
+    assert.equal(popover.style.top, "322px");
+    launcher.rect = { left: 200, top: 760, width: 32, height: 32, right: 232, bottom: 792 };
+    t.mock.timers.tick(800);
+    assert.equal(popover.style.top, "232px", "the panel ends 8 px above the launcher again");
+    assert.equal(plugin.isQuickPopoverOpen(), true);
+    // Nothing moved: nothing is written.
+    let writes = 0;
+    const style = popover.style;
+    popover.style = new Proxy(style, { set(target, prop, value) { writes++; target[prop] = value; return true; } });
+    t.mock.timers.tick(800);
+    t.mock.timers.tick(800);
+    assert.equal(writes, 0);
+});
+
+// --- QP-6: Tab belongs to whatever has focus outside the panel ---
+
+test("Tab in Discord's composer is not taken by an open quick panel; from the page or the launcher it enters the panel", t => {
+    const { plugin, doc, launcher, composer } = createQuickPanelPlugin(t);
+    dispatch(doc, launcher, "click", { detail: 0 });
+    t.mock.timers.tick(1);
+    const popover = doc.querySelector(".dait-quick-popover");
+    const first = byClass(popover, "dait-qp-header-open-full");
+    const last = byClass(popover, "dait-qp-footer-open-full");
+    // Discord moves focus to the composer without a click (a notification opened a channel).
+    composer.focus();
+    let event = key(doc, "Tab");
+    assert.equal(event.defaultPrevented, false, "the composer's Tab (e.g. accepting an emoji) works");
+    assert.equal(doc.activeElement, composer);
+    event = key(doc, "Tab", { shiftKey: true });
+    assert.equal(event.defaultPrevented, false);
+    assert.equal(doc.activeElement, composer);
+    assert.equal(plugin.isQuickPopoverOpen(), true);
+
+    // From the page itself or from the launcher, Tab still leads into the panel.
+    doc.activeElement = doc.body;
+    event = key(doc, "Tab");
+    assert.equal(event.defaultPrevented, true);
+    assert.equal(doc.activeElement, first);
+    launcher.focus();
+    event = key(doc, "Tab", { shiftKey: true });
+    assert.equal(event.defaultPrevented, true);
+    assert.equal(doc.activeElement, last);
+    // Inside the panel it wraps as before.
+    event = key(doc, "Tab");
+    assert.equal(event.defaultPrevented, true);
+    assert.equal(doc.activeElement, first);
+});
+
+// --- X6: with channel translation off, no rule caption promises auto-translation ---
+
+test("with channel translation off, the channel rule caption says so for every rule", t => {
+    const { plugin, doc, launcher } = createQuickPanelPlugin(t);
+    plugin.settings.ui.autoTranslateMessages = true;
+    dispatch(doc, launcher, "click", { detail: 0 });
+    t.mock.timers.tick(1);
+    const popover = doc.querySelector(".dait-quick-popover");
+    const caption = byClass(popover, "dait-qp-rule-caption");
+    const click = value => dispatch(doc, segmentButton(popover, "rule", value), "click");
+    click("enabled");
+    assert.equal(caption.textContent, "总开关关闭时，这个频道也会自动翻译");
+
+    plugin.setSetting("translation.enabled", false);
+    t.mock.timers.tick(20);
+    assert.equal(plugin.isAutoTranslateEnabled(), false, "nothing is auto-translated");
+    assert.equal(caption.textContent, "频道翻译已关闭，这里的规则暂不生效");
+    for (const mode of ["disabled", "inherit", "enabled"]) {
+        click(mode);
+        assert.equal(caption.textContent, "频道翻译已关闭，这里的规则暂不生效", mode);
+        assert.equal(segmentButton(popover, "rule", mode).getAttribute("aria-checked"), "true", "the rule can still be set");
+    }
+    // The status line above says the same.
+    assert.equal(byClass(popover, "dait-qp-status-detail").textContent, "频道翻译已关闭");
+
+    plugin.settings.ui.language = "en";
+    plugin.quickPanel.rerender("language");
+    assert.equal(byClass(doc.querySelector(".dait-quick-popover"), "dait-qp-rule-caption").textContent, "Channel translation is off; this rule applies once it is on");
+
+    // Back on: the rule's own caption returns.
+    plugin.setSetting("translation.enabled", true);
+    t.mock.timers.tick(20);
+    assert.equal(byClass(doc.querySelector(".dait-quick-popover"), "dait-qp-rule-caption").textContent, "Auto-translates here even when the main switch is off");
+});
+
+// --- X3: only a request made with the translation settings clears their "failed" status ---
+
+test("a public bilingual request on the polish key does not mark a broken translation key as working", async t => {
+    const { plugin } = createQuickPanelPlugin(t, { provider: "deepseek" });
+    plugin.settings.translation.apiKey = "sk-fake-expired";
+    plugin.settings.translation.apiStatus = { state: "failed", message: "API key rejected" };
+    plugin.settings.polish.provider = "deepseek";
+    plugin.settings.polish.apiKey = "sk-fake-polish";
+    const requests = [];
+    plugin.fetchModelResponse = async (endpoint, request) => {
+        requests.push(request?.headers?.Authorization || "");
+        return "Hola";
+    };
+    // Public bilingual picks the (working) polish profile and pins it.
+    assert.equal(plugin.getPublicBilingualBaseConfig(), plugin.settings.polish);
+    const result = await plugin.runModelTaskWithResult("translation", "hello", {
+        configOverrides: plugin.getPublicBilingualTranslationOverrides(),
+        mode: "public-bilingual",
+        providerProfilePinned: true
+    });
+    assert.equal(result.text, "Hola");
+    assert.match(requests[0], /sk-fake-polish/);
+    assert.deepEqual(plugin.getApiStatus("translation"), { state: "failed", message: "API key rejected" }, "the translation key is still broken");
+    assert.equal(plugin.getLauncherStatus().state, "needs-you");
+
+    // A working request with the translation settings themselves does clear it (e.g. after a top-up).
+    await plugin.runModelTaskWithResult("translation", "good morning", { mode: "manual" });
+    assert.match(requests[1], /sk-fake-expired/);
+    assert.equal(plugin.getApiStatus("translation").state, "success");
+});
+
+// --- "Local service not responding" is only said of the local service, with its own address ---
+
+test("the local-service message names the local service that failed, even after a switch to a cloud service", t => {
+    const { plugin } = createQuickPanelPlugin(t, { endpoint: LOOPBACK_SAKURA });
+    const sakura = plugin.clone(plugin.getTaskConfig("translation"));
+    // A manual translation waits on a hung local service; meanwhile the user switches to DeepSeek.
+    const error = Object.assign(new Error("fetch failed"), { cause: { code: "ECONNREFUSED" } });
+    plugin.settings.translation.provider = "deepseek";
+    plugin.settings.translation.endpoint = "https://api.deepseek.com/chat/completions";
+    plugin.annotateModelRequestError(error, "translation", LOOPBACK_SAKURA, sakura, { configOverrides: sakura });
+    assert.equal(error.localProviderUnavailable, true);
+    assert.equal(plugin.getTranslationErrorPresentation(error).message, "本地翻译服务没有响应（127.0.0.1:8080）");
+    // An error that does not say where it came from names the service set up now, as before.
+    plugin.settings.translation.provider = "sakuraLocal";
+    plugin.settings.translation.endpoint = "http://127.0.0.1:18080/v1/chat/completions";
+    assert.equal(plugin.getTranslationErrorPresentation(Object.assign(new Error("x"), { localProviderUnavailable: true })).message, "本地翻译服务没有响应（127.0.0.1:18080）");
+});
+
+test("a cloud or OpenAI-compatible service that does not answer gets the network message, never the local one", t => {
+    const { plugin } = createQuickPanelPlugin(t, { provider: "deepseek" });
+    const services = [
+        ["deepseek", "https://api.deepseek.com/chat/completions"],
+        ["openaiCompatible", "https://llm.example.com/v1/chat/completions"],
+        // A local OpenAI-compatible server (LM Studio, Ollama) is not the Sakura local service either.
+        ["openaiCompatible", "http://127.0.0.1:1234/v1/chat/completions"]
+    ];
+    for (const [provider, endpoint] of services) {
+        plugin.settings.translation.provider = provider;
+        plugin.settings.translation.endpoint = endpoint;
+        const config = plugin.clone(plugin.getTaskConfig("translation"));
+        const error = Object.assign(new Error("fetch failed"), { cause: { code: "ECONNREFUSED" } });
+        plugin.annotateModelRequestError(error, "translation", endpoint, config, { configOverrides: config });
+        assert.equal(Boolean(error.localProviderUnavailable), false, endpoint);
+        assert.equal(plugin.getAutoTranslationFailureType(error), "network", endpoint);
+        const presentation = plugin.getTranslationErrorPresentation(error);
+        assert.equal(presentation.action, "retry", endpoint);
+        assert.equal(presentation.message, "翻译失败：网络连接失败。", endpoint);
+    }
+});
+
+// --- X7: what counts as a channel for the channel rule ---
+
+test("channels, threads and DMs have a channel rule; Discord's guild pages and the DM list do not", () => {
+    const { getChannelRuleKey } = require("../../src/auto-translation/channel-rule");
+    const cases = {
+        // Text channel, a thread or forum post opened full size, a message link, a DM and a group DM.
+        "111111111111111111:222222222222222222:": "111111111111111111:222222222222222222",
+        "111111111111111111:444444444444444444:555555555555555555": "111111111111111111:444444444444444444",
+        "@me:333333333333333333:": "@me:333333333333333333",
+        // Discord's own guild pages share the /channels/<guild>/<name> route.
+        "111111111111111111:channel-browser:": "",
+        "111111111111111111:customize-community:": "",
+        "111111111111111111:onboarding:": "",
+        "111111111111111111:member-safety:": "",
+        "111111111111111111:role-subscriptions:": "",
+        "111111111111111111:shop:": "",
+        "111111111111111111:@home:": "",
+        // The DM list and screens outside /channels.
+        "@me::": "",
+        "::": "",
+        "": ""
+    };
+    for (const [routeKey, expected] of Object.entries(cases)) assert.equal(getChannelRuleKey(routeKey), expected, routeKey);
+});
+
+test("on a guild page such as Browse Channels the rule is off in the quick panel, the settings and the store", t => {
+    const { plugin, doc, launcher } = createQuickPanelPlugin(t, { pathname: "/channels/111/channel-browser" });
+    assert.equal(plugin.getCurrentRouteKey(), "111:channel-browser:");
+    assert.equal(plugin.getChannelAutoTranslatePolicyStorageKey(), "");
+
+    // Quick panel: no channel, the rule cannot be set.
+    dispatch(doc, launcher, "click", { detail: 0 });
+    t.mock.timers.tick(1);
+    const popover = doc.querySelector(".dait-quick-popover");
+    assert.equal(byClass(popover, "dait-qp-channel-name").textContent, "未打开频道");
+    assert.ok(["inherit", "enabled", "disabled"].every(mode => segmentButton(popover, "rule", mode).disabled));
+    assert.equal(byClass(popover, "dait-qp-rule-caption").textContent, "打开一个频道后可以单独设置");
+
+    // Settings: the "this channel" rule row is disabled the same way.
+    const row = plugin.createCurrentChannelPolicyRow();
+    const control = row.querySelectorAll("[data-dait-path='ui.currentChannelAutoTranslatePolicy']")[0];
+    assert.ok(control);
+    assert.equal(plugin.isChannelRuleControlDisabled(control), true);
+    assert.equal(plugin.getSettingsChannelLabel(), "");
+
+    // Nothing is stored for the page, and an entry stored for one before does not count as an allow-listed channel.
+    assert.equal(plugin.setCurrentChannelAutoTranslatePolicyMode("enabled"), false);
+    assert.deepEqual(plugin.settings.ui.channelAutoTranslatePolicies || {}, {});
+    plugin.settings.ui.channelAutoTranslatePolicies = {
+        "111:channel-browser": { mode: "enabled" },
+        "111:222": { mode: "enabled" }
+    };
+    assert.equal(plugin.getChannelAutoTranslateAllowListCount(), 1);
+    // The page follows the main switch like any screen without a channel.
+    assert.equal(plugin.getCurrentChannelAutoTranslatePolicyMode(), "inherit");
+
+    // Back in a channel, the rule works again.
+    window.location.pathname = "/channels/111/222";
+    plugin.quickPanel.handleRouteChange();
+    assert.equal(byClass(popover, "dait-qp-channel-name").textContent, "#general");
+    assert.equal(segmentButton(popover, "rule", "enabled").disabled, false);
+    assert.equal(segmentButton(popover, "rule", "enabled").getAttribute("aria-checked"), "true");
+});

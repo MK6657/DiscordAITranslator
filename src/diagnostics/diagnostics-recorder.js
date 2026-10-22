@@ -354,17 +354,20 @@ class DiagnosticsRecorder {
             },
             settings: {
                 provider: this.plugin.settings.translation?.provider,
-                model: this.plugin.settings.translation?.model,
+                model: this.plugin.getDiagnosticModelLabel(this.plugin.settings.translation?.model),
                 targetLanguage: this.plugin.settings.translation?.targetLanguage,
                 autoTranslateMessages: this.plugin.settings.ui?.autoTranslateMessages,
                 autoTranslatePrefetch: this.plugin.settings.ui?.autoTranslatePrefetch,
                 autoTranslateIntakeMode: this.plugin.settings.ui?.autoTranslateIntakeMode,
                 autoTranslateConcurrency: this.plugin.settings.ui?.autoTranslateConcurrency,
                 channelPolicy: this.plugin.getCurrentChannelAutoTranslatePolicy(),
+                allowListedChannels: this.plugin.getChannelAutoTranslateAllowListCount(),
                 historyBackfillEnabled: this.plugin.settings.ui?.historyBackfillEnabled,
                 providerFallbackEnabled: this.plugin.settings.ui?.providerFallbackEnabled,
                 providerFallbackOrder: this.plugin.getProviderFallbackOrder("translation"),
-                localProviderModel: this.plugin.getLocalProviderDetectedModelSnapshot(this.plugin.settings.translation)
+                localProviderModel: this.plugin.getLocalProviderDetectedModelSnapshot(this.plugin.settings.translation),
+                panelTheme: this.plugin.settings.ui?.panelTheme,
+                panelThemeResolved: this.plugin.resolvePanelTheme()
             },
             stats: {
                 entries: this.plugin.diagnosticLogs.length,
@@ -392,22 +395,28 @@ class DiagnosticsRecorder {
         };
     }
 
-    loadDiagnosticLogs() {
+    // options.keepLogged: the entries in memory were logged during start() before the stored log was loaded
+    // (settings load, data move, a failed read). They are added after the stored entries instead of being
+    // dropped, and the stored entries are never replaced by them on disk.
+    loadDiagnosticLogs(options = {}) {
+        const logged = options.keepLogged && Array.isArray(this.plugin.diagnosticLogs) ? this.plugin.diagnosticLogs : [];
+        const loggedCompressed = options.keepLogged ? Math.max(0, Number(this.plugin.diagnosticCompressedCount || 0) || 0) : 0;
         const payload = this.plugin.loadData(DIAGNOSTIC_DATA_KEY);
         const logs = Array.isArray(payload) ? payload : payload?.logs;
         if (!Array.isArray(logs)) {
-            this.plugin.diagnosticLogs = [];
-            this.plugin.diagnosticCompressedCount = 0;
+            this.plugin.diagnosticLogs = logged.slice(-DIAGNOSTICS_MAX_ENTRIES);
+            this.plugin.diagnosticCompressedCount = loggedCompressed;
             return;
         }
 
-        this.plugin.diagnosticLogs = logs
+        const stored = logs
             .map(entry => this.plugin.normalizePersistedDiagnosticEntry(entry))
-            .filter(Boolean)
-            .slice(-DIAGNOSTICS_MAX_ENTRIES);
-        this.plugin.diagnosticCompressedCount = Math.max(0, Number(payload?.compressed || 0) || 0);
+            .filter(Boolean);
+        this.plugin.diagnosticLogs = [...stored, ...logged].slice(-DIAGNOSTICS_MAX_ENTRIES);
+        this.plugin.diagnosticCompressedCount = Math.max(0, Number(payload?.compressed || 0) || 0) + loggedCompressed;
         this.plugin.diagnosticLogsDirty = false;
         this.plugin.diagnosticLogsDirtyAt = 0;
+        if (logged.length) this.plugin.scheduleDiagnosticLogsPersist();
     }
 
     createPersistedDiagnosticLogsPayload() {
@@ -429,6 +438,44 @@ class DiagnosticsRecorder {
                 if (Number.isFinite(Number(entry.ms))) compact.ms = Number(entry.ms);
                 return compact;
             })
+        };
+    }
+
+    // Used once when the log moves to its own data file: keeps the entries of both copies (the old copy may
+    // hold entries written by an older plugin version after a downgrade), oldest first, without duplicates.
+    // Nothing older than the newer copy's save time is taken from the older copy: a log cleared or turned off
+    // later (in either version) stays cleared.
+    mergePersistedDiagnosticLogsPayloads(current, legacy) {
+        const logsOf = payload => Array.isArray(payload) ? payload : Array.isArray(payload?.logs) ? payload.logs : null;
+        let currentLogs = logsOf(current);
+        let legacyLogs = logsOf(legacy);
+        if (!legacyLogs) return current;
+        if (!currentLogs) return legacy;
+        const currentSavedAt = Number(current?.savedAt) || 0;
+        const legacySavedAt = Number(legacy?.savedAt) || 0;
+        const loggedSince = savedAt => entry => Math.max(Number(entry?.ts) || 0, Number(entry?.lastTs) || 0) >= savedAt;
+        if (legacySavedAt > currentSavedAt) currentLogs = currentLogs.filter(loggedSince(legacySavedAt));
+        else if (currentSavedAt > legacySavedAt) legacyLogs = legacyLogs.filter(loggedSince(currentSavedAt));
+        const seen = new Set();
+        const logs = [...legacyLogs, ...currentLogs]
+            .filter(entry => entry && typeof entry === "object")
+            .filter(entry => {
+                const id = JSON.stringify([entry.ts, entry.lastTs, entry.action, entry.status, entry.key, entry.count]);
+                if (seen.has(id)) return false;
+                seen.add(id);
+                return true;
+            })
+            .sort((left, right) => (Number(left.ts) || 0) - (Number(right.ts) || 0))
+            .slice(-DIAGNOSTICS_MAX_ENTRIES);
+        const compressed = count => Math.max(0, Number(count || 0) || 0);
+        return {
+            version: 1,
+            savedAt: Date.now(),
+            maxEntries: DIAGNOSTICS_MAX_ENTRIES,
+            // The older copy's count belongs to entries it no longer contributes.
+            compressed: (legacySavedAt > currentSavedAt ? 0 : compressed(current?.compressed))
+                + (currentSavedAt > legacySavedAt ? 0 : compressed(legacy?.compressed)),
+            logs
         };
     }
 

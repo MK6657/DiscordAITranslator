@@ -8,6 +8,7 @@ const {
     AUTO_LANGUAGE_VALUE,
     AUTO_TRANSLATE_FAILURE_MAX_TTL,
     AUTO_TRANSLATE_INVALID_OUTPUT_FAILURE_TTL,
+    AUTO_TRANSLATE_PROVIDER_FAILURE_TTL,
     AUTO_TRANSLATE_VIEWPORT_STABLE_RESCAN_MS,
     DEFAULT_SETTINGS,
     DIAGNOSTIC_REASON_CODES,
@@ -27,9 +28,18 @@ const {
     SETTINGS_WRITE_DEBOUNCE_MS
 } = require("../constants");
 
+// Text shaped like a Google API key ("AIza" and at least 10 more key characters; real keys have 35).
+const GOOGLE_API_KEY_PATTERN = /AIza[0-9A-Za-z_-]{10,}/;
+
 class ProviderLayer {
     constructor(plugin) {
         this.plugin = plugin;
+        // The last connection test per task (in memory only): what the settings and the quick panel show next to
+        // the status, e.g. "Hy-MT2 · 820 ms · just now".
+        this.lastApiTestResults = new Map();
+        // Connection tests in flight per task (the saved "testing" status can outlive its test, e.g. after a
+        // settings change cut the test short).
+        this.runningApiTests = new Map();
     }
 
     getProviderDefaults(provider) {
@@ -112,13 +122,42 @@ class ProviderLayer {
         const key = this.plugin.getLocalProviderModelDetectionCacheKey(config, options.defaultConfig);
         if (!key || !normalized) return "";
         const now = Date.now();
+        const previousModel = String(this.plugin.localProviderDetectedModels.get(key)?.model || "");
         this.plugin.localProviderDetectedModels.set(key, {
             model: normalized,
             detectedAt: now,
             expiresAt: now + Math.max(1000, Number(options.ttlMs || LOCAL_PROVIDER_MODEL_DETECTION_TTL_MS) || LOCAL_PROVIDER_MODEL_DETECTION_TTL_MS),
             retryAt: 0
         });
+        // The served model is part of the cache key, so it is saved with the cache, and hits the
+        // cached-draw memo remembered under the old model's keys must not be drawn again.
+        if (previousModel !== normalized) {
+            // Lines drawn before a server's first detection carry keys that name the placeholder model.
+            if (!previousModel) this.plugin.localProviderModelFirstDetected = true;
+            this.plugin.scheduleTranslationCachePersist();
+            this.plugin.cachedDrawMemo?.clear?.();
+        }
         return normalized;
+    }
+
+    getPersistableLocalProviderDetectedModels() {
+        return [...(this.plugin.localProviderDetectedModels?.entries?.() || [])]
+            .filter(([key, entry]) => key && String(entry?.model || "").trim())
+            .sort((left, right) => Number(right[1].detectedAt || 0) - Number(left[1].detectedAt || 0))
+            .slice(0, 8)
+            .map(([key, entry]) => ({ key, model: String(entry.model).trim() }));
+    }
+
+    // Restores the last served model per local server after a restart, so cached lines keep
+    // their keys (and draw) before the server answers again; the next request re-detects.
+    restoreLocalProviderDetectedModels(list) {
+        if (!Array.isArray(list)) return;
+        list.slice(0, 8).forEach(item => {
+            const key = String(item?.key || "");
+            const model = this.plugin.normalizeLocalProviderModelId(item?.model);
+            if (!key || !model || this.plugin.localProviderDetectedModels.get(key)?.model) return;
+            this.plugin.localProviderDetectedModels.set(key, { model, detectedAt: 0, expiresAt: 0, retryAt: 0 });
+        });
     }
 
     getEffectiveChatCompletionModel(kind, config = {}, defaultConfig = DEFAULT_SETTINGS[kind] || {}) {
@@ -228,7 +267,9 @@ class ProviderLayer {
         }
     }
 
-    parseLocalProviderModelsResponse(raw) {
+    // The model the server serves: the first .gguf id, else the first id. With { all: true }, every id the server
+    // lists, in its order (for the settings' "Detect models" picker).
+    parseLocalProviderModelsResponse(raw, options = {}) {
         const data = typeof raw === "string" ? this.plugin.parseApiJson(raw) : raw;
         const candidates = [];
         const addModel = value => {
@@ -256,7 +297,59 @@ class ProviderLayer {
         add(data?.models);
         add(data?.items);
         if (!candidates.length) add(data);
+        if (options?.all) return candidates;
         return candidates.find(model => /\.gguf(?:$|[?#])/i.test(model)) || candidates[0] || "";
+    }
+
+    // "Detect models" in the settings: lists the models a Sakura local or OpenAI-compatible server reports. It runs
+    // only on that explicit click (automatic detection stays limited to loopback servers). For a local server whose
+    // model is left on local-model, the loaded model also refreshes the detection cache.
+    async detectProviderModels(kind, options = {}) {
+        const config = this.plugin.clone(this.plugin.getTaskConfig(kind));
+        const defaultConfig = DEFAULT_SETTINGS[kind] || {};
+        if (!this.plugin.isModelDetectionProvider(config.provider)) {
+            const error = new Error(this.plugin.t("modelDetectUnsupported"));
+            error.code = "MODEL_DETECTION_UNSUPPORTED";
+            throw error;
+        }
+        const endpoint = this.plugin.getEffectiveChatCompletionEndpoint(config, defaultConfig);
+        const modelsEndpoint = this.plugin.getLocalProviderModelsEndpoint(endpoint);
+        const local = this.plugin.isLocalTranslationProvider(config);
+        const timeoutMs = Math.max(1000, Number(options.timeoutMs || (local ? LOCAL_PROVIDER_MODEL_DETECTION_TIMEOUT_MS : API_TEST_REQUEST_TIMEOUT_MS)) || API_TEST_REQUEST_TIMEOUT_MS);
+        const startedAt = Date.now();
+        try {
+            const raw = await this.plugin.fetchApiResponseText(modelsEndpoint, {
+                method: "GET",
+                provider: config.provider,
+                headers: this.plugin.getRequestHeaders(config, this.plugin.getEffectiveRequestApiKey(config))
+            }, timeoutMs);
+            const models = this.plugin.parseLocalProviderModelsResponse(raw, { all: true });
+            const loaded = local ? this.plugin.parseLocalProviderModelsResponse(raw) : "";
+            if (loaded && this.plugin.shouldAutoDetectLocalProviderModel(config, defaultConfig)) {
+                this.plugin.setCachedLocalProviderDetectedModel(config, loaded, { defaultConfig });
+            }
+            this.plugin.logDiagnostic("provider.models.detect", "success", {
+                kind,
+                provider: config.provider,
+                count: models.length,
+                ms: Date.now() - startedAt
+            });
+            return { models, loaded };
+        }
+        catch (error) {
+            this.plugin.logDiagnostic("provider.models.detect", "failed", {
+                kind,
+                provider: config.provider,
+                failureType: this.plugin.getAutoTranslationFailureType(error),
+                status: Number(error?.status || 0),
+                ms: Date.now() - startedAt
+            });
+            throw error;
+        }
+    }
+
+    isModelDetectionProvider(provider) {
+        return ["sakuraLocal", "openaiCompatible"].includes(String(provider || ""));
     }
 
     normalizeLocalProviderModelId(value) {
@@ -284,6 +377,7 @@ class ProviderLayer {
         const normalized = this.plugin.normalizeGoogleTranslateKeyPool(this.plugin.settings.googleTranslate || {});
         this.plugin.settings.googleTranslate.keys = normalized.keys;
         this.plugin.settings.googleTranslate.keyPoolText = normalized.keyPoolText;
+        this.plugin.settings.googleTranslate.usageById = normalized.usageById;
         return normalized.keys;
     }
 
@@ -301,7 +395,7 @@ class ProviderLayer {
         const keys = this.plugin.getGoogleTranslateKeys();
         const needed = Math.max(1, Math.round(Number(charCount) || 1));
         const available = keys.find(key => key.enabled !== false
-            && Number(key.cooldownUntil || 0) <= now
+            && (options.ignoreCooldown || Number(key.cooldownUntil || 0) <= now)
             && Number(key.usedChars || 0) + (options.ignoreReservations ? 0 : this.plugin.getGoogleTranslateReservedChars(key)) + needed <= Number(key.monthlyLimit || GOOGLE_TRANSLATE_DEFAULT_MONTHLY_LIMIT));
         if (available || options.persist === false) return available || null;
         this.plugin.saveGoogleTranslateRuntimeState();
@@ -354,6 +448,70 @@ class ProviderLayer {
         return error;
     }
 
+    // No key can take the request, but one with room this month only waits out a cooldown
+    // (a per-minute limit, a rejected request). Returns when the first of those comes back, or 0.
+    getGoogleTranslateCoolingKeyReadyAt(charCount = 1, options = {}) {
+        const now = Date.now();
+        const needed = Math.max(1, Math.round(Number(charCount) || 1));
+        const readyAt = this.plugin.getGoogleTranslateKeys()
+            .filter(key => key.enabled !== false
+                && Number(key.cooldownUntil || 0) > now
+                && Number(key.usedChars || 0) + (options.ignoreReservations ? 0 : this.plugin.getGoogleTranslateReservedChars(key)) + needed <= Number(key.monthlyLimit || GOOGLE_TRANSLATE_DEFAULT_MONTHLY_LIMIT))
+            .map(key => Number(key.cooldownUntil));
+        return readyAt.length ? Math.min(...readyAt) : 0;
+    }
+
+    // Every usable key is cooling down: the pool waits until the first one is back. This is a
+    // rate limit for the whole pool, not an exhausted quota.
+    createGoogleTranslateCooldownError(options = {}) {
+        const until = Math.max(Date.now() + 1000, Number(options.until) || 0);
+        const error = new Error(this.plugin.formatGoogleTranslateCooldownMessage(until));
+        error.googleTranslateKeysCooling = true;
+        error.googleTranslateCooldownUntil = until;
+        error.providerRateLimited = true;
+        error.providerKey = this.plugin.getGoogleTranslateProviderKey();
+        error.retryAfterMs = until - Date.now();
+        if (options.charCount !== undefined) error.googleTranslateCharCount = Math.max(0, Math.round(Number(options.charCount) || 0));
+        return error;
+    }
+
+    formatGoogleTranslateCooldownMessage(until) {
+        return this.plugin.t("googleTranslateKeysCooling", { time: this.plugin.formatDiagnosticSummaryTime(until) });
+    }
+
+    // Names the pool key a Google error came from (by its label, never the key itself).
+    formatGoogleTranslateKeyError(error, options = {}) {
+        const message = this.plugin.formatError(error, options);
+        const keyId = String(error?.googleTranslateKeyId || "");
+        const apiKey = String(error?.googleTranslateApiKey || "");
+        if (!keyId && !apiKey) return message;
+        const keys = this.plugin.getGoogleTranslateKeys();
+        const key = keys.find(item => (keyId && item.id === keyId) || (apiKey && item.apiKey === apiKey));
+        if (!key) return message;
+        return this.plugin.t("googleTranslateKeyError", { label: this.plugin.getGoogleTranslateKeyDisplayLabel(key, keys), error: message });
+    }
+
+    // The name a pool key is shown by on screen (the error toast, the service card, the overview checklist, the
+    // status). A label that looks like a Google key or holds a key of the pool (a key typed into the label field)
+    // is replaced by the key's generated name, so a key never appears where others can see the screen.
+    getGoogleTranslateKeyDisplayLabel(key, keys = this.plugin.getGoogleTranslateKeys()) {
+        const index = keys.findIndex(item => item === key || (key?.id && item?.id === key.id));
+        const generated = `Google ${Math.max(0, index) + 1}`;
+        const label = String(key?.label || "").trim();
+        if (!label || GOOGLE_API_KEY_PATTERN.test(label)) return generated;
+        const holdsPoolKey = keys.some(item => {
+            const apiKey = String(item?.apiKey || "").trim();
+            return Boolean(apiKey) && (label === apiKey || (apiKey.length >= 8 && label.includes(apiKey)));
+        });
+        return holdsPoolKey ? generated : label;
+    }
+
+    // A failure of one pool key needs the user only when no other key can take over.
+    isGoogleTranslatePoolServing(error) {
+        if (!error?.googleTranslateApiKey || error.googleTranslateKeysCooling) return false;
+        return Boolean(this.plugin.peekGoogleTranslateAvailableKey(1, { ignoreReservations: true }));
+    }
+
     createGoogleTranslateNoKeyError() {
         const error = new Error(this.plugin.t("googleTranslateNoKey"));
         error.googleTranslateNoKey = true;
@@ -376,12 +534,17 @@ class ProviderLayer {
     getGoogleTranslateUsageSummary() {
         const keys = this.plugin.getGoogleTranslateKeys();
         const now = Date.now();
+        const coolingUntil = keys
+            .filter(key => key.enabled !== false && Number(key.cooldownUntil || 0) > now)
+            .map(key => Number(key.cooldownUntil));
         return {
             monthKey: this.plugin.getCurrentMonthKey(),
             total: keys.length,
             available: keys.filter(key => key.enabled !== false && Number(key.cooldownUntil || 0) <= now && Number(key.usedChars || 0) + this.plugin.getGoogleTranslateReservedChars(key) < Number(key.monthlyLimit || 0)).length,
             used: keys.reduce((sum, key) => sum + Math.max(0, Number(key.usedChars || 0) || 0), 0),
-            limit: keys.reduce((sum, key) => sum + Math.max(0, Number(key.monthlyLimit || 0) || 0), 0)
+            limit: keys.reduce((sum, key) => sum + Math.max(0, Number(key.monthlyLimit || 0) || 0), 0),
+            coolingDown: coolingUntil.length,
+            nextCooldownEndsAt: coolingUntil.length ? Math.min(...coolingUntil) : 0
         };
     }
 
@@ -411,6 +574,7 @@ class ProviderLayer {
         const normalized = this.plugin.normalizeGoogleTranslateKeyPool(this.plugin.settings.googleTranslate || {});
         this.plugin.settings.googleTranslate.keys = normalized.keys;
         this.plugin.settings.googleTranslate.keyPoolText = normalized.keyPoolText;
+        this.plugin.settings.googleTranslate.usageById = normalized.usageById;
         if (this.plugin.saveSettings() === true) {
             this.plugin.googleTranslateRuntimeDirty = false;
             return true;
@@ -425,13 +589,17 @@ class ProviderLayer {
         this.plugin.settings.googleTranslate.keys = this.plugin.getGoogleTranslateKeys().map(key => ({
             ...key,
             usedChars: 0,
-            monthKey
+            monthKey,
+            cooldownUntil: 0,
+            lastError: ""
         }));
+        // Also forget the remembered usage of keys no longer in the pool.
+        this.plugin.settings.googleTranslate.usageById = {};
         this.plugin.saveGoogleTranslateRuntimeState();
         this.plugin.showToast(this.plugin.t("googleTranslateStatsReset"), "success");
     }
 
-    markGoogleTranslateKeyUsage(apiKey, charCount) {
+    markGoogleTranslateKeyUsage(apiKey, charCount, options = {}) {
         const keyHash = this.plugin.getTextFingerprint(String(apiKey || "").trim());
         const monthKey = this.plugin.getCurrentMonthKey();
         const usedDelta = Math.max(0, Math.round(Number(charCount) || 0));
@@ -441,10 +609,17 @@ class ProviderLayer {
                 ...key,
                 monthKey,
                 usedChars: Math.max(0, Number(key.usedChars || 0) || 0) + usedDelta,
+                // A passing API test brings a cooling key back right away.
+                ...(options.clearCooldown ? { cooldownUntil: 0 } : {}),
                 lastError: ""
             };
         });
         this.plugin.settings.googleTranslate.keys = keys;
+        const usageById = this.plugin.settings.googleTranslate.usageById || {};
+        keys.forEach(key => {
+            if (key.id && key.usedChars > 0) usageById[key.id] = { monthKey, usedChars: key.usedChars };
+        });
+        this.plugin.settings.googleTranslate.usageById = usageById;
         this.plugin.saveGoogleTranslateRuntimeState();
     }
 
@@ -496,9 +671,19 @@ class ProviderLayer {
         if (preset?.code) return preset.code === "zh" ? "zh-CN" : preset.code;
         const value = String(language || "").trim();
         if (/^[a-z]{2,3}(-[A-Za-z0-9]+)?$/.test(value)) return value;
-        const embedded = value.match(/\b([a-z]{2,3}(?:-[A-Za-z0-9]+)?)\b/);
+        // LLM instruction labels end with the code, e.g. "Spanish (Español, es)". Prefer that
+        // explicit code; \b alone treats ñ/ç/ế as boundaries and finds "ol" in "Español".
+        const explicit = value.match(/[(,]\s*([a-z]{2,3}(?:-[A-Za-z0-9]+)?)\s*\)/);
+        const embedded = explicit || value.match(/(?<![\p{L}\p{N}_-])([a-z]{2,3}(?:-[A-Za-z0-9]+)?)(?![\p{L}\p{N}_-])/u);
         if (embedded?.[1]) return embedded[1] === "zh" ? "zh-CN" : embedded[1];
         return value;
+    }
+
+    // The raw target of a request for direct translation APIs, resolved from the user's
+    // language setting rather than from the LLM instruction text.
+    getTargetLanguageCode(language) {
+        if (!language || language === AUTO_LANGUAGE_VALUE) return "";
+        return this.plugin.getGoogleLanguageCode(language);
     }
 
     getEffectiveRequestApiKey(config) {
@@ -544,11 +729,20 @@ class ProviderLayer {
         return Boolean(endpoint && (!requiresModel || model) && this.plugin.getEffectiveRequestApiKey(config));
     }
 
-    setApiStatus(status, state, text, title = "", kind = status?.dataset?.daitKind) {
-        if (!status) return;
+    // Badges are drawn by renderApiStatusBadge, which shows "Not set up" while a required field is missing.
+    renderStatusBadge(status, kind, state, text, title) {
+        if (typeof this.plugin.renderApiStatusBadge === "function") {
+            this.plugin.renderApiStatusBadge(status, kind, state, text, title || "");
+            return;
+        }
         status.className = `dait-api-status dait-api-status-${state}`;
         status.textContent = text;
-        status.title = title;
+        status.title = title || "";
+    }
+
+    setApiStatus(status, state, text, title = "", kind = status?.dataset?.daitKind) {
+        if (!status) return;
+        this.renderStatusBadge(status, kind, state, text, title);
         if (kind && this.plugin.settings[kind]) {
             this.plugin.settings[kind].apiStatus = { state, message: title || "" };
             this.plugin.saveSettings({ debounce: true });
@@ -562,13 +756,11 @@ class ProviderLayer {
         if (previous.state !== next.state || previous.message !== next.message) {
             this.plugin.settings[kind].apiStatus = next;
             this.plugin.saveSettings({ debounce: true, delayMs: SETTINGS_WRITE_DEBOUNCE_MS });
+            // An open overview's checklist and cards follow the new state.
+            this.plugin.scheduleOverviewStatusRefresh?.(`${kind}.apiStatus`);
         }
         if (typeof document === "undefined") return;
-        document.querySelectorAll(`.dait-api-status[data-dait-kind='${kind}']`).forEach(status => {
-            status.className = `dait-api-status dait-api-status-${state}`;
-            status.textContent = text;
-            status.title = title || "";
-        });
+        document.querySelectorAll(`.dait-api-status[data-dait-kind='${kind}']`).forEach(status => this.renderStatusBadge(status, kind, state, text, title));
     }
 
     markLocalProviderHealthy(providerKey) {
@@ -637,7 +829,8 @@ class ProviderLayer {
                     });
                 }
                 this.plugin.autoTranslationProviderFailures.delete(providerKey);
-                this.plugin.autoTranslationProviderNoticeAt.delete(providerKey);
+                // The "needs you" episode stays open: a server that answers this tiny request can still
+                // fail real messages (HTTP 5xx). A successful translation request ends it.
                 this.plugin.markLocalProviderHealthy(providerKey);
                 this.plugin.setApiRuntimeStatus("translation", "success", this.plugin.t("apiStatusSuccess"));
                 this.plugin.logDiagnostic("auto.provider.health", "success", {
@@ -654,8 +847,14 @@ class ProviderLayer {
                     error.localProviderUnavailable = true;
                     error.retryAfterMs = Math.max(Number(error.retryAfterMs || 0), LOCAL_PROVIDER_UNAVAILABLE_RETRY_MS);
                     error.providerKey = providerKey;
+                    error.localProviderEndpoint = error.localProviderEndpoint || String(endpoint || config.endpoint || "");
                 }
                 this.plugin.markAutoTranslationProviderFailure(requestOptions, error);
+                // Failures the provider cooldown does not record (an invalid or unsafe API URL) still end the
+                // "testing" status this probe set, with the reason.
+                if (this.plugin.getApiStatus("translation").state === "testing" && !this.plugin.isRequestCancelled(error)) {
+                    this.plugin.setApiRuntimeStatus("translation", "failed", this.plugin.t("apiStatusFailed"), this.plugin.formatError(error));
+                }
                 this.plugin.logDiagnostic("auto.provider.health", "failed", {
                     key: this.plugin.getTextFingerprint(providerKey),
                     reason: options.reason || "",
@@ -672,7 +871,56 @@ class ProviderLayer {
         this.plugin.localProviderHealthChecks.set(providerKey, promise);
     }
 
+    // { ok, model, latencyMs, at, message } of the last connection test of this task, or null when none ran since
+    // the service settings last changed. model is the model the server reported (Sakura local, OpenAI-compatible),
+    // else the configured one; "" for machine-translation services. latencyMs is the test request's round trip.
+    getLastApiTestResult(kind) {
+        const result = this.lastApiTestResults.get(kind);
+        return result ? { ...result } : null;
+    }
+
+    recordApiTestResult(kind, result = {}) {
+        if (!kind) return null;
+        const latency = Number(result.latencyMs);
+        const entry = {
+            ok: Boolean(result.ok),
+            model: String(result.model || ""),
+            latencyMs: Number.isFinite(latency) && latency >= 0 ? Math.round(latency) : null,
+            at: Number(result.at) || Date.now(),
+            message: String(result.message || "")
+        };
+        this.lastApiTestResults.set(kind, entry);
+        return { ...entry };
+    }
+
+    clearLastApiTestResult(kind) {
+        return this.lastApiTestResults.delete(kind);
+    }
+
+    isApiTestRunning(kind) {
+        return Number(this.runningApiTests.get(kind) || 0) > 0;
+    }
+
+    // The model named in a chat-completions reply ("model": "..."), shortened to its file name.
+    getReportedResponseModel(raw) {
+        try {
+            const data = typeof raw === "string" ? this.plugin.parseApiJson(raw) : raw;
+            const model = typeof data?.model === "string" ? data.model.trim() : "";
+            return model ? this.plugin.getDiagnosticModelLabel(model) : "";
+        }
+        catch {
+            return "";
+        }
+    }
+
+    getApiTestModel(config = {}, request = {}, reportedModel = "") {
+        if (this.plugin.isDirectTranslateProvider(config)) return "";
+        if (reportedModel && (this.plugin.isLocalTranslationProvider(config) || config?.provider === "openaiCompatible")) return reportedModel;
+        return this.plugin.getDiagnosticModelLabel(String(request?.body?.model || config?.model || ""));
+    }
+
     resetApiStatus(kind, options = {}) {
+        this.plugin.clearLastApiTestResult?.(kind);
         if (this.plugin.settings[kind]) {
             this.plugin.settings[kind].apiStatus = { state: "untested", message: "" };
             if (options.save === "debounce") this.plugin.saveSettings({ debounce: true });
@@ -829,10 +1077,16 @@ class ProviderLayer {
             .filter(Boolean)
             .map((line, index) => {
                 const parts = line.split(/[|\t]/).map(part => part.trim());
+                while (parts.length > 1 && !parts[parts.length - 1]) parts.pop();
                 let label = "";
                 let apiKey = "";
                 let monthlyLimit = "";
-                if (parts.length >= 2) {
+                // "KEY|limit" has no label: a whole number is never a Google key, so it is the monthly limit and
+                // the key gets a generated label instead of being shown as one.
+                if (parts.length === 2 && /^\d+$/.test(parts[1])) {
+                    [apiKey, monthlyLimit] = parts;
+                }
+                else if (parts.length >= 2) {
                     [label, apiKey, monthlyLimit = ""] = parts;
                 }
                 else {
@@ -861,30 +1115,63 @@ class ProviderLayer {
         const source = hasKeyPoolText
             ? this.plugin.parseGoogleTranslateKeyPoolText(settings.keyPoolText, settings.keys)
             : Array.isArray(settings.keys) ? settings.keys : [];
+        const usageById = this.plugin.getGoogleTranslateUsageLedger(settings, currentMonth);
         const seen = new Set();
         const keys = [];
         source.forEach((entry, index) => {
             const apiKey = String(entry?.apiKey || "").trim();
             if (!apiKey || seen.has(apiKey)) return;
             seen.add(apiKey);
+            const id = this.plugin.getTextFingerprint(apiKey);
             const monthKey = /^\d{4}-\d{2}$/.test(String(entry?.monthKey || "")) ? String(entry.monthKey) : currentMonth;
             const sameMonth = monthKey === currentMonth;
+            const usedChars = sameMonth ? Math.max(0, Math.round(Number(entry?.usedChars || 0) || 0)) : 0;
             keys.push({
-                id: this.plugin.getTextFingerprint(apiKey),
+                id,
                 label: String(entry?.label || `Google ${index + 1}`).trim() || `Google ${index + 1}`,
                 apiKey,
                 enabled: entry?.enabled !== false,
                 monthlyLimit: this.plugin.normalizeGoogleTranslateMonthlyLimit(entry?.monthlyLimit, defaultLimit),
-                usedChars: sameMonth ? Math.max(0, Math.round(Number(entry?.usedChars || 0) || 0)) : 0,
+                // A key pasted back after its line was removed keeps this month's usage.
+                usedChars: Math.max(usedChars, Number(usageById[id]?.usedChars || 0)),
                 monthKey: currentMonth,
                 cooldownUntil: Math.max(0, Math.round(Number(entry?.cooldownUntil || 0) || 0)),
                 lastError: String(entry?.lastError || "").slice(0, 160)
             });
         });
+        keys.forEach(key => {
+            if (key.usedChars > 0) usageById[key.id] = { monthKey: currentMonth, usedChars: key.usedChars };
+        });
         return {
             keys,
-            keyPoolText: this.plugin.formatGoogleTranslateKeyPoolText(keys)
+            keyPoolText: this.plugin.formatGoogleTranslateKeyPoolText(keys),
+            usageById
         };
+    }
+
+    // This month's usage per key fingerprint (never the key itself). It outlives the key's
+    // line in the pool, so removing a key and pasting it back cannot reset its usage.
+    getGoogleTranslateUsageLedger(settings = this.plugin.settings.googleTranslate || {}, currentMonth = this.plugin.getCurrentMonthKey()) {
+        const ledger = {};
+        const remember = (id, value) => {
+            const usedChars = Math.max(0, Math.round(Number(value) || 0));
+            if (!id || !usedChars || Number(ledger[id]?.usedChars || 0) >= usedChars) return;
+            ledger[id] = { monthKey: currentMonth, usedChars };
+        };
+        const stored = settings?.usageById;
+        if (stored && typeof stored === "object" && !Array.isArray(stored)) {
+            Object.entries(stored).forEach(([id, record]) => {
+                if (/^[a-z0-9]{1,16}$/.test(id) && record?.monthKey === currentMonth) remember(id, record.usedChars);
+            });
+        }
+        // Keys still in the pool before this change count too, so a line removed right now
+        // keeps its latest usage.
+        (Array.isArray(settings?.keys) ? settings.keys : []).forEach(entry => {
+            const apiKey = String(entry?.apiKey || "").trim();
+            const monthKey = /^\d{4}-\d{2}$/.test(String(entry?.monthKey || "")) ? String(entry.monthKey) : currentMonth;
+            if (apiKey && monthKey === currentMonth) remember(this.plugin.getTextFingerprint(apiKey), entry?.usedChars);
+        });
+        return ledger;
     }
 
     getAutoTranslationProviderKey(requestOptions = this.plugin.getAutoTranslationOptions()) {
@@ -992,7 +1279,8 @@ class ProviderLayer {
         promise = this.plugin.fetchModelResponse(endpoint, request, options.timeoutMs || MODEL_REQUEST_TIMEOUT_MS, {
             googleTranslateAsArray: Boolean(options.googleTranslateAsArray),
             translateAsArray: Boolean(options.translateAsArray || options.googleTranslateAsArray),
-            lifecycleToken
+            lifecycleToken,
+            signal: options.signal
         })
             .then(result => {
                 const requestStillCurrent = this.plugin.isLifecycleTokenCurrent(lifecycleToken)
@@ -1000,6 +1288,18 @@ class ProviderLayer {
                 if (requestStillCurrent && providerSnapshotKey && kind === "translation" && this.plugin.isLocalTranslationProvider(taskConfig)) {
                     this.plugin.markLocalProviderHealthy(providerSnapshotKey);
                     this.plugin.setApiRuntimeStatus("translation", "success", this.plugin.t("apiStatusSuccess"));
+                }
+                // A working request to the configured service clears an earlier "failed" status (e.g. after a
+                // top-up), so the launcher does not keep asking the user to fix it. Only a request built from the
+                // live translation settings counts (a current snapshot key means the same service, URL, model and
+                // key): a pinned profile, such as public bilingual on the polish key, says nothing about them.
+                else if (requestStillCurrent && providerSnapshotKey && kind === "translation" && taskConfig?.provider === this.plugin.settings.translation?.provider
+                    && this.plugin.getApiStatus("translation").state === "failed") {
+                    this.plugin.setApiRuntimeStatus("translation", "success", this.plugin.t("apiStatusSuccess"));
+                }
+                // A working request ends the provider's "needs your attention" episode.
+                if (requestStillCurrent && kind === "translation" && this.plugin.autoTranslationProviderNoticeAt?.size) {
+                    this.plugin.endTranslationAttentionEpisode?.(providerSnapshotKey || this.plugin.getAutoTranslationProviderKey({ configOverrides: taskConfig }));
                 }
                 if (requestStillCurrent) {
                     this.plugin.logDiagnostic("model.request", "success", {
@@ -1073,13 +1373,20 @@ class ProviderLayer {
 
     async fetchModelResponse(endpoint, request, timeoutMs = MODEL_REQUEST_TIMEOUT_MS, options = {}) {
         try {
-            const raw = await this.plugin.fetchApiResponseText(endpoint, request, timeoutMs);
+            const raw = await this.plugin.fetchApiResponseText(endpoint, request, timeoutMs, options.signal ? { signal: options.signal } : undefined);
+            // The connection test reads the model the server names in its reply.
+            if (typeof options.onRawResponse === "function") {
+                try { options.onRawResponse(raw); }
+                catch {}
+            }
             if (request?.responseParser === "googleTranslate") {
                 const result = this.plugin.parseGoogleTranslateResponse(raw, request?.googleTranslate?.expectedCount || 1, {
                     asArray: Boolean(options.googleTranslateAsArray || options.translateAsArray),
                     restoreMaps: request?.googleTranslate?.restoreMaps
                 });
-                this.plugin.markGoogleTranslateKeyUsage(request.googleTranslate?.apiKey, request.googleTranslate?.charCount || 0);
+                this.plugin.markGoogleTranslateKeyUsage(request.googleTranslate?.apiKey, request.googleTranslate?.charCount || 0, {
+                    clearCooldown: Boolean(options.connectionTest)
+                });
                 this.plugin.markGoogleTranslateProviderSuccess(request);
                 return result;
             }
@@ -1101,6 +1408,14 @@ class ProviderLayer {
             }
             return this.plugin.parseModelResponse(raw);
         }
+        catch (error) {
+            // Queued work orphaned by a settings change is aborted, but Google already received the
+            // request and counts its characters: so does the key's monthly usage.
+            if (request?.responseParser === "googleTranslate" && error?.requestSent && this.plugin.isRequestCancelled(error)) {
+                this.plugin.markGoogleTranslateKeyUsage(request.googleTranslate?.apiKey, request.googleTranslate?.charCount || 0);
+            }
+            throw error;
+        }
         finally {
             this.plugin.releaseGoogleTranslateRequestReservation(request);
         }
@@ -1112,6 +1427,8 @@ class ProviderLayer {
             error.localProviderUnavailable = true;
             error.retryAfterMs = Math.max(Number(error.retryAfterMs || 0), LOCAL_PROVIDER_UNAVAILABLE_RETRY_MS);
             error.providerKey = error.providerKey || this.plugin.getAutoTranslationProviderKey({ configOverrides: options.configOverrides });
+            // The address that did not answer, for the message: the settings may name another service by then.
+            error.localProviderEndpoint = error.localProviderEndpoint || String(endpoint || config?.endpoint || "");
         }
         return error;
     }
@@ -1120,10 +1437,13 @@ class ProviderLayer {
         if (error?.localProviderUnavailable) return true;
         if (!this.plugin.isLocalTranslationProvider(config) || !this.plugin.isLoopbackEndpoint(endpoint || config?.endpoint)) return false;
         const status = Number(error?.status || 0);
-        if (this.plugin.isTimeoutError(error)) return !this.plugin.isLongAutoTranslationRequestOptions(options);
+        // A long request, or the larger retry after a cut-off output, can time out on a healthy
+        // service that is just generating slowly.
+        if (this.plugin.isTimeoutError(error)) return !options?.truncationRetry && !this.plugin.isLongAutoTranslationRequestOptions(options);
         if (this.plugin.isNetworkError(error)) return true;
-        if (status >= 500) return true;
-        return this.plugin.isLocalProviderEmptyResponseError(error) || this.plugin.isLocalProviderInvalidResponseError(error);
+        // An empty or unparseable reply to a successful HTTP request is a bad answer to
+        // this one message, not a sign that the service is down.
+        return status >= 500;
     }
 
     isLoopbackEndpoint(endpoint) {
@@ -1188,14 +1508,26 @@ class ProviderLayer {
         return message === this.plugin.t("invalidJson") || /invalid json|unexpected token|not valid json/i.test(message);
     }
 
-    async fetchApiResponseText(endpoint, request, timeoutMs = MODEL_REQUEST_TIMEOUT_MS) {
+    async fetchApiResponseText(endpoint, request, timeoutMs = MODEL_REQUEST_TIMEOUT_MS, callerOptions = {}) {
         this.plugin.assertSafeRequestEndpoint(endpoint);
         const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
         if (controller) this.plugin.activeApiControllers.add(controller);
         // abort() keeps its first reason, so the signal records whether the timer or a cancel came first.
         const timeout = controller ? setTimeout(() => controller.abort(new DOMException("API request timed out", "TimeoutError")), timeoutMs) : null;
+        // The caller's signal (queued auto-translation work) cancels this request when that work is
+        // orphaned by a settings change, so it does not keep a local server busy.
+        const callerSignal = callerOptions?.signal || null;
+        const abortFromCaller = () => controller?.abort();
+        if (callerSignal && controller) {
+            if (callerSignal.aborted) controller.abort();
+            else callerSignal.addEventListener?.("abort", abortFromCaller, { once: true });
+        }
+        // Whether the request left the plugin: a service may bill a request it received, even when
+        // the answer is thrown away.
+        let sent = false;
         try {
             if (this.plugin.apiRequestsClosed) throw new DOMException("API requests are closed until the plugin starts", "AbortError");
+            controller?.signal.throwIfAborted();
             const method = String(request?.method || "POST").trim().toUpperCase() || "POST";
             const fetchOptions = {
                 method,
@@ -1211,6 +1543,7 @@ class ProviderLayer {
                     ? new URLSearchParams(request.body || {}).toString()
                     : JSON.stringify(request.body);
             }
+            sent = true;
             const response = await fetch(endpoint, fetchOptions);
 
             const raw = await response.text();
@@ -1222,6 +1555,7 @@ class ProviderLayer {
                     this.plugin.annotateGoogleTranslateApiError(apiError, raw, request);
                 }
                 this.plugin.annotateTranslateProviderApiError(apiError, raw, request);
+                this.plugin.annotateChatCompletionApiError(apiError, raw, request);
                 throw apiError;
             }
 
@@ -1234,12 +1568,14 @@ class ProviderLayer {
                 ? `API request timed out after ${Math.round(timeoutMs / 1000)}s`
                 : "Request cancelled", { cause: error }), {
                 name: timedOut ? "TimeoutError" : "AbortError",
-                code: timedOut ? "REQUEST_TIMEOUT" : "REQUEST_CANCELLED"
+                code: timedOut ? "REQUEST_TIMEOUT" : "REQUEST_CANCELLED",
+                requestSent: sent
             });
         }
         finally {
             if (timeout) clearTimeout(timeout);
             if (controller) this.plugin.activeApiControllers.delete(controller);
+            if (callerSignal) callerSignal.removeEventListener?.("abort", abortFromCaller);
         }
     }
 
@@ -1257,12 +1593,63 @@ class ProviderLayer {
         error.providerKey = request.providerKey || this.plugin.getGoogleTranslateProviderKey();
         error.googleTranslateApiKey = request.googleTranslate?.apiKey || "";
         error.googleTranslateKeyId = request.googleTranslate?.keyId || "";
-        const signal = `${Number(error.status || 0)} ${String(raw || "").slice(0, 4000)}`;
-        if (/RESOURCE_EXHAUSTED|quota|limit exceeded|daily limit|monthly limit|rateLimitExceeded|userRateLimitExceeded/i.test(signal)) {
+        const status = Number(error.status || 0);
+        const text = String(raw || "").slice(0, 4000);
+        // Google's per-minute 429 also says RESOURCE_EXHAUSTED and "Quota exceeded", so the
+        // short-window limits are checked first and only lock the key for about a minute.
+        const dailyLimit = /dailyLimitExceeded|daily limit|per\s*day\b/i.test(text);
+        const shortWindowLimit = /userRateLimitExceeded|rateLimitExceeded|per\s*(?:minute|second|100\s*seconds)\b/i.test(text);
+        if (!dailyLimit && (shortWindowLimit || status === 429)) {
+            error.providerRateLimited = true;
+            error.retryAfterMs = Number(error.retryAfterMs || 0) > 0 ? Number(error.retryAfterMs) : AUTO_TRANSLATE_PROVIDER_FAILURE_TTL;
+        }
+        else if (dailyLimit) {
+            error.googleTranslateQuotaExceeded = true;
+            error.retryAfterMs = Math.max(Number(error.retryAfterMs || 0), this.plugin.getGoogleTranslateDailyQuotaRetryAfterMs());
+        }
+        else if (/RESOURCE_EXHAUSTED|quota|limit exceeded|monthly limit/i.test(text)) {
             error.googleTranslateQuotaExceeded = true;
             error.retryAfterMs = Math.max(Number(error.retryAfterMs || 0), this.plugin.getGoogleTranslateQuotaRetryAfterMs());
         }
+        else if (/API_KEY_INVALID|API_KEY_EXPIRED|API key not valid|API key expired|PERMISSION_DENIED/i.test(text)) {
+            // Google answers a mistyped or expired key with HTTP 400: the key is rejected, so it
+            // cools like one and the message says the key is invalid.
+            error.providerAuthFailed = true;
+            error.googleTranslateKeyInvalid = true;
+        }
         return error;
+    }
+
+    // OpenAI-compatible services answer a model name they do not know with 400 or 404 (DeepSeek:
+    // "Model Not Exist"); the message then points to the model setting, not to account permissions.
+    annotateChatCompletionApiError(error, raw = "", request = {}) {
+        if (!error || !Array.isArray(request?.body?.messages)) return error;
+        if (![400, 404, 422].includes(Number(error.status || 0))) return error;
+        const text = String(raw || "").slice(0, 4000);
+        if (/model_not_found|no such model|\b(?:unknown|invalid|unsupported) model\b|\bmodel\b[^.]{0,80}?\b(?:not exists?|does not exist|not found|is not (?:available|supported))\b/i.test(text)) {
+            error.providerModelNotFound = true;
+        }
+        return error;
+    }
+
+    // Google resets daily quota at midnight Pacific Time.
+    getGoogleTranslateDailyQuotaRetryAfterMs(now = Date.now()) {
+        const day = 24 * 60 * 60 * 1000;
+        try {
+            const parts = new Intl.DateTimeFormat("en-US", {
+                timeZone: "America/Los_Angeles",
+                hourCycle: "h23",
+                hour: "2-digit",
+                minute: "2-digit",
+                second: "2-digit"
+            }).formatToParts(new Date(now));
+            const part = type => Number(parts.find(item => item.type === type)?.value || 0);
+            const elapsedMs = ((part("hour") % 24) * 3600 + part("minute") * 60 + part("second")) * 1000;
+            return Math.max(AUTO_TRANSLATE_FAILURE_MAX_TTL, day - elapsedMs + 5 * 60 * 1000);
+        }
+        catch {
+            return day;
+        }
     }
 
     getModelRequestKey(endpoint, request, input) {
@@ -1306,7 +1693,18 @@ class ProviderLayer {
         let endpoint = "";
         let providerSnapshotKey = "";
         let testConfig = null;
+        // Round trip of the test request, and the model the server named in its reply.
+        let testRequest = null;
+        let requestStartedAt = 0;
+        let reportedModel = "";
+        const record = (ok, message = "") => this.plugin.recordApiTestResult?.(kind, {
+            ok,
+            model: this.plugin.getApiTestModel(testConfig || this.plugin.getTaskConfig(kind), testRequest, reportedModel),
+            latencyMs: requestStartedAt ? Date.now() - requestStartedAt : null,
+            message
+        });
 
+        this.runningApiTests.set(kind, Number(this.runningApiTests.get(kind) || 0) + 1);
         try {
             testConfig = this.plugin.clone(this.plugin.getTaskConfig(kind));
             providerSnapshotKey = kind === "translation"
@@ -1317,11 +1715,18 @@ class ProviderLayer {
             }
             const test = this.plugin.buildConnectionTestRequest(kind);
             endpoint = test.endpoint;
-            await this.plugin.fetchModelResponse(test.endpoint, test.request, API_TEST_REQUEST_TIMEOUT_MS, { lifecycleToken });
+            testRequest = test.request;
+            requestStartedAt = Date.now();
+            await this.plugin.fetchModelResponse(test.endpoint, test.request, API_TEST_REQUEST_TIMEOUT_MS, {
+                lifecycleToken,
+                connectionTest: true,
+                onRawResponse: raw => { reportedModel = this.plugin.getReportedResponseModel(raw); }
+            });
             if (!this.plugin.isLifecycleTokenCurrent(lifecycleToken)
                 || (kind === "translation" && !this.plugin.isAutoTranslationProviderSnapshotCurrent(providerSnapshotKey, { configOverrides: testConfig }))) return;
             this.plugin.clearAutoTranslationProviderFailureForCurrentConfig(kind);
             if (kind === "translation" && this.plugin.isLocalTranslationProvider(testConfig)) this.plugin.markLocalProviderHealthy(providerSnapshotKey);
+            record(true);
             this.plugin.setApiStatus(status, "success", this.plugin.t("apiStatusSuccess"));
             if (kind === "translation") this.plugin.queueScan();
             this.plugin.showToast(this.plugin.t("apiTestSuccess", { name: this.plugin.getTaskDisplayName(kind) }), "success");
@@ -1341,6 +1746,7 @@ class ProviderLayer {
                     this.plugin.markLocalProviderHealthy(providerSnapshotKey);
                     this.plugin.queueScan();
                 }
+                record(true);
                 this.plugin.setApiStatus(status, "success", this.plugin.t("apiStatusSuccess"));
                 this.plugin.showToast(this.plugin.t("apiTestSuccess", { name: this.plugin.getTaskDisplayName(kind) }), "success");
                 return;
@@ -1351,33 +1757,41 @@ class ProviderLayer {
                 if (error?.googleTranslateApiKey) this.plugin.markGoogleTranslateKeyFailure(error.googleTranslateApiKey, error);
                 if (error.localProviderUnavailable) this.plugin.markAutoTranslationProviderFailure(this.plugin.getAutoTranslationOptions(), error);
             }
-            const message = this.plugin.formatError(error);
+            const message = this.plugin.formatGoogleTranslateKeyError(error);
+            record(false, message);
             this.plugin.setApiStatus(status, "failed", this.plugin.t("apiStatusFailed"), message);
             this.plugin.showToast(this.plugin.t("apiTestFailed", { name: this.plugin.getTaskDisplayName(kind), error: message }), "error");
         }
         finally {
-            if (this.plugin.isLifecycleTokenCurrent(lifecycleToken)) this.plugin.setButtonBusy(button, false, this.plugin.t("apiTest"));
+            const running = Number(this.runningApiTests.get(kind) || 0) - 1;
+            if (running > 0) this.runningApiTests.set(kind, running);
+            else this.runningApiTests.delete(kind);
+            if (this.plugin.isLifecycleTokenCurrent(lifecycleToken)) {
+                this.plugin.setButtonBusy(button, false, this.plugin.t("apiTest"));
+                // A test cut short writes no result; the launcher still stops showing it as running.
+                this.plugin.requestLauncherStatusUpdate?.();
+            }
         }
     }
 
     buildConnectionTestRequest(kind) {
-        const { config, endpoint, apiKey, model } = this.plugin.getApiConfig(kind);
-        if (this.plugin.isDirectTranslateProvider(config)) {
+        const taskConfig = this.plugin.getTaskConfig(kind);
+        if (this.plugin.isDirectTranslateProvider(taskConfig)) {
+            // Test the language pair the user actually translates into: some targets are
+            // rejected by some services. When every Google key is cooling down, a cooling key
+            // is tested, so a passing test can bring it back.
+            const targetLanguage = taskConfig.targetLanguage || this.plugin.settings.translation?.targetLanguage;
             return this.plugin.buildModelRequest("translation", "hello", {
                 configOverrides: {
-                    ...config,
+                    ...taskConfig,
                     sourceLanguage: AUTO_LANGUAGE_VALUE,
-                    targetLanguage: "en"
-                }
+                    targetLanguage,
+                    targetLanguageCode: this.plugin.getTargetLanguageCode(targetLanguage)
+                },
+                ignoreGoogleTranslateCooldown: true
             });
         }
-        if (this.plugin.isGoogleTranslateProvider(config)) {
-            return this.plugin.buildGoogleTranslateRequest("hello", {
-                ...config,
-                sourceLanguage: AUTO_LANGUAGE_VALUE,
-                targetLanguage: "en"
-            });
-        }
+        const { config, endpoint, apiKey, model } = this.plugin.getApiConfig(kind);
         const body = this.plugin.applyProviderBodyOptions(config, {
             model,
             messages: [
@@ -1409,6 +1823,7 @@ class ProviderLayer {
             if (kind !== "translation") throw new Error(this.plugin.t("translationDisabled"));
             return this.plugin.buildGoogleTranslateRequest(input, effectiveConfig, {
                 ignoreReservations: Boolean(options.deferGoogleTranslateReservation),
+                ignoreCooldown: Boolean(options.ignoreGoogleTranslateCooldown),
                 reserve: Boolean(options.reserveGoogleTranslateQuota)
             });
         }
@@ -1466,15 +1881,22 @@ class ProviderLayer {
         const protectedTexts = protectedPayloads.map(payload => payload.text);
         const charCount = this.plugin.countGoogleTranslateChars(protectedTexts);
         const endpoint = String(PROVIDER_DEFAULTS.googleCloud.endpoint).trim();
-        const target = this.plugin.getGoogleLanguageCode(config.targetLanguage);
+        const target = this.plugin.getGoogleLanguageCode(config.targetLanguageCode || config.targetLanguage);
         if (!target || target === AUTO_LANGUAGE_VALUE) throw new Error(this.plugin.t("targetLanguageDesc"));
         const source = this.plugin.getGoogleLanguageCode(config.sourceLanguage, { source: true });
-        const key = this.plugin.selectGoogleTranslateKey(charCount, { ignoreReservations: Boolean(options.ignoreReservations) });
+        const selectOptions = { ignoreReservations: Boolean(options.ignoreReservations) };
+        // ignoreCooldown (the API test) still prefers a key that is not cooling down; a cooling
+        // key is used only when every key is cooling, so a passing test can bring it back.
+        const key = options.ignoreCooldown
+            ? this.plugin.selectGoogleTranslateKey(charCount, { ...selectOptions, persist: false })
+                || this.plugin.selectGoogleTranslateKey(charCount, { ...selectOptions, ignoreCooldown: true })
+            : this.plugin.selectGoogleTranslateKey(charCount, selectOptions);
         if (!key) {
-            const hasKeys = this.plugin.getGoogleTranslateKeys().length > 0;
-            throw hasKeys
-                ? this.plugin.createGoogleTranslateQuotaError({ charCount })
-                : this.plugin.createGoogleTranslateNoKeyError();
+            if (!this.plugin.getGoogleTranslateKeys().length) throw this.plugin.createGoogleTranslateNoKeyError();
+            const coolingReadyAt = this.plugin.getGoogleTranslateCoolingKeyReadyAt(charCount, { ignoreReservations: Boolean(options.ignoreReservations) });
+            throw coolingReadyAt
+                ? this.plugin.createGoogleTranslateCooldownError({ until: coolingReadyAt, charCount })
+                : this.plugin.createGoogleTranslateQuotaError({ charCount });
         }
         const reservation = options.reserve ? this.plugin.reserveGoogleTranslateKey(key, charCount) : null;
         const body = {
@@ -1484,13 +1906,15 @@ class ProviderLayer {
         };
         if (source) body.source = source;
         return {
-            endpoint: this.plugin.appendQueryParam(endpoint, "key", key.apiKey),
+            // The key goes in a header so it never shows up in logged or wrapped request URLs.
+            endpoint,
             request: {
                 provider: "googleCloud",
                 providerKey: this.plugin.getGoogleTranslateProviderKey(key),
                 responseParser: "googleTranslate",
                 headers: {
-                    "Content-Type": "application/json"
+                    "Content-Type": "application/json",
+                    "X-Goog-Api-Key": key.apiKey
                 },
                 body,
                 googleTranslate: {
@@ -1511,7 +1935,7 @@ class ProviderLayer {
         const apiKey = this.plugin.getEffectiveRequestApiKey(config);
         if (!endpoint) throw new Error(this.plugin.t("endpointMissing"));
         if (!apiKey) throw new Error(this.plugin.t("apiKeyMissingTranslation"));
-        const target = this.plugin.getMicrosoftLanguageCode(config.targetLanguage);
+        const target = this.plugin.getMicrosoftLanguageCode(config.targetLanguageCode || config.targetLanguage);
         if (!target || target === AUTO_LANGUAGE_VALUE) throw new Error(this.plugin.t("targetLanguageDesc"));
         const source = this.plugin.getMicrosoftLanguageCode(config.sourceLanguage, { source: true });
         const params = new URLSearchParams({ "api-version": "3.0", to: target });
@@ -1540,7 +1964,7 @@ class ProviderLayer {
         const apiKey = this.plugin.getEffectiveRequestApiKey(config);
         if (!endpoint) throw new Error(this.plugin.t("endpointMissing"));
         if (!apiKey) throw new Error(this.plugin.t("apiKeyMissingTranslation"));
-        const target = this.plugin.getDeepLLanguageCode(config.targetLanguage);
+        const target = this.plugin.getDeepLLanguageCode(config.targetLanguageCode || config.targetLanguage);
         if (!target || target === AUTO_LANGUAGE_VALUE) throw new Error(this.plugin.t("targetLanguageDesc"));
         const source = this.plugin.getDeepLLanguageCode(config.sourceLanguage, { source: true });
         const body = {
@@ -1570,7 +1994,7 @@ class ProviderLayer {
         const secretKey = String(config.secretKey || "").trim();
         if (!endpoint) throw new Error(this.plugin.t("endpointMissing"));
         if (!appId || !secretKey) throw new Error(this.plugin.t("apiKeyMissingTranslation"));
-        const target = this.plugin.getBaiduLanguageCode(config.targetLanguage);
+        const target = this.plugin.getBaiduLanguageCode(config.targetLanguageCode || config.targetLanguage);
         if (!target || target === AUTO_LANGUAGE_VALUE) throw new Error(this.plugin.t("targetLanguageDesc"));
         const source = this.plugin.getBaiduLanguageCode(config.sourceLanguage, { source: true }) || "auto";
         // Baidu returns one trans_result row per line of q, so multi-line texts must be
@@ -1626,7 +2050,11 @@ class ProviderLayer {
         const code = this.plugin.getGoogleLanguageCode(language, options);
         if (options.source && (!code || code === AUTO_LANGUAGE_VALUE)) return "";
         const upper = String(code || "").replace("_", "-").toUpperCase();
-        if (upper === "ZH-CN" || upper === "ZH-TW" || upper === "ZH-HANS" || upper === "ZH-HANT") return "ZH";
+        if (upper === "ZH-CN" || upper === "ZH-TW" || upper === "ZH-HANS" || upper === "ZH-HANT") {
+            // source_lang only knows "ZH"; as a target, "ZH" means Simplified Chinese.
+            if (options.source) return "ZH";
+            return upper === "ZH-TW" || upper === "ZH-HANT" ? "ZH-HANT" : "ZH-HANS";
+        }
         if (upper === "EN") return "EN";
         if (upper === "PT") return "PT";
         return upper;
@@ -1837,7 +2265,8 @@ class ProviderLayer {
 
     parseBaiduTranslateResponse(raw, expectedCount = 1, options = {}) {
         const data = this.plugin.parseProviderJson(raw, "baidu");
-        if (data?.error_code) {
+        // 52000 is Baidu's "success" code.
+        if (data?.error_code && String(data.error_code) !== "52000") {
             throw this.plugin.createBaiduTranslateError(data);
         }
         const results = data?.trans_result;
@@ -1902,10 +2331,38 @@ class ProviderLayer {
         const error = new Error(message);
         error.baiduApiError = true;
         error.baiduErrorCode = code;
-        if (["52003", "54001"].includes(code)) error.providerAuthFailed = true;
-        if (["54003"].includes(code)) error.providerRateLimited = true;
-        if (["54004", "54005"].includes(code)) error.providerQuotaExceeded = true;
-        if (["52001", "52002"].includes(code)) error.providerServerError = true;
+        // Baidu answers HTTP 200 with an error_code, so every code needs a type here;
+        // otherwise it would look like a bad translation and be retried forever, silently.
+        if (["52003", "54001", "58002", "90107"].includes(code)) error.providerAuthFailed = true;
+        else if (code === "58000") {
+            error.providerAuthFailed = true;
+            error.providerIpRejected = true;
+        }
+        else if (["54000", "58001"].includes(code)) {
+            // Missing parameter or unsupported language pair: every message fails the same
+            // way until the settings change, so pause the provider and tell the user.
+            error.providerAuthFailed = true;
+            error.providerRequestRejected = true;
+            if (code === "58001") error.providerLanguageUnsupported = true;
+        }
+        else if (code === "54003") error.providerRateLimited = true;
+        else if (code === "54005") {
+            // Too many long requests; Baidu asks to wait 3 s.
+            error.providerRateLimited = true;
+            error.retryAfterMs = 3000;
+        }
+        else if (code === "54004") error.providerQuotaExceeded = true;
+        else if (code === "20003") {
+            // Baidu refuses this text; retrying the same message cannot help.
+            error.providerRequestRejected = true;
+            error.autoTranslationTerminalFailure = true;
+        }
+        else if (["52001", "52002"].includes(code)) error.providerServerError = true;
+        else {
+            // Unknown code: pause the provider like a server error and show the code.
+            error.providerServerError = true;
+            error.providerRequestRejected = true;
+        }
         return error;
     }
 

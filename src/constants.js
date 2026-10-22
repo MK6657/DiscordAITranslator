@@ -6,6 +6,10 @@ const PLUGIN_NAME = "DiscordAITranslator";
 const DATA_KEY = "settings";
 const CACHE_DATA_KEY = "translationCache";
 const DIAGNOSTIC_DATA_KEY = "diagnosticLogs";
+// Since v0.4.0 the translation cache and the diagnostics log live in their own BetterDiscord data files
+// (DiscordAITranslator.cache.config.json / .diagnostics.config.json), so a settings save no longer rewrites them.
+const CACHE_DATA_STORE = `${PLUGIN_NAME}.cache`;
+const DIAGNOSTIC_DATA_STORE = `${PLUGIN_NAME}.diagnostics`;
 const STYLE_ID = "discord-ai-translator-style";
 const DISCORD_THEME_CLASSES = ["theme-light", "theme-midnight", "theme-darker", "theme-dark"];
 const DISCORD_DEFAULT_THEME_CLASS = "theme-dark";
@@ -149,40 +153,6 @@ const PROVIDER_DEFAULTS = {
         autoTranslateRequestBatchSize: 1
     }
 };
-
-const SETTINGS_TAB_POLISH = "polish";
-const SETTINGS_TAB_TRANSLATION = "translation";
-const SETTINGS_TAB_PUBLIC_BILINGUAL = "publicBilingual";
-const SETTINGS_TAB_DISPLAY = "display";
-const SETTINGS_TAB_DEFAULT = SETTINGS_TAB_POLISH;
-const SETTINGS_TABS = [
-    SETTINGS_TAB_POLISH,
-    SETTINGS_TAB_TRANSLATION,
-    SETTINGS_TAB_PUBLIC_BILINGUAL,
-    SETTINGS_TAB_DISPLAY
-];
-const SETTINGS_SECTION_GENERAL = "general";
-const SETTINGS_SECTION_POLISH = "polish";
-const SETTINGS_SECTION_POLISH_CONTROLS = "polishControls";
-const SETTINGS_SECTION_TRANSLATION = "translation";
-const SETTINGS_SECTION_TRANSLATION_CONTROLS = "translationControls";
-const SETTINGS_SECTION_AUTO_TRANSLATE = "autoTranslate";
-const SETTINGS_SECTION_PUBLIC_BILINGUAL = "publicBilingual";
-const SETTINGS_SECTION_DISPLAY = "display";
-const SETTINGS_SECTION_CACHE = "cache";
-const SETTINGS_SECTION_DIAGNOSTICS = "diagnostics";
-const SETTINGS_SECTION_IDS = [
-    SETTINGS_SECTION_GENERAL,
-    SETTINGS_SECTION_POLISH,
-    SETTINGS_SECTION_POLISH_CONTROLS,
-    SETTINGS_SECTION_TRANSLATION,
-    SETTINGS_SECTION_TRANSLATION_CONTROLS,
-    SETTINGS_SECTION_AUTO_TRANSLATE,
-    SETTINGS_SECTION_PUBLIC_BILINGUAL,
-    SETTINGS_SECTION_DISPLAY,
-    SETTINGS_SECTION_CACHE,
-    SETTINGS_SECTION_DIAGNOSTICS
-];
 
 const PROVIDER_ORDER = ["deepseek", "openaiCompatible", "sakuraLocal", "googleCloud", "microsoft", "deepl", "baidu"];
 const PROVIDER_PROFILE_FIELDS = ["apiKey", "endpoint", "model", "enableThinking", "region", "deeplPlan", "appId", "secretKey"];
@@ -347,10 +317,16 @@ const AUTO_TRANSLATE_FAILURE_MAX_TTL = 120000;
 const AUTO_TRANSLATE_FAILURE_HISTORY_TTL = 10 * 60 * 1000;
 const AUTO_TRANSLATE_FAILURE_HISTORY_LIMIT = 2000;
 const AUTO_TRANSLATE_INLINE_FAILURE_AFTER_COUNT = 3;
+// A visible message that keeps timing out is retained in the queue for this many failures; after that its
+// failure record (with the grown backoff) paces the next attempt, so it stops holding a queue slot.
+const AUTO_TRANSLATE_RETAIN_MAX_FAILURE_COUNT = 3;
 const AUTO_TRANSLATE_INVALID_OUTPUT_FAILURE_TTL = 4000;
 const AUTO_TRANSLATE_FINAL_INVALID_OUTPUT_FAILURE_TTL = 2 * 60 * 1000;
 const AUTO_TRANSLATE_TRANSIENT_FAILURE_TTL = 10000;
 const AUTO_TRANSLATE_PROVIDER_FAILURE_TTL = 60000;
+// Output cut off at max_tokens even after one retry with a larger limit: retry after 2 min, doubling up to 30 min.
+const AUTO_TRANSLATE_TRUNCATED_FAILURE_TTL = 2 * 60 * 1000;
+const AUTO_TRANSLATE_TRUNCATED_FAILURE_MAX_TTL = 30 * 60 * 1000;
 const LOCAL_PROVIDER_UNAVAILABLE_RETRY_MS = 60000;
 const LOCAL_PROVIDER_HEALTH_RETRY_MS = 5000;
 const LOCAL_PROVIDER_AUTO_MODEL_VALUE = "local-model";
@@ -374,6 +350,12 @@ const AUTO_TRANSLATE_LONG_TEXT_MIN_MAX_TOKENS = 1800;
 const AUTO_TRANSLATE_LONG_TEXT_TIMEOUT_MAX_MS = 90000;
 const AUTO_TRANSLATE_CLOUD_LONG_TEXT_TIMEOUT_MAX_MS = 45000;
 const MANUAL_LONG_TEXT_WHOLE_PASS_MAX_LENGTH = 1800;
+// Most model requests one manual Translate click may send, counting every rescue and chunk attempt.
+const MANUAL_TRANSLATION_REQUEST_BUDGET = 8;
+// A long message's click gets one request per chunk, the whole pass and this many rescue requests on top
+// (never less than the base budget above), up to the maximum.
+const MANUAL_TRANSLATION_RESCUE_REQUEST_ALLOWANCE = 4;
+const MANUAL_TRANSLATION_REQUEST_BUDGET_MAX = 24;
 const MODEL_REQUEST_TIMEOUT_MS = 45000;
 const API_TEST_REQUEST_TIMEOUT_MS = 15000;
 // Error codes thrown by assertSafeRequestEndpoint, mapped to their localized messages.
@@ -415,6 +397,13 @@ const INCREMENTAL_MESSAGE_WORK_BUDGET_MS = 8;
 const INCREMENTAL_MESSAGE_WORK_MAX_PER_SLICE = 1;
 const MESSAGE_BUTTON_VISIBILITY_ALWAYS = "always";
 const MESSAGE_BUTTON_VISIBILITY_HOVER = "hover";
+// How a translated line looks in chat (Display settings): faint background, dimmer text, or a small tag.
+const TRANSLATION_LINE_STYLES = Object.freeze(["tint", "muted", "tag"]);
+const TRANSLATION_LINE_TEXT_SCALES = Object.freeze([100, 90]);
+// The palette of the plugin's own windows (Display settings): follow Discord's light/dark theme, or always light/dark.
+const PANEL_THEMES = Object.freeze(["auto", "light", "dark"]);
+// Target languages written right to left; their translation lines get dir="rtl".
+const RTL_LANGUAGE_CODES = Object.freeze(["ar", "fa", "he", "iw", "ur", "ps", "yi", "dv", "ug", "ckb", "sd"]);
 const POLISH_REPOLISH_SOURCE_ORIGINAL = "original";
 const POLISH_REPOLISH_SOURCE_LAST_RESULT = "lastResult";
 const TRANSLATION_CACHE_DEFAULT_TTL_HOURS = 48;
@@ -432,6 +421,9 @@ const AUTO_TRANSLATE_PRECHECK_SKIP_TTL_MS = 30 * 60 * 1000;
 const AUTO_TRANSLATE_PRECHECK_SKIP_MAX = 2000;
 const AUTO_TRANSLATE_RECENT_RENDER_TTL_MS = 60 * 1000;
 const AUTO_TRANSLATE_RECENT_RENDER_MAX = 1200;
+// Partial (not cacheable) results are kept in memory for redraw, so a rebuilt or prefetched message is not paid for again.
+const AUTO_TRANSLATE_PARTIAL_RESULT_TTL_MS = 10 * 60 * 1000;
+const AUTO_TRANSLATE_PARTIAL_RESULT_MAX = 300;
 const AUTO_TRANSLATE_LAST_DECISION_MAX = 600;
 const AUTO_TRANSLATE_INTAKE_MODES = ["auto", "dom", "bdfdb"];
 const STORE_MESSAGE_ID_NEGATIVE_LOOKUP_TTL_MS = 3000;
@@ -706,12 +698,15 @@ const DEFAULT_SETTINGS = {
     googleTranslate: {
         keyPoolText: "",
         keys: [],
+        // This month's usage per key fingerprint, kept after a key's line is removed.
+        usageById: {},
         defaultMonthlyLimit: GOOGLE_TRANSLATE_DEFAULT_MONTHLY_LIMIT,
         allowPrefetch: true
     },
     ui: {
         settingsVersion: 2,
-        settingsActiveTab: SETTINGS_SECTION_GENERAL,
+        // One of the settings tabs in src/settings/settings-schema.js.
+        settingsActiveTab: "overview",
         language: "zh-CN",
         showQuickSettingsRailButton: false,
         showQuickSettingsPanelButton: true,
@@ -729,6 +724,9 @@ const DEFAULT_SETTINGS = {
         autoTranslateConcurrency: AUTO_TRANSLATE_DEFAULT_CONCURRENCY,
         autoTranslateStrictRetry: false,
         channelAutoTranslatePolicies: {},
+        // 2: an 'enabled' rule allow-lists the channel even while autoTranslateMessages is off (v0.4.0). Older
+        // 'enabled' rules followed the main switch and are loaded as 'inherit' (settings-store ensureSettingsShape).
+        channelAutoTranslatePoliciesVersion: 2,
         historyBackfillEnabled: false,
         historyBackfillLimit: 20,
         providerFallbackEnabled: false,
@@ -742,6 +740,10 @@ const DEFAULT_SETTINGS = {
         translationPosition: "before",
         maskTranslations: false,
         hideOriginalAfterTranslation: false,
+        translationStyle: "tint",
+        translationTextScale: 100,
+        // One of PANEL_THEMES: the colours of the settings window, the quick panel and the dialogs.
+        panelTheme: "auto",
         injectMessageContextMenu: true,
         enablePolishHotkey: true,
         polishHotkey: "Ctrl+Alt+P",
@@ -755,6 +757,8 @@ module.exports = {
     DATA_KEY,
     CACHE_DATA_KEY,
     DIAGNOSTIC_DATA_KEY,
+    CACHE_DATA_STORE,
+    DIAGNOSTIC_DATA_STORE,
     STYLE_ID,
     DISCORD_THEME_CLASSES,
     DISCORD_DEFAULT_THEME_CLASS,
@@ -766,23 +770,6 @@ module.exports = {
     DISCORD_MEDIA_MUTATION_SELECTOR,
     DISCORD_THEME_VARIABLES,
     PROVIDER_DEFAULTS,
-    SETTINGS_TAB_POLISH,
-    SETTINGS_TAB_TRANSLATION,
-    SETTINGS_TAB_PUBLIC_BILINGUAL,
-    SETTINGS_TAB_DISPLAY,
-    SETTINGS_TAB_DEFAULT,
-    SETTINGS_TABS,
-    SETTINGS_SECTION_GENERAL,
-    SETTINGS_SECTION_POLISH,
-    SETTINGS_SECTION_POLISH_CONTROLS,
-    SETTINGS_SECTION_TRANSLATION,
-    SETTINGS_SECTION_TRANSLATION_CONTROLS,
-    SETTINGS_SECTION_AUTO_TRANSLATE,
-    SETTINGS_SECTION_PUBLIC_BILINGUAL,
-    SETTINGS_SECTION_DISPLAY,
-    SETTINGS_SECTION_CACHE,
-    SETTINGS_SECTION_DIAGNOSTICS,
-    SETTINGS_SECTION_IDS,
     PROVIDER_ORDER,
     PROVIDER_PROFILE_FIELDS,
     PROVIDER_CAPABILITIES,
@@ -803,10 +790,13 @@ module.exports = {
     AUTO_TRANSLATE_FAILURE_HISTORY_TTL,
     AUTO_TRANSLATE_FAILURE_HISTORY_LIMIT,
     AUTO_TRANSLATE_INLINE_FAILURE_AFTER_COUNT,
+    AUTO_TRANSLATE_RETAIN_MAX_FAILURE_COUNT,
     AUTO_TRANSLATE_INVALID_OUTPUT_FAILURE_TTL,
     AUTO_TRANSLATE_FINAL_INVALID_OUTPUT_FAILURE_TTL,
     AUTO_TRANSLATE_TRANSIENT_FAILURE_TTL,
     AUTO_TRANSLATE_PROVIDER_FAILURE_TTL,
+    AUTO_TRANSLATE_TRUNCATED_FAILURE_TTL,
+    AUTO_TRANSLATE_TRUNCATED_FAILURE_MAX_TTL,
     LOCAL_PROVIDER_UNAVAILABLE_RETRY_MS,
     LOCAL_PROVIDER_HEALTH_RETRY_MS,
     LOCAL_PROVIDER_AUTO_MODEL_VALUE,
@@ -830,6 +820,9 @@ module.exports = {
     AUTO_TRANSLATE_LONG_TEXT_TIMEOUT_MAX_MS,
     AUTO_TRANSLATE_CLOUD_LONG_TEXT_TIMEOUT_MAX_MS,
     MANUAL_LONG_TEXT_WHOLE_PASS_MAX_LENGTH,
+    MANUAL_TRANSLATION_REQUEST_BUDGET,
+    MANUAL_TRANSLATION_RESCUE_REQUEST_ALLOWANCE,
+    MANUAL_TRANSLATION_REQUEST_BUDGET_MAX,
     MODEL_REQUEST_TIMEOUT_MS,
     API_TEST_REQUEST_TIMEOUT_MS,
     API_ENDPOINT_ERROR_MESSAGE_KEYS,
@@ -863,6 +856,10 @@ module.exports = {
     INCREMENTAL_MESSAGE_WORK_MAX_PER_SLICE,
     MESSAGE_BUTTON_VISIBILITY_ALWAYS,
     MESSAGE_BUTTON_VISIBILITY_HOVER,
+    TRANSLATION_LINE_STYLES,
+    TRANSLATION_LINE_TEXT_SCALES,
+    PANEL_THEMES,
+    RTL_LANGUAGE_CODES,
     POLISH_REPOLISH_SOURCE_ORIGINAL,
     POLISH_REPOLISH_SOURCE_LAST_RESULT,
     TRANSLATION_CACHE_DEFAULT_TTL_HOURS,
@@ -880,6 +877,8 @@ module.exports = {
     AUTO_TRANSLATE_PRECHECK_SKIP_MAX,
     AUTO_TRANSLATE_RECENT_RENDER_TTL_MS,
     AUTO_TRANSLATE_RECENT_RENDER_MAX,
+    AUTO_TRANSLATE_PARTIAL_RESULT_TTL_MS,
+    AUTO_TRANSLATE_PARTIAL_RESULT_MAX,
     AUTO_TRANSLATE_LAST_DECISION_MAX,
     AUTO_TRANSLATE_INTAKE_MODES,
     STORE_MESSAGE_ID_NEGATIVE_LOOKUP_TTL_MS,

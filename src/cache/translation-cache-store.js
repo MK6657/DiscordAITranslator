@@ -21,10 +21,226 @@ const {
     TRANSLATION_CACHE_TTL_OPTIONS,
     TRANSLATION_CACHE_WRITE_DEBOUNCE_MS
 } = require("../constants");
+const { removeStandardEmoji } = require("../intake/emoji-text");
+
+// The size limit counts messages (distinct cached translations): one message is stored under 2-3 keys (identity,
+// auto-text, manual, promoted aliases) that share its text. Keys are still capped at this multiple of the limit,
+// so many messages with the same short translation cannot grow the key count without bound.
+const TRANSLATION_CACHE_MAX_KEYS_PER_MESSAGE = 4;
+
+// The key format a saved cache was written with; caches saved before 0.4.0 (and by its previews) have none.
+// Their keys name a local server's "local-model" placeholder instead of the model it serves, and were built from
+// message text without standard emoji (only ":name:" emoji were read then). Such entries stay reachable through
+// compatibility aliases and move to their current key on their first hit.
+const TRANSLATION_CACHE_KEY_SCHEMA = 2;
+// Message texts with standard emoji, and the same text read the way versions before 0.4.0 read it.
+const TRANSLATION_CACHE_PRE_EMOJI_TEXT_MAX = 2000;
 
 class TranslationCacheStore {
     constructor(plugin) {
         this.plugin = plugin;
+        // value -> number of keys holding it; valid only for valueRefsCache at size valueRefsSize (rebuilt otherwise).
+        this.valueRefs = null;
+        this.valueRefsCache = null;
+        this.valueRefsSize = -1;
+        // Keys of entries saved before 0.4.0 that have not moved to their current key yet.
+        this.legacyKeys = new Set();
+        this.preEmojiSourceTexts = new Map();
+    }
+
+    getTranslationCacheValueRefs() {
+        const cache = this.plugin.translationCache;
+        if (this.hasCurrentTranslationCacheValueRefs()) return this.valueRefs;
+        const refs = new Map();
+        for (const value of cache.values()) refs.set(value, (refs.get(value) || 0) + 1);
+        this.valueRefs = refs;
+        this.valueRefsCache = cache;
+        this.valueRefsSize = cache.size;
+        return refs;
+    }
+
+    hasCurrentTranslationCacheValueRefs() {
+        const cache = this.plugin.translationCache;
+        return Boolean(this.valueRefs) && this.valueRefsCache === cache && this.valueRefsSize === cache.size;
+    }
+
+    invalidateTranslationCacheValueRefs() {
+        this.valueRefs = null;
+        this.valueRefsCache = null;
+        this.valueRefsSize = -1;
+    }
+
+    releaseTranslationCacheValueRef(value) {
+        const count = (this.valueRefs.get(value) || 0) - 1;
+        if (count > 0) this.valueRefs.set(value, count);
+        else this.valueRefs.delete(value);
+    }
+
+    // Map writes that keep the value counts current (when they have been built).
+    setTranslationCacheEntry(key, value) {
+        const cache = this.plugin.translationCache;
+        const tracked = this.hasCurrentTranslationCacheValueRefs();
+        if (cache.has(key)) {
+            if (tracked) this.releaseTranslationCacheValueRef(cache.get(key));
+            cache.delete(key);
+        }
+        cache.set(key, value);
+        // Written now, so it is a current entry.
+        this.legacyKeys.delete(key);
+        if (tracked) {
+            this.valueRefs.set(value, (this.valueRefs.get(value) || 0) + 1);
+            this.valueRefsSize = cache.size;
+        }
+    }
+
+    deleteTranslationCacheEntry(key) {
+        const cache = this.plugin.translationCache;
+        this.legacyKeys.delete(key);
+        if (!cache.has(key)) return false;
+        const tracked = this.hasCurrentTranslationCacheValueRefs();
+        if (tracked) this.releaseTranslationCacheValueRef(cache.get(key));
+        cache.delete(key);
+        if (tracked) this.valueRefsSize = cache.size;
+        return true;
+    }
+
+    // --- Entries saved before 0.4.0 -------------------------------------------------------------------------
+
+    isPreKeySchemaTranslationCachePayload(payload) {
+        if (Array.isArray(payload)) return true;
+        if (!payload || typeof payload !== "object") return false;
+        return !(Number(payload.keySchema) >= TRANSLATION_CACHE_KEY_SCHEMA);
+    }
+
+    hasLegacyTranslationCacheEntries() {
+        return this.legacyKeys.size > 0;
+    }
+
+    // Called by text extraction while old entries remain: the same message text read without the standard
+    // emoji images, which is what versions before 0.4.0 keyed it by.
+    rememberPreEmojiSourceText(text, preEmojiText) {
+        if (!this.legacyKeys.size) return;
+        const value = String(text || "");
+        const previous = String(preEmojiText || "");
+        if (!value || value === previous) return;
+        this.preEmojiSourceTexts.delete(value);
+        this.preEmojiSourceTexts.set(value, previous);
+        while (this.preEmojiSourceTexts.size > TRANSLATION_CACHE_PRE_EMOJI_TEXT_MAX) {
+            this.preEmojiSourceTexts.delete(this.preEmojiSourceTexts.keys().next().value);
+        }
+    }
+
+    getPreEmojiSourceText(text) {
+        const value = String(text || "");
+        if (removeStandardEmoji(value) === value) return "";
+        // Read from the chat: exact. Otherwise each emoji is taken as a word of its own.
+        const traced = this.preEmojiSourceTexts.get(value);
+        const previous = traced ?? this.plugin.normalizeExtractedText(removeStandardEmoji(value));
+        return previous && previous !== value ? previous : "";
+    }
+
+    // The message identity ends with the hash of the text it was built from.
+    getPreEmojiMessageIdentity(identity, text, preEmojiText) {
+        const value = this.plugin.normalizeTranslationMessageIdentity(identity);
+        const suffix = `:${this.plugin.getTextFingerprint(text)}`;
+        if (!value || !value.endsWith(suffix)) return value;
+        return `${value.slice(0, -suffix.length)}:${this.plugin.getTextFingerprint(preEmojiText)}`;
+    }
+
+    // Whether cache keys name a detected model in place of the configured "local-model" placeholder (true),
+    // still wait for the detection (false), or never name a detected model (null).
+    getTranslationCacheServedModelState(options = {}) {
+        const config = this.plugin.getEffectiveTaskConfig("translation", options.configOverrides);
+        const defaults = DEFAULT_SETTINGS.translation || {};
+        if (!this.plugin.shouldAutoDetectLocalProviderModel(config, defaults)) return null;
+        return Boolean(this.plugin.getCachedLocalProviderDetectedModel(config, { defaultConfig: defaults }));
+    }
+
+    isServedModelInTranslationCacheKeys(options = {}) {
+        return this.getTranslationCacheServedModelState(options) === true;
+    }
+
+    // The key as it was before the served model was detected (or before 0.4.0): the model part names the
+    // configured placeholder. "" when keys name no detected model.
+    getPlaceholderModelTranslationCacheKey(text, options = {}, servedModelState = this.getTranslationCacheServedModelState(options)) {
+        if (servedModelState !== true) return "";
+        return this.plugin.buildTranslationCacheKey(text, options, this.plugin.getStrongTextFingerprint(text), { legacyModel: true });
+    }
+
+    // Keys an entry saved before 0.4.0 has for this text and options, when they differ from the current key.
+    // Only keys of such entries that are still cached are returned.
+    getLegacyCompatTranslationCacheKeys(text, options = {}, primaryKey = "", servedModelState = this.getTranslationCacheServedModelState(options)) {
+        if (!this.legacyKeys.size) return [];
+        const candidates = [this.getPlaceholderModelTranslationCacheKey(text, options, servedModelState)];
+        const preEmojiText = this.getPreEmojiSourceText(text);
+        if (preEmojiText) {
+            const preEmojiOptions = options.messageIdentity
+                ? { ...options, messageIdentity: this.getPreEmojiMessageIdentity(options.messageIdentity, text, preEmojiText) }
+                : options;
+            candidates.push(this.plugin.buildTranslationCacheKey(preEmojiText, preEmojiOptions, this.plugin.getStrongTextFingerprint(preEmojiText), { legacyModel: true }));
+        }
+        return [...new Set(candidates)].filter(key => key
+            && key !== primaryKey
+            && this.legacyKeys.has(key)
+            && this.plugin.translationCache.has(key));
+    }
+
+    // Moves the old entries of this text and options to the current key, keeping their times, so every lookup
+    // (and the saved cache) finds them there. Before the served model is detected the current key still names
+    // the placeholder, so a moved entry stays an old one and moves again once the model is known.
+    adoptLegacyTranslationCacheEntries(text, options = {}, primaryKey = "") {
+        if (!this.legacyKeys.size || !primaryKey) return 0;
+        const servedModelState = this.getTranslationCacheServedModelState(options);
+        const stillPlaceholder = servedModelState === false;
+        // An old entry under the current key itself is final, unless that key still waits for the served model.
+        if (!stillPlaceholder) this.legacyKeys.delete(primaryKey);
+        const found = this.getLegacyCompatTranslationCacheKeys(text, options, primaryKey, servedModelState);
+        if (!found.length) {
+            if (!this.legacyKeys.size) this.preEmojiSourceTexts.clear();
+            return 0;
+        }
+        const cache = this.plugin.translationCache;
+        const metaByKey = this.plugin.translationCacheMeta;
+        const now = Date.now();
+        let adopted = 0;
+        for (const key of found) {
+            const meta = metaByKey.get(key) || {};
+            if (!cache.has(primaryKey) && !this.plugin.isTranslationCacheEntryExpired(meta, now)) {
+                this.setTranslationCacheEntry(primaryKey, cache.get(key));
+                metaByKey.set(primaryKey, {
+                    createdAt: Number(meta.createdAt || now),
+                    touchedAt: Number(meta.touchedAt || now),
+                    expiresAt: this.plugin.getTranslationCacheEntryExpiresAt(meta, now),
+                    volatile: Boolean(meta.volatile || this.plugin.isVolatileTranslationCacheKey(primaryKey))
+                });
+                if (stillPlaceholder) this.legacyKeys.add(primaryKey);
+                adopted++;
+            }
+            this.deleteTranslationCacheEntry(key);
+            metaByKey.delete(key);
+        }
+        if (!this.legacyKeys.size) this.preEmojiSourceTexts.clear();
+        this.plugin.clearTranslationCacheNegativeLookups();
+        this.plugin.scheduleTranslationCachePersist(TRANSLATION_CACHE_WRITE_DEBOUNCE_MS);
+        this.plugin.logDiagnostic("cache.lookup", "legacy-adopted", {
+            ...this.plugin.getDiagnosticBaseMeta("cache", this.getTranslationCacheMode(primaryKey), "cache-legacy-adopted"),
+            cacheHash: this.plugin.getTextFingerprint(primaryKey),
+            adopted,
+            remaining: this.legacyKeys.size
+        });
+        return adopted;
+    }
+
+    pruneLegacyTranslationCacheKeys() {
+        if (!this.legacyKeys.size) return;
+        for (const key of [...this.legacyKeys]) {
+            if (!this.plugin.translationCache.has(key)) this.legacyKeys.delete(key);
+        }
+        if (!this.legacyKeys.size) this.preEmojiSourceTexts.clear();
+    }
+
+    getTranslationCacheMessageCount() {
+        return this.getTranslationCacheValueRefs().size;
     }
 
     normalizeTranslationCacheTtlHours(value) {
@@ -65,6 +281,8 @@ class TranslationCacheStore {
     }
 
     isVolatileTranslationCacheKey(cacheKey) {
+        // Public bilingual entries are translations of unsent drafts (DMs included): memory only.
+        if (String(this.getTranslationCacheMode(cacheKey)).startsWith("public-bilingual")) return true;
         return this.plugin.isVolatileTranslationIdentity(this.plugin.getTranslationIdentityFromCacheKey(cacheKey));
     }
 
@@ -96,6 +314,11 @@ class TranslationCacheStore {
                 this.plugin.getPreMessageIdentityTranslationCacheKey(text, options, legacyTextHash, { fullConfig: true })
             );
         }
+        // A line drawn before the served model was first detected carries the placeholder-model key.
+        if (aliasOptions.includePlaceholderModel && this.plugin.localProviderModelFirstDetected) {
+            aliases.push(this.getPlaceholderModelTranslationCacheKey(text, options));
+        }
+        this.adoptLegacyTranslationCacheEntries(text, options, primaryKey);
         return [...new Set(aliases.filter(key => key && key !== primaryKey))];
     }
 
@@ -138,8 +361,13 @@ class TranslationCacheStore {
         return this.plugin.buildTranslationCacheKey(text, options, sourceTextHash, { ...cacheOptions, omitMessageIdentity: true });
     }
 
+    // cacheOptions.legacyModel: keep the configured model (the "local-model" placeholder) instead of the model
+    // the local server was detected to serve, as keys saved before the detection (or before 0.4.0) do.
     buildTranslationCacheKey(text, options = {}, sourceTextHash = this.plugin.getStrongTextFingerprint(text), cacheOptions = {}) {
-        const config = this.plugin.getCacheConfigSnapshot("translation", this.plugin.getEffectiveTaskConfig("translation", options.configOverrides));
+        const config = this.plugin.getCacheConfigSnapshot("translation", this.plugin.getEffectiveTaskConfig("translation", options.configOverrides), {
+            servedModel: true,
+            legacyModel: Boolean(cacheOptions.legacyModel)
+        });
         config.promptPolicyVersion = this.plugin.getPromptPolicyCacheVersion("translation", options, config);
         const messageIdentity = this.plugin.normalizeTranslationMessageIdentity(options.messageIdentity) || `text:${sourceTextHash}`;
         const configParts = cacheOptions.fullConfig
@@ -168,6 +396,23 @@ class TranslationCacheStore {
         ].join("\n---\n");
     }
 
+    // A queued item's key names the local model detected when it was queued, but the request
+    // re-detects the model first. Its result belongs under the model that answered, so the model
+    // part of the key is swapped for the currently served one; everything else stays.
+    getServedModelTranslationCacheKey(cacheKey, options = {}) {
+        const key = String(cacheKey || "");
+        const config = this.plugin.getEffectiveTaskConfig("translation", options.configOverrides);
+        if (!key || !this.plugin.shouldAutoDetectLocalProviderModel(config, DEFAULT_SETTINGS.translation || {})) return key;
+        const parts = key.split("\n---\n");
+        const index = parts.findIndex((part, position) => position > 0 && part.startsWith("model:") && parts[position - 1].startsWith("endpoint:"));
+        if (index < 0) return key;
+        const servedModel = this.plugin.getCacheConfigSnapshot("translation", config, { servedModel: true }).model;
+        const servedPart = `model:${this.plugin.getStrongTextFingerprint(servedModel)}`;
+        if (parts[index] === servedPart) return key;
+        parts[index] = servedPart;
+        return parts.join("\n---\n");
+    }
+
     getCompactTranslationCacheConfigParts(config) {
         return [
             `provider:${this.plugin.getStrongTextFingerprint(config.provider)}`,
@@ -186,7 +431,11 @@ class TranslationCacheStore {
         ];
     }
 
-    getCacheConfigSnapshot(kind, config) {
+    // options.servedModel: for cache keys, name the model the local server actually serves
+    // when the setting is the "local-model" placeholder, so swapping the loaded model stops
+    // matching the old model's translations. Provider keys leave it out on purpose: health
+    // and cooldowns belong to the server, not to the model it has loaded.
+    getCacheConfigSnapshot(kind, config, options = {}) {
         const defaults = DEFAULT_SETTINGS[kind] || {};
         const provider = String(config.provider || defaults.provider || "").trim();
         const snapshot = {
@@ -224,6 +473,16 @@ class TranslationCacheStore {
                 snapshot.endpoint = this.plugin.normalizeDeepLPlan(config.deeplPlan) === "pro"
                     ? PROVIDER_DEFAULTS.deepl.endpoint.replace("api-free.deepl.com", "api.deepl.com")
                     : PROVIDER_DEFAULTS.deepl.endpoint;
+            }
+        }
+        if (options.servedModel) {
+            if (provider === "deepl" && this.plugin.getDeepLLanguageCode(config.targetLanguageCode || config.targetLanguage) === "ZH-HANT") {
+                // DeepL used to receive "ZH" (Simplified) for Traditional Chinese; a distinct
+                // value retires the Simplified text cached as Traditional.
+                snapshot.model = "zh-hant";
+            }
+            else if (!options.legacyModel && this.plugin.shouldAutoDetectLocalProviderModel(config, defaults)) {
+                snapshot.model = this.plugin.getCachedLocalProviderDetectedModel(config, { defaultConfig: defaults }) || snapshot.model;
             }
         }
         return snapshot;
@@ -291,7 +550,7 @@ class TranslationCacheStore {
 
             const meta = this.plugin.translationCacheMeta.get(hitKey) || {};
             if (this.plugin.isTranslationCacheEntryExpired(meta)) {
-                this.plugin.translationCache.delete(hitKey);
+                this.deleteTranslationCacheEntry(hitKey);
                 this.plugin.translationCacheMeta.delete(hitKey);
                 this.plugin.scheduleTranslationCachePersist();
                 this.plugin.logDiagnostic("cache.lookup", "expired", {
@@ -329,8 +588,7 @@ class TranslationCacheStore {
         const now = Date.now();
         const sourceMeta = this.plugin.translationCacheMeta.get(sourceKey) || {};
         const value = this.plugin.translationCache.get(sourceKey);
-        if (this.plugin.translationCache.has(targetKey)) this.plugin.translationCache.delete(targetKey);
-        this.plugin.translationCache.set(targetKey, value);
+        this.setTranslationCacheEntry(targetKey, value);
         this.plugin.translationCacheMeta.set(targetKey, {
             createdAt: Number(sourceMeta.createdAt || now),
             touchedAt: now,
@@ -346,8 +604,7 @@ class TranslationCacheStore {
         if (!key) return;
         const now = Date.now();
         const previous = this.plugin.translationCacheMeta.get(key);
-        if (this.plugin.translationCache.has(key)) this.plugin.translationCache.delete(key);
-        this.plugin.translationCache.set(key, String(value || ""));
+        this.setTranslationCacheEntry(key, String(value || ""));
         this.plugin.translationCacheMeta.set(key, {
             createdAt: Number(previous?.createdAt || now),
             touchedAt: now,
@@ -370,7 +627,7 @@ class TranslationCacheStore {
         const uniqueKeys = [...new Set(keys.filter(Boolean))];
         let removed = 0;
         uniqueKeys.forEach(key => {
-            if (this.plugin.translationCache.delete(key)) removed++;
+            if (this.deleteTranslationCacheEntry(key)) removed++;
             if (this.plugin.translationCacheMeta.delete(key) && !this.plugin.translationCache.has(key)) removed++;
         });
         if (!removed) return false;
@@ -391,8 +648,9 @@ class TranslationCacheStore {
         const meta = this.plugin.translationCacheMeta.get(key) || {};
         const now = Date.now();
         const currentExpiresAt = this.plugin.getTranslationCacheEntryExpiresAt(meta, now);
+        // A hit never extends an entry past the lifetime the user picked (3 h stays 3 h).
         const nextExpiresAt = options.extendExpiry
-            ? Math.max(currentExpiresAt, now + TRANSLATION_CACHE_HIT_EXTEND_MS)
+            ? Math.max(currentExpiresAt, now + Math.min(TRANSLATION_CACHE_HIT_EXTEND_MS, this.plugin.getTranslationCacheTtlMs()))
             : currentExpiresAt;
         this.plugin.translationCacheMeta.set(key, {
             createdAt: Number(meta.createdAt || now),
@@ -413,8 +671,12 @@ class TranslationCacheStore {
     loadTranslationCache() {
         this.plugin.translationCache.clear();
         this.plugin.translationCacheMeta.clear();
+        this.invalidateTranslationCacheValueRefs();
         this.plugin.clearTranslationCacheNegativeLookups();
+        this.legacyKeys.clear();
+        this.preEmojiSourceTexts.clear();
         const payload = this.plugin.loadData(CACHE_DATA_KEY);
+        this.plugin.restoreLocalProviderDetectedModels(payload?.localModels);
         const entries = Array.isArray(payload) ? payload : payload?.entries;
         if (!Array.isArray(entries)) {
             this.plugin.persistentTranslationCacheCount = 0;
@@ -424,6 +686,7 @@ class TranslationCacheStore {
         const now = Date.now();
         const storedTtlMs = this.plugin.normalizeTranslationCacheTtlHours(payload?.ttlHours) * 60 * 60 * 1000;
         const persistedStrings = Array.isArray(payload?.strings) ? payload.strings.map(value => String(value || "")) : [];
+        const savedBeforeKeySchema = this.isPreKeySchemaTranslationCachePayload(payload);
         let restoredEntries = 0;
         for (const entry of entries) {
             const key = this.plugin.decodePersistedTranslationCacheKey(entry, persistedStrings);
@@ -439,11 +702,112 @@ class TranslationCacheStore {
             if (this.plugin.isTranslationCacheEntryExpired(meta, now)) continue;
             this.plugin.translationCache.set(key, value);
             this.plugin.translationCacheMeta.set(key, meta);
+            if (savedBeforeKeySchema || entry?.l) this.legacyKeys.add(key);
             restoredEntries++;
         }
+        // Stored expiry times may come from a longer lifetime (or an older, uncapped hit extension).
+        const clamped = this.plugin.clampTranslationCacheExpiryToCurrentTtl(now);
         this.plugin.pruneTranslationCache({ scanExpired: true });
-        this.plugin.persistentTranslationCacheCount = this.plugin.translationCache.size;
-        if (this.plugin.translationCache.size !== entries.length || restoredEntries !== entries.length || payload?.version !== 3) this.plugin.scheduleTranslationCachePersist();
+        this.plugin.persistentTranslationCacheCount = this.plugin.getTranslationCacheMessageCount();
+        if (clamped || this.plugin.translationCache.size !== entries.length || restoredEntries !== entries.length || payload?.version !== 3) this.plugin.scheduleTranslationCachePersist();
+    }
+
+    // Used once when the cache moves to its own data file (and after a downgrade left an old copy behind):
+    // keeps the keys of both payloads that are not older than the newer copy, the more recently used copy of a
+    // key wins, oldest first (LRU order).
+    mergePersistedTranslationCachePayloads(current, legacy) {
+        const now = Date.now();
+        const decode = payload => {
+            const entries = Array.isArray(payload) ? payload : payload?.entries;
+            if (!Array.isArray(entries)) return null;
+            const strings = Array.isArray(payload?.strings) ? payload.strings.map(value => String(value || "")) : [];
+            const ttlMs = this.plugin.normalizeTranslationCacheTtlHours(payload?.ttlHours) * 60 * 60 * 1000;
+            const savedBeforeKeySchema = this.isPreKeySchemaTranslationCachePayload(payload);
+            return entries.map(entry => {
+                const key = this.plugin.decodePersistedTranslationCacheKey(entry, strings);
+                const value = this.plugin.decodePersistedTranslationCacheValue(entry, strings);
+                if (!key || !value) return null;
+                const createdAt = Number(entry?.createdAt ?? entry?.c ?? now);
+                return {
+                    key,
+                    value,
+                    createdAt,
+                    touchedAt: Number(entry?.touchedAt ?? entry?.lastUsedAt ?? entry?.t ?? createdAt),
+                    expiresAt: Number(entry?.expiresAt ?? entry?.e ?? (createdAt + ttlMs)),
+                    legacy: savedBeforeKeySchema || Boolean(entry?.l)
+                };
+            }).filter(Boolean);
+        };
+        let currentEntries = decode(current);
+        let legacyEntries = decode(legacy);
+        if (!legacyEntries) return current;
+        if (!currentEntries) return legacy;
+        // A copy saved by a version that read the other copy is the whole cache as it was then: nothing older than
+        // its save time is taken from the other copy, which was cleared, evicted or expired there. That holds for
+        // this store's copy over an old settings-file copy it was merged from (its deletion failed), and for an
+        // empty copy 0.3.0 saves on "Clear translation cache" after a downgrade: a cleared cache must not come
+        // back. Anything else 0.3.0 saves after a downgrade is only what it cached then, since it cannot read
+        // this store: both copies are kept, and the lifetime and size limits prune them.
+        const currentSavedAt = Number(current?.savedAt) || 0;
+        const legacySavedAt = Number(legacy?.savedAt) || 0;
+        if (legacySavedAt > currentSavedAt) {
+            const legacySawCurrent = !this.isPreKeySchemaTranslationCachePayload(legacy);
+            if (!legacyEntries.length || legacySawCurrent) currentEntries = currentEntries.filter(item => item.touchedAt >= legacySavedAt);
+        }
+        else if (currentSavedAt > legacySavedAt) legacyEntries = legacyEntries.filter(item => item.touchedAt >= currentSavedAt);
+        const byKey = new Map();
+        [...legacyEntries, ...currentEntries].forEach(item => {
+            const existing = byKey.get(item.key);
+            if (!existing || item.touchedAt >= existing.touchedAt) byKey.set(item.key, item);
+        });
+        const strings = [];
+        const stringIndexes = new Map();
+        const encodeString = value => {
+            const text = String(value || "");
+            if (!stringIndexes.has(text)) {
+                stringIndexes.set(text, strings.length);
+                strings.push(text);
+            }
+            return stringIndexes.get(text);
+        };
+        const entries = [...byKey.values()]
+            .sort((left, right) => left.touchedAt - right.touchedAt)
+            .map(item => {
+                const entry = {
+                    k: item.key.split("\n---\n").map(encodeString),
+                    v: encodeString(item.value),
+                    c: item.createdAt,
+                    t: item.touchedAt,
+                    e: item.expiresAt
+                };
+                if (item.legacy) entry.l = 1;
+                return entry;
+            });
+        return {
+            version: 3,
+            keySchema: TRANSLATION_CACHE_KEY_SCHEMA,
+            savedAt: now,
+            ttlHours: this.plugin.normalizeTranslationCacheTtlHours(current?.ttlHours ?? legacy?.ttlHours),
+            maxEntries: Number(current?.maxEntries || legacy?.maxEntries || 0) || this.plugin.getTranslationCacheMaxEntries(),
+            // Local-model cache keys name the served model; without the list those lines stop matching.
+            localModels: this.mergePersistedLocalModels(current?.localModels, legacy?.localModels),
+            strings,
+            entries
+        };
+    }
+
+    // One entry per local server, the current copy's model first; restoreLocalProviderDetectedModels reads 8.
+    mergePersistedLocalModels(current, legacy) {
+        const seen = new Set();
+        return [...(Array.isArray(current) ? current : []), ...(Array.isArray(legacy) ? legacy : [])]
+            .filter(item => {
+                const key = String(item?.key || "");
+                if (!key || !String(item?.model || "").trim() || seen.has(key)) return false;
+                seen.add(key);
+                return true;
+            })
+            .slice(0, 8)
+            .map(item => ({ key: String(item.key), model: String(item.model).trim() }));
     }
 
     decodePersistedTranslationCacheKey(entry, strings = []) {
@@ -487,19 +851,25 @@ class TranslationCacheStore {
             return !meta.volatile && !this.plugin.isVolatileTranslationCacheKey(key);
         }).map(([key, value]) => {
             const meta = this.plugin.translationCacheMeta.get(key) || {};
-            return {
+            const entry = {
                 k: encodeKey(key),
                 v: encodeValue(value),
                 c: Number(meta.createdAt || Date.now()),
                 t: Number(meta.touchedAt || Date.now()),
                 e: this.plugin.getTranslationCacheEntryExpiresAt(meta)
             };
+            // Saved before 0.4.0 and not moved to its current key yet.
+            if (this.legacyKeys.has(key)) entry.l = 1;
+            return entry;
         });
         return {
             version: 3,
+            keySchema: TRANSLATION_CACHE_KEY_SCHEMA,
             savedAt: Date.now(),
             ttlHours: this.plugin.normalizeTranslationCacheTtlHours(this.plugin.settings.ui?.translationCacheTtlHours),
             maxEntries: this.plugin.getTranslationCacheMaxEntries(),
+            // Cache keys of local models name the served model; see getCacheConfigSnapshot.
+            localModels: this.plugin.getPersistableLocalProviderDetectedModels(),
             strings,
             entries
         };
@@ -536,7 +906,8 @@ class TranslationCacheStore {
         try {
             const payload = this.plugin.createPersistedTranslationCachePayload();
             if (this.plugin.saveData(CACHE_DATA_KEY, payload) !== true) throw new Error("DATA_SAVE_FAILED");
-            this.plugin.persistentTranslationCacheCount = payload.entries.length;
+            // Saved messages: entries of one message share its value index.
+            this.plugin.persistentTranslationCacheCount = new Set(payload.entries.map(entry => entry.v)).size;
             this.plugin.translationCacheDirty = false;
             this.plugin.translationCacheTouchDirtyCount = 0;
             this.plugin.translationCachePersistenceDeferredSince = 0;
@@ -567,6 +938,7 @@ class TranslationCacheStore {
         const previousPersistentCount = this.plugin.persistentTranslationCacheCount;
         const previousDirty = this.plugin.translationCacheDirty;
         const previousDirtyAt = this.plugin.translationCacheDirtyAt;
+        const previousLegacyKeys = this.legacyKeys;
         if (this.plugin.translationCacheDirtyTimer) {
             clearTimeout(this.plugin.translationCacheDirtyTimer);
             this.plugin.translationCacheDirtyTimer = null;
@@ -575,6 +947,9 @@ class TranslationCacheStore {
         this.plugin.translationCacheDirty = false;
         this.plugin.translationCache.clear();
         this.plugin.translationCacheMeta.clear();
+        this.legacyKeys = new Set();
+        this.preEmojiSourceTexts.clear();
+        this.invalidateTranslationCacheValueRefs();
         this.plugin.clearTranslationCacheNegativeLookups();
         this.plugin.translationCacheStats = { hits: 0, misses: 0 };
         this.plugin.persistentTranslationCacheCount = 0;
@@ -586,6 +961,7 @@ class TranslationCacheStore {
         catch (error) {
             this.plugin.translationCache = previousCache;
             this.plugin.translationCacheMeta = previousMeta;
+            this.legacyKeys = previousLegacyKeys;
             this.plugin.translationCacheStats = previousStats;
             this.plugin.persistentTranslationCacheCount = previousPersistentCount;
             this.plugin.translationCacheDirty = previousDirty;
@@ -627,6 +1003,8 @@ class TranslationCacheStore {
         const scanExpired = options.scanExpired !== false;
         let removed = false;
         if (scanExpired) {
+            // Full passes also recount values, so direct Map writes elsewhere cannot skew the count for long.
+            this.invalidateTranslationCacheValueRefs();
             for (const [key, meta] of this.plugin.translationCacheMeta) {
                 if (this.plugin.isTranslationCacheEntryExpired(meta, now)) {
                     this.plugin.translationCache.delete(key);
@@ -634,11 +1012,16 @@ class TranslationCacheStore {
                     removed = true;
                 }
             }
+            this.pruneLegacyTranslationCacheKeys();
         }
 
-        while (this.plugin.translationCache.size > this.plugin.getTranslationCacheMaxEntries()) {
-            const oldestKey = this.plugin.translationCache.keys().next().value;
-            this.plugin.translationCache.delete(oldestKey);
+        const cache = this.plugin.translationCache;
+        const maxMessages = this.plugin.getTranslationCacheMaxEntries();
+        const maxKeys = maxMessages * TRANSLATION_CACHE_MAX_KEYS_PER_MESSAGE;
+        // Oldest keys go first; a message leaves the count once its last key is gone.
+        while (cache.size > maxKeys || (cache.size > maxMessages && this.getTranslationCacheValueRefs().size > maxMessages)) {
+            const oldestKey = cache.keys().next().value;
+            this.deleteTranslationCacheEntry(oldestKey);
             this.plugin.translationCacheMeta.delete(oldestKey);
             removed = true;
         }
