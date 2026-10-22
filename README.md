@@ -2,7 +2,7 @@
 
 [中文](README.md) | [English](README.en.md)
 
-换机继续开发：[优化清单与接手说明](docs/optimization-handoff.md)（包含未完成项和真机验收步骤）。
+后续维护先读：[2026-10-22 维护交接](docs/maintenance-handoff-2026-10-22.md)（新维护分支、三项已确认待修问题、验证边界与接手步骤）。历史进度与完整验收清单见 [优化清单与接手说明](docs/optimization-handoff.md)。
 
 Discord AI Translator 是一个 BetterDiscord 桌面插件，用于输入润色、公开双语输入、手动消息翻译和频道自动翻译。
 

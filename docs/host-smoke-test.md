@@ -1,5 +1,11 @@
 # Windows Host Smoke Test
 
+## Maintenance checkpoint (2026-10-22)
+
+The current handoff branch is `codex/maintenance-v0.4.0-2026-10-22`, with runtime code and artifact unchanged from `2fe3f0c` (1,782,270 bytes; SHA256 `ed718cac37b2bc1bcf5032c46647b2ee60e65ccd20cf20b00c5ce7226abd4570`). That source commit passed Windows Node 22/24 CI on September 26. The nine v0.4.0 live-host acceptance rows below remain Pending; this checkpoint is not a host acceptance result.
+
+Read-only inspection found a different, older v0.4.0 installed artifact (1,765,243 bytes; SHA256 `256a3dcae5427020e5057800622cd655476a04c7c2c5b6b0b1cd15f9e1b481fd`) and no BetterDiscord hook in the current Discord Stable 1.0.9262 startup file. Source review and in-memory checks confirmed three open issues: generated mass mentions, cooldown records cleared on runtime cancellation, and automatic retries without a total attempt budget. See the [maintenance handoff](maintenance-handoff-2026-10-22.md) for evidence, reproduction, repair criteria and remaining review leads. No messages were sent and the host was not changed for this inspection.
+
 ## Current snapshot status (2026-09-26)
 
 v0.4.0 is a pre-release with **no live-host acceptance yet**. Its pending checklist is the [last section of this file](#v040-pending-acceptance-2026-09-26); nothing in it has a result. v0.3.0 was not accepted on a live host either. The September 8 records below cover a limited local-model smoke test of an older artifact, and the July record applies only to its explicitly identified v0.2.0 artifact. Local offline/installer tests are documented in [repository-intake-2026-09-08.md](repository-intake-2026-09-08.md) and, for v0.4.0, in the [optimization handoff](optimization-handoff.md).
@@ -91,7 +97,7 @@ Not covered:
 
 ## v0.4.0 pending acceptance (2026-09-26)
 
-Status: **pending; no results yet.** Nothing below has been run in live Discord. The v0.4.0 changes have passed only the local checks (source check, 364 module tests, artifact regressions, installer tests, artifact check at `b3fdd51`) and screenshots of browser test pages that imitate BetterDiscord. The same checklist, with background, is in the [optimization handoff](optimization-handoff.md).
+Status: **pending; no results yet.** Nothing below has been run in live Discord. At this table's September 26 baseline, checks covered source syntax, 364 module tests, artifact regressions, installer tests and artifact structure at `b3fdd51`, plus screenshots of browser pages that imitate BetterDiscord. Later source commit `2fe3f0c` also passed Windows Node 22/24 CI; see the October 22 checkpoint above. Those offline/CI results do not complete any live-host row. The same checklist, with background, is in the [optimization handoff](optimization-handoff.md).
 
 Before starting, record:
 

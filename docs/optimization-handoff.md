@@ -1,6 +1,6 @@
 # 优化清单与换机接手说明 / Optimization handoff
 
-更新日期：2026-09-26。本文是下一台电脑的接手入口，不代表清单里的功能已经实现。后续完成一项时，请更新状态、提交号和验证记录，不要只改勾选框。
+更新日期：2026-10-22。最新接手入口为 [2026-10-22 维护交接](maintenance-handoff-2026-10-22.md)：包含新维护分支、当前 GitHub 状态、三项确认待修问题、安装文件差异和后续顺序。本文保留早期功能历史及完整宿主清单，不代表清单里的功能已经验收。后续完成一项时，请更新状态、提交号和验证记录，不要只改勾选框。
 
 ### v0.4.0 预览版（2026-09-26）
 
@@ -72,20 +72,20 @@
 
 ## 1. 当前基线：先看这里
 
-- 私有仓库：https://github.com/MK6657/DiscordAITranslator
+- 仓库：https://github.com/MK6657/DiscordAITranslator（2026-10-22 GitHub 可见性为 Public；不提交个人配置、凭据或测试聊天数据）。
 - 已发布：main 上的 v0.3.0 预览版，合并提交 `964e51f`（PR #2），标签 `v0.3.0`。
-- 开发中：本地分支 `feat/v0.4.0`，版本 v0.4.0 预览版。代码集成到 `b3fdd51`（第 2 轮复查修复合并后重建产物），之后是本文所在的文档提交。本文编写时该分支还没有推送到远端，也没有 PR 或 GitHub CI 结果；接手时先用 `git log` 和 `git ls-remote` 确认实际状态。
+- 当前维护分支：`codex/maintenance-v0.4.0-2026-10-22`，从 main 创建并完整合并 `feat/v0.4.0` 的 `2fe3f0c`，随后追加交接资料；功能代码仍为 v0.4.0 预览版。原开发分支已推送，PR #3 已打开且无冲突。
 - 已完成：v0.4.0 的设置界面重做、频道规则白名单、服务商错误分类、队列重试、输入框写入、数据文件拆分和安装器拒绝重定向（见上方 v0.4.0 一节）；更早的取消/超时区分已在 v0.3.0 完成（见第 3 节）。
-- 已通过（本地，`b3fdd51`）：`npm run check`、364 项模块测试、产物回归、安装器测试和产物检查。v0.4.0 还没有 GitHub Windows Node 22/24 CI 结果。
-- **未完成：v0.4.0 的真实 Discord 验收（清单见上方 v0.4.0 一节和 [宿主记录](host-smoke-test.md)），以及推送、PR 和 CI。** 验收前不要把 v0.4.0 标为稳定版。
+- 历史验证：`b3fdd51` 的本地检查包含 364 项模块测试、产物回归、安装器和产物检查；后来的 `2fe3f0c` 已于 2026-09-26 通过 GitHub Windows Node 22/24 CI。此前“尚未推送、无 PR/CI”的描述已失效；最新维护分支验证及证据边界见新交接文档。
+- **未完成：三项确认待修问题（新增群体提及、取消清除失败冷却、持续自动重试）、其他审查线索的核实，以及 v0.4.0 的真实 Discord 验收。** 详细范围见 [新交接文档](maintenance-handoff-2026-10-22.md)，验收清单见上方和 [宿主记录](host-smoke-test.md)。
 - 真实宿主记录只覆盖 v0.2.0 的加载/设置/启停和 9 月 8 日的有限本地模型冒烟测试；v0.3.0 与 v0.4.0 都没有完整的真机验收。
 
-v0.4.0 代码基线产物指纹（`b3fdd51` 构建；之后修改代码并重建会变化，文档提交不影响）：
+v0.4.0 当前代码基线产物指纹（`2fe3f0c` 构建；本维护分支保留此产物，文档提交不影响指纹）：
 
 ```text
 DiscordAITranslator.plugin.js
-Bytes: 1737598
-SHA256: 1795230A2DBA143B8BCAA0AC0B78A3FECC3D0C35D08901F9A598E31C3C68396A
+Bytes: 1782270
+SHA256: ed718cac37b2bc1bcf5032c46647b2ee60e65ccd20cf20b00c5ce7226abd4570
 ```
 
 ## 2. 换机准备
@@ -106,7 +106,7 @@ npm run release:check
 
 `gh` 不是必需工具；也可在 Git 已正确认证后使用 `git clone https://github.com/MK6657/DiscordAITranslator.git`。如果认证失败，由用户在该机器完成登录，不要把 token 发进聊天或写进仓库。
 
-已有克隆时，先检查 `git status`，保护本机未提交内容，再执行 `git pull --ff-only`。不要使用强制重置或用旧压缩包覆盖最新仓库。检查通过后，从最新 main 创建自己的优化分支，先修小问题，再验收；最后通过 PR 合并。v0.4.0 合入 main 之前，它的验收和修复从 `feat/v0.4.0` 开始。
+已有克隆时，先检查 `git status`，保护本机未提交内容，再执行 `git pull --ff-only`。不要使用强制重置或用旧压缩包覆盖最新仓库。v0.4.0 合入 main 之前，它的后续维护以 `codex/maintenance-v0.4.0-2026-10-22` 为起点，先处理已知缺陷，再验收；最后通过 PR 合并。具体命令见新交接文档。
 
 优先阅读：
 
@@ -189,14 +189,14 @@ npm run release:check
 
 ## 7. 可直接交给下一台电脑助手的任务
 
-> 请先阅读仓库的 docs/optimization-handoff.md、README.md 和 docs/critical-chain-contracts.md，确认 main、`feat/v0.4.0` 与工作区状态。取消/超时的错误分类已在 v0.3.0 完成，不要重做。优先在本机具备用户允许的 Discord/BetterDiscord 测试条件时，按本文“v0.4.0 预览版”一节的验收清单做真机验收，并把结果写进 docs/host-smoke-test.md 的 v0.4.0 表格。不要重做已合并的安装器与重定向修复，不要使用旧快照覆盖仓库。涉及账号、真实请求、费用、发送消息、安装或删除数据时按本环境规则确认；遇到缺少测试条件时报告具体缺口。发现问题先补失败测试再修复，改动提交到分支，CI 通过后按用户要求合入 main，并更新通过与未覆盖记录。
+> 请先阅读 docs/maintenance-handoff-2026-10-22.md、README.md 和 docs/critical-chain-contracts.md，确认 main、本维护分支与工作区状态。取消/超时分类已在 v0.3.0 完成，不要重做。优先处理维护交接中的 M-01/M-02/M-03 和高影响审查线索，先补失败回归再修复；具备测试条件后，按 v0.4.0 清单做真实 Discord 验收，把实际结果写入 docs/host-smoke-test.md。不要用旧快照覆盖仓库，不要把 CI 通过解释成缺陷已修复；遇到缺少测试条件时记录具体缺口。修复提交到维护分支，依据用户要求决定后续 PR、主分支合并与发布。
 
 ## English summary
 
-Start from this private repository, not the old ZIP snapshots. v0.3.0 is the latest release on main (`964e51f`, PR #2, tag `v0.3.0`). v0.4.0 is a pre-release on the local branch `feat/v0.4.0`: code integrated at `b3fdd51`, followed by this documentation commit; when this was written the branch had not been pushed and had no PR or GitHub CI run. At `b3fdd51` the source check, 364 module tests, the artifact regressions, the installer tests and the artifact check pass locally. Artifact: 1,737,598 bytes, SHA256 `1795230A2DBA143B8BCAA0AC0B78A3FECC3D0C35D08901F9A598E31C3C68396A`.
+Start with the [October 22 maintenance handoff](maintenance-handoff-2026-10-22.md), not old ZIP snapshots. The repository is public as of this checkpoint. v0.3.0 remains on main (`964e51f`, PR #2, tag `v0.3.0`). The maintenance branch merges v0.4.0 at `2fe3f0c` and preserves the runtime artifact (1,782,270 bytes, SHA256 `ed718cac37b2bc1bcf5032c46647b2ee60e65ccd20cf20b00c5ce7226abd4570`). Original PR #3 is open and its Windows Node 22/24 CI passed on September 26; the earlier statements that there was no push, PR or CI are obsolete.
 
 v0.4.0 rebuilds the settings window (six tabs, search, setup checklist, model detection, "Try a sentence"), adds a quick panel and a status badge on the AI button, turns the "Always translate" channel rule into an allow-list, reworks translation and error lines, tightens provider error handling and retries, fixes composer writes ("Ask before sending" now sends with Enter), splits the cache and diagnostics into their own data files, keeps keys on reset by default, and makes the installer refuse redirected AppData windows. It was built in three waves of parallel branches with two rounds of independent read-only review and repair branches. Cancellation-versus-timeout handling was already completed in v0.3.0 and is not pending work.
 
-Next: live acceptance of the exact v0.4.0 artifact on the actual Discord/BetterDiscord machine, using the checklist in the v0.4.0 section above (quick panel and badge, tabs and search, reset dialog, ask-before-send via Enter, hotkey recorder, Google/Baidu/DeepL messages, local model detection, "Try a sentence", keeping v0.3.0 cached translations and channel rules after the update). Use a user-approved, isolated account/channel/provider. Protect existing data and credentials; obtain any required confirmation before real requests, costs, messages, installation, or deletion. Record actual environment, commit/hash, passes, failures, and uncovered scenarios in the host smoke record, which has an empty v0.4.0 table for this.
+Next: address the three confirmed open issues (generated mass mentions, cancellation clearing cooldown records, and retries without a total attempt budget), revalidate other review leads, then complete live acceptance of the exact artifact using the nine scenarios above. The installed artifact is older and the current Discord startup lacks the BetterDiscord hook. Record the actual environment, commit/hash, passes, failures and uncovered scenarios in the host smoke record. Keep credentials and personal data outside the repository.
 
 Optional later work includes memory-only caching, explicit data-cleanup controls, request/character accounting, focused module tests, and gradual state-machine/Discord-adapter extraction after host acceptance. These are candidates, not blanket authorization to implement everything. Submit scoped changes through a branch/PR, check CI before and after merging, and keep the release marked as a preview until host acceptance is complete.
