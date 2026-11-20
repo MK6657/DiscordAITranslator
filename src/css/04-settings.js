@@ -1,8 +1,11 @@
 "use strict";
 
-// The full settings window (UI-SPEC "Visual system"): header, a 184 px tab rail with search, and a content pane that
-// scrolls on its own. Rows are a 2-column grid whose right-hand controls share one width (--dait-control-w), so
-// their edges line up down the page. Below 640 px of panel width the rail becomes a row and rows stack.
+const { createPixelSvgDataUri } = require("../ui/pixel-icons");
+const PIXEL_CHECK_ICON = createPixelSvgDataUri("check", "#000000");
+
+// The full settings window (Warm Oriental Pixel / Voxel Courtyard theme): header with glazed-tile
+// trim, a 184 px tab rail with search, and a content pane that scrolls on its own. Rows keep clean
+// readable sans-serif typography and 2-column alignment while controls carry crisp pixel edges.
 module.exports = `.dait-settings {
     --dait-rail-w: 184px;
     --dait-content-max: 680px;
@@ -17,11 +20,23 @@ module.exports = `.dait-settings {
     line-height: var(--dait-line);
     margin-left: auto;
     margin-right: auto;
-    /* At least 360 px, but never more than the host leaves: a taller panel would make the host scroll too. */
+    max-width: min(100%, var(--dait-dynamic-max-w, 100%));
+    /* At least 360 px, but never more than the host leaves: a taller panel would clip or double-scroll under zoom. */
     min-height: min(360px, calc(min(100vh - 64px, var(--dait-host-max, 100vh)) - var(--dait-host-chrome, 140px)));
     min-width: 0;
     overflow: hidden;
     text-align: left;
+    width: 100%;
+}
+
+/* BetterDiscord 1.14+ renders plugin settings inline inside the Settings column: fill the column width and
+   cap height & width to the remaining visible viewport so scaling/zoom never clips the right edge or bottom. */
+.dait-settings[data-dait-settings-inline="true"] {
+    border: 2px solid var(--dait-input-border);
+    box-shadow: var(--dait-pixel-shadow-sm);
+    height: min(760px, var(--dait-host-max, calc(100vh - 160px)));
+    max-width: min(100%, var(--dait-dynamic-max-w, 100%));
+    min-height: min(300px, var(--dait-host-max, calc(100vh - 160px)));
     width: 100%;
 }
 
@@ -43,10 +58,12 @@ module.exports = `.dait-settings {
     letter-spacing: 0;
 }
 
-/* Header: logo, title, version, translation status, close. */
+/* Header: pixel glazed-tile top trim, square voxel logo, title, version, translation status, close. */
 .dait-settings-header {
     align-items: center;
-    border-bottom: 1px solid var(--dait-divider);
+    background: var(--dait-surface);
+    border-bottom: 2px solid var(--dait-divider);
+    box-shadow: inset 0 3px 0 var(--dait-accent-gold);
     display: flex;
     flex: 0 0 auto;
     gap: var(--dait-space-3);
@@ -58,7 +75,9 @@ module.exports = `.dait-settings {
 .dait-settings-logo {
     align-items: center;
     background: var(--dait-brand);
+    border: 2px solid var(--dait-accent-gold);
     border-radius: var(--dait-radius-card);
+    box-shadow: var(--dait-pixel-shadow-sm);
     color: var(--dait-on-fill);
     display: flex;
     flex: 0 0 auto;
@@ -203,6 +222,7 @@ module.exports = `.dait-settings {
 
 .dait-settings-rail {
     background: var(--dait-rail);
+    border-right: 2px solid var(--dait-divider);
     display: flex;
     flex-direction: column;
     gap: var(--dait-space-3);
@@ -272,6 +292,7 @@ module.exports = `.dait-settings {
 
 .dait-settings-tab[aria-selected="true"] {
     background: var(--dait-brand);
+    box-shadow: inset 3px 0 0 var(--dait-accent-gold), var(--dait-pixel-shadow-sm);
     color: var(--dait-on-fill);
 }
 
@@ -501,36 +522,38 @@ module.exports = `.dait-settings {
     opacity: 0.55;
 }
 
-/* Switch: a native checkbox with role="switch", 40 x 24. */
+/* Switch: crisp rectangular voxel track with a square sliding pixel knob. */
 .dait-settings input.dait-switch {
     appearance: none;
     background: var(--dait-switch-off);
-    border: 0;
+    border: 1px solid var(--dait-input-border);
     border-radius: var(--dait-radius-pill);
+    box-shadow: inset 0 1px 0 var(--dait-pixel-shade);
     cursor: pointer;
     flex: 0 0 auto;
     height: 24px;
     margin: 0;
     position: relative;
-    transition: background-color 140ms ease;
+    transition: background-color 120ms steps(3);
     width: 40px;
 }
 
 .dait-settings input.dait-switch::after {
     background: #ffffff;
-    border-radius: var(--dait-radius-pill);
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.24);
+    border-radius: 1px;
+    box-shadow: 1px 1px 0 rgba(0, 0, 0, 0.32);
     content: "";
-    height: 18px;
+    height: 16px;
     left: 3px;
     position: absolute;
     top: 3px;
-    transition: transform 140ms ease;
-    width: 18px;
+    transition: transform 110ms steps(3);
+    width: 16px;
 }
 
 .dait-settings input.dait-switch:checked {
     background: var(--dait-brand);
+    border-color: var(--dait-brand);
 }
 
 .dait-settings input.dait-switch:checked::after {
@@ -589,13 +612,13 @@ module.exports = `.dait-settings {
     opacity: 0.55;
 }
 
-/* Buttons: 36 px high, body size at 500. Default is the grey secondary button, the one style for every button that
-   is neither primary nor dangerous (buttons created as "outline" look the same). */
+/* Buttons: 36 px high, body size at 500, crisp pixel edge + voxel offset shadow + press feedback. */
 .dait-small-button {
     align-items: center;
     background: var(--dait-raised);
     border: 1px solid var(--dait-input-border);
     border-radius: var(--dait-radius-control);
+    box-shadow: var(--dait-pixel-bevel), var(--dait-pixel-shadow-sm);
     color: var(--dait-text);
     cursor: pointer;
     display: inline-flex;
@@ -607,11 +630,17 @@ module.exports = `.dait-settings {
     justify-content: center;
     line-height: var(--dait-line);
     padding: 0 14px;
+    transition: transform 80ms steps(2), background-color 100ms ease, box-shadow 80ms steps(2);
     white-space: nowrap;
 }
 
 .dait-small-button:hover:not(:disabled) {
     background: var(--dait-raised-hover);
+}
+
+.dait-small-button:active:not(:disabled) {
+    box-shadow: var(--dait-pixel-bevel), 1px 1px 0 var(--dait-pixel-shadow);
+    transform: translate(1px, 1px);
 }
 
 .dait-small-button:disabled {
@@ -914,7 +943,9 @@ module.exports = `.dait-settings {
 /* Overview: setup checklist (hidden once complete), then the two service status cards. */
 .dait-setup-card {
     background: var(--dait-surface);
+    border: 1px solid var(--dait-divider);
     border-radius: var(--dait-radius-card);
+    box-shadow: inset 0 2px 0 var(--dait-accent-gold), var(--dait-pixel-shadow-sm);
     display: grid;
     gap: var(--dait-space-2);
     margin-bottom: var(--dait-space-6);
@@ -977,8 +1008,8 @@ module.exports = `.dait-settings {
 .dait-setup-item-done .dait-setup-icon {
     background: var(--dait-success-fill);
     border-radius: 0;
-    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6L9 17l-5-5'/%3E%3C/svg%3E") center / contain no-repeat;
-    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6L9 17l-5-5'/%3E%3C/svg%3E") center / contain no-repeat;
+    -webkit-mask: ${PIXEL_CHECK_ICON} center / contain no-repeat;
+    mask: ${PIXEL_CHECK_ICON} center / contain no-repeat;
 }
 
 .dait-setup-item-todo .dait-setup-icon,
@@ -1058,7 +1089,9 @@ module.exports = `.dait-settings {
 .dait-service-card {
     align-items: center;
     background: var(--dait-surface);
+    border: 1px solid var(--dait-divider);
     border-radius: var(--dait-radius-card);
+    box-shadow: var(--dait-pixel-bevel), var(--dait-pixel-shadow-sm);
     display: flex;
     gap: var(--dait-space-3);
     min-width: 0;
@@ -1169,6 +1202,20 @@ module.exports = `.dait-settings {
     display: grid;
     gap: 6px;
     min-width: 0;
+}
+
+.dait-service-config-bar {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--dait-space-2);
+    min-width: 0;
+}
+
+.dait-settings .dait-service-config-select {
+    flex: 1 1 220px;
+    min-width: 0;
+    width: auto;
 }
 
 .dait-model-field-line,
@@ -1386,11 +1433,179 @@ module.exports = `.dait-settings {
     width: 16px;
 }
 
-/* Narrower panel (BetterDiscord's own plugin-settings modal, small windows): the tab rail becomes a scrolling row
-   under the search box, so the rows keep room for their text. */
+/* Discord Host Health Check card (Data & Diagnostics tab). */
+.dait-host-health-card {
+    background: var(--dait-surface);
+    border: 1px solid var(--dait-divider);
+    border-radius: var(--dait-radius-card);
+    box-shadow: inset 0 2px 0 var(--dait-brand), var(--dait-pixel-shadow-sm);
+    display: grid;
+    gap: var(--dait-space-3);
+    margin: var(--dait-space-3) 0 var(--dait-space-4);
+    padding: var(--dait-space-4);
+}
+
+.dait-host-health-head {
+    align-items: flex-start;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--dait-space-2) var(--dait-space-3);
+    justify-content: space-between;
+}
+
+.dait-host-health-title-wrap {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+}
+
+.dait-host-health-title {
+    color: var(--dait-heading);
+    font-size: var(--dait-font-group);
+    font-weight: 600;
+    line-height: 1.35;
+}
+
+.dait-host-health-desc {
+    color: var(--dait-text);
+    font-size: var(--dait-font-body);
+    font-weight: 400;
+    line-height: var(--dait-line);
+}
+
+.dait-host-health-summary {
+    background: var(--dait-raised);
+    border: 1px solid var(--dait-divider);
+    border-radius: var(--dait-radius-pill);
+    color: var(--dait-text);
+    flex: 0 0 auto;
+    font-size: var(--dait-font-body);
+    font-weight: 500;
+    line-height: var(--dait-line);
+    padding: 2px 10px;
+}
+
+.dait-host-health-summary-ok {
+    border-color: var(--dait-success-fill);
+    color: var(--dait-success);
+}
+
+.dait-host-health-summary-warn {
+    border-color: var(--dait-warning-fill);
+    color: var(--dait-warning);
+}
+
+.dait-host-health-summary-error {
+    border-color: var(--dait-danger-fill);
+    color: var(--dait-danger);
+}
+
+.dait-host-health-list {
+    display: grid;
+    gap: 0;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.dait-host-health-item {
+    align-items: center;
+    column-gap: var(--dait-space-2);
+    display: grid;
+    grid-template-columns: 10px minmax(140px, 210px) auto minmax(0, 1fr);
+    min-height: 36px;
+    padding: 6px 0;
+    row-gap: 2px;
+}
+
+.dait-host-health-item + .dait-host-health-item {
+    border-top: 1px solid var(--dait-divider);
+}
+
+.dait-host-health-dot {
+    background: var(--dait-placeholder);
+    border-radius: 1px;
+    height: 10px;
+    width: 10px;
+}
+
+.dait-host-health-item-ok .dait-host-health-dot {
+    background: var(--dait-success-fill);
+    box-shadow: 1px 1px 0 var(--dait-pixel-shadow);
+}
+
+.dait-host-health-item-warn .dait-host-health-dot {
+    background: var(--dait-warning-fill);
+    box-shadow: 1px 1px 0 var(--dait-pixel-shadow);
+}
+
+.dait-host-health-item-error .dait-host-health-dot {
+    background: var(--dait-danger-fill);
+    box-shadow: 1px 1px 0 var(--dait-pixel-shadow);
+}
+
+.dait-host-health-label {
+    color: var(--dait-text);
+    font-size: var(--dait-font-body);
+    font-weight: 600;
+    line-height: var(--dait-line);
+    min-width: 0;
+}
+
+.dait-host-health-state {
+    color: var(--dait-text);
+    font-size: var(--dait-font-body);
+    font-weight: 500;
+    line-height: var(--dait-line);
+    white-space: nowrap;
+}
+
+.dait-host-health-item-ok .dait-host-health-state {
+    color: var(--dait-success);
+}
+
+.dait-host-health-item-warn .dait-host-health-state {
+    color: var(--dait-warning);
+}
+
+.dait-host-health-item-error .dait-host-health-state {
+    color: var(--dait-danger);
+}
+
+.dait-host-health-detail {
+    color: var(--dait-text);
+    font-size: var(--dait-font-body);
+    font-weight: 400;
+    line-height: var(--dait-line);
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.dait-host-health-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--dait-space-2);
+    justify-content: flex-end;
+}
+
+/* Slightly scaled laptop / 125% DPI tier: tighten rail and padding so 2-column rows stay airy without clipping. */
+@container dait-settings (max-width: 860px) {
+    .dait-settings-body {
+        --dait-rail-w: 156px;
+        --dait-control-w: 210px;
+    }
+
+    .dait-settings-content {
+        padding: 18px 18px 24px;
+    }
+}
+
+/* Medium / scaled panel: move the tab rail above the content so every row keeps comfortable reading width. */
 @container dait-settings (max-width: 760px) {
     .dait-settings-header {
-        padding-left: 16px;
+        gap: var(--dait-space-2);
+        min-height: 52px;
+        padding: 10px 10px 10px 14px;
     }
 
     .dait-settings-logo {
@@ -1404,9 +1619,10 @@ module.exports = `.dait-settings {
 
     .dait-settings-rail {
         border-bottom: 1px solid var(--dait-divider);
+        border-right: 0;
         gap: var(--dait-space-2);
         overflow: visible;
-        padding: 12px 16px 8px;
+        padding: 10px 14px 8px;
     }
 
     .dait-settings-tabs {
@@ -1424,14 +1640,38 @@ module.exports = `.dait-settings {
     }
 
     .dait-settings-content {
-        padding: 16px 16px 24px;
+        padding: 16px 14px 24px;
     }
 }
 
-/* Narrow panel: rows put their control under the text (switches stay on the right). */
+/* Narrow / high-zoom panel: rows put their control under the text (switches stay on the right) and buttons wrap cleanly. */
 @container dait-settings (max-width: 600px) {
-    .dait-settings-header-provider {
+    .dait-settings-header-provider,
+    .dait-settings-version {
         display: none;
+    }
+
+    .dait-provider-settings-header {
+        grid-template-areas:
+            "title test"
+            "status status"
+            "detail detail";
+        grid-template-columns: minmax(0, 1fr) auto;
+        row-gap: 4px;
+    }
+
+    .dait-provider-connection > .dait-api-status {
+        justify-self: start;
+    }
+
+    .dait-model-field-line,
+    .dait-try-line {
+        flex-wrap: wrap;
+    }
+
+    .dait-settings .dait-model-field-line > input,
+    .dait-settings .dait-try-line > input {
+        flex: 1 1 160px;
     }
 
     .dait-settings-row:not(.dait-settings-row-switch) {
@@ -1441,6 +1681,8 @@ module.exports = `.dait-settings {
 
     .dait-settings-row:not(.dait-settings-row-switch) > .dait-row-control {
         justify-content: flex-start;
+        max-width: 100%;
+        min-width: 0;
     }
 
     .dait-row-control > select,
@@ -1448,6 +1690,7 @@ module.exports = `.dait-settings {
     .dait-row-control > .dait-segmented,
     .dait-row-control > .dait-language-controls {
         max-width: 100%;
+        width: 100%;
     }
 
     .dait-prompt-tools {
@@ -1468,6 +1711,14 @@ module.exports = `.dait-settings {
 
     .dait-service-cards {
         grid-template-columns: minmax(0, 1fr);
+    }
+
+    .dait-host-health-item {
+        grid-template-columns: 10px minmax(0, 1fr) auto;
+    }
+
+    .dait-host-health-detail {
+        grid-column: 2 / -1;
     }
 }
 `;

@@ -9,13 +9,22 @@ from inside such an app loads that copy instead), checks whether this window's A
 writes are redirected the same way, and whether Discord's startup file loads BetterDiscord.
 Exits with 1 when the installed plugin is missing or differs from the repository build.
 
+.PARAMETER ProfileDir
+Directory containing the selected BetterDiscord profile's plugins.json. Defaults to data\stable
+beside PluginsDir. A stable, ptb, or canary profile selects the corresponding Discord channel.
+
+.PARAMETER Strict
+Also exits with 1 when the selected Discord installation cannot be confirmed to load the plugin.
+
 .EXAMPLE
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\check-installed-plugin.ps1
 #>
 [CmdletBinding()]
 param(
     [string]$PluginPath = "",
-    [string]$PluginsDir = ""
+    [string]$PluginsDir = "",
+    [string]$ProfileDir = "",
+    [switch]$Strict
 )
 
 Set-StrictMode -Version Latest
@@ -43,6 +52,56 @@ function Get-PluginVersion {
     return "unknown"
 }
 
+function Get-PluginName {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $source = [string](Get-Content -LiteralPath $Path -Raw -Encoding UTF8)
+    $metadata = [regex]::Match($source, '(?s)\A[ \t]*/\*\*(.*?)\*/')
+    $name = [regex]::Match($metadata.Groups[1].Value, '(?m)^[ \t]*\*?[ \t]*@name[ \t]+([^\r\n]+)')
+    return $name.Groups[1].Value.Trim()
+}
+
+function Get-PluginEnableState {
+    param([string]$Path, [string]$PluginId)
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return "profile missing" }
+    try {
+        $raw = [string](Get-Content -LiteralPath $Path -Raw -Encoding UTF8)
+        if (-not $raw.TrimStart().StartsWith("{")) { return "profile invalid" }
+        $state = ConvertFrom-Json -InputObject $raw
+    }
+    catch {
+        return "profile unreadable or invalid"
+    }
+    $entry = $state.PSObject.Properties | Where-Object { $_.Name -ceq $PluginId } | Select-Object -First 1
+    if (-not $entry) { return "missing enable key" }
+    if ($entry.Value -isnot [bool]) { return "invalid enable value" }
+    if ($entry.Value) { return "enabled" }
+    return "disabled"
+}
+
+function Get-StartupRequireTargets {
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return }
+    $source = [string](Get-Content -LiteralPath $Path -Raw -Encoding UTF8 -ErrorAction SilentlyContinue)
+    $tokenPattern = @'
+(?x)
+    //[^\r\n]*
+  | /\*[\s\S]*?(?:\*/|\z)
+  | "(?:\\[\s\S]|[^"\\])*"
+  | '(?:\\[\s\S]|[^'\\])*'
+  | `(?:\\[\s\S]|[^`\\])*`
+  | (?<![\w$.]) require \s* \(\s*
+        (?:
+            (?<quote>['"]) (?<target>(?:\\[^\r\n]|(?!\k<quote>)[^\\\r\n])*) \k<quote>
+          | path\.(?:join|resolve) \s*\(
+                (?:\s*(?:[\w$.]+|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')\s*,)+
+                \s* (?<fileQuote>['"]) (?<target>(?:\\[^\r\n]|(?!\k<fileQuote>)[^\\\r\n])*) \k<fileQuote> \s*\)
+        ) \s*\)
+'@
+    foreach ($token in [regex]::Matches($source, $tokenPattern)) {
+        if ($token.Groups["target"].Success) { $token.Groups["target"].Value }
+    }
+}
+
 function Get-PluginInfo {
     param([Parameter(Mandatory = $true)][string]$Path)
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $null }
@@ -68,6 +127,16 @@ if (-not $PluginPath) {
 if (-not $PluginsDir) {
     $PluginsDir = Join-Path $env:APPDATA "BetterDiscord\plugins"
 }
+$pluginsFolder = [System.IO.DirectoryInfo]($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($PluginsDir))
+$PluginsDir = $pluginsFolder.FullName
+$betterDiscordRoot = if ($pluginsFolder.Parent) { $pluginsFolder.Parent.FullName } else { $PluginsDir }
+$dataDir = Join-Path $betterDiscordRoot "data"
+if (-not $ProfileDir) {
+    $ProfileDir = Join-Path $dataDir "stable"
+}
+$profileFolder = [System.IO.DirectoryInfo]($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($ProfileDir))
+$flavor = $profileFolder.Name.ToLowerInvariant()
+$profilePath = Join-Path $profileFolder.FullName "plugins.json"
 $pluginName = "DiscordAITranslator.plugin.js"
 $problems = New-Object System.Collections.Generic.List[string]
 
@@ -85,6 +154,17 @@ else {
     Write-Host "Installed plugin:  v$($installed.Version)  $(Format-Short $installed.Sha256)  ($state)"
     if ($installed.Sha256 -ne $repo.Sha256) {
         $problems.Add("The installed plugin is not the repository build. Run 'npm run plugin:install' from a normal PowerShell window.")
+    }
+    $pluginId = Get-PluginName -Path $installed.Path
+    if ($pluginId) {
+        $enableState = Get-PluginEnableState -Path $profilePath -PluginId $pluginId
+        Write-Host "Profile ($flavor): $pluginId - $enableState ($profilePath)"
+        if ($enableState -ne "enabled") {
+            $problems.Add("The BetterDiscord profile does not enable '$pluginId': $enableState ($profilePath).")
+        }
+    }
+    else {
+        $problems.Add("The installed plugin has no @name in its metadata header.")
     }
 }
 
@@ -124,25 +204,64 @@ finally {
     Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
 }
 
-# A normally started Discord loads BetterDiscord only if its startup file has the hook.
-$discordRoot = Join-Path $env:LOCALAPPDATA "Discord"
-$startupFiles = @()
-if (Test-Path -LiteralPath $discordRoot) {
-    $startupFiles = @(Get-ChildItem -Path (Join-Path $discordRoot "app-*\modules\discord_desktop_core-*\discord_desktop_core\index.js") -ErrorAction SilentlyContinue |
-        Sort-Object FullName -Descending | Select-Object -First 1)
-}
-$asar = Test-Path -LiteralPath (Join-Path $env:APPDATA "BetterDiscord\data\betterdiscord.asar")
-$coreState = if ($asar) { "present" } else { "MISSING" }
-if ($startupFiles.Count) {
-    $hooked = (Get-Content -LiteralPath $startupFiles[0].FullName -Raw) -match "betterdiscord"
-    Write-Host "Discord startup:   $(if ($hooked) { 'loads BetterDiscord' } else { 'does NOT load BetterDiscord' }); BetterDiscord core $coreState"
-    if (-not $hooked -or -not $asar) {
-        $problems.Add("A normally started Discord will not load BetterDiscord. Run the BetterDiscord installer yourself and choose Install or Repair for Discord Stable.")
+$discordFolders = @{ stable = "Discord"; ptb = "DiscordPTB"; canary = "DiscordCanary" }
+$discordLabels = @{ stable = "Discord Stable"; ptb = "Discord PTB"; canary = "Discord Canary" }
+$discordLabel = $discordLabels[$flavor]
+$latestApp = $null
+if ($discordLabel) {
+    $discordRoot = Join-Path $env:LOCALAPPDATA $discordFolders[$flavor]
+    if (Test-Path -LiteralPath $discordRoot -PathType Container) {
+        $latestApp = Get-ChildItem -LiteralPath $discordRoot -Directory -Filter "app-*" -ErrorAction SilentlyContinue |
+            ForEach-Object {
+                $appVersion = $null
+                if ([version]::TryParse($_.Name.Substring(4), [ref]$appVersion)) {
+                    [pscustomobject]@{ Directory = $_; Version = $appVersion }
+                }
+            } | Sort-Object Version -Descending | Select-Object -First 1
     }
 }
+$asar = Test-Path -LiteralPath (Join-Path $dataDir "betterdiscord.asar") -PathType Leaf
+$coreState = if ($asar) { "present" } else { "MISSING" }
+if ($latestApp) {
+    Write-Host "Discord app:       $($latestApp.Directory.Name) ($discordLabel)"
+    $appPath = $latestApp.Directory.FullName
+    $resources = Join-Path $appPath "resources"
+    $appEntry = Join-Path $resources "app\index.js"
+    $legacyEntries = @(Get-ChildItem -Path (Join-Path $appPath "modules\discord_desktop_core-*\discord_desktop_core\index.js") -ErrorAction SilentlyContinue |
+        Sort-Object FullName -Descending | Select-Object -First 1)
+    $usesAppEntry = (Test-Path -LiteralPath $appEntry -PathType Leaf) -and
+        -not (Test-Path -LiteralPath (Join-Path $resources "app.asar") -PathType Leaf)
+    $coreModulePattern = '(?:^|[\\/])betterdiscord\.asar$'
+    $resourcesLoadCore = $false
+    $resourcesLoadDiscord = $false
+    if ($usesAppEntry) {
+        $appTargets = @(Get-StartupRequireTargets -Path $appEntry)
+        $resourcesLoadCore = $appTargets -match $coreModulePattern
+        $resourcesLoadDiscord = ($appTargets -match '^\.\.[\\/]+betterdiscord\.app\.asar$') -and
+            (Test-Path -LiteralPath (Join-Path $resources "betterdiscord.app.asar") -PathType Leaf)
+    }
+    $hookedApp = $resourcesLoadCore -and $resourcesLoadDiscord
+    $hookedLegacy = (-not $usesAppEntry -or $resourcesLoadDiscord) -and ($legacyEntries.Count -gt 0) -and
+        (@(Get-StartupRequireTargets -Path $legacyEntries[0].FullName) -match $coreModulePattern)
+    $hooked = $hookedApp -or $hookedLegacy
+    $hookKind = if ($hookedApp) { "resources/app hook (BD 1.14+)" }
+        elseif ($hookedLegacy) { "desktop_core hook" }
+        elseif ($resourcesLoadCore) { "incomplete resources/app hook" }
+        else { "no hook" }
+    if ($hooked -and $asar) {
+        Write-Host "Discord startup:   loads BetterDiscord; BetterDiscord core $coreState ($hookKind)"
+    }
+    else {
+        Write-Host "Discord startup:   does NOT load BetterDiscord; BetterDiscord core $coreState ($hookKind)"
+        $problems.Add("A normally started $discordLabel will not load BetterDiscord. Run the BetterDiscord installer yourself and choose Install or Repair for $discordLabel.")
+    }
+}
+elseif ($discordLabel) {
+    Write-Host "Discord startup:   $discordLabel not found; BetterDiscord core $coreState"
+    $problems.Add("$discordLabel was not found, so this check cannot confirm that Discord loads BetterDiscord.")
+}
 else {
-    Write-Host "Discord startup:   Discord Stable not found; BetterDiscord core $coreState"
-    $problems.Add("Discord Stable was not found, so this check cannot confirm that Discord loads BetterDiscord.")
+    $problems.Add("This check cannot confirm a Discord channel for profile '$($profileFolder.FullName)'.")
 }
 
 Write-Host ""
@@ -153,5 +272,5 @@ if ($problems.Count) {
 else {
     Write-Host "OK: BetterDiscord will load v$($repo.Version) ($(Format-Short $repo.Sha256))."
 }
-if (-not $installed -or $installed.Sha256 -ne $repo.Sha256) { exit 1 }
+if (-not $installed -or $installed.Sha256 -ne $repo.Sha256 -or ($Strict -and $problems.Count)) { exit 1 }
 exit 0

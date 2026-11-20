@@ -37,11 +37,45 @@ const WATCHED_ATTRIBUTES = ["class", "data-theme", "theme"];
 const DIALOG_CLASS = "dait-dialog";
 const DIALOG_SURFACE_ATTRIBUTE = "data-dait-dialog-surface";
 // Body text of each palette (css/01-theme-tokens): the one that reads better on the modal's background wins.
-const PALETTE_BODY_TEXT = Object.freeze({ light: [0x2e, 0x30, 0x35], dark: [0xe3, 0xe5, 0xe8] });
+const PALETTE_BODY_TEXT = Object.freeze({ light: [0x24, 0x21, 0x1b], dark: [0xee, 0xe8, 0xdc] });
 
 function normalizePanelTheme(value) {
     const theme = String(value || "").trim().toLowerCase();
     return PANEL_THEMES.includes(theme) ? theme : DEFAULT_SETTINGS.ui.panelTheme;
+}
+
+// Convert linear sRGB channel [0..1] to gamma-encoded sRGB [0..255].
+function linearToSrgb255(value) {
+    const clamped = Math.min(1, Math.max(0, value));
+    const encoded = clamped <= 0.0031308
+        ? 12.92 * clamped
+        : 1.055 * (clamped ** (1 / 2.4)) - 0.055;
+    return Math.round(encoded * 255);
+}
+
+// Convert OKLab (L, a, b) to sRGB [0..255 x3] using Björn Ottosson's reference matrices.
+function oklabToSrgb(L, a, b) {
+    const l_ = L + 0.3963377774 * a + 0.2158037573 * b;
+    const m_ = L - 0.1055613458 * a - 0.0638541728 * b;
+    const s_ = L - 0.0894841775 * a - 1.2914855480 * b;
+    const l = l_ * l_ * l_;
+    const m = m_ * m_ * m_;
+    const s = s_ * s_ * s_;
+    const r = +4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s;
+    const g = -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s;
+    const bl = -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s;
+    return [linearToSrgb255(r), linearToSrgb255(g), linearToSrgb255(bl)];
+}
+
+function parseAlphaToken(token) {
+    if (token === undefined || token === "") return 1;
+    const value = String(token).trim();
+    return value.endsWith("%") ? parseFloat(value) / 100 : parseFloat(value);
+}
+
+function parseOklabChannel(token, percentScale) {
+    const value = String(token).trim();
+    return value.endsWith("%") ? (parseFloat(value) / 100) * percentScale : parseFloat(value);
 }
 
 // A computed background colour as { rgb: [0-255 x3], alpha: 0-1 }, or null for a value it cannot read.
@@ -50,13 +84,33 @@ function parseComputedColor(value) {
     if (!text || text === "transparent") return { rgb: [0, 0, 0], alpha: 0 };
     let match = /^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)(?:\s*[,/]\s*([\d.]+%?))?\s*\)$/.exec(text);
     if (match) {
-        const alpha = match[4] === undefined ? 1 : (match[4].endsWith("%") ? parseFloat(match[4]) / 100 : parseFloat(match[4]));
-        return { rgb: [match[1], match[2], match[3]].map(Number), alpha };
+        return { rgb: [match[1], match[2], match[3]].map(Number), alpha: parseAlphaToken(match[4]) };
     }
     match = /^color\(srgb\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)(?:\s*\/\s*([\d.]+%?))?\s*\)$/.exec(text);
     if (match) {
-        const alpha = match[4] === undefined ? 1 : (match[4].endsWith("%") ? parseFloat(match[4]) / 100 : parseFloat(match[4]));
-        return { rgb: [match[1], match[2], match[3]].map(channel => Number(channel) * 255), alpha };
+        return { rgb: [match[1], match[2], match[3]].map(channel => Number(channel) * 255), alpha: parseAlphaToken(match[4]) };
+    }
+    match = /^oklab\(\s*([-+\d.]+%?)\s+([-+\d.]+%?)\s+([-+\d.]+%?)(?:\s*\/\s*([\d.]+%?))?\s*\)$/.exec(text);
+    if (match) {
+        const L = parseOklabChannel(match[1], 1);
+        const a = parseOklabChannel(match[2], 0.4);
+        const b = parseOklabChannel(match[3], 0.4);
+        return { rgb: oklabToSrgb(L, a, b), alpha: parseAlphaToken(match[4]) };
+    }
+    match = /^oklch\(\s*([-+\d.]+%?)\s+([-+\d.]+%?)\s+([-+\d.]+)(deg|rad|grad|turn)?(?:\s*\/\s*([\d.]+%?))?\s*\)$/.exec(text);
+    if (match) {
+        const L = parseOklabChannel(match[1], 1);
+        const C = parseOklabChannel(match[2], 0.4);
+        const rawH = parseFloat(match[3]);
+        const unit = match[4] || "deg";
+        const rad = unit === "rad"
+            ? rawH
+            : unit === "turn"
+                ? rawH * Math.PI * 2
+                : unit === "grad"
+                    ? rawH * (Math.PI / 200)
+                    : rawH * (Math.PI / 180);
+        return { rgb: oklabToSrgb(L, C * Math.cos(rad), C * Math.sin(rad)), alpha: parseAlphaToken(match[5]) };
     }
     return null;
 }
@@ -233,6 +287,7 @@ class PanelTheme {
         const onChange = () => {
             if (!this.plugin.isStarted) return;
             this.refresh();
+            this.plugin.refreshDiscordThemeClasses?.({ skipPanelTheme: true });
         };
         if (typeof MutationObserver === "function" && typeof document !== "undefined") {
             try {

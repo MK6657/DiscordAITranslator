@@ -102,6 +102,7 @@ test("upgrade from v0.3.0 on Sakura: cached lines draw at once and are never req
     await scanUntilIdle();
     assertLinesDrawn(lineText, AUTO_MESSAGES, "after the upgrade");
     assert.deepEqual(server.chatPhrases(), [], "no cached message is requested (messages with standard emoji included)");
+    assert.equal(server.modelRequests(), 0, "cached messages do not trigger a model probe");
     assert.equal(detectedModel(plugin), "");
 
     // A new message is translated; that request detects the model the server serves.
@@ -210,10 +211,10 @@ function messageIdOfKey(key) {
 test("first model detection with messages queued and in flight: no message is requested twice, no finished line is redrawn", async t => {
     const { server, plugin, drawn, scan, scanUntilIdle, lineText } = openChat(t, { data: freshInstallData({ autoTranslateConcurrency: 1 }) });
     const ids = AUTO_MESSAGES.map(message => message.id);
-    // The local server has answered the plugin's health check already (Discord has been open a while).
-    plugin.shouldBlockAutoTranslationForLocalProviderHealth(plugin.getAutoTranslationOptions());
-    await ticks();
-    assert.equal(plugin.shouldBlockAutoTranslationForLocalProviderHealth(plugin.getAutoTranslationOptions()), false);
+    const options = plugin.getAutoTranslationOptions();
+    plugin.setApiRuntimeStatus("translation", "success");
+    plugin.markLocalProviderHealthy(options.providerKey);
+    assert.equal(plugin.shouldBlockAutoTranslationForLocalProviderHealth(options), false);
     server.hold("models");
     server.hold("chat");
     scan(ids);

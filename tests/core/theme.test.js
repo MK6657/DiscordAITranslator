@@ -450,17 +450,17 @@ test("regression: Discord's light theme without --input-background no longer giv
     const root = [".dait-settings", '[data-dait-panel-theme="light"]'];
     for (const discord of [LIGHT_PAGE_WITHOUT_INPUT_VARIABLES, { ...LIGHT_PAGE_WITHOUT_INPUT_VARIABLES, ...DARK_REGION_VARIABLES }]) {
         const token = panelTokens(root, discord);
-        assert.equal(token("--dait-bg"), "#ffffff");
-        assert.equal(token("--dait-input-bg"), "#ffffff", "inputs and selects are light");
-        assert.equal(token("--dait-text"), "#2e3035");
+        assert.equal(token("--dait-bg"), "#f7f3e9");
+        assert.equal(token("--dait-input-bg"), "#fffdf8", "inputs and selects are light");
+        assert.equal(token("--dait-text"), "#24211b");
         assert.ok(contrast(token("--dait-text"), token("--dait-input-bg")) >= 7, "control text reads at 7:1");
         assert.ok(contrast(token("--dait-placeholder"), token("--dait-input-bg")) >= 4.5, "placeholders read at 4.5:1");
     }
     // The same page in the dark palette: one coherent set too.
     const dark = panelTokens([".dait-settings", '[data-dait-panel-theme="dark"]'], LIGHT_PAGE_WITHOUT_INPUT_VARIABLES);
-    assert.equal(dark("--dait-bg"), "#2b2d31");
-    assert.equal(dark("--dait-input-bg"), "#1e1f22");
-    assert.equal(dark("--dait-text"), "#e3e5e8");
+    assert.equal(dark("--dait-bg"), "#1f2426");
+    assert.equal(dark("--dait-input-bg"), "#15191a");
+    assert.equal(dark("--dait-text"), "#eee8dc");
 });
 
 test("regression: a light Discord page resolves every plugin window to the light palette, whatever the launcher's area says", t => {
@@ -687,7 +687,12 @@ test("computed background colours are read in the forms browsers report", () => 
     assert.deepEqual(parseComputedColor("rgb(255 255 255 / 50%)"), { rgb: [255, 255, 255], alpha: 0.5 });
     assert.deepEqual(parseComputedColor("transparent"), { rgb: [0, 0, 0], alpha: 0 });
     assert.deepEqual(parseComputedColor("color(srgb 1 1 1)"), { rgb: [255, 255, 255], alpha: 1 });
-    assert.equal(parseComputedColor("oklch(0.5 0.1 200)"), null);
+    assert.deepEqual(parseComputedColor("oklab(1 0 0)"), { rgb: [255, 255, 255], alpha: 1 });
+    assert.deepEqual(parseComputedColor("oklab(0 0 0 / 50%)"), { rgb: [0, 0, 0], alpha: 0.5 });
+    const oklchColor = parseComputedColor("oklch(0.5 0.1 200)");
+    assert.equal(oklchColor?.alpha, 1);
+    assert.equal(oklchColor?.rgb?.length, 3);
+    assert.equal(parseComputedColor("lab(50% 40 59.5)"), null);
     assert.equal(parseComputedColor("#313338"), null);
 });
 
@@ -804,7 +809,7 @@ test("the settings snapshot and the diagnostics export include the window theme"
 // --- The stylesheet ---
 
 // Rules that style the plugin's own windows (not the chat lines and the buttons that live inside Discord's UI).
-const WINDOW_PARTS = /\.dait-(settings|row-|segmented|small-button|order-|provider-|google-settings|diagnostic-|setup-|service-|status-mark|api-|model-|try-|prompt-|language-controls|hotkey-|cache-actions|history-backfill-actions|visually-hidden|quick-settings-(modal-root|backdrop|dialog|body|error|done)|quick-popover|qp-|polish-result-|input-action-menu(?!-button)|dialog)|\[data-dait-panel-theme/;
+const WINDOW_PARTS = /\.dait-(settings|row-|segmented|small-button|order-|provider-|google-settings|diagnostic-|host-health|setup-|service-|status-mark|api-|model-|try-|prompt-|language-controls|hotkey-|cache-actions|history-backfill-actions|visually-hidden|quick-settings-(modal-root|backdrop|dialog|body|error|done)|quick-popover|qp-|polish-result-|input-action-menu(?!-button)|dialog)|\[data-dait-panel-theme/;
 const DISCORD_UI_PARTS = /\.dait-(quick-settings-button|quick-settings-panel|launcher-status|polish-button|public-bilingual-button|polish-restore|input-action-menu-button|message-button|translation-|input-action-group)/;
 
 test("no plugin-window rule reads Discord's colour variables (--input-background, --background-*, --text-*...)", () => {

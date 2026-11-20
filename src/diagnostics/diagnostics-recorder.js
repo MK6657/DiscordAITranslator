@@ -395,28 +395,26 @@ class DiagnosticsRecorder {
         };
     }
 
-    // options.keepLogged: the entries in memory were logged during start() before the stored log was loaded
-    // (settings load, data move, a failed read). They are added after the stored entries instead of being
-    // dropped, and the stored entries are never replaced by them on disk.
     loadDiagnosticLogs(options = {}) {
-        const logged = options.keepLogged && Array.isArray(this.plugin.diagnosticLogs) ? this.plugin.diagnosticLogs : [];
-        const loggedCompressed = options.keepLogged ? Math.max(0, Number(this.plugin.diagnosticCompressedCount || 0) || 0) : 0;
         const payload = this.plugin.loadData(DIAGNOSTIC_DATA_KEY);
-        const logs = Array.isArray(payload) ? payload : payload?.logs;
-        if (!Array.isArray(logs)) {
-            this.plugin.diagnosticLogs = logged.slice(-DIAGNOSTICS_MAX_ENTRIES);
-            this.plugin.diagnosticCompressedCount = loggedCompressed;
-            return;
+        if (this.plugin.dataLoadFailures.has(DIAGNOSTIC_DATA_KEY)) {
+            this.plugin.diagnosticLogsLoaded = false;
+            return false;
         }
 
-        const stored = logs
+        const keepLogged = options.keepLogged || (!this.plugin.diagnosticLogsLoaded && this.plugin.diagnosticLogsDirty);
+        const logged = keepLogged ? this.plugin.diagnosticLogs : [];
+        const loggedCompressed = keepLogged ? Math.max(0, Number(this.plugin.diagnosticCompressedCount || 0) || 0) : 0;
+        const logs = Array.isArray(payload) ? payload : payload?.logs;
+        const stored = (Array.isArray(logs) ? logs : [])
             .map(entry => this.plugin.normalizePersistedDiagnosticEntry(entry))
             .filter(Boolean);
         this.plugin.diagnosticLogs = [...stored, ...logged].slice(-DIAGNOSTICS_MAX_ENTRIES);
         this.plugin.diagnosticCompressedCount = Math.max(0, Number(payload?.compressed || 0) || 0) + loggedCompressed;
-        this.plugin.diagnosticLogsDirty = false;
-        this.plugin.diagnosticLogsDirtyAt = 0;
-        if (logged.length) this.plugin.scheduleDiagnosticLogsPersist();
+        this.plugin.diagnosticLogsLoaded = true;
+        this.plugin.diagnosticLogsDirty = logged.length > 0;
+        if (logged.length && options.schedulePersist !== false) this.plugin.scheduleDiagnosticLogsPersist();
+        return true;
     }
 
     createPersistedDiagnosticLogsPayload() {
@@ -501,13 +499,20 @@ class DiagnosticsRecorder {
             this.plugin.scheduleDiagnosticLogsPersist(HEAVY_PERSISTENCE_DEFER_MS, { force: true });
             return true;
         }
+        const readyToSave = this.plugin.diagnosticLogsLoaded
+            || this.plugin.loadDiagnosticLogs({ keepLogged: true, schedulePersist: false });
         if (this.plugin.diagnosticLogsDirtyTimer) {
             clearTimeout(this.plugin.diagnosticLogsDirtyTimer);
             this.plugin.diagnosticLogsDirtyTimer = null;
         }
         this.plugin.diagnosticLogsDirtyAt = 0;
+        if (!readyToSave) {
+            if (options.retryOnError !== false) this.plugin.scheduleDiagnosticLogsPersist(DIAGNOSTICS_WRITE_DEBOUNCE_MS, { force: true });
+            return false;
+        }
         try {
             if (this.plugin.saveData(DIAGNOSTIC_DATA_KEY, this.plugin.createPersistedDiagnosticLogsPayload()) !== true) throw new Error("DATA_SAVE_FAILED");
+            this.plugin.dataLoadFailures.delete(DIAGNOSTIC_DATA_KEY);
             this.plugin.diagnosticLogsDirty = false;
             this.plugin.diagnosticLogsPersistenceDeferredSince = 0;
             return true;
@@ -515,7 +520,7 @@ class DiagnosticsRecorder {
         catch (error) {
             this.plugin.warnSanitized("Failed to persist diagnostic logs", error);
             this.plugin.diagnosticLogsDirty = true;
-            if (options.retryOnError !== false) this.plugin.scheduleDiagnosticLogsPersist(30000, { force: true });
+            if (options.retryOnError !== false) this.plugin.scheduleDiagnosticLogsPersist(DIAGNOSTICS_WRITE_DEBOUNCE_MS, { force: true });
             return false;
         }
     }
@@ -569,6 +574,7 @@ class DiagnosticsRecorder {
         const previousDirty = this.plugin.diagnosticLogsDirty;
         const previousDirtyAt = this.plugin.diagnosticLogsDirtyAt;
         const previousDecisions = this.plugin.lastAutoTranslationDecisions;
+        this.plugin.cancelHeavyPersistenceIdle("diagnostics");
         if (this.plugin.diagnosticLogsDirtyTimer) {
             clearTimeout(this.plugin.diagnosticLogsDirtyTimer);
             this.plugin.diagnosticLogsDirtyTimer = null;
@@ -581,8 +587,6 @@ class DiagnosticsRecorder {
         this.plugin.diagnosticLogsDirtyAt = 0;
         try {
             if (this.plugin.saveData(DIAGNOSTIC_DATA_KEY, this.plugin.createPersistedDiagnosticLogsPayload()) !== true) throw new Error("DATA_SAVE_FAILED");
-            this.plugin.showToast(this.plugin.t("diagnosticLogsCleared"), "success");
-            return true;
         }
         catch (error) {
             this.plugin.diagnosticLogs = previousLogs;
@@ -598,6 +602,11 @@ class DiagnosticsRecorder {
             this.plugin.showToast(this.plugin.formatError(error), "error");
             return false;
         }
+        this.plugin.diagnosticLogsLoaded = true;
+        this.plugin.dataLoadFailures.delete(DIAGNOSTIC_DATA_KEY);
+        this.plugin.diagnosticLogsPersistenceDeferredSince = 0;
+        this.plugin.showToast(this.plugin.t("diagnosticLogsCleared"), "success");
+        return true;
     }
 
     logAutoTranslationIntakeState(status, intake = {}) {

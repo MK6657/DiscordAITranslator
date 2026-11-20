@@ -385,7 +385,7 @@ test("the v0.3.0 settings layout rules are gone from the stylesheet, and nothing
 test("the polish result panel reads the shared tokens instead of per-theme colour blocks", () => {
     const panel = cssRule(".dait-polish-result-panel");
     assert.match(panel, /background: var\(--dait-surface\);/);
-    assert.match(panel, /border: 1px solid var\(--dait-divider\);/);
+    assert.match(panel, /border: 2px solid var\(--dait-input-border\);/);
     assert.match(panel, /box-shadow: var\(--dait-shadow\);/);
     assert.match(panel, /color: var\(--dait-text\);/);
     const output = cssRule(".dait-polish-result-output");

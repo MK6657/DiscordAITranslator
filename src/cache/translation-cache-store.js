@@ -8,6 +8,7 @@ const {
     DEFAULT_SETTINGS,
     DIAGNOSTIC_REASON_CODES,
     HEAVY_PERSISTENCE_DEFER_MS,
+    PLUGIN_NAME,
     PROVIDER_DEFAULTS,
     TRANSLATION_CACHE_DEFAULT_LIMIT,
     TRANSLATION_CACHE_DEFAULT_TTL_HOURS,
@@ -36,6 +37,112 @@ const TRANSLATION_CACHE_KEY_SCHEMA = 2;
 // Message texts with standard emoji, and the same text read the way versions before 0.4.0 read it.
 const TRANSLATION_CACHE_PRE_EMOJI_TEXT_MAX = 2000;
 
+const SHA256_K = new Uint32Array([
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+]);
+
+function encodeUtf8Bytes(text) {
+    const value = String(text ?? "");
+    if (typeof TextEncoder === "function") return new TextEncoder().encode(value);
+    const bytes = [];
+    for (let index = 0; index < value.length; index++) {
+        let code = value.charCodeAt(index);
+        if (code >= 0xd800 && code <= 0xdbff && index + 1 < value.length) {
+            const next = value.charCodeAt(index + 1);
+            if (next >= 0xdc00 && next <= 0xdfff) {
+                code = ((code - 0xd800) << 10) + (next - 0xdc00) + 0x10000;
+                index++;
+            }
+        }
+        if (code < 0x80) bytes.push(code);
+        else if (code < 0x800) bytes.push(0xc0 | (code >> 6), 0x80 | (code & 0x3f));
+        else if (code < 0x10000) bytes.push(0xe0 | (code >> 12), 0x80 | ((code >> 6) & 0x3f), 0x80 | (code & 0x3f));
+        else {
+            bytes.push(
+                0xf0 | (code >> 18),
+                0x80 | ((code >> 12) & 0x3f),
+                0x80 | ((code >> 6) & 0x3f),
+                0x80 | (code & 0x3f)
+            );
+        }
+    }
+    return new Uint8Array(bytes);
+}
+
+// Pure-JS SHA-256 so BetterDiscord's renderer never depends on Node's require("node:crypto").
+function sha256Hex(text) {
+    const bytes = encodeUtf8Bytes(text);
+    const bitLen = bytes.length * 8;
+    const totalLen = Math.ceil((bytes.length + 9) / 64) * 64;
+    const padded = new Uint8Array(totalLen);
+    padded.set(bytes);
+    padded[bytes.length] = 0x80;
+    const view = new DataView(padded.buffer);
+    view.setUint32(totalLen - 8, Math.floor(bitLen / 0x100000000), false);
+    view.setUint32(totalLen - 4, bitLen >>> 0, false);
+
+    let h0 = 0x6a09e667;
+    let h1 = 0xbb67ae85;
+    let h2 = 0x3c6ef372;
+    let h3 = 0xa54ff53a;
+    let h4 = 0x510e527f;
+    let h5 = 0x9b05688c;
+    let h6 = 0x1f83d9ab;
+    let h7 = 0x5be0cd19;
+    const w = new Uint32Array(64);
+
+    for (let offset = 0; offset < totalLen; offset += 64) {
+        for (let i = 0; i < 16; i++) w[i] = view.getUint32(offset + i * 4, false);
+        for (let i = 16; i < 64; i++) {
+            const w15 = w[i - 15];
+            const s0 = ((w15 >>> 7) | (w15 << 25)) ^ ((w15 >>> 18) | (w15 << 14)) ^ (w15 >>> 3);
+            const w2 = w[i - 2];
+            const s1 = ((w2 >>> 17) | (w2 << 15)) ^ ((w2 >>> 19) | (w2 << 13)) ^ (w2 >>> 10);
+            w[i] = (w[i - 16] + s0 + w[i - 7] + s1) >>> 0;
+        }
+        let a = h0;
+        let b = h1;
+        let c = h2;
+        let d = h3;
+        let e = h4;
+        let f = h5;
+        let g = h6;
+        let h = h7;
+        for (let i = 0; i < 64; i++) {
+            const s1 = ((e >>> 6) | (e << 26)) ^ ((e >>> 11) | (e << 21)) ^ ((e >>> 25) | (e << 7));
+            const ch = (e & f) ^ (~e & g);
+            const temp1 = (h + s1 + ch + SHA256_K[i] + w[i]) >>> 0;
+            const s0 = ((a >>> 2) | (a << 30)) ^ ((a >>> 13) | (a << 19)) ^ ((a >>> 22) | (a << 10));
+            const maj = (a & b) ^ (a & c) ^ (b & c);
+            const temp2 = (s0 + maj) >>> 0;
+            h = g;
+            g = f;
+            f = e;
+            e = (d + temp1) >>> 0;
+            d = c;
+            c = b;
+            b = a;
+            a = (temp1 + temp2) >>> 0;
+        }
+        h0 = (h0 + a) >>> 0;
+        h1 = (h1 + b) >>> 0;
+        h2 = (h2 + c) >>> 0;
+        h3 = (h3 + d) >>> 0;
+        h4 = (h4 + e) >>> 0;
+        h5 = (h5 + f) >>> 0;
+        h6 = (h6 + g) >>> 0;
+        h7 = (h7 + h) >>> 0;
+    }
+    return [h0, h1, h2, h3, h4, h5, h6, h7].map(part => (part >>> 0).toString(16).padStart(8, "0")).join("");
+}
+
 class TranslationCacheStore {
     constructor(plugin) {
         this.plugin = plugin;
@@ -46,6 +153,10 @@ class TranslationCacheStore {
         // Keys of entries saved before 0.4.0 that have not moved to their current key yet.
         this.legacyKeys = new Set();
         this.preEmojiSourceTexts = new Map();
+        this.cacheNeedsReload = false;
+        this.clearedAt = 0;
+        this.mergedLegacy = null;
+        this.unmarkedLegacyCommit = null;
     }
 
     getTranslationCacheValueRefs() {
@@ -172,12 +283,20 @@ class TranslationCacheStore {
     getLegacyCompatTranslationCacheKeys(text, options = {}, primaryKey = "", servedModelState = this.getTranslationCacheServedModelState(options)) {
         if (!this.legacyKeys.size) return [];
         const candidates = [this.getPlaceholderModelTranslationCacheKey(text, options, servedModelState)];
+        const endpoints = [undefined, ...this.getCompatibleLegacyTranslationCacheEndpoints(options)];
+        if (servedModelState === true) {
+            for (const legacyEndpoint of endpoints.slice(1)) {
+                candidates.push(this.buildTranslationCacheKey(text, options, this.plugin.getStrongTextFingerprint(text), { legacyModel: true, legacyEndpoint }));
+            }
+        }
         const preEmojiText = this.getPreEmojiSourceText(text);
         if (preEmojiText) {
             const preEmojiOptions = options.messageIdentity
                 ? { ...options, messageIdentity: this.getPreEmojiMessageIdentity(options.messageIdentity, text, preEmojiText) }
                 : options;
-            candidates.push(this.plugin.buildTranslationCacheKey(preEmojiText, preEmojiOptions, this.plugin.getStrongTextFingerprint(preEmojiText), { legacyModel: true }));
+            for (const legacyEndpoint of endpoints) {
+                candidates.push(this.buildTranslationCacheKey(preEmojiText, preEmojiOptions, this.plugin.getStrongTextFingerprint(preEmojiText), { legacyModel: true, legacyEndpoint }));
+            }
         }
         return [...new Set(candidates)].filter(key => key
             && key !== primaryKey
@@ -318,6 +437,21 @@ class TranslationCacheStore {
         if (aliasOptions.includePlaceholderModel && this.plugin.localProviderModelFirstDetected) {
             aliases.push(this.getPlaceholderModelTranslationCacheKey(text, options));
         }
+        for (const legacyEndpoint of this.getCompatibleLegacyTranslationCacheEndpoints(options)) {
+            const build = (hash, cacheOptions = {}) => this.buildTranslationCacheKey(text, options, hash, { ...cacheOptions, legacyEndpoint });
+            aliases.push(build(strongTextHash), build(legacyTextHash), build(strongTextHash, { fullConfig: true }), build(legacyTextHash, { fullConfig: true }));
+            if (aliasOptions.includePreMessageIdentity !== false) {
+                aliases.push(
+                    build(strongTextHash, { omitMessageIdentity: true }),
+                    build(legacyTextHash, { omitMessageIdentity: true }),
+                    build(strongTextHash, { fullConfig: true, omitMessageIdentity: true }),
+                    build(legacyTextHash, { fullConfig: true, omitMessageIdentity: true })
+                );
+            }
+            if (aliasOptions.includePlaceholderModel && this.plugin.localProviderModelFirstDetected && this.getTranslationCacheServedModelState(options) === true) {
+                aliases.push(build(strongTextHash, { legacyModel: true }));
+            }
+        }
         this.adoptLegacyTranslationCacheEntries(text, options, primaryKey);
         return [...new Set(aliases.filter(key => key && key !== primaryKey))];
     }
@@ -361,13 +495,43 @@ class TranslationCacheStore {
         return this.plugin.buildTranslationCacheKey(text, options, sourceTextHash, { ...cacheOptions, omitMessageIdentity: true });
     }
 
+    getTranslationCacheEndpoint(config) {
+        const defaults = DEFAULT_SETTINGS.translation;
+        const provider = this.plugin.providerLayer;
+        const endpoint = provider.getProviderEndpointIdentity(config, defaults);
+        const legacyFallback = String(defaults.endpoint || "").trim();
+        if (config.provider === "microsoft" || (endpoint === legacyFallback
+            && endpoint !== provider.getProviderEndpointIdentity({ ...config, endpoint: "" }, defaults))) {
+            return `resolved:${endpoint}`;
+        }
+        return endpoint;
+    }
+
+    getCompatibleLegacyTranslationCacheEndpoints(options) {
+        const config = this.plugin.getEffectiveTaskConfig("translation", options.configOverrides);
+        const defaults = DEFAULT_SETTINGS.translation;
+        const provider = this.plugin.providerLayer;
+        const endpoint = provider.getProviderEndpointIdentity(config, defaults);
+        const cacheEndpoint = this.getTranslationCacheEndpoint(config);
+        const legacyFallback = String(defaults.endpoint || "").trim();
+        const oldEndpoint = this.plugin.getCacheConfigSnapshot("translation", config).endpoint;
+        const candidates = new Set([oldEndpoint, endpoint, PROVIDER_DEFAULTS[config.provider]?.endpoint]);
+        return [...candidates].filter(candidate => {
+            if (!candidate || candidate === cacheEndpoint) return false;
+            if (candidate === legacyFallback && endpoint !== provider.getProviderEndpointIdentity({ ...config, endpoint: "" }, defaults)) return false;
+            return endpoint === provider.getProviderEndpointIdentity({ ...config, endpoint: candidate }, defaults);
+        });
+    }
+
     // cacheOptions.legacyModel: keep the configured model (the "local-model" placeholder) instead of the model
     // the local server was detected to serve, as keys saved before the detection (or before 0.4.0) do.
     buildTranslationCacheKey(text, options = {}, sourceTextHash = this.plugin.getStrongTextFingerprint(text), cacheOptions = {}) {
-        const config = this.plugin.getCacheConfigSnapshot("translation", this.plugin.getEffectiveTaskConfig("translation", options.configOverrides), {
+        const taskConfig = this.plugin.getEffectiveTaskConfig("translation", options.configOverrides);
+        const config = this.plugin.getCacheConfigSnapshot("translation", taskConfig, {
             servedModel: true,
             legacyModel: Boolean(cacheOptions.legacyModel)
         });
+        config.endpoint = cacheOptions.legacyEndpoint ?? this.getTranslationCacheEndpoint(taskConfig);
         config.promptPolicyVersion = this.plugin.getPromptPolicyCacheVersion("translation", options, config);
         const messageIdentity = this.plugin.normalizeTranslationMessageIdentity(options.messageIdentity) || `text:${sourceTextHash}`;
         const configParts = cacheOptions.fullConfig
@@ -668,27 +832,41 @@ class TranslationCacheStore {
         }
     }
 
-    loadTranslationCache() {
-        this.plugin.translationCache.clear();
-        this.plugin.translationCacheMeta.clear();
+    loadTranslationCache(options = {}) {
+        const mergePending = this.plugin.translationCacheDirty
+            && (this.cacheNeedsReload || this.plugin.dataLoadFailures.has(CACHE_DATA_KEY));
+        const payload = this.plugin.loadData(CACHE_DATA_KEY);
+        if (this.plugin.dataLoadFailures.has(CACHE_DATA_KEY)) {
+            this.cacheNeedsReload = true;
+            return false;
+        }
+        const pending = mergePending ? {
+            cache: this.plugin.translationCache,
+            meta: this.plugin.translationCacheMeta,
+            legacyKeys: this.legacyKeys,
+            preEmojiSourceTexts: this.preEmojiSourceTexts,
+            clearedAt: this.clearedAt
+        } : null;
+        this.plugin.translationCache = new Map();
+        this.plugin.translationCacheMeta = new Map();
         this.invalidateTranslationCacheValueRefs();
         this.plugin.clearTranslationCacheNegativeLookups();
-        this.legacyKeys.clear();
-        this.preEmojiSourceTexts.clear();
-        const payload = this.plugin.loadData(CACHE_DATA_KEY);
+        this.legacyKeys = new Set();
+        this.preEmojiSourceTexts = new Map();
+        this.clearedAt = this.getPersistedTranslationCacheClearedAt(payload);
+        this.mergedLegacy = payload?.mergedLegacy || null;
+        if (!this.mergedLegacy && this.unmarkedLegacyCommit && payload
+            && this.getLegacyTranslationCacheReceipt(payload).fingerprint === this.unmarkedLegacyCommit.fingerprint) {
+            this.mergedLegacy = this.unmarkedLegacyCommit;
+        }
+        this.unmarkedLegacyCommit = null;
         this.plugin.restoreLocalProviderDetectedModels(payload?.localModels);
         const entries = Array.isArray(payload) ? payload : payload?.entries;
-        if (!Array.isArray(entries)) {
-            this.plugin.persistentTranslationCacheCount = 0;
-            return;
-        }
-
         const now = Date.now();
         const storedTtlMs = this.plugin.normalizeTranslationCacheTtlHours(payload?.ttlHours) * 60 * 60 * 1000;
         const persistedStrings = Array.isArray(payload?.strings) ? payload.strings.map(value => String(value || "")) : [];
         const savedBeforeKeySchema = this.isPreKeySchemaTranslationCachePayload(payload);
-        let restoredEntries = 0;
-        for (const entry of entries) {
+        for (const entry of Array.isArray(entries) ? entries : []) {
             const key = this.plugin.decodePersistedTranslationCacheKey(entry, persistedStrings);
             const value = this.plugin.decodePersistedTranslationCacheValue(entry, persistedStrings);
             if (!key || !value) continue;
@@ -703,19 +881,124 @@ class TranslationCacheStore {
             this.plugin.translationCache.set(key, value);
             this.plugin.translationCacheMeta.set(key, meta);
             if (savedBeforeKeySchema || entry?.l) this.legacyKeys.add(key);
-            restoredEntries++;
         }
         // Stored expiry times may come from a longer lifetime (or an older, uncapped hit extension).
         const clamped = this.plugin.clampTranslationCacheExpiryToCurrentTtl(now);
         this.plugin.pruneTranslationCache({ scanExpired: true });
         this.plugin.persistentTranslationCacheCount = this.plugin.getTranslationCacheMessageCount();
-        if (clamped || this.plugin.translationCache.size !== entries.length || restoredEntries !== entries.length || payload?.version !== 3) this.plugin.scheduleTranslationCachePersist();
+        const needsCleanup = Array.isArray(entries)
+            && (clamped || this.plugin.translationCache.size !== entries.length || payload?.version !== 3);
+        if (pending) this.mergePendingTranslationCache(pending, now);
+        this.cacheNeedsReload = false;
+        if (needsCleanup && options.scheduleCleanup !== false) this.plugin.scheduleTranslationCachePersist();
+        return true;
     }
 
-    // Used once when the cache moves to its own data file (and after a downgrade left an old copy behind):
-    // keeps the keys of both payloads that are not older than the newer copy, the more recently used copy of a
-    // key wins, oldest first (LRU order).
-    mergePersistedTranslationCachePayloads(current, legacy) {
+    mergePendingTranslationCache(pending, now) {
+        const cache = this.plugin.translationCache;
+        const metaByKey = this.plugin.translationCacheMeta;
+        for (const [key, value] of pending.cache) {
+            const meta = pending.meta.get(key) || {};
+            if (this.clearedAt > pending.clearedAt && Number(meta.createdAt || 0) <= this.clearedAt) continue;
+            if (this.plugin.isTranslationCacheEntryExpired(meta, now)) continue;
+            if (Number(metaByKey.get(key)?.touchedAt || 0) > Number(meta.touchedAt || 0)) continue;
+            cache.set(key, value);
+            metaByKey.set(key, meta);
+            if (pending.legacyKeys.has(key)) this.legacyKeys.add(key);
+            else this.legacyKeys.delete(key);
+        }
+        this.plugin.translationCache = new Map([...cache].sort(([left], [right]) =>
+            Number(metaByKey.get(left)?.touchedAt || 0) - Number(metaByKey.get(right)?.touchedAt || 0)));
+        this.preEmojiSourceTexts = pending.preEmojiSourceTexts;
+        this.plugin.clampTranslationCacheExpiryToCurrentTtl(now);
+        this.plugin.pruneTranslationCache({ scanExpired: true });
+    }
+
+    prepareTranslationCacheWrite() {
+        return (!this.cacheNeedsReload && !this.plugin.dataLoadFailures.has(CACHE_DATA_KEY))
+            || this.loadTranslationCache({ scheduleCleanup: false });
+    }
+
+    getPersistedTranslationCacheClearedAt(payload) {
+        const oldEmptySnapshot = Array.isArray(payload?.entries) && payload.entries.length === 0;
+        const time = Number(payload?.clearedAt ?? (oldEmptySnapshot ? payload.savedAt : 0));
+        return Number.isFinite(time) && time > 0 ? time : 0;
+    }
+
+    getLegacyTranslationCacheReceipt(payload) {
+        return {
+            fingerprint: sha256Hex(JSON.stringify(payload) ?? "undefined"),
+            savedAt: Number(payload?.savedAt) || 0
+        };
+    }
+
+    readTranslationCacheForMigration(storeName) {
+        try {
+            return { payload: this.plugin.settingsStore.readDataStore(storeName, CACHE_DATA_KEY) };
+        }
+        catch (error) {
+            const legacy = storeName === PLUGIN_NAME;
+            if (!legacy) this.plugin.dataLoadFailures.add(CACHE_DATA_KEY);
+            this.plugin.recordDataIoFailure("load", legacy ? `legacy:${CACHE_DATA_KEY}` : CACHE_DATA_KEY, error);
+            return null;
+        }
+    }
+
+    migrateLegacyTranslationCache() {
+        const storeName = this.plugin.getDataStoreName(CACHE_DATA_KEY);
+        if (storeName === PLUGIN_NAME) return "not-separated";
+        const storage = this.plugin.settingsStore;
+        const legacyRead = this.readTranslationCacheForMigration(PLUGIN_NAME);
+        if (!legacyRead) return "legacy-unreadable";
+        const legacy = legacyRead.payload;
+        if (legacy === null || legacy === undefined) return "none";
+        this.cacheNeedsReload = true;
+        const currentRead = this.readTranslationCacheForMigration(storeName);
+        if (!currentRead) return "store-unreadable";
+        const current = currentRead.payload;
+        const hasCurrent = current !== null && current !== undefined;
+        const receipt = this.getLegacyTranslationCacheReceipt(legacy);
+        const previousCommit = current?.mergedLegacy;
+        const committed = previousCommit ? previousCommit.fingerprint === receipt.fingerprint
+            : (hasCurrent && this.getLegacyTranslationCacheReceipt(current).fingerprint === receipt.fingerprint);
+        const payload = committed ? current : (hasCurrent ? this.mergePersistedTranslationCachePayloads(current, legacy, receipt) : legacy);
+        if (!committed) {
+            const expectedFingerprint = this.getLegacyTranslationCacheReceipt(payload).fingerprint;
+            try {
+                if (storage.writeDataStore(storeName, CACHE_DATA_KEY, payload) !== true) throw new Error("DATA_SAVE_FAILED");
+            }
+            catch (error) {
+                this.plugin.recordDataIoFailure("save", CACHE_DATA_KEY, error);
+                return "save-failed";
+            }
+            const readback = this.readTranslationCacheForMigration(storeName);
+            if (!readback) return "store-unreadable";
+            if (readback.payload === null || readback.payload === undefined
+                || this.getLegacyTranslationCacheReceipt(readback.payload).fingerprint !== expectedFingerprint) {
+                this.plugin.recordDataIoFailure("save", CACHE_DATA_KEY, new Error("DATA_SAVE_VERIFICATION_FAILED"));
+                return "save-failed";
+            }
+        }
+        if (payload === legacy || (committed && !payload?.mergedLegacy)) this.unmarkedLegacyCommit = receipt;
+        const latestLegacy = this.readTranslationCacheForMigration(PLUGIN_NAME);
+        if (!latestLegacy) return "legacy-unreadable";
+        if (latestLegacy.payload === null || latestLegacy.payload === undefined
+            || this.getLegacyTranslationCacheReceipt(latestLegacy.payload).fingerprint !== receipt.fingerprint) return "legacy-changed";
+        try {
+            if (storage.deleteDataStoreKey(PLUGIN_NAME, CACHE_DATA_KEY) !== true) throw new Error("DATA_DELETE_FAILED");
+        }
+        catch (error) {
+            this.plugin.recordDataIoFailure("save", `legacy:${CACHE_DATA_KEY}`, error);
+            return "delete-failed";
+        }
+        try {
+            this.plugin.logDiagnostic("data.migrate", "ok", { key: CACHE_DATA_KEY, merged: hasCurrent });
+        }
+        catch {}
+        return hasCurrent ? "merged" : "migrated";
+    }
+
+    mergePersistedTranslationCachePayloads(current, legacy, legacyReceipt = null) {
         const now = Date.now();
         const decode = payload => {
             const entries = Array.isArray(payload) ? payload : payload?.entries;
@@ -732,6 +1015,7 @@ class TranslationCacheStore {
                     key,
                     value,
                     createdAt,
+                    recordedCreatedAt: Number(entry?.createdAt ?? entry?.c ?? payload?.savedAt) || 0,
                     touchedAt: Number(entry?.touchedAt ?? entry?.lastUsedAt ?? entry?.t ?? createdAt),
                     expiresAt: Number(entry?.expiresAt ?? entry?.e ?? (createdAt + ttlMs)),
                     legacy: savedBeforeKeySchema || Boolean(entry?.l)
@@ -742,19 +1026,14 @@ class TranslationCacheStore {
         let legacyEntries = decode(legacy);
         if (!legacyEntries) return current;
         if (!currentEntries) return legacy;
-        // A copy saved by a version that read the other copy is the whole cache as it was then: nothing older than
-        // its save time is taken from the other copy, which was cleared, evicted or expired there. That holds for
-        // this store's copy over an old settings-file copy it was merged from (its deletion failed), and for an
-        // empty copy 0.3.0 saves on "Clear translation cache" after a downgrade: a cleared cache must not come
-        // back. Anything else 0.3.0 saves after a downgrade is only what it cached then, since it cannot read
-        // this store: both copies are kept, and the lifetime and size limits prune them.
-        const currentSavedAt = Number(current?.savedAt) || 0;
-        const legacySavedAt = Number(legacy?.savedAt) || 0;
-        if (legacySavedAt > currentSavedAt) {
-            const legacySawCurrent = !this.isPreKeySchemaTranslationCachePayload(legacy);
-            if (!legacyEntries.length || legacySawCurrent) currentEntries = currentEntries.filter(item => item.touchedAt >= legacySavedAt);
-        }
-        else if (currentSavedAt > legacySavedAt) legacyEntries = legacyEntries.filter(item => item.touchedAt >= currentSavedAt);
+        const receipt = legacyReceipt || this.getLegacyTranslationCacheReceipt(legacy);
+        if (current?.mergedLegacy?.fingerprint === receipt.fingerprint) return current;
+        const currentClearedAt = this.getPersistedTranslationCacheClearedAt(current);
+        const legacyClearedAt = this.getPersistedTranslationCacheClearedAt(legacy);
+        const previousLegacySave = Number(current?.mergedLegacy?.savedAt) || 0;
+        if (legacyClearedAt > currentClearedAt) currentEntries = currentEntries.filter(item => item.recordedCreatedAt > legacyClearedAt);
+        if (currentClearedAt >= legacyClearedAt && currentClearedAt) legacyEntries = legacyEntries.filter(item => item.recordedCreatedAt > currentClearedAt);
+        if (previousLegacySave) legacyEntries = legacyEntries.filter(item => item.touchedAt >= previousLegacySave);
         const byKey = new Map();
         [...legacyEntries, ...currentEntries].forEach(item => {
             const existing = byKey.get(item.key);
@@ -787,6 +1066,8 @@ class TranslationCacheStore {
             version: 3,
             keySchema: TRANSLATION_CACHE_KEY_SCHEMA,
             savedAt: now,
+            clearedAt: Math.max(currentClearedAt, legacyClearedAt),
+            mergedLegacy: receipt,
             ttlHours: this.plugin.normalizeTranslationCacheTtlHours(current?.ttlHours ?? legacy?.ttlHours),
             maxEntries: Number(current?.maxEntries || legacy?.maxEntries || 0) || this.plugin.getTranslationCacheMaxEntries(),
             // Local-model cache keys name the served model; without the list those lines stop matching.
@@ -866,6 +1147,8 @@ class TranslationCacheStore {
             version: 3,
             keySchema: TRANSLATION_CACHE_KEY_SCHEMA,
             savedAt: Date.now(),
+            clearedAt: this.clearedAt,
+            ...(this.mergedLegacy ? { mergedLegacy: this.mergedLegacy } : {}),
             ttlHours: this.plugin.normalizeTranslationCacheTtlHours(this.plugin.settings.ui?.translationCacheTtlHours),
             maxEntries: this.plugin.getTranslationCacheMaxEntries(),
             // Cache keys of local models name the served model; see getCacheConfigSnapshot.
@@ -902,8 +1185,9 @@ class TranslationCacheStore {
             this.plugin.translationCacheDirtyTimer = null;
         }
         this.plugin.translationCacheDirtyAt = 0;
-        this.plugin.pruneTranslationCache({ scanExpired: true });
         try {
+            if (!this.prepareTranslationCacheWrite()) throw new Error("DATA_LOAD_FAILED");
+            this.plugin.pruneTranslationCache({ scanExpired: true });
             const payload = this.plugin.createPersistedTranslationCachePayload();
             if (this.plugin.saveData(CACHE_DATA_KEY, payload) !== true) throw new Error("DATA_SAVE_FAILED");
             // Saved messages: entries of one message share its value index.
@@ -932,6 +1216,10 @@ class TranslationCacheStore {
     }
 
     clearTranslationCache() {
+        if (!this.prepareTranslationCacheWrite()) {
+            this.plugin.showToast(this.plugin.formatError(new Error("DATA_LOAD_FAILED")), "error");
+            return false;
+        }
         const previousCache = new Map(this.plugin.translationCache);
         const previousMeta = new Map(this.plugin.translationCacheMeta);
         const previousStats = { ...this.plugin.translationCacheStats };
@@ -939,6 +1227,8 @@ class TranslationCacheStore {
         const previousDirty = this.plugin.translationCacheDirty;
         const previousDirtyAt = this.plugin.translationCacheDirtyAt;
         const previousLegacyKeys = this.legacyKeys;
+        const previousPreEmojiSourceTexts = this.preEmojiSourceTexts;
+        const previousClearedAt = this.clearedAt;
         if (this.plugin.translationCacheDirtyTimer) {
             clearTimeout(this.plugin.translationCacheDirtyTimer);
             this.plugin.translationCacheDirtyTimer = null;
@@ -948,7 +1238,8 @@ class TranslationCacheStore {
         this.plugin.translationCache.clear();
         this.plugin.translationCacheMeta.clear();
         this.legacyKeys = new Set();
-        this.preEmojiSourceTexts.clear();
+        this.preEmojiSourceTexts = new Map();
+        this.clearedAt = Math.max(this.clearedAt, Date.now());
         this.invalidateTranslationCacheValueRefs();
         this.plugin.clearTranslationCacheNegativeLookups();
         this.plugin.translationCacheStats = { hits: 0, misses: 0 };
@@ -962,6 +1253,8 @@ class TranslationCacheStore {
             this.plugin.translationCache = previousCache;
             this.plugin.translationCacheMeta = previousMeta;
             this.legacyKeys = previousLegacyKeys;
+            this.preEmojiSourceTexts = previousPreEmojiSourceTexts;
+            this.clearedAt = previousClearedAt;
             this.plugin.translationCacheStats = previousStats;
             this.plugin.persistentTranslationCacheCount = previousPersistentCount;
             this.plugin.translationCacheDirty = previousDirty;

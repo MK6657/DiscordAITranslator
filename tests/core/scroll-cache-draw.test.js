@@ -295,6 +295,60 @@ test("a steady-state pass settles: nothing to draw is remembered and the pass st
     assert.equal(last.settledMessages, 40);
 });
 
+for (const mutationType of ["characterData", "childList", "attributes"]) {
+    test(`M07 ${mutationType} invalidates only the changed message and draws the new cache hit`, t => {
+        const scroller = createScroller({ isScroller: true, getBoundingClientRect: () => rectAt(0, 800) });
+        const messages = createShortMessages(scroller, 2, 100, 40);
+        scroller.querySelectorAll = () => messages;
+        const plugin = createDrawPassPlugin(t, messages, scroller);
+        plugin.getElementText = content => content.text;
+        plugin.getAutoTranslationPrecheckSkipReason = () => "";
+        plugin.isInvalidAutoTranslationCacheValue = () => false;
+        const drawn = [];
+        plugin.renderTranslation = (message, content, translated) => {
+            drawn.push({ message, translated });
+            return {};
+        };
+        const [changed, unchanged] = messages;
+        changed.matches = () => true;
+        let messageId = "222222222222222222";
+        changed.getAttribute = name => name === "data-message-id" ? messageId : null;
+        assert.equal(plugin.runCachedTranslationDrawPass().evaluations, 2);
+        assert.equal(plugin.runCachedTranslationDrawPass().settledMessages, 2);
+
+        const originalContent = changed.content;
+        let mutation;
+        if (mutationType === "attributes") {
+            messageId = "333333333333333333";
+            mutation = { type: mutationType, target: changed, attributeName: "data-message-id" };
+        }
+        else {
+            changed.text = "Edited message with a translation in the cache";
+            if (mutationType === "childList") {
+                changed.content = { ...originalContent, dataset: {}, text: changed.text };
+                mutation = { type: mutationType, target: changed, addedNodes: [changed.content], removedNodes: [originalContent] };
+            }
+            else {
+                changed.content.text = changed.text;
+                mutation = { type: mutationType, target: { nodeType: 3, parentElement: changed.content } };
+            }
+        }
+        const [candidate] = plugin.createDomAutoTranslationCandidatesForMessage(changed);
+        const options = plugin.withAutoTranslationCandidateIdentity(plugin.getAutoTranslationRequestOptionsForText(candidate.text, plugin.getAutoTranslationOptions()), candidate);
+        plugin.setTranslationCache(plugin.getTranslationCacheKey(candidate.text, options), "更新后的缓存译文");
+        t.after(() => clearTimeout(plugin.translationCacheDirtyTimer));
+
+        plugin.invalidateElementTextCacheForMutations([mutation]);
+        assert.equal(plugin.isCachedDrawMessageSettled(changed), false);
+        assert.equal(plugin.isCachedDrawMessageSettled(unchanged), true);
+        const pass = plugin.runCachedTranslationDrawPass();
+        assert.equal(pass.settledMessages, 1);
+        assert.equal(pass.evaluations, 1);
+        assert.equal(pass.queued, 1);
+        assert.deepEqual(drawn, [{ message: changed, translated: "更新后的缓存译文" }]);
+    });
+}
+
 test("scroll corrections are never written while the chat is moving", t => {
     useGlobals(t, { window: { innerHeight: 800 }, document: { scrollingElement: null, documentElement: null }, getComputedStyle: scrollerStyle });
     const plugin = new Plugin();

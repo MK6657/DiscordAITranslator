@@ -1,5 +1,8 @@
 "use strict";
 
+const { createPixelSvgDataUri } = require("../ui/pixel-icons");
+const PIXEL_CLOSE_ICON = createPixelSvgDataUri("close", "#000000");
+
 module.exports = `
 /* BetterDiscord's plugin-settings modal, marked by applySettingsModalSizing: a moderate window, not a full-width sheet. */
 [data-dait-settings-modal="true"] {
@@ -7,7 +10,7 @@ module.exports = `
     margin-left: auto !important;
     margin-right: auto !important;
     max-height: min(760px, calc(100vh - 64px)) !important;
-    max-width: min(920px, calc(100vw - 48px)) !important;
+    max-width: min(920px, calc(100vw - 48px), var(--dait-dynamic-max-w, 100vw)) !important;
     width: min(920px, calc(100vw - 48px)) !important;
 }
 
@@ -47,25 +50,35 @@ module.exports = `
     --dait-font-small: 13px;
     --dait-line: 1.55;
     --dait-font-family: var(--font-primary, "gg sans", "Noto Sans", "Microsoft YaHei", "Helvetica Neue", Helvetica, Arial, sans-serif);
-    /* 4/8 spacing grid, radii and the shared control size. */
+    /* 4/8 spacing grid, crisp voxel/pixel radii (2px) and shared control size. */
     --dait-space-1: 4px;
     --dait-space-2: 8px;
     --dait-space-3: 12px;
     --dait-space-4: 16px;
     --dait-space-5: 24px;
     --dait-space-6: 28px;
-    --dait-radius-control: 4px;
-    --dait-radius-card: 8px;
-    --dait-radius-pill: 999px;
+    --dait-radius-control: 2px;
+    --dait-radius-card: 2px;
+    --dait-radius-pill: 2px;
     --dait-control-w: 240px;
     --dait-control-h: 36px;
-    /* Derived from the palette: hover of filled buttons, the switch track when off, scrollbars. */
+    /* Derived from the palette: hover of filled buttons, switch off-track, voxel shadows, pixel scrollbars. */
     --dait-brand-hover: color-mix(in srgb, var(--dait-brand) 86%, #000000);
     --dait-raised-hover: color-mix(in srgb, var(--dait-raised) 88%, var(--dait-text));
     --dait-switch-off: color-mix(in srgb, var(--dait-placeholder) 78%, var(--dait-bg));
     --dait-scrollbar-thumb: color-mix(in srgb, var(--dait-placeholder) 55%, transparent);
     --dait-scrollbar-thumb-hover: color-mix(in srgb, var(--dait-placeholder) 80%, transparent);
     --dait-scrollbar-track: transparent;
+    --dait-pixel-shadow-sm: 2px 2px 0 var(--dait-pixel-shadow);
+    --dait-pixel-shadow-md: 4px 4px 0 var(--dait-pixel-shadow);
+    --dait-pixel-bevel: inset 0 1px 0 var(--dait-pixel-highlight), inset 0 -1px 0 var(--dait-pixel-shade);
+    --dait-pixel-trim: repeating-linear-gradient(
+        90deg,
+        var(--dait-brand) 0 16px,
+        var(--dait-accent-gold) 16px 24px,
+        var(--dait-brand) 24px 40px,
+        var(--dait-danger-fill) 40px 44px
+    );
     color: var(--dait-text);
     font-family: var(--dait-font-family);
     font-size: var(--dait-font-body);
@@ -74,62 +87,68 @@ module.exports = `
     line-height: var(--dait-line);
 }
 
-/* Dark palette (also the default for a window that has not been given a theme yet). */
+/* Dark Courtyard palette (墨瓦青砖 — glazed jade, imperial gold, cinnabar on deep ink-slate). */
 [data-dait-panel-theme="dark"],
 :is(.dait-settings, .dait-quick-settings-modal-root, .dait-quick-popover, .dait-polish-result-panel, .dait-input-action-menu, .dait-dialog):not([data-dait-panel-theme]) {
-    --dait-bg: #2b2d31;
-    --dait-rail: #232428;
-    --dait-surface: #313338;
-    --dait-raised: #383a40;
-    --dait-input-bg: #1e1f22;
-    /* Control edges (inputs, selects, segmented controls, secondary buttons) reach 3:1 against the window, rail and
-       card surfaces (WCAG 1.4.11); the spec's #4e5058 reached 1.6-1.9:1. */
-    --dait-input-border: #7a7e86;
-    --dait-divider: #3f4147;
-    --dait-text: #e3e5e8;
-    --dait-heading: #f2f3f5;
-    --dait-placeholder: #949ba4;
-    --dait-brand: #4f5bd5;
+    --dait-bg: #1f2426;
+    --dait-rail: #181c1e;
+    --dait-surface: #262c2f;
+    --dait-raised: #2e3538;
+    --dait-input-bg: #15191a;
+    /* Control edges reach >= 3:1 against window, rail and card surfaces (WCAG 1.4.11). */
+    --dait-input-border: #828c88;
+    --dait-divider: #3a4346;
+    --dait-text: #eee8dc;
+    --dait-heading: #faf4e6;
+    --dait-placeholder: #9ca8a3;
+    --dait-brand: #227a5f;
     --dait-on-fill: #ffffff;
-    --dait-link: #a4abf8;
-    --dait-focus: #6f79e8;
-    --dait-success-fill: #3ba55d;
-    --dait-success: #6ccf8e;
-    --dait-warning-fill: #f0b232;
-    --dait-warning: #f5c55c;
-    --dait-danger-fill: #da373c;
-    --dait-danger: #ff8a8e;
-    --dait-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
-    --dait-backdrop: rgba(0, 0, 0, 0.5);
+    --dait-link: #7de0bc;
+    --dait-focus: #e5bd67;
+    --dait-accent-gold: #d8a84e;
+    --dait-success-fill: #248063;
+    --dait-success: #72dfa8;
+    --dait-warning-fill: #c99022;
+    --dait-warning: #f5cb6e;
+    --dait-danger-fill: #bd3737;
+    --dait-danger: #ff9494;
+    --dait-pixel-shadow: rgba(0, 0, 0, 0.54);
+    --dait-pixel-highlight: rgba(250, 244, 230, 0.08);
+    --dait-pixel-shade: rgba(0, 0, 0, 0.28);
+    --dait-shadow: 6px 6px 0 rgba(0, 0, 0, 0.48), 0 12px 28px rgba(0, 0, 0, 0.36);
+    --dait-backdrop: rgba(12, 15, 16, 0.62);
     color-scheme: dark;
 }
 
-/* Light palette. */
+/* Light Courtyard palette (宣纸暖石 — sunlit rice paper, warm stone, glazed jade & gold). */
 [data-dait-panel-theme="light"] {
-    --dait-bg: #ffffff;
-    --dait-rail: #f2f3f5;
-    --dait-surface: #f6f7f8;
-    --dait-raised: #ebedef;
-    --dait-input-bg: #ffffff;
-    /* White inputs sit on the white window: their edge is the only thing that shows them, so it reaches 3:1 on the
-       window, rail and card surfaces (WCAG 1.4.11); the spec's #c4c9ce reached 1.5-1.7:1. */
-    --dait-input-border: #868a91;
-    --dait-divider: #e3e5e8;
-    --dait-text: #2e3035;
-    --dait-heading: #1f2124;
-    --dait-placeholder: #6d6f78;
-    --dait-brand: #4f5bd5;
+    --dait-bg: #f7f3e9;
+    --dait-rail: #ede6d6;
+    --dait-surface: #fcf9f1;
+    --dait-raised: #e3dac7;
+    --dait-input-bg: #fffdf8;
+    /* Control edges reach >= 3:1 against window, rail and card surfaces (WCAG 1.4.11). */
+    --dait-input-border: #716b5d;
+    --dait-divider: #d4cbb8;
+    --dait-text: #24211b;
+    --dait-heading: #171410;
+    --dait-placeholder: #595449;
+    --dait-brand: #1d6e54;
     --dait-on-fill: #ffffff;
-    --dait-link: #3c45a5;
-    --dait-focus: #4f5bd5;
-    --dait-success-fill: #248046;
-    --dait-success: #1a7f45;
-    --dait-warning-fill: #c7860d;
-    --dait-warning: #8a5a00;
-    --dait-danger-fill: #da373c;
-    --dait-danger: #c42b2f;
-    --dait-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
-    --dait-backdrop: rgba(0, 0, 0, 0.36);
+    --dait-link: #165c45;
+    --dait-focus: #1d6e54;
+    --dait-accent-gold: #c9942a;
+    --dait-success-fill: #1d6e54;
+    --dait-success: #145e43;
+    --dait-warning-fill: #a66d08;
+    --dait-warning: #734700;
+    --dait-danger-fill: #b53333;
+    --dait-danger: #9c2222;
+    --dait-pixel-shadow: rgba(36, 33, 27, 0.24);
+    --dait-pixel-highlight: rgba(255, 253, 248, 0.72);
+    --dait-pixel-shade: rgba(36, 33, 27, 0.12);
+    --dait-shadow: 6px 6px 0 rgba(36, 33, 27, 0.2), 0 10px 24px rgba(36, 33, 27, 0.14);
+    --dait-backdrop: rgba(23, 20, 16, 0.42);
     color-scheme: light;
 }
 
@@ -197,7 +216,7 @@ module.exports = `
 .dait-prompt-preview::-webkit-scrollbar-track,
 .dait-polish-result-output::-webkit-scrollbar-track {
     background: var(--dait-scrollbar-track);
-    border-radius: 999px;
+    border-radius: 0;
 }
 
 [data-dait-settings-modal="true"]::-webkit-scrollbar-thumb,
@@ -210,7 +229,7 @@ module.exports = `
 .dait-polish-result-output::-webkit-scrollbar-thumb {
     background: var(--dait-scrollbar-thumb);
     border: 2px solid transparent;
-    border-radius: 999px;
+    border-radius: 2px;
     background-clip: padding-box;
 }
 
@@ -250,7 +269,7 @@ module.exports = `
 }
 
 .dait-icon-close {
-    --dait-icon-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M6 6l12 12M18 6L6 18'/%3E%3C/svg%3E");
+    --dait-icon-image: ${PIXEL_CLOSE_ICON};
 }
 
 /* One visible focus ring for every control in these surfaces. */

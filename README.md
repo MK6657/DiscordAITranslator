@@ -6,13 +6,13 @@
 
 Discord AI Translator 是一个 BetterDiscord 桌面插件，用于输入润色、公开双语输入、手动消息翻译和频道自动翻译。
 
-## 当前版本
+## 当前分支
 
-`v0.4.0` · 2026-09-26 · 预览版（Pre-release）
+当前分支的源码预览版本为 `v0.4.0`。
 
 版本号显示在设置窗口标题栏、插件启动提示和 BetterDiscord 插件列表中；改动见 [CHANGELOG.md](CHANGELOG.md)。
 
-源码检查、构建一致性、离线回归（模块测试和发布产物回归）、安装器安装/回滚和产物结构已在本地通过。v0.4.0 重做了设置窗口、快捷面板、聊天里的译文行和错误行，这些新界面以及“发送前询问”的发送方式都还没有在真实 Discord 中验收，因此仍以预览版发布，不是稳定版。待验收清单见 [宿主记录](docs/host-smoke-test.md) 和 [接手说明](docs/optimization-handoff.md)。
+源码检查、构建一致性、离线回归（模块测试和产物回归）、安装器安装与回滚、产物结构均已在本地验证。v0.4.0 重做了设置窗口、快捷面板、译文行和错误行。新界面及“发送前询问”的真实 Discord 验收清单见 [宿主记录](docs/host-smoke-test.md) 和 [接手说明](docs/optimization-handoff.md)。
 
 本项目是第三方插件，并非 Discord 官方产品。使用前请自行了解客户端修改的相关规则和风险；不要用重要账号或敏感频道做首次测试。
 
@@ -50,12 +50,14 @@ Discord AI Translator 是一个 BetterDiscord 桌面插件，用于输入润色�
 
 ## 插件安装（无需 Node.js）
 
+**已发布的固定版本**为 `v0.3.0`，于 2026 年 9 月 25 日预发布。
+
 1. 安装 BetterDiscord。
 2. 打开 Discord 设置中的 `BetterDiscord` -> `Plugins`。
 3. 点击 `Open Plugins Folder`。
-4. 打开仓库根目录的 [DiscordAITranslator.plugin.js](DiscordAITranslator.plugin.js)，下载原始文件（不要保存 GitHub 网页），放入插件目录并启用。私有仓库需要先登录有访问权限的账号。
+4. 下载 [v0.3.0 Release 的 DiscordAITranslator.plugin.js](https://github.com/MK6657/DiscordAITranslator/releases/download/v0.3.0/DiscordAITranslator.plugin.js)，放入插件目录并启用。
 
-插件用户只需要这个 `.plugin.js` 文件，不需要安装 Node.js、npm 或 esbuild。当前只有预览版 Release，尚无稳定版；自动翻译会将消息发给所选服务，建议先保持关闭，在专用频道手动测试。
+插件安装只需这个 `.plugin.js` 文件。自动翻译会将消息发给所选服务，建议先在专用频道手动测试。
 
 常见 Windows 插件目录：
 
@@ -63,7 +65,11 @@ Discord AI Translator 是一个 BetterDiscord 桌面插件，用于输入润色�
 C:\Users\<你的用户名>\AppData\Roaming\BetterDiscord\plugins
 ```
 
-从源码运行时也可以使用安装脚本。脚本会检查语法和 SHA256，为已有插件创建备份，并原子更新 BetterDiscord profile 的启用状态：
+### 当前分支源码预览
+
+体验当前分支的 `v0.4.0` 源码预览时，可下载仓库根目录的 [DiscordAITranslator.plugin.js](DiscordAITranslator.plugin.js) 原始文件，或克隆当前分支并运行 `npm run build` 重新生成。
+
+本地预览也可使用安装脚本。脚本会检查语法和 SHA256，为已有插件创建备份，并原子更新 BetterDiscord profile 的启用状态。
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-plugin.ps1
@@ -81,7 +87,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-plugin.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-plugin.ps1 -NoEnable
 ```
 
-安装脚本（包括 `-WhatIf` 预览）会先检查当前窗口是不是运行在某个打包的桌面应用里（例如 AI 应用的内置终端）。这类窗口写入 `%APPDATA%` 的文件会被重定向到该应用的私有目录，正常启动的 Discord 看不到。发现这种情况时，脚本会说明原因、不做任何修改，并以退出码 2 结束；请改在开始菜单打开的普通 PowerShell 窗口中运行，再用 `npm run plugin:check` 确认。确实要装进该应用的私有副本时，才加 `-AllowRedirectedAppData`。
+指定 `-PluginsDir` 时，脚本查找与插件目录同级的 `data` 下的 BetterDiscord profile。可用 `-ProfileDir` 选中单一包含 `plugins.json` 的 profile 目录。
+
+安装目标位于 `%APPDATA%` 时，脚本会在安装或 `-WhatIf` 预览前检查应用包重定向。遇到重定向时，脚本会提示原因并以退出码 2 结束。请在开始菜单打开普通 PowerShell，重新运行安装，再用 `npm run plugin:check` 确认。若要装入当前应用的私有副本，使用 `-AllowRedirectedAppData`。
 
 ### 确认装的是哪个版本
 
@@ -90,6 +98,8 @@ npm run plugin:check
 ```
 
 该命令需要本仓库的克隆以及 Node.js/npm；没有 npm 时也可在仓库目录运行 `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\check-installed-plugin.ps1`。只下载了插件文件的用户，可直接看设置页顶部显示的版本号。它会列出仓库构建与已安装插件的版本和 SHA256，并检查三种“装了却没生效”的情况：某个应用（例如 AI 桌面应用）保存的私有 BetterDiscord 副本、当前窗口的写入被重定向到应用私有目录、Discord 启动文件没有加载 BetterDiscord。安装和检查都请在开始菜单打开的普通 PowerShell 窗口中运行，不要在 AI 应用的内置终端里运行。
+
+自动化可用 `npm run plugin:check -- -Strict`，将目标 profile 未启用或 Discord 加载条件未确认视为检查失败。
 
 ## Windows 11 从源码运行
 
@@ -164,7 +174,7 @@ npm run verify
 
 `scripts/verify-plugin.js` 直接加载根目录插件，覆盖配置迁移、provider 请求与解析、fallback 凭据隔离、缓存、自动翻译队列、长文本、诊断、生命周期和 DOM mock 回归。
 
-GitHub Actions 在 `windows-latest` 上使用 Node 22 和 Node 24 执行 `npm ci` 与 `npm run release:check`。
+GitHub Actions 在 `windows-latest` 上使用 Node 22 和 Node 24 执行 `npm ci` 与 `npm run release:check`。标签推送校验该标签对应的提交并记录插件 SHA-256。本地有暂存改动时，发布门禁要求工作树与暂存区一致。暂存区无改动时，命令验证当前工作树。
 
 ## 更新和卸载
 

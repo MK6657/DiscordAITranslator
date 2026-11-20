@@ -632,7 +632,8 @@ test("settings search in English: clear, test and cache find the actions; 'reset
     const reset = labels("reset");
     assert.ok(reset.includes(plugin.t("reset")));
     assert.deepEqual(reset.filter(label => /preset/i.test(label)), [], "no match inside another word");
-    assert.ok(labels("preset").some(label => /preset/i.test(label)), "the whole word still matches");
+    assert.deepEqual(labels("set").filter(label => /\breset\b/i.test(label)), [], "word-middle 'set' does not match 'Reset'");
+    assert.ok(labels("model").some(label => /model/i.test(label)), "the whole word still matches");
     assert.ok(labels("api").length > 0, "a word start in the middle of a label");
 });
 
@@ -747,13 +748,21 @@ test("English wording: 'hide original' in both places and sentence-case group he
 test("built-in prompt templates show a localised name in English; renamed and custom ones keep their name", t => {
     const { plugin, doc } = createPlugin(t, { language: "en", tab: "translate" });
     const templates = plugin.getPromptTemplates("translation");
-    const custom = { id: "translation-custom-fake", serial: "003", name: "My style", prompt: "Translate into {targetLanguage}." };
+    const custom = { id: "translation-custom-fake", serial: "007", name: "My style", prompt: "Translate into {targetLanguage}." };
     templates.push(custom);
     const panel = plugin.getSettingsPanel({ quickSettings: true });
     doc.body.appendChild(panel);
     const manager = tabPanel(panel, "translate").querySelector(".dait-prompt-manager");
     const options = manager.querySelector("select").querySelectorAll("option").map(option => option.textContent);
-    assert.deepEqual(options, ["001 · Natural", "002 · Literal", "003 · My style"]);
+    assert.deepEqual(options, [
+        "001 · Natural",
+        "002 · Literal",
+        "003 · Slang & casual chat",
+        "004 · Tech, AI & dev",
+        "005 · Gaming & ACG",
+        "006 · Formal & changelog",
+        "007 · My style"
+    ]);
     assert.ok(options.every(text => !/[一-鿿]/.test(text)), "no Chinese names in the English UI");
     assert.ok(manager.textContent.includes(plugin.t("promptUsingTemplate", { code: "001", name: "Natural" })));
     assert.equal(plugin.getPromptTemplateDisplayName(templates[0]), "Natural");
@@ -762,7 +771,16 @@ test("built-in prompt templates show a localised name in English; renamed and cu
     // A built-in template the user renamed keeps the new name.
     assert.equal(plugin.getPromptTemplateDisplayName({ ...templates[0], name: "Casual" }), "Casual");
     // The polish templates too.
-    assert.deepEqual(plugin.getPromptTemplates("polish").map(template => plugin.getPromptTemplateDisplayName(template)), ["Natural chat", "Polite and clear", "Short and direct"]);
+    assert.deepEqual(plugin.getPromptTemplates("polish").map(template => plugin.getPromptTemplateDisplayName(template)), [
+        "Natural chat",
+        "Polite and clear",
+        "Short and direct",
+        "Native casual",
+        "Tech & bug report",
+        "Gaming & squad chat",
+        "Tactful & diplomatic",
+        "Formal & announcement"
+    ]);
     // Toasts name it the same way.
     plugin.applyPromptTemplate("translation", "translation-literal");
     assert.equal(plugin.toasts.at(-1).message, plugin.t("promptApplied", { name: "Literal", code: "002" }));

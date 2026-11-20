@@ -316,6 +316,131 @@ test("strict retry off: invalid rows from a successful batch still end as final 
     items.forEach(item => assert.equal(plugin.autoTranslationFailures.get(item.cacheKey)?.type, "invalid-output"));
 });
 
+test("A11 preserves JSON fields with code fences", async () => {
+    const plugin = new Plugin();
+    const withCode = "保留下面的代码：\n```js\nconsole.log(\"{test}\");\n```\n完成。";
+    const json = JSON.stringify([{ id: "2", translation: "第二条消息。" }, { id: 1, translation: withCode }]);
+    for (const output of [json, "```JSON\r\n" + json + "\r\n```", "Here is the translation:\n" + json]) {
+        plugin.runModelTask = async () => output;
+        assert.deepEqual(await plugin.runAutoTranslationBatchTask(["An example.", "Another example."]), [withCode, "第二条消息。"]);
+    }
+});
+
+test("A11 rejects unknown, duplicate and conflicting IDs", async () => {
+    const plugin = new Plugin();
+    const rows = ["An example.", "Another example.", "A third example."];
+    const invalidOutputs = [
+        '[{"id":"1002","translation":"不应写入。"}]',
+        '[{"id":["2"],"translation":"不应写入。"}]',
+        '[{"id":2,"translation":"第一份。"},{"id":"002","translation":"第二份。"}]',
+        '{"translations":{"002":"第一份。","\\u0030\\u00302":"第二份。"}}',
+        '{"translations":{"1002":{"id":"002","translation":"不应写入。"}}}'
+    ];
+    for (const output of invalidOutputs) {
+        plugin.runModelTask = async () => output;
+        await assert.rejects(plugin.runAutoTranslationBatchTask(rows), { code: "AUTO_BATCH_PARSE_FAILED" });
+    }
+
+    assert.deepEqual(plugin.parseAutoTranslationBatchOutput('{"1":"第一条。","02":"第二条。"}'), [
+        { id: "001", translation: "第一条。" },
+        { id: "002", translation: "第二条。" }
+    ]);
+    plugin.runModelTask = async () => '{"translations":{"2":{"id":"002","translation":"第二条消息。"}}}';
+    const result = await plugin.runAutoTranslationBatchTask(rows);
+    assert.deepEqual(result, ["", "第二条消息。", ""]);
+    assert.deepEqual([...result.omittedIndexes], [0, 2]);
+});
+
+function createMicrosoftQueuePlugin(t) {
+    const plugin = createQueuePlugin(t);
+    Object.assign(plugin.settings.translation, { provider: "microsoft", apiKey: "synthetic-microsoft-key", endpoint: "https://translator.example.test/translate", targetLanguage: "日语" });
+    plugin.scheduleTranslationCachePersist = () => {};
+    plugin.getElementText = content => content.sourceText;
+    plugin.hasManualTranslationLine = () => false;
+    plugin.queueAutoTranslationRenderTask = task => task.run();
+    return plugin;
+}
+
+function makeMicrosoftItem(plugin, name, text) {
+    return makeItem(plugin, name, { text, content: { dataset: {}, isConnected: true, sourceText: text } });
+}
+
+test("A12 Microsoft single and batch render and cache alike", async t => {
+    const plugin = createMicrosoftQueuePlugin(t);
+    const source = "工作完成了。";
+    const expected = "仕事完了。";
+    const single = makeMicrosoftItem(plugin, "microsoft-single", source);
+    const batchGood = makeMicrosoftItem(plugin, "microsoft-batch", source);
+    const batchBad = makeMicrosoftItem(plugin, "microsoft-emoji", "工作结束了。 <:check:123456789012345678>");
+    const rendered = new Map();
+    const sizes = [];
+    plugin.renderAutoTranslationRequestTarget = (item, _target, translated, validation) => {
+        rendered.set(item.cacheKey, { translated, renderable: validation.renderable, cacheable: validation.cacheable });
+        return true;
+    };
+    plugin.fetchApiResponseText = async (_endpoint, request) => {
+        sizes.push(request.body.length);
+        assert.equal(request.responseParser, "microsoftTranslate");
+        return JSON.stringify(request.body.map(() => ({ translations: [{ text: expected }] })));
+    };
+    assert.equal(plugin.getAutoTranslationInvalidOutputReason(source, expected, "日语"), "residual-source");
+
+    startInFlight(plugin, [single]);
+    await plugin.autoTranslateQueuedMessage(single);
+    startInFlight(plugin, [batchGood, batchBad]);
+    await plugin.autoTranslateQueuedBatch([batchGood, batchBad]);
+
+    assert.deepEqual(sizes, [1, 2]);
+    for (const item of [single, batchGood]) {
+        assert.deepEqual(rendered.get(item.cacheKey), { translated: expected, renderable: true, cacheable: true });
+        assert.equal(plugin.getTranslationCacheValue(item.cacheKey), expected);
+    }
+    assert.equal(rendered.has(batchBad.cacheKey), false);
+    assert.equal(plugin.getTranslationCacheValue(batchBad.cacheKey), null);
+    assert.equal(plugin.getAutoTranslationFailure(batchBad.cacheKey)?.invalidReason, "emoji-mismatch");
+    await assert.rejects(plugin.runAutoTranslationTask(batchBad.text, batchBad.requestOptions), { autoTranslationInvalidReason: "emoji-mismatch" });
+});
+
+test("A12 batch retry retains only the emoji mismatch", async t => {
+    const plugin = createMicrosoftQueuePlugin(t);
+    const good = makeMicrosoftItem(plugin, "microsoft-retry", "工作完成了。");
+    const bad = makeMicrosoftItem(plugin, "microsoft-retry-emoji", "工作结束了。 <:check:123456789012345678>");
+    const rendered = [];
+    plugin.renderAutoTranslationRequestTarget = item => { rendered.push(item.cacheKey); return true; };
+    plugin.fetchApiResponseText = async (_endpoint, request) => JSON.stringify(request.body.map(() => ({ translations: [{ text: "仕事完了。" }] })));
+    const pending = new Set([good, bad]);
+    startInFlight(plugin, [...pending]);
+
+    await plugin.runAutoTranslationBatchRetryItems(pending);
+
+    assert.deepEqual(rendered, [good.cacheKey]);
+    assert.equal(plugin.getTranslationCacheValue(good.cacheKey), "仕事完了。");
+    assert.deepEqual([...pending], [bad]);
+    assert.equal(bad.daitLastInvalidReason, "emoji-mismatch");
+    assert.equal(plugin.getTranslationCacheValue(bad.cacheKey), null);
+});
+
+test("A12 empty Microsoft responses are never rendered or cached", async t => {
+    const plugin = createMicrosoftQueuePlugin(t);
+    const single = makeMicrosoftItem(plugin, "microsoft-empty-single", "工作完成了。");
+    const batch = [makeMicrosoftItem(plugin, "microsoft-empty-batch-good", "工作结束了。"), makeMicrosoftItem(plugin, "microsoft-empty-batch-bad", "今天该交报告了。")];
+    const rendered = [];
+    plugin.renderAutoTranslationRequestTarget = item => { rendered.push(item.cacheKey); return true; };
+    plugin.fetchApiResponseText = async (_endpoint, request) => JSON.stringify(
+        request.body.map((_row, index) => ({ translations: [{ text: request.body.length === 1 || index === 1 ? "  " : "仕事完了。" }] }))
+    );
+    startInFlight(plugin, [single]);
+    await plugin.autoTranslateQueuedMessage(single);
+    startInFlight(plugin, batch);
+    await plugin.autoTranslateQueuedBatch(batch);
+
+    assert.deepEqual(rendered, []);
+    for (const item of [single, ...batch]) {
+        assert.equal(plugin.getAutoTranslationFailure(item.cacheKey)?.type, "parse");
+        assert.equal(plugin.getTranslationCacheValue(item.cacheKey), null);
+    }
+});
+
 // --- req-6: long messages stop on provider errors ---
 
 test("a long message stops sending chunks after a rate-limit, auth, quota, server or timeout error", async () => {

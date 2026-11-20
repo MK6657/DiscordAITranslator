@@ -1,5 +1,9 @@
 "use strict";
 
+const { createPixelSvgDataUri } = require("../ui/pixel-icons");
+const PIXEL_GEAR_ICON = createPixelSvgDataUri("gear", "#000000");
+const PIXEL_CLOSE_ICON = createPixelSvgDataUri("close", "#000000");
+
 // The user-panel launcher's quick panel (popover) and its status badge. The popover is a plugin window: its colours
 // come from the panel palette (01-theme-tokens, data-dait-panel-theme on the popover) and it uses the one type scale
 // (body 15/1.55, title 18/600, section heading 16/600, version chip 13/500), 360 px wide, controls 36 px high.
@@ -21,8 +25,8 @@ module.exports = `
     --dait-qp-off-mark: var(--dait-placeholder);
     --dait-qp-control-w: 180px;
     background: var(--dait-bg);
-    border: 1px solid var(--dait-divider);
-    border-radius: 8px;
+    border: 2px solid var(--dait-input-border);
+    border-radius: var(--dait-radius-card);
     box-shadow: var(--dait-shadow);
     box-sizing: border-box;
     color: var(--dait-text);
@@ -43,6 +47,14 @@ module.exports = `
     z-index: 2147482000;
 }
 
+.dait-quick-popover::before {
+    background: var(--dait-pixel-trim);
+    content: "";
+    display: block;
+    flex: 0 0 4px;
+    width: 100%;
+}
+
 .dait-quick-popover *,
 .dait-quick-popover *::before,
 .dait-quick-popover *::after {
@@ -51,10 +63,12 @@ module.exports = `
 
 .dait-qp-header {
     align-items: center;
+    background: var(--dait-rail);
+    border-bottom: 1px solid var(--dait-divider);
     display: flex;
     flex: 0 0 auto;
     gap: 8px;
-    padding: 12px 8px 8px 16px;
+    padding: 10px 8px 10px 16px;
 }
 
 .dait-qp-title {
@@ -71,7 +85,9 @@ module.exports = `
 
 .dait-qp-chip {
     background: var(--dait-raised);
-    border-radius: 999px;
+    border: 1px solid var(--dait-divider);
+    border-radius: var(--dait-radius-pill);
+    box-shadow: inset 0 1px 0 var(--dait-pixel-highlight);
     color: var(--dait-text);
     flex: 0 0 auto;
     font-size: var(--dait-font-small);
@@ -84,7 +100,7 @@ module.exports = `
     align-items: center;
     background: transparent;
     border: 0;
-    border-radius: 4px;
+    border-radius: var(--dait-radius-control);
     color: var(--dait-text);
     cursor: pointer;
     display: inline-flex;
@@ -101,6 +117,7 @@ module.exports = `
 
 .dait-qp-icon-button:hover {
     background: var(--dait-raised);
+    box-shadow: inset 0 0 0 1px var(--dait-divider);
     color: var(--dait-heading);
 }
 
@@ -114,11 +131,11 @@ module.exports = `
 }
 
 .dait-qp-icon-gear {
-    --dait-qp-icon-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='3'/%3E%3Cpath d='M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z'/%3E%3C/svg%3E");
+    --dait-qp-icon-image: ${PIXEL_GEAR_ICON};
 }
 
 .dait-qp-icon-close {
-    --dait-qp-icon-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M6 6l12 12M18 6L6 18'/%3E%3C/svg%3E");
+    --dait-qp-icon-image: ${PIXEL_CLOSE_ICON};
 }
 
 .dait-qp-body {
@@ -127,7 +144,7 @@ module.exports = `
     overflow-x: hidden;
     overflow-y: auto;
     overscroll-behavior: contain;
-    padding: 4px 16px 12px;
+    padding: 10px 16px 12px;
     scrollbar-width: thin;
 }
 
@@ -136,11 +153,13 @@ module.exports = `
 .dait-qp-status {
     align-items: center;
     background: var(--dait-surface);
-    border-radius: 8px;
+    border: 1px solid var(--dait-divider);
+    border-radius: var(--dait-radius-card);
+    box-shadow: var(--dait-pixel-shadow-sm);
     column-gap: 12px;
     display: grid;
     grid-template-columns: 10px minmax(0, 1fr) auto;
-    margin: 0 0 4px;
+    margin: 0 0 6px;
     padding: 10px 12px;
 }
 
@@ -237,7 +256,8 @@ module.exports = `
 .dait-qp-button {
     align-items: center;
     border: 1px solid transparent;
-    border-radius: 4px;
+    border-radius: var(--dait-radius-control);
+    box-shadow: var(--dait-pixel-bevel), var(--dait-pixel-shadow-sm);
     cursor: pointer;
     display: inline-flex;
     font-family: inherit;
@@ -248,7 +268,13 @@ module.exports = `
     line-height: var(--dait-line);
     min-width: 60px;
     padding: 0 14px;
+    transition: background-color 120ms ease, transform 80ms ease, box-shadow 80ms ease;
     white-space: nowrap;
+}
+
+.dait-qp-button:active:not(:disabled) {
+    box-shadow: none;
+    transform: translate(1px, 1px);
 }
 
 .dait-qp-button-secondary {
@@ -344,8 +370,9 @@ label.dait-qp-label {
     -webkit-appearance: none;
     appearance: none;
     background: var(--dait-switch-off);
-    border: 0;
-    border-radius: 999px;
+    border: 1px solid var(--dait-input-border);
+    border-radius: 2px;
+    box-shadow: inset 0 1px 0 var(--dait-pixel-shade);
     cursor: pointer;
     flex: 0 0 auto;
     height: 24px;
@@ -357,18 +384,19 @@ label.dait-qp-label {
 
 .dait-qp-switch::before {
     background: #ffffff;
-    border-radius: 999px;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+    border-radius: 1px;
+    box-shadow: 1px 1px 0 rgba(0, 0, 0, 0.35);
     content: "";
-    height: 18px;
+    height: 16px;
     left: 3px;
     position: absolute;
     top: 3px;
-    width: 18px;
+    width: 16px;
 }
 
 .dait-qp-switch:checked {
     background: var(--dait-brand);
+    border-color: var(--dait-brand);
 }
 
 .dait-qp-switch:checked::before {
@@ -393,7 +421,8 @@ label.dait-qp-label {
     background-repeat: no-repeat;
     background-size: 5px 5px, 5px 5px;
     border: 1px solid var(--dait-input-border);
-    border-radius: 4px;
+    border-radius: var(--dait-radius-control);
+    box-shadow: inset 1px 1px 0 var(--dait-pixel-shade);
     color: var(--dait-text);
     cursor: pointer;
     font-family: inherit;
@@ -417,7 +446,8 @@ label.dait-qp-label {
 .dait-qp-segmented {
     background: var(--dait-input-bg);
     border: 1px solid var(--dait-input-border);
-    border-radius: 4px;
+    border-radius: var(--dait-radius-control);
+    box-shadow: inset 1px 1px 0 var(--dait-pixel-shade);
     display: grid;
     gap: 2px;
     grid-auto-columns: minmax(0, 1fr);
@@ -434,7 +464,7 @@ label.dait-qp-label {
 .dait-qp-segment {
     background: transparent;
     border: 0;
-    border-radius: 3px;
+    border-radius: 1px;
     color: var(--dait-text);
     cursor: pointer;
     font-family: inherit;
@@ -459,6 +489,7 @@ label.dait-qp-label {
 /* The chosen value reads at a glance in both themes: filled with the accent, white text. */
 .dait-qp-segment[aria-checked="true"] {
     background: var(--dait-brand);
+    box-shadow: inset 0 1px 0 var(--dait-pixel-highlight);
     color: var(--dait-on-fill);
 }
 
@@ -484,7 +515,7 @@ label.dait-qp-label {
 .dait-qp-link {
     background: transparent;
     border: 0;
-    border-radius: 4px;
+    border-radius: var(--dait-radius-control);
     color: var(--dait-link);
     cursor: pointer;
     font-family: inherit;
@@ -526,7 +557,7 @@ label.dait-qp-label {
 /* Status shapes differ as well as colours: filled = ok, ring = busy, triangle = waiting, "!" = needs you,
    dash = off. */
 .dait-qp-dot {
-    border-radius: 999px;
+    border-radius: 2px;
     display: block;
     flex: 0 0 auto;
     height: 10px;
@@ -579,14 +610,25 @@ label.dait-qp-label {
     top: calc(50% - 0.75px);
 }
 
-/* The launcher: same size as Discord's user-panel buttons, with the status badge on its corner. */
+/* The launcher: compact fit inside Discord's user-panel button row so it never crowds or covers User Settings. */
 .dait-quick-settings-panel {
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 700;
-    height: 32px;
-    min-width: 32px;
-    padding: 0 8px;
+    height: 30px;
+    max-width: 30px;
+    min-width: 28px;
+    padding: 0;
     position: relative;
+    width: 30px;
+}
+
+.dait-quick-settings-panel[data-dait-launcher-compact="true"] {
+    font-size: 10px;
+    height: 26px;
+    margin: 0 1px 0 0;
+    max-width: 24px;
+    min-width: 24px;
+    width: 24px;
 }
 
 .dait-quick-settings-panel:focus-visible {
@@ -597,15 +639,15 @@ label.dait-qp-label {
 .dait-launcher-status {
     align-items: center;
     background: var(--background-secondary-alt, #232428);
-    border-radius: 999px;
-    bottom: -3px;
+    border-radius: 2px;
+    bottom: -1px;
     display: flex;
-    height: 14px;
+    height: 12px;
     justify-content: center;
     pointer-events: none;
     position: absolute;
-    right: -3px;
-    width: 14px;
+    right: -1px;
+    width: 12px;
 }
 
 @media (prefers-reduced-motion: no-preference) {

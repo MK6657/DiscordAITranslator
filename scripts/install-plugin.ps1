@@ -6,7 +6,7 @@ Installs the generated DiscordAITranslator BetterDiscord plugin on Windows.
 Validates JavaScript syntax, creates a timestamped backup, verifies SHA256, and
 optionally enables the plugin in each BetterDiscord profile using atomic JSON replacement.
 
-Before installing (also with -WhatIf), it writes and removes a small probe file in %APPDATA% to
+Before installing into %APPDATA% (also with -WhatIf), it writes and removes a small probe file there to
 detect a window running inside a packaged app (for example an AI desktop app). Such a window's new
 AppData files are redirected to %LOCALAPPDATA%\Packages\<app>\LocalCache\Roaming, which a normally
 started Discord never reads, so the script then stops with exit code 2 and changes nothing.
@@ -15,7 +15,11 @@ started Discord never reads, so the script then stops with exit code 2 and chang
 Path to the generated .plugin.js file. Defaults to the repository root artifact.
 
 .PARAMETER PluginsDir
-BetterDiscord plugins directory. Defaults to the current user's APPDATA directory.
+BetterDiscord plugins directory. Defaults to the current user's APPDATA directory. Profile
+enable state comes from the sibling data directory unless -ProfileDir selects a profile.
+
+.PARAMETER ProfileDir
+Directory of one BetterDiscord profile containing plugins.json, such as BetterDiscord\data\stable.
 
 .PARAMETER SkipSyntaxCheck
 Skips the Node.js syntax check.
@@ -37,6 +41,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-plugin
 param(
     [string]$PluginPath = "",
     [string]$PluginsDir = "",
+    [string]$ProfileDir = "",
     [switch]$SkipSyntaxCheck,
     [switch]$NoEnable,
     [switch]$AllowRedirectedAppData
@@ -71,76 +76,182 @@ function Set-Utf8NoBomContent {
     [System.IO.File]::WriteAllText($Path, $Value, $encoding)
 }
 
-function Enable-BetterDiscordPlugin {
+function Invoke-InstallerRollback {
+    param([Parameter(Mandatory = $true)][scriptblock]$Restore)
+
+    for ($attempt = 0; ; $attempt++) {
+        try {
+            & $Restore
+            return
+        }
+        catch {
+            $failure = $_.Exception.GetBaseException()
+            if ($attempt -ge 8 -or $failure -isnot [System.IO.IOException] -or ($failure.HResult -band 0xffff) -notin (32, 33)) {
+                throw
+            }
+            Start-Sleep -Milliseconds 125
+        }
+    }
+}
+
+function Read-InstallerProfile {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $bytes = [System.IO.File]::ReadAllBytes($Path)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $hash = [System.BitConverter]::ToString($sha.ComputeHash($bytes)).Replace("-", "")
+    }
+    finally { $sha.Dispose() }
+
+    $state = [System.Collections.Specialized.OrderedDictionary]::new([System.StringComparer]::Ordinal)
+    $raw = [System.Text.Encoding]::UTF8.GetString($bytes).TrimStart([char]0xFEFF).Trim()
+    if ($raw) {
+        if (-not $raw.StartsWith("{")) { throw "Expected a JSON object in profile file: $Path" }
+        $parsed = ConvertFrom-Json -InputObject $raw -ErrorAction Stop
+        foreach ($property in $parsed.PSObject.Properties) {
+            $state[$property.Name] = $property.Value
+        }
+    }
+    return [pscustomobject]@{ Hash = $hash; State = $state }
+}
+
+function Restore-InstallerBackup {
     param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Backup,
+        [string]$ExpectedHash = ""
+    )
+
+    $restoreTemp = "$Path.tmp-$([guid]::NewGuid().ToString('N'))"
+    try {
+        [System.IO.File]::Copy($Backup, $restoreTemp)
+        if ($ExpectedHash) {
+            if ((Get-Sha256 -Path $Path) -ne $ExpectedHash) {
+                throw "File changed before rollback: $Path"
+            }
+            [System.IO.File]::Replace($restoreTemp, $Path, [NullString]::Value, $true)
+        }
+        else {
+            [System.IO.File]::Move($restoreTemp, $Path)
+        }
+    }
+    finally {
+        if ([System.IO.File]::Exists($restoreTemp)) {
+            Remove-Item -LiteralPath $restoreTemp -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+function Undo-InstallerProfileChange {
+    param(
+        [Parameter(Mandatory = $true)][pscustomobject]$Change,
         [Parameter(Mandatory = $true)][string]$PluginName
     )
 
-    $dataDir = Join-Path $env:APPDATA "BetterDiscord\data"
-    if (-not (Test-Path -LiteralPath $dataDir -PathType Container)) {
-        return @()
+    $path = $Change.Path
+    $backup = $Change.Backup
+    if (-not $Change.Committed) {
+        if ([System.IO.File]::Exists($backup) -and -not [System.IO.File]::Exists($path)) {
+            Restore-InstallerBackup -Path $path -Backup $backup
+        }
+        return
     }
 
-    $updated = New-Object System.Collections.Generic.List[string]
-    $backups = @{}
+    $current = Read-InstallerProfile -Path $path
+    if ($current.Hash -eq $Change.InstalledHash) {
+        Restore-InstallerBackup -Path $path -Backup $backup -ExpectedHash $current.Hash
+        return
+    }
+
+    $state = $current.State
+    if ($state[$PluginName] -isnot [bool] -or -not $state[$PluginName]) {
+        Write-Warning "Profile changed after enable. Preserved its current state at '$path'. Backup retained: '$backup'." -WarningAction Continue
+        return
+    }
+
+    $original = (Read-InstallerProfile -Path $backup).State
+    if ($original.Contains($PluginName)) {
+        $state[$PluginName] = $original[$PluginName]
+    }
+    else {
+        $state.Remove($PluginName)
+    }
+    $restoreTemp = "$path.tmp-$([guid]::NewGuid().ToString('N'))"
     try {
-        foreach ($profile in @(Get-ChildItem -LiteralPath $dataDir -Directory -ErrorAction SilentlyContinue)) {
-            $pluginsJson = Join-Path $profile.FullName "plugins.json"
-            if (-not (Test-Path -LiteralPath $pluginsJson -PathType Leaf)) {
-                continue
-            }
+        Set-Utf8NoBomContent -Path $restoreTemp -Value (ConvertTo-Json -InputObject $state -Depth 100)
+        if ((Get-Sha256 -Path $path) -ne $current.Hash) {
+            throw "Profile changed before rollback: $path"
+        }
+        [System.IO.File]::Replace($restoreTemp, $path, [NullString]::Value, $true)
+    }
+    finally {
+        if ([System.IO.File]::Exists($restoreTemp)) {
+            Remove-Item -LiteralPath $restoreTemp -Force -ErrorAction SilentlyContinue
+        }
+    }
+    Write-Warning "Profile changed after enable. Rolled back only '$PluginName' in '$path'. Backup retained: '$backup'." -WarningAction Continue
+}
 
-            $originalHash = Get-Sha256 -Path $pluginsJson
-            $raw = (Get-Content -LiteralPath $pluginsJson -Raw -Encoding UTF8 -ErrorAction Stop).Trim()
-            $state = [ordered]@{}
-            if ($raw) {
-                $parsed = $raw | ConvertFrom-Json -ErrorAction Stop
-                foreach ($property in $parsed.PSObject.Properties) {
-                    $state[$property.Name] = $property.Value
-                }
-            }
-            if ($state.Contains($PluginName) -and $state[$PluginName] -eq $true) {
-                continue
-            }
+function Enable-BetterDiscordPlugin {
+    param(
+        [Parameter(Mandatory = $true)][AllowNull()][AllowEmptyCollection()][string[]]$ProfileFiles,
+        [Parameter(Mandatory = $true)][string]$PluginName
+    )
 
+    $changes = [System.Collections.Generic.List[object]]::new()
+    try {
+        foreach ($pluginsJson in $ProfileFiles) {
+            $original = Read-InstallerProfile -Path $pluginsJson
+            $state = $original.State
+            if ($state[$PluginName] -is [bool] -and $state[$PluginName]) { continue }
             $state[$PluginName] = $true
-            $json = $state | ConvertTo-Json -Depth 8
             $runId = [guid]::NewGuid().ToString("N")
             $temp = "$pluginsJson.tmp-$runId"
             $backup = "$pluginsJson.bak-enable-$runId"
             try {
-                Set-Utf8NoBomContent -Path $temp -Value $json
-                $validated = Get-Content -LiteralPath $temp -Raw -Encoding UTF8 -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
-                $enabledProperty = $validated.PSObject.Properties | Where-Object { $_.Name -eq $PluginName } | Select-Object -First 1
-                if (-not $enabledProperty -or $enabledProperty.Value -ne $true) {
+                Set-Utf8NoBomContent -Path $temp -Value (ConvertTo-Json -InputObject $state -Depth 100)
+                $staged = Read-InstallerProfile -Path $temp
+                if ($staged.State[$PluginName] -isnot [bool] -or -not $staged.State[$PluginName]) {
                     throw "Plugin enable verification failed for profile file: $pluginsJson"
                 }
-                if ((Get-Sha256 -Path $pluginsJson) -ne $originalHash) {
+                if ((Get-Sha256 -Path $pluginsJson) -ne $original.Hash) {
                     throw "Profile file changed during installation: $pluginsJson"
                 }
+                $change = [pscustomobject]@{
+                    Path = $pluginsJson
+                    Backup = $backup
+                    InstalledHash = $staged.Hash
+                    Committed = $false
+                }
+                $changes.Add($change)
                 [System.IO.File]::Replace($temp, $pluginsJson, $backup, $true)
-                $backups[$pluginsJson] = $backup
-                $updated.Add($pluginsJson)
+                $change.Committed = $true
+                if ((Get-Sha256 -Path $backup) -ne $original.Hash) {
+                    throw "Profile file changed during installation: $pluginsJson"
+                }
             }
             finally {
-                if (Test-Path -LiteralPath $temp) {
+                if ([System.IO.File]::Exists($temp)) {
                     Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
                 }
             }
         }
     }
     catch {
-        for ($index = $updated.Count - 1; $index -ge 0; $index--) {
-            $path = $updated[$index]
-            $backup = $backups[$path]
-            if ($backup -and (Test-Path -LiteralPath $backup -PathType Leaf)) {
-                Copy-Item -LiteralPath $backup -Destination $path -Force -ErrorAction SilentlyContinue
+        for ($index = $changes.Count - 1; $index -ge 0; $index--) {
+            $change = $changes[$index]
+            try {
+                Invoke-InstallerRollback -Restore { Undo-InstallerProfileChange -Change $change -PluginName $PluginName }
+            }
+            catch {
+                Write-Warning "Profile rollback failed for '$($change.Path)'. Recovery backup: '$($change.Backup)'. $($_.Exception.Message)" -WarningAction Continue
             }
         }
         throw
     }
 
-    return @($updated)
+    return $changes | ForEach-Object { $_.Path }
 }
 
 function Get-PluginVersion {
@@ -150,6 +261,16 @@ function Get-PluginVersion {
     $match = [regex]::Match(($header -join "`n"), '@version\s+(\S+)')
     if ($match.Success) { return $match.Groups[1].Value }
     return "unknown"
+}
+
+function Get-PluginName {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $header = Get-Content -LiteralPath $Path -TotalCount 24 -Encoding UTF8 -ErrorAction Stop
+    $match = [regex]::Match(($header -join "`n"), '(?m)^[ \t]*\*[ \t]*@name[ \t]+([^\r\n]+)')
+    if (-not $match.Success -or -not $match.Groups[1].Value.Trim()) {
+        throw "The plugin metadata must contain an @name: $Path"
+    }
+    return $match.Groups[1].Value.Trim()
 }
 
 # Packaged desktop apps redirect files that a process inside them creates under %APPDATA% to
@@ -182,14 +303,13 @@ function Get-AppDataRedirectPackage {
     }
 }
 
-if (-not $env:APPDATA) {
-    throw "APPDATA is not set. Cannot locate the BetterDiscord plugins folder."
-}
-
 if (-not $PluginPath) {
     $PluginPath = Join-Path $PSScriptRoot "..\DiscordAITranslator.plugin.js"
 }
 if (-not $PluginsDir) {
+    if (-not $env:APPDATA) {
+        throw "APPDATA is not set. Supply -PluginsDir to locate the BetterDiscord plugins folder."
+    }
     $PluginsDir = Join-Path $env:APPDATA "BetterDiscord\plugins"
 }
 
@@ -203,15 +323,46 @@ if (-not (Test-Path -LiteralPath $PluginsDir -PathType Container)) {
 }
 
 $resolvedPluginsDir = (Resolve-Path -LiteralPath $PluginsDir).ProviderPath
-$destination = Join-Path $resolvedPluginsDir (Split-Path -Leaf $pluginFile)
+$destination = Join-Path $resolvedPluginsDir "DiscordAITranslator.plugin.js"
 $pluginsRoot = [System.IO.Path]::GetFullPath($resolvedPluginsDir).TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
 $destinationFull = [System.IO.Path]::GetFullPath($destination)
 if (-not $destinationFull.StartsWith($pluginsRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
     throw "Refusing to write outside the BetterDiscord plugins folder: $destinationFull"
 }
 
+$pluginName = Get-PluginName -Path $pluginFile
+$profileFiles = @()
+if (-not $NoEnable) {
+    if ($ProfileDir) {
+        $resolvedProfileDir = (Resolve-Path -LiteralPath $ProfileDir -ErrorAction Stop).ProviderPath
+        $pluginsJson = Join-Path $resolvedProfileDir "plugins.json"
+        if (-not (Test-Path -LiteralPath $pluginsJson -PathType Leaf)) {
+            throw "The specified BetterDiscord profile does not contain plugins.json: $resolvedProfileDir"
+        }
+        $profileFiles = @($pluginsJson)
+    }
+    else {
+        $pluginsParent = Split-Path -Parent $resolvedPluginsDir
+        if ($pluginsParent) {
+            $profileDataDir = Join-Path $pluginsParent "data"
+            if (Test-Path -LiteralPath $profileDataDir -PathType Container) {
+                $profileFiles = @(Get-ChildItem -LiteralPath $profileDataDir -Directory -ErrorAction Stop |
+                    ForEach-Object { Join-Path $_.FullName "plugins.json" } |
+                    Where-Object { Test-Path -LiteralPath $_ -PathType Leaf })
+            }
+        }
+    }
+}
+
 # The hash check below reads through the same redirected view, so it cannot catch this case.
-$redirectPackage = Get-AppDataRedirectPackage
+$redirectPackage = ""
+if ($env:APPDATA) {
+    $appDataRoot = [System.IO.Path]::GetFullPath($env:APPDATA).TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
+    $appDataTargets = @((@($destinationFull) + $profileFiles) | Where-Object {
+        $_.StartsWith($appDataRoot, [System.StringComparison]::OrdinalIgnoreCase)
+    })
+    if ($appDataTargets.Count) { $redirectPackage = Get-AppDataRedirectPackage }
+}
 if ($redirectPackage) {
     $privateRoaming = Join-Path $env:LOCALAPPDATA "Packages\$redirectPackage\LocalCache\Roaming"
     Write-Warning "This window runs inside app package $redirectPackage, which redirects its AppData writes to $privateRoaming."
@@ -242,19 +393,16 @@ if (-not $SkipSyntaxCheck) {
 $target = "BetterDiscord plugin file '$destination'"
 if ($PSCmdlet.ShouldProcess($target, "Install DiscordAITranslator plugin")) {
     $sourceHash = Get-Sha256 -Path $pluginFile
-    $sourceVersion = Get-PluginVersion -Path $pluginFile
     $previousVersion = ""
+    $previousHash = ""
     $backupCreated = $false
+    $replaceAttempted = $false
     $destinationReplaced = $false
 
     try {
-        if (Test-Path -LiteralPath $destination) {
+        if (Test-Path -LiteralPath $destination -PathType Leaf) {
             $previousVersion = Get-PluginVersion -Path $destination
-            if (Test-Path -LiteralPath $backup) {
-                throw "Backup path already exists: $backup"
-            }
-            Copy-Item -LiteralPath $destination -Destination $backup
-            $backupCreated = $true
+            $previousHash = Get-Sha256 -Path $destination
         }
 
         Copy-Item -LiteralPath $pluginFile -Destination $temp
@@ -262,8 +410,26 @@ if ($PSCmdlet.ShouldProcess($target, "Install DiscordAITranslator plugin")) {
         if ($sourceHash -ne $tempHash) {
             throw "Hash mismatch before replace. Source=$sourceHash Temp=$tempHash"
         }
-        Move-Item -LiteralPath $temp -Destination $destination -Force
+        $pluginName = Get-PluginName -Path $temp
+        $sourceVersion = Get-PluginVersion -Path $temp
+        if ($previousHash) {
+            if ((Get-Sha256 -Path $destination) -ne $previousHash) {
+                throw "Plugin destination changed during installation: $destination"
+            }
+            if (Test-Path -LiteralPath $backup) {
+                throw "Backup path already exists: $backup"
+            }
+            $replaceAttempted = $true
+            [System.IO.File]::Replace($temp, $destination, $backup, $true)
+            $backupCreated = $true
+        }
+        else {
+            [System.IO.File]::Move($temp, $destination)
+        }
         $destinationReplaced = $true
+        if ($backupCreated -and (Get-Sha256 -Path $backup) -ne $previousHash) {
+            throw "Plugin destination changed during installation: $destination"
+        }
 
         $destinationHash = Get-Sha256 -Path $destination
         if ($sourceHash -ne $destinationHash) {
@@ -272,23 +438,40 @@ if ($PSCmdlet.ShouldProcess($target, "Install DiscordAITranslator plugin")) {
 
         $enabledFiles = @()
         if (-not $NoEnable) {
-            $pluginName = [System.IO.Path]::GetFileNameWithoutExtension([System.IO.Path]::GetFileNameWithoutExtension($destination))
-            $enabledFiles = @(Enable-BetterDiscordPlugin -PluginName $pluginName)
+            $enabledFiles = @(Enable-BetterDiscordPlugin -ProfileFiles $profileFiles -PluginName $pluginName)
         }
     }
     catch {
-        # A backup collision/copy error occurs before replacement. In that case
-        # the destination is not ours to roll back, and must be left untouched.
-        if ($destinationReplaced -and $backupCreated -and (Test-Path -LiteralPath $backup -PathType Leaf)) {
-            Copy-Item -LiteralPath $backup -Destination $destination -Force -ErrorAction SilentlyContinue
+        $recovery = if (($destinationReplaced -or $replaceAttempted) -and [System.IO.File]::Exists($backup)) {
+            " Backup retained: '$backup'."
         }
-        elseif ($destinationReplaced -and -not $backupCreated -and (Test-Path -LiteralPath $destination -PathType Leaf)) {
-            Remove-Item -LiteralPath $destination -Force -ErrorAction SilentlyContinue
+        else { "" }
+        try {
+            if ($destinationReplaced) {
+                Invoke-InstallerRollback -Restore {
+                    if (-not [System.IO.File]::Exists($destination) -or (Get-Sha256 -Path $destination) -ne $tempHash) {
+                        Write-Warning "Plugin destination changed after replacement. Preserved its current state at '$destination'.$recovery" -WarningAction Continue
+                        return
+                    }
+                    if ($backupCreated) {
+                        Restore-InstallerBackup -Path $destination -Backup $backup -ExpectedHash $tempHash
+                    }
+                    else {
+                        [System.IO.File]::Delete($destination)
+                    }
+                }
+            }
+            elseif ($replaceAttempted -and [System.IO.File]::Exists($backup) -and -not [System.IO.File]::Exists($destination)) {
+                Invoke-InstallerRollback -Restore { Restore-InstallerBackup -Path $destination -Backup $backup }
+            }
+        }
+        catch {
+            Write-Warning "Plugin rollback failed for '$destination'.$recovery $($_.Exception.Message)" -WarningAction Continue
         }
         throw
     }
     finally {
-        if (Test-Path -LiteralPath $temp) {
+        if ([System.IO.File]::Exists($temp)) {
             Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
         }
     }

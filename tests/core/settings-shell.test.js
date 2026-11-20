@@ -733,17 +733,31 @@ test("segmented labels that do not fit the shared width make the row stacked", t
     assert.match(PLUGIN_CSS, /\.dait-segmented \{[\s\S]*?grid-auto-columns: auto;[\s\S]*?grid-auto-flow: column;/);
 });
 
-test("the model preset select follows the model field", t => {
-    const { plugin, panel } = createShell(t, { tab: "translate" });
+test("the model preset select follows the model field, and DeepSeek lets users enter any model directly", t => {
+    const env = installDom(t);
+    // DeepSeek: direct free-text model input with remembered history (no outdated preset dropdown row).
+    const ds = createShell(t, { tab: "translate" }, env);
+    assert.equal(ds.panel.querySelector("[data-dait-model-preset=translation]"), null);
+    const dsModel = ds.panel.querySelector("[data-dait-path='translation.model']");
+    assert.ok(dsModel && dsModel.getAttribute("list"), "DeepSeek model input attaches a remembered-model datalist");
+    dsModel.value = "deepseek-v5-custom";
+    dsModel.dispatch("change");
+    assert.equal(ds.plugin.settings.translation.model, "deepseek-v5-custom");
+    assert.equal(ds.plugin.settings.translation.providerProfiles.deepseek.model, "deepseek-v5-custom");
+    assert.equal(ds.plugin.settings.translation.providerProfiles.deepseek.recentModels[0], "deepseek-v5-custom");
+
+    // Sakura local still keeps its model picker synced to the free-text model field.
+    const { plugin, panel } = createShell(t, { tab: "translate", translationProvider: "sakuraLocal" }, env);
+    plugin.setSetting("translation.model", "local-model");
     const preset = panel.querySelector("[data-dait-model-preset=translation]");
     const model = panel.querySelector("[data-dait-path='translation.model']");
-    assert.equal(preset.value, "deepseek-v4-flash");
+    assert.equal(preset.value, "local-model");
     model.value = "my-own-model";
     model.dispatch("change");
     assert.equal(plugin.settings.translation.model, "my-own-model");
     assert.equal(preset.value, "", "custom");
-    plugin.setSetting("translation.model", "deepseek-v4-pro");
-    assert.equal(preset.value, "deepseek-v4-pro");
+    plugin.setSetting("translation.model", "HY-MT1.5-7B-Q4_K_M.gguf");
+    assert.equal(preset.value, "HY-MT1.5-7B-Q4_K_M.gguf");
 });
 
 test("one select for the message Translate button maps onto injectMessageButtons + messageButtonVisibility", t => {

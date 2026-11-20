@@ -659,6 +659,180 @@ test("OpenAI-compatible: the picker appears after detection; a failed detection 
     assert.ok(cardOf(deepseek.panel, "translation").querySelector("[data-dait-path='translation.model']"));
 });
 
+function changeProviderEndpoint(card, kind, value) {
+    const input = card.querySelector(`[data-dait-path='${kind}.endpoint']`);
+    input.value = value;
+    input.dispatch("input");
+    input.dispatch("change");
+}
+
+function captureModelProbes(plugin) {
+    const requests = [];
+    plugin.fetchApiResponseText = async (endpoint, request) => {
+        requests.push([endpoint, request.method, request.headers.Authorization]);
+        return JSON.stringify({ data: [{ id: "synthetic-model" }] });
+    };
+    return requests;
+}
+
+test("A01 same-origin detection and binding after reload and provider switches", async t => {
+    const { doc, plugin, panel } = createShell(t, {
+        translationProvider: "openaiCompatible",
+        translation: { apiKey: "sk-synthetic-original", endpoint: "https://old.example.test/v1" }
+    });
+    const requests = captureModelProbes(plugin);
+    const card = cardOf(panel, "translation");
+    changeProviderEndpoint(card, "translation", "https://OLD.example.test:443/gateway/v1");
+    await flush();
+    assert.deepEqual(requests, [["https://old.example.test/gateway/v1/models", "GET", "Bearer sk-synthetic-original"]]);
+
+    changeProviderEndpoint(card, "translation", "https://new.example.test/v1");
+    await flush();
+    assert.equal(requests.length, 1);
+    assert.equal(plugin.hasUsableApiConfig("translation"), false);
+    await assert.rejects(plugin.runAutoTranslationTask("An example sentence."), { code: "API_KEY_ORIGIN_MISMATCH" });
+    assert.throws(() => plugin.buildConnectionTestRequest("translation"), { code: "API_KEY_ORIGIN_MISMATCH" });
+    assert.equal(requests.length, 1);
+
+    const stored = JSON.parse(JSON.stringify(plugin.settings));
+    const reloaded = new Plugin();
+    reloaded.loadData = () => stored;
+    reloaded.saveSettings = () => true;
+    reloaded.queueScan = () => {};
+    assert.equal(reloaded.loadSettings(), true);
+    reloaded.setTaskProvider("translation", "deepseek");
+    reloaded.setTaskProvider("translation", "openaiCompatible");
+    const afterReload = captureModelProbes(reloaded);
+    const newPanel = doc.body.appendChild(reloaded.getSettingsPanel({ quickSettings: true }));
+    changeProviderEndpoint(cardOf(newPanel, "translation"), "translation", "https://new.example.test/routes/v1");
+    await flush();
+    assert.equal(reloaded.settings.translation.apiKeyOrigin, "https://old.example.test");
+    assert.equal(reloaded.settings.translation.apiKey, "sk-synthetic-original");
+    assert.deepEqual(afterReload, []);
+});
+
+test("A01 explicit consent to reuse a key at a new remote origin", async t => {
+    const { win, plugin, panel } = createShell(t, {
+        polishProvider: "openaiCompatible",
+        polish: { apiKey: "sk-synthetic-remote", endpoint: "https://old.example.test/v1" }
+    });
+    const requests = captureModelProbes(plugin);
+    const confirmations = [];
+    win.confirm = message => {
+        confirmations.push(message);
+        return confirmations.length > 1;
+    };
+    const card = cardOf(panel, "polish");
+    const detect = card.querySelector("[data-dait-action=detectModels]");
+    changeProviderEndpoint(card, "polish", "https://new.example.test:7443/gateway/v1");
+    await flush();
+    assert.deepEqual(requests, []);
+    assert.deepEqual(confirmations, []);
+
+    detect.click();
+    await flush();
+    assert.equal(confirmations.length, 1);
+    assert.match(confirmations[0], /https:\/\/new\.example\.test:7443/);
+    assert.doesNotMatch(confirmations[0], /sk-synthetic-remote/);
+    assert.deepEqual(requests, []);
+
+    detect.click();
+    await flush();
+    assert.deepEqual(requests, [["https://new.example.test:7443/gateway/v1/models", "GET", "Bearer sk-synthetic-remote"]]);
+    assert.equal(plugin.settings.polish.apiKeyOrigin, "https://new.example.test:7443");
+    changeProviderEndpoint(card, "polish", "https://new.example.test:7443/other/v1");
+    await flush();
+    assert.deepEqual(requests[1], ["https://new.example.test:7443/other/v1/models", "GET", "Bearer sk-synthetic-remote"]);
+    assert.equal(confirmations.length, 2);
+});
+
+test("A01 loopback port changes and remote key isolation", async t => {
+    const { win, plugin, panel } = createShell(t, {
+        translationProvider: "sakuraLocal",
+        translation: { apiKey: "synthetic-local-key", endpoint: "http://127.0.0.1:18080/v1" },
+        polishProvider: "openaiCompatible",
+        polish: { apiKey: "sk-synthetic-remote", endpoint: "https://old.example.test/v1" }
+    });
+    const requests = captureModelProbes(plugin);
+    const confirmations = [];
+    win.confirm = message => {
+        confirmations.push(message);
+        return false;
+    };
+    const localCard = cardOf(panel, "translation");
+    const remoteCard = cardOf(panel, "polish");
+    changeProviderEndpoint(localCard, "translation", "http://localhost:18081/v1");
+    changeProviderEndpoint(remoteCard, "polish", "http://127.0.0.1:18082/v1");
+    await flush();
+    assert.deepEqual(requests, []);
+
+    localCard.querySelector("[data-dait-action=detectModels]").click();
+    remoteCard.querySelector("[data-dait-action=detectModels]").click();
+    await flush();
+    assert.deepEqual(confirmations, []);
+    assert.deepEqual(requests, [
+        ["http://localhost:18081/v1/models", "GET", "Bearer synthetic-local-key"],
+        ["http://127.0.0.1:18082/v1/models", "GET", undefined]
+    ]);
+    assert.equal(plugin.settings.polish.apiKeyOrigin, "https://old.example.test");
+    assert.equal(plugin.hasUsableApiConfig("polish"), false);
+
+    const keyInput = remoteCard.querySelector("[data-dait-path='polish.apiKey']");
+    keyInput.value = "fake-local-replacement";
+    keyInput.dispatch("change");
+    remoteCard.querySelector("[data-dait-action=detectModels]").click();
+    await flush();
+    assert.deepEqual(requests[2], ["http://127.0.0.1:18082/v1/models", "GET", "Bearer fake-local-replacement"]);
+    assert.deepEqual(confirmations, []);
+});
+
+test("A01 keyless loopback discovery waits for manual detection", async t => {
+    const { plugin, panel } = createShell(t, {
+        translationProvider: "sakuraLocal",
+        translation: { endpoint: "http://127.0.0.1:18080/v1" }
+    });
+    const requests = captureModelProbes(plugin);
+    const card = cardOf(panel, "translation");
+    assert.equal(plugin.shouldAutoDetectLocalProviderModel(plugin.settings.translation), true);
+
+    changeProviderEndpoint(card, "translation", "http://127.0.0.1:18081/v1");
+    await flush();
+    assert.deepEqual(requests, []);
+    assert.equal(plugin.shouldAutoDetectLocalProviderModel(plugin.settings.translation), false);
+
+    card.querySelector("[data-dait-action=detectModels]").click();
+    await flush();
+    assert.deepEqual(requests, [["http://127.0.0.1:18081/v1/models", "GET", undefined]]);
+    assert.equal(plugin.shouldAutoDetectLocalProviderModel(plugin.settings.translation), true);
+    assert.equal(plugin.getCachedLocalProviderDetectedModel(plugin.settings.translation), "synthetic-model");
+});
+
+test("A01 discards stale probes and consent after endpoint changes", async t => {
+    const { plugin, panel } = createShell(t, {
+        polishProvider: "openaiCompatible",
+        polish: { apiKey: "sk-synthetic-first", endpoint: "https://first.example.test/v1" }
+    });
+    const requests = captureModelProbes(plugin);
+    const card = cardOf(panel, "polish");
+    changeProviderEndpoint(card, "polish", "https://first.example.test/alternate/v1");
+    plugin.setSetting("polish.endpoint", "https://second.example.test/v1");
+    plugin.setSetting("polish.apiKey", "sk-synthetic-second");
+    await flush();
+    assert.deepEqual(requests, []);
+
+    changeProviderEndpoint(card, "polish", "https://third.example.test/v1");
+    let confirm;
+    plugin.confirmAction = () => new Promise(resolve => { confirm = resolve; });
+    const pending = plugin.runModelDetection("polish");
+    assert.equal(typeof confirm, "function");
+    changeProviderEndpoint(card, "polish", "https://fourth.example.test/v1");
+    confirm(true);
+    assert.equal(await pending, null);
+    await flush();
+    assert.deepEqual(requests, []);
+    assert.equal(plugin.settings.polish.apiKeyOrigin, "https://second.example.test");
+});
+
 test("try a sentence / try polishing: current settings, result with the time it took, errors inline", async t => {
     const { plugin, panel } = createShell(t, { translation: { apiKey: "sk-fake-1" }, polish: { apiKey: "sk-fake-2" } });
     const calls = [];

@@ -839,7 +839,7 @@ test("the quick panel styles follow the UI spec and respect reduced motion", () 
     // whole panel shows without scrolling on a common window; the body still scrolls below that.
     assert.match(popover, /width: 360px;/);
     assert.match(popover, /max-height: min\(760px, calc\(100vh - 64px\)\);/);
-    assert.match(popover, /border-radius: 8px;/);
+    assert.match(popover, /border-radius: var\(--dait-radius-card\);/);
     assert.match(rule(".dait-qp-body"), /overflow-y: auto;/);
     // One type scale: labels and descriptions at the body size (weight tells them apart), the section as a group
     // heading, the title as a window title.

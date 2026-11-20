@@ -4,16 +4,21 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
+const { createHash } = require("node:crypto");
 const {
     collectPublishedTexts,
     findBrowserProfilePaths,
     findForceAddedIgnoredPaths,
     findLocalOnlyPaths,
     findNestedRepositories,
-    readGitIndex
+    findReleaseSnapshotDifferences,
+    findStagedPaths,
+    readGitIndex,
+    resolveGitCommit
 } = require("./release-guards");
 
 const root = path.resolve(__dirname, "..");
+const artifact = "DiscordAITranslator.plugin.js";
 const textExtensions = new Set(["", ".js", ".json", ".md", ".ps1", ".txt", ".yml", ".yaml"]);
 const secretPatterns = [
     /-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/,
@@ -105,7 +110,7 @@ const requiredTracked = [
     ...requiredFiles,
     ".github/workflows/ci.yml",
     ".gitignore",
-    "DiscordAITranslator.plugin.js",
+    artifact,
     "package.json",
     "package-lock.json",
     "src/index.js",
@@ -116,6 +121,42 @@ if (missingTracked.length) {
     throw new Error(`Required release files are not tracked by Git: ${missingTracked.join(", ")}`);
 }
 
+const githubActions = process.env.GITHUB_ACTIONS === "true";
+const eventSha = process.env.GITHUB_SHA || "";
+if (githubActions && !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(eventSha)) {
+    throw new Error("Release blocked. GitHub Actions must provide the event commit in GITHUB_SHA.");
+}
+const releaseCommit = githubActions ? resolveGitCommit(root, eventSha) : "";
+const stagedRelease = findStagedPaths(root).length > 0;
+const snapshotLabel = releaseCommit ? `Git commit ${releaseCommit}` : "Git index";
+
+function checkReleaseSnapshot() {
+    if (releaseCommit) {
+        const head = resolveGitCommit(root, "HEAD");
+        if (head !== releaseCommit) {
+            throw new Error(`Release blocked. Checked-out commit ${head} does not match the event commit ${releaseCommit}.`);
+        }
+        const stagedPaths = findStagedPaths(root);
+        if (stagedPaths.length) {
+            throw new Error(`Release blocked. Git index differs from ${snapshotLabel}: ${stagedPaths.join(", ")}.`);
+        }
+    }
+    if (releaseCommit || stagedRelease) {
+        const differences = findReleaseSnapshotDifferences(root, indexEntries);
+        if (differences.length) {
+            throw new Error(`Release blocked. Working tree differs from ${snapshotLabel}: ${differences.join(", ")}.`);
+        }
+    }
+    else if (findStagedPaths(root).length) {
+        throw new Error("Release blocked. The Git index gained staged changes during the working-tree review. Run the gate again.");
+    }
+}
+
+checkReleaseSnapshot();
+process.stdout.write(releaseCommit || stagedRelease
+    ? `Release snapshot: ${snapshotLabel}.\n`
+    : "Local review: working tree (no staged changes).\n");
+
 const npmCliCandidates = [
     process.env.npm_execpath,
     path.join(path.dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js")
@@ -125,4 +166,10 @@ if (!npmCli) throw new Error("Unable to locate npm-cli.js. Run the release gate 
 const result = spawnSync(process.execPath, [npmCli, "run", "ci"], { cwd: root, stdio: "inherit" });
 if (result.error) throw result.error;
 if (result.status !== 0) process.exit(result.status || 1);
+checkReleaseSnapshot();
+const artifactHash = createHash("sha256").update(fs.readFileSync(path.join(root, artifact))).digest("hex");
+if (releaseCommit && process.env.GITHUB_STEP_SUMMARY) {
+    fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `- Commit: \`${releaseCommit}\`\n- SHA-256 (\`${artifact}\`): \`${artifactHash}\`\n`);
+}
+process.stdout.write(`SHA-256 (${artifact}): ${artifactHash}\n`);
 process.stdout.write("Release checks passed.\n");

@@ -23,8 +23,9 @@ module.exports = `
 
 .dait-dialog[data-dait-dialog-surface="true"] {
     background: var(--dait-bg);
-    border: 1px solid var(--dait-divider);
+    border: 2px solid var(--dait-input-border);
     border-radius: var(--dait-radius-card);
+    box-shadow: inset 0 3px 0 var(--dait-brand), var(--dait-pixel-shadow-md);
     padding: 16px;
 }
 
@@ -55,8 +56,9 @@ module.exports = `
 .dait-dialog-check {
     align-items: center;
     background: var(--dait-raised);
-    border: 1px solid var(--dait-divider);
-    border-radius: 8px;
+    border: 1px solid var(--dait-input-border);
+    border-radius: var(--dait-radius-card);
+    box-shadow: var(--dait-pixel-shadow-sm);
     color: var(--dait-text);
     cursor: pointer;
     display: flex;
@@ -82,8 +84,9 @@ module.exports = `
 
 .dait-dialog-preview {
     background: var(--dait-raised);
-    border-left: 3px solid var(--dait-input-border);
-    border-radius: 4px;
+    border: 1px solid var(--dait-divider);
+    border-left: 3px solid var(--dait-accent-gold);
+    border-radius: var(--dait-radius-control);
     color: var(--dait-text);
     font-size: var(--dait-font-body);
     max-height: 220px;
@@ -122,7 +125,7 @@ module.exports = `
 
 .dait-prompt-manager .dait-prompt-tools input,
 .dait-prompt-manager .dait-prompt-tools select {
-    border-radius: 4px;
+    border-radius: var(--dait-radius-control);
     font-size: var(--dait-font-body);
     font-weight: 400;
     height: var(--dait-control-h);
@@ -137,7 +140,7 @@ module.exports = `
 }
 
 .dait-prompt-manager .dait-prompt-editor textarea {
-    border-radius: 4px;
+    border-radius: var(--dait-radius-control);
     font-family: inherit;
     font-size: var(--dait-font-body);
     font-weight: 400;
@@ -147,7 +150,7 @@ module.exports = `
 }
 
 .dait-prompt-manager .dait-small-button {
-    border-radius: 4px;
+    border-radius: var(--dait-radius-control);
     font-size: var(--dait-font-body);
     font-weight: 500;
     height: var(--dait-control-h);
@@ -175,7 +178,8 @@ module.exports = `
 .dait-prompt-preview {
     background: var(--dait-surface);
     border: 1px solid var(--dait-divider);
-    border-radius: 4px;
+    border-radius: var(--dait-radius-control);
+    box-shadow: inset 1px 1px 0 var(--dait-pixel-shade);
     color: var(--dait-text);
     font-size: var(--dait-font-body);
     line-height: var(--dait-line);

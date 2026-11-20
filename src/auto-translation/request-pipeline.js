@@ -20,12 +20,12 @@ const {
     AUTO_TRANSLATE_SINGLE_FALLBACK_LIMIT,
     AUTO_TRANSLATE_VIEWPORT_STABLE_RESCAN_MS,
     AUTO_TRANSLATE_VISIBLE_BACKFILL_SCAN_MS,
+    LOCAL_PROVIDER_HEALTH_RETRY_MS,
     DEFAULT_SETTINGS,
     DIAGNOSTIC_FAILURE_CLASSES,
     DIAGNOSTIC_FAILURE_LAYERS,
     DIAGNOSTIC_MESSAGE_STATES,
     DIAGNOSTIC_REASON_CODES,
-    LOCAL_PROVIDER_HEALTH_RETRY_MS,
     MANUAL_LONG_TEXT_WHOLE_PASS_MAX_LENGTH,
     MANUAL_TRANSLATION_REQUEST_BUDGET,
     MANUAL_TRANSLATION_REQUEST_BUDGET_MAX,
@@ -120,8 +120,7 @@ class AutoTranslationRequestPipeline {
             this.plugin.scheduleAutoTranslationRetryScan(this.plugin.getAutoTranslationFailureRemainingMs(providerFailure, now));
         }
         const providerCoolingDown = Boolean(providerFailure && !this.plugin.isAutoTranslationFailureExpired(providerFailure, now));
-        const localProviderHealthBlocked = hasUsableApi && !providerCoolingDown && !cacheOnly && this.plugin.shouldBlockAutoTranslationForLocalProviderHealth(requestOptions);
-        const apiWorkBlocked = !hasUsableApi || viewportApiBlocked || providerCoolingDown || localProviderHealthBlocked;
+        const apiWorkBlocked = !hasUsableApi || viewportApiBlocked || providerCoolingDown;
         const blockReason = !hasUsableApi
             ? "missing-api"
             : cacheOnly
@@ -136,9 +135,7 @@ class AutoTranslationRequestPipeline {
                             ? "stability-pending"
                             : providerCoolingDown
                                 ? "provider-cooldown"
-                                : localProviderHealthBlocked
-                                    ? "local-provider-health"
-                                    : "";
+                                : "";
         const scanStats = {
             messages: messageNodes.length,
             seen: 0,
@@ -159,10 +156,6 @@ class AutoTranslationRequestPipeline {
         if (viewportSettling) {
             this.plugin.scheduleAutoTranslationRetryScan(this.plugin.getAutoTranslationViewportSettleRemainingMs(now));
         }
-        if (localProviderHealthBlocked) {
-            this.plugin.scheduleAutoTranslationRetryScan(this.plugin.getLocalProviderHealthRetryMs(requestOptions, now), { minDelayMs: LOCAL_PROVIDER_HEALTH_RETRY_MS });
-        }
-
         const scanState = {
             now,
             batchSize,
@@ -180,7 +173,7 @@ class AutoTranslationRequestPipeline {
             layoutUnstable,
             providerFailure,
             providerCoolingDown,
-            localProviderHealthBlocked,
+            checkLocalProviderHealth: !apiWorkBlocked,
             apiWorkBlocked,
             blockReason
         };
@@ -194,16 +187,13 @@ class AutoTranslationRequestPipeline {
             scanStats,
             context,
             requestOptions,
-            apiWorkBlocked,
-            blockReason,
             cacheOnly,
             hasUsableApi,
             renderPaused,
             viewportSettling,
             jumpCoolingDown,
             viewportStabilityPending,
-            providerCoolingDown,
-            localProviderHealthBlocked
+            providerCoolingDown
         };
     }
 
@@ -220,10 +210,11 @@ class AutoTranslationRequestPipeline {
     finishAutoTranslationScanWork(work) {
         if (!work?.scanState || !work?.scanStats) return;
         const { scanState, scanStats, context, requestOptions } = work;
+        const { apiWorkBlocked, blockReason, localProviderHealthBlocked } = scanState;
         if (scanStats.eligible || scanStats.cacheHits || scanStats.textCacheHits || scanStats.enqueued || scanStats.blocked || scanStats.failures) {
-            this.plugin.logDiagnostic("auto.scan", work.apiWorkBlocked ? "blocked" : "ok", {
-                ...this.plugin.getDiagnosticBaseMeta("auto", requestOptions?.mode || "auto", work.apiWorkBlocked ? this.plugin.getAutoTranslationBlockReasonCode(work.blockReason) : ""),
-                messageState: work.apiWorkBlocked ? DIAGNOSTIC_MESSAGE_STATES.QUEUED_VISIBLE : DIAGNOSTIC_MESSAGE_STATES.DISCOVERED,
+            this.plugin.logDiagnostic("auto.scan", apiWorkBlocked ? "blocked" : "ok", {
+                ...this.plugin.getDiagnosticBaseMeta("auto", requestOptions?.mode || "auto", apiWorkBlocked ? this.plugin.getAutoTranslationBlockReasonCode(blockReason) : ""),
+                messageState: apiWorkBlocked ? DIAGNOSTIC_MESSAGE_STATES.QUEUED_VISIBLE : DIAGNOSTIC_MESSAGE_STATES.DISCOVERED,
                 ...scanStats,
                 cacheOnly: work.cacheOnly,
                 hasUsableApi: work.hasUsableApi,
@@ -232,8 +223,8 @@ class AutoTranslationRequestPipeline {
                 jumpCoolingDown: work.jumpCoolingDown,
                 viewportStabilityPending: work.viewportStabilityPending,
                 providerCoolingDown: work.providerCoolingDown,
-                localProviderHealthBlocked: work.localProviderHealthBlocked,
-                blockReason: work.blockReason,
+                localProviderHealthBlocked: Boolean(localProviderHealthBlocked),
+                blockReason,
                 intakeMode: context.autoTranslateIntake?.mode || this.plugin.normalizeAutoTranslateIntakeMode(this.plugin.settings.ui?.autoTranslateIntakeMode),
                 intakeSource: context.autoTranslateIntake?.source || "dom",
                 bdfdbAvailable: Boolean(context.autoTranslateIntake?.bdfdbAvailable),
@@ -241,8 +232,8 @@ class AutoTranslationRequestPipeline {
                 inFlight: this.plugin.autoTranslationInFlight
             });
         }
-        if (!work.apiWorkBlocked) this.plugin.drainAutoTranslationQueue();
-        if (!work.apiWorkBlocked && scanStats.visibleDeferred > 0) {
+        if (!apiWorkBlocked) this.plugin.drainAutoTranslationQueue();
+        if (!apiWorkBlocked && scanStats.visibleDeferred > 0) {
             this.plugin.scheduleAutoTranslationRetryScan(AUTO_TRANSLATE_VISIBLE_BACKFILL_SCAN_MS, { minDelayMs: AUTO_TRANSLATE_VISIBLE_BACKFILL_SCAN_MS });
         }
     }
@@ -540,6 +531,15 @@ class AutoTranslationRequestPipeline {
 
         const scanBudgetReached = !targetVisible && Number(scanState.queued || 0) >= Number(scanState.batchSize || 0);
         const item = { ...targetWithOptions, cacheKey };
+        if (!scanBudgetReached && scanState.checkLocalProviderHealth) {
+            scanState.checkLocalProviderHealth = false;
+            if (this.plugin.shouldBlockAutoTranslationForLocalProviderHealth(requestOptions)) {
+                scanState.localProviderHealthBlocked = true;
+                scanState.apiWorkBlocked = true;
+                scanState.blockReason = "local-provider-health";
+                this.plugin.scheduleAutoTranslationRetryScan(this.plugin.getLocalProviderHealthRetryMs(requestOptions, now), { minDelayMs: LOCAL_PROVIDER_HEALTH_RETRY_MS });
+            }
+        }
         if (scanState.apiWorkBlocked || scanBudgetReached) {
             return {
                 action: "block",
@@ -875,11 +875,8 @@ class AutoTranslationRequestPipeline {
                     pending.delete(item);
                     return;
                 }
-                const translated = this.plugin.sanitizeAutoTranslationOutput(item.text, String(translations[index] || "").trim(), this.plugin.getAutoTranslationTargetLanguage(item.requestOptions));
-                const invalidReason = !translated
-                    ? "empty"
-                    : (this.plugin.getAutoTranslationInvalidOutputReason(item.text, translated, this.plugin.getAutoTranslationTargetLanguage(item.requestOptions)) || "");
-                if (!translated || invalidReason) {
+                const { translated, invalidReason } = this.plugin.validateAutoTranslationBatchRow(item, translations[index]);
+                if (invalidReason) {
                     invalid++;
                     this.plugin.logAutoTranslationMessageState(
                         "auto.message.state",
@@ -1556,11 +1553,14 @@ class AutoTranslationRequestPipeline {
 
     async runAutoTranslationModelAttempt(text, options = this.plugin.getAutoTranslationOptions(), taskOptions = {}) {
         const timeoutMs = this.plugin.getAutoTranslationRequestTimeoutMs(options, text);
+        const isCurrent = () => this.isAutoTranslationAttemptCurrent(options, taskOptions);
+        if (!isCurrent()) throw this.plugin.createAutoTranslationStaleError("model-attempt-stale");
         const translated = await this.plugin.runModelTask("translation", text, {
             configOverrides: options.configOverrides,
             timeoutMs,
             mode: options.mode || "auto",
             requestContext: options.requestContext,
+            isCurrent,
             longTextChunk: Boolean(options.longTextChunk),
             longTextSourceLength: Number(options.longTextSourceLength || String(text || "").length) || 0,
             ...(options.truncationRetry ? { truncationRetry: true } : {}),
@@ -1585,6 +1585,22 @@ class AutoTranslationRequestPipeline {
             mergedLongText: isMergedLongText || Boolean(requestOptions?.longTextChunk),
             partialLongText: Boolean(requestOptions?.longTextPartial) || this.plugin.hasLongAutoTranslationChunkFailurePlaceholder(translated)
         };
+    }
+
+    validateAutoTranslationBatchRow(item, output) {
+        const { text, requestOptions } = item;
+        const targetLanguage = this.plugin.getAutoTranslationTargetLanguage(requestOptions);
+        const trustProvider = this.plugin.getAutoTranslationValidationPolicy(requestOptions) === "trust-provider";
+        const outputOptions = trustProvider ? this.plugin.getAutoTranslationOutputValidationOptions(text, output, requestOptions) : {};
+        const translated = this.plugin.sanitizeAutoTranslationOutput(text, output, targetLanguage, outputOptions);
+        if (!translated) return { translated, invalidReason: "empty" };
+        if (!trustProvider) {
+            const invalidReason = this.plugin.getAutoTranslationInvalidOutputReason(text, translated, targetLanguage) || "";
+            return { translated, invalidReason };
+        }
+        const validationOptions = this.plugin.getAutoTranslationOutputValidationOptions(text, translated, requestOptions);
+        const validation = this.plugin.getAutoTranslationOutputValidationResult(text, translated, targetLanguage, validationOptions, requestOptions);
+        return { translated, invalidReason: validation.renderable ? "" : (validation.reasonCode || "invalid-output") };
     }
 
     getAutoTranslationValidationPolicy(requestOptions = this.plugin.getAutoTranslationOptions()) {
@@ -2072,6 +2088,12 @@ class AutoTranslationRequestPipeline {
         return error;
     }
 
+    isAutoTranslationAttemptCurrent(options, taskOptions) {
+        if (taskOptions?.signal?.aborted) return false;
+        if (taskOptions?.requestBudget || taskOptions?.manualRescue || /^manual(?:-|$)/.test(options?.mode || "")) return true;
+        return this.plugin.isAutoTranslationRequestCurrent(options);
+    }
+
     // Superseded or cancelled work must not be retried, rescued or continued with the next chunk.
     isAbandonedTranslationError(error) {
         return Boolean(error?.autoTranslationStale) || this.plugin.isRequestCancelled(error);
@@ -2099,6 +2121,8 @@ class AutoTranslationRequestPipeline {
     }
 
     async runAutoTranslationBatchTask(texts, options = this.plugin.getAutoTranslationOptions(), taskOptions = {}) {
+        const isCurrent = () => this.isAutoTranslationAttemptCurrent(options, taskOptions);
+        if (!isCurrent()) throw this.plugin.createAutoTranslationStaleError("batch-attempt-stale");
         if ((texts || []).some(text => this.plugin.isLongAutoTranslationText(text))) {
             throw this.plugin.createAutoBatchParseError("Long text is handled by LongTextStrategy");
         }
@@ -2112,10 +2136,16 @@ class AutoTranslationRequestPipeline {
         const batchOptions = taskOptions.retry
             ? this.plugin.getAutoTranslationBatchRetryOptions(batch.length, options)
             : this.plugin.getAutoTranslationBatchOptions(batch.length, options);
+        const baseTimeoutMs = this.plugin.getAutoTranslationRequestTimeoutMs(batchOptions);
+        const batchTimeoutMs = Math.min(
+            AUTO_TRANSLATE_CLOUD_LONG_TEXT_TIMEOUT_MAX_MS,
+            baseTimeoutMs + Math.max(0, batch.length - 1) * 3000
+        );
         const output = await this.plugin.runModelTask("translation", JSON.stringify(batch), {
             configOverrides: batchOptions.configOverrides,
-            timeoutMs: this.plugin.getAutoTranslationRequestTimeoutMs(batchOptions),
+            timeoutMs: batchTimeoutMs,
             mode: batchOptions.mode || "auto-batch",
+            isCurrent,
             ...(taskOptions?.signal ? { signal: taskOptions.signal } : {})
         });
         const rows = this.plugin.parseAutoTranslationBatchOutput(output);
@@ -2139,7 +2169,19 @@ class AutoTranslationRequestPipeline {
             byId.set(id, String(translation || ""));
         });
 
-        return batch.map(item => String(byId.get(item.id) || "").trim());
+        const omittedIndexes = new Set();
+        const translated = batch.map((item, index) => {
+            if (!byId.has(item.id)) omittedIndexes.add(index);
+            return String(byId.get(item.id) || "").trim();
+        });
+        if (omittedIndexes.size) {
+            Object.defineProperty(translated, "omittedIndexes", {
+                value: omittedIndexes,
+                enumerable: false,
+                configurable: true
+            });
+        }
+        return translated;
     }
 
     getAutoTranslationOptions() {
@@ -2243,6 +2285,19 @@ class AutoTranslationRequestPipeline {
             throw this.plugin.createAutoBatchParseError(this.plugin.t("invalidJson"));
         }
 
+        const objectKeys = [];
+        for (const [token, quotedKey, separator] of jsonText.matchAll(/("(?:[^"\\]|\\.)*")(\s*:)?|[{}\[\]]/g)) {
+            if (token === "{") objectKeys.push(new Set());
+            else if (token === "[") objectKeys.push(null);
+            else if (token === "}" || token === "]") objectKeys.pop();
+            else if (separator) {
+                const keys = objectKeys.at(-1);
+                const key = JSON.parse(quotedKey);
+                if (keys.has(key)) throw this.plugin.createAutoBatchParseError("Duplicate batch JSON member");
+                keys.add(key);
+            }
+        }
+
         const rows = this.plugin.normalizeAutoTranslationBatchRows(parsed);
         if (!Array.isArray(rows)) throw this.plugin.createAutoBatchParseError(this.plugin.t("invalidJson"));
         return rows;
@@ -2258,10 +2313,15 @@ class AutoTranslationRequestPipeline {
         const objectRows = parsed?.translations || parsed?.items || parsed?.results || parsed;
         if (!objectRows || typeof objectRows !== "object" || Array.isArray(objectRows)) return null;
         return Object.entries(objectRows).map(([id, value]) => {
+            const normalizedId = this.plugin.normalizeBatchRowId(id);
             if (value && typeof value === "object") {
-                return { id: this.plugin.normalizeBatchRowId(value.id ?? value.key ?? value.index ?? value.number ?? id), ...value };
+                const explicitId = value.id ?? value.key ?? value.index ?? value.number;
+                if (explicitId != null && this.plugin.normalizeBatchRowId(explicitId) !== normalizedId) {
+                    throw this.plugin.createAutoBatchParseError("Conflicting batch row id");
+                }
+                return { ...value, id: value.id ?? normalizedId };
             }
-            return { id: this.plugin.normalizeBatchRowId(id), translation: value };
+            return { id: normalizedId, translation: value };
         });
     }
 
@@ -2330,6 +2390,7 @@ class AutoTranslationRequestPipeline {
         return {
             provider: this.plugin.settings.translation.provider,
             apiKey: this.plugin.settings.translation.apiKey,
+            apiKeyOrigin: this.plugin.settings.translation.apiKeyOrigin,
             endpoint: this.plugin.settings.translation.endpoint,
             model: this.plugin.settings.translation.model,
             sourceLanguage: AUTO_LANGUAGE_VALUE,
@@ -2354,6 +2415,7 @@ class AutoTranslationRequestPipeline {
         return {
             provider: config.provider,
             apiKey: config.apiKey,
+            apiKeyOrigin: config.apiKeyOrigin,
             endpoint: config.endpoint,
             model: config.model,
             region: config.region,

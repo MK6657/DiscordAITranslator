@@ -3,6 +3,13 @@
 // Phase 5a of the modularization plan: model-output validation (emoji tokens, leakage/refusal/dictionary/labeled shapes, Chinese script checks, low-information text).
 // Extracted from discord-ai-translator.js behind a facade: every cross-subsystem call
 // goes through this.plugin so the main class keeps its full (test-visible) surface.
+const LIKELY_TRADITIONAL_HAN_CHARS = "國體臺灣漢語話門問間見車東風電龍點開關廣樂學會說讀寫還這個們來時後無為與對發網軍義讓惡過裡現實長業專習愛馬鳥魚氣頭萬億條買賣邊難聽選擇簡複雜舊歡沒給進變樣覺應該確認請謝錯換幫帶辦離連續斷轉傳輸刪補測試驗證潤譯設啟閉顯隱評論讚訴談講記憶熱輕緊張壞爛亂髒窮貴賤賺賠滿齊倆僅雖總終經歷將剛須願擬屬稱舉棄毀傷殺戰勝敗贏搶護裝備練機動題節種產畫圖視頻軟頁載錄號碼賬鏈觀規則標準組員權鎖鍵盤檔夾庫線誤報區層級階態勢質數據統計構環際聯郵訊聲響劇戲賽隊團廳館場廠錢幣價費稅單雙兩歲禮慶運陽陰霧腦腳驚嚇罵鬧煩憂慮穩順暢遲鐘";
+const LIKELY_SIMPLIFIED_HAN_CHARS = "国体汉语话门问间见车东风电龙点开关广乐学会说读写还这个们来时无为与对发网军义让恶过现实长业专习爱马鸟鱼气头万亿条买卖边难听选择简复杂旧欢没给进变样觉应该确认请谢错换帮带办离连续断转传输删补测试验证润译设启闭显隐评论赞诉谈讲记忆热轻紧张坏烂乱脏穷贵贱赚赔满齐俩仅虽总终经历将刚须愿拟属称举弃毁伤杀战胜败赢抢护装备练机动题节种产画图视频软页载录号码账链观规则标组员权锁键盘档夹库线误报区层级阶态势质数据统计构环际联邮讯声响剧戏赛队团厅馆场厂钱币价费税单双两岁礼庆运阳阴雾脑脚惊吓骂闹烦忧虑稳顺畅迟钟";
+const LIKELY_TRADITIONAL_HAN_RE = new RegExp(`[${LIKELY_TRADITIONAL_HAN_CHARS}]`);
+const LIKELY_SIMPLIFIED_HAN_RE = new RegExp(`[${LIKELY_SIMPLIFIED_HAN_CHARS}]`);
+const LIKELY_TRADITIONAL_HAN_GLOBAL_RE = new RegExp(`[${LIKELY_TRADITIONAL_HAN_CHARS}]`, "g");
+const LIKELY_SIMPLIFIED_HAN_GLOBAL_RE = new RegExp(`[${LIKELY_SIMPLIFIED_HAN_CHARS}]`, "g");
+
 class OutputGuard {
     constructor(plugin) {
         this.plugin = plugin;
@@ -23,16 +30,15 @@ class OutputGuard {
     sanitizeAutoTranslationOutput(sourceText, translatedText, targetLanguage = this.plugin.settings.translation.targetLanguage, options = {}) {
         const raw = String(translatedText || "").trim();
         if (!raw) return raw;
+        const validationOptions = { ...options, skipCandidateExtraction: true };
         const candidates = this.plugin.extractAutoTranslationOutputCandidates(raw, {
-            includeQuoted: !this.plugin.shouldSkipQuotedAutoTranslationCandidates(sourceText, raw, options)
+            includeQuoted: !this.plugin.shouldSkipQuotedAutoTranslationCandidates(sourceText, raw, options),
+            allowQuotedFragments: () => Boolean(this.plugin.getAutoTranslationInvalidOutputReason(sourceText, raw, targetLanguage, validationOptions))
         });
         for (const candidate of candidates) {
             const value = String(candidate || "").trim();
             if (!value || value === raw) continue;
-            const invalidReason = this.plugin.getAutoTranslationInvalidOutputReason(sourceText, value, targetLanguage, {
-                ...options,
-                skipCandidateExtraction: true
-            });
+            const invalidReason = this.plugin.getAutoTranslationInvalidOutputReason(sourceText, value, targetLanguage, validationOptions);
             if (!invalidReason) {
                 this.plugin.logDiagnostic("auto.output", "candidate", {
                     sourceHash: this.plugin.getStrongTextFingerprint(sourceText),
@@ -63,12 +69,19 @@ class OutputGuard {
         if (wrapped) push(wrapped[2]);
 
         if (options?.includeQuoted !== false) {
+            const closingQuote = { '"': '"', "'": "'", "\u201c": "\u201d", "\u2018": "\u2019", "\u300c": "\u300d", "\u300e": "\u300f", "\u300a": "\u300b" }[raw[0]];
+            if (closingQuote && raw.endsWith(closingQuote)) {
+                const inner = raw.slice(1, -1);
+                if (!inner.includes(closingQuote)) push(inner);
+            }
             const quotedMatches = [...raw.matchAll(/["'\u201c\u201d\u2018\u2019\u300c\u300d\u300e\u300f\u300a\u300b]([^"'\u201c\u201d\u2018\u2019\u300c\u300d\u300e\u300f\u300a\u300b]{1,220})["'\u201c\u201d\u2018\u2019\u300c\u300d\u300e\u300f\u300a\u300b]/g)];
-            quotedMatches.forEach(match => {
-                const rest = raw.slice(Number(match.index || 0) + String(match[0] || "").length);
-                if (/^\s*:/.test(rest)) return;
-                push(match[1]);
-            });
+            if (quotedMatches.length && (options.allowQuotedFragments?.() ?? true)) {
+                quotedMatches.forEach(match => {
+                    const rest = raw.slice(match.index + match[0].length);
+                    if (/^\s*:/.test(rest)) return;
+                    push(match[1]);
+                });
+            }
         }
 
         try {
@@ -108,6 +121,58 @@ class OutputGuard {
             if (Number(outputCounts.get(name) || 0) !== count) return true;
         }
         return false;
+    }
+
+    // M-01 safety boundary: models rewriting or translating a draft must never silently introduce
+    // executable mass mentions (@everyone, @here) or role mentions (<@&id>) that were absent from
+    // the user's own source draft. Any newly introduced ones are defanged with a zero-width space
+    // after '@' while preserving mentions the user intentionally typed.
+    guardGeneratedMassMentions(sourceText, outputText, reservedText = "") {
+        const source = String(sourceText || "");
+        const output = String(outputText || "");
+        if (!output) return { text: output, neutralized: false, addedMentions: [] };
+
+        const groupMentionPattern = /(?<![a-z0-9_@])@(everyone|here)(?![a-z0-9_])/gi;
+        const roleMentionPattern = /<@&(\d{15,})>/g;
+        const maskLiteralText = value => this.plugin.splitDiscordCodeSegments(value)
+            .map(segment => segment.code ? " ".repeat(segment.text.length) : segment.text.replace(/\\[\s\S]/g, "  "))
+            .join("");
+
+        const countMentions = value => {
+            const cleaned = maskLiteralText(value);
+            const counts = new Map();
+            const bump = key => counts.set(key, Number(counts.get(key) || 0) + 1);
+            for (const match of cleaned.matchAll(groupMentionPattern)) bump(`@${match[1].toLowerCase()}`);
+            for (const match of cleaned.matchAll(roleMentionPattern)) bump(match[0]);
+            return counts;
+        };
+
+        const allowed = countMentions(source);
+        const used = countMentions(reservedText);
+        const addedMentions = [];
+        const visibleOutput = maskLiteralText(output);
+        const useMention = key => {
+            const seen = Number(used.get(key) || 0);
+            if (seen < Number(allowed.get(key) || 0)) {
+                used.set(key, seen + 1);
+                return true;
+            }
+            if (!addedMentions.includes(key)) addedMentions.push(key);
+            return false;
+        };
+
+        let sanitized = output.replace(groupMentionPattern, (full, keyword, offset) =>
+            visibleOutput[offset] !== "@" || useMention(`@${keyword.toLowerCase()}`) ? full : `@\u200b${keyword}`);
+
+        const visibleSanitized = maskLiteralText(sanitized);
+        sanitized = sanitized.replace(roleMentionPattern, (full, roleId, offset) =>
+            visibleSanitized[offset] !== "<" || useMention(full) ? full : `<@\u200b&${roleId}>`);
+
+        return {
+            text: sanitized,
+            neutralized: addedMentions.length > 0,
+            addedMentions
+        };
     }
 
     getAutoTranslationInvalidOutputReason(sourceText, translatedText, targetLanguage = this.plugin.settings.translation.targetLanguage, options = {}) {
@@ -180,8 +245,8 @@ class OutputGuard {
         const value = String(text || "");
         const hanCount = (value.match(/\p{Script=Han}/gu) || []).length;
         if (!hanCount) return true;
-        const simplifiedCount = (value.match(/[\u56fd\u4f53\u53f0\u6c49\u8bed\u8bdd\u95e8\u95ee\u95f4\u89c1\u8f66\u4e1c\u98ce\u7535\u9f99\u70b9\u5f00\u5173\u5e7f\u4e50\u5b66\u4f1a\u8bf4\u8bfb\u5199\u8fd8\u8fd9\u4e2a\u4eec\u6765\u65f6\u540e\u65e0\u4e3a\u4e0e\u5bf9\u53d1\u7f51\u519b\u4e49\u8ba9\u6076\u5567\u8fc7\u91cc\u73b0\u5b9e\u957f\u4e1a\u4e13\u4e60\u7231\u9a6c\u9e1f\u9c7c\u6c14\u4e91\u5934\u4e07\u4ebf\u6761\u4e70\u5356\u8fb9\u96be\u542c\u9009\u62e9\u7b80\u590d\u6742\u65e7\u6b22]/g) || []).length;
-        const traditionalCount = (value.match(/[\u570b\u9ad4\u81fa\u7063\u6f22\u8a9e\u8a71\u9580\u554f\u9593\u898b\u8eca\u6771\u98a8\u96fb\u9f8d\u9ede\u958b\u95dc\u5ee3\u6a02\u5b78\u6703\u8aaa\u8b80\u5beb\u9084\u9019\u500b\u5011\u4f86\u6642\u5f8c\u7121\u70ba\u8207\u5c0d\u767c\u7db2]/g) || []).length;
+        const simplifiedCount = (value.match(LIKELY_SIMPLIFIED_HAN_GLOBAL_RE) || []).length;
+        const traditionalCount = (value.match(LIKELY_TRADITIONAL_HAN_GLOBAL_RE) || []).length;
         const offCount = this.plugin.isTraditionalChineseTarget(targetLanguage) ? simplifiedCount : traditionalCount;
         const onCount = this.plugin.isTraditionalChineseTarget(targetLanguage) ? traditionalCount : simplifiedCount;
         if (offCount <= 0) return true;
@@ -386,7 +451,7 @@ class OutputGuard {
         const sourceLetters = (String(sourceText || "").match(/\p{L}/gu) || []).length;
         if (sourceLetters > 16) return false;
         const target = this.plugin.normalizeLanguageName(targetLanguage);
-        if (["鑻辫", "English"].includes(target)) {
+        if (["英语", "English"].includes(target)) {
             const normalized = value.toLocaleLowerCase().replace(/[^a-z0-9_'+-]+/g, " ").trim();
             const common = new Set(["ok", "okay", "yes", "no", "thanks", "thank you", "done", "sure", "nice", "good", "bad", "same"]);
             return common.has(normalized);
@@ -402,11 +467,59 @@ class OutputGuard {
     }
 
     hasLikelyTraditionalHan(text) {
-        return /[\u570b\u9ad4\u81fa\u7063\u6f22\u8a9e\u8a71\u9580\u554f\u9593\u898b\u8eca\u6771\u98a8\u96fb\u9f8d\u9ede\u958b\u95dc\u5ee3\u6a02\u5b78\u6703\u8aaa\u8b80\u5beb\u9084\u9019\u500b\u5011\u4f86\u6642\u5f8c\u7121\u70ba\u8207\u5c0d\u767c\u7db2]/.test(String(text || ""));
+        return LIKELY_TRADITIONAL_HAN_RE.test(String(text || ""));
     }
 
     hasLikelySimplifiedHan(text) {
-        return /[\u56fd\u4f53\u53f0\u6c49\u8bed\u8bdd\u95e8\u95ee\u95f4\u89c1\u8f66\u4e1c\u98ce\u7535\u9f99\u70b9\u5f00\u5173\u5e7f\u4e50\u5b66\u4f1a\u8bf4\u8bfb\u5199\u8fd8\u8fd9\u4e2a\u4eec\u6765\u65f6\u540e\u65e0\u4e3a\u4e0e\u5bf9\u53d1\u7f51\u519b\u4e49\u8ba9\u6076\u5567\u8fc7\u91cc\u73b0\u5b9e\u957f\u4e1a\u4e13\u4e60\u7231\u9a6c\u9e1f\u9c7c\u6c14\u4e91\u5934\u4e07\u4ebf\u6761\u4e70\u5356\u8fb9\u96be\u542c\u9009\u62e9\u7b80\u590d\u6742\u65e7\u6b22]/.test(String(text || ""));
+        return LIKELY_SIMPLIFIED_HAN_RE.test(String(text || ""));
+    }
+
+    stripProtectedTokensForPolishValidation(text) {
+        const value = String(text || "");
+        const plain = typeof this.plugin.splitDiscordCodeSegments === "function"
+            ? this.plugin.splitDiscordCodeSegments(value).map(segment => (segment.code ? " " : segment.text)).join("")
+            : value.replace(/```[\s\S]*?```/g, " ").replace(/`[^`\n]+`/g, " ");
+        return plain
+            .replace(/https?:\/\/[^\s<>"']+/gi, " ")
+            .replace(/<a?:[A-Za-z0-9_~.-]+:\d{15,}>/g, " ")
+            .replace(/<[@#][!&]?\d{15,}>/g, " ")
+            .replace(/<t:\d{1,12}(?::[tTdDfFR])?>/g, " ")
+            .replace(/:[A-Za-z0-9_~.-]{2,}:/g, " ")
+            .replace(/(?<![a-z0-9_@])@(?:everyone|here)(?![a-z0-9_])/gi, " ")
+            .trim();
+    }
+
+    // Checks whether a polished draft drifted away from the configured output language or Chinese script.
+    getPolishOutputLanguageViolation(sourceText, outputText, targetLanguage = this.plugin.settings.polish?.targetLanguage, options = {}) {
+        const output = String(outputText || "").trim();
+        if (!output) return "empty";
+        const checked = this.stripProtectedTokensForPolishValidation(output);
+        if (!checked || !this.plugin.hasLetters(checked)) return "";
+
+        const traditionalTarget = this.isTraditionalChineseTarget(targetLanguage);
+        const simplifiedTarget = this.isSimplifiedChineseTarget(targetLanguage);
+        if (traditionalTarget && this.hasLikelySimplifiedHan(checked)) return "script-mismatch";
+        if (simplifiedTarget && this.hasLikelyTraditionalHan(checked)) return "script-mismatch";
+        if (options.chineseScriptOnly) return "";
+
+        const targetScript = this.plugin.getTargetLanguageScript(targetLanguage);
+        if (targetScript === "unknown") return "";
+        const sourceChecked = this.stripProtectedTokensForPolishValidation(sourceText);
+        if (sourceChecked && !this.plugin.hasLetters(sourceChecked)) return "";
+
+        const counts = this.plugin.countTextScriptsForValidation(checked);
+        const total = Number(counts.total || 0);
+        if (total < 2) return "";
+        if (targetScript === "kana") {
+            const kana = Number(counts.kana || 0);
+            const han = Number(counts.han || 0);
+            if (kana === 0 && han === 0) return "wrong-script";
+            if (kana === 0 && han >= 4 && this.hasLikelySimplifiedHan(checked)) return "wrong-script";
+            return "";
+        }
+        const targetCount = Number(counts[targetScript] || 0);
+        if (targetCount === 0) return "wrong-script";
+        return "";
     }
 
     isTraditionalChineseTarget(language) {

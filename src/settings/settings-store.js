@@ -182,6 +182,13 @@ class SettingsStore {
 
         const wasActive = this.plugin.settings[kind].activePromptTemplate === templateId;
         templates.splice(index, 1);
+        if (this.isBuiltInPromptTemplateId(kind, templateId)) {
+            const dismissed = new Set(Array.isArray(this.plugin.settings[kind].dismissedBuiltInPromptTemplates)
+                ? this.plugin.settings[kind].dismissedBuiltInPromptTemplates.filter(id => typeof id === "string")
+                : []);
+            dismissed.add(templateId);
+            this.plugin.settings[kind].dismissedBuiltInPromptTemplates = [...dismissed];
+        }
         // Only deleting the active template may change the effective prompt; deleting any
         // other template must not touch the live prompt or discard queued work.
         if (wasActive) {
@@ -195,6 +202,59 @@ class SettingsStore {
         this.plugin.saveSettings();
         if (kind === "translation" && wasActive) this.plugin.invalidateAutoTranslationQueue();
         this.plugin.showToast(this.plugin.t("promptDeleted"), "success");
+    }
+
+    isBuiltInPromptTemplateId(kind, templateId) {
+        const id = String(templateId || "").trim();
+        if (!id) return false;
+        return (DEFAULT_PROMPT_TEMPLATES[kind] || []).some(template => template.id === id);
+    }
+
+    getMissingBuiltInPromptTemplates(kind) {
+        const templates = this.plugin.getPromptTemplates(kind);
+        const existingIds = new Set(templates.map(template => template?.id).filter(Boolean));
+        return (DEFAULT_PROMPT_TEMPLATES[kind] || []).filter(template => !existingIds.has(template.id));
+    }
+
+    seedMissingBuiltInPromptTemplates(kind) {
+        const task = this.plugin.settings[kind];
+        if (!task || !Array.isArray(task.promptTemplates) || !task.promptTemplates.length) return false;
+        const defaults = DEFAULT_PROMPT_TEMPLATES[kind] || [];
+        if (!defaults.length) return false;
+        const builtInIds = new Set(defaults.map(template => template.id));
+        const existingIds = new Set(task.promptTemplates.map(template => template?.id).filter(Boolean));
+        // Only auto-seed for configs that use built-in templates (leave custom-only sets untouched).
+        const usesBuiltIns = [...existingIds].some(id => builtInIds.has(id));
+        if (!usesBuiltIns) return false;
+        const dismissed = new Set(Array.isArray(task.dismissedBuiltInPromptTemplates)
+            ? task.dismissedBuiltInPromptTemplates.filter(id => typeof id === "string")
+            : []);
+        const missing = defaults.filter(template => !existingIds.has(template.id) && !dismissed.has(template.id));
+        if (!missing.length) return false;
+        missing.forEach(template => task.promptTemplates.push(this.plugin.clone(template)));
+        this.plugin.ensurePromptTemplateSerials(kind);
+        return true;
+    }
+
+    restoreMissingBuiltInPromptTemplates(kind, options = {}) {
+        const task = this.plugin.settings[kind];
+        if (!task) return 0;
+        const missing = this.getMissingBuiltInPromptTemplates(kind);
+        const hadDismissed = Array.isArray(task.dismissedBuiltInPromptTemplates) && task.dismissedBuiltInPromptTemplates.length > 0;
+        if (hadDismissed) delete task.dismissedBuiltInPromptTemplates;
+        if (!missing.length) {
+            if (hadDismissed && options.save !== false) this.plugin.saveSettings();
+            if (options.silent !== true) this.plugin.showToast(this.plugin.t("promptPresetsComplete"), "info");
+            return 0;
+        }
+        const templates = this.plugin.getPromptTemplates(kind);
+        missing.forEach(template => templates.push(this.plugin.clone(template)));
+        this.plugin.ensurePromptTemplateSerials(kind);
+        if (options.save !== false) this.plugin.saveSettings();
+        if (options.silent !== true) {
+            this.plugin.showToast(this.plugin.t("promptPresetsRestored", { count: missing.length }), "success");
+        }
+        return missing.length;
     }
 
     loadSettings() {
@@ -216,6 +276,7 @@ class SettingsStore {
             this.plugin.settingsDirty = false;
         }
         const stored = storedValue || {};
+        this.diagnosticsDisabledInStoredSettings = stored.ui?.diagnosticsEnabled === false;
         this.plugin.settings = this.plugin.mergeSettings(DEFAULT_SETTINGS, stored);
         this.plugin.ensureSettingsShape(stored);
         return true;
@@ -266,6 +327,18 @@ class SettingsStore {
             }
             if (!this.plugin.settings[kind].activePromptTemplate && this.plugin.settings[kind].promptTemplates[0]) {
                 this.plugin.settings[kind].activePromptTemplate = this.plugin.settings[kind].promptTemplates[0].id;
+                changed = true;
+            }
+            if (Array.isArray(this.plugin.settings[kind].dismissedBuiltInPromptTemplates)) {
+                const validDismissed = [...new Set(this.plugin.settings[kind].dismissedBuiltInPromptTemplates
+                    .filter(id => typeof id === "string" && this.isBuiltInPromptTemplateId(kind, id)))];
+                if (validDismissed.length !== this.plugin.settings[kind].dismissedBuiltInPromptTemplates.length) {
+                    if (validDismissed.length) this.plugin.settings[kind].dismissedBuiltInPromptTemplates = validDismissed;
+                    else delete this.plugin.settings[kind].dismissedBuiltInPromptTemplates;
+                    changed = true;
+                }
+            }
+            if (this.seedMissingBuiltInPromptTemplates(kind)) {
                 changed = true;
             }
             if (this.plugin.ensurePromptTemplateSerials(kind)) {
@@ -347,6 +420,30 @@ class SettingsStore {
         if (JSON.stringify(normalizedGoogleKeys.usageById) !== JSON.stringify(this.plugin.settings.googleTranslate.usageById ?? null)) {
             this.plugin.settings.googleTranslate.usageById = normalizedGoogleKeys.usageById;
             changed = true;
+        }
+        const normalizedServiceConfigs = typeof this.plugin.normalizeSavedServiceConfigs === "function"
+            ? this.plugin.normalizeSavedServiceConfigs(this.plugin.settings.serviceConfigs)
+            : [];
+        if (JSON.stringify(normalizedServiceConfigs) !== JSON.stringify(this.plugin.settings.serviceConfigs ?? null)) {
+            this.plugin.settings.serviceConfigs = normalizedServiceConfigs;
+            changed = true;
+        }
+        const hasStoredServiceConfigs = Boolean(
+            storedSettings
+            && typeof storedSettings === "object"
+            && Object.prototype.hasOwnProperty.call(storedSettings, "serviceConfigs")
+        );
+        if (!hasStoredServiceConfigs && !this.plugin.settings.serviceConfigs.length && typeof this.plugin.saveVerifiedServiceConfig === "function") {
+            ["translation", "polish"].forEach(kind => {
+                if (this.plugin.settings[kind]?.apiStatus?.state !== "success") return;
+                if (!this.plugin.hasUsableApiConfig?.(kind)) return;
+                const seeded = this.plugin.saveVerifiedServiceConfig(kind, this.plugin.settings[kind], {
+                    autoSync: false,
+                    save: false,
+                    refreshUi: false
+                });
+                if (seeded?.entry) changed = true;
+            });
         }
         if (!this.plugin.settings.ui || typeof this.plugin.settings.ui !== "object" || Array.isArray(this.plugin.settings.ui)) {
             this.plugin.settings.ui = this.plugin.clone(DEFAULT_SETTINGS.ui);
@@ -651,11 +748,12 @@ class SettingsStore {
 
     loadData(key) {
         const bdApi = globalThis.BdApi;
-        if (!bdApi) return null;
-        if (!bdApi.Data?.load && !bdApi.loadData) return null;
+        const hasReadApi = Boolean(bdApi?.Data?.load || bdApi?.loadData);
+        if (!hasReadApi && key !== DIAGNOSTIC_DATA_KEY) return null;
         const storeName = this.plugin.getDataStoreName(key);
         let value = null;
         try {
+            if (!hasReadApi) throw new Error("DATA_LOAD_UNAVAILABLE");
             value = this.readDataStore(storeName, key);
             this.plugin.dataLoadFailures.delete(key);
         }
@@ -670,7 +768,12 @@ class SettingsStore {
                 const legacy = this.readDataStore(PLUGIN_NAME, key);
                 if (legacy !== null && legacy !== undefined) return legacy;
             }
-            catch {}
+            catch (error) {
+                if (key === DIAGNOSTIC_DATA_KEY && !this.plugin.dataLoadFailures.has(key)) {
+                    this.plugin.dataLoadFailures.add(key);
+                    this.plugin.recordDataIoFailure("load", key, error);
+                }
+            }
         }
         return value;
     }
@@ -853,6 +956,14 @@ class SettingsStore {
             }
             return false;
         }
+        if (parts.length === 2 && ["polish", "translation"].includes(parts[0]) && this.plugin.isModelDetectionProvider(cursor.provider)) {
+            if (leaf === "endpoint" && typeof cursor.apiKeyOrigin !== "string") {
+                cursor.apiKeyOrigin = this.plugin.getProviderEndpointOrigin(cursor);
+            }
+            if (leaf === "apiKey" && String(value ?? "").trim() !== String(cursor.apiKey ?? "").trim()) {
+                cursor.apiKeyOrigin = this.plugin.getProviderEndpointOrigin(cursor);
+            }
+        }
         cursor[leaf] = value;
         if (parts[0] === "googleTranslate") {
             if (path === "googleTranslate.keyPoolText" && !String(value || "").trim()) {
@@ -869,10 +980,25 @@ class SettingsStore {
             }
         }
         if (path === "translation.provider") this.plugin.applyProviderIntakeMode(value);
+        if (["polish", "translation"].includes(parts[0]) && parts[1] === "model") {
+            const currentProvider = this.plugin.normalizeProviderForTask(parts[0], this.plugin.settings[parts[0]]?.provider);
+            if (currentProvider) {
+                if (options.live === true) {
+                    const task = this.plugin.settings[parts[0]];
+                    if (task) {
+                        if (!task.providerProfiles || typeof task.providerProfiles !== "object" || Array.isArray(task.providerProfiles)) task.providerProfiles = {};
+                        task.providerProfiles[currentProvider] = { ...(task.providerProfiles[currentProvider] || {}), model: value };
+                    }
+                }
+                else {
+                    this.plugin.rememberTaskProviderModel?.(parts[0], currentProvider, value);
+                }
+            }
+        }
         if (options.save === false) {}
         else if (options.save === "immediate") this.plugin.saveSettings({ retryOnError: options.retryOnError });
         else this.plugin.saveSettings({ debounce: true, delayMs: options.delayMs });
-        this.plugin.syncSettingControls(path, this.plugin.getSetting(path), { includeActive: true });
+        this.plugin.syncSettingControls(path, this.plugin.getSetting(path), { includeActive: options.live !== true });
         if (["polish", "translation"].includes(parts[0]) && ["apiKey", "endpoint", "model", "provider", "region", "deeplPlan", "appId", "secretKey"].includes(parts[1])) {
             this.plugin.resetApiStatus(parts[0], { save: "debounce" });
         }
@@ -993,6 +1119,7 @@ class SettingsStore {
             RESET_KEPT_CONNECTION_FIELDS.forEach(field => {
                 if (isFilled(source[field])) picked[field] = source[field];
             });
+            if (picked.apiKey && typeof source.apiKeyOrigin === "string") picked.apiKeyOrigin = source.apiKeyOrigin;
             return picked;
         };
         ["polish", "translation"].forEach(kind => {
@@ -1019,6 +1146,7 @@ class SettingsStore {
                 [...RESET_KEPT_CREDENTIAL_FIELDS, ...RESET_KEPT_CONNECTION_FIELDS].forEach(field => {
                     if (own[field] !== undefined && Object.prototype.hasOwnProperty.call(after, field)) after[field] = own[field];
                 });
+                if (typeof own.apiKeyOrigin === "string") after.apiKeyOrigin = own.apiKeyOrigin;
             }
             const templates = Array.isArray(before.promptTemplates)
                 ? before.promptTemplates.filter(isObject).map(template => this.plugin.clone(template))
@@ -1039,6 +1167,14 @@ class SettingsStore {
             if (Array.isArray(google.keys)) next.googleTranslate.keys = this.plugin.clone(google.keys);
             if (typeof google.keyPoolText === "string") next.googleTranslate.keyPoolText = google.keyPoolText;
             if (google.defaultMonthlyLimit !== undefined) next.googleTranslate.defaultMonthlyLimit = google.defaultMonthlyLimit;
+        }
+        if (Array.isArray(previous.serviceConfigs) && typeof this.plugin.normalizeSavedServiceConfigs === "function") {
+            const safeEntries = previous.serviceConfigs.filter(entry => {
+                if (!isObject(entry)) return false;
+                if (entry.endpoint !== undefined && typeof entry.endpoint !== "string") return false;
+                return true;
+            });
+            next.serviceConfigs = this.plugin.normalizeSavedServiceConfigs(safeEntries);
         }
         return next;
     }

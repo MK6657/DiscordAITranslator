@@ -6,13 +6,13 @@ Continuing maintenance? Start with the [October 22 maintenance handoff](docs/mai
 
 A Windows-first BetterDiscord desktop plugin for message translation, writing assistance, and public bilingual messages. This is a third-party project, not an official Discord product. Review the rules and risks of client modifications before using it; use a dedicated test account and channel for initial testing.
 
-## Status
+## Current branch
 
-**v0.4.0 · September 26, 2026 · pre-release.**
+The current branch contains the **v0.4.0 source preview**.
 
 The version appears in the settings window's title bar, in the start notification and in BetterDiscord's plugin list. Changes are listed in [CHANGELOG.md](CHANGELOG.md).
 
-Local validation covers source syntax, reproducible builds, offline regressions (module tests and artifact regressions), installer installation/rollback, and artifact structure, and all of it passes. v0.4.0 rebuilds the settings window, adds a quick panel, and reworks the translation and error lines in the chat. Neither the new interface nor the new way "Ask before sending" sends a message has been accepted in live Discord yet, so this is published as a pre-release, not a stable release. The pending acceptance checklist is in the [host smoke record](docs/host-smoke-test.md) and the [optimization handoff](docs/optimization-handoff.md).
+Local validation covers source syntax, reproducible builds, offline module and artifact regressions, installer rollback, and artifact structure. v0.4.0 rebuilds the settings window, adds a quick panel, and reworks the translation and error lines in chat. The live Discord checks for the new interface and "Ask before sending" are listed in the [host smoke record](docs/host-smoke-test.md) and the [optimization handoff](docs/optimization-handoff.md).
 
 ## Features
 
@@ -37,19 +37,27 @@ Local validation covers source syntax, reproducible builds, offline regressions 
 
 ## Install the plugin
 
-Plugin users do **not** need Node.js, npm, or esbuild.
+The **published fixed version** is `v0.3.0`, released as a pre-release on September 25, 2026.
 
 1. Set up BetterDiscord for the Discord desktop client.
 2. Open Discord settings → BetterDiscord → Plugins → Open Plugins Folder.
-3. Download the raw [DiscordAITranslator.plugin.js](DiscordAITranslator.plugin.js) file from this repository. Do not save the GitHub HTML page. A private repository requires an account with access.
+3. Download [DiscordAITranslator.plugin.js from the v0.3.0 Release](https://github.com/MK6657/DiscordAITranslator/releases/download/v0.3.0/DiscordAITranslator.plugin.js).
 4. Copy the file into the plugins folder and enable it.
 5. Configure your chosen provider in plugin settings. Start with manual translation in a dedicated test channel before enabling automatic translation.
 
-Only pre-release builds are published so far. A typical Windows plugin directory is `%APPDATA%\BetterDiscord\plugins`.
+A typical Windows plugin directory is `%APPDATA%\BetterDiscord\plugins`.
+
+### Current branch source preview
+
+To try the branch's `v0.4.0` source preview, download the raw [DiscordAITranslator.plugin.js](DiscordAITranslator.plugin.js) from the repository root or clone this branch and run `npm run build`.
+
+The Windows installer looks for BetterDiscord profiles in the `data` directory next to a custom `-PluginsDir`. Use `-ProfileDir` to select one profile directory containing `plugins.json`.
 
 ### Check which version is installed
 
 From a clone of this repository, run `npm run plugin:check`. It lists the version and SHA256 of the repository build and of the installed plugin, and checks three reasons an install may not take effect: a private BetterDiscord copy kept by another app (such as an AI desktop app), this window's writes being redirected into an app's private storage, and Discord's startup file not loading BetterDiscord. Run installs and checks from a normal PowerShell window opened from the Start menu, not from an AI app's built-in terminal.
+
+Use `npm run plugin:check -- -Strict` in automation to require an enabled profile and a confirmed Discord loading path.
 
 ## Providers
 
@@ -105,7 +113,7 @@ npm run verify         # Rebuild first, then run validation
 npm run release:check  # Full repository release gate
 ```
 
-GitHub Actions is configured to run the release gate on Windows with Node 22 and 24. Installer tests isolate BetterDiscord data in temporary directories; they do not install into your real Discord profile.
+GitHub Actions runs the release gate on Windows with Node 22 and 24. Tag pushes verify the tagged commit and record the plugin's SHA-256. For local checks with staged changes, the gate requires the working tree to match the index. With no staged changes, it verifies the working tree. Installer tests use temporary BetterDiscord profiles.
 
 To install into your actual profile after validation:
 

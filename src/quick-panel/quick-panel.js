@@ -618,8 +618,9 @@ class QuickPanel {
         }
         // While this panel's test runs, a panel built again in the meantime shows it too (the test only updates the
         // button it started from); another test or probe in flight also keeps the button off.
-        controls.test.disabled = Boolean(status.testing || this.testRunning);
-        this.setText(controls.test, this.plugin.t(this.testRunning ? "apiTestBusy" : "apiTest"));
+        const testRunning = this.isConnectionTestRunning();
+        controls.test.disabled = Boolean(status.testing || testRunning);
+        this.setText(controls.test, this.plugin.t(testRunning ? "apiTestBusy" : "apiTest"));
         this.syncCountdown(status);
         // New text can change the panel's height; keep it above the launcher and inside the window.
         if (resized) this.position();
@@ -654,10 +655,17 @@ class QuickPanel {
         this.countdownTimer?.unref?.();
     }
 
+    isConnectionTestRunning() {
+        return Boolean(this.testRunning?.isCurrent?.());
+    }
+
     async runConnectionTest(button) {
-        if (this.testRunning || button?.disabled) return false;
+        if (this.isConnectionTestRunning() || button?.disabled) return false;
         const plugin = this.plugin;
-        this.testRunning = true;
+        const lifecycleToken = plugin.getLifecycleToken();
+        if (!plugin.isLifecycleTokenCurrent(lifecycleToken)) return false;
+        const run = { isCurrent: () => plugin.isLifecycleTokenCurrent(lifecycleToken) };
+        this.testRunning = run;
         // The test reports its own result; a failure must not also raise the auto-translate notice.
         try {
             plugin.rememberTranslationAttentionNotice(null, plugin.getTranslationAttentionProviderKey(null), "local-unavailable");
@@ -667,14 +675,19 @@ class QuickPanel {
         const statusSink = document.createElement("span");
         statusSink.dataset.daitKind = "translation";
         try {
-            await plugin.testApiConnection("translation", button, statusSink);
+            return (await plugin.testApiConnection("translation", button, statusSink, {
+                onStart: isCurrent => { run.isCurrent = isCurrent; }
+            })) !== false;
         }
         finally {
-            this.testRunning = false;
-            this.requestStatusUpdate();
-            if (this.isOpen()) this.update();
+            if (this.testRunning === run) {
+                this.testRunning = false;
+                if (plugin.isLifecycleTokenCurrent(lifecycleToken)) {
+                    this.requestStatusUpdate();
+                    if (this.isOpen()) this.update();
+                }
+            }
         }
-        return true;
     }
 
     // --- Position, keyboard and pointer ---
@@ -983,15 +996,20 @@ class QuickPanel {
         catch { providerKey = ""; }
         const failure = providerKey ? plugin.autoTranslationProviderFailures?.get?.(providerKey) || null : null;
         const failureType = String(failure?.type || "");
-        // A local service stays "down" until a probe or request succeeds; other cooldowns end at retryAt.
-        const failureActive = Boolean(failure && (failureType === "local-unavailable" || Number(failure.retryAt || 0) > now));
+        // A local service stays "down" until a probe or request succeeds; terminal auth/quota failures
+        // stay active until fixed or expired; transient cooldowns end at retryAt.
+        const failureActive = Boolean(failure && (
+            failureType === "local-unavailable"
+            || (failure.terminal && !plugin.isAutoTranslationFailureExpired(failure, now))
+            || Number(failure.retryAt || 0) > now
+        ));
         const configError = this.getConfigError(providerKey);
         const probing = Boolean(providerKey && plugin.localProviderHealthChecks?.has?.(providerKey));
         // Only work that is running counts: the saved "testing" status outlives a test or probe that was cut short.
         let settingsTest = false;
         try { settingsTest = Boolean(plugin.isApiTestRunning?.("translation")); }
         catch { settingsTest = false; }
-        const testing = probing || this.testRunning || settingsTest;
+        const testing = probing || this.isConnectionTestRunning() || settingsTest;
         const apiState = api.state === "testing" && !testing ? "untested" : api.state;
         const queue = plugin.getAutoTranslationQueueSnapshot?.() || {};
         const inFlight = Math.max(0, Number(queue.inFlightItems || queue.inFlight || 0) || 0);

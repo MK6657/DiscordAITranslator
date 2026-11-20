@@ -6,9 +6,9 @@ module.exports = `.dait-polish-button,
 .dait-input-action-menu-button,
 .dait-message-button {
     background: color-mix(in srgb, var(--background-modifier-hover, rgba(79, 84, 92, 0.16)) 72%, transparent);
-    border: 1px solid color-mix(in srgb, var(--interactive-muted, #747f8d) 34%, transparent);
-    border-radius: 7px;
-    box-shadow: none;
+    border: 1px solid color-mix(in srgb, var(--interactive-muted, #747f8d) 38%, transparent);
+    border-radius: 2px;
+    box-shadow: 1px 1px 0 rgba(0, 0, 0, 0.18);
     color: var(--interactive-normal, var(--text-secondary, #b5bac1));
     cursor: pointer;
     font-size: 12px;
@@ -16,6 +16,7 @@ module.exports = `.dait-polish-button,
     line-height: 1;
     padding: 7px 9px;
     text-shadow: none;
+    transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease, box-shadow 120ms ease, transform 80ms ease;
 }
 
 .dait-input-actions-host {
@@ -41,9 +42,19 @@ module.exports = `.dait-polish-button,
 .dait-polish-restore-button:hover,
 .dait-input-action-menu-button:hover,
 .dait-message-button:hover {
-    background: color-mix(in srgb, var(--brand-500, #5865f2) 18%, var(--background-modifier-hover, rgba(79, 84, 92, 0.16)));
-    border-color: color-mix(in srgb, var(--brand-500, #5865f2) 54%, var(--interactive-muted, #747f8d));
+    background: color-mix(in srgb, #227a5f 20%, var(--background-modifier-hover, rgba(79, 84, 92, 0.16)));
+    border-color: color-mix(in srgb, #227a5f 68%, var(--interactive-muted, #747f8d));
+    box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.24);
     color: var(--interactive-hover, var(--text-normal, #ffffff));
+}
+
+.dait-polish-button:active:not(:disabled),
+.dait-public-bilingual-button:active:not(:disabled),
+.dait-polish-restore-button:active:not(:disabled),
+.dait-input-action-menu-button:active:not(:disabled),
+.dait-message-button:active:not(:disabled) {
+    box-shadow: none;
+    transform: translate(1px, 1px);
 }
 
 .dait-polish-button:disabled,
@@ -92,8 +103,8 @@ module.exports = `.dait-polish-button,
 }
 
 .dait-public-bilingual-button {
-    background: color-mix(in srgb, var(--brand-500, #5865f2) 12%, var(--background-modifier-hover, rgba(79, 84, 92, 0.16)));
-    border-color: color-mix(in srgb, var(--brand-500, #5865f2) 36%, var(--interactive-muted, #747f8d));
+    background: color-mix(in srgb, #227a5f 14%, var(--background-modifier-hover, rgba(79, 84, 92, 0.16)));
+    border-color: color-mix(in srgb, #227a5f 44%, var(--interactive-muted, #747f8d));
 }
 
 .theme-light.dait-polish-button,
@@ -104,17 +115,18 @@ module.exports = `.dait-polish-button,
 .dait-public-bilingual-button[data-dait-discord-theme="light"],
 [data-dait-discord-theme="light"] .dait-polish-button,
 [data-dait-discord-theme="light"] .dait-public-bilingual-button {
-    background: rgba(79, 84, 92, 0.08);
-    border-color: rgba(79, 84, 92, 0.2);
-    color: var(--interactive-normal, #4f5660);
+    background: rgba(247, 243, 233, 0.88);
+    border-color: rgba(113, 107, 93, 0.42);
+    box-shadow: 1px 1px 0 rgba(36, 33, 27, 0.16);
+    color: var(--interactive-normal, #24211b);
 }
 
 .theme-light.dait-public-bilingual-button,
 .theme-light .dait-public-bilingual-button,
 .dait-public-bilingual-button[data-dait-discord-theme="light"],
 [data-dait-discord-theme="light"] .dait-public-bilingual-button {
-    background: rgba(88, 101, 242, 0.1);
-    border-color: rgba(88, 101, 242, 0.34);
+    background: rgba(29, 110, 84, 0.12);
+    border-color: rgba(29, 110, 84, 0.42);
 }
 
 .theme-light.dait-polish-button:hover,
@@ -133,9 +145,10 @@ module.exports = `.dait-polish-button,
 [data-dait-discord-theme="light"] .dait-polish-button:focus-visible,
 [data-dait-discord-theme="light"] .dait-public-bilingual-button:hover,
 [data-dait-discord-theme="light"] .dait-public-bilingual-button:focus-visible {
-    background: rgba(88, 101, 242, 0.14);
-    border-color: rgba(88, 101, 242, 0.48);
-    color: var(--interactive-hover, #2e3338);
+    background: rgba(29, 110, 84, 0.18);
+    border-color: rgba(29, 110, 84, 0.65);
+    box-shadow: 2px 2px 0 rgba(29, 110, 84, 0.22);
+    color: var(--interactive-hover, #171410);
 }
 
 .theme-dark.dait-polish-button,
@@ -235,8 +248,9 @@ module.exports = `.dait-polish-button,
 [data-dait-discord-theme="midnight"] .dait-polish-button:focus-visible,
 [data-dait-discord-theme="midnight"] .dait-public-bilingual-button:hover,
 [data-dait-discord-theme="midnight"] .dait-public-bilingual-button:focus-visible {
-    background: color-mix(in srgb, var(--brand-500, #5865f2) 20%, rgba(255, 255, 255, 0.08));
-    border-color: color-mix(in srgb, var(--brand-500, #5865f2) 54%, rgba(255, 255, 255, 0.18));
+    background: color-mix(in srgb, #227a5f 24%, rgba(255, 255, 255, 0.08));
+    border-color: color-mix(in srgb, #d8a84e 42%, #227a5f);
+    box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.34);
     color: var(--interactive-hover, var(--text-primary, #ffffff));
 }
 
@@ -273,14 +287,14 @@ module.exports = `.dait-polish-button,
 /* The composer's action menu is a plugin window: the panel palette (01-theme-tokens) and the body type size. */
 .dait-input-action-menu {
     background: var(--dait-bg);
-    border: 1px solid var(--dait-divider);
+    border: 2px solid var(--dait-input-border);
     border-radius: var(--dait-radius-card);
-    box-shadow: var(--dait-shadow);
+    box-shadow: inset 0 3px 0 var(--dait-brand), var(--dait-shadow);
     color: var(--dait-text);
     display: grid;
     gap: 2px;
     min-width: 160px;
-    padding: 6px;
+    padding: 8px 6px 6px;
     position: fixed;
     z-index: 10000;
 }
@@ -312,9 +326,9 @@ module.exports = `.dait-polish-button,
 
 .dait-polish-restore-control {
     background: color-mix(in srgb, var(--background-secondary, #2b2d31) 92%, transparent);
-    border: 1px solid color-mix(in srgb, var(--brand-500, #5865f2) 42%, var(--background-modifier-accent, #4e5058));
-    border-radius: 6px;
-    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.24);
+    border: 1px solid color-mix(in srgb, #227a5f 55%, var(--background-modifier-accent, #4e5058));
+    border-radius: 2px;
+    box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.28);
     color: var(--text-normal, #dbdee1);
     cursor: pointer;
     font-size: 12px;
@@ -330,10 +344,10 @@ module.exports = `.dait-polish-button,
 .theme-light .dait-polish-restore-control,
 .dait-polish-restore-control[data-dait-discord-theme="light"],
 [data-dait-discord-theme="light"] .dait-polish-restore-control {
-    background: rgba(255, 255, 255, 0.96);
-    border-color: rgba(88, 101, 242, 0.34);
-    box-shadow: 0 8px 20px rgba(24, 36, 61, 0.14);
-    color: #242832;
+    background: rgba(252, 249, 241, 0.98);
+    border-color: rgba(29, 110, 84, 0.56);
+    box-shadow: 3px 3px 0 rgba(36, 33, 27, 0.2);
+    color: #24211b;
 }
 
 .theme-dark.dait-polish-restore-control,
@@ -349,28 +363,40 @@ module.exports = `.dait-polish-button,
 [data-dait-discord-theme="darker"] .dait-polish-restore-control,
 [data-dait-discord-theme="midnight"] .dait-polish-restore-control {
     background: color-mix(in srgb, var(--background-secondary, #2b2d31) 92%, transparent);
-    border-color: color-mix(in srgb, var(--brand-500, #5865f2) 42%, var(--background-modifier-accent, #4e5058));
+    border-color: color-mix(in srgb, #227a5f 55%, var(--background-modifier-accent, #4e5058));
     color: var(--text-normal, #dbdee1);
 }
 
 .dait-polish-restore-control:hover {
-    border-color: color-mix(in srgb, var(--brand-500, #5865f2) 62%, var(--background-modifier-accent, #4e5058));
+    border-color: color-mix(in srgb, #d8a84e 45%, #227a5f);
 }
 
 /* Colours come from the panel palette (01-theme-tokens, data-dait-panel-theme on the panel). */
 .dait-polish-result-panel {
     background: var(--dait-surface);
-    border: 1px solid var(--dait-divider);
-    border-radius: 8px;
+    border: 2px solid var(--dait-input-border);
+    border-radius: var(--dait-radius-card);
     box-shadow: var(--dait-shadow);
     color: var(--dait-text);
     display: grid;
     gap: var(--dait-space-2);
     max-height: min(34vh, 280px);
     min-width: 240px;
-    padding: var(--dait-space-3);
+    overflow: hidden;
+    padding: calc(var(--dait-space-3) + 4px) var(--dait-space-3) var(--dait-space-3);
     position: fixed;
     z-index: 10000;
+}
+
+.dait-polish-result-panel::before {
+    background: var(--dait-pixel-trim);
+    content: "";
+    height: 4px;
+    left: 0;
+    pointer-events: none;
+    position: absolute;
+    right: 0;
+    top: 0;
 }
 
 .dait-polish-result-header {
@@ -417,6 +443,7 @@ module.exports = `.dait-polish-button,
     background: var(--dait-input-bg);
     border: 1px solid var(--dait-input-border);
     border-radius: var(--dait-radius-control);
+    box-shadow: inset 1px 1px 0 var(--dait-pixel-shade);
     color: var(--dait-text);
     font: inherit;
     font-size: var(--dait-font-body);
@@ -435,12 +462,13 @@ module.exports = `.dait-polish-button,
     justify-content: flex-end;
 }
 
-/* Like the settings buttons: grey secondary, brand-filled primary with white text. */
+/* Like the settings buttons: raised secondary, brand-filled primary with white text, tactile pixel press. */
 .dait-polish-result-action {
     align-items: center;
     background: var(--dait-raised);
     border: 1px solid var(--dait-input-border);
     border-radius: var(--dait-radius-control);
+    box-shadow: var(--dait-pixel-bevel), var(--dait-pixel-shadow-sm);
     color: var(--dait-text);
     cursor: pointer;
     display: inline-flex;
@@ -451,7 +479,13 @@ module.exports = `.dait-polish-button,
     justify-content: center;
     line-height: var(--dait-line);
     padding: 0 14px;
+    transition: background-color 120ms ease, transform 80ms ease, box-shadow 80ms ease;
     white-space: nowrap;
+}
+
+.dait-polish-result-action:active:not(:disabled) {
+    box-shadow: none;
+    transform: translate(1px, 1px);
 }
 
 .dait-polish-result-action.primary {

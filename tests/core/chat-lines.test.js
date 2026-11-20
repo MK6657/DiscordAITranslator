@@ -976,6 +976,47 @@ test("a retranslation in flight is not drawn over by the cached translation it r
     assert.equal(plugin.translationLineTexts.get(line), "新译文");
 });
 
+test("M06 a queued cache draw preserves completed manual work and accepts a reused message node", async t => {
+    const { plugin, doc } = createChatPlugin(t);
+    plugin.settings.translation.enabled = true;
+    plugin.isAutoTranslateEnabled = () => true;
+    plugin.isAutoTranslationCacheTargetDrawable = () => true;
+    plugin.getAutoTranslationPrecheckSkipReason = () => "";
+    plugin.scheduleAutoTranslationRenderQueue = () => {};
+    plugin.resolveManualTranslationSource = (node, element) => ({ text: element.text, domText: element.text, source: "dom-content" });
+    const text = "Could you check the build logs from yesterday please";
+    const { messageNode, content } = createMessage(doc, text);
+    const candidate = { messageNode, content, text, domText: text, targetKind: "message" };
+    const baseOptions = plugin.getAutoTranslationOptions();
+    const enqueue = translated => {
+        const options = plugin.withAutoTranslationCandidateIdentity(plugin.getAutoTranslationRequestOptionsForText(text, baseOptions), candidate);
+        const key = plugin.getTranslationCacheKey(text, options);
+        plugin.setTranslationCache(key, translated);
+        assert.equal(plugin.queueCachedDrawForCandidate(candidate, baseOptions).status, "queued");
+    };
+    t.after(() => clearTimeout(plugin.translationCacheDirtyTimer));
+
+    enqueue("旧译文");
+    plugin.runManualTranslationPlan = async () => ({ translated: "手动新译文", validation: { renderable: true, cacheable: true, quality: "good" } });
+    await plugin.retranslateMessage(messageNode, content);
+    const manualLine = plugin.getTranslationLine(content);
+    assert.equal(manualLine.dataset.daitMode, "manual");
+    assert.equal(plugin.translationLineTexts.get(manualLine), "手动新译文");
+    assert.equal(plugin.autoTranslationRenderQueue.length, 1);
+
+    plugin.processAutoTranslationRenderQueue();
+    assert.equal(plugin.autoTranslationRenderQueue.length, 0);
+    assert.equal(plugin.getTranslationLine(content), manualLine);
+    assert.equal(plugin.translationLineTexts.get(manualLine), "手动新译文");
+
+    messageNode.id = "chat-messages-111111111111111111-333333333333333333";
+    enqueue("新消息缓存译文");
+    plugin.processAutoTranslationRenderQueue();
+    const newLine = plugin.getTranslationLine(content);
+    assert.notEqual(newLine.dataset.daitMode, "manual");
+    assert.equal(plugin.translationLineTexts.get(newLine), "新消息缓存译文");
+});
+
 // --- partial long-message results (contract with the queue branch) ---
 
 test("a partial long-message result shows which parts are missing and offers a full retranslation", t => {

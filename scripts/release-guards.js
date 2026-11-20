@@ -4,6 +4,7 @@
 // They look at the Git index, so a file that is only staged counts as much as a committed one.
 
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
@@ -135,9 +136,53 @@ function runGitList(cwd, args) {
 function readGitIndex(cwd) {
     return runGitList(cwd, ["ls-files", "--stage", "-z"]).map(line => {
         const tab = line.indexOf("\t");
-        const [mode, object] = line.slice(0, tab).split(" ");
-        return { mode, object, path: line.slice(tab + 1) };
+        const [mode, object, stage] = line.slice(0, tab).split(" ");
+        return { mode, object, stage: Number(stage), path: line.slice(tab + 1) };
     });
+}
+
+function findStagedPaths(cwd) {
+    return runGitList(cwd, ["--no-optional-locks", "diff", "--cached", "--no-renames", "--name-only", "-z", "--"]);
+}
+
+function resolveGitCommit(cwd, revision) {
+    return runGit(cwd, ["rev-parse", "--verify", "--end-of-options", `${revision}^{commit}`], { encoding: "utf8" }).trim();
+}
+
+function matchesCheckedOutFile(actual, expected) {
+    const actualStats = fs.lstatSync(actual, { throwIfNoEntry: false });
+    if (!actualStats) return false;
+    const expectedStats = fs.lstatSync(expected);
+    if (expectedStats.isSymbolicLink()) {
+        return actualStats.isSymbolicLink() && fs.readlinkSync(actual) === fs.readlinkSync(expected);
+    }
+    return actualStats.isFile()
+        && (process.platform === "win32" || ((actualStats.mode ^ expectedStats.mode) & 0o100) === 0)
+        && fs.readFileSync(actual).equals(fs.readFileSync(expected));
+}
+
+function findReleaseSnapshotDifferences(cwd, entries) {
+    if (entries.some(entry => entry.stage !== 0)) throw new Error("Release blocked. The Git index has unresolved merge conflicts.");
+    if (JSON.stringify(readGitIndex(cwd)) !== JSON.stringify(entries)) {
+        throw new Error("Release blocked. The Git index changed during the release check. Run the gate again.");
+    }
+    const differences = new Set([
+        ...runGitList(cwd, ["ls-files", "--others", "-z", "--exclude-per-directory=.gitignore"]),
+        ...runGitList(cwd, ["ls-files", "--others", "-z", "--", "src", "scripts", "tests", "docs", ".github"])
+    ]);
+    const snapshot = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "dait-release-snapshot-"));
+    try {
+        runGit(cwd, ["checkout-index", "--all", "--ignore-skip-worktree-bits", `--prefix=${toRepositoryPath(snapshot)}/`]);
+        for (const entry of entries) {
+            if (!matchesCheckedOutFile(path.join(cwd, entry.path), path.join(snapshot, entry.path))) {
+                differences.add(entry.path);
+            }
+        }
+        return [...differences].sort();
+    }
+    finally {
+        fs.rmSync(snapshot, { recursive: true, force: true });
+    }
 }
 
 // Tracked files that the repository's .gitignore files exclude; only `git add -f` puts them in the index.
@@ -202,5 +247,8 @@ module.exports = {
     findForceAddedIgnoredPaths,
     findLocalOnlyPaths,
     findNestedRepositories,
-    readGitIndex
+    findReleaseSnapshotDifferences,
+    findStagedPaths,
+    readGitIndex,
+    resolveGitCommit
 };

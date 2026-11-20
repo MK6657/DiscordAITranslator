@@ -2849,12 +2849,12 @@ else global.BdApi = savedBdApiForStyles;
 const panelDarkBlock = injectedCss.match(/\[data-dait-panel-theme="dark"\],\n:is\([^)]*\):not\(\[data-dait-panel-theme\]\) \{([\s\S]*?)\n\}/)?.[1] || "";
 const panelLightBlock = injectedCss.match(/\n\[data-dait-panel-theme="light"\] \{([\s\S]*?)\n\}/)?.[1] || "";
 const panelSharedBlock = injectedCss.match(/\n\.dait-settings,\n\.dait-quick-settings-modal-root,\n\.dait-quick-popover,\n\.dait-polish-result-panel,\n\.dait-input-action-menu,\n\.dait-dialog \{([\s\S]*?)\n\}/)?.[1] || "";
-assert.match(panelDarkBlock, /--dait-bg: #2b2d31;[\s\S]*?--dait-rail: #232428;[\s\S]*?--dait-surface: #313338;[\s\S]*?--dait-input-bg: #1e1f22;[\s\S]*?--dait-text: #e3e5e8;[\s\S]*?--dait-heading: #f2f3f5;[\s\S]*?--dait-placeholder: #949ba4;[\s\S]*?--dait-brand: #4f5bd5;/);
-// Control edges reach 3:1 against the window surfaces (theme audit; the spec asked for #4e5058 / #c4c9ce).
-assert.match(panelDarkBlock, /--dait-input-border: #7a7e86;/);
+assert.match(panelDarkBlock, /--dait-bg: #1f2426;[\s\S]*?--dait-rail: #181c1e;[\s\S]*?--dait-surface: #262c2f;[\s\S]*?--dait-input-bg: #15191a;[\s\S]*?--dait-text: #eee8dc;[\s\S]*?--dait-heading: #faf4e6;[\s\S]*?--dait-placeholder: #9ca8a3;[\s\S]*?--dait-brand: #227a5f;/);
+// Control edges reach 3:1 against the window surfaces (WCAG 1.4.11).
+assert.match(panelDarkBlock, /--dait-input-border: #828c88;/);
 assert.match(panelDarkBlock, /color-scheme: dark;/);
-assert.match(panelLightBlock, /--dait-bg: #ffffff;[\s\S]*?--dait-rail: #f2f3f5;[\s\S]*?--dait-surface: #f6f7f8;[\s\S]*?--dait-input-bg: #ffffff;[\s\S]*?--dait-input-border: #868a91;[\s\S]*?--dait-text: #2e3035;[\s\S]*?--dait-heading: #1f2124;[\s\S]*?--dait-placeholder: #6d6f78;/);
-assert.match(panelLightBlock, /--dait-danger: #c42b2f;/);
+assert.match(panelLightBlock, /--dait-bg: #f7f3e9;[\s\S]*?--dait-rail: #ede6d6;[\s\S]*?--dait-surface: #fcf9f1;[\s\S]*?--dait-input-bg: #fffdf8;[\s\S]*?--dait-input-border: #716b5d;[\s\S]*?--dait-text: #24211b;[\s\S]*?--dait-heading: #171410;[\s\S]*?--dait-placeholder: #595449;/);
+assert.match(panelLightBlock, /--dait-danger: #9c2222;/);
 assert.match(panelLightBlock, /color-scheme: light;/);
 [panelDarkBlock, panelLightBlock, panelSharedBlock].forEach(block => {
     assert.ok(block.length > 0);
@@ -2927,7 +2927,7 @@ assert.match(quickDialogBlock, /background: var\(--dait-bg\);/);
 assert.match(quickDialogBlock, /overflow: hidden;/);
 assert.equal(injectedCss.includes("1280px"), false);
 assert.match(injectedCss, /\.dait-quick-settings-modal-root \{[\s\S]*?background: var\(--dait-backdrop\);[\s\S]*?overflow: hidden;/);
-assert.match(panelLightBlock, /--dait-backdrop: rgba\(0, 0, 0, 0\.36\);/);
+assert.match(panelLightBlock, /--dait-backdrop: rgba\(23, 20, 16, 0\.42\);/);
 assert.equal(/\.theme-(dark|darker|midnight)\.dait-quick-settings-modal-root/.test(injectedCss), false);
 assert.equal(injectedCss.includes("--dait-quick-dialog-bg"), false);
 const quickBodyBlock = injectedCss.match(/\.dait-quick-settings-body \{([\s\S]*?)\n\}/)?.[1] || "";
@@ -2962,7 +2962,7 @@ assert.match(injectedCss, /@container dait-settings \(max-width: 600px\) \{[\s\S
 assert.match(injectedCss, /\.dait-message-button \{[\s\S]*?border: 1px solid color-mix/);
 assert.match(injectedCss, /\.theme-light\.dait-polish-button,[\s\S]*?\.dait-polish-button\[data-dait-discord-theme="light"\]/);
 assert.match(injectedCss, /\.theme-dark\.dait-polish-button,[\s\S]*?\.theme-darker\.dait-polish-button,[\s\S]*?\.theme-midnight\.dait-polish-button/);
-assert.match(injectedCss, /\.theme-dark\.dait-polish-button:hover,[\s\S]*?\.theme-midnight\.dait-public-bilingual-button:focus-visible,[\s\S]*?background: color-mix\(in srgb, var\(--brand-500, #5865f2\) 20%, rgba\(255, 255, 255, 0\.08\)\);/);
+assert.match(injectedCss, /\.theme-dark\.dait-polish-button:hover,[\s\S]*?\.theme-midnight\.dait-public-bilingual-button:focus-visible,[\s\S]*?background: color-mix\(in srgb, #227a5f 24%, rgba\(255, 255, 255, 0\.08\)\);/);
 assert.match(injectedCss, /\.theme-light\.dait-message-button,[\s\S]*?\.dait-message-button\[data-dait-discord-theme="light"\]/);
 assert.match(injectedCss, /\.theme-dark\.dait-message-button,[\s\S]*?\.theme-darker\.dait-message-button,[\s\S]*?\.theme-midnight\.dait-message-button/);
 assert.match(injectedCss, /\.dait-message-button\.dait-message-button-hover-only \{/);
@@ -2974,7 +2974,7 @@ assert.match(injectedCss, /\[id\^="chat-messages-"\]:hover \.dait-message-button
 assert.match(injectedCss, /\.dait-translation-line \{[\s\S]*?overflow-anchor: none;/);
 assert.match(injectedCss, /\.dait-polish-result-panel \{/);
 // The polish result panel reads the shared tokens instead of four per-theme colour blocks.
-assert.match(injectedCss, /\.dait-polish-result-panel \{[\s\S]*?background: var\(--dait-surface\);[\s\S]*?border: 1px solid var\(--dait-divider\);[\s\S]*?box-shadow: var\(--dait-shadow\);[\s\S]*?color: var\(--dait-text\);/);
+assert.match(injectedCss, /\.dait-polish-result-panel \{[\s\S]*?background: var\(--dait-surface\);[\s\S]*?border: 2px solid var\(--dait-input-border\);[\s\S]*?box-shadow: var\(--dait-shadow\);[\s\S]*?color: var\(--dait-text\);/);
 assert.match(injectedCss, /\.dait-polish-result-output \{[\s\S]*?background: var\(--dait-input-bg\);[\s\S]*?color: var\(--dait-text\);/);
 assert.equal(/\.theme-(dark|darker|midnight)\.dait-polish-result-panel/.test(injectedCss), false);
 assert.equal(/\[data-dait-discord-theme="(light|darker|midnight)"\] \.dait-polish-result-output/.test(injectedCss), false);
@@ -4290,7 +4290,7 @@ plugin.savePromptTemplate("polish", "Test Template", "Test prompt in {targetLang
 assert.equal(plugin.getPromptTemplates("polish").length, templateCount + 1);
 const savedTemplateId = plugin.settings.polish.activePromptTemplate;
 const savedTemplate = plugin.getPromptTemplates("polish").find(item => item.id === savedTemplateId);
-assert.equal(savedTemplate.serial, "004");
+assert.equal(savedTemplate.serial, String(templateCount + 1).padStart(3, "0"));
 plugin.settings.polish.prompt = "Edited prompt";
 plugin.updatePromptTemplate("polish", savedTemplateId, plugin.settings.polish.prompt);
 plugin.applyPromptTemplate("polish", savedTemplateId);
@@ -5738,7 +5738,12 @@ bdfdbIntakePlugin.isElementVisibleInViewport = () => true;
 bdfdbIntakePlugin.getMessageContentElement = message => message.content;
 bdfdbIntakePlugin.getCachedElementText = content => content.text;
 bdfdbIntakePlugin.shouldAutoTranslateText = () => true;
-const bdfdbDomMessage = { isConnected: true, content: { dataset: {}, isConnected: true, text: "hola bdfdb" } };
+const bdfdbDomMessage = {
+    nodeType: 1,
+    isConnected: true,
+    getAttribute: name => name === "data-message-id" ? "111111111111111111" : null,
+    content: { dataset: {}, isConnected: true, text: "hola bdfdb" }
+};
 const bdfdbCandidates = bdfdbIntakePlugin.createAutoTranslationCandidates({
     messageNodes: [bdfdbDomMessage],
     contentByMessage: new Map(),
@@ -5791,7 +5796,12 @@ storeFullIntakePlugin.getDiscordMessageStore = () => ({
         timestamp: "2026-06-23T00:00:00.000Z"
     }]
 });
-const storeFullMessage = { isConnected: true, content: { dataset: {}, isConnected: true, text: storeShortDom } };
+const storeFullMessage = {
+    nodeType: 1,
+    isConnected: true,
+    getAttribute: name => name === "data-message-id" ? "333333333333333334" : null,
+    content: { dataset: {}, isConnected: true, text: storeShortDom }
+};
 const storeFullCandidates = storeFullIntakePlugin.createAutoTranslationCandidates({
     messageNodes: [storeFullMessage],
     contentByMessage: new Map(),
@@ -13856,7 +13866,12 @@ global.document = {
             }
         }
     });
-    const intakeStoreMessages = () => [{ isConnected: true, content: { dataset: {}, isConnected: true, text: intakeStoreShortDom } }];
+    const intakeStoreMessages = () => [{
+        nodeType: 1,
+        isConnected: true,
+        getAttribute: name => name === "data-message-id" ? "444444444444444445" : null,
+        content: { dataset: {}, isConnected: true, text: intakeStoreShortDom }
+    }];
     global.window = intakeStoreWindow();
     const intakeStoreReference = createIntakeFixturePlugin("auto")
         .createAutoTranslationCandidates(createIntakeContext(intakeStoreMessages()));

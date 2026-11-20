@@ -1,20 +1,21 @@
 "use strict";
 
-// Line-art icons drawn as CSS masks, so they take the text colour of their button or line.
-const svgIcon = body => `url("data:image/svg+xml,${encodeURIComponent(`<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>${body}</svg>`)}")`;
-const ICON_COPY = svgIcon("<rect x='9' y='9' width='12' height='12' rx='2'/><path d='M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1'/>");
-const ICON_RETRANSLATE = svgIcon("<path d='M21 12a9 9 0 1 1-3-6.7L21 8'/><path d='M21 3v5h-5'/>");
-const ICON_HIDE = svgIcon("<path d='M17.9 17.9A10 10 0 0 1 12 20c-7 0-10-8-10-8a18 18 0 0 1 5.1-5.9M9.9 4.2A9 9 0 0 1 12 4c7 0 10 8 10 8a18 18 0 0 1-2.2 3.2'/><path d='M1 1l22 22'/>");
-const ICON_ALERT = svgIcon("<circle cx='12' cy='12' r='10'/><path d='M12 7v6'/><path d='M12 17h.01'/>");
-const ICON_CLOCK = svgIcon("<circle cx='12' cy='12' r='10'/><path d='M12 6v6l4 2'/>");
+const { createPixelSvgDataUri } = require("../ui/pixel-icons");
+
+// Crisp 16x16 pixel-art icons drawn as CSS masks, so they take the text colour of their button or line.
+const ICON_COPY = createPixelSvgDataUri("copy", "#000000");
+const ICON_RETRANSLATE = createPixelSvgDataUri("retranslate", "#000000");
+const ICON_HIDE = createPixelSvgDataUri("hide", "#000000");
+const ICON_ALERT = createPixelSvgDataUri("alert", "#000000");
+const ICON_CLOCK = createPixelSvgDataUri("clock", "#000000");
 
 module.exports = `.dait-message-button {
     display: inline-flex;
     align-items: center;
     background: color-mix(in srgb, var(--background-modifier-hover, #747f8d) 32%, transparent);
-    border: 1px solid color-mix(in srgb, var(--interactive-muted, #747f8d) 34%, transparent);
-    border-radius: 6px;
-    box-shadow: none;
+    border: 1px solid color-mix(in srgb, var(--interactive-muted, #747f8d) 38%, transparent);
+    border-radius: 2px;
+    box-shadow: 1px 1px 0 rgba(0, 0, 0, 0.16);
     color: color-mix(in srgb, var(--text-normal, #dbdee1) 82%, var(--text-muted, #949ba4));
     justify-content: center;
     margin-left: 8px;
@@ -30,9 +31,9 @@ module.exports = `.dait-message-button {
 .theme-light .dait-message-button,
 .dait-message-button[data-dait-discord-theme="light"],
 [data-dait-discord-theme="light"] .dait-message-button {
-    background: rgba(79, 84, 92, 0.08);
-    border-color: rgba(79, 84, 92, 0.2);
-    color: #3f4652;
+    background: rgba(247, 243, 233, 0.86);
+    border-color: rgba(113, 107, 93, 0.36);
+    color: #24211b;
     opacity: 0.9;
 }
 
@@ -73,9 +74,9 @@ module.exports = `.dait-message-button {
 [data-list-item-id*="chat-messages"]:hover .dait-message-button,
 .dait-message-button:hover,
 .dait-message-button:focus-visible {
-    background: color-mix(in srgb, var(--brand-500, #5865f2) 14%, var(--background-modifier-hover, transparent));
-    border-color: color-mix(in srgb, var(--brand-500, #5865f2) 48%, var(--interactive-muted, #747f8d));
-    box-shadow: 0 0 0 1px color-mix(in srgb, var(--brand-500, #5865f2) 18%, transparent);
+    background: color-mix(in srgb, #227a5f 18%, var(--background-modifier-hover, transparent));
+    border-color: color-mix(in srgb, #227a5f 62%, var(--interactive-muted, #747f8d));
+    box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.24);
     color: var(--text-normal);
     opacity: 1;
     pointer-events: auto;
@@ -109,9 +110,10 @@ module.exports = `.dait-message-button {
 [data-dait-discord-theme="light"] [data-list-item-id*="chat-messages"]:hover .dait-message-button,
 [data-dait-discord-theme="light"] .dait-message-button:hover,
 [data-dait-discord-theme="light"] .dait-message-button:focus-visible {
-    background: rgba(88, 101, 242, 0.1);
-    border-color: rgba(88, 101, 242, 0.42);
-    color: #242832;
+    background: rgba(29, 110, 84, 0.14);
+    border-color: rgba(29, 110, 84, 0.56);
+    box-shadow: 2px 2px 0 rgba(29, 110, 84, 0.18);
+    color: #171410;
 }
 
 .dait-translation-line {
@@ -132,7 +134,8 @@ module.exports = `.dait-message-button {
 
 .dait-translation-line.dait-translation-revealed {
     background: var(--dait-line-tint);
-    border-radius: 4px;
+    border-left: 3px solid rgba(34, 122, 95, 0.72);
+    border-radius: 2px;
     box-decoration-break: clone;
     -webkit-box-decoration-break: clone;
     color: var(--dait-line-text);
@@ -144,6 +147,7 @@ module.exports = `.dait-message-button {
 .dait-translation-line.dait-translation-revealed.dait-translation-style-muted,
 .dait-translation-line.dait-translation-revealed.dait-translation-style-tag {
     background: transparent;
+    border-left: 0;
     padding: 0;
 }
 
@@ -154,12 +158,14 @@ module.exports = `.dait-message-button {
 /* With a note under the text, the faint background marks only the translated text. */
 .dait-translation-line.dait-translation-revealed.dait-translation-style-tint:has(> .dait-translation-note) {
     background: transparent;
+    border-left: 0;
     padding: 0;
 }
 
 .dait-translation-line.dait-translation-revealed.dait-translation-style-tint:has(> .dait-translation-note) > .dait-translation-text {
     background: var(--dait-line-tint);
-    border-radius: 4px;
+    border-left: 3px solid rgba(34, 122, 95, 0.72);
+    border-radius: 2px;
     box-decoration-break: clone;
     -webkit-box-decoration-break: clone;
     padding: 1px 6px;
@@ -167,7 +173,8 @@ module.exports = `.dait-message-button {
 
 .dait-translation-line.dait-translation-style-tag:not(.dait-translation-preview)::before {
     background: var(--dait-line-chip);
-    border-radius: 3px;
+    border: 1px solid rgba(34, 122, 95, 0.45);
+    border-radius: 2px;
     color: var(--dait-line-text);
     content: attr(data-dait-tag);
     display: inline-block;
@@ -203,6 +210,7 @@ module.exports = `.dait-message-button {
 }
 
 .dait-translation-line.dait-translation-preview.dait-translation-revealed {
+    border-left: 0;
     padding: 0 2px;
 }
 
@@ -210,8 +218,8 @@ module.exports = `.dait-message-button {
     align-items: center;
     background: var(--dait-line-surface);
     border: 1px solid var(--dait-line-border);
-    border-radius: 6px;
-    box-shadow: var(--shadow-low, 0 2px 8px rgba(0, 0, 0, 0.24));
+    border-radius: 2px;
+    box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.28);
     box-sizing: border-box;
     display: inline-flex;
     gap: 2px;
@@ -263,7 +271,7 @@ module.exports = `.dait-message-button {
     align-items: center;
     background: transparent;
     border: 0;
-    border-radius: 4px;
+    border-radius: 2px;
     box-sizing: border-box;
     color: var(--dait-line-muted);
     cursor: pointer;
@@ -305,7 +313,7 @@ module.exports = `.dait-message-button {
     align-items: center;
     background: color-mix(in srgb, var(--dait-line-danger-accent) 12%, transparent);
     border: 1px solid color-mix(in srgb, var(--dait-line-danger-accent) 45%, transparent);
-    border-radius: 6px;
+    border-radius: 2px;
     color: var(--dait-line-danger);
     column-gap: 8px;
     display: flex;
@@ -353,7 +361,7 @@ module.exports = `.dait-message-button {
 .dait-translation-retry,
 .dait-translation-note-button {
     align-items: center;
-    border-radius: 4px;
+    border-radius: 2px;
     box-sizing: border-box;
     cursor: pointer;
     display: inline-flex;
@@ -407,7 +415,7 @@ module.exports = `.dait-message-button {
     align-items: center;
     background: color-mix(in srgb, var(--dait-line-warning-accent) 12%, transparent);
     border: 1px solid color-mix(in srgb, var(--dait-line-warning-accent) 45%, transparent);
-    border-radius: 6px;
+    border-radius: 2px;
     box-sizing: border-box;
     color: var(--dait-line-warning);
     column-gap: 8px;
@@ -474,7 +482,7 @@ module.exports = `.dait-message-button {
 .dait-translation-line.dait-translation-masked .dait-translation-text::before {
     background: var(--dait-chat-mask);
     border: 1px solid var(--dait-chat-mask-border);
-    border-radius: 3px;
+    border-radius: 2px;
     bottom: 0;
     content: "";
     left: -4px;
@@ -486,7 +494,7 @@ module.exports = `.dait-message-button {
 
 .dait-translation-line.dait-translation-loading {
     background: var(--dait-line-chip);
-    border-radius: 4px;
+    border-radius: 2px;
     color: var(--dait-line-muted);
     font-size: 0.8125rem;
     height: 1.375rem;

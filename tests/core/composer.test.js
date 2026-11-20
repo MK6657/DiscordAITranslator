@@ -711,6 +711,146 @@ function createPolishFlow(t, options = {}) {
     return { plugin, textbox, calls };
 }
 
+for (const useInitialOriginal of [false, true]) {
+    test(`H02 uses the original draft to authorize mentions in both bilingual stages (${useInitialOriginal ? "original" : "polished"} spoiler)`, async t => {
+        const original = "请 @here 确认 <@&123456789012345678> 的更新。";
+        const { plugin, textbox } = createPolishFlow(t, { textbox: createFlowTextbox(original) });
+        plugin.settings.ui.publicBilingualPolishBeforeTranslate = true;
+        plugin.settings.ui.publicBilingualUseInitialOriginal = useInitialOriginal;
+        plugin.isInvalidAutoTranslationOutput = () => false;
+        const requests = [];
+        plugin.runModelTask = async (kind, text) => {
+            requests.push({ kind, text });
+            if (kind === "polish") return "请 @here 确认 <@&123456789012345678> 的更新。||@everyone|| <@&223456789012345678>";
+            return "Review @here <@&123456789012345678>, @everyone, \\`@here\\` and `@here`.";
+        };
+
+        const result = await plugin.publicBilingualCurrentDraft();
+        assert.equal(result.ok, true);
+        assert.deepEqual(requests, [
+            { kind: "polish", text: original },
+            { kind: "translation", text: "请 @here 确认 <@&123456789012345678> 的更新。||@\u200beveryone|| <@\u200b&223456789012345678>" }
+        ]);
+        assert.equal(plugin.polishSession.lastResultRawText, requests[1].text);
+        assert.equal(plugin.polishSession.lastBilingualSourceRawText, requests[1].text);
+        const expectedSpoiler = useInitialOriginal ? original : requests[1].text;
+        assert.equal(textbox.text, [
+            "Review @\u200bhere <@\u200b&123456789012345678>, @\u200beveryone, \\`@\u200bhere\\` and `@here`.",
+            `||${plugin.getPublicBilingualSpoilerText(expectedSpoiler)}||`
+        ].join("\n\n"));
+    });
+}
+
+test("H02 an escaped mention in the original does not authorize an active generated mention", async t => {
+    const draft = "请参考 \\@everyone 的字面写法。";
+    const { plugin, textbox } = createPolishFlow(t, { textbox: createFlowTextbox(draft) });
+    plugin.settings.ui.publicBilingualUseInitialOriginal = true;
+    plugin.getPublicBilingualTranslation = async () => ({ text: "Please review @everyone." });
+    assert.equal((await plugin.publicBilingualCurrentDraft()).ok, true);
+    assert.equal(textbox.text, `Please review @\u200beveryone.\n\n||${draft}||`);
+});
+
+for (const lateOutcome of ["success", "failure"]) {
+    test(`H03 drops a cancelled polish ${lateOutcome} that arrives after the next polish completes`, async t => {
+        const { plugin, textbox, calls } = createPolishFlow(t);
+        const oldResult = Promise.withResolvers();
+        const modelCalls = [];
+        plugin.runModelTask = (kind, text) => {
+            modelCalls.push({ kind, text });
+            return modelCalls.length === 1 ? oldResult.promise : Promise.resolve("new polished draft");
+        };
+        const oldRun = plugin.polishCurrentDraft();
+        const [oldToken] = plugin.composerWriter.activeWriteTokens.values();
+        plugin.composerWriter.cancelWriteToken(oldToken, "user-input");
+        textbox.text = "new original";
+
+        await plugin.polishCurrentDraft();
+        const newSession = plugin.polishSession;
+        if (lateOutcome === "success") oldResult.resolve("obsolete polished draft");
+        else oldResult.reject(new Error("obsolete failure"));
+        await oldRun;
+
+        assert.deepEqual(modelCalls.map(call => call.text), ["draft", "new original"]);
+        assert.deepEqual(calls.writes, ["new polished draft"]);
+        assert.deepEqual(calls.panels, []);
+        assert.deepEqual(calls.toasts, []);
+        assert.equal(plugin.polishSession, newSession);
+        assert.equal(newSession.originalRawText, "new original");
+        assert.equal(newSession.lastResultRawText, "new polished draft");
+    });
+}
+
+test("H03 a replacement textbox in the same composer takes ownership of the polish session", async t => {
+    const composer = { dataset: {} };
+    const textbox = createFlowTextbox("draft", composer);
+    const replacement = createFlowTextbox("draft", composer);
+    const oldResult = Promise.withResolvers();
+    const { plugin, calls } = createPolishFlow(t, { textbox });
+    let requests = 0;
+    plugin.runModelTask = () => ++requests === 1 ? oldResult.promise : Promise.resolve("replacement polish");
+
+    const oldRun = plugin.polishCurrentDraft(null, { textbox });
+    const [oldToken] = plugin.composerWriter.activeWriteTokens.values();
+    plugin.composerWriter.cancelWriteToken(oldToken, "user-input");
+    await plugin.polishCurrentDraft(null, { textbox: replacement });
+    oldResult.resolve("old polish");
+    await oldRun;
+
+    assert.equal(textbox.text, "draft");
+    assert.equal(replacement.text, "replacement polish");
+    assert.deepEqual(calls.writes, ["replacement polish"]);
+    assert.deepEqual(calls.panels, []);
+    assert.equal(plugin.polishSession.textbox, replacement);
+    assert.equal(plugin.polishSession.lastResultRawText, "replacement polish");
+});
+
+test("H03 holds a single late polish for copying after user input", async t => {
+    const result = Promise.withResolvers();
+    const { plugin, textbox, calls } = createPolishFlow(t, { runModelTask: () => result.promise });
+    const run = plugin.polishCurrentDraft();
+    const [token] = plugin.composerWriter.activeWriteTokens.values();
+    plugin.composerWriter.cancelWriteToken(token, "user-input");
+    textbox.text = "edited draft";
+    result.resolve("held polish");
+    await run;
+
+    assert.equal(textbox.text, "edited draft");
+    assert.deepEqual(calls.writes, []);
+    assert.deepEqual(calls.panels, ["held polish"]);
+});
+
+for (const change of ["typing", "channel", "unchanged"]) {
+    test(`H04 confirms only the verified polish after waiting for automatic bilingual (${change})`, async t => {
+        const { plugin, textbox, calls } = createPolishFlow(t);
+        plugin.settings.ui.publicBilingualAfterPolish = true;
+        plugin.settings.polish.afterAction = "confirmSend";
+        let routeKey = "guild:original-channel";
+        plugin.getCurrentRouteKey = () => routeKey;
+        const translation = Promise.withResolvers();
+        const started = Promise.withResolvers();
+        plugin.getPublicBilingualTranslation = text => {
+            started.resolve(text);
+            return translation.promise;
+        };
+        const previews = [];
+        plugin.confirmAction = async options => {
+            previews.push(options.preview);
+            return false;
+        };
+        const run = plugin.polishCurrentDraft();
+        assert.equal(await started.promise, "polished draft");
+        if (change === "typing") textbox.text = "new user draft";
+        if (change === "channel") routeKey = "guild:new-channel";
+        if (change === "unchanged") translation.reject(new Error("translation service unavailable"));
+        else translation.resolve({ text: "translated draft" });
+        await run;
+
+        assert.deepEqual(calls.writes, ["polished draft"]);
+        assert.equal(textbox.text, change === "typing" ? "new user draft" : "polished draft");
+        assert.deepEqual(previews, change === "unchanged" ? ["polished draft"] : []);
+    });
+}
+
 test("a late polish result is held while the user types in another field", async t => {
     const otherInput = { tagName: "INPUT", type: "text", getAttribute: () => null };
     useGlobals(t, { document: { activeElement: otherInput, body: {}, documentElement: {} } });

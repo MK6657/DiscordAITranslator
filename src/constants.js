@@ -156,6 +156,7 @@ const PROVIDER_DEFAULTS = {
 
 const PROVIDER_ORDER = ["deepseek", "openaiCompatible", "sakuraLocal", "googleCloud", "microsoft", "deepl", "baidu"];
 const PROVIDER_PROFILE_FIELDS = ["apiKey", "endpoint", "model", "enableThinking", "region", "deeplPlan", "appId", "secretKey"];
+const MAX_SAVED_SERVICE_CONFIGS = 20;
 const PROVIDER_CAPABILITIES = {
     deepseek: {
         tasks: { polish: true, translation: true },
@@ -163,7 +164,7 @@ const PROVIDER_CAPABILITIES = {
             apiKey: true,
             apiTest: true,
             endpoint: true,
-            deepseekPreset: true,
+            deepseekPreset: false,
             localModelPreset: false,
             model: true,
             enableThinking: true,
@@ -314,6 +315,8 @@ const AUTO_TRANSLATE_FAILURE_TTL = 15000;
 const AUTO_TRANSLATE_TERMINAL_FAILURE_TTL = 6 * 60 * 60 * 1000;
 const AUTO_TRANSLATE_FAILURE_LIMIT = 2000;
 const AUTO_TRANSLATE_FAILURE_MAX_TTL = 120000;
+const AUTO_TRANSLATE_MAX_RETRY_ATTEMPTS = 6;
+const AUTO_TRANSLATE_IMMEDIATE_TERMINAL_TYPES = Object.freeze(["auth", "quota", "client"]);
 const AUTO_TRANSLATE_FAILURE_HISTORY_TTL = 10 * 60 * 1000;
 const AUTO_TRANSLATE_FAILURE_HISTORY_LIMIT = 2000;
 const AUTO_TRANSLATE_INLINE_FAILURE_AFTER_COUNT = 3;
@@ -358,10 +361,10 @@ const MANUAL_TRANSLATION_RESCUE_REQUEST_ALLOWANCE = 4;
 const MANUAL_TRANSLATION_REQUEST_BUDGET_MAX = 24;
 const MODEL_REQUEST_TIMEOUT_MS = 45000;
 const API_TEST_REQUEST_TIMEOUT_MS = 15000;
-// Error codes thrown by assertSafeRequestEndpoint, mapped to their localized messages.
 const API_ENDPOINT_ERROR_MESSAGE_KEYS = Object.freeze({
     INVALID_API_ENDPOINT: "errorInvalidEndpoint",
-    UNSAFE_API_ENDPOINT: "errorUnsafeEndpoint"
+    UNSAFE_API_ENDPOINT: "errorUnsafeEndpoint",
+    API_KEY_ORIGIN_MISMATCH: "apiKeyOriginMismatch"
 });
 const SCAN_VIEWPORT_BUFFER_PX = 480;
 const AUTO_TRANSLATE_VIEWPORT_SETTLE_MS = 450;
@@ -585,6 +588,76 @@ const DEFAULT_PROMPT_TEMPLATES = {
                 "Keep the key meaning, remove unnecessary wording, and preserve mentions, URLs, Markdown, emoji, and code blocks.",
                 "Return only the final message."
             ].join("\n")
+        },
+        {
+            id: "polish-native-casual",
+            serial: "004",
+            name: "地道口语（去翻译腔）",
+            prompt: [
+                "你是一名熟悉 Discord 社区语境的母语级写作助手。",
+                "任务：将用户的草稿润色并改写为自然、地道的 {targetLanguage} 聊天表达。",
+                "要求：",
+                "- 消除“翻译腔”和教科书式长句，使用目标语言网友在 Discord 日常聊天中真实会说的说法和节奏。",
+                "- 准确保留原意、情绪强度、人称与核心诉求，不要擅自脑补事实或改变立场。",
+                "- 完整保留 @提及、链接、Markdown 格式、表情/emoji、行内代码、代码块、命令与专有名词。",
+                "- 如果草稿本身很短，保持简短利落，不要无故拉长。",
+                "- 严格使用 {targetLanguage} 输出，只返回最终可直接发送的消息正文，不要附带解释、标题、引号、备注或多个备选版本。"
+            ].join("\n")
+        },
+        {
+            id: "polish-tech-bug",
+            serial: "005",
+            name: "技术 / Bug 反馈",
+            prompt: [
+                "你是一名熟悉开发者社区与工单沟通的技术写作助手。",
+                "任务：将用户的草稿润色为清晰、准确、条理分明的 {targetLanguage} 技术沟通消息。",
+                "要求：",
+                "- 突出关键现象、复现步骤、环境信息或明确诉求，去掉冗余废话，便于开发者快速定位和回复。",
+                "- 严格保留代码块、行内代码、报错日志、命令、API/参数名、版本号、文件路径、链接、@提及与专有名词，不要改动或强行意译技术标识。",
+                "- 保持客观友善的协作语气，不要自行编造未提及的技术细节。",
+                "- 严格使用 {targetLanguage} 输出，只返回最终消息正文，不要附带解释、标签或多余引号。"
+            ].join("\n")
+        },
+        {
+            id: "polish-gaming-chat",
+            serial: "006",
+            name: "游戏 / 开黑社区",
+            prompt: [
+                "你是一名熟悉 Discord 游戏频道和开黑语境的聊天助手。",
+                "任务：将用户的草稿改写为自然、轻松、有玩家语感的 {targetLanguage} 群聊消息。",
+                "要求：",
+                "- 句子短促顺口、贴合真实玩家交流节奏，不要写成书面报告或客服腔。",
+                "- 保留常见游戏术语、黑话、技能/角色/装备专名与缩写（如 buff、nerf、CD、DPS、AFK、GG 等），避免生硬直译。",
+                "- 完整保留 @提及、链接、Markdown、emoji 与原本的情绪或玩笑感。",
+                "- 严格使用 {targetLanguage} 输出，只返回最终消息正文，不要附带解释、备注或多余引号。"
+            ].join("\n")
+        },
+        {
+            id: "polish-tactful",
+            serial: "007",
+            name: "高情商 / 委婉沟通",
+            prompt: [
+                "你是一名擅长社区与跨文化沟通的高情商写作助手。",
+                "任务：将用户的草稿润色为克制、有分寸、好沟通的 {targetLanguage} 消息。",
+                "要求：",
+                "- 缓和生硬、冲动或容易引发误解的措辞，用建设性、尊重对方的方式表达核心诉求、异议、催促或拒绝。",
+                "- 保持不卑不亢、意思明确，不要过度客套、不要削弱用户的真实底线或立场。",
+                "- 完整保留 @提及、链接、Markdown、emoji、代码与关键事实。",
+                "- 严格使用 {targetLanguage} 输出，只返回最终消息正文，不要附带解释、标题或备选版本。"
+            ].join("\n")
+        },
+        {
+            id: "polish-formal-notice",
+            serial: "008",
+            name: "正式 / 公告与合作",
+            prompt: [
+                "你是一名专业、得体的双语公告与商务沟通写作助手。",
+                "任务：将用户的草稿润色为专业、规范、结构清晰的 {targetLanguage} 正式文本。",
+                "要求：",
+                "- 适用于频道公告、社区规则、合作洽谈、申诉或重要通知；用词严谨礼貌，重点信息层次清楚。",
+                "- 保留原有时间、数据、条款编号、换行层级、@提及、链接、Markdown、emoji 与专有名词，不擅自增删承诺或事实。",
+                "- 严格使用 {targetLanguage} 输出，只返回最终正文，不要附带解释、备注或外层引号。"
+            ].join("\n")
         }
     ],
     translation: [
@@ -616,6 +689,63 @@ const DEFAULT_PROMPT_TEMPLATES = {
                 "Do not summarize or add explanations.",
                 "Return only the translation."
             ].join("\n")
+        },
+        {
+            id: "translation-slang-casual",
+            serial: "003",
+            name: "社区梗与口语（接地气）",
+            prompt: [
+                "你正在为 Discord 聊天频道提供贴近母语网感的实时消息翻译。",
+                "任务：将消息中的自然语言准确意译为地道、鲜活的 {targetLanguage} 口语表达。",
+                "要求：",
+                "- 准确理解并意译 Discord 高频缩略语、俚语、吐槽、阴阳怪气和情绪词（如 ngl、fr、imo、cooked、skill issue、cope 等），翻成目标语言网友自然会说的表达，不死板硬译字面。",
+                "- 完整保留原句语气、幽默感、粗口烈度与简短节奏，不要擅自审查、说教或补全未说出的内容。",
+                "- 严格保留 @提及、链接、emoji、Markdown、代码块、行内代码、用户名、专有名词与换行结构。",
+                "- 严格使用 {targetLanguage} 输出，只返回译文正文，不要添加解释、注释、标签、外层引号或备选译文。"
+            ].join("\n")
+        },
+        {
+            id: "translation-tech-dev",
+            serial: "004",
+            name: "技术 / AI / 开发频道",
+            prompt: [
+                "你正在为 Discord 技术与开发频道提供实时消息翻译。",
+                "任务：将消息中的自然语言部分准确翻译为流畅、易读的 {targetLanguage}。",
+                "要求：",
+                "- 准确传达技术逻辑、因果关系、报错语境和原作者语气（包括吐槽、简写与口语）。",
+                "- 保留业内通用且无需强行直译的英文术语、缩写和专有名词（如 API、PR、commit、merge、token、prompt、endpoint、cache、bug、hotfix、CLI、SDK、版本号、产品名、模型名等），让译文符合开发者日常阅读习惯。",
+                "- 严格保留 @提及、链接、代码块、行内代码、命令、文件路径、日志片段、ID、Markdown、emoji 与原有换行/列表结构。",
+                "- 若原文为多语言混排，仅翻译需要翻译的部分，保持整体行文自然连贯。",
+                "- 严格使用 {targetLanguage} 输出，只返回最终译文，不要添加解释、注释、标签、外层引号或任何额外内容。"
+            ].join("\n")
+        },
+        {
+            id: "translation-gaming-acg",
+            serial: "005",
+            name: "游戏 / 二次元社区",
+            prompt: [
+                "你正在为 Discord 游戏与二次元同好频道提供实时消息翻译。",
+                "任务：将消息翻译为贴合玩家和社区语境的自然 {targetLanguage}。",
+                "要求：",
+                "- 准确还原玩家间的玩笑、吐槽、攻略讨论、抽卡/副本/对战情绪，行文轻松自然，避免生硬机翻味。",
+                "- 合理保留圈内通用词、机制缩写、角色/作品/技能/道具专名（如 buff、nerf、DPS、CD、AFK、gacha、pity、DLC 等）或使用公认中文/目标语译名。",
+                "- 严格保留 @提及、链接、emoji、Markdown、代码块、用户名与原有排版。",
+                "- 严格使用 {targetLanguage} 输出，只返回译文正文，不要添加解释、词条说明、标签或外层引号。"
+            ].join("\n")
+        },
+        {
+            id: "translation-formal-changelog",
+            serial: "006",
+            name: "官方公告 / 更新日志",
+            prompt: [
+                "你正在为 Discord 官方公告、规则说明与版本更新日志提供高质量翻译。",
+                "任务：将消息准确、规范地翻译为条理清晰的 {targetLanguage}。",
+                "要求：",
+                "- 用词严谨清晰，忠实传达公告结论、时间节点、版本变更、修复项与注意事项，不遗漏也不自行概括删减。",
+                "- 严格保留标题层级、列表符号、条款编号、版本号、时间戳、@提及、链接、代码块、行内代码、Markdown 与 emoji。",
+                "- 专有名词、产品名、功能代号与命令保持原样或采用一贯译法。",
+                "- 严格使用 {targetLanguage} 输出，只返回译文正文，不要添加总结、解释、标签或外层引号。"
+            ].join("\n")
         }
     ]
 };
@@ -639,7 +769,7 @@ const LEGACY_TRANSLATION_NATURAL_PROMPTS = [
 
 const PROMPT_POLICY_VERSIONS = Object.freeze({
     system: "system-v2",
-    polish: "polish-v2",
+    polish: "polish-v3",
     manual: "translation-manual-v2",
     manualForceTarget: "translation-manual-force-v1",
     manualRepair: "translation-manual-repair-v1",
@@ -703,6 +833,7 @@ const DEFAULT_SETTINGS = {
         defaultMonthlyLimit: GOOGLE_TRANSLATE_DEFAULT_MONTHLY_LIMIT,
         allowPrefetch: true
     },
+    serviceConfigs: [],
     ui: {
         settingsVersion: 2,
         // One of the settings tabs in src/settings/settings-schema.js.
@@ -772,6 +903,7 @@ module.exports = {
     PROVIDER_DEFAULTS,
     PROVIDER_ORDER,
     PROVIDER_PROFILE_FIELDS,
+    MAX_SAVED_SERVICE_CONFIGS,
     PROVIDER_CAPABILITIES,
     DEEPSEEK_MODELS,
     LOCAL_MODEL_PRESETS,
@@ -787,6 +919,8 @@ module.exports = {
     AUTO_TRANSLATE_TERMINAL_FAILURE_TTL,
     AUTO_TRANSLATE_FAILURE_LIMIT,
     AUTO_TRANSLATE_FAILURE_MAX_TTL,
+    AUTO_TRANSLATE_MAX_RETRY_ATTEMPTS,
+    AUTO_TRANSLATE_IMMEDIATE_TERMINAL_TYPES,
     AUTO_TRANSLATE_FAILURE_HISTORY_TTL,
     AUTO_TRANSLATE_FAILURE_HISTORY_LIMIT,
     AUTO_TRANSLATE_INLINE_FAILURE_AFTER_COUNT,

@@ -25,7 +25,7 @@ module.exports = `.dait-quick-settings-modal-root {
 
 .dait-quick-settings-dialog {
     background: var(--dait-bg);
-    border: 1px solid var(--dait-divider);
+    border: 2px solid var(--dait-input-border);
     border-radius: var(--dait-radius-card);
     box-shadow: var(--dait-shadow);
     color: var(--dait-text);
@@ -36,6 +36,30 @@ module.exports = `.dait-quick-settings-modal-root {
     position: relative;
     width: min(920px, calc(100vw - 48px));
     z-index: 1;
+}
+
+.dait-quick-settings-dialog::before {
+    background: var(--dait-pixel-trim);
+    content: "";
+    display: block;
+    flex: 0 0 auto;
+    height: 4px;
+    width: 100%;
+}
+
+/* Dynamic viewport adaptation across large desktops, DPI-scaled laptops, and zoomed/split windows. */
+@media (max-width: 1080px), (max-height: 760px) {
+    .dait-quick-settings-dialog {
+        height: min(760px, calc(100vh - 24px));
+        width: min(920px, calc(100vw - 24px));
+    }
+}
+
+@media (max-width: 760px), (max-height: 600px) {
+    .dait-quick-settings-dialog {
+        height: min(760px, calc(100vh - 12px));
+        width: min(920px, calc(100vw - 12px));
+    }
 }
 
 .dait-quick-settings-body {
@@ -101,25 +125,32 @@ module.exports = `.dait-quick-settings-modal-root {
 }
 
 .dait-quick-settings-button {
-    --dait-quick-button-bg: color-mix(in srgb, var(--background-modifier-hover, var(--background-surface-high, rgba(79, 84, 92, 0.16))) 46%, transparent);
-    --dait-quick-button-border: color-mix(in srgb, var(--interactive-muted, #747f8d) 24%, transparent);
+    --dait-quick-button-bg: color-mix(in srgb, var(--background-modifier-hover, var(--background-surface-high, rgba(79, 84, 92, 0.16))) 52%, transparent);
+    --dait-quick-button-border: color-mix(in srgb, var(--interactive-muted, #747f8d) 38%, transparent);
     --dait-quick-button-text: var(--interactive-normal, var(--text-secondary, var(--text-muted, #b5bac1)));
-    --dait-quick-button-hover-bg: color-mix(in srgb, var(--brand-500, #5865f2) 16%, var(--background-modifier-selected, var(--background-modifier-hover, rgba(79, 84, 92, 0.16))));
-    --dait-quick-button-hover-border: color-mix(in srgb, var(--brand-500, #5865f2) 48%, var(--interactive-muted, #747f8d));
+    --dait-quick-button-hover-bg: color-mix(in srgb, #227a5f 22%, var(--background-modifier-selected, var(--background-modifier-hover, rgba(79, 84, 92, 0.16))));
+    --dait-quick-button-hover-border: #2e8f70;
     --dait-quick-button-hover-text: var(--interactive-hover, var(--text-primary, var(--text-normal, #ffffff)));
     align-items: center;
     background: var(--dait-quick-button-bg);
     border: 1px solid var(--dait-quick-button-border);
-    border-radius: 8px;
-    box-shadow: none;
+    border-radius: 2px;
+    box-shadow: 1px 1px 0 rgba(0, 0, 0, 0.22);
     color: var(--dait-quick-button-text);
     cursor: pointer;
     display: inline-flex;
     font-size: 11px;
     font-weight: 800;
     justify-content: center;
-    letter-spacing: 0;
+    letter-spacing: 0.02em;
     line-height: 1;
+    transition: transform 80ms steps(2), background-color 100ms ease, border-color 100ms ease;
+    z-index: 0;
+}
+
+.dait-quick-settings-button:active {
+    box-shadow: none;
+    transform: translate(1px, 1px);
 }
 
 .dait-quick-settings-button:hover,
@@ -134,13 +165,13 @@ module.exports = `.dait-quick-settings-modal-root {
 .theme-light .dait-quick-settings-button,
 .dait-quick-settings-button[data-dait-discord-theme="light"],
 [data-dait-discord-theme="light"] .dait-quick-settings-button {
-    --dait-quick-button-bg: color-mix(in srgb, var(--background-secondary, var(--background-modifier-hover, rgba(79, 84, 92, 0.1))) 58%, transparent);
-    --dait-quick-button-border: color-mix(in srgb, var(--interactive-muted, #747f8d) 22%, transparent);
+    --dait-quick-button-bg: color-mix(in srgb, #f7f3e9 82%, transparent);
+    --dait-quick-button-border: color-mix(in srgb, #716b5d 45%, transparent);
     --dait-quick-button-text: var(--interactive-normal, var(--text-secondary, #4f5660));
-    --dait-quick-button-hover-bg: color-mix(in srgb, var(--brand-500, #5865f2) 12%, var(--background-modifier-selected, var(--background-modifier-hover, rgba(79, 84, 92, 0.1))));
-    --dait-quick-button-hover-border: color-mix(in srgb, var(--brand-500, #5865f2) 44%, var(--interactive-muted, #747f8d));
-    --dait-quick-button-hover-text: var(--interactive-hover, var(--text-primary, #2e3338));
-    box-shadow: none;
+    --dait-quick-button-hover-bg: color-mix(in srgb, #1d6e54 16%, #f7f3e9);
+    --dait-quick-button-hover-border: #1d6e54;
+    --dait-quick-button-hover-text: var(--interactive-hover, var(--text-primary, #171410));
+    box-shadow: 2px 2px 0 rgba(36, 33, 27, 0.16);
 }
 
 .theme-light.dait-quick-settings-button:hover,
@@ -169,12 +200,12 @@ module.exports = `.dait-quick-settings-modal-root {
 [data-dait-discord-theme="darker"] .dait-quick-settings-button,
 [data-dait-discord-theme="midnight"] .dait-quick-settings-button {
     --dait-quick-button-bg: color-mix(in srgb, var(--background-modifier-hover, rgba(255, 255, 255, 0.08)) 48%, transparent);
-    --dait-quick-button-border: color-mix(in srgb, var(--interactive-muted, #747f8d) 24%, transparent);
+    --dait-quick-button-border: color-mix(in srgb, #828c88 42%, transparent);
     --dait-quick-button-text: var(--interactive-normal, var(--text-secondary, var(--text-muted, #b5bac1)));
-    --dait-quick-button-hover-bg: color-mix(in srgb, var(--brand-500, #5865f2) 18%, var(--background-modifier-selected, var(--background-modifier-hover, rgba(255, 255, 255, 0.08))));
-    --dait-quick-button-hover-border: color-mix(in srgb, var(--brand-500, #5865f2) 52%, var(--interactive-muted, #747f8d));
+    --dait-quick-button-hover-bg: color-mix(in srgb, #227a5f 24%, var(--background-modifier-selected, var(--background-modifier-hover, rgba(255, 255, 255, 0.08))));
+    --dait-quick-button-hover-border: #d8a84e;
     --dait-quick-button-hover-text: var(--interactive-hover, #ffffff);
-    box-shadow: none;
+    box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.34);
 }
 
 .theme-darker.dait-quick-settings-button,
@@ -218,10 +249,10 @@ module.exports = `.dait-quick-settings-modal-root {
     color: var(--dait-quick-button-hover-text);
 }
 
-/* The launcher's size and position come from 07-quick-popover; this keeps it from shrinking in the user panel. */
+/* The launcher's size and position come from 07-quick-popover; this keeps it compact and clear of Discord's Settings button. */
 .dait-quick-settings-panel {
     flex: 0 0 auto;
-    margin: 0 2px;
+    margin: 0 2px 0 0;
 }
 
 `;
