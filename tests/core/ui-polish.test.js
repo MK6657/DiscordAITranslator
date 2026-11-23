@@ -770,8 +770,10 @@ test("built-in prompt templates show a localised name in English; renamed and cu
     assert.ok(plugin.getPromptTemplateSearchText(templates[1]).includes("literal"));
     // A built-in template the user renamed keeps the new name.
     assert.equal(plugin.getPromptTemplateDisplayName({ ...templates[0], name: "Casual" }), "Casual");
-    // The polish templates too.
-    assert.deepEqual(plugin.getPromptTemplates("polish").map(template => plugin.getPromptTemplateDisplayName(template)), [
+    // The polish templates too (General + Dialect categories, all localized in English).
+    const polishTemplates = plugin.getPromptTemplates("polish");
+    const polishNames = polishTemplates.map(template => plugin.getPromptTemplateDisplayName(template));
+    assert.deepEqual(polishNames.slice(0, 8), [
         "Natural chat",
         "Polite and clear",
         "Short and direct",
@@ -781,6 +783,8 @@ test("built-in prompt templates show a localised name in English; renamed and cu
         "Tactful & diplomatic",
         "Formal & announcement"
     ]);
+    assert.equal(polishNames.length, 59);
+    assert.ok(polishNames.every(name => name.trim().length > 0 && !/[一-鿿]/.test(name)), "all built-in polish templates have English names without Chinese characters");
     // Toasts name it the same way.
     plugin.applyPromptTemplate("translation", "translation-literal");
     assert.equal(plugin.toasts.at(-1).message, plugin.t("promptApplied", { name: "Literal", code: "002" }));

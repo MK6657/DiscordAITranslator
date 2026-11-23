@@ -210,6 +210,12 @@ const {
     RTL_LANGUAGE_CODES,
     POLISH_REPOLISH_SOURCE_ORIGINAL,
     POLISH_REPOLISH_SOURCE_LAST_RESULT,
+    PROMPT_TEMPLATE_CATEGORY_GENERAL,
+    PROMPT_TEMPLATE_CATEGORY_DIALECT,
+    PROMPT_TEMPLATE_CATEGORY_PERSONA,
+    POLISH_PROMPT_TEMPLATE_CATEGORIES,
+    DIALECT_REGION_ORDER,
+    PERSONA_GROUP_ORDER,
     TRANSLATION_CACHE_DEFAULT_TTL_HOURS,
     TRANSLATION_CACHE_TTL_OPTIONS,
     TRANSLATION_CACHE_HIT_EXTEND_MS,
@@ -4570,13 +4576,30 @@ module.exports = class DiscordAITranslator {
         promptBlock.appendChild(footer);
 
         const saveRow = document.createElement("div");
-        saveRow.className = "dait-prompt-tools dait-prompt-save";
+        saveRow.className = kind === "polish"
+            ? "dait-prompt-tools dait-prompt-save dait-prompt-save-categorized"
+            : "dait-prompt-tools dait-prompt-save";
         const nameInput = document.createElement("input");
         nameInput.type = "text";
         nameInput.maxLength = 80;
         nameInput.placeholder = this.t("promptNamePlaceholder");
         nameInput.setAttribute("aria-label", this.t("promptSaveNameLabel"));
         saveRow.appendChild(nameInput);
+        let categorySelect = null;
+        if (kind === "polish") {
+            categorySelect = document.createElement("select");
+            categorySelect.className = "dait-prompt-category-select";
+            categorySelect.setAttribute("aria-label", this.t("promptTemplateCategoryLabel"));
+            const defaultCategory = this.getPolishTemplateCategory(this.getActivePolishTemplate());
+            POLISH_PROMPT_TEMPLATE_CATEGORIES.forEach(category => {
+                const option = document.createElement("option");
+                option.value = category;
+                option.textContent = this.getPolishTemplateCategoryLabel(category);
+                option.selected = category === defaultCategory;
+                categorySelect.appendChild(option);
+            });
+            saveRow.appendChild(categorySelect);
+        }
         const save = this.createSmallButton(this.t("promptSave"));
         save.dataset.daitAction = "promptSave";
         saveRow.appendChild(save);
@@ -4634,13 +4657,26 @@ module.exports = class DiscordAITranslator {
 
             const activeId = this.settings[kind]?.activePromptTemplate;
             const selectedId = [previous, activeId].find(id => id && templates.some(template => template.id === id)) || templates[0].id;
-            templates.forEach(template => {
+            const appendOption = (container, template) => {
                 const option = document.createElement("option");
                 option.value = template.id;
                 option.textContent = this.getPromptTemplateLabel(template);
                 option.selected = template.id === selectedId;
-                select.appendChild(option);
-            });
+                container.appendChild(option);
+            };
+            if (kind === "polish") {
+                POLISH_PROMPT_TEMPLATE_CATEGORIES.forEach(category => {
+                    const groupTemplates = templates.filter(template => this.getPolishTemplateCategory(template) === category);
+                    if (!groupTemplates.length) return;
+                    const group = document.createElement("optgroup");
+                    group.label = this.getPolishTemplateCategoryLabel(category);
+                    groupTemplates.forEach(template => appendOption(group, template));
+                    select.appendChild(group);
+                });
+            }
+            else {
+                templates.forEach(template => appendOption(select, template));
+            }
             syncPreview();
         };
 
@@ -4657,7 +4693,7 @@ module.exports = class DiscordAITranslator {
             }
             const prompt = getPromptValue();
             commitPrompt(prompt);
-            this.savePromptTemplate(kind, name, prompt);
+            this.savePromptTemplate(kind, name, prompt, categorySelect ? { category: categorySelect.value } : {});
             nameInput.value = "";
             search.value = "";
             renderOptions(this.settings[kind]?.activePromptTemplate);
@@ -5007,6 +5043,69 @@ module.exports = class DiscordAITranslator {
         return `${template.serial || "000"} · ${this.getPromptTemplateDisplayName(template)}`;
     }
 
+    getPolishTemplateCategory(template) {
+        return this.normalizePromptTemplateCategory("polish", template?.category, template?.id);
+    }
+
+    getPolishTemplateCategoryLabel(category) {
+        const keyMap = {
+            [PROMPT_TEMPLATE_CATEGORY_GENERAL]: "promptTemplateCategoryGeneral",
+            [PROMPT_TEMPLATE_CATEGORY_DIALECT]: "promptTemplateCategoryDialect",
+            [PROMPT_TEMPLATE_CATEGORY_PERSONA]: "promptTemplateCategoryPersona"
+        };
+        return this.t(keyMap[category] || "promptTemplateCategoryGeneral");
+    }
+
+    getDialectRegionLabel(region) {
+        const keyMap = {
+            southChina: "promptTemplateRegionSouthChina",
+            southwest: "promptTemplateRegionSouthwest",
+            north: "promptTemplateRegionNorth",
+            eastCentral: "promptTemplateRegionEastCentral"
+        };
+        return this.t(keyMap[region] || "promptTemplateRegionCustom");
+    }
+
+    getPersonaGroupLabel(group) {
+        const keyMap = {
+            monarchs: "promptTemplatePersonaGroupMonarchs",
+            strategists: "promptTemplatePersonaGroupStrategists",
+            literati: "promptTemplatePersonaGroupLiterati",
+            global: "promptTemplatePersonaGroupGlobal"
+        };
+        return this.t(keyMap[group] || "promptTemplatePersonaGroupCustom");
+    }
+
+    getActivePolishTemplate(config = null) {
+        const templates = this.getPromptTemplates("polish") || [];
+        const task = this.settings?.polish || {};
+        const activeId = String(config?.activePromptTemplate || task.activePromptTemplate || "");
+        const candidate = templates.find(item => item && item.id === activeId) || null;
+        if (!candidate) return null;
+        if (config && typeof config.prompt === "string") {
+            const normalize = value => String(value ?? "").replace(/\r\n?/g, "\n").trim();
+            if (normalize(config.prompt) !== normalize(candidate.prompt)) return null;
+        }
+        return candidate;
+    }
+
+    getEffectivePolishTargetLanguage(config = null) {
+        const rawTarget = config?.targetLanguage ?? this.settings?.polish?.targetLanguage;
+        const activeTemplate = this.getActivePolishTemplate(config);
+        const shouldPreferChinese = Boolean(
+            activeTemplate
+            && (this.getPolishTemplateCategory(activeTemplate) === PROMPT_TEMPLATE_CATEGORY_DIALECT
+                || activeTemplate.preferChineseOutput === true)
+        );
+        if (shouldPreferChinese) {
+            if (this.isTraditionalChineseTarget(rawTarget) || this.isSimplifiedChineseTarget(rawTarget)) {
+                return rawTarget;
+            }
+            return "汉语";
+        }
+        return rawTarget;
+    }
+
     // A built-in template keeps its stored (Chinese) name but is shown in the interface language, unless the user
     // renamed it; the user's own templates show their name as typed.
     getPromptTemplateDisplayName(template) {
@@ -5020,6 +5119,57 @@ module.exports = class DiscordAITranslator {
             "polish-gaming-chat": "promptTemplateNameGamingChat",
             "polish-tactful": "promptTemplateNameTactful",
             "polish-formal-notice": "promptTemplateNameFormalNotice",
+            "polish-dialect-cantonese-guangfu": "promptTemplateNameDialectCantoneseGuangfu",
+            "polish-dialect-cantonese-hk": "promptTemplateNameDialectCantoneseHk",
+            "polish-dialect-hakka": "promptTemplateNameDialectHakka",
+            "polish-dialect-chaoshan": "promptTemplateNameDialectChaoshan",
+            "polish-dialect-guangxi": "promptTemplateNameDialectGuangxi",
+            "polish-dialect-minnan": "promptTemplateNameDialectMinnan",
+            "polish-dialect-taiwan": "promptTemplateNameDialectTaiwan",
+            "polish-dialect-sichuan": "promptTemplateNameDialectSichuan",
+            "polish-dialect-yunnan": "promptTemplateNameDialectYunnan",
+            "polish-dialect-guizhou": "promptTemplateNameDialectGuizhou",
+            "polish-dialect-dongbei": "promptTemplateNameDialectDongbei",
+            "polish-dialect-beijing": "promptTemplateNameDialectBeijing",
+            "polish-dialect-tianjin": "promptTemplateNameDialectTianjin",
+            "polish-dialect-shaanxi": "promptTemplateNameDialectShaanxi",
+            "polish-dialect-henan": "promptTemplateNameDialectHenan",
+            "polish-dialect-shandong": "promptTemplateNameDialectShandong",
+            "polish-dialect-xinjiang": "promptTemplateNameDialectXinjiang",
+            "polish-dialect-shanghai": "promptTemplateNameDialectShanghai",
+            "polish-dialect-jiangzhe": "promptTemplateNameDialectJiangzhe",
+            "polish-dialect-nanjing": "promptTemplateNameDialectNanjing",
+            "polish-dialect-wuhan": "promptTemplateNameDialectWuhan",
+            "polish-dialect-hunan": "promptTemplateNameDialectHunan",
+            "polish-persona-qin-shihuang": "promptTemplateNamePersonaQinShihuang",
+            "polish-persona-han-wudi": "promptTemplateNamePersonaHanWudi",
+            "polish-persona-zhu-yuanzhang": "promptTemplateNamePersonaZhuYuanzhang",
+            "polish-persona-chiang-kai-shek": "promptTemplateNamePersonaChiangKaiShek",
+            "polish-persona-cao-cao": "promptTemplateNamePersonaCaoCao",
+            "polish-persona-li-shimin": "promptTemplateNamePersonaLiShimin",
+            "polish-persona-yongzheng": "promptTemplateNamePersonaYongzheng",
+            "polish-persona-zhuge-liang": "promptTemplateNamePersonaZhugeLiang",
+            "polish-persona-sima-yi": "promptTemplateNamePersonaSimaYi",
+            "polish-persona-sun-tzu": "promptTemplateNamePersonaSunTzu",
+            "polish-persona-xiang-yu": "promptTemplateNamePersonaXiangYu",
+            "polish-persona-lu-xun": "promptTemplateNamePersonaLuXun",
+            "polish-persona-lin-daiyu": "promptTemplateNamePersonaLinDaiyu",
+            "polish-persona-wang-yangming": "promptTemplateNamePersonaWangYangming",
+            "polish-persona-li-bai": "promptTemplateNamePersonaLiBai",
+            "polish-persona-su-shi": "promptTemplateNamePersonaSuShi",
+            "polish-persona-confucius": "promptTemplateNamePersonaConfucius",
+            "polish-persona-zhuangzi": "promptTemplateNamePersonaZhuangzi",
+            "polish-persona-eileen-chang": "promptTemplateNamePersonaEileenChang",
+            "polish-persona-qian-zhongshu": "promptTemplateNamePersonaQianZhongshu",
+            "polish-persona-wang-xiaobo": "promptTemplateNamePersonaWangXiaobo",
+            "polish-persona-guo-degang": "promptTemplateNamePersonaGuoDegang",
+            "polish-persona-shakespeare": "promptTemplateNamePersonaShakespeare",
+            "polish-persona-trump": "promptTemplateNamePersonaTrump",
+            "polish-persona-nietzsche": "promptTemplateNamePersonaNietzsche",
+            "polish-persona-marx": "promptTemplateNamePersonaMarx",
+            "polish-persona-napoleon": "promptTemplateNamePersonaNapoleon",
+            "polish-persona-churchill": "promptTemplateNamePersonaChurchill",
+            "polish-persona-musk": "promptTemplateNamePersonaMusk",
             "translation-natural": "promptTemplateNameNatural",
             "translation-literal": "promptTemplateNameLiteral",
             "translation-slang-casual": "promptTemplateNameSlangCasual",
@@ -5034,11 +5184,18 @@ module.exports = class DiscordAITranslator {
     }
 
     getPromptTemplateSearchText(template) {
+        const category = template?.category ? this.getPolishTemplateCategoryLabel(template.category) : "";
+        const region = template?.region ? this.getDialectRegionLabel(template.region) : "";
+        const personaGroup = template?.personaGroup ? this.getPersonaGroupLabel(template.personaGroup) : "";
         return [
             template.serial,
             String(template.serial || "").replace(/^0+/, ""),
             template.name,
-            this.getPromptTemplateDisplayName(template)
+            this.getPromptTemplateDisplayName(template),
+            template.category,
+            category,
+            region,
+            personaGroup
         ].filter(Boolean).join(" ").toLowerCase();
     }
 
@@ -9761,7 +9918,8 @@ module.exports = class DiscordAITranslator {
         const task = this.settings?.polish || {};
         const activeId = String(task.activePromptTemplate || "");
         const activeTemplate = templates.find(item => item && item.id === activeId) || null;
-        const matchesActive = Boolean(activeTemplate && String(activeTemplate.prompt || "") === String(task.prompt || ""));
+        const normalize = value => String(value ?? "").replace(/\r\n?/g, "\n").trim();
+        const matchesActive = Boolean(activeTemplate && normalize(activeTemplate.prompt) === normalize(task.prompt));
         const label = matchesActive
             ? this.getPromptTemplateLabel(activeTemplate)
             : this.t("quickPanelTemplateCustom");
@@ -9803,16 +9961,20 @@ module.exports = class DiscordAITranslator {
             const active = typeof document !== "undefined" ? document.activeElement : null;
             const focusedInMenu = Boolean(active && this.polishPresetMenu.contains?.(active));
             const focusedTemplateId = focusedInMenu ? active?.dataset?.daitTemplateId || "" : "";
+            const focusedCategory = focusedInMenu && active?.classList?.contains?.("dait-polish-preset-tab") ? active?.dataset?.daitCategory || "" : "";
             const focusedManage = Boolean(focusedInMenu && active?.classList?.contains?.("dait-polish-preset-manage"));
             this.renderPolishPresetMenuContent(this.polishPresetMenu, this.polishPresetMenuAnchor);
             this.positionPolishPresetMenu(this.polishPresetMenu, this.polishPresetMenuAnchor);
             if (focusedInMenu) {
                 const nextFocus = focusedManage
                     ? this.polishPresetMenu.querySelector?.(".dait-polish-preset-manage")
-                    : (focusedTemplateId
-                        ? [...(this.polishPresetMenu.querySelectorAll?.(".dait-polish-preset-item") || [])].find(item => item.dataset?.daitTemplateId === focusedTemplateId)
+                    : (focusedCategory
+                        ? [...(this.polishPresetMenu.querySelectorAll?.(".dait-polish-preset-tab") || [])].find(tab => tab.dataset?.daitCategory === focusedCategory)
                         : null)
-                        || this.polishPresetMenu.querySelector?.(".dait-polish-preset-item, .dait-polish-preset-manage");
+                        || (focusedTemplateId
+                            ? [...(this.polishPresetMenu.querySelectorAll?.(".dait-polish-preset-item") || [])].find(item => item.dataset?.daitTemplateId === focusedTemplateId)
+                            : null)
+                        || this.polishPresetMenu.querySelector?.(".dait-polish-preset-item, .dait-polish-preset-tab, .dait-polish-preset-manage");
                 nextFocus?.focus?.();
             }
         }
@@ -9860,13 +10022,54 @@ module.exports = class DiscordAITranslator {
         if (!menu) return;
         menu.textContent = "";
         const info = this.getActivePolishPresetInfo();
+        const activeCategory = POLISH_PROMPT_TEMPLATE_CATEGORIES.includes(this.polishPresetMenuCategory)
+            ? this.polishPresetMenuCategory
+            : this.getPolishTemplateCategory(info.activeTemplate);
+        this.polishPresetMenuCategory = activeCategory;
+        menu.dataset.daitCategory = activeCategory;
 
         const header = document.createElement("div");
         header.className = "dait-polish-preset-header";
+        const headerTop = document.createElement("div");
+        headerTop.className = "dait-polish-preset-header-top";
         const title = document.createElement("div");
         title.className = "dait-polish-preset-title";
         title.textContent = this.t("polishPresetMenuTitle");
-        header.appendChild(title);
+        headerTop.appendChild(title);
+
+        const tabs = document.createElement("div");
+        tabs.className = "dait-polish-preset-tabs";
+        tabs.setAttribute("role", "tablist");
+        tabs.setAttribute("aria-label", this.t("polishPresetMenuTabsLabel"));
+        POLISH_PROMPT_TEMPLATE_CATEGORIES.forEach(category => {
+            const tab = document.createElement("button");
+            tab.className = "dait-polish-preset-tab";
+            tab.type = "button";
+            tab.dataset.daitCategory = category;
+            tab.textContent = this.getPolishTemplateCategoryLabel(category);
+            tab.setAttribute("role", "tab");
+            tab.setAttribute("aria-selected", category === activeCategory ? "true" : "false");
+            tab.addEventListener("click", event => {
+                event.preventDefault();
+                event.stopPropagation();
+                if (!this.isLifecycleTokenCurrent(lifecycleToken) || this.polishPresetMenu !== menu || menu.isConnected === false) return;
+                if (this.polishPresetMenuCategory === category) return;
+                const hadFocusInMenu = Boolean(typeof document !== "undefined" && document.activeElement && menu.contains?.(document.activeElement));
+                this.polishPresetMenuCategory = category;
+                const nextSelected = this.renderPolishPresetMenuContent(menu, anchor, lifecycleToken);
+                this.positionPolishPresetMenu(menu, anchor);
+                if (hadFocusInMenu) {
+                    const nextTab = [...(menu.querySelectorAll?.(".dait-polish-preset-tab") || [])].find(node => node.dataset?.daitCategory === category);
+                    nextTab?.focus?.();
+                }
+                try { nextSelected?.scrollIntoView?.({ block: "nearest" }); }
+                catch {}
+            });
+            tabs.appendChild(tab);
+        });
+        headerTop.appendChild(tabs);
+        header.appendChild(headerTop);
+
         if (!info.matchesActive) {
             const customNote = document.createElement("div");
             customNote.className = "dait-polish-preset-custom-note";
@@ -9879,55 +10082,87 @@ module.exports = class DiscordAITranslator {
         list.className = "dait-polish-preset-list";
         list.setAttribute("role", "none");
         let selectedItem = null;
-        if (info.templates.length) {
-            info.templates.forEach(template => {
-                if (!template?.id) return;
-                const isSelected = Boolean(info.matchesActive && info.activeTemplate?.id === template.id);
-                const displayName = this.getPromptTemplateDisplayName(template);
-                const fullLabel = this.getPromptTemplateLabel(template);
-                const item = document.createElement("button");
-                item.className = "dait-polish-preset-item";
-                item.type = "button";
-                item.dataset.daitTemplateId = template.id;
-                item.title = fullLabel;
-                item.setAttribute("role", "menuitemradio");
-                item.setAttribute("aria-checked", isSelected ? "true" : "false");
-                item.setAttribute("aria-label", fullLabel);
+        const categoryTemplates = info.templates.filter(template => template?.id && this.getPolishTemplateCategory(template) === activeCategory);
+        const appendTemplateItem = template => {
+            const isSelected = Boolean(info.matchesActive && info.activeTemplate?.id === template.id);
+            const displayName = this.getPromptTemplateDisplayName(template);
+            const fullLabel = this.getPromptTemplateLabel(template);
+            const item = document.createElement("button");
+            item.className = "dait-polish-preset-item";
+            item.type = "button";
+            item.dataset.daitTemplateId = template.id;
+            item.dataset.daitCategory = activeCategory;
+            item.title = fullLabel;
+            item.setAttribute("role", "menuitemradio");
+            item.setAttribute("aria-checked", isSelected ? "true" : "false");
+            item.setAttribute("aria-label", fullLabel);
 
-                const code = document.createElement("span");
-                code.className = "dait-polish-preset-code";
-                code.textContent = String(template.serial || "000");
+            const code = document.createElement("span");
+            code.className = "dait-polish-preset-code";
+            code.textContent = String(template.serial || "000");
 
-                const name = document.createElement("span");
-                name.className = "dait-polish-preset-name";
-                name.textContent = displayName;
+            const name = document.createElement("span");
+            name.className = "dait-polish-preset-name";
+            name.textContent = displayName;
 
-                const check = document.createElement("span");
-                check.className = "dait-polish-preset-check";
-                check.setAttribute("aria-hidden", "true");
+            const check = document.createElement("span");
+            check.className = "dait-polish-preset-check";
+            check.setAttribute("aria-hidden", "true");
 
-                item.appendChild(code);
-                item.appendChild(name);
-                item.appendChild(check);
-                item.addEventListener("click", event => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    if (!this.isLifecycleTokenCurrent(lifecycleToken) || this.polishPresetMenu !== menu || menu.isConnected === false) return;
-                    if (this.settings.polish?.enabled === false) {
-                        this.removePolishPresetMenu();
-                        return;
-                    }
+            item.appendChild(code);
+            item.appendChild(name);
+            item.appendChild(check);
+            item.addEventListener("click", event => {
+                event.preventDefault();
+                event.stopPropagation();
+                if (!this.isLifecycleTokenCurrent(lifecycleToken) || this.polishPresetMenu !== menu || menu.isConnected === false) return;
+                if (this.settings.polish?.enabled === false) {
                     this.removePolishPresetMenu();
-                    this.applyPromptTemplate("polish", template.id);
-                });
-                list.appendChild(item);
-                if (isSelected) selectedItem = item;
+                    return;
+                }
+                this.removePolishPresetMenu();
+                this.applyPromptTemplate("polish", template.id);
             });
+            list.appendChild(item);
+            if (isSelected) selectedItem = item;
+        };
+
+        if (categoryTemplates.length) {
+            const appendSubgroup = (labelText, items) => {
+                if (!items.length) return;
+                const groupLabel = document.createElement("div");
+                groupLabel.className = "dait-polish-preset-group-label";
+                groupLabel.setAttribute("role", "presentation");
+                groupLabel.textContent = labelText;
+                list.appendChild(groupLabel);
+                items.forEach(appendTemplateItem);
+            };
+            if (activeCategory === PROMPT_TEMPLATE_CATEGORY_DIALECT) {
+                const customDialects = categoryTemplates.filter(template => !DIALECT_REGION_ORDER.includes(String(template.region || "")));
+                appendSubgroup(this.t("promptTemplateRegionCustom"), customDialects);
+                DIALECT_REGION_ORDER.forEach(region => {
+                    const regionItems = categoryTemplates.filter(template => template.region === region);
+                    appendSubgroup(this.getDialectRegionLabel(region), regionItems);
+                });
+            }
+            else if (activeCategory === PROMPT_TEMPLATE_CATEGORY_PERSONA) {
+                const customPersonas = categoryTemplates.filter(template => !PERSONA_GROUP_ORDER.includes(String(template.personaGroup || "")));
+                appendSubgroup(this.t("promptTemplatePersonaGroupCustom"), customPersonas);
+                PERSONA_GROUP_ORDER.forEach(group => {
+                    const groupItems = categoryTemplates.filter(template => template.personaGroup === group);
+                    appendSubgroup(this.getPersonaGroupLabel(group), groupItems);
+                });
+            }
+            else {
+                categoryTemplates.forEach(appendTemplateItem);
+            }
         }
         else {
             const empty = document.createElement("p");
             empty.className = "dait-polish-preset-empty";
-            empty.textContent = this.t("polishPresetMenuEmpty");
+            empty.textContent = activeCategory === PROMPT_TEMPLATE_CATEGORY_PERSONA
+                ? this.t("polishPresetMenuEmptyPersona")
+                : this.t("polishPresetMenuEmpty");
             list.appendChild(empty);
         }
         menu.appendChild(list);
@@ -10045,6 +10280,39 @@ module.exports = class DiscordAITranslator {
                 if (shouldRestoreFocus && anchorNode?.isConnected !== false) anchorNode?.focus?.();
                 return;
             }
+            if (["ArrowLeft", "ArrowRight"].includes(event.key)) {
+                const active = document.activeElement;
+                const allowTabNavigation = !active
+                    || active === document.body
+                    || active === document.documentElement
+                    || menu.contains?.(active)
+                    || active === anchorNode;
+                if (!allowTabNavigation) return;
+                const currentIdx = Math.max(0, POLISH_PROMPT_TEMPLATE_CATEGORIES.indexOf(this.polishPresetMenuCategory));
+                const delta = event.key === "ArrowRight" ? 1 : -1;
+                const nextCategory = POLISH_PROMPT_TEMPLATE_CATEGORIES[(currentIdx + delta + POLISH_PROMPT_TEMPLATE_CATEGORIES.length) % POLISH_PROMPT_TEMPLATE_CATEGORIES.length];
+                event.preventDefault();
+                event.stopPropagation();
+                const hadFocusInMenu = Boolean(active && menu.contains?.(active));
+                const wasFocusedOnTab = Boolean(active?.classList?.contains?.("dait-polish-preset-tab"));
+                this.polishPresetMenuCategory = nextCategory;
+                const nextSelected = this.renderPolishPresetMenuContent(menu, anchorNode, lifecycleToken);
+                this.positionPolishPresetMenu(menu, anchorNode);
+                if (wasFocusedOnTab) {
+                    const nextTab = [...(menu.querySelectorAll?.(".dait-polish-preset-tab") || [])].find(tab => tab.dataset?.daitCategory === nextCategory);
+                    nextTab?.focus?.();
+                }
+                else if (hadFocusInMenu) {
+                    const fallbackFocus = nextSelected
+                        || menu.querySelector?.(".dait-polish-preset-item, .dait-polish-preset-manage, .dait-polish-preset-tab");
+                    fallbackFocus?.focus?.();
+                }
+                else {
+                    try { nextSelected?.scrollIntoView?.({ block: "nearest" }); }
+                    catch {}
+                }
+                return;
+            }
             if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
             const active = document.activeElement;
             const allowNavigation = !active
@@ -10096,7 +10364,7 @@ module.exports = class DiscordAITranslator {
         const rect = anchor?.getBoundingClientRect?.() || null;
         const viewportWidth = Number(window.innerWidth || document.documentElement?.clientWidth || 0) || 900;
         const viewportHeight = Number(window.innerHeight || document.documentElement?.clientHeight || 0) || 700;
-        const width = Math.min(280, Math.max(240, viewportWidth - 24));
+        const width = Math.min(324, Math.max(260, viewportWidth - 24));
         const left = rect ? Math.max(12, Math.min(rect.right - width, viewportWidth - width - 12)) : viewportWidth - width - 16;
         menu.style.maxHeight = "";
         const menuHeight = Number(menu.getBoundingClientRect?.()?.height || 0);
@@ -10126,6 +10394,7 @@ module.exports = class DiscordAITranslator {
         this.polishPresetMenu?.remove?.();
         this.polishPresetMenu = null;
         this.polishPresetMenuAnchor = null;
+        this.polishPresetMenuCategory = "";
     }
 
     getPolishButtonContainer(textbox) {
@@ -12539,7 +12808,10 @@ module.exports = class DiscordAITranslator {
             if (compactPrompt) return compactPrompt;
         }
         const sourceLanguage = this.getLanguageInstruction(config.sourceLanguage, { source: true });
-        const targetLanguage = this.getLanguageInstruction(config.targetLanguage);
+        const effectiveTargetLanguage = kind === "polish"
+            ? this.getEffectivePolishTargetLanguage(config)
+            : config.targetLanguage;
+        const targetLanguage = this.getLanguageInstruction(effectiveTargetLanguage);
         const userTemplate = this.expandPrompt(config.prompt, targetLanguage);
         const task = kind === "polish"
             ? "Polish or rewrite the user message according to the template rules."
@@ -12588,7 +12860,7 @@ module.exports = class DiscordAITranslator {
             if (repairReason) {
                 const invalidOutput = String(config.polishPreviousInvalidOutput || "").trim();
                 const repairDetail = repairReason === "script-mismatch"
-                    ? (this.isTraditionalChineseTarget(config.targetLanguage)
+                    ? (this.isTraditionalChineseTarget(effectiveTargetLanguage)
                         ? "The previous polish output contained Simplified Chinese characters. Rewrite it strictly in Traditional Chinese (繁體中文, zh-TW) with ZERO Simplified Chinese characters (嚴禁出現任何簡體字)."
                         : "The previous polish output used the wrong Chinese script. Rewrite it strictly in Simplified Chinese (简体中文, zh-CN).")
                     : repairReason === "duplicate-repolish"
@@ -12603,13 +12875,13 @@ module.exports = class DiscordAITranslator {
             }
         }
 
-        if (this.isTraditionalChineseTarget(config.targetLanguage)) {
+        if (this.isTraditionalChineseTarget(effectiveTargetLanguage)) {
             lines.push(
                 "",
                 "Final mandatory constraint: Output ONLY in Traditional Chinese (繁體中文, zh-TW). Convert ALL Chinese wording into Traditional Chinese characters (繁體字) even if the input draft, template, or previous attempts contain Simplified Chinese. 嚴禁輸出簡體字。"
             );
         }
-        else if (this.isSimplifiedChineseTarget(config.targetLanguage)) {
+        else if (this.isSimplifiedChineseTarget(effectiveTargetLanguage)) {
             lines.push(
                 "",
                 "Final mandatory constraint: Output ONLY in Simplified Chinese (简体中文, zh-CN). Use Simplified Chinese characters consistently."
@@ -15118,7 +15390,10 @@ module.exports = class DiscordAITranslator {
 
     async runPolishWithGuards(sourceText, options = {}) {
         const polishConfig = this.getTaskConfig("polish") || {};
-        const targetLanguage = polishConfig.targetLanguage;
+        const activeTemplate = this.getActivePolishTemplate(polishConfig);
+        const isDialectTemplate = Boolean(activeTemplate && this.getPolishTemplateCategory(activeTemplate) === PROMPT_TEMPLATE_CATEGORY_DIALECT);
+        const targetLanguage = this.getEffectivePolishTargetLanguage(polishConfig);
+        const allowDialectScriptMix = Boolean(isDialectTemplate && !this.isTraditionalChineseTarget(targetLanguage));
         const previousResults = Array.isArray(options.previousResults)
             ? options.previousResults.map(item => String(item || "").trim()).filter(Boolean).slice(-5)
             : [];
@@ -15139,7 +15414,8 @@ module.exports = class DiscordAITranslator {
         if (options.isStillCurrent && !options.isStillCurrent()) return first;
 
         let violation = this.getPolishOutputLanguageViolation(sourceText, first, targetLanguage, {
-            chineseScriptOnly: Boolean(options.chineseScriptOnly)
+            chineseScriptOnly: Boolean(options.chineseScriptOnly),
+            allowDialectScriptMix
         });
         if (!violation && options.enforceRepolishVariation && previousResults.length
             && previousResults.some(item => this.areComparableTextsEqual(item, first))) {
@@ -15166,7 +15442,8 @@ module.exports = class DiscordAITranslator {
             const cleaned = String(repaired || "").trim();
             if (!cleaned) return first;
             const repairViolation = this.getPolishOutputLanguageViolation(sourceText, cleaned, targetLanguage, {
-                chineseScriptOnly: Boolean(options.chineseScriptOnly)
+                chineseScriptOnly: Boolean(options.chineseScriptOnly),
+                allowDialectScriptMix
             });
             this.logDiagnostic("polish.guard", repairViolation ? "repair-partial" : "repair-ok", {
                 violation,
@@ -19685,6 +19962,7 @@ module.exports = class DiscordAITranslator {
     setTaskProvider(...args) { return this.settingsStore.setTaskProvider(...args); }
     applyProviderIntakeMode(...args) { return this.settingsStore.applyProviderIntakeMode(...args); }
     getPromptTemplates(...args) { return this.settingsStore.getPromptTemplates(...args); }
+    normalizePromptTemplateCategory(...args) { return this.settingsStore.normalizePromptTemplateCategory(...args); }
     ensurePromptTemplateSerials(...args) { return this.settingsStore.ensurePromptTemplateSerials(...args); }
     getNextPromptTemplateSerial(...args) { return this.settingsStore.getNextPromptTemplateSerial(...args); }
     applyPromptTemplate(...args) { return this.settingsStore.applyPromptTemplate(...args); }

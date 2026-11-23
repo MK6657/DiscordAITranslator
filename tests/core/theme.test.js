@@ -958,7 +958,7 @@ test("controls and single-line text use the body line height too", () => {
     const rule = selector => declarations(cssRules().find(item => item.selector === selector && !item.context)?.body || "");
     for (const selector of [".dait-small-button", ".dait-segmented-option", ".dait-settings-tab", ".dait-settings .dait-api-status",
         ".dait-status-mark", ".dait-diagnostic-summary-title", ".dait-qp-button", ".dait-qp-select", ".dait-qp-segment",
-        ".dait-polish-result-action", ".dait-input-action-menu-item", ".dait-polish-preset-item", ".dait-polish-preset-manage", ".dait-quick-settings-done", ".dait-prompt-preview-label"]) {
+        ".dait-polish-result-action", ".dait-input-action-menu-item", ".dait-polish-preset-tab", ".dait-polish-preset-item", ".dait-polish-preset-manage", ".dait-quick-settings-done", ".dait-prompt-preview-label"]) {
         assert.equal(rule(selector).get("line-height"), "var(--dait-line)", selector);
     }
     const controls = cssRules().find(item => item.selector.startsWith(".dait-settings :where(input:not([type=\"checkbox\"]):not([type=\"radio\"]), select, textarea)") && !item.context);

@@ -49,7 +49,10 @@ function createComposerTextbox(initialText) {
 
 test("built-in prompt presets include expanded polish & translation scenarios with {targetLanguage} and bilingual labels", () => {
     const plugin = new Plugin();
-    assert.equal(DEFAULT_PROMPT_TEMPLATES.polish.length, 8);
+    assert.equal(DEFAULT_PROMPT_TEMPLATES.polish.length, 59);
+    assert.equal(DEFAULT_PROMPT_TEMPLATES.polish.filter(item => item.category === "general").length, 8);
+    assert.equal(DEFAULT_PROMPT_TEMPLATES.polish.filter(item => item.category === "dialect").length, 22);
+    assert.equal(DEFAULT_PROMPT_TEMPLATES.polish.filter(item => item.category === "persona").length, 29);
     assert.equal(DEFAULT_PROMPT_TEMPLATES.translation.length, 6);
 
     for (const kind of ["polish", "translation"]) {
@@ -63,6 +66,16 @@ test("built-in prompt presets include expanded polish & translation scenarios wi
             ids.add(template.id);
             serials.add(template.serial);
             assert.ok(template.prompt.includes("{targetLanguage}"), `${template.id} includes {targetLanguage}`);
+            if (kind === "polish") {
+                assert.ok(["general", "dialect", "persona"].includes(template.category), `${template.id} valid category`);
+                if (template.category === "dialect") {
+                    assert.ok(["southChina", "southwest", "north", "eastCentral"].includes(template.region), `${template.id} valid region`);
+                }
+                if (template.category === "persona") {
+                    assert.ok(["monarchs", "strategists", "literati", "global"].includes(template.personaGroup), `${template.id} valid personaGroup`);
+                    assert.equal(typeof template.preferChineseOutput, "boolean", `${template.id} defines preferChineseOutput`);
+                }
+            }
 
             plugin.settings.ui.language = "zh-CN";
             assert.ok(plugin.getPromptTemplateDisplayName(template).trim().length > 0);
@@ -72,6 +85,64 @@ test("built-in prompt presets include expanded polish & translation scenarios wi
             assert.doesNotMatch(enName, /[\u4e00-\u9fff]/, `${template.id} English name has no Chinese`);
         }
     }
+});
+
+test("dialect & persona polish presets route Chinese-preferring styles to Chinese while global personas follow targetLanguage", async () => {
+    const plugin = new Plugin();
+    plugin.isStarted = true;
+    plugin.saveSettings = () => true;
+    plugin.showToast = () => {};
+    Object.assign(plugin.settings.polish, {
+        enabled: true,
+        provider: "openaiCompatible",
+        endpoint: "http://127.0.0.1:18080/v1/chat/completions",
+        apiKey: "synthetic-key",
+        model: "synthetic-model",
+        targetLanguage: "英语",
+        temperature: 0.6
+    });
+
+    // Apply Guangfu Cantonese dialect while polish targetLanguage is still English.
+    plugin.applyPromptTemplate("polish", "polish-dialect-cantonese-guangfu");
+    assert.equal(plugin.getEffectivePolishTargetLanguage(plugin.getTaskConfig("polish")), "汉语");
+
+    const capturedBodies = [];
+    plugin.fetchApiResponseText = async (_endpoint, request) => {
+        capturedBodies.push(request.body);
+        return JSON.stringify({ choices: [{ message: { content: "兄弟唔係吧，呢次更新又整冧晒，點解會咁㗎 😭" }, finish_reason: "stop" }] });
+    };
+
+    const result = await plugin.runPolishWithGuards("Bro this update broke everything again 😭");
+    assert.equal(result, "兄弟唔係吧，呢次更新又整冧晒，點解會咁㗎 😭");
+    assert.equal(capturedBodies.length, 1, "authentic Cantonese characters do not trigger false script-mismatch retry");
+    assert.match(capturedBodies[0].messages[0].content, /Output language: Simplified Chinese/);
+
+    // Traditional Chinese targetLanguage stays Traditional Chinese even for dialect presets.
+    plugin.settings.polish.targetLanguage = "繁體中文";
+    assert.equal(plugin.getEffectivePolishTargetLanguage(plugin.getTaskConfig("polish")), "繁體中文");
+
+    // Chinese historical personas (e.g. Qin Shi Huang, Zhu Yuanzhang) auto-route non-Chinese targetLanguage to Chinese,
+    // while keeping Traditional Chinese when configured.
+    plugin.settings.polish.targetLanguage = "英语";
+    plugin.applyPromptTemplate("polish", "polish-persona-qin-shihuang");
+    assert.equal(plugin.getEffectivePolishTargetLanguage(plugin.getTaskConfig("polish")), "汉语");
+    plugin.settings.polish.targetLanguage = "繁體中文";
+    assert.equal(plugin.getEffectivePolishTargetLanguage(plugin.getTaskConfig("polish")), "繁體中文");
+
+    // Overseas global personas (e.g. Trump, Shakespeare) follow configured targetLanguage directly.
+    plugin.settings.polish.targetLanguage = "英语";
+    plugin.applyPromptTemplate("polish", "polish-persona-trump");
+    assert.equal(plugin.getEffectivePolishTargetLanguage(plugin.getTaskConfig("polish")), "英语");
+
+    // Switching back to a general preset immediately restores English output language.
+    plugin.applyPromptTemplate("polish", "polish-natural-chat");
+    assert.equal(plugin.getEffectivePolishTargetLanguage(plugin.getTaskConfig("polish")), "英语");
+
+    // Saving a custom template into the persona (大能) category persists its category cleanly.
+    plugin.savePromptTemplate("polish", "自定义大能风格", "用独特口吻改写为 {targetLanguage}", { category: "persona" });
+    const saved = plugin.getPromptTemplates("polish").find(item => item.name === "自定义大能风格");
+    assert.ok(saved);
+    assert.equal(saved.category, "persona");
 });
 
 test("upgrade auto-seeds new built-in presets, respects deleted presets on reload, and restores them on demand", t => {

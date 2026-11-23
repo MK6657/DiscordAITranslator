@@ -14,8 +14,10 @@ const {
     GOOGLE_TRANSLATE_DEFAULT_MONTHLY_LIMIT,
     LEGACY_TRANSLATION_NATURAL_PROMPTS,
     PLUGIN_NAME,
+    POLISH_PROMPT_TEMPLATE_CATEGORIES,
     POLISH_REPOLISH_SOURCE_LAST_RESULT,
     POLISH_REPOLISH_SOURCE_ORIGINAL,
+    PROMPT_TEMPLATE_CATEGORY_GENERAL,
     QUICK_PANEL_TABS,
     SETTINGS_WRITE_DEBOUNCE_MS,
     TRANSLATION_CACHE_WRITE_DEBOUNCE_MS,
@@ -64,23 +66,56 @@ class SettingsStore {
         return this.plugin.settings[kind].promptTemplates;
     }
 
+    normalizePromptTemplateCategory(kind, category, templateId = "") {
+        if (kind !== "polish") return "";
+        const value = String(category || "").trim();
+        if (POLISH_PROMPT_TEMPLATE_CATEGORIES.includes(value)) return value;
+        const builtIn = (DEFAULT_PROMPT_TEMPLATES.polish || []).find(item => item.id === templateId);
+        if (builtIn && POLISH_PROMPT_TEMPLATE_CATEGORIES.includes(builtIn.category)) return builtIn.category;
+        return PROMPT_TEMPLATE_CATEGORY_GENERAL;
+    }
+
     ensurePromptTemplateSerials(kind) {
         const templates = this.plugin.settings[kind]?.promptTemplates;
         if (!Array.isArray(templates)) return false;
 
         let changed = false;
         const used = new Set();
+        const builtInMap = kind === "polish"
+            ? new Map((DEFAULT_PROMPT_TEMPLATES.polish || []).map(item => [item.id, item]))
+            : null;
         templates.forEach(template => {
             if (!template || typeof template !== "object") return;
             const serial = this.plugin.normalizePromptTemplateSerial(template.serial);
             if (serial && !used.has(serial)) {
                 template.serial = serial;
                 used.add(serial);
-                return;
             }
-            template.serial = this.plugin.getNextPromptTemplateSerial(used);
-            used.add(template.serial);
-            changed = true;
+            else {
+                template.serial = this.plugin.getNextPromptTemplateSerial(used);
+                used.add(template.serial);
+                changed = true;
+            }
+            if (kind === "polish") {
+                const category = this.normalizePromptTemplateCategory("polish", template.category, template.id);
+                if (template.category !== category) {
+                    template.category = category;
+                    changed = true;
+                }
+                const builtIn = builtInMap?.get(template.id);
+                if (builtIn?.region && !template.region) {
+                    template.region = builtIn.region;
+                    changed = true;
+                }
+                if (builtIn?.personaGroup && !template.personaGroup) {
+                    template.personaGroup = builtIn.personaGroup;
+                    changed = true;
+                }
+                if (typeof builtIn?.preferChineseOutput === "boolean" && typeof template.preferChineseOutput !== "boolean") {
+                    template.preferChineseOutput = builtIn.preferChineseOutput;
+                    changed = true;
+                }
+            }
         });
         return changed;
     }
@@ -149,12 +184,13 @@ class SettingsStore {
         this.plugin.showToast(this.plugin.t("promptApplied", { name: this.getTemplateDisplayName(template), code: template.serial }), "success");
     }
 
-    savePromptTemplate(kind, name, prompt) {
+    savePromptTemplate(kind, name, prompt, options = {}) {
         const templates = this.plugin.getPromptTemplates(kind);
         const used = new Set(templates.map(template => template.serial).filter(Boolean));
         const template = {
             id: `${kind}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
             serial: this.plugin.getNextPromptTemplateSerial(used),
+            ...(kind === "polish" ? { category: this.normalizePromptTemplateCategory("polish", options?.category) } : {}),
             name,
             prompt
         };

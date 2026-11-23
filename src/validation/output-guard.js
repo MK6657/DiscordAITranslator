@@ -500,7 +500,7 @@ class OutputGuard {
         const traditionalTarget = this.isTraditionalChineseTarget(targetLanguage);
         const simplifiedTarget = this.isSimplifiedChineseTarget(targetLanguage);
         if (traditionalTarget && this.hasLikelySimplifiedHan(checked)) return "script-mismatch";
-        if (simplifiedTarget && this.hasLikelyTraditionalHan(checked)) return "script-mismatch";
+        if (simplifiedTarget && !options.allowDialectScriptMix && this.hasLikelyTraditionalHan(checked)) return "script-mismatch";
         if (options.chineseScriptOnly) return "";
 
         const targetScript = this.plugin.getTargetLanguageScript(targetLanguage);

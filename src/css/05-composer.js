@@ -473,7 +473,7 @@ module.exports = `.dait-polish-button,
     grid-template-rows: auto minmax(0, 1fr) auto;
     max-height: calc(100vh - 24px);
     max-width: calc(100vw - 24px);
-    min-width: 240px;
+    min-width: 260px;
     padding: 10px 8px 8px;
     position: fixed;
     z-index: 10000;
@@ -482,16 +482,70 @@ module.exports = `.dait-polish-button,
 .dait-polish-preset-header {
     border-bottom: 1px solid var(--dait-divider);
     display: grid;
-    gap: 2px;
+    gap: 6px;
     padding: 0 6px 6px;
+}
+
+.dait-polish-preset-header-top {
+    align-items: center;
+    column-gap: 8px;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    min-width: 0;
+    row-gap: 4px;
 }
 
 .dait-polish-preset-title {
     color: var(--dait-heading);
+    flex: 0 0 auto;
     font-size: var(--dait-font-body);
     font-weight: 600;
     line-height: var(--dait-line);
     margin: 0;
+    white-space: nowrap;
+}
+
+.dait-polish-preset-tabs {
+    align-items: center;
+    background: var(--dait-surface);
+    border: 1px solid var(--dait-input-border);
+    border-radius: var(--dait-radius-control);
+    display: inline-flex;
+    flex: 0 1 auto;
+    gap: 2px;
+    min-width: 0;
+    padding: 2px;
+}
+
+.dait-polish-preset-tab {
+    align-items: center;
+    background: transparent;
+    border: 0;
+    border-radius: var(--dait-radius-control);
+    color: var(--dait-placeholder);
+    cursor: pointer;
+    display: inline-flex;
+    font-family: inherit;
+    font-size: var(--dait-font-body);
+    font-weight: 500;
+    justify-content: center;
+    line-height: var(--dait-line);
+    min-height: 24px;
+    padding: 1px 7px;
+    white-space: nowrap;
+}
+
+.dait-polish-preset-tab:hover,
+.dait-polish-preset-tab:focus-visible {
+    background: var(--dait-raised);
+    color: var(--dait-heading);
+}
+
+.dait-polish-preset-tab[aria-selected="true"] {
+    background: var(--dait-brand);
+    color: var(--dait-on-fill);
+    font-weight: 600;
 }
 
 .dait-polish-preset-custom-note {
@@ -500,6 +554,19 @@ module.exports = `.dait-polish-button,
     font-weight: 400;
     line-height: var(--dait-line);
     margin: 0;
+}
+
+.dait-polish-preset-group-label {
+    color: var(--dait-placeholder);
+    font-size: var(--dait-font-body);
+    font-weight: 600;
+    line-height: var(--dait-line);
+    margin: 4px 0 0;
+    padding: 2px 10px;
+}
+
+.dait-polish-preset-group-label:first-child {
+    margin-top: 0;
 }
 
 .dait-polish-preset-list {

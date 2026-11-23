@@ -1403,27 +1403,68 @@ test("composer polish split button opens tone picker, switches preset without st
     assert.equal(presetButton.getAttribute("aria-expanded"), "true");
     assert.ok(menu.dataset.daitPanelTheme, "panel theme applied to picker");
 
+    const tabs = menu.querySelectorAll(".dait-polish-preset-tab");
+    assert.deepEqual(tabs.map(tab => tab.dataset.daitCategory), ["general", "dialect", "persona"]);
+    assert.equal(tabs[0].getAttribute("aria-selected"), "true");
+
+    const generalCount = plugin.getPromptTemplates("polish").filter(item => item.category === "general").length;
+    const dialectCount = plugin.getPromptTemplates("polish").filter(item => item.category === "dialect").length;
     const items = menu.querySelectorAll(".dait-polish-preset-item");
-    assert.equal(items.length, plugin.getPromptTemplates("polish").length);
+    assert.equal(items.length, generalCount);
     assert.equal(items[0].getAttribute("aria-checked"), "true");
     assert.equal(items[1].getAttribute("aria-checked"), "false");
 
+    // Switching to Dialect tab shows region headers and all 22 dialect presets without closing the menu.
+    tabs[1].dispatchEvent({ type: "click", preventDefault() {}, stopPropagation() {} });
+    assert.equal(plugin.polishPresetMenu, menu, "tab click keeps preset picker open");
+    assert.equal(menu.dataset.daitCategory, "dialect");
+    assert.equal(menu.querySelectorAll(".dait-polish-preset-group-label").length, 4);
+    assert.equal(menu.querySelectorAll(".dait-polish-preset-item").length, dialectCount);
+
+    // Switching to Persona (大能) tab shows 4 subgroup headers and all 29 persona presets, then switching back works.
+    const personaCount = plugin.getPromptTemplates("polish").filter(item => item.category === "persona").length;
+    menu.querySelectorAll(".dait-polish-preset-tab")[2].dispatchEvent({ type: "click", preventDefault() {}, stopPropagation() {} });
+    assert.equal(menu.dataset.daitCategory, "persona");
+    assert.equal(menu.querySelectorAll(".dait-polish-preset-group-label").length, 4);
+    assert.equal(menu.querySelectorAll(".dait-polish-preset-item").length, personaCount);
+    menu.querySelectorAll(".dait-polish-preset-tab")[0].dispatchEvent({ type: "click", preventDefault() {}, stopPropagation() {} });
+    assert.equal(menu.dataset.daitCategory, "general");
+
+    const generalItems = menu.querySelectorAll(".dait-polish-preset-item");
     // Picking a preset preserves composer focus on button press, while allowing native scrollbar drag on the list track.
     let buttonPointerPrevented = false;
-    menu.dispatchEvent({ type: "pointerdown", target: items[1], preventDefault() { buttonPointerPrevented = true; }, stopPropagation() {} });
+    menu.dispatchEvent({ type: "pointerdown", target: generalItems[1], preventDefault() { buttonPointerPrevented = true; }, stopPropagation() {} });
     assert.equal(buttonPointerPrevented, true, "pressing a preset item preserves composer focus");
     let listPointerPrevented = false;
     const listEl = menu.querySelector(".dait-polish-preset-list");
     menu.dispatchEvent({ type: "pointerdown", target: listEl, preventDefault() { listPointerPrevented = true; }, stopPropagation() {} });
     assert.equal(listPointerPrevented, false, "pressing list scrollbar does not get blocked");
-    items[1].dispatchEvent({ type: "click", preventDefault() {}, stopPropagation() {} });
+    generalItems[1].dispatchEvent({ type: "click", preventDefault() {}, stopPropagation() {} });
 
-    assert.equal(plugin.settings.polish.activePromptTemplate, items[1].dataset.daitTemplateId);
+    assert.equal(plugin.settings.polish.activePromptTemplate, generalItems[1].dataset.daitTemplateId);
     assert.equal(plugin.polishPresetMenu, null);
     assert.equal(presetButton.getAttribute("aria-expanded"), "false");
     assert.match(polishButton.title, /002/);
     assert.match(presetButton.title, /002/);
     assert.equal(browser.document.activeElement, editor, "editor keeps focus after switching tone");
+
+    // Selecting a dialect preset causes reopening the menu to land directly on the Dialect tab.
+    plugin.applyPromptTemplate("polish", "polish-dialect-dongbei");
+    presetButton.dispatchEvent({ type: "click", preventDefault() {}, stopPropagation() {} });
+    const dialectMenu = browser.document.body.querySelector(".dait-polish-preset-menu");
+    assert.ok(dialectMenu);
+    assert.equal(dialectMenu.dataset.daitCategory, "dialect");
+    assert.equal(dialectMenu.querySelectorAll(".dait-polish-preset-item").some(item => item.dataset.daitTemplateId === "polish-dialect-dongbei" && item.getAttribute("aria-checked") === "true"), true);
+    // ArrowRight while focus stays in the composer does not hijack text cursor navigation.
+    (docListeners.get("keydown") || []).slice().forEach(handler => handler({ key: "ArrowRight", isComposing: false, preventDefault() {}, stopPropagation() {} }));
+    assert.equal(dialectMenu.dataset.daitCategory, "dialect");
+    // Focusing a category tab lets ArrowRight switch Dialect -> Persona via keyboard.
+    dialectMenu.querySelector(".dait-polish-preset-tab").focus();
+    (docListeners.get("keydown") || []).slice().forEach(handler => handler({ key: "ArrowRight", isComposing: false, preventDefault() {}, stopPropagation() {} }));
+    assert.equal(dialectMenu.dataset.daitCategory, "persona");
+    plugin.removePolishPresetMenu();
+    editor.focus();
+    plugin.applyPromptTemplate("polish", "polish-polite");
 
     // Custom prompt edit marks picker as custom until user selects a preset again.
     plugin.setSetting("polish.prompt", "Custom prompt text for tone test");

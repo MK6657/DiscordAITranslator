@@ -1317,6 +1317,10 @@ module.exports = `.dait-settings {
     min-width: 0;
 }
 
+.dait-prompt-save-categorized {
+    grid-template-columns: minmax(0, 1fr) minmax(96px, auto) auto;
+}
+
 .dait-prompt-actions {
     display: flex;
     flex-wrap: wrap;
