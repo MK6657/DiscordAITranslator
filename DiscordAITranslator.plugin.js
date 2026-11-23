@@ -16983,13 +16983,28 @@ var require_panel_theme = __commonJS({
       // Discord observer does not watch <html>. The system theme matters while "auto" finds no Discord theme. Open
       // dialog content is checked on every such change: Discord's modal changes with Discord's theme even while an
       // explicit light/dark choice keeps the plugin's windows as they are.
+      getHostThemeSignature() {
+        if (typeof document === "undefined") return "";
+        return [document.documentElement, document.body].filter(Boolean).map((node) => [
+          this.getNodeTheme(node),
+          String(node.getAttribute?.("data-theme") || ""),
+          String(node.getAttribute?.("theme") || "")
+        ].join(":")).join("|");
+      }
       startWatching() {
         this.stopWatching();
         this.lastTheme = this.resolve();
+        this.lastHostThemeSignature = this.getHostThemeSignature();
         const onChange = () => {
           if (!this.plugin.isStarted) return;
-          this.refresh();
-          this.plugin.refreshDiscordThemeClasses?.({ skipPanelTheme: true });
+          const prevPanelTheme = this.lastTheme;
+          const prevHostSignature = this.lastHostThemeSignature;
+          const nextPanelTheme = this.refresh();
+          const nextHostSignature = this.getHostThemeSignature();
+          this.lastHostThemeSignature = nextHostSignature;
+          if (nextPanelTheme !== prevPanelTheme || nextHostSignature !== prevHostSignature) {
+            this.plugin.refreshDiscordThemeClasses?.({ skipPanelTheme: true });
+          }
         };
         if (typeof MutationObserver === "function" && typeof document !== "undefined") {
           try {
@@ -23338,6 +23353,10 @@ var require_discord_ai_translator = __commonJS({
         this.boundViewportScan = this.queueViewportScan.bind(this);
         this.inputButtonScanTimer = null;
         this.inputButtonScanDueAt = 0;
+        this.lightweightButtonRecoveryRoots = /* @__PURE__ */ new Set();
+        this.lightweightButtonRecoveryTimer = null;
+        this.nonTranslatableMessageCache = typeof WeakMap === "function" ? /* @__PURE__ */ new WeakMap() : null;
+        this.lastMissingMessageButtonSweepAt = 0;
         this.inputActionMenu = null;
         this.inputActionMenuCleanup = null;
         this.polishPresetMenu = null;
@@ -23479,6 +23498,9 @@ var require_discord_ai_translator = __commonJS({
         this.removePolishRestoreControl();
         this.removeInputActionMenu();
         this.removePolishPresetMenu();
+        this.cancelLightweightButtonRecovery();
+        this.nonTranslatableMessageCache = typeof WeakMap === "function" ? /* @__PURE__ */ new WeakMap() : null;
+        this.lastMissingMessageButtonSweepAt = 0;
         this.polishSession = null;
         this.latestPolishRequestIds = /* @__PURE__ */ new WeakMap();
         this.closeQuickSettingsPanel(null, "stop");
@@ -28051,6 +28073,9 @@ var require_discord_ai_translator = __commonJS({
       }
       refreshLocalizedUi() {
         if (typeof document === "undefined") return;
+        this.cancelLightweightButtonRecovery();
+        this.nonTranslatableMessageCache = typeof WeakMap === "function" ? /* @__PURE__ */ new WeakMap() : null;
+        this.lastMissingMessageButtonSweepAt = 0;
         this.removePolishResultPanel();
         this.removePolishRestoreControl();
         this.removeInputActionMenu();
@@ -28185,6 +28210,8 @@ var require_discord_ai_translator = __commonJS({
           return;
         }
         const externalMutations = [...mutations || []].filter((mutation) => !this.isOwnMutation(mutation));
+        const strippedButtonRoots = this.collectStrippedMessageButtonRoots(mutations);
+        if (strippedButtonRoots.length) this.scheduleLightweightButtonRecovery(strippedButtonRoots);
         if (!externalMutations.length) return;
         this.invalidateElementTextCacheForMutations(externalMutations);
         if (this.hasDiscordMediaViewerMutation(externalMutations)) {
@@ -28197,12 +28224,17 @@ var require_discord_ai_translator = __commonJS({
           this.markInputComposerBusy();
           this.queueInputButtonScan({ delayMs: 500, trailing: true });
         }
-        if (this.isDiscordMediaViewerOpen() || this.areDiscordMediaViewerMutations(externalMutations)) {
+        const shouldProbeMediaViewer = Boolean(this.mediaViewerProbeOpen || this.hasLightweightDiscordMediaViewerMutation(externalMutations));
+        if (shouldProbeMediaViewer && this.isDiscordMediaViewerOpen() || this.areDiscordMediaViewerMutations(externalMutations)) {
           this.enterDiscordMediaViewerQuietMode("open");
           return;
         }
         const scanMutations = this.getScanRelevantMutations(externalMutations);
         if (!scanMutations.length) return;
+        if (this.shouldInjectMessageButtons() && this.isAutoTranslationRenderPaused()) {
+          const addedMessageRoots = this.collectAddedMessageRootsForButtons(scanMutations);
+          if (addedMessageRoots.length) this.scheduleLightweightButtonRecovery(addedMessageRoots);
+        }
         if (this.hasLargeMessageMutation(scanMutations)) this.markAutoTranslationViewportBusy("mutation");
         this.queueMutationScan(scanMutations);
       }
@@ -28229,7 +28261,8 @@ var require_discord_ai_translator = __commonJS({
               return;
             }
           }
-          this.handleDiscordObservedMutations(outsideMutations);
+          const relevantOutside = outsideMutations.filter((mutation) => !this.isOwnMutation(mutation) && (this.isDiscordMediaViewerMutation(mutation) || this.isInputButtonRelevantMutation(mutation) || this.hasDiscordThemeMutation([mutation])));
+          if (relevantOutside.length) this.handleDiscordObservedMutations(relevantOutside);
         });
         this.observerLifecycle = lifecycleObserver;
         if (lifecycleRoot !== observerRoot) {
@@ -28298,11 +28331,11 @@ var require_discord_ai_translator = __commonJS({
           const className = String(target.className || "");
           const isRootThemeHost = typeof document !== "undefined" && (target === document.body || target === document.documentElement) || id === "app-mount" || /app-?mount/i.test(className);
           if (isRootThemeHost) return true;
-          if (target.closest?.("[data-list-id*='chat-messages'], [class*='messagesWrapper'], [class*='scrollerInner']")) return false;
-          if (attributeName === "style") return Boolean(this.getElementDiscordThemeExplicitClass(target));
-          if (this.elementHasAnyDiscordThemeClass(target)) return true;
-          if (this.getElementDiscordThemeClass(target)) return true;
-          return false;
+          if (target.closest?.("[data-list-id*='chat-messages'], [class*='messagesWrapper'], [class*='scrollerInner'], [class*='chatContent'], [class*='channelTextArea'], [class*='popout'], [class*='popover'], [class*='emojiPicker'], [class*='expressionPicker'], [class*='stickerPicker'], [class*='reaction'], [class*='typing'], [class*='newMessagesBar']")) return false;
+          if (attributeName === "style" || attributeName === "data-theme" || attributeName === "theme") {
+            return Boolean(this.getElementDiscordThemeExplicitClass(target));
+          }
+          return ["theme-midnight", "theme-onyx", "theme-darker", "theme-ash", "theme-light", "theme-dark"].some((theme) => this.elementHasClassName(target, theme));
         });
       }
       isOwnMutation(mutation) {
@@ -28323,7 +28356,7 @@ var require_discord_ai_translator = __commonJS({
       invalidateElementTextCacheForMutations(mutations = []) {
         if (!this.elementTextCache?.delete) return;
         for (const mutation of mutations || []) {
-          if (this.isPresentationOnlyMessageMutation(mutation)) continue;
+          if (this.isPresentationOnlyMessageMutation(mutation) || this.isMessageChromeOnlyMutation(mutation)) continue;
           const nodes = [
             mutation?.target?.nodeType === 3 ? mutation.target.parentElement : mutation?.target,
             ...mutation?.addedNodes || [],
@@ -28338,6 +28371,7 @@ var require_discord_ai_translator = __commonJS({
         while (element && element.nodeType === 1 && depth < 12) {
           this.elementTextCache?.delete?.(element);
           this.cachedDrawMessageMemo?.delete(element);
+          this.nonTranslatableMessageCache?.delete?.(element);
           if (this.isDiscordMessageElement(element)) break;
           element = element.parentElement;
           depth++;
@@ -28414,12 +28448,23 @@ var require_discord_ai_translator = __commonJS({
         if (this.isDiscordMessageElement(element) || element.closest?.(DISCORD_MESSAGE_NODE_SELECTOR)) return false;
         return Boolean(element.matches?.(DISCORD_MEDIA_VIEWER_SELECTOR) || element.closest?.(DISCORD_MEDIA_VIEWER_SELECTOR) || this.isDiscordMediaViewerElement(element.closest?.(DISCORD_MEDIA_VIEWER_CONTAINER_SELECTOR)));
       }
+      isDiscordExpressionOrMenuOverlay(element) {
+        if (!element || element.nodeType !== 1) return false;
+        const selector = "[class*='emojiPicker'], [class*='expressionPicker'], [class*='stickerPicker'], [class*='gifPicker'], [class*='reaction'], [class*='popout'], [class*='popover'], [class*='tooltip'], [role='menu'], [role='listbox']";
+        try {
+          if (element.matches?.(selector) || element.closest?.(selector)) return true;
+          if (element.querySelector?.("[class*='emojiPicker'], [class*='expressionPicker'], [class*='stickerPicker'], [class*='gifPicker']")) return true;
+        } catch {
+        }
+        return false;
+      }
       isDiscordMediaViewerElement(element) {
         if (!element || element.nodeType !== 1) return false;
         if (this.isOwnPluginElement(element) || this.isInsideDiscordSettingsSurface(element) || this.isInsideInputComposer(element)) return false;
         if (this.observerRoot && (element === this.observerRoot || element.contains?.(this.observerRoot))) return false;
+        if (this.isDiscordExpressionOrMenuOverlay(element)) return false;
         if (this.isDiscordMessageElement(element) || element.closest?.(DISCORD_MESSAGE_NODE_SELECTOR) || element.querySelector?.(DISCORD_MESSAGE_NODE_SELECTOR)) return false;
-        if (element.matches?.(DISCORD_MEDIA_VIEWER_SELECTOR)) return true;
+        if (element.matches?.("[class*='imageModal'], [class*='carouselModal'], [class*='mediaViewer'], [class*='zoomed']")) return true;
         const hasMedia = this.elementHasMediaViewerContent(element);
         if (!hasMedia) return false;
         return Boolean(element.matches?.(DISCORD_MEDIA_VIEWER_CONTAINER_SELECTOR) || element.closest?.(DISCORD_MEDIA_VIEWER_CONTAINER_SELECTOR));
@@ -28435,7 +28480,8 @@ var require_discord_ai_translator = __commonJS({
         if (now - Number(this.mediaViewerProbeAt || 0) < DISCORD_MEDIA_VIEWER_PROBE_CACHE_MS) {
           return Boolean(this.mediaViewerProbeOpen);
         }
-        if (document.querySelector?.(DISCORD_MEDIA_VIEWER_SELECTOR)) {
+        const exactViewer = document.querySelector?.("[class*='imageModal'], [class*='carouselModal'], [class*='mediaViewer'], [class*='zoomed']");
+        if (exactViewer && !this.isDiscordExpressionOrMenuOverlay(exactViewer)) {
           this.mediaViewerProbeAt = now;
           this.mediaViewerProbeOpen = true;
           this.enterDiscordMediaViewerQuietMode("selector");
@@ -28460,6 +28506,7 @@ var require_discord_ai_translator = __commonJS({
           this.queueScan({ delayMs: this.getDiscordMediaViewerQuietRemainingMs() + 80, trailing: true });
         }
         this.deferInputButtonScanForMediaViewer();
+        this.cancelLightweightButtonRecovery();
         this.deferAutoTranslationRenderQueueForMediaViewer();
       }
       isDiscordMediaViewerQuiet(now = Date.now()) {
@@ -28480,6 +28527,8 @@ var require_discord_ai_translator = __commonJS({
       }
       isLightweightDiscordMediaViewerElement(element) {
         if (!element || element.nodeType !== 1) return false;
+        if (this.isOwnPluginElement(element) || this.isDiscordMessageElement(element) || element.closest?.(DISCORD_MESSAGE_NODE_SELECTOR)) return false;
+        if (this.isDiscordExpressionOrMenuOverlay(element)) return false;
         const tagName = String(element.tagName || element.nodeName || "").toLowerCase();
         if (["img", "video", "picture", "source", "canvas"].includes(tagName)) return true;
         const className = element.className?.baseVal || element.className || "";
@@ -28492,7 +28541,7 @@ var require_discord_ai_translator = __commonJS({
           element.getAttribute?.("aria-label") || "",
           element.getAttribute?.("data-testid") || ""
         ].join(" ");
-        return /(imageModal|carouselModal|mediaViewer|focusLock|modalRoot|zoomed|imageWrapper|imageContainer|lazyImg|mediaAttachmentsContainer|embedImage|embedMedia|embedThumbnail|embedVideo|attachmentInner|carousel|modal|layer|dialog)/i.test(identity);
+        return /(imageModal|carouselModal|mediaViewer|modalRoot|zoomed|imageWrapper|imageContainer|mediaAttachmentsContainer|embedImage|embedMedia|embedThumbnail|embedVideo|carousel)/i.test(identity);
       }
       getDiscordMediaViewerDeferredDelayMs(now = Date.now()) {
         if (this.isDiscordMediaViewerQuiet(now)) return this.getDiscordMediaViewerQuietRemainingMs(now) + 80;
@@ -28540,6 +28589,7 @@ var require_discord_ai_translator = __commonJS({
         if (this.isInsideDiscordSettingsSurface(target)) return false;
         if (this.isMediaOnlyMutation(mutation)) return false;
         if (this.isPresentationOnlyMessageMutation(mutation, target)) return false;
+        if (this.isMessageChromeOnlyMutation(mutation, target)) return false;
         if (this.isLayoutOnlyChatContainerMutation(mutation, target)) return false;
         if (this.isScanRelevantElement(target)) return true;
         if (mutation?.type === "childList") {
@@ -28547,6 +28597,43 @@ var require_discord_ai_translator = __commonJS({
           return nodes.some((node) => this.isScanRelevantMutationNode(node));
         }
         return false;
+      }
+      isMessageChromeOnlyElement(element) {
+        if (!element || element.nodeType !== 1) return false;
+        if (this.isDiscordMessageElement(element)) return false;
+        const contentSelector = "[class*='messageContent'], [class*='markup']";
+        if (element.matches?.(contentSelector) || element.closest?.(contentSelector)) return false;
+        const chromeSelector = [
+          "[class*='buttonContainer']",
+          "[class*='buttonsInner']",
+          "[class*='reactions']",
+          "[class*='reaction_']",
+          "[class*='reactionBtn']",
+          "[class*='popover']",
+          "[class*='avatar']",
+          "[class*='roleIcon']",
+          "[class*='botTag']",
+          "[class*='clanTag']",
+          "[class*='emojiPicker']",
+          "[class*='expressionPicker']"
+        ].join(",");
+        if (!element.matches?.(chromeSelector) && !element.closest?.(chromeSelector)) return false;
+        try {
+          if (element.querySelector?.(`${DISCORD_MESSAGE_NODE_SELECTOR}, ${contentSelector}`)) return false;
+        } catch {
+        }
+        return true;
+      }
+      isMessageChromeOnlyMutation(mutation, target = null) {
+        const element = target || (mutation?.target?.nodeType === 3 ? mutation.target.parentElement : mutation?.target);
+        if (this.isMessageChromeOnlyElement(element)) return true;
+        if (mutation?.type !== "childList") return false;
+        const nodes = [...mutation.addedNodes || [], ...mutation.removedNodes || []];
+        if (!nodes.length) return false;
+        return nodes.every((node) => {
+          if (node?.nodeType === 3) return !String(node.nodeValue || "").trim();
+          return this.isMessageChromeOnlyElement(node);
+        });
       }
       isLayoutOnlyChatContainerMutation(mutation, target = null) {
         if (mutation?.type !== "attributes") return false;
@@ -28980,22 +29067,125 @@ var require_discord_ai_translator = __commonJS({
           ...scanStages
         });
       }
+      dedupeNestedMessageNodes(nodes = []) {
+        const unique = [...new Set((nodes || []).filter(Boolean))];
+        if (unique.length <= 1) return unique;
+        const nodeSet = new Set(unique);
+        return unique.filter((node) => {
+          for (let parent = node.parentElement; parent; parent = parent.parentElement) {
+            if (nodeSet.has(parent)) return false;
+          }
+          return true;
+        });
+      }
       ensureMissingVisibleMessageButtons(context = null) {
         if (!this.shouldInjectMessageButtons() || typeof document === "undefined" || typeof document.querySelectorAll !== "function") return 0;
+        const now = Date.now();
+        if (context?.dirtyOnly && now - Number(this.lastMissingMessageButtonSweepAt || 0) < 400) return 0;
+        this.lastMissingMessageButtonSweepAt = now;
         const scanContext = context || this.createScanContext();
         const checkedNodes = context?.messageNodes?.length ? new Set(context.messageNodes) : null;
-        const nodes = [...document.querySelectorAll(DISCORD_MESSAGE_NODE_SELECTOR)];
+        const nodes = this.dedupeNestedMessageNodes([...document.querySelectorAll(DISCORD_MESSAGE_NODE_SELECTOR)]);
         const toInject = [];
         for (const messageNode of nodes) {
           if (!messageNode?.isConnected) continue;
           if (checkedNodes?.has(messageNode)) continue;
           if (messageNode.querySelector?.(".dait-message-button")) continue;
+          if (this.nonTranslatableMessageCache?.get?.(messageNode) === true) continue;
           if (!this.isMessageNodeVisibleForScan(messageNode, scanContext)) continue;
           toInject.push(messageNode);
         }
         let injected = 0;
         for (const messageNode of toInject) {
           if (this.injectMessageButton(messageNode, scanContext)) injected++;
+        }
+        return injected;
+      }
+      collectStrippedMessageButtonRoots(mutations = []) {
+        if (!this.shouldInjectMessageButtons()) return [];
+        const roots = /* @__PURE__ */ new Set();
+        for (const mutation of mutations || []) {
+          if (mutation?.type !== "childList" || !mutation.removedNodes?.length) continue;
+          const target = mutation.target?.nodeType === 3 ? mutation.target.parentElement : mutation.target;
+          if (!target || target.isConnected === false) continue;
+          const addedSet = mutation.addedNodes?.length ? new Set(mutation.addedNodes) : null;
+          const stripped = [...mutation.removedNodes].some((node) => {
+            if (!node || node.nodeType !== 1) return false;
+            if (addedSet?.has(node)) return false;
+            return this.elementHasClassName(node, "dait-message-button") || Boolean(node.querySelector?.(".dait-message-button"));
+          });
+          if (!stripped) continue;
+          const messageNode = this.isDiscordMessageElement(target) ? target : target.closest?.(DISCORD_MESSAGE_NODE_SELECTOR);
+          if (messageNode && messageNode.isConnected !== false && !messageNode.querySelector?.(".dait-message-button")) {
+            roots.add(messageNode);
+          }
+        }
+        return this.dedupeNestedMessageNodes([...roots]);
+      }
+      collectAddedMessageRootsForButtons(mutations = []) {
+        if (!this.shouldInjectMessageButtons()) return [];
+        const roots = /* @__PURE__ */ new Set();
+        for (const mutation of mutations || []) {
+          if (mutation?.type !== "childList" || !mutation.addedNodes?.length) continue;
+          for (const node of mutation.addedNodes) {
+            if (!node || node.nodeType !== 1 || node.isConnected === false) continue;
+            if (this.isOwnPluginElement(node) || this.isMessageChromeOnlyElement(node)) continue;
+            if (this.isDiscordMessageElement(node)) {
+              if (!node.querySelector?.(".dait-message-button")) roots.add(node);
+            } else if (roots.size < MUTATION_DIRTY_SCAN_MAX_MESSAGES) {
+              const nested = node.querySelectorAll?.(DISCORD_MESSAGE_NODE_SELECTOR) || [];
+              for (const msg of nested) {
+                if (msg?.isConnected !== false && !msg.querySelector?.(".dait-message-button")) roots.add(msg);
+                if (roots.size >= MUTATION_DIRTY_SCAN_MAX_MESSAGES) break;
+              }
+            }
+            if (roots.size >= MUTATION_DIRTY_SCAN_MAX_MESSAGES) break;
+          }
+        }
+        return this.dedupeNestedMessageNodes([...roots]);
+      }
+      scheduleLightweightButtonRecovery(roots = [], delayMs = 80) {
+        if (!this.isStarted || !this.shouldInjectMessageButtons() || !roots?.length) return;
+        if (!this.lightweightButtonRecoveryRoots?.add) this.lightweightButtonRecoveryRoots = /* @__PURE__ */ new Set();
+        for (const root of roots) {
+          if (root && root.isConnected !== false) this.lightweightButtonRecoveryRoots.add(root);
+        }
+        if (!this.lightweightButtonRecoveryRoots.size) return;
+        if (this.lightweightButtonRecoveryTimer) clearTimeout(this.lightweightButtonRecoveryTimer);
+        this.lightweightButtonRecoveryTimer = this.unrefTimer(setTimeout(() => {
+          this.lightweightButtonRecoveryTimer = null;
+          this.flushLightweightButtonRecovery();
+        }, Math.max(16, Number(delayMs) || 80)));
+      }
+      cancelLightweightButtonRecovery() {
+        if (this.lightweightButtonRecoveryTimer) {
+          clearTimeout(this.lightweightButtonRecoveryTimer);
+          this.lightweightButtonRecoveryTimer = null;
+        }
+        this.lightweightButtonRecoveryRoots?.clear?.();
+      }
+      // Restores or mounts missing Translate buttons without createScanContext(), getBoundingClientRect(),
+      // or scroll-clip ancestor style walks — zero forced reflow and safe during chat scroll settle.
+      flushLightweightButtonRecovery() {
+        if (!this.isStarted || !this.shouldInjectMessageButtons()) {
+          this.lightweightButtonRecoveryRoots?.clear?.();
+          return 0;
+        }
+        if (this.isQuickSettingsPanelOpen() || this.isDiscordSettingsSurfaceOpen() || this.isDiscordMediaViewerQuiet()) {
+          this.lightweightButtonRecoveryRoots?.clear?.();
+          return 0;
+        }
+        const roots = this.dedupeNestedMessageNodes([...this.lightweightButtonRecoveryRoots || []]).filter((node) => node?.isConnected !== false && !node.querySelector?.(".dait-message-button"));
+        this.lightweightButtonRecoveryRoots?.clear?.();
+        if (!roots.length) return 0;
+        const lightContext = {
+          contentByMessage: /* @__PURE__ */ new Map(),
+          textByElement: /* @__PURE__ */ new Map(),
+          replyTextByElement: /* @__PURE__ */ new Map()
+        };
+        let injected = 0;
+        for (const messageNode of roots) {
+          if (this.injectMessageButton(messageNode, lightContext)) injected++;
         }
         return injected;
       }
@@ -29165,10 +29355,10 @@ var require_discord_ai_translator = __commonJS({
             }
             nodes.push(...root.querySelectorAll?.(DISCORD_MESSAGE_NODE_SELECTOR) || []);
           });
-          return nodes;
+          return this.dedupeNestedMessageNodes(nodes);
         }
         if (typeof document === "undefined" || typeof document.querySelectorAll !== "function") return [];
-        return [...document.querySelectorAll(DISCORD_MESSAGE_NODE_SELECTOR)];
+        return this.dedupeNestedMessageNodes([...document.querySelectorAll(DISCORD_MESSAGE_NODE_SELECTOR)]);
       }
       getScanMessageNodes(allMessageNodes, context = null) {
         const sorted = [...new Set(allMessageNodes || [])].filter((node) => node?.isConnected && node?.getBoundingClientRect);
@@ -29910,12 +30100,26 @@ var require_discord_ai_translator = __commonJS({
         }
         return panel;
       }
+      getFastRootDiscordThemeClass() {
+        if (typeof document === "undefined") return "";
+        return this.getElementDiscordThemeExplicitClass(document.body) || this.getElementDiscordThemeExplicitClass(document.documentElement) || this.getElementDiscordThemeClassNameClass(document.body) || this.getElementDiscordThemeClassNameClass(document.documentElement) || "";
+      }
       syncDiscordThemeClasses(target, anchor = null) {
         if (!target?.classList) return "";
+        const fastRootThemeClass = this.getFastRootDiscordThemeClass();
+        if (fastRootThemeClass && this.lastObservedRootThemeClass && fastRootThemeClass !== this.lastObservedRootThemeClass) {
+          this.discordThemeCacheEpoch++;
+        }
+        if (fastRootThemeClass) this.lastObservedRootThemeClass = fastRootThemeClass;
+        const epoch = String(this.discordThemeCacheEpoch || 0);
+        const existingThemeData = target.dataset?.daitDiscordTheme || "";
+        const existingThemeClass = existingThemeData ? `theme-${existingThemeData}` : "";
+        if (existingThemeClass && target.dataset?.daitThemeEpoch === epoch && (!fastRootThemeClass || fastRootThemeClass === existingThemeClass) && target.classList.contains?.(existingThemeClass) && !DISCORD_THEME_CLASSES.some((theme) => theme !== existingThemeClass && target.classList.contains?.(theme))) {
+          return existingThemeClass;
+        }
         const themeSource = this.getDiscordThemeSource(anchor);
         const themeClass = themeSource.themeClass || DISCORD_DEFAULT_THEME_CLASS;
         const themeData = themeClass.replace(/^theme-/, "");
-        const epoch = String(this.discordThemeCacheEpoch || 0);
         const hasTargetClass = Boolean(target.classList.contains?.(themeClass));
         const hasStaleThemeClass = DISCORD_THEME_CLASSES.some((theme) => theme !== themeClass && target.classList.contains?.(theme));
         if (hasTargetClass && !hasStaleThemeClass && target.dataset?.daitDiscordTheme === themeData && target.dataset?.daitThemeEpoch === epoch) {
@@ -30018,11 +30222,13 @@ var require_discord_ai_translator = __commonJS({
       getDiscordThemeGlobalCandidates() {
         const now = Date.now();
         const cached = this.discordThemeGlobalCandidatesCache;
-        if (cached && cached.epoch === this.discordThemeCacheEpoch && now - cached.at < DISCORD_THEME_CACHE_TTL_MS) {
+        if (cached && cached.epoch === this.discordThemeCacheEpoch && now - cached.at < 5e3) {
           return cached;
         }
         const selectors = ["#app-mount", "[class*='appMount']", "[class*='app-mount']", "[data-theme]", "[theme]"].map((selector) => document.querySelector?.(selector)).filter((node) => node && !this.isPluginThemeCandidate(node));
-        const themed = [...document.querySelectorAll?.("[class*='theme-'], [data-theme], [theme]") || []].filter((node) => node && !this.isPluginThemeCandidate(node));
+        const rootCandidates = [document.documentElement, document.body, ...selectors].filter(Boolean);
+        const hasRootTheme = rootCandidates.some((node) => Boolean(this.getElementDiscordThemeClass(node)));
+        const themed = hasRootTheme ? [] : [...document.querySelectorAll?.("[class*='theme-'], [data-theme], [theme]") || []].filter((node) => node && !this.isPluginThemeCandidate(node)).slice(0, 8);
         const snapshot = { at: now, epoch: this.discordThemeCacheEpoch, selectors, themed };
         this.discordThemeGlobalCandidatesCache = snapshot;
         return snapshot;
@@ -30098,7 +30304,7 @@ var require_discord_ai_translator = __commonJS({
         const now = Date.now();
         const sourceKey = source || null;
         const cached = this.discordThemeVariableValuesCache;
-        if (cached && cached.source === sourceKey && cached.epoch === this.discordThemeCacheEpoch && now - cached.at < DISCORD_THEME_CACHE_TTL_MS) {
+        if (cached && cached.epoch === this.discordThemeCacheEpoch && (cached.source === sourceKey || !sourceKey) && now - cached.at < 5e3) {
           return cached.values;
         }
         const sources = this.getDiscordThemeVariableSources(source);
@@ -30124,16 +30330,12 @@ var require_discord_ai_translator = __commonJS({
           if (!node || sources.includes(node) || this.isPluginThemeCandidate(node)) return;
           sources.push(node);
         };
-        let current = source && typeof source === "object" ? source : null;
-        let guard = 0;
-        while (current && guard < 16) {
-          add(current);
-          current = current.parentElement;
-          guard++;
-        }
-        this.getDiscordThemeCandidates().forEach(add);
+        if (source && typeof source === "object") add(source);
+        const globalCandidates = this.getDiscordThemeGlobalCandidates();
+        globalCandidates.selectors.forEach(add);
         add(document.body);
         add(document.documentElement);
+        if (!sources.length) globalCandidates.themed.slice(0, 3).forEach(add);
         return sources;
       }
       elementHasAnyDiscordThemeClass(node) {
@@ -31356,7 +31558,11 @@ var require_discord_ai_translator = __commonJS({
         const content = this.getMessageContentElement(messageNode, context);
         if (!content) return false;
         const text = this.getCachedElementText(content, context);
-        if (!this.hasTranslatableMessageText(text)) return false;
+        if (!this.hasTranslatableMessageText(text)) {
+          this.nonTranslatableMessageCache?.set?.(messageNode, true);
+          return false;
+        }
+        this.nonTranslatableMessageCache?.delete?.(messageNode);
         let button = content.querySelector(":scope > .dait-message-button");
         const created = !button;
         if (!button) {
@@ -31388,7 +31594,7 @@ var require_discord_ai_translator = __commonJS({
             if (String(sibling.nodeValue || "").trim()) return true;
             continue;
           }
-          if (sibling.nodeType === 1 && !this.isOwnPluginElement(sibling)) return true;
+          if (sibling.nodeType === 1 && !this.isOwnPluginElement(sibling) && !this.isMessageChromeOnlyElement(sibling)) return true;
         }
         return false;
       }

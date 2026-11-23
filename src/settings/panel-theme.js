@@ -283,13 +283,34 @@ class PanelTheme {
     // Discord observer does not watch <html>. The system theme matters while "auto" finds no Discord theme. Open
     // dialog content is checked on every such change: Discord's modal changes with Discord's theme even while an
     // explicit light/dark choice keeps the plugin's windows as they are.
+    getHostThemeSignature() {
+        if (typeof document === "undefined") return "";
+        return [document.documentElement, document.body]
+            .filter(Boolean)
+            .map(node => [
+                this.getNodeTheme(node),
+                String(node.getAttribute?.("data-theme") || ""),
+                String(node.getAttribute?.("theme") || "")
+            ].join(":"))
+            .join("|");
+    }
+
     startWatching() {
         this.stopWatching();
         this.lastTheme = this.resolve();
+        this.lastHostThemeSignature = this.getHostThemeSignature();
         const onChange = () => {
             if (!this.plugin.isStarted) return;
-            this.refresh();
-            this.plugin.refreshDiscordThemeClasses?.({ skipPanelTheme: true });
+            const prevPanelTheme = this.lastTheme;
+            const prevHostSignature = this.lastHostThemeSignature;
+            const nextPanelTheme = this.refresh();
+            const nextHostSignature = this.getHostThemeSignature();
+            this.lastHostThemeSignature = nextHostSignature;
+            // Ignore non-theme class toggles on <html>/<body> (e.g. mouse-mode / keyboard-mode / app-focused)
+            // so routine clicks or emoji picker focus changes do not trigger a full-page button theme resync.
+            if (nextPanelTheme !== prevPanelTheme || nextHostSignature !== prevHostSignature) {
+                this.plugin.refreshDiscordThemeClasses?.({ skipPanelTheme: true });
+            }
         };
         if (typeof MutationObserver === "function" && typeof document !== "undefined") {
             try {

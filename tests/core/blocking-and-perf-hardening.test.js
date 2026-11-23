@@ -483,3 +483,179 @@ test("autoTranslateQueuedBatch does not steal another batch's in-flight slot aft
     assert.equal(plugin.autoTranslationInFlightItems, 1, "Batch2's active item count must remain intact");
     assert.ok(plugin.autoTranslationInFlightKeys.has(batch2Item.cacheKey));
 });
+
+test("emoji pickers with focusLock, reaction strips, and message avatars do not trigger media-viewer quiet mode, theme storms, or rescans", () => {
+    const plugin = new Plugin();
+    plugin.isStarted = true;
+    const savedDocument = global.document;
+    try {
+        const emojiPicker = {
+            nodeType: 1,
+            className: "focusLock_abc emojiPicker_def",
+            matches: selector => String(selector || "").includes("focusLock") || String(selector || "").includes("emojiPicker") || String(selector || "").includes("[role='dialog']"),
+            closest: selector => String(selector || "").includes("emojiPicker") ? emojiPicker : null,
+            querySelector: selector => String(selector || "").includes("img") ? ({ nodeType: 1 }) : null
+        };
+        global.document = {
+            body: {},
+            documentElement: {},
+            querySelector: () => null,
+            querySelectorAll: () => [emojiPicker]
+        };
+        assert.equal(plugin.isDiscordMediaViewerElement(emojiPicker), false);
+        assert.equal(plugin.isDiscordMediaViewerOpen(), false, "focusLock emoji picker must not trip media-viewer quiet mode");
+
+        const messageNode = {
+            nodeType: 1,
+            id: "chat-messages-100-200",
+            isConnected: true,
+            matches: selector => String(selector || "").includes("chat-messages-"),
+            closest: () => null,
+            querySelector: () => null
+        };
+        const avatarImg = {
+            nodeType: 1,
+            tagName: "IMG",
+            className: "avatar_xyz",
+            matches: () => false,
+            closest: selector => String(selector || "").includes("chat-messages-") ? messageNode : null
+        };
+        assert.equal(plugin.isLightweightDiscordMediaViewerElement(avatarImg), false, "message avatar img must not trigger media-viewer probe");
+
+        const reactionStrip = {
+            nodeType: 1,
+            className: "reactions_xyz",
+            isConnected: true,
+            matches: selector => String(selector || "").includes("reactions"),
+            closest: selector => String(selector || "").includes("chat-messages-") ? messageNode : (String(selector || "").includes("reactions") ? reactionStrip : null),
+            querySelector: () => null
+        };
+        assert.equal(plugin.isScanRelevantMutation({ type: "childList", target: messageNode, addedNodes: [reactionStrip], removedNodes: [] }), false);
+
+        // Nested message node deduplication drops inner data-list-item-id wrapper when outer <li> is present.
+        const innerMsg = { nodeType: 1, parentElement: messageNode };
+        assert.deepEqual(plugin.dedupeNestedMessageNodes([messageNode, innerMsg]), [messageNode]);
+    }
+    finally {
+        if (savedDocument === undefined) delete global.document;
+        else global.document = savedDocument;
+    }
+});
+
+test("theme sync uses O(1) epoch fast-path and never runs getComputedStyle across arbitrary document [class*='theme-'] nodes", () => {
+    const plugin = new Plugin();
+    const savedDocument = global.document;
+    const savedWindow = global.window;
+    try {
+        const html = { nodeType: 1, className: "theme-light mouse-mode", dataset: {}, getAttribute: () => null };
+        const body = { nodeType: 1, className: "", dataset: {}, getAttribute: () => null };
+        let fullThemedQueries = 0;
+        global.document = {
+            documentElement: html,
+            body,
+            querySelector: () => null,
+            querySelectorAll: selector => {
+                if (String(selector).includes("theme-")) fullThemedQueries++;
+                return [];
+            }
+        };
+        const computedNodes = [];
+        global.window = {
+            getComputedStyle: node => {
+                computedNodes.push(node);
+                return { getPropertyValue: name => (name === "--text-normal" ? "#111" : "") };
+            }
+        };
+        const classes = new Set(["dait-message-button", "theme-light"]);
+        const button = {
+            className: "dait-message-button theme-light",
+            dataset: { daitDiscordTheme: "light", daitThemeEpoch: String(plugin.discordThemeCacheEpoch || 0) },
+            classList: {
+                contains: name => classes.has(name),
+                add: name => classes.add(name),
+                remove: name => classes.delete(name)
+            },
+            style: { getPropertyValue: () => "", setProperty: () => {}, removeProperty: () => {} }
+        };
+        let sourceLookups = 0;
+        const origGetSource = plugin.getDiscordThemeSource.bind(plugin);
+        plugin.getDiscordThemeSource = (...args) => { sourceLookups++; return origGetSource(...args); };
+        assert.equal(plugin.syncDiscordThemeClasses(button), "theme-light");
+        assert.equal(sourceLookups, 0, "already-synced button returns O(1) without querying theme candidates");
+
+        // Changing root theme directly without MutationObserver still invalidates epoch and updates classes.
+        html.className = "theme-dark mouse-mode";
+        assert.equal(plugin.syncDiscordThemeClasses(button), "theme-dark");
+        assert.equal(button.dataset.daitDiscordTheme, "dark");
+        assert.equal(classes.has("theme-dark"), true);
+        assert.equal(classes.has("theme-light"), false);
+
+        // Fresh theme variable resolution skips full-doc [class*='theme-'] query when <html> has theme-dark.
+        plugin.getDiscordThemeVariableValues(html);
+        assert.equal(fullThemedQueries, 0, "skips document.querySelectorAll('[class*=theme-]') when root already has theme");
+        assert.ok(computedNodes.length <= 6, "inspects only root hosts, not dozens of sub-components");
+    }
+    finally {
+        if (savedDocument === undefined) delete global.document;
+        else global.document = savedDocument;
+        if (savedWindow === undefined) delete global.window;
+        else global.window = savedWindow;
+    }
+});
+
+test("lightweight button recovery restores truly stripped buttons without createScanContext and ignores self-moves", () => {
+    const plugin = new Plugin();
+    plugin.isStarted = true;
+    const savedDocument = global.document;
+    global.document = { body: {} };
+    try {
+        const messageNode = {
+            nodeType: 1,
+            id: "chat-messages-100-300",
+            isConnected: true,
+            matches: selector => String(selector || "").includes("chat-messages-"),
+            closest: () => null,
+            querySelector: () => null
+        };
+        const contentNode = {
+            nodeType: 1,
+            isConnected: true,
+            matches: () => false,
+            closest: selector => String(selector || "").includes("chat-messages-") ? messageNode : null
+        };
+        const btn = {
+            nodeType: 1,
+            className: "dait-message-button",
+            matches: selector => String(selector || "").includes(".dait-message-button"),
+            closest: () => null,
+            querySelector: () => null
+        };
+        // Self-move (present in both removedNodes and addedNodes) must not schedule recovery.
+        assert.deepEqual(plugin.collectStrippedMessageButtonRoots([{
+            type: "childList",
+            target: contentNode,
+            addedNodes: [btn],
+            removedNodes: [btn]
+        }]), []);
+
+        // Genuine React strip schedules lightweight recovery that skips createScanContext (zero forced reflow).
+        const roots = plugin.collectStrippedMessageButtonRoots([{
+            type: "childList",
+            target: contentNode,
+            addedNodes: [],
+            removedNodes: [btn]
+        }]);
+        assert.deepEqual(roots, [messageNode]);
+
+        plugin.createScanContext = () => { throw new Error("lightweight recovery must not call createScanContext"); };
+        const restored = [];
+        plugin.injectMessageButton = node => { restored.push(node); return true; };
+        plugin.lightweightButtonRecoveryRoots.add(messageNode);
+        plugin.flushLightweightButtonRecovery();
+        assert.deepEqual(restored, [messageNode]);
+    }
+    finally {
+        if (savedDocument === undefined) delete global.document;
+        else global.document = savedDocument;
+    }
+});
