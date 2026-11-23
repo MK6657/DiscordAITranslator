@@ -19777,6 +19777,4519 @@ var require_settings_store = __commonJS({
   }
 });
 
+// src/core/delegate-methods.js
+var require_delegate_methods = __commonJS({
+  "src/core/delegate-methods.js"(exports2, module2) {
+    "use strict";
+    function installPrototypeBridge(targetProto, controllerProp, methodNames) {
+      const installed = [];
+      for (const name of methodNames) {
+        if (!name || name === "constructor") continue;
+        if (Object.prototype.hasOwnProperty.call(targetProto, name)) continue;
+        targetProto[name] = function bridgedMethod(...args) {
+          return this[controllerProp][name](...args);
+        };
+        installed.push(name);
+      }
+      return installed;
+    }
+    function attachControllerMethods(ControllerClass, methodMaps) {
+      const names = [];
+      const proto = ControllerClass.prototype;
+      for (const map of methodMaps) {
+        if (!map || typeof map !== "object") continue;
+        for (const name of Object.keys(map)) {
+          if (name === "constructor") continue;
+          const fn = map[name];
+          if (typeof fn !== "function") continue;
+          proto[name] = fn;
+          names.push(name);
+        }
+      }
+      return names;
+    }
+    module2.exports = {
+      installPrototypeBridge,
+      attachControllerMethods
+    };
+  }
+});
+
+// src/settings/ui/settings-shell.js
+var require_settings_shell = __commonJS({
+  "src/settings/ui/settings-shell.js"(exports2, module2) {
+    "use strict";
+    var {
+      SETTINGS_TAB_OVERVIEW,
+      SETTINGS_TAB_TRANSLATE,
+      SETTINGS_TAB_COMPOSE,
+      SETTINGS_TAB_APPEARANCE,
+      SETTINGS_TAB_ADVANCED,
+      SETTINGS_TAB_DATA,
+      SETTINGS_TAB_IDS,
+      normalizeSettingsTabId
+    } = require_settings_schema();
+    var { PLUGIN_VERSION } = require_version();
+    var methods = {
+      getSettingsPanel(options = {}) {
+        const startedAt = this.plugin.getDiagnosticTime();
+        const quickSettings = Boolean(options.quickSettings);
+        const panel = document.createElement("div");
+        panel.className = "dait-settings";
+        if (quickSettings) panel.dataset.daitQuickSettings = "true";
+        panel.dataset.daitLocale = this.plugin.getLocale();
+        this.plugin.applyPanelTheme(panel);
+        panel.appendChild(this.createSettingsHeader({ quickSettings }));
+        panel.appendChild(this.createSettingsLayout(panel));
+        if (!quickSettings) this.scheduleSettingsModalSizing(panel);
+        this.plugin.logSlowOperation("settings.panel.build", startedAt, {
+          tabs: SETTINGS_TAB_IDS.length,
+          quickSettings
+        });
+        return panel;
+      },
+      // Tab rail (search + tabs) on the left, one tab page at a time on the right. Every page is built up front so
+      // search and syncSettingControls see all controls; inactive pages are hidden.
+      createSettingsLayout(panel) {
+        const uid = this.createSettingsControlId("dait-settings");
+        const activeTab = this.getSettingsActiveTab();
+        const state = {
+          panel,
+          activeTab,
+          searchQuery: "",
+          tabs: this.getSettingsNavItems().map((tab) => ({ ...tab, tabId: `${uid}-tab-${tab.id}`, panelId: `${uid}-panel-${tab.id}` })),
+          resultsId: `${uid}-results`
+        };
+        if (panel) panel.__daitSettingsUi = state;
+        const layout = document.createElement("div");
+        layout.className = "dait-settings-body";
+        const content = document.createElement("div");
+        content.className = "dait-settings-content";
+        state.content = content;
+        content.appendChild(this.createSettingsSearchResults(state));
+        state.tabs.forEach((tab) => {
+          tab.tabpanel = this.createSettingsTabPanel(state, tab, tab.id === activeTab);
+          content.appendChild(tab.tabpanel);
+        });
+        layout.appendChild(this.createSettingsRail(state));
+        layout.appendChild(content);
+        return layout;
+      },
+      getSettingsActiveTab() {
+        return normalizeSettingsTabId(this.plugin.settings.ui?.settingsActiveTab);
+      },
+      getSettingsNavItems() {
+        return this.plugin.settingsSchema.getTabs().map((tab) => ({
+          id: tab.id,
+          label: this.plugin.t(tab.labelKey)
+        }));
+      },
+      createSettingsControlId(prefix = "dait-control") {
+        this.plugin.settingsControlIdCounter = (Number(this.plugin.settingsControlIdCounter) || 0) + 1;
+        return `${prefix}-${this.plugin.settingsControlIdCounter}`;
+      },
+      createSettingsRail(state) {
+        const rail = document.createElement("div");
+        rail.className = "dait-settings-rail";
+        rail.appendChild(this.createSettingsSearch(state));
+        const tablist = document.createElement("div");
+        tablist.className = "dait-settings-tabs";
+        tablist.setAttribute("role", "tablist");
+        tablist.setAttribute("aria-orientation", "vertical");
+        tablist.setAttribute("aria-label", this.plugin.t("settingsTabsLabel"));
+        state.tabs.forEach((tab) => {
+          const active = tab.id === state.activeTab;
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "dait-settings-tab";
+          button.id = tab.tabId;
+          button.setAttribute("role", "tab");
+          button.setAttribute("aria-controls", tab.panelId);
+          button.setAttribute("aria-selected", active ? "true" : "false");
+          button.setAttribute("tabindex", active ? "0" : "-1");
+          button.dataset.daitSettingsTab = tab.id;
+          button.textContent = tab.label;
+          button.addEventListener("click", () => this.showSettingsTab(state, tab.id));
+          tab.button = button;
+          tablist.appendChild(button);
+        });
+        tablist.addEventListener("keydown", (event) => this.handleSettingsTabKeydown(state, event));
+        state.tablist = tablist;
+        rail.appendChild(tablist);
+        return rail;
+      },
+      createSettingsTabPanel(state, tab, active) {
+        const tabpanel = document.createElement("div");
+        tabpanel.className = "dait-settings-tabpanel";
+        tabpanel.id = tab.panelId;
+        tabpanel.setAttribute("role", "tabpanel");
+        tabpanel.setAttribute("aria-labelledby", tab.tabId);
+        tabpanel.dataset.daitSettingsTabPanel = tab.id;
+        tabpanel.dataset.daitSettingsSection = tab.id;
+        tabpanel.hidden = !active;
+        const heading = document.createElement("h2");
+        heading.className = "dait-settings-page-title";
+        heading.textContent = tab.label;
+        tabpanel.appendChild(heading);
+        const builders = {
+          [SETTINGS_TAB_OVERVIEW]: () => this.createOverviewTabContent(),
+          [SETTINGS_TAB_TRANSLATE]: () => this.createTranslateTabContent(),
+          [SETTINGS_TAB_COMPOSE]: () => this.createComposeTabContent(),
+          [SETTINGS_TAB_APPEARANCE]: () => this.createDisplayTabContent(),
+          [SETTINGS_TAB_ADVANCED]: () => this.createAdvancedTabContent(),
+          [SETTINGS_TAB_DATA]: () => this.createDataTabContent(state)
+        };
+        (builders[tab.id]?.() || []).forEach((node) => {
+          if (node) tabpanel.appendChild(node);
+        });
+        return tabpanel;
+      },
+      // Shows one tab page. Saving is debounced; a rebuilt panel opens on the same tab.
+      showSettingsTab(state, tabId, options = {}) {
+        if (!state?.tabs?.length) return null;
+        const id = normalizeSettingsTabId(tabId);
+        const target = state.tabs.find((tab) => tab.id === id) || state.tabs[0];
+        if (options.clearSearch !== false && state.searchQuery) this.clearSettingsSearch(state, { focus: false, showTab: false });
+        state.activeTab = target.id;
+        state.tabs.forEach((tab) => {
+          const active = tab === target;
+          tab.button?.setAttribute?.("aria-selected", active && !state.searchQuery ? "true" : "false");
+          tab.button?.setAttribute?.("tabindex", active ? "0" : "-1");
+          if (tab.tabpanel) tab.tabpanel.hidden = !active || Boolean(state.searchQuery);
+        });
+        if (options.resetScroll !== false && state.content) state.content.scrollTop = 0;
+        if (target.id === SETTINGS_TAB_OVERVIEW) this.refreshOverviewStatusSection(target.tabpanel);
+        if (target.id === SETTINGS_TAB_DATA) {
+          target.tabpanel?.querySelector?.("[data-dait-host-health-card='true']")?.__daitEnsureHostHealthRendered?.();
+        }
+        if (target.id === SETTINGS_TAB_TRANSLATE || target.id === SETTINGS_TAB_COMPOSE) {
+          const tabKind = target.id === SETTINGS_TAB_COMPOSE ? "polish" : "translation";
+          const renderedProvider = target.tabpanel?.querySelector?.(".dait-provider-settings-block")?.dataset?.daitProvider || "";
+          const currentProvider = String(this.plugin.settings[tabKind]?.provider || "");
+          if (renderedProvider && currentProvider && renderedProvider !== currentProvider && target.tabpanel?.replaceWith) {
+            const fresh = this.createSettingsTabPanel(state, target, !state.searchQuery);
+            target.tabpanel.replaceWith(fresh);
+            target.tabpanel = fresh;
+            this.syncSettingsDependentRows?.(fresh);
+          }
+          this.refreshSavedServiceConfigControls?.(target.tabpanel);
+        }
+        if (options.focusTab) this.focusSettingsElement(target.button);
+        if (options.save !== false && this.plugin.settings?.ui && this.plugin.settings.ui.settingsActiveTab !== target.id) {
+          this.plugin.settings.ui.settingsActiveTab = target.id;
+          this.plugin.saveSettings({ debounce: true });
+        }
+        return target.id;
+      },
+      // Arrow keys move along the rail (up/down, or left/right when it is a horizontal row); Home/End jump to the ends.
+      handleSettingsTabKeydown(state, event) {
+        const count = state?.tabs?.length || 0;
+        if (!count) return;
+        const steps = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 };
+        const current = Math.max(0, state.tabs.findIndex((tab) => tab.id === state.activeTab));
+        let next = null;
+        if (steps[event?.key]) next = (current + steps[event.key] + count) % count;
+        else if (event?.key === "Home") next = 0;
+        else if (event?.key === "End") next = count - 1;
+        if (next === null) return;
+        event.preventDefault?.();
+        event.stopPropagation?.();
+        this.showSettingsTab(state, state.tabs[next].id, { focusTab: true });
+      },
+      setSettingsActiveTab(tab, source = null) {
+        const id = normalizeSettingsTabId(tab);
+        const state = source?.closest?.(".dait-settings")?.__daitSettingsUi;
+        if (state) return this.showSettingsTab(state, id);
+        if (this.plugin.settings?.ui) this.plugin.settings.ui.settingsActiveTab = id;
+        this.plugin.saveSettings({ debounce: true });
+        return id;
+      },
+      focusSettingsElement(element) {
+        if (!element?.focus) return false;
+        try {
+          element.focus({ preventScroll: true });
+        } catch {
+          try {
+            element.focus();
+          } catch {
+            return false;
+          }
+        }
+        return true;
+      },
+      // The one title bar of every settings window: the plugin's own window has no header of its own, so the panel
+      // shows the title and the close button there too.
+      createSettingsHeader() {
+        const header = document.createElement("div");
+        header.className = "dait-settings-header";
+        const logo = document.createElement("div");
+        logo.className = "dait-settings-logo";
+        logo.setAttribute("aria-hidden", "true");
+        logo.textContent = "AI";
+        header.appendChild(logo);
+        const title = document.createElement("h2");
+        title.className = "dait-settings-title";
+        title.textContent = this.plugin.t("settingsTitle");
+        header.appendChild(title);
+        const versionChip = document.createElement("span");
+        versionChip.className = "dait-settings-version";
+        versionChip.dataset.daitVersion = PLUGIN_VERSION;
+        versionChip.textContent = `v${PLUGIN_VERSION}`;
+        header.appendChild(versionChip);
+        header.appendChild(this.createSettingsHeaderStatus());
+        const close = document.createElement("button");
+        close.type = "button";
+        close.className = "dait-settings-close";
+        close.title = this.plugin.t("settingsClose");
+        close.setAttribute("aria-label", this.plugin.t("settingsClose"));
+        close.appendChild(this.createWindowIcon("close"));
+        close.addEventListener("click", (event) => {
+          event?.preventDefault?.();
+          this.closeSettingsWindow(close);
+        });
+        header.appendChild(close);
+        return header;
+      },
+      // An icon for an icon button in a plugin window (css/01-theme-tokens .dait-icon); the button carries the label.
+      createWindowIcon(name) {
+        const icon = document.createElement("span");
+        icon.className = `dait-icon dait-icon-${name}`;
+        icon.setAttribute("aria-hidden", "true");
+        return icon;
+      },
+      createSettingsHero(options = {}) {
+        return this.createSettingsHeader(options);
+      },
+      // "<status> · <translation service>" for the header; the status badge updates live after a test.
+      createSettingsHeaderStatus() {
+        const wrap = document.createElement("span");
+        wrap.className = "dait-settings-header-status";
+        wrap.title = this.plugin.t("translationTitle");
+        wrap.appendChild(this.createApiStatusBadge("translation"));
+        const provider = document.createElement("span");
+        provider.className = "dait-settings-header-provider";
+        provider.textContent = this.plugin.getProviderDisplayName(this.plugin.settings.translation?.provider);
+        wrap.appendChild(provider);
+        return wrap;
+      },
+      createApiStatusBadge(kind) {
+        const status = document.createElement("span");
+        const savedStatus = this.plugin.getApiStatus(kind);
+        status.dataset.daitKind = kind;
+        this.renderApiStatusBadge(status, kind, savedStatus.state, this.plugin.getApiStatusText(savedStatus.state), savedStatus.message || "");
+        return status;
+      },
+      // What a status badge shows: "Not set up" (with the "needs you" mark) while the service is missing a required
+      // field, the same name the quick panel and the overview cards use; otherwise the saved or live state. A test
+      // that is running still shows as testing.
+      getApiStatusBadgeState(kind, state = this.plugin.getApiStatus(kind).state) {
+        if (state === "testing" || !kind) return state;
+        let configured = true;
+        try {
+          configured = Boolean(this.plugin.hasUsableApiConfig(kind));
+        } catch {
+          configured = true;
+        }
+        return configured ? state : "unconfigured";
+      },
+      renderApiStatusBadge(badge, kind, state, text = this.plugin.getApiStatusText(state), title = "") {
+        if (!badge) return;
+        const shown = this.getApiStatusBadgeState(kind, state);
+        badge.className = `dait-api-status dait-api-status-${shown}`;
+        badge.textContent = shown === state ? text : this.plugin.getApiStatusText(shown);
+        badge.title = shown === state ? title || "" : this.plugin.t("overviewServiceMissing", { field: this.getSettingLabelForPath(this.getMissingServiceSettingPath(kind)) });
+      },
+      // The close button closes whichever window holds the panel: the plugin's own settings window, or
+      // BetterDiscord's plugin-settings modal (through its own footer button, or Escape as a last resort).
+      closeSettingsWindow(source) {
+        const quickRoot = source?.closest?.(".dait-quick-settings-modal-root");
+        if (quickRoot) {
+          this.plugin.closeQuickSettingsPanel(quickRoot, "button");
+          return true;
+        }
+        const modal = source?.closest?.("[data-dait-settings-modal-root='true']") || source?.closest?.("[role='dialog']");
+        const hostButtons = [...modal?.querySelectorAll?.("button") || []].filter((button) => !button.closest?.(".dait-settings"));
+        const hostClose = hostButtons[hostButtons.length - 1];
+        if (hostClose?.click) {
+          hostClose.click();
+          return true;
+        }
+        if (typeof document === "undefined" || typeof KeyboardEvent !== "function") return false;
+        const target = document.activeElement || document.body;
+        target?.dispatchEvent?.(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", keyCode: 27, which: 27, bubbles: true, cancelable: true }));
+        return true;
+      }
+    };
+    module2.exports = methods;
+  }
+});
+
+// src/settings/ui/settings-search.js
+var require_settings_search = __commonJS({
+  "src/settings/ui/settings-search.js"(exports2, module2) {
+    "use strict";
+    var methods = {
+      createSettingsSearch(state) {
+        const wrap = document.createElement("div");
+        wrap.className = "dait-settings-search";
+        const input = document.createElement("input");
+        input.type = "search";
+        input.className = "dait-settings-search-input";
+        input.placeholder = this.plugin.t("settingsSearchPlaceholder");
+        input.autocomplete = "off";
+        input.spellcheck = false;
+        input.setAttribute("aria-label", this.plugin.t("settingsSearchPlaceholder"));
+        input.setAttribute("aria-controls", state.resultsId);
+        input.addEventListener("input", () => this.runSettingsSearch(state, input.value));
+        input.addEventListener("keydown", (event) => this.handleSettingsSearchKeydown(state, event));
+        input.addEventListener("focus", () => this.bindSettingsSearchEscape(state));
+        state.searchInput = input;
+        wrap.appendChild(input);
+        return wrap;
+      },
+      createSettingsSearchResults(state) {
+        const results = document.createElement("div");
+        results.className = "dait-settings-search-results";
+        results.id = state.resultsId;
+        results.setAttribute("role", "region");
+        results.setAttribute("aria-label", this.plugin.t("settingsSearchPlaceholder"));
+        results.hidden = true;
+        const summary = document.createElement("p");
+        summary.className = "dait-settings-search-summary";
+        summary.setAttribute("aria-live", "polite");
+        results.appendChild(summary);
+        const list = document.createElement("ul");
+        list.className = "dait-settings-search-list";
+        results.appendChild(list);
+        state.results = results;
+        state.resultsSummary = summary;
+        state.resultsList = list;
+        return results;
+      },
+      // Every searchable row with the tab it lives on. Group titles and the row's own button texts (Clear stats,
+      // Export JSON, Test) take part in matching but are not shown.
+      getSettingsSearchEntries(state) {
+        const entries = [];
+        const visit = (node, tab, groupTitle) => {
+          for (const child of node?.children || []) {
+            const group = child.dataset?.daitSearchGroup;
+            const nextGroup = group !== void 0 ? group : groupTitle;
+            const classes = String(child.className || "").split(/\s+/);
+            if (classes.includes("dait-settings-row") || classes.includes("dait-settings-search-target")) {
+              const label = String(child.dataset?.daitSearchLabel || "").trim();
+              if (label) {
+                const description = String(child.dataset?.daitSearchDescription || "").trim();
+                entries.push({
+                  row: child,
+                  tabId: tab.id,
+                  tabLabel: tab.label,
+                  label,
+                  description,
+                  haystack: `${label} ${description} ${this.getSettingsSearchButtonText(child)} ${nextGroup || ""} ${tab.label}`.toLocaleLowerCase()
+                });
+              }
+            }
+            visit(child, tab, nextGroup);
+          }
+        };
+        (state?.tabs || []).forEach((tab) => visit(tab.tabpanel, tab, ""));
+        return entries;
+      },
+      // The texts of the buttons that belong to this row (not to a row nested in it).
+      getSettingsSearchButtonText(row) {
+        return [...row?.querySelectorAll?.("button") || []].filter((button) => button.closest?.(".dait-settings-row, .dait-settings-search-target") === row).map((button) => String(button.textContent || "").trim()).filter(Boolean).join(" ");
+      },
+      // A Latin or numeric term matches at the start of a word ("reset" is not found in "preset"); other scripts,
+      // which do not separate words with spaces, match anywhere.
+      matchesSettingsSearchTerm(haystack, term) {
+        if (!/^[a-z0-9]/.test(term)) return haystack.includes(term);
+        for (let index = haystack.indexOf(term); index >= 0; index = haystack.indexOf(term, index + 1)) {
+          if (index === 0 || !/[a-z0-9]/.test(haystack[index - 1])) return true;
+        }
+        return false;
+      },
+      runSettingsSearch(state, rawQuery) {
+        if (!state) return [];
+        const query = String(rawQuery || "").trim().toLocaleLowerCase();
+        state.searchQuery = query;
+        if (!query) {
+          this.clearSettingsSearch(state, { focus: false, keepInput: true });
+          return [];
+        }
+        const terms = query.split(/\s+/).filter(Boolean);
+        const entries = this.getSettingsSearchEntries(state).filter((entry) => terms.every((term) => this.matchesSettingsSearchTerm(entry.haystack, term)));
+        state.searchEntries = entries;
+        state.tabs.forEach((tab) => {
+          if (tab.tabpanel) tab.tabpanel.hidden = true;
+          tab.button?.setAttribute?.("aria-selected", "false");
+        });
+        if (state.results) state.results.hidden = false;
+        if (state.resultsSummary) {
+          state.resultsSummary.textContent = entries.length ? this.plugin.t("settingsSearchResults", { count: entries.length }) : this.plugin.t("settingsSearchEmpty", { query: String(rawQuery || "").trim() });
+        }
+        if (state.resultsList) {
+          state.resultsList.textContent = "";
+          entries.forEach((entry, index) => {
+            const item = document.createElement("li");
+            item.className = "dait-settings-search-item";
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "dait-settings-search-result";
+            const label = document.createElement("span");
+            label.className = "dait-settings-search-result-label";
+            label.textContent = entry.label;
+            button.appendChild(label);
+            const tab = document.createElement("span");
+            tab.className = "dait-settings-search-result-tab";
+            tab.textContent = entry.tabLabel;
+            button.appendChild(tab);
+            if (entry.description) {
+              const description = document.createElement("span");
+              description.className = "dait-settings-search-result-description";
+              description.textContent = entry.description;
+              button.appendChild(description);
+            }
+            button.addEventListener("click", () => this.openSettingsSearchResult(state, entry));
+            button.addEventListener("keydown", (event) => this.handleSettingsSearchResultKeydown(state, event, index));
+            entry.button = button;
+            item.appendChild(button);
+            state.resultsList.appendChild(item);
+          });
+        }
+        if (state.content) state.content.scrollTop = 0;
+        return entries;
+      },
+      clearSettingsSearch(state, options = {}) {
+        if (!state) return;
+        state.searchQuery = "";
+        state.searchEntries = [];
+        if (state.searchInput && !options.keepInput) state.searchInput.value = "";
+        if (state.results) state.results.hidden = true;
+        if (state.resultsList) state.resultsList.textContent = "";
+        if (state.resultsSummary) state.resultsSummary.textContent = "";
+        if (options.showTab !== false) {
+          state.tabs.forEach((tab) => {
+            if (tab.tabpanel) tab.tabpanel.hidden = tab.id !== state.activeTab;
+            tab.button?.setAttribute?.("aria-selected", tab.id === state.activeTab ? "true" : "false");
+          });
+        }
+        if (options.focus) this.focusSettingsElement(state.searchInput);
+      },
+      handleSettingsSearchKeydown(state, event) {
+        const entries = state?.searchEntries || [];
+        if (event?.key === "Enter") {
+          event.preventDefault?.();
+          if (entries.length) this.openSettingsSearchResult(state, entries[0]);
+          return;
+        }
+        if (event?.key === "ArrowDown" && entries.length) {
+          event.preventDefault?.();
+          this.focusSettingsElement(entries[0].button);
+          return;
+        }
+        if (event?.key === "Escape" && (state.searchQuery || state.searchInput?.value)) {
+          event.preventDefault?.();
+          event.stopPropagation?.();
+          this.clearSettingsSearch(state, { focus: true });
+        }
+      },
+      handleSettingsSearchResultKeydown(state, event, index) {
+        const entries = state?.searchEntries || [];
+        if (event?.key === "ArrowDown" || event?.key === "ArrowUp") {
+          event.preventDefault?.();
+          const next = index + (event.key === "ArrowDown" ? 1 : -1);
+          if (next < 0) this.focusSettingsElement(state.searchInput);
+          else if (entries[next]) this.focusSettingsElement(entries[next].button);
+          return;
+        }
+        if (event?.key === "Escape") {
+          event.preventDefault?.();
+          event.stopPropagation?.();
+          this.clearSettingsSearch(state, { focus: true });
+        }
+      },
+      // Esc with a query clears the search instead of closing the window. The quick-settings window listens on the
+      // document in the capture phase, so this listener sits one step earlier, on window, while the panel is open.
+      // Only a running plugin with the panel on the page binds it: a BetterDiscord settings panel left open across a
+      // plugin reload would otherwise keep the listener (and the panel) alive with nothing left to remove them.
+      bindSettingsSearchEscape(state) {
+        if (!state || state.searchEscapeListener || typeof window === "undefined" || typeof window.addEventListener !== "function") return;
+        if (!this.plugin.isStarted || state.panel && state.panel.isConnected === false) return;
+        state.searchEscapeListener = (event) => {
+          if (state.panel && state.panel.isConnected === false) {
+            this.cleanupSettingsPanelListeners(state.panel);
+            return;
+          }
+          if (event?.key !== "Escape" || !(state.searchQuery || state.searchInput?.value)) return;
+          const active = typeof document !== "undefined" ? document.activeElement : null;
+          if (!active || !(active === state.searchInput || state.results?.contains?.(active))) return;
+          event.preventDefault?.();
+          event.stopPropagation?.();
+          event.stopImmediatePropagation?.();
+          this.clearSettingsSearch(state, { focus: true });
+        };
+        window.addEventListener("keydown", state.searchEscapeListener, true);
+      },
+      openSettingsSearchResult(state, entry) {
+        if (!state || !entry?.row) return false;
+        this.clearSettingsSearch(state, { focus: false, showTab: false });
+        this.showSettingsTab(state, entry.tabId, { clearSearch: false });
+        for (let node = entry.row.parentElement; node && node !== entry.row.closest?.(".dait-settings-tabpanel"); node = node.parentElement) {
+          if (String(node.tagName || "").toUpperCase() === "DETAILS") node.open = true;
+        }
+        entry.row.scrollIntoView?.({ block: "center", behavior: "auto" });
+        entry.row.classList?.add?.("dait-settings-row-found");
+        const timer = setTimeout(() => entry.row.classList?.remove?.("dait-settings-row-found"), 1600);
+        this.plugin.unrefTimer(timer);
+        const target = this.getSettingsRowControls(entry.row).find((control) => !control.disabled && !control.hidden && control.getAttribute?.("tabindex") !== "-1") || this.getSettingsRowControls(entry.row).find((control) => !control.disabled && !control.hidden);
+        if (target) return this.focusSettingsElement(target);
+        entry.row.setAttribute?.("tabindex", "-1");
+        return this.focusSettingsElement(entry.row);
+      }
+    };
+    module2.exports = methods;
+  }
+});
+
+// src/settings/ui/settings-sizing.js
+var require_settings_sizing = __commonJS({
+  "src/settings/ui/settings-sizing.js"(exports2, module2) {
+    "use strict";
+    var { DISCORD_THEME_VARIABLES } = require_constants();
+    var { SETTINGS_WINDOW_MAX_WIDTH } = require_settings_schema();
+    var methods = {
+      replaceSettingsPanelFrom(source) {
+        const panel = source?.closest?.(".dait-settings");
+        if (panel) this.plugin.replaceSettingsPanelElement(panel);
+      },
+      // Rebuilds the panel in place (provider or language change, reset) and keeps the tab, the scroll position and
+      // the focused control.
+      replaceSettingsPanelElement(panel, nextPanel = null) {
+        if (!panel) return null;
+        if (panel.__daitReplacedBy && panel.isConnected === false) return panel.__daitReplacedBy;
+        const scrollTop = Number(panel.__daitSettingsUi?.content?.scrollTop || 0);
+        const active = typeof document !== "undefined" ? document.activeElement : null;
+        const focusPath = active && panel.contains?.(active) ? String(active.dataset?.daitPath || "") : "";
+        const focusSavedKind = !focusPath && active && panel.contains?.(active) ? String(active.dataset?.daitSavedConfigs || "") : "";
+        const activeTab = panel.__daitSettingsUi?.activeTab;
+        if (activeTab && this.plugin.settings?.ui) this.plugin.settings.ui.settingsActiveTab = activeTab;
+        nextPanel = nextPanel || this.plugin.getSettingsPanel({ quickSettings: panel.dataset?.daitQuickSettings === "true" });
+        ["--dait-host-chrome", "--dait-host-max"].forEach((name) => {
+          const value = panel.style?.getPropertyValue?.(name);
+          if (value) nextPanel.style?.setProperty?.(name, value);
+        });
+        this.destroySettingsModalSizing(panel);
+        panel.replaceWith?.(nextPanel);
+        panel.__daitReplacedBy = nextPanel;
+        const content = nextPanel.__daitSettingsUi?.content;
+        if (content && scrollTop) content.scrollTop = scrollTop;
+        if (focusPath) {
+          const control = [...nextPanel.querySelectorAll?.(`[data-dait-path='${focusPath}']`) || []].find((node) => !node.closest?.("[hidden]"));
+          this.focusSettingsElement(control);
+        } else if (focusSavedKind) {
+          const control = [...nextPanel.querySelectorAll?.(`[data-dait-saved-configs='${focusSavedKind}']`) || []].find((node) => !node.closest?.("[hidden]"));
+          this.focusSettingsElement(control);
+        }
+        if (nextPanel.dataset?.daitQuickSettings === "true") this.syncSettingsPanelHeight(nextPanel);
+        return nextPanel;
+      },
+      // Kept for the quick-settings window, which calls it after inserting the panel. The tabbed window has no
+      // scroll-spy; this shows the saved tab and fits the panel to its host.
+      bindSettingsScrollTracking(panel, scroller = null) {
+        const state = panel?.__daitSettingsUi;
+        if (state) this.showSettingsTab(state, this.getSettingsActiveTab(), { save: false, resetScroll: false });
+        this.syncSettingsPanelHeight(panel, scroller);
+      },
+      syncSettingsScrollPosition(panel, scroller = null) {
+        const state = panel?.__daitSettingsUi;
+        if (state) this.showSettingsTab(state, this.getSettingsActiveTab(), { save: false });
+        this.syncSettingsPanelHeight(panel, scroller);
+      },
+      scheduleSettingsModalSizing(panel) {
+        this.clearSettingsModalSizingSchedule(panel);
+        const apply = () => this.applySettingsModalSizing(panel);
+        const schedule = { raf: null, timers: [] };
+        if (panel) panel.__daitSettingsModalSizingSchedule = schedule;
+        if (panel?.isConnected) apply();
+        if (typeof requestAnimationFrame === "function") {
+          schedule.raf = requestAnimationFrame(() => {
+            schedule.raf = null;
+            apply();
+          });
+        }
+        schedule.timers.push(setTimeout(apply, 50));
+        schedule.timers.push(setTimeout(apply, 250));
+        if (panel?.isConnected) this.plugin.watchSettingsModalSizingCleanup(panel);
+      },
+      // BetterDiscord 1.14+ renders plugin settings inline inside Discord's Settings content column (not a popup modal).
+      // Detect inline views via both class hints and live geometry (handles obfuscated/renamed Discord class hashes)
+      // so we never force a 920 px popup-modal width inside a narrower column beside Discord's Settings sidebar.
+      isSettingsPanelInInlineDiscordView(panel) {
+        if (!panel) return false;
+        let inInlineColumn = false;
+        for (let node = panel.parentElement; node && node !== document.body; node = node.parentElement) {
+          const className = String(node.className?.baseVal ?? node.className ?? "");
+          const role = String(node.getAttribute?.("role") || "");
+          if (/(?:^|\s)(?:dait-quick-settings-dialog|bd-modal-root|bd-modal-wrapper)(?:\s|$)/.test(className) || /focusLock/i.test(className) || role === "dialog") {
+            return false;
+          }
+          if (/(?:standardSidebarView|contentRegion|contentColumn|settingsContent|bd-addon-views|bd-settings)/i.test(className)) {
+            inInlineColumn = true;
+          }
+        }
+        if (inInlineColumn) return true;
+        try {
+          const viewportWidth = Number(
+            (typeof window !== "undefined" ? window.visualViewport?.width || window.innerWidth : 0) || (typeof document !== "undefined" ? document.documentElement?.clientWidth : 0) || 0
+          );
+          const panelRect = panel.getBoundingClientRect?.();
+          const parentRect = panel.parentElement?.getBoundingClientRect?.();
+          if (viewportWidth > 0 && panelRect && parentRect && Number(panelRect.left || 0) >= 160 && Number(parentRect.width || 0) > 0 && Number(parentRect.width || 0) < viewportWidth - 140 && Number(parentRect.right || 0) >= viewportWidth - 96) {
+            return true;
+          }
+        } catch {
+        }
+        return false;
+      },
+      // Computes the tightest visible width budget for the settings panel from both the live visualViewport
+      // (reacts to Windows DPI & Electron Ctrl+/-/0 zoom) and any overflow-clipping ancestor containers.
+      computeSettingsPanelDynamicWidth(panel) {
+        if (!panel?.isConnected || typeof window === "undefined") return 0;
+        const viewportWidth = Number(
+          window.visualViewport?.width || window.innerWidth || (typeof document !== "undefined" ? document.documentElement?.clientWidth : 0) || 0
+        );
+        if (!viewportWidth) return 0;
+        let maxWidth = Math.max(280, Math.floor(viewportWidth - 20));
+        try {
+          const panelRect = panel.getBoundingClientRect?.();
+          const left = Number(panelRect?.left || 0);
+          if (Number.isFinite(left) && left > 0 && left < viewportWidth - 200) {
+            maxWidth = Math.min(maxWidth, Math.max(280, Math.floor(viewportWidth - left - 16)));
+          }
+          let current = panel.parentElement;
+          let depth = 0;
+          while (current && current !== document.body && depth < 10) {
+            if (current.dataset?.daitSettingsModal !== "true") {
+              const style = typeof getComputedStyle === "function" ? getComputedStyle(current) : null;
+              const overflowX = String(style?.overflowX || "");
+              if (/(hidden|clip|auto|scroll)/.test(overflowX)) {
+                const rect = current.getBoundingClientRect?.();
+                const padLeft = Number.parseFloat(style?.paddingLeft) || 0;
+                const padRight = Number.parseFloat(style?.paddingRight) || 0;
+                const inner = Number(rect?.width || 0) - padLeft - padRight;
+                if (Number.isFinite(inner) && inner >= 260) {
+                  maxWidth = Math.min(maxWidth, Math.floor(inner));
+                }
+              }
+            }
+            current = current.parentElement;
+            depth++;
+          }
+        } catch {
+        }
+        return Math.min(SETTINGS_WINDOW_MAX_WIDTH, Math.max(280, maxWidth));
+      },
+      // BetterDiscord's plugin-settings modal is narrow; widen it to a moderate window (at most 920 px). The
+      // panel works without this too: below 640 px its tab rail becomes a row and rows stack.
+      applySettingsModalSizing(panel) {
+        if (!this.plugin.isStarted || !panel?.isConnected || typeof window === "undefined") {
+          this.cleanupSettingsModalSizing(panel);
+          return;
+        }
+        if (panel.closest?.(".dait-quick-settings-dialog")) return;
+        if (this.isSettingsPanelInInlineDiscordView(panel)) {
+          this.cleanupSettingsModalSizing(panel);
+          if (panel.dataset) panel.dataset.daitSettingsInline = "true";
+          this.syncSettingsPanelHeight(panel);
+          this.plugin.watchSettingsModalSizingCleanup(panel);
+          return;
+        }
+        if (panel.dataset?.daitSettingsInline) delete panel.dataset.daitSettingsInline;
+        const documentWidth = typeof document !== "undefined" ? Number(document.documentElement?.clientWidth || 0) : 0;
+        const viewportWidth = Number(window.innerWidth || documentWidth || 0);
+        const desiredWidth = Math.min(SETTINGS_WINDOW_MAX_WIDTH, viewportWidth ? viewportWidth - 48 : SETTINGS_WINDOW_MAX_WIDTH);
+        let current = panel.parentElement;
+        const candidateNodes = [];
+        while (current && current !== document.body && candidateNodes.length < 5) {
+          const rect = current.getBoundingClientRect?.();
+          const width = Number(rect?.width || 0);
+          if (viewportWidth && width >= viewportWidth - 1) break;
+          if (!width || width <= desiredWidth + 80) {
+            candidateNodes.push(current);
+          }
+          current = current.parentElement;
+        }
+        let root = null;
+        const markedNodes = [];
+        for (const node of candidateNodes) {
+          if (node.dataset.daitSettingsModal !== "true") node.dataset.daitSettingsModal = "true";
+          root = node;
+          markedNodes.push(node);
+        }
+        if (root) {
+          if (root.dataset.daitSettingsModalRoot !== "true") root.dataset.daitSettingsModalRoot = "true";
+          if (!markedNodes.includes(root)) markedNodes.push(root);
+        }
+        const nextNodes = new Set(markedNodes);
+        const previousNodes = Array.isArray(panel.__daitSettingsModalMarkedNodes) ? panel.__daitSettingsModalMarkedNodes : [];
+        previousNodes.forEach((node) => {
+          if (!nextNodes.has(node)) this.cleanupSettingsModalNode(node);
+        });
+        panel.__daitSettingsModalMarkedNodes = markedNodes;
+        this.syncSettingsPanelHeight(panel);
+        this.plugin.watchSettingsModalSizingCleanup(panel);
+      },
+      // The panel is as tall as the window allows (min(760px, 100vh - 64px)) minus what its host draws around it:
+      // BetterDiscord's modal header and footer, or the quick-settings window's header and footer. The content pane
+      // scrolls inside, so the header and the tab rail stay put.
+      syncSettingsPanelHeight(panel, scroller = null) {
+        if (!panel?.isConnected || !panel.style?.setProperty || typeof getComputedStyle !== "function") return false;
+        this.bindSettingsTabOrientation(panel);
+        const isInline = panel.dataset?.daitSettingsInline === "true";
+        const host = scroller || this.getSettingsHostScroller(panel);
+        const modalRoot = panel.closest?.("[data-dait-settings-modal-root='true']");
+        const frame = panel.closest?.(".dait-quick-settings-dialog") || modalRoot || host;
+        const viewportHeight = Number(
+          (typeof window !== "undefined" ? window.visualViewport?.height || window.innerHeight : 0) || (typeof document !== "undefined" ? document.documentElement?.clientHeight : 0) || 0
+        );
+        const dynamicMaxW = this.computeSettingsPanelDynamicWidth(panel);
+        const applyDynamicWidth = () => {
+          if (dynamicMaxW > 0) {
+            panel.style.setProperty("--dait-dynamic-max-w", `${dynamicMaxW}px`);
+            if (modalRoot?.style?.setProperty) modalRoot.style.setProperty("--dait-dynamic-max-w", `${dynamicMaxW}px`);
+          } else {
+            panel.style.removeProperty?.("--dait-dynamic-max-w");
+          }
+        };
+        if (isInline) {
+          try {
+            const panelRect = panel.getBoundingClientRect?.();
+            const top = Number(panelRect?.top || 0);
+            const available = viewportHeight > 0 && Number.isFinite(top) && top >= 0 && top < viewportHeight ? Math.max(260, Math.floor(viewportHeight - top - 24)) : 0;
+            applyDynamicWidth();
+            panel.style.setProperty("--dait-host-chrome", "0px");
+            if (available > 0) panel.style.setProperty("--dait-host-max", `${available}px`);
+            else panel.style.removeProperty?.("--dait-host-max");
+            this.bindSettingsPanelResize(panel);
+            return true;
+          } catch {
+            applyDynamicWidth();
+            return false;
+          }
+        }
+        if (!host || !frame?.getBoundingClientRect) {
+          applyDynamicWidth();
+          return false;
+        }
+        try {
+          const hostStyle = getComputedStyle(host);
+          const hostRect = host.getBoundingClientRect();
+          const panelRect = panel.getBoundingClientRect();
+          const frameRect = frame.getBoundingClientRect();
+          const rawFrameMax = Number.parseFloat(getComputedStyle(frame).maxHeight);
+          const above = Math.max(0, panelRect.top - hostRect.top - Number(host.clientTop || 0) + Number(host.scrollTop || 0));
+          const below = Number.parseFloat(hostStyle.paddingBottom) || 0;
+          const chrome = frameRect.height - Number(host.clientHeight || 0) + above + below;
+          const safeChrome = Number.isFinite(chrome) && chrome >= 0 ? Math.ceil(chrome) : 0;
+          let effectiveMax = Number.isFinite(rawFrameMax) && rawFrameMax > 0 ? Math.floor(rawFrameMax) : 0;
+          if (viewportHeight > 0 && Number.isFinite(panelRect.top) && panelRect.top > 0 && panelRect.top < viewportHeight) {
+            const viewportCap = Math.max(260, Math.floor(viewportHeight - panelRect.top - 16)) + safeChrome;
+            effectiveMax = effectiveMax > 0 ? Math.min(effectiveMax, viewportCap) : viewportCap;
+          }
+          applyDynamicWidth();
+          if (Number.isFinite(chrome) && chrome >= 0) panel.style.setProperty("--dait-host-chrome", `${safeChrome}px`);
+          if (effectiveMax > 0) panel.style.setProperty("--dait-host-max", `${effectiveMax}px`);
+          else panel.style.removeProperty?.("--dait-host-max");
+          this.bindSettingsPanelResize(panel);
+          return true;
+        } catch {
+          applyDynamicWidth();
+          return false;
+        }
+      },
+      // The tab rail is a vertical list, or a row once the panel is 760 px wide or less (the @container rule in
+      // css/04-settings.js); aria-orientation follows the panel's width as it changes. Uses one ResizeObserver per panel.
+      bindSettingsTabOrientation(panel) {
+        this.syncSettingsTabOrientation(panel);
+        if (!panel || panel.__daitSettingsOrientationObserver || typeof ResizeObserver !== "function") return;
+        try {
+          const observer = new ResizeObserver(() => {
+            this.syncSettingsTabOrientation(panel);
+            if (panel.dataset?.daitSettingsInline === "true") panel.__daitSettingsResize?.listener?.();
+          });
+          observer.observe(panel);
+          panel.__daitSettingsOrientationObserver = observer;
+        } catch {
+        }
+      },
+      syncSettingsTabOrientation(panel) {
+        const tablist = panel?.__daitSettingsUi?.tablist;
+        const width = Number(panel?.clientWidth || panel?.getBoundingClientRect?.()?.width || 0);
+        if (!tablist?.setAttribute || !width) return "";
+        const orientation = width <= 760 ? "horizontal" : "vertical";
+        if (tablist.getAttribute?.("aria-orientation") !== orientation) tablist.setAttribute("aria-orientation", orientation);
+        if (panel.dataset) {
+          const tier = width <= 600 ? "compact" : width <= 860 ? "medium" : "wide";
+          if (panel.dataset.daitSizeTier !== tier) panel.dataset.daitSizeTier = tier;
+        }
+        return orientation;
+      },
+      getSettingsHostScroller(panel) {
+        for (let node = panel?.parentElement; node && node !== document.body; node = node.parentElement) {
+          try {
+            if (/(auto|scroll)/.test(getComputedStyle(node).overflowY)) return node;
+          } catch {
+            return null;
+          }
+        }
+        return null;
+      },
+      // A host whose max-height follows the viewport changes size with the window or browser/DPI zoom.
+      bindSettingsPanelResize(panel) {
+        if (!panel || panel.__daitSettingsResize || typeof window === "undefined" || typeof window.addEventListener !== "function") return;
+        const state = { raf: null };
+        state.listener = () => {
+          if (state.raf !== null || typeof requestAnimationFrame !== "function") return;
+          state.raf = requestAnimationFrame(() => {
+            state.raf = null;
+            if (panel.isConnected) this.syncSettingsPanelHeight(panel);
+            else this.cleanupSettingsPanelListeners(panel);
+          });
+        };
+        panel.__daitSettingsResize = state;
+        window.addEventListener("resize", state.listener, { passive: true });
+        window.visualViewport?.addEventListener?.("resize", state.listener, { passive: true });
+      },
+      cleanupSettingsPanelListeners(panel) {
+        const resize = panel?.__daitSettingsResize;
+        if (resize) {
+          if (resize.raf !== null && typeof cancelAnimationFrame === "function") cancelAnimationFrame(resize.raf);
+          if (typeof window !== "undefined") {
+            window.removeEventListener?.("resize", resize.listener, { passive: true });
+            window.visualViewport?.removeEventListener?.("resize", resize.listener, { passive: true });
+          }
+          panel.__daitSettingsResize = null;
+        }
+        if (panel?.__daitSettingsOrientationObserver) {
+          panel.__daitSettingsOrientationObserver.disconnect?.();
+          panel.__daitSettingsOrientationObserver = null;
+        }
+        const state = panel?.__daitSettingsUi;
+        if (state?.searchEscapeListener) {
+          if (typeof window !== "undefined") window.removeEventListener?.("keydown", state.searchEscapeListener, true);
+          state.searchEscapeListener = null;
+        }
+      },
+      cleanupSettingsModalSizing(panel) {
+        const nodes = new Set(Array.isArray(panel?.__daitSettingsModalMarkedNodes) ? panel.__daitSettingsModalMarkedNodes : []);
+        nodes.forEach((node) => this.cleanupSettingsModalNode(node));
+        if (panel) panel.__daitSettingsModalMarkedNodes = [];
+      },
+      cleanupSettingsModalNode(node) {
+        if (node?.dataset?.daitSettingsModal) delete node.dataset.daitSettingsModal;
+        if (node?.dataset?.daitSettingsModalRoot) delete node.dataset.daitSettingsModalRoot;
+        if (node?.dataset?.daitDiscordTheme) delete node.dataset.daitDiscordTheme;
+        if (node?.style?.removeProperty) {
+          node.style.removeProperty("--dait-dynamic-max-w");
+          DISCORD_THEME_VARIABLES.forEach((name) => node.style.removeProperty(name));
+        }
+      },
+      clearSettingsModalSizingSchedule(panel) {
+        const schedule = panel?.__daitSettingsModalSizingSchedule;
+        if (!schedule) return;
+        if (schedule.raf !== null && schedule.raf !== void 0 && typeof cancelAnimationFrame === "function") {
+          cancelAnimationFrame(schedule.raf);
+        }
+        (schedule.timers || []).forEach((timer) => clearTimeout(timer));
+        if (panel) panel.__daitSettingsModalSizingSchedule = null;
+      },
+      destroySettingsModalSizing(panel) {
+        this.plugin.clearHotkeyRecordingWithin(panel);
+        this.cleanupSettingsPanelListeners(panel);
+        this.clearSettingsModalSizingSchedule(panel);
+        if (panel?.__daitSettingsModalCleanupObserver) {
+          panel.__daitSettingsModalCleanupObserver.disconnect?.();
+          panel.__daitSettingsModalCleanupObserver = null;
+        }
+        this.cleanupSettingsModalSizing(panel);
+      },
+      watchSettingsModalSizingCleanup(panel) {
+        if (!panel?.isConnected || panel.__daitSettingsModalCleanupObserver || typeof MutationObserver !== "function" || typeof document === "undefined" || !document.body) return;
+        const observedAncestors = /* @__PURE__ */ new Set();
+        const observeChain = (obs) => {
+          let observed = false;
+          let current = panel.parentElement;
+          while (current) {
+            if (!observedAncestors.has(current)) {
+              try {
+                obs.observe(current, { childList: true, subtree: false });
+                observedAncestors.add(current);
+                observed = true;
+              } catch {
+              }
+            } else {
+              observed = true;
+            }
+            if (current === document.body) break;
+            current = current.parentElement;
+          }
+          return observed;
+        };
+        const observer = new MutationObserver(() => {
+          if (panel.isConnected) {
+            if (panel.parentElement && !observedAncestors.has(panel.parentElement)) {
+              observeChain(observer);
+            }
+            return;
+          }
+          this.plugin.clearHotkeyRecordingWithin(panel);
+          this.cleanupSettingsPanelListeners(panel);
+          this.clearSettingsModalSizingSchedule(panel);
+          this.cleanupSettingsModalSizing(panel);
+          observer.disconnect?.();
+          panel.__daitSettingsModalCleanupObserver = null;
+        });
+        if (!observeChain(observer)) observer.observe(document.body, { childList: true, subtree: true });
+        panel.__daitSettingsModalCleanupObserver = observer;
+      },
+      preserveSettingsScroll(anchor, action) {
+        const snapshot = this.plugin.getSettingsScrollSnapshot(anchor);
+        const result = action();
+        this.restoreSettingsScroll(snapshot);
+        return result;
+      },
+      restoreSettingsScrollSoon(anchor) {
+        const snapshot = this.plugin.getSettingsScrollSnapshot(anchor);
+        this.restoreSettingsScroll(snapshot);
+      },
+      getSettingsScrollSnapshot(anchor) {
+        const scroller = this.getSettingsScrollContainer(anchor);
+        return {
+          scroller,
+          top: scroller?.scrollTop ?? 0,
+          left: scroller?.scrollLeft ?? 0
+        };
+      },
+      restoreSettingsScroll(snapshot) {
+        if (!snapshot?.scroller) return;
+        const restore = () => {
+          snapshot.scroller.scrollTop = snapshot.top;
+          snapshot.scroller.scrollLeft = snapshot.left;
+        };
+        restore();
+        if (typeof requestAnimationFrame === "function") requestAnimationFrame(restore);
+        setTimeout(restore, 0);
+        setTimeout(restore, 80);
+        setTimeout(restore, 180);
+        setTimeout(restore, 420);
+      },
+      getSettingsScrollContainer(anchor) {
+        let node = anchor?.parentElement;
+        while (node && node !== document.body) {
+          const style = getComputedStyle(node);
+          if (/(auto|scroll)/.test(style.overflowY) && node.scrollHeight > node.clientHeight) {
+            return node;
+          }
+          node = node.parentElement;
+        }
+        return document.scrollingElement || document.documentElement;
+      }
+    };
+    module2.exports = methods;
+  }
+});
+
+// src/settings/ui/tab-overview.js
+var require_tab_overview = __commonJS({
+  "src/settings/ui/tab-overview.js"(exports2, module2) {
+    "use strict";
+    var {
+      SETTINGS_TAB_OVERVIEW,
+      SETTINGS_TAB_TRANSLATE,
+      SETTINGS_TAB_COMPOSE,
+      normalizeSettingsTabId
+    } = require_settings_schema();
+    var methods = {
+      createSettingsGroup(titleText, key, options = {}) {
+        const group = document.createElement("section");
+        group.className = `dait-settings-group dait-settings-group-${key}${options.className ? ` ${options.className}` : ""}`;
+        group.dataset.daitSettingsGroup = key;
+        group.dataset.daitSearchGroup = titleText || "";
+        if (titleText) {
+          const title = document.createElement("h3");
+          title.className = "dait-settings-group-title";
+          title.textContent = titleText;
+          group.appendChild(title);
+        }
+        if (options.description) {
+          const note = document.createElement("p");
+          note.className = "dait-settings-group-note";
+          note.textContent = options.description;
+          group.appendChild(note);
+        }
+        return group;
+      },
+      createOverviewTabContent() {
+        return [this.createOverviewStatusSection(), this.createGeneralSection()];
+      },
+      // Setup checklist (hidden once everything is done) and the status of the two services, each with a Test button.
+      // Rebuilt in place when the overview is shown, after a test and when a setting it reports on changes.
+      createOverviewStatusSection() {
+        const section = document.createElement("section");
+        section.className = "dait-settings-group dait-overview-status";
+        section.dataset.daitSettingsGroup = "overview-status";
+        section.dataset.daitSearchGroup = "";
+        const items = this.getOverviewSetupItems();
+        const done = items.filter((item) => item.done).length;
+        if (done < items.length) section.appendChild(this.createOverviewSetupCard(items, done));
+        const title = document.createElement("h3");
+        title.className = "dait-settings-group-title";
+        title.textContent = this.plugin.t("overviewServicesTitle");
+        section.appendChild(title);
+        const cards = document.createElement("div");
+        cards.className = "dait-service-cards";
+        ["translation", "polish"].forEach((kind) => cards.appendChild(this.createOverviewServiceCard(kind)));
+        section.appendChild(cards);
+        return section;
+      },
+      // One entry per setup step: { id, label, state, done, detail, action }. state is the icon: done, todo, error,
+      // busy or off (a step that does not apply, which counts as done). action: { key, text, run } or
+      // { key, text, tab, path } (opens that tab and focuses the control).
+      getOverviewSetupItems() {
+        const translation = this.plugin.settings.translation || {};
+        const providerName = this.plugin.getProviderDisplayName(translation.provider);
+        const enabled = translation.enabled !== false;
+        const configured = enabled && this.plugin.hasUsableApiConfig("translation");
+        const status = this.plugin.getApiStatus("translation");
+        const routeKey = this.plugin.getCurrentRouteKey();
+        const hasChannel = Boolean(this.plugin.getChannelAutoTranslatePolicyStorageKey(routeKey));
+        const rule = hasChannel ? this.plugin.getCurrentChannelAutoTranslatePolicyMode(routeKey) : "";
+        const autoOn = Boolean(this.plugin.settings.ui?.autoTranslateMessages);
+        const target = String(translation.targetLanguage || "").trim();
+        const items = [];
+        items.push({
+          id: "service",
+          label: this.plugin.t("overviewSetupService"),
+          done: configured,
+          state: configured ? "done" : "todo",
+          detail: !enabled ? this.plugin.t("overviewSetupServiceOff") : configured ? providerName : this.plugin.t("overviewSetupServiceMissing", { provider: providerName }),
+          action: configured ? null : { key: "setup", text: this.plugin.t("overviewSetUp"), tab: SETTINGS_TAB_TRANSLATE, path: enabled ? this.getMissingServiceSettingPath("translation") : "translation.enabled" }
+        });
+        const tested = status.state === "success";
+        items.push({
+          id: "test",
+          label: this.plugin.t("overviewSetupTest"),
+          done: tested,
+          state: tested ? "done" : status.state === "failed" ? "error" : status.state === "testing" ? "busy" : "todo",
+          detail: !configured && !tested ? this.plugin.t("overviewSetupTestBlocked") : this.getApiTestSummaryText("translation"),
+          action: tested || !configured ? null : { key: "test", text: this.plugin.t("apiTest"), run: "test" }
+        });
+        items.push({
+          id: "target",
+          label: this.plugin.t("overviewSetupTarget"),
+          done: Boolean(target),
+          state: target ? "done" : "todo",
+          detail: target ? this.plugin.getDisplayLanguage(target) : "",
+          action: target ? null : { key: "setup", text: this.plugin.t("overviewSetUp"), tab: SETTINGS_TAB_TRANSLATE, path: "translation.targetLanguage" }
+        });
+        const autoDone = autoOn || rule === "enabled";
+        items.push({
+          id: "auto",
+          label: this.plugin.t("overviewSetupAuto"),
+          done: autoDone,
+          state: autoDone ? "done" : "todo",
+          detail: autoOn ? this.plugin.t("overviewSetupAutoOn") : autoDone ? this.plugin.t("overviewSetupAutoChannel") : this.plugin.t("overviewSetupAutoOff"),
+          action: autoDone ? null : { key: "auto", text: this.plugin.t("overviewTurnOn"), run: "autoTranslate" }
+        });
+        const channelLabel = hasChannel ? this.getSettingsChannelLabel(routeKey) : "";
+        const channelDetail = !hasChannel ? this.plugin.t("overviewSetupChannelNone") : rule === "disabled" ? this.plugin.t("overviewSetupChannelNever") : rule === "enabled" ? this.plugin.t("channelRuleAlways") : this.plugin.t("channelRuleFollow");
+        items.push({
+          id: "channel",
+          label: this.plugin.t("overviewSetupChannel"),
+          done: rule !== "disabled",
+          state: !hasChannel ? "off" : rule === "disabled" ? "todo" : "done",
+          detail: channelLabel ? `${channelLabel} · ${channelDetail}` : channelDetail,
+          action: rule === "disabled" ? { key: "channel", text: this.plugin.t("overviewChange"), tab: SETTINGS_TAB_OVERVIEW, path: "ui.currentChannelAutoTranslatePolicy" } : null
+        });
+        return items;
+      },
+      createOverviewSetupCard(items, done) {
+        const card = document.createElement("div");
+        card.className = "dait-setup-card";
+        const titleId = this.createSettingsControlId("dait-setup-title");
+        card.setAttribute("role", "region");
+        card.setAttribute("aria-labelledby", titleId);
+        const head = document.createElement("div");
+        head.className = "dait-setup-head";
+        const title = document.createElement("h3");
+        title.className = "dait-setup-title";
+        title.id = titleId;
+        title.textContent = this.plugin.t("overviewSetupTitle", { count: items.length - done });
+        head.appendChild(title);
+        const progress = document.createElement("span");
+        progress.className = "dait-setup-progress";
+        progress.textContent = this.plugin.t("overviewSetupProgress", { done, total: items.length });
+        head.appendChild(progress);
+        card.appendChild(head);
+        const list = document.createElement("ul");
+        list.className = "dait-setup-list";
+        items.forEach((item) => {
+          const entry = document.createElement("li");
+          entry.className = `dait-setup-item dait-setup-item-${item.state}`;
+          entry.dataset.daitSetupItem = item.id;
+          const icon = document.createElement("span");
+          icon.className = "dait-setup-icon";
+          const iconText = document.createElement("span");
+          iconText.className = "dait-visually-hidden";
+          iconText.textContent = this.plugin.t(item.done ? "overviewStateDone" : "overviewStateTodo");
+          icon.appendChild(iconText);
+          entry.appendChild(icon);
+          const label = document.createElement("span");
+          label.className = "dait-setup-label";
+          label.textContent = item.label;
+          entry.appendChild(label);
+          const detail = document.createElement("span");
+          detail.className = "dait-setup-detail";
+          detail.textContent = item.detail || "";
+          detail.title = item.detail || "";
+          entry.appendChild(detail);
+          if (item.action) entry.appendChild(this.createOverviewActionButton(item.action, item.label));
+          list.appendChild(entry);
+        });
+        card.appendChild(list);
+        return card;
+      },
+      createOverviewActionButton(action, context = "") {
+        const button = this.createSmallButton(action.text, action.run === "autoTranslate" || action.run === "test" ? "primary" : "outline");
+        button.dataset.daitOverviewAction = action.key;
+        if (context) button.setAttribute("aria-label", `${action.text}: ${context}`);
+        button.addEventListener("click", (event) => {
+          event?.preventDefault?.();
+          if (action.run === "test") {
+            this.runOverviewApiTest("translation", button);
+            return;
+          }
+          if (action.run === "autoTranslate") {
+            this.plugin.setSetting("ui.autoTranslateMessages", true);
+            this.refreshOverviewStatusSection(button.closest?.(".dait-settings") || null);
+            return;
+          }
+          this.openSettingsControl(button, action.tab, action.path);
+        });
+        return button;
+      },
+      // Service card: task and service name, the connection state (the same live badge as the connection card), a
+      // detail line and Test, or "Set up" while the service is off or missing a field.
+      createOverviewServiceCard(kind) {
+        const task = this.plugin.settings[kind] || {};
+        const card = document.createElement("div");
+        card.className = "dait-service-card";
+        card.dataset.daitKind = kind;
+        const text = document.createElement("div");
+        text.className = "dait-service-card-text";
+        const title = document.createElement("div");
+        title.className = "dait-service-card-title";
+        title.textContent = `${this.plugin.t(kind === "polish" ? "overviewCardPolish" : "overviewCardTranslation")} · ${this.plugin.getProviderDisplayName(task.provider)}`;
+        text.appendChild(title);
+        const line = document.createElement("div");
+        line.className = "dait-service-card-status";
+        const enabled = task.enabled !== false;
+        const configured = enabled && this.plugin.hasUsableApiConfig(kind);
+        let action = null;
+        if (!enabled || !configured) {
+          const mark = document.createElement("span");
+          mark.className = `dait-status-mark dait-status-mark-${enabled ? "needs" : "off"}`;
+          mark.textContent = enabled ? this.plugin.t("overviewServiceMissing", { field: this.getSettingLabelForPath(this.getMissingServiceSettingPath(kind)) }) : this.plugin.t("overviewServiceOff");
+          line.appendChild(mark);
+          action = { key: "setup", text: this.plugin.t("overviewSetUp"), tab: kind === "polish" ? SETTINGS_TAB_COMPOSE : SETTINGS_TAB_TRANSLATE, path: enabled ? this.getMissingServiceSettingPath(kind) : `${kind}.enabled` };
+        } else {
+          line.appendChild(this.createApiStatusBadge(kind));
+          line.appendChild(this.createApiTestDetail(kind));
+        }
+        text.appendChild(line);
+        card.appendChild(text);
+        if (action) {
+          const setup = this.createOverviewActionButton(action, title.textContent);
+          card.appendChild(setup);
+        } else {
+          const test = this.createSmallButton(this.plugin.t("apiTest"));
+          test.dataset.daitAction = "apiTest";
+          test.dataset.daitKind = kind;
+          test.setAttribute("aria-label", `${this.plugin.t("apiTest")}: ${title.textContent}`);
+          test.addEventListener("click", (event) => {
+            event?.preventDefault?.();
+            this.runOverviewApiTest(kind, test, line.querySelector?.(".dait-api-status"));
+          });
+          card.appendChild(test);
+        }
+        return card;
+      },
+      // A test started from the overview: the card's badge shows it, then every view of this task's status follows.
+      runOverviewApiTest(kind, button, badge = null) {
+        const status = badge || this.createApiStatusBadge(kind);
+        return Promise.resolve(this.plugin.testApiConnection(kind, button, status)).then((committed) => {
+          if (committed !== false) this.refreshApiTestViews(kind);
+          return committed;
+        });
+      },
+      // The first field a task's service still needs, or its provider select.
+      getMissingServiceSettingPath(kind) {
+        const config = this.plugin.getTaskConfig(kind) || {};
+        const provider = String(config.provider || "");
+        const defaults = this.plugin.getProviderDefaults(provider) || {};
+        const ui = this.plugin.getProviderCapabilities(provider)?.ui || {};
+        if (provider === "baidu") {
+          if (!String(config.appId || "").trim()) return `${kind}.appId`;
+          if (!String(config.secretKey || "").trim()) return `${kind}.secretKey`;
+        }
+        if (provider === "googleCloud" && !this.plugin.getEffectiveRequestApiKey(config)) return "googleTranslate.keyPoolText";
+        if (ui.apiKey && !this.plugin.isProviderApiKeyOptional(provider) && !String(config.apiKey || "").trim()) return `${kind}.apiKey`;
+        if (ui.endpoint && !String(config.endpoint || defaults.endpoint || "").trim()) return `${kind}.endpoint`;
+        if (ui.model && !String(config.model || defaults.model || "").trim()) return `${kind}.model`;
+        return `${kind}.provider`;
+      },
+      getSettingLabelForPath(path) {
+        const field = String(path || "").split(".").pop();
+        const keys = {
+          apiKey: "apiKey",
+          endpoint: "endpoint",
+          model: "model",
+          appId: "baiduAppId",
+          secretKey: "baiduSecretKey",
+          keyPoolText: "googleTranslateKeys",
+          provider: "provider",
+          enabled: "enabled"
+        };
+        return this.plugin.t(keys[field] || "provider");
+      },
+      // "#general" for the current channel when Discord's store knows it.
+      getSettingsChannelLabel(routeKey = this.plugin.getCurrentRouteKey()) {
+        if (!this.plugin.getChannelAutoTranslatePolicyStorageKey(routeKey)) return "";
+        const channelId = String(routeKey || "").split(":")[1] || "";
+        try {
+          const name = String(this.plugin.getDiscordNamedStore?.("ChannelStore")?.getChannel?.(channelId)?.name || "").trim();
+          return name ? `#${name}` : "";
+        } catch {
+          return "";
+        }
+      },
+      // Opens a tab and brings one control into view with focus (the overview's "Set up" / "Change" buttons).
+      openSettingsControl(source, tabId, path) {
+        const panel = source?.closest?.(".dait-settings");
+        const state = panel?.__daitSettingsUi;
+        if (!state) return false;
+        const tab = state.tabs.find((item) => item.id === normalizeSettingsTabId(tabId)) || state.tabs[0];
+        const control = [...tab.tabpanel?.querySelectorAll?.(`[data-dait-path='${path}']`) || []][0] || null;
+        const row = control?.closest?.(".dait-settings-row") || null;
+        if (!row) {
+          this.showSettingsTab(state, tab.id);
+          return false;
+        }
+        return this.openSettingsSearchResult(state, { row, tabId: tab.id });
+      },
+      // Rebuilds the overview status sections under root (a panel, a tab page, or the whole document), keeping the
+      // keyboard focus on the same kind of button when it was inside.
+      refreshOverviewStatusSection(root = null) {
+        const scope = root || (typeof document !== "undefined" ? document : null);
+        let sections = [];
+        try {
+          sections = [...scope?.querySelectorAll?.(".dait-overview-status") || []];
+        } catch {
+          sections = [];
+        }
+        sections = sections.filter((section) => section?.replaceWith && !section.__daitReplaced && section.isConnected !== false);
+        sections.forEach((section) => {
+          section.__daitReplaced = true;
+          const active = typeof document !== "undefined" ? document.activeElement : null;
+          const hadFocus = Boolean(active && section.contains?.(active));
+          const focusAction = hadFocus ? String(active.dataset?.daitOverviewAction || active.dataset?.daitAction || "") : "";
+          const focusKind = hadFocus ? String(active.closest?.(".dait-service-card")?.dataset?.daitKind || "") : "";
+          const next = this.createOverviewStatusSection();
+          section.replaceWith(next);
+          if (!hadFocus) return;
+          const candidates = [...next.querySelectorAll?.("button") || []];
+          const target = candidates.find((button) => (button.dataset?.daitOverviewAction || button.dataset?.daitAction) === focusAction && String(button.closest?.(".dait-service-card")?.dataset?.daitKind || "") === focusKind) || candidates.find((button) => !button.disabled);
+          this.focusSettingsElement(target);
+        });
+        return sections.length;
+      },
+      // Setting writes the overview reports on refresh it once, after the current event.
+      scheduleOverviewStatusRefresh(path = "") {
+        if (!/^(translation|polish|googleTranslate)\./.test(path) && !["ui.autoTranslateMessages", "ui.currentChannelAutoTranslatePolicy"].includes(path)) return;
+        if (this.plugin.overviewStatusRefreshTimer || typeof setTimeout !== "function") return;
+        this.plugin.overviewStatusRefreshTimer = setTimeout(() => {
+          this.plugin.overviewStatusRefreshTimer = null;
+          if (!this.plugin.isStarted || typeof document === "undefined") return;
+          this.refreshOverviewStatusSection();
+        }, 0);
+        this.plugin.unrefTimer(this.plugin.overviewStatusRefreshTimer);
+      },
+      // After a connection test: every badge, detail line and overview of this task shows the new state.
+      refreshApiTestViews(kind) {
+        if (typeof document === "undefined") return;
+        const status = this.plugin.getApiStatus(kind);
+        let badges = [];
+        let details = [];
+        try {
+          badges = [...document.querySelectorAll?.(`.dait-api-status[data-dait-kind='${kind}']`) || []];
+          details = [...document.querySelectorAll?.(`.dait-api-test-detail[data-dait-kind='${kind}']`) || []];
+        } catch {
+        }
+        badges.forEach((badge) => this.renderApiStatusBadge(badge, kind, status.state, this.plugin.getApiStatusText(status.state), status.message || ""));
+        details.forEach((detail) => this.syncApiTestDetail(detail, kind));
+        this.refreshSavedServiceConfigControls();
+        this.refreshOverviewStatusSection();
+      },
+      // Text after the status badge: "Hy-MT2 · 820 ms · just now" after a passed test, the error after a failed one.
+      createApiTestDetail(kind) {
+        const detail = document.createElement("span");
+        detail.className = "dait-api-test-detail";
+        detail.dataset.daitKind = kind;
+        this.syncApiTestDetail(detail, kind);
+        return detail;
+      },
+      syncApiTestDetail(detail, kind) {
+        if (!detail) return;
+        const status = this.plugin.getApiStatus(kind);
+        const result = this.plugin.getLastApiTestResult(kind);
+        let text = "";
+        if (status.state === "success") text = result?.ok ? this.formatApiTestResult(result) : "";
+        else if (status.state === "failed") text = status.message || result?.message || "";
+        detail.dataset.daitFor = status.state;
+        detail.textContent = text;
+        detail.title = text;
+        detail.hidden = !text;
+      },
+      // "Hy-MT2 · 820 ms · just now"
+      formatApiTestResult(result) {
+        if (!result) return "";
+        return [
+          result.model || "",
+          this.formatLatency(result.latencyMs),
+          this.formatTimeAgo(result.at)
+        ].filter(Boolean).join(" · ");
+      },
+      // One line for the overview checklist: the result of the last test, or that none ran.
+      getApiTestSummaryText(kind) {
+        const status = this.plugin.getApiStatus(kind);
+        const result = this.plugin.getLastApiTestResult(kind);
+        if (status.state === "success") {
+          const details = result?.ok ? this.formatApiTestResult(result) : "";
+          return details ? `${this.plugin.t("apiStatusSuccess")} · ${details}` : this.plugin.t("apiStatusSuccess");
+        }
+        if (status.state === "failed") return status.message || this.plugin.t("apiStatusFailed");
+        if (status.state === "testing") return this.plugin.t("apiStatusTesting");
+        return this.plugin.t("apiTestNotYet");
+      },
+      formatLatency(ms) {
+        if (ms === null || ms === void 0 || ms === "") return "";
+        const value = Number(ms);
+        if (!Number.isFinite(value) || value < 0) return "";
+        if (value < 1e3) return `${Math.round(value)} ms`;
+        return `${(value / 1e3).toFixed(1)} s`;
+      },
+      formatTimeAgo(at, now = Date.now()) {
+        const time = Number(at);
+        if (!Number.isFinite(time) || time <= 0) return "";
+        const elapsed = Math.max(0, now - time);
+        if (elapsed < 60 * 1e3) return this.plugin.t("apiTestJustNow");
+        if (elapsed < 60 * 60 * 1e3) return this.plugin.t("apiTestMinutesAgo", { count: Math.floor(elapsed / 6e4) });
+        if (elapsed < 24 * 60 * 60 * 1e3) return this.plugin.t("apiTestHoursAgo", { count: Math.floor(elapsed / 36e5) });
+        return this.formatDiagnosticSummaryTime(new Date(time).toISOString());
+      }
+    };
+    module2.exports = methods;
+  }
+});
+
+// src/settings/ui/tab-services.js
+var require_tab_services = __commonJS({
+  "src/settings/ui/tab-services.js"(exports2, module2) {
+    "use strict";
+    var {
+      DEEPSEEK_MODELS,
+      LOCAL_MODEL_PRESETS,
+      LOCAL_PROVIDER_AUTO_MODEL_VALUE,
+      POLISH_REPOLISH_SOURCE_ORIGINAL,
+      POLISH_REPOLISH_SOURCE_LAST_RESULT,
+      GOOGLE_TRANSLATE_DEFAULT_MONTHLY_LIMIT,
+      GOOGLE_TRANSLATE_MAX_MONTHLY_LIMIT
+    } = require_constants();
+    var methods = {
+      createTaskSection(kind, titleText, descriptionText) {
+        const section = this.createSettingsGroup(titleText, kind, { description: descriptionText });
+        section.appendChild(this.plugin.createCheckboxRow(`${kind}.enabled`, this.plugin.t("enabled"), { description: this.plugin.t("enabledDesc") }));
+        section.appendChild(this.createSavedServiceConfigsRow(kind));
+        section.appendChild(this.plugin.createSelectRow(`${kind}.provider`, this.plugin.t("provider"), this.getGroupedProviderOptionsForTask(kind), {
+          description: this.plugin.t(kind === "polish" ? "providerPolishDesc" : "providerDesc")
+        }));
+        const capabilities = this.plugin.getProviderCapabilities(this.plugin.settings[kind]?.provider);
+        const ui = capabilities.ui || {};
+        const providerSettings = this.createTaskProviderSettingsBlock(kind, ui);
+        if (providerSettings) section.appendChild(providerSettings);
+        if (ui.sourceLanguage) {
+          const sourceKey = kind === "polish" ? "inputLanguage" : "messageLanguage";
+          section.appendChild(this.createLanguageRow(kind, "sourceLanguage", this.plugin.t(sourceKey), this.plugin.t(`${sourceKey}Desc`), { allowAuto: true }));
+        }
+        if (ui.targetLanguage) section.appendChild(this.createLanguageRow(kind, "targetLanguage", kind === "polish" ? this.plugin.t("outputLanguage") : this.plugin.t("targetLanguage"), kind === "polish" ? this.plugin.t("outputLanguageDesc") : this.plugin.t("targetLanguageDesc")));
+        if (kind === "polish") {
+          section.appendChild(this.plugin.createSelectRow("polish.afterAction", this.plugin.t("afterPolishing"), [
+            ["replace", this.plugin.t("afterReplace")],
+            ["confirmSend", this.plugin.t("afterConfirmSend")]
+          ], { description: this.plugin.t("afterPolishingDesc") }));
+          section.appendChild(this.plugin.createSelectRow("polish.repolishSource", this.plugin.t("repolishSource"), [
+            [POLISH_REPOLISH_SOURCE_ORIGINAL, this.plugin.t("repolishSourceOriginal")],
+            [POLISH_REPOLISH_SOURCE_LAST_RESULT, this.plugin.t("repolishSourceLastResult")]
+          ], { description: this.plugin.t("repolishSourceDesc") }));
+        }
+        return section;
+      },
+      // Translation providers are listed in two groups: LLMs (also usable for polishing) and translation engines.
+      getGroupedProviderOptionsForTask(kind) {
+        const options = this.plugin.getProviderOptionsForTask(kind);
+        const machine = options.filter(([provider]) => this.plugin.isDirectTranslateProvider(provider));
+        if (!machine.length) return options;
+        const models = options.filter(([provider]) => !this.plugin.isDirectTranslateProvider(provider));
+        return [
+          { label: this.plugin.t("providerGroupAi"), options: models },
+          { label: this.plugin.t("providerGroupMachine"), options: machine }
+        ];
+      },
+      // Shared verified service configs: any passing connection test saves a reusable preset here, so users can
+      // apply the same provider + credentials + model across translation and polishing in one click (or sync directly).
+      createSavedServiceConfigsRow(kind) {
+        const bar = document.createElement("div");
+        bar.className = "dait-service-config-bar";
+        bar.dataset.daitSavedConfigBar = kind;
+        const select = document.createElement("select");
+        select.className = "dait-service-config-select";
+        select.dataset.daitSavedConfigs = kind;
+        select.setAttribute("aria-label", this.plugin.t("savedServiceConfigs"));
+        bar.appendChild(select);
+        const otherKind = kind === "translation" ? "polish" : "translation";
+        const syncButton = this.createSmallButton(this.plugin.t(kind === "translation" ? "syncConfigToPolish" : "syncConfigToTranslation"), "outline");
+        syncButton.classList.add("dait-service-config-sync");
+        syncButton.dataset.daitAction = "syncServiceConfig";
+        syncButton.dataset.daitKind = kind;
+        bar.appendChild(syncButton);
+        const deleteButton = this.createSmallButton(this.plugin.t("savedServiceConfigDelete"), "danger");
+        deleteButton.classList.add("dait-service-config-delete");
+        deleteButton.dataset.daitAction = "deleteSavedServiceConfig";
+        deleteButton.dataset.daitKind = kind;
+        bar.appendChild(deleteButton);
+        this.renderSavedServiceConfigBar(bar, kind);
+        select.addEventListener("change", () => {
+          const configId = String(select.value || "").trim();
+          if (!configId) return;
+          if (this.plugin.applySavedServiceConfig(kind, configId)) {
+            this.replaceSettingsPanelFrom(select);
+          }
+        });
+        syncButton.addEventListener("click", (event) => {
+          event?.preventDefault?.();
+          event?.stopPropagation?.();
+          this.plugin.syncTaskServiceConfig(kind, otherKind);
+        });
+        deleteButton.addEventListener("click", (event) => {
+          event?.preventDefault?.();
+          event?.stopPropagation?.();
+          const matched = this.plugin.findMatchingSavedServiceConfig(kind);
+          if (!matched) return;
+          this.plugin.deleteSavedServiceConfig(matched.id);
+        });
+        return this.createRow(this.plugin.t("savedServiceConfigs"), bar, {
+          description: this.plugin.t("savedServiceConfigsDesc"),
+          stacked: true,
+          labelFor: select
+        });
+      },
+      renderSavedServiceConfigBar(bar, kind) {
+        if (!bar) return;
+        const select = bar.querySelector?.(`[data-dait-saved-configs='${kind}']`);
+        const syncButton = bar.querySelector?.("[data-dait-action='syncServiceConfig']");
+        const deleteButton = bar.querySelector?.("[data-dait-action='deleteSavedServiceConfig']");
+        const configs = this.plugin.getSavedServiceConfigsForTask(kind);
+        const matched = this.plugin.findMatchingSavedServiceConfig(kind);
+        const matchedId = matched?.id || "";
+        if (select) {
+          [...select.children || []].forEach((child) => child.remove?.());
+          select.textContent = "";
+          const placeholder = document.createElement("option");
+          placeholder.value = "";
+          placeholder.textContent = configs.length ? this.plugin.t("savedServiceConfigsPlaceholder", { count: configs.length }) : this.plugin.t("savedServiceConfigsEmpty");
+          placeholder.selected = !matchedId;
+          select.appendChild(placeholder);
+          configs.forEach((entry) => {
+            const option = document.createElement("option");
+            option.value = entry.id;
+            option.textContent = this.plugin.formatServiceConfigLabel(entry);
+            option.selected = entry.id === matchedId;
+            select.appendChild(option);
+          });
+          select.value = matchedId;
+          select.disabled = !configs.length;
+        }
+        if (syncButton) {
+          const otherKind = kind === "translation" ? "polish" : "translation";
+          const currentProvider = String(this.plugin.settings[kind]?.provider || "");
+          const allowed = this.plugin.isProviderAllowedForTask(otherKind, currentProvider);
+          const usable = this.plugin.hasUsableApiConfig(kind);
+          syncButton.disabled = !allowed || !usable;
+          syncButton.title = !allowed ? this.plugin.t("syncConfigUnsupportedPolish") : !usable ? this.plugin.t("syncConfigMissing") : this.plugin.t(kind === "translation" ? "syncConfigToPolish" : "syncConfigToTranslation");
+        }
+        if (deleteButton) {
+          deleteButton.hidden = !matchedId;
+          deleteButton.disabled = !matchedId;
+        }
+      },
+      refreshSavedServiceConfigControls(root = null) {
+        if (typeof document === "undefined") return;
+        const scope = root?.querySelectorAll ? root : document;
+        let bars = [];
+        try {
+          bars = [...scope?.querySelectorAll?.("[data-dait-saved-config-bar]") || []];
+        } catch {
+          bars = [];
+        }
+        bars.forEach((bar) => {
+          const kind = String(bar?.dataset?.daitSavedConfigBar || "");
+          if (kind === "translation" || kind === "polish") this.renderSavedServiceConfigBar(bar, kind);
+        });
+        if (!root) this.plugin.quickPanel?.scheduleUpdate?.();
+      },
+      // The connection card: status and Test in its header, then only the fields the selected provider uses.
+      // Rarely changed model parameters and an optional API key sit behind <details>.
+      createTaskProviderSettingsBlock(kind, ui = this.plugin.getProviderCapabilities(this.plugin.settings[kind]?.provider).ui || {}) {
+        const provider = String(this.plugin.settings[kind]?.provider || "");
+        const defaults = this.plugin.getProviderDefaults(provider) || {};
+        const block = document.createElement("div");
+        block.className = "dait-provider-settings-block";
+        block.dataset.daitProvider = provider;
+        const header = document.createElement("div");
+        header.className = "dait-provider-settings-header";
+        const title = document.createElement("span");
+        title.className = "dait-provider-settings-title";
+        title.textContent = `${this.plugin.t("providerSettingsTitle")} · ${this.plugin.getProviderDisplayName(provider)}`;
+        title.title = this.plugin.t("providerSettingsDesc");
+        header.appendChild(title);
+        if (ui.apiTest || ui.apiKey) {
+          header.appendChild(this.createProviderConnectionStatus(kind));
+          header.className = `${header.className} dait-settings-search-target`;
+          header.dataset.daitSearchLabel = title.textContent;
+          header.dataset.daitSearchDescription = this.plugin.t("providerStatusDesc");
+        }
+        block.appendChild(header);
+        let hasRows = false;
+        const append = (node, parent = block) => {
+          if (!node) return;
+          hasRows = true;
+          parent.appendChild(node);
+        };
+        const apiKeyOptional = Boolean(ui.apiKey && this.plugin.isProviderApiKeyOptional(provider));
+        if (ui.apiKey && !apiKeyOptional) append(this.createApiKeyRow(kind));
+        if (ui.endpoint) append(this.createInputRow(`${kind}.endpoint`, this.plugin.t("endpoint"), "text", defaults.endpoint || "", {}, { description: this.getProviderFieldHelp("endpoint", provider), stacked: true }));
+        if (ui.region) append(this.createInputRow(`${kind}.region`, this.plugin.t("providerRegion"), "text", "eastus", {}, { description: this.plugin.t("providerRegionDesc") }));
+        if (ui.deeplPlan) append(this.plugin.createSelectRow(`${kind}.deeplPlan`, this.plugin.t("deeplPlan"), [
+          ["free", this.plugin.t("deeplPlanFree")],
+          ["pro", this.plugin.t("deeplPlanPro")]
+        ], { description: this.plugin.t("deeplPlanDesc") }));
+        if (ui.baiduCredentials) {
+          append(this.createInputRow(`${kind}.appId`, this.plugin.t("baiduAppId"), "text", "", {}, { description: this.plugin.t("baiduAppIdDesc") }));
+          append(this.createInputRow(`${kind}.secretKey`, this.plugin.t("baiduSecretKey"), "password", "", {}, { description: this.plugin.t("baiduSecretKeyDesc"), stacked: true }));
+        }
+        if (ui.deepseekPreset) append(this.createDeepSeekModelRow(kind));
+        if (ui.model && this.plugin.isModelDetectionProvider(provider)) {
+          const modelRow = this.createModelFieldRow(kind);
+          append(modelRow);
+          const detectUi = modelRow?.__daitModelDetectUi;
+          const endpointInput = block.querySelector?.(`[data-dait-path='${kind}.endpoint']`);
+          if (detectUi && endpointInput?.addEventListener) {
+            let previousOrigin = this.getProviderEndpointOrigin(this.plugin.getTaskConfig(kind));
+            let lastDetection = null;
+            let detectionTimer = null;
+            endpointInput.addEventListener("change", () => {
+              clearTimeout(detectionTimer);
+              const config = this.plugin.getTaskConfig(kind);
+              const { endpoint, apiKey, apiKeyOrigin } = config;
+              const origin = this.getProviderEndpointOrigin(config);
+              const originChanged = origin !== previousOrigin;
+              previousOrigin = origin;
+              if (!this.plugin.isStarted || config.provider !== provider || originChanged || !origin || !String(endpoint || "").trim()) return;
+              if ((apiKeyOrigin ?? origin) !== origin || !this.plugin.isLoopbackEndpoint(origin) && !String(apiKey || "").trim()) return;
+              const snapshot = { provider, endpoint, apiKey, apiKeyOrigin };
+              const lifecycleToken = this.plugin.getLifecycleToken();
+              detectionTimer = setTimeout(() => {
+                if (!endpointInput.isConnected || !this.plugin.isLifecycleTokenCurrent(lifecycleToken) || !this.matchesModelDetectionConfig(kind, snapshot) || lastDetection && Object.keys(snapshot).every((field) => snapshot[field] === lastDetection[field])) return;
+                lastDetection = snapshot;
+                this.runModelDetection(kind, { ...detectUi, auto: true });
+              }, 0);
+            });
+          }
+        } else if (ui.model) {
+          const row = this.createInputRow(`${kind}.model`, this.plugin.t("model"), "text", defaults.model || "", { spellcheck: "false", autocomplete: "off" }, { description: this.getProviderFieldHelp("model", provider), stacked: true });
+          const modelInput = row?.querySelector?.(`[data-dait-path='${kind}.model']`);
+          if (modelInput) this.attachModelHistoryDatalist(modelInput, kind, modelInput.parentElement);
+          append(row);
+        }
+        if (kind === "translation" && ui.googleTranslateSettings) append(this.createGoogleTranslateSettings());
+        if (ui.enableThinking || ui.temperature || ui.maxTokens) {
+          const details = this.createSettingsDetails(this.plugin.t("settingsMoreModelParams"), "model-params");
+          if (ui.enableThinking) append(this.plugin.createCheckboxRow(`${kind}.enableThinking`, this.plugin.t("thinkingMode"), { description: this.plugin.t("thinkingModeDesc") }), details);
+          if (ui.temperature) append(this.createInputRow(`${kind}.temperature`, this.plugin.t("temperature"), "number", "0.4", { min: "0", max: "2", step: "0.1" }, { description: this.plugin.t("temperatureDesc") }), details);
+          if (ui.maxTokens) append(this.createInputRow(`${kind}.maxTokens`, this.plugin.t("maxTokens"), "number", "800", { min: "1", step: "1" }, { description: this.plugin.t("maxTokensDesc") }), details);
+          block.appendChild(details);
+        }
+        if (apiKeyOptional) {
+          const details = this.createSettingsDetails(this.plugin.t("settingsApiKeyOptional"), "api-key");
+          details.open = Boolean(String(this.plugin.settings[kind]?.apiKey || "").trim());
+          append(this.createApiKeyRow(kind), details);
+          block.appendChild(details);
+        }
+        if (hasRows) block.appendChild(this.createTryTaskRow(kind));
+        return hasRows ? block : null;
+      },
+      // Help text that fits the selected service (endpoint, model, API key); other services use the general text.
+      getProviderFieldHelp(field, provider) {
+        const keys = {
+          endpoint: { deepseek: "endpointDeepSeekDesc", openaiCompatible: "endpointOpenAIDesc", sakuraLocal: "endpointLocalDesc", microsoft: "endpointMicrosoftDesc", baidu: "endpointBaiduDesc" },
+          model: { deepseek: "modelDesc", openaiCompatible: "modelOpenAIDesc", sakuraLocal: "modelLocalDesc" },
+          apiKey: { deepseek: "apiKeyDeepSeekDesc", openaiCompatible: "apiKeyOpenAIDesc", sakuraLocal: "apiKeyLocalDesc", microsoft: "apiKeyMicrosoftDesc", deepl: "apiKeyDeepLDesc" }
+        };
+        const fallback = { endpoint: "endpointDesc", model: "modelDesc", apiKey: "apiKeyDesc" }[field] || "";
+        const key = keys[field]?.[String(provider || "")] || fallback;
+        return key ? this.plugin.t(key) : "";
+      },
+      // The model field of Sakura local and OpenAI-compatible: the name, "Detect models", and a picker below with the
+      // server's models (after detection) and, for Sakura, "use the loaded model" plus common models. The picker
+      // follows the field (data-dait-model-preset), and picking writes the field.
+      createModelFieldRow(kind) {
+        const provider = String(this.plugin.settings[kind]?.provider || "");
+        const defaults = this.plugin.getProviderDefaults(provider) || {};
+        const local = this.plugin.isLocalTranslationProvider(provider);
+        const field = document.createElement("div");
+        field.className = "dait-model-field";
+        const line = document.createElement("div");
+        line.className = "dait-model-field-line";
+        const input = document.createElement("input");
+        input.type = "text";
+        input.dataset.daitPath = `${kind}.model`;
+        input.placeholder = defaults.model || "";
+        input.spellcheck = false;
+        input.autocomplete = "off";
+        input.value = this.plugin.getSetting(`${kind}.model`) ?? "";
+        const commitModel = (immediate = false) => {
+          const raw = String(input.value ?? "");
+          const next = immediate ? raw.trim() : raw;
+          if (immediate && next !== input.value) input.value = next;
+          this.plugin.setSetting(`${kind}.model`, next, immediate ? { save: "immediate", retryOnError: false } : { save: "debounce", live: true });
+          if (immediate) this.refreshModelHistoryDatalist(input, kind);
+        };
+        input.addEventListener("input", () => commitModel(false));
+        input.addEventListener("blur", () => commitModel(true));
+        input.addEventListener("change", () => commitModel(true));
+        line.appendChild(input);
+        this.attachModelHistoryDatalist(input, kind, field);
+        const detect = this.createSmallButton(this.plugin.t("modelDetect"), "outline");
+        detect.dataset.daitAction = "detectModels";
+        detect.dataset.daitKind = kind;
+        line.appendChild(detect);
+        field.appendChild(line);
+        const picker = document.createElement("select");
+        picker.className = "dait-model-picker";
+        picker.dataset.daitModelPreset = kind;
+        picker.setAttribute("aria-label", this.plugin.t("modelPicker"));
+        this.renderModelPickerOptions(picker, kind, []);
+        picker.hidden = !local;
+        picker.addEventListener("change", () => {
+          if (!picker.value) {
+            this.focusSettingsElement(input);
+            return;
+          }
+          this.plugin.setSetting(`${kind}.model`, picker.value);
+        });
+        field.appendChild(picker);
+        let description = this.getProviderFieldHelp("model", provider);
+        if (local && this.plugin.isLocalProviderAutoModelValue(this.plugin.settings[kind]?.model)) {
+          const snapshot = this.plugin.getLocalProviderDetectedModelSnapshot(this.plugin.settings[kind]);
+          if (snapshot?.model) description = this.plugin.t("modelLocalLoadedDesc", { model: snapshot.model });
+        }
+        const row = this.createRow(this.plugin.t("model"), field, { description, stacked: true, labelFor: input });
+        row.classList.add("dait-model-field-row");
+        const status = row.__daitDescription;
+        status?.setAttribute?.("aria-live", "polite");
+        const detectUi = { button: detect, picker, status, input };
+        row.__daitModelDetectUi = detectUi;
+        detect.addEventListener("click", (event) => {
+          event?.preventDefault?.();
+          this.runModelDetection(kind, detectUi);
+        });
+        return row;
+      },
+      renderModelPickerOptions(picker, kind, detected = [], loaded = "") {
+        if (!picker) return;
+        const provider = String(this.plugin.settings[kind]?.provider || "");
+        const local = this.plugin.isLocalTranslationProvider(provider);
+        const current = String(this.plugin.settings[kind]?.model || "");
+        [...picker.children || []].forEach((child) => child.remove?.());
+        picker.textContent = "";
+        const option = (parent, value, text) => {
+          const node = document.createElement("option");
+          node.value = value;
+          node.textContent = text;
+          node.selected = value === current;
+          parent.appendChild(node);
+          return node;
+        };
+        const group = (label) => {
+          const node = document.createElement("optgroup");
+          node.label = label;
+          node.setAttribute("label", label);
+          picker.appendChild(node);
+          return node;
+        };
+        const listed = /* @__PURE__ */ new Set();
+        if (local) {
+          option(picker, LOCAL_PROVIDER_AUTO_MODEL_VALUE, this.plugin.t("modelPickerServerLoaded"));
+          listed.add(LOCAL_PROVIDER_AUTO_MODEL_VALUE);
+        }
+        const fresh = detected.filter((model) => model && !listed.has(model));
+        if (fresh.length) {
+          const parent = group(this.plugin.t("modelPickerDetected"));
+          fresh.forEach((model) => {
+            listed.add(model);
+            option(parent, model, model === loaded ? this.plugin.t("modelPickerLoadedTag", { model: this.plugin.getDiagnosticModelLabel(model) }) : model);
+          });
+        }
+        if (local) {
+          const presets = LOCAL_MODEL_PRESETS.filter(([value]) => !listed.has(value));
+          if (presets.length) {
+            const parent = group(this.plugin.t("modelPickerPresets"));
+            presets.forEach(([value, text]) => option(parent, value, text));
+          }
+        }
+        const other = option(picker, "", this.plugin.t("modelPickerOther"));
+        const known = [...picker.querySelectorAll?.("option") || []].some((node) => node.value && node.value === current);
+        if (!known) other.selected = true;
+        picker.value = known ? current : "";
+      },
+      getProviderEndpointOrigin(config) {
+        try {
+          const url = new URL(this.plugin.getEffectiveChatCompletionEndpoint(config));
+          return url.protocol === "https:" || url.protocol === "http:" ? url.origin : "";
+        } catch {
+          return "";
+        }
+      },
+      hasApiKeyOriginMismatch(config) {
+        return this.plugin.isModelDetectionProvider(config?.provider) && typeof config.apiKeyOrigin === "string" && Boolean(String(config.apiKey || "").trim()) && config.apiKeyOrigin !== this.getProviderEndpointOrigin(config);
+      },
+      matchesModelDetectionConfig(kind, snapshot) {
+        const current = this.plugin.getTaskConfig(kind);
+        return Object.keys(snapshot).every((field) => snapshot[field] === current[field]);
+      },
+      // "Detect models": asks the server for its models, fills the picker + input datalist, and says what it found.
+      async runModelDetection(kind, { button = null, picker = null, status = null, input = null, auto = false } = {}) {
+        const lifecycleToken = this.plugin.getLifecycleToken();
+        if (!this.plugin.isLifecycleTokenCurrent(lifecycleToken)) return null;
+        const { provider, endpoint, apiKey, apiKeyOrigin, model } = this.plugin.getTaskConfig(kind);
+        let snapshot = Object.freeze({ provider, endpoint, apiKey, apiKeyOrigin, model });
+        const origin = this.getProviderEndpointOrigin(snapshot);
+        const previousOrigin = apiKeyOrigin ?? origin;
+        if (auto && (!origin || previousOrigin !== origin)) return null;
+        const runs = this.plugin.modelDetectionRuns ??= /* @__PURE__ */ new Map();
+        const previous = runs.get(kind);
+        const sequence = (previous?.sequence || 0) + 1;
+        const controller = new AbortController();
+        const { signal } = controller;
+        const isLatest = () => runs.get(kind)?.sequence === sequence;
+        const isCurrent = () => isLatest() && !signal.aborted && this.plugin.isLifecycleTokenCurrent(lifecycleToken) && this.matchesModelDetectionConfig(kind, snapshot);
+        runs.set(kind, { sequence, controller, button, lifecycleToken });
+        previous?.controller?.abort();
+        if (previous?.button && previous.button !== button && this.plugin.isLifecycleTokenCurrent(previous.lifecycleToken)) {
+          this.plugin.setButtonBusy(previous.button, false, this.plugin.t("modelDetect"));
+        }
+        this.plugin.setButtonBusy(button, true, this.plugin.t("modelDetectBusy"));
+        try {
+          let omitApiKey = false;
+          if (origin && previousOrigin !== origin) {
+            const hasKey = Boolean(String(apiKey || "").trim());
+            const loopback = this.plugin.isLoopbackEndpoint(origin);
+            if (hasKey && !loopback) {
+              const confirmed = await this.plugin.confirmAction({
+                title: this.plugin.t("modelDetectConfirmOrigin"),
+                body: this.plugin.t("modelDetectConfirmOriginDesc", { origin }),
+                confirmText: this.plugin.t("modelDetect")
+              });
+              if (!confirmed || !isCurrent()) return null;
+            }
+            omitApiKey = hasKey && loopback && !this.plugin.isLoopbackEndpoint(previousOrigin);
+            if (!omitApiKey) {
+              if (!isCurrent()) return null;
+              this.plugin.getTaskConfig(kind).apiKeyOrigin = origin;
+              snapshot = Object.freeze({ ...snapshot, apiKeyOrigin: origin });
+              this.plugin.saveSettings({ debounce: true });
+              this.refreshApiTestViews(kind);
+              if (kind === "translation") this.plugin.queueScan();
+            }
+          }
+          if (!isCurrent()) return null;
+          const { models, loaded } = await this.plugin.detectProviderModels(kind, { config: snapshot, omitApiKey, signal, isCurrent });
+          if (!isCurrent()) return null;
+          this.renderModelPickerOptions(picker, kind, models, loaded);
+          if (picker && models.length) picker.hidden = false;
+          if (input && models.length) this.refreshModelHistoryDatalist(input, kind, models);
+          const text = !models.length ? this.plugin.t("modelDetectNone") : loaded ? this.plugin.t("modelDetectFoundLoaded", { count: models.length, model: this.plugin.getDiagnosticModelLabel(loaded) }) : this.plugin.t("modelDetectFound", { count: models.length });
+          if (status) {
+            status.textContent = text;
+            status.hidden = false;
+            status.classList?.remove?.("dait-row-description-error");
+          }
+          return { models, loaded };
+        } catch (error) {
+          if (!isCurrent() || this.plugin.isRequestCancelled(error)) return null;
+          const text = this.plugin.t("modelDetectFailed", { error: this.plugin.formatError(error) });
+          if (status) {
+            status.textContent = text;
+            status.hidden = false;
+            status.classList?.add?.("dait-row-description-error");
+          }
+          return null;
+        } finally {
+          if (isLatest()) {
+            runs.set(kind, { sequence });
+            if (this.plugin.isLifecycleTokenCurrent(lifecycleToken)) this.plugin.setButtonBusy(button, false, this.plugin.t("modelDetect"));
+          }
+        }
+      },
+      // "Try a sentence" (translation) / "Try polishing" (composer), at the end of the connection card: runs one
+      // sentence through the task with the settings as they are now (like the old test mode) and shows the result with
+      // the time it took. Nothing is sent to Discord.
+      createTryTaskRow(kind) {
+        const polish = kind === "polish";
+        const wrap = document.createElement("div");
+        wrap.className = "dait-try-field";
+        const line = document.createElement("div");
+        line.className = "dait-try-line";
+        const input = document.createElement("input");
+        input.type = "text";
+        input.className = "dait-try-input";
+        input.placeholder = this.plugin.t(polish ? "tryPolishPlaceholder" : "tryTranslatePlaceholder");
+        input.autocomplete = "off";
+        line.appendChild(input);
+        const run = this.createSmallButton(this.plugin.t(polish ? "tryPolishRun" : "tryTranslateRun"));
+        run.dataset.daitAction = "tryTask";
+        run.dataset.daitKind = kind;
+        line.appendChild(run);
+        wrap.appendChild(line);
+        const result = document.createElement("p");
+        result.className = "dait-try-result";
+        result.setAttribute("aria-live", "polite");
+        result.hidden = true;
+        const output = document.createElement("span");
+        output.className = "dait-try-output";
+        result.appendChild(output);
+        const time = document.createElement("span");
+        time.className = "dait-try-time";
+        result.appendChild(time);
+        wrap.appendChild(result);
+        const tryHistory = { text: "", results: [] };
+        const start = () => this.plugin.runTryTask(kind, input.value, { button: run, result, output, time, tryHistory });
+        run.addEventListener("click", (event) => {
+          event?.preventDefault?.();
+          start();
+        });
+        input.addEventListener("keydown", (event) => {
+          if (event?.key !== "Enter" || event.isComposing) return;
+          event.preventDefault?.();
+          start();
+        });
+        const row = this.createRow(this.plugin.t(polish ? "tryPolish" : "tryTranslate"), wrap, {
+          description: this.plugin.t(polish ? "tryPolishDesc" : "tryTranslateDesc"),
+          stacked: true,
+          labelFor: input
+        });
+        row.classList.add("dait-try-row");
+        return row;
+      },
+      async runTryTask(kind, text, { button = null, result = null, output = null, time = null, tryHistory = null } = {}) {
+        const sample = String(text || "").trim();
+        const show = (value, seconds = "", failed = false) => {
+          if (output) output.textContent = value;
+          if (time) {
+            time.textContent = seconds ? this.plugin.t("tryResultTime", { time: seconds }) : "";
+            time.hidden = !seconds;
+          }
+          if (result) {
+            result.hidden = !value;
+            result.classList?.toggle?.("dait-try-result-error", Boolean(failed));
+          }
+        };
+        if (!sample) {
+          show(this.plugin.t("tryInputRequired"), "", true);
+          return null;
+        }
+        const lifecycleToken = this.plugin.getLifecycleToken();
+        const label = button?.textContent || "";
+        this.plugin.setButtonBusy(button, true, this.plugin.t("tryBusy"));
+        const startedAt = Date.now();
+        try {
+          let translated;
+          if (kind === "polish") {
+            const sameSample = tryHistory && tryHistory.text === sample;
+            const previousResults = sameSample ? tryHistory.results.slice(-5) : [];
+            translated = await this.plugin.runPolishWithGuards(sample, {
+              mode: "test",
+              previousResults,
+              enforceRepolishVariation: previousResults.length > 0,
+              isStillCurrent: () => this.plugin.isLifecycleTokenCurrent(lifecycleToken)
+            });
+            if (tryHistory && String(translated || "").trim()) {
+              if (tryHistory.text !== sample) {
+                tryHistory.text = sample;
+                tryHistory.results = [];
+              }
+              const cleaned = String(translated).trim();
+              if (!tryHistory.results.includes(cleaned)) {
+                tryHistory.results.push(cleaned);
+                if (tryHistory.results.length > 5) tryHistory.results = tryHistory.results.slice(-5);
+              }
+            }
+          } else {
+            translated = await this.plugin.runModelTask(kind, sample, { mode: "test" });
+          }
+          if (!this.plugin.isLifecycleTokenCurrent(lifecycleToken)) return null;
+          show(String(translated ?? ""), this.formatLatency(Date.now() - startedAt));
+          return translated;
+        } catch (error) {
+          if (!this.plugin.isLifecycleTokenCurrent(lifecycleToken)) return null;
+          show(this.plugin.formatError(error), this.formatLatency(Date.now() - startedAt), true);
+          return null;
+        } finally {
+          if (this.plugin.isLifecycleTokenCurrent(lifecycleToken)) this.plugin.setButtonBusy(button, false, label);
+        }
+      },
+      createSettingsDetails(summaryText, key) {
+        const details = document.createElement("details");
+        details.className = `dait-settings-details dait-settings-details-${key}`;
+        const summary = document.createElement("summary");
+        summary.className = "dait-settings-details-summary";
+        summary.textContent = summaryText;
+        details.appendChild(summary);
+        return details;
+      },
+      // Status badge, the last test's details ("Hy-MT2 · 820 ms · just now") and Test.
+      createProviderConnectionStatus(kind) {
+        const wrap = document.createElement("span");
+        wrap.className = "dait-provider-connection";
+        const status = this.createApiStatusBadge(kind);
+        wrap.appendChild(status);
+        wrap.appendChild(this.createApiTestDetail(kind));
+        const test = this.createSmallButton(this.plugin.t("apiTest"));
+        test.dataset.daitAction = "apiTest";
+        test.dataset.daitKind = kind;
+        test.addEventListener("click", (event) => {
+          event?.preventDefault?.();
+          event?.stopPropagation?.();
+          this.runOverviewApiTest(kind, test, status);
+        });
+        wrap.appendChild(test);
+        return wrap;
+      },
+      // Prompt templates and the prompt editor belong to the task, not to the provider connection.
+      createTaskPromptSection(kind) {
+        const ui = this.plugin.getProviderCapabilities(this.plugin.settings[kind]?.provider)?.ui || {};
+        if (!ui.promptManager) return null;
+        const group = this.createSettingsGroup("", `${kind}-prompt`);
+        const manager = this.createPromptManager(kind);
+        manager.className = `${manager.className || ""} dait-settings-search-target`.trim();
+        manager.dataset.daitSearchLabel = this.plugin.t("promptTemplates");
+        manager.dataset.daitSearchDescription = this.plugin.t("promptTemplatesDesc");
+        group.appendChild(manager);
+        return group;
+      },
+      createDeepSeekModelRow(kind) {
+        const select = document.createElement("select");
+        select.dataset.daitModelPreset = kind;
+        const current = this.plugin.settings[kind]?.model;
+        const custom = document.createElement("option");
+        custom.value = "";
+        custom.textContent = this.plugin.t("customModel");
+        custom.selected = !DEEPSEEK_MODELS.some(([value]) => value === current);
+        select.appendChild(custom);
+        DEEPSEEK_MODELS.forEach(([value, text]) => {
+          const option = document.createElement("option");
+          option.value = value;
+          option.textContent = text;
+          option.selected = value === current;
+          select.appendChild(option);
+        });
+        select.addEventListener("change", () => {
+          if (!select.value) return;
+          this.plugin.setSetting(`${kind}.model`, select.value);
+          this.plugin.showToast(this.plugin.t("modelSet", { model: select.options[select.selectedIndex].textContent }), "success");
+        });
+        return this.createRow(this.plugin.t("deepseekPreset"), select, { description: this.plugin.t("deepseekPresetDesc") });
+      },
+      createGoogleTranslateSettings() {
+        const block = document.createElement("div");
+        block.className = "dait-google-settings";
+        const header = document.createElement("div");
+        header.className = "dait-settings-subheading";
+        const title = document.createElement("span");
+        title.textContent = this.plugin.t("googleTranslateTitle");
+        header.appendChild(title);
+        block.appendChild(header);
+        block.appendChild(this.createTextareaRow("googleTranslate.keyPoolText", this.plugin.t("googleTranslateKeys"), {
+          description: this.plugin.t("googleTranslateKeysDesc")
+        }));
+        block.appendChild(this.createInputRow("googleTranslate.defaultMonthlyLimit", this.plugin.t("googleTranslateDefaultLimit"), "number", String(GOOGLE_TRANSLATE_DEFAULT_MONTHLY_LIMIT), {
+          min: "1",
+          max: String(GOOGLE_TRANSLATE_MAX_MONTHLY_LIMIT),
+          step: "1000"
+        }, { description: this.plugin.t("googleTranslateDefaultLimitDesc") }));
+        block.appendChild(this.plugin.createCheckboxRow("googleTranslate.allowPrefetch", this.plugin.t("googleTranslateAllowPrefetch"), {
+          description: this.plugin.t("googleTranslateAllowPrefetchDesc")
+        }));
+        block.appendChild(this.createGoogleTranslateStatsRow());
+        return block;
+      },
+      createGoogleTranslateStatsRow() {
+        const controls = document.createElement("div");
+        controls.className = "dait-cache-actions";
+        const reset = this.createSmallButton(this.plugin.t("googleTranslateResetStats"), "danger");
+        reset.addEventListener("click", async () => {
+          const confirmed = await this.plugin.confirmAction({
+            title: this.plugin.t("googleTranslateResetStats"),
+            body: this.plugin.t("googleTranslateResetConfirm"),
+            confirmText: this.plugin.t("googleTranslateResetStats"),
+            danger: true
+          });
+          if (!confirmed) return;
+          this.plugin.resetGoogleTranslateUsageStats();
+          const row = reset.closest(".dait-settings-row");
+          const description = row?.querySelector?.(".dait-row-description");
+          if (description) description.textContent = this.getGoogleTranslateStatsText();
+        });
+        controls.appendChild(reset);
+        return this.createRow(this.plugin.t("googleTranslateStats"), controls, {
+          description: this.getGoogleTranslateStatsText()
+        });
+      },
+      getGoogleTranslateStatsText() {
+        const stats = this.plugin.getGoogleTranslateUsageSummary();
+        const text = this.plugin.t("googleTranslateStatsDesc", {
+          used: stats.used,
+          limit: stats.limit,
+          available: stats.available,
+          total: stats.total,
+          month: stats.monthKey
+        });
+        if (!stats.coolingDown) return text;
+        return `${text} ${this.plugin.t("googleTranslateStatsCooldown", {
+          count: stats.coolingDown,
+          time: this.formatDiagnosticSummaryTime(stats.nextCooldownEndsAt)
+        })}`;
+      },
+      attachModelHistoryDatalist(input, kind, host = null) {
+        if (!input || typeof document === "undefined" || !document.createElement) return null;
+        const provider = String(this.plugin.settings[kind]?.provider || "");
+        const listId = `dait-model-history-${kind}-${provider}-${Math.random().toString(36).slice(2, 8)}`;
+        const datalist = document.createElement("datalist");
+        datalist.id = listId;
+        datalist.dataset.daitModelHistory = `${kind}:${provider}`;
+        input.setAttribute("list", listId);
+        input.__daitModelDatalist = datalist;
+        (host || input.parentElement)?.appendChild?.(datalist);
+        this.refreshModelHistoryDatalist(input, kind);
+        return datalist;
+      },
+      refreshModelHistoryDatalist(input, kind, extraModels = []) {
+        const datalist = input?.__daitModelDatalist;
+        if (!datalist || typeof document === "undefined") return;
+        const provider = String(this.plugin.settings[kind]?.provider || "");
+        const baseModels = this.plugin.getRememberedModelsForProvider(kind, provider);
+        const merged = [];
+        const seen = /* @__PURE__ */ new Set();
+        for (const candidate of [...baseModels, ...Array.isArray(extraModels) ? extraModels : []]) {
+          const text = String(candidate || "").trim();
+          if (!text || seen.has(text)) continue;
+          seen.add(text);
+          merged.push(text);
+        }
+        [...datalist.children || []].forEach((child) => child.remove?.());
+        datalist.textContent = "";
+        merged.forEach((modelName) => {
+          const option = document.createElement("option");
+          option.value = modelName;
+          datalist.appendChild(option);
+        });
+      }
+    };
+    module2.exports = methods;
+  }
+});
+
+// src/ui/host-health-card.js
+var require_host_health_card = __commonJS({
+  "src/ui/host-health-card.js"(exports2, module2) {
+    "use strict";
+    function buildHostHealthCard(plugin, options = {}) {
+      const card = document.createElement("div");
+      card.className = "dait-host-health-card dait-settings-search-target";
+      card.dataset.daitHostHealthCard = "true";
+      card.dataset.daitSearchLabel = plugin.t("hostHealthTitle");
+      card.dataset.daitSearchDescription = plugin.t("hostHealthDesc");
+      const head = document.createElement("div");
+      head.className = "dait-host-health-head";
+      const titleWrap = document.createElement("div");
+      titleWrap.className = "dait-host-health-title-wrap";
+      const title = document.createElement("div");
+      title.className = "dait-host-health-title";
+      title.textContent = plugin.t("hostHealthTitle");
+      titleWrap.appendChild(title);
+      const desc = document.createElement("div");
+      desc.className = "dait-host-health-desc";
+      desc.textContent = plugin.t("hostHealthDesc");
+      titleWrap.appendChild(desc);
+      const badge = document.createElement("span");
+      badge.className = "dait-host-health-summary";
+      head.appendChild(titleWrap);
+      head.appendChild(badge);
+      card.appendChild(head);
+      const list = document.createElement("ul");
+      list.className = "dait-host-health-list";
+      card.appendChild(list);
+      const actions = document.createElement("div");
+      actions.className = "dait-host-health-actions";
+      const recheckBtn = document.createElement("button");
+      recheckBtn.type = "button";
+      recheckBtn.className = "dait-small-button dait-small-button-primary";
+      recheckBtn.dataset.daitHostHealthAction = "recheck";
+      recheckBtn.textContent = plugin.t("hostHealthRecheck");
+      const copyBtn = document.createElement("button");
+      copyBtn.type = "button";
+      copyBtn.className = "dait-small-button dait-small-button-outline";
+      copyBtn.dataset.daitHostHealthAction = "copy";
+      copyBtn.textContent = plugin.t("hostHealthCopyReport");
+      actions.appendChild(recheckBtn);
+      actions.appendChild(copyBtn);
+      card.appendChild(actions);
+      let lastReport = null;
+      const render = () => {
+        lastReport = plugin.runHostHealthCheck();
+        const { summary, checks } = lastReport;
+        badge.className = `dait-host-health-summary dait-host-health-summary-${summary.overall}`;
+        if (summary.overall === "ok") {
+          badge.textContent = plugin.t("hostHealthSummaryOk", { ok: summary.ok, total: summary.total });
+        } else if (summary.overall === "warn") {
+          badge.textContent = plugin.t("hostHealthSummaryWarn", { ok: summary.ok, warn: summary.warn, error: summary.error });
+        } else {
+          badge.textContent = plugin.t("hostHealthSummaryError", { ok: summary.ok, warn: summary.warn, error: summary.error });
+        }
+        while (list.firstChild) list.firstChild.remove?.();
+        checks.forEach((item) => {
+          const li = document.createElement("li");
+          li.className = `dait-host-health-item dait-host-health-item-${item.status}`;
+          li.dataset.daitHostHealthCheck = item.id;
+          const dot = document.createElement("span");
+          dot.className = "dait-host-health-dot";
+          dot.setAttribute("aria-hidden", "true");
+          li.appendChild(dot);
+          const label = document.createElement("span");
+          label.className = "dait-host-health-label";
+          label.textContent = plugin.t(item.labelKey);
+          li.appendChild(label);
+          const state = document.createElement("span");
+          state.className = "dait-host-health-state";
+          state.textContent = plugin.t(
+            item.status === "ok" ? "hostHealthStateOk" : item.status === "warn" ? "hostHealthStateWarn" : "hostHealthStateError"
+          );
+          li.appendChild(state);
+          const detail = document.createElement("span");
+          detail.className = "dait-host-health-detail";
+          detail.textContent = item.detail || "";
+          detail.title = item.detail || "";
+          li.appendChild(detail);
+          list.appendChild(li);
+        });
+      };
+      recheckBtn.addEventListener("click", (event) => {
+        event?.preventDefault?.();
+        render();
+      });
+      copyBtn.addEventListener("click", async (event) => {
+        event?.preventDefault?.();
+        if (!lastReport) render();
+        const payload = JSON.stringify(lastReport, null, 2);
+        try {
+          await plugin.copyTextToClipboard(payload);
+          plugin.showToast(plugin.t("hostHealthCopied"), "success");
+        } catch (error) {
+          plugin.showToast(plugin.t("promptCopyFailed", { error: plugin.formatError(error) }), "error");
+        }
+      });
+      card.__daitEnsureHostHealthRendered = () => {
+        if (!lastReport) render();
+        return lastReport;
+      };
+      if (!options?.lazy) render();
+      return card;
+    }
+    module2.exports = { buildHostHealthCard };
+  }
+});
+
+// src/settings/ui/tab-sections.js
+var require_tab_sections = __commonJS({
+  "src/settings/ui/tab-sections.js"(exports2, module2) {
+    "use strict";
+    var {
+      PROVIDER_ORDER,
+      AUTO_TRANSLATE_DEFAULT_CONCURRENCY,
+      AUTO_TRANSLATE_MIN_CONCURRENCY,
+      AUTO_TRANSLATE_MAX_CONCURRENCY,
+      AUTO_TRANSLATE_PREFETCH_RANGES,
+      MESSAGE_BUTTON_VISIBILITY_ALWAYS,
+      MESSAGE_BUTTON_VISIBILITY_HOVER,
+      TRANSLATION_CACHE_TTL_OPTIONS,
+      TRANSLATION_CACHE_DEFAULT_LIMIT,
+      TRANSLATION_CACHE_MIN_LIMIT,
+      TRANSLATION_CACHE_MAX_LIMIT,
+      DEFAULT_SETTINGS
+    } = require_constants();
+    var { SETTINGS_TAB_DATA, MESSAGE_BUTTON_MODE_OFF } = require_settings_schema();
+    var { buildHostHealthCard } = require_host_health_card();
+    var { getDiagnosticCodeLabel } = require_diagnostic_labels();
+    var methods = {
+      createGeneralSection() {
+        const group = this.createSettingsGroup(this.plugin.t("settingsGroupCommon"), "general");
+        group.appendChild(this.plugin.createCheckboxRow("ui.autoTranslateMessages", this.plugin.t("autoTranslateMessages"), { description: this.plugin.t("autoTranslateMessagesDesc") }));
+        group.appendChild(this.createCurrentChannelPolicyRow());
+        group.appendChild(this.plugin.createSelectRow("ui.language", this.plugin.t("interfaceLanguage"), [
+          ["zh-CN", this.plugin.t("languageZh")],
+          ["en", this.plugin.t("languageEn")]
+        ], { description: this.plugin.t("interfaceLanguageDesc") }));
+        return group;
+      },
+      createTranslateTabContent() {
+        return [
+          this.createTaskSection("translation", this.plugin.t("translationTitle"), this.plugin.t("translationDescription")),
+          this.createAutoTranslateSection(),
+          this.createTranslationControlsSection(),
+          this.createTaskPromptSection("translation")
+        ];
+      },
+      createComposeTabContent() {
+        return [
+          this.createTaskSection("polish", this.plugin.t("polishTitle"), this.plugin.t("polishDescription")),
+          this.createTaskPromptSection("polish"),
+          this.createPolishControlsSection(),
+          this.createPublicBilingualSection()
+        ];
+      },
+      createDisplayTabContent() {
+        return [this.createDisplayWindowSection(), this.createDisplayBehaviorSection(), this.createDisplayNoticesSection()];
+      },
+      // The palette of the plugin's own windows (ui.panelTheme); changing it restyles every open window in place.
+      createDisplayWindowSection() {
+        const section = this.createSettingsGroup(this.plugin.t("settingsGroupWindows"), "windows");
+        section.appendChild(this.createSegmentedRow("ui.panelTheme", this.plugin.t("panelTheme"), [
+          ["auto", this.plugin.t("panelThemeAuto")],
+          ["light", this.plugin.t("panelThemeLight")],
+          ["dark", this.plugin.t("panelThemeDark")]
+        ], { description: this.plugin.t("panelThemeDesc") }));
+        return section;
+      },
+      createAdvancedTabContent() {
+        const local = this.plugin.isLocalTranslationProvider(this.plugin.settings.translation);
+        return [
+          this.createAdvancedSection(),
+          this.createHistoryBackfillSection(),
+          this.createProviderFallbackSection(local)
+        ];
+      },
+      createDataTabContent(state = null) {
+        return [
+          this.createCacheSection(),
+          this.createDiagnosticsSection(state),
+          this.createSettingsDangerZone()
+        ];
+      },
+      createPolishControlsSection() {
+        const section = this.createSettingsGroup(this.plugin.t("polishControlsTitle"), "polish-controls");
+        section.appendChild(this.plugin.createCheckboxRow("ui.injectInputButton", this.plugin.t("showPolishButton"), { description: this.plugin.t("showPolishButtonDesc") }));
+        section.appendChild(this.plugin.createCheckboxRow("ui.enablePolishHotkey", this.plugin.t("enableHotkey"), { description: this.plugin.t("enableHotkeyDesc") }));
+        section.appendChild(this.createHotkeyRow({ dependsOn: { path: "ui.enablePolishHotkey", label: this.plugin.t("enableHotkey") } }));
+        return section;
+      },
+      createTranslationControlsSection() {
+        const section = this.createSettingsGroup(this.plugin.t("translationControlsTitle"), "translation-controls");
+        section.appendChild(this.createMessageButtonModeRow());
+        section.appendChild(this.plugin.createCheckboxRow("ui.injectMessageContextMenu", this.plugin.t("showContextMenu"), { description: this.plugin.t("showContextMenuDesc") }));
+        return section;
+      },
+      // One select for the message Translate button: on hover / always / off.
+      createMessageButtonModeRow() {
+        return this.plugin.createSelectRow("ui.messageButtonMode", this.plugin.t("messageButtonMode"), [
+          [MESSAGE_BUTTON_VISIBILITY_HOVER, this.plugin.t("messageButtonModeHover")],
+          [MESSAGE_BUTTON_VISIBILITY_ALWAYS, this.plugin.t("messageButtonModeAlways")],
+          [MESSAGE_BUTTON_MODE_OFF, this.plugin.t("messageButtonModeOff")]
+        ], { description: this.plugin.t("messageButtonModeDesc") });
+      },
+      getMessageButtonMode() {
+        if (this.plugin.settings.ui?.injectMessageButtons === false) return MESSAGE_BUTTON_MODE_OFF;
+        return this.plugin.getMessageButtonVisibility();
+      },
+      // Stored as ui.injectMessageButtons + ui.messageButtonVisibility, each through setSetting so its own effects run.
+      setMessageButtonMode(mode, options = {}) {
+        const value = [MESSAGE_BUTTON_VISIBILITY_HOVER, MESSAGE_BUTTON_VISIBILITY_ALWAYS, MESSAGE_BUTTON_MODE_OFF].includes(mode) ? mode : MESSAGE_BUTTON_VISIBILITY_ALWAYS;
+        if (value === MESSAGE_BUTTON_MODE_OFF) {
+          this.plugin.setSetting("ui.injectMessageButtons", false, options);
+        } else {
+          this.plugin.setSetting("ui.messageButtonVisibility", value, options);
+          this.plugin.setSetting("ui.injectMessageButtons", true, options);
+        }
+        this.plugin.syncSettingControls("ui.messageButtonMode", this.getMessageButtonMode(), { includeActive: true });
+        return value;
+      },
+      createAutoTranslateSection() {
+        const section = this.createSettingsGroup(this.plugin.t("settingsGroupAutoTranslate"), "auto-translate");
+        section.appendChild(this.plugin.createCheckboxRow("ui.autoTranslateMessages", this.plugin.t("autoTranslateMessages"), { description: this.plugin.t("autoTranslateMessagesDesc") }));
+        section.appendChild(this.plugin.createCheckboxRow("ui.autoTranslatePrefetch", this.plugin.t("autoTranslatePrefetch"), { description: this.plugin.t("autoTranslatePrefetchDesc") }));
+        section.appendChild(this.plugin.createSelectRow("ui.autoTranslatePrefetchRange", this.plugin.t("autoTranslatePrefetchRange"), AUTO_TRANSLATE_PREFETCH_RANGES.map((value) => [String(value), String(value)]), {
+          description: this.plugin.t("autoTranslatePrefetchRangeDesc"),
+          dependsOn: { path: "ui.autoTranslatePrefetch", label: this.plugin.t("autoTranslatePrefetch") }
+        }));
+        section.appendChild(this.createCurrentChannelPolicyRow());
+        return section;
+      },
+      // Tuning that rarely needs a change: concurrency, how messages are found, strict retry.
+      createAdvancedSection() {
+        const section = this.createSettingsGroup(this.plugin.t("autoTranslateSettingsTitle"), "advanced");
+        const provider = this.plugin.getProviderDefaults(this.plugin.settings.translation.provider);
+        const local = this.plugin.isLocalTranslationProvider(this.plugin.settings.translation);
+        const concurrencyRange = { min: AUTO_TRANSLATE_MIN_CONCURRENCY, max: AUTO_TRANSLATE_MAX_CONCURRENCY, default: AUTO_TRANSLATE_DEFAULT_CONCURRENCY };
+        section.appendChild(this.createInputRow("ui.autoTranslateConcurrency", this.plugin.t("autoTranslateConcurrency"), "number", String(AUTO_TRANSLATE_DEFAULT_CONCURRENCY), { min: String(AUTO_TRANSLATE_MIN_CONCURRENCY), max: String(AUTO_TRANSLATE_MAX_CONCURRENCY), step: "1" }, { description: this.plugin.t(local ? "localConcurrencyDesc" : "autoTranslateConcurrencyDesc", concurrencyRange) }));
+        section.appendChild(this.plugin.createSelectRow("ui.autoTranslateIntakeMode", this.plugin.t("autoTranslateIntakeMode"), [
+          ["auto", this.plugin.t("autoTranslateIntakeAuto")],
+          ["dom", this.plugin.t("autoTranslateIntakeDom")],
+          ["bdfdb", this.plugin.t("autoTranslateIntakeBdfdb")]
+        ], { description: this.plugin.t("autoTranslateIntakeModeDesc"), disabledReason: provider?.autoTranslateIntakeMode && this.plugin.t("localIntakeFixed") }));
+        section.appendChild(this.plugin.createCheckboxRow("ui.autoTranslateStrictRetry", this.plugin.t("autoTranslateStrictRetry"), { description: this.plugin.t("autoTranslateStrictRetryDesc") }));
+        return section;
+      },
+      createHistoryBackfillSection() {
+        const section = this.createSettingsGroup(this.plugin.t("settingsGroupHistoryBackfill"), "history-backfill");
+        const dependsOn = { path: "ui.historyBackfillEnabled", label: this.plugin.t("historyBackfillEnabled") };
+        section.appendChild(this.plugin.createCheckboxRow("ui.historyBackfillEnabled", this.plugin.t("historyBackfillEnabled"), { description: this.plugin.t("historyBackfillEnabledDesc") }));
+        section.appendChild(this.createInputRow("ui.historyBackfillLimit", this.plugin.t("historyBackfillLimit"), "number", String(DEFAULT_SETTINGS.ui.historyBackfillLimit), { min: "1", max: "100", step: "1" }, { description: this.plugin.t("historyBackfillLimitDesc"), dependsOn }));
+        section.appendChild(this.createHistoryBackfillActionRow({ dependsOn }));
+        return section;
+      },
+      createProviderFallbackSection(local = this.plugin.isLocalTranslationProvider(this.plugin.settings.translation)) {
+        const section = this.createSettingsGroup(this.plugin.t("settingsGroupFallback"), "provider-fallback");
+        section.appendChild(this.plugin.createCheckboxRow("ui.providerFallbackEnabled", this.plugin.t("providerFallbackEnabled"), { description: this.plugin.t("providerFallbackEnabledDesc"), disabledReason: local && this.plugin.t("localFallbackUnavailable") }));
+        section.appendChild(this.createProviderFallbackOrderRow(local));
+        return section;
+      },
+      createCurrentChannelPolicyRow() {
+        const routeKey = this.plugin.getCurrentRouteKey();
+        const noChannel = !this.plugin.getChannelAutoTranslatePolicyStorageKey(routeKey);
+        const row = this.createSegmentedRow("ui.currentChannelAutoTranslatePolicy", this.plugin.t("currentChannelAutoTranslatePolicy"), [
+          ["inherit", this.plugin.t("channelRuleFollow")],
+          ["enabled", this.plugin.t("channelRuleAlways")],
+          ["disabled", this.plugin.t("channelRuleNever")]
+        ], {
+          description: this.plugin.t("currentChannelAutoTranslatePolicyDesc"),
+          disabledReason: noChannel && this.plugin.t("quickPanelRuleCaptionNoChannel"),
+          routeKey
+        });
+        if (noChannel) {
+          const control = row?.querySelectorAll?.("[data-dait-path='ui.currentChannelAutoTranslatePolicy']")?.[0];
+          if (control) this.setChannelRuleControlDisabled(control, true);
+        }
+        return row;
+      },
+      // The rule control is a radiogroup of buttons; "disabled" has to reach every button.
+      setChannelRuleControlDisabled(control, disabled) {
+        control.disabled = Boolean(disabled);
+        if (disabled) control.setAttribute?.("aria-disabled", "true");
+        else control.removeAttribute?.("aria-disabled");
+        [...control.children || []].filter((child) => child?.tagName === "BUTTON").forEach((button) => {
+          button.disabled = Boolean(disabled);
+        });
+      },
+      isChannelRuleControlDisabled(control) {
+        return Boolean(control?.disabled) || control?.getAttribute?.("aria-disabled") === "true";
+      },
+      createHistoryBackfillActionRow(rowOptions = {}) {
+        const controls = document.createElement("div");
+        controls.className = "dait-history-backfill-actions";
+        const button = this.createSmallButton(this.plugin.t("historyBackfillRun"));
+        button.dataset.daitAction = "historyBackfillRun";
+        button.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          this.plugin.runExplicitHistoryBackfillFromUi(button, { source: "settings" });
+        });
+        controls.appendChild(button);
+        return this.createRow(this.plugin.t("historyBackfillRun"), controls, { ...rowOptions, description: this.plugin.t("historyBackfillRunDesc") });
+      },
+      // The manual-translation fallback services as an ordered list: tick the services to use and move them with the
+      // arrow buttons (no typing of provider ids). Local services cannot be a fallback, so they are not listed.
+      createProviderFallbackOrderRow(local) {
+        const list = document.createElement("div");
+        list.className = "dait-order-list";
+        list.setAttribute("role", "group");
+        list.dataset.daitPath = "ui.providerFallbackOrder";
+        list.dataset.daitControl = "order-list";
+        this.renderProviderFallbackOrderList(list);
+        return this.createRow(this.plugin.t("providerFallbackOrder"), list, {
+          description: this.plugin.t("providerFallbackOrderListDesc"),
+          disabledReason: local && this.plugin.t("localFallbackUnavailable"),
+          dependsOn: { path: "ui.providerFallbackEnabled", label: this.plugin.t("providerFallbackEnabled") },
+          stacked: true,
+          ariaTarget: list
+        });
+      },
+      getProviderFallbackCandidates() {
+        return PROVIDER_ORDER.filter((provider) => !this.plugin.isLocalTranslationProvider(provider));
+      },
+      // Chosen services first, in their saved order, then the others.
+      renderProviderFallbackOrderList(list) {
+        if (!list) return;
+        const candidates = this.getProviderFallbackCandidates();
+        const order = this.plugin.parseProviderFallbackOrderText(this.plugin.settings.ui?.providerFallbackOrder).filter((provider) => candidates.includes(provider));
+        const current = String(this.plugin.settings.translation?.provider || "");
+        const focusHint = list.__daitFocusHint || null;
+        list.__daitFocusHint = null;
+        [...list.children || []].forEach((child) => child.remove?.());
+        list.textContent = "";
+        const save = (next, hint) => {
+          list.__daitFocusHint = hint;
+          this.plugin.setSetting("ui.providerFallbackOrder", next);
+        };
+        [...order, ...candidates.filter((provider) => !order.includes(provider))].forEach((provider) => {
+          const index = order.indexOf(provider);
+          const name = this.plugin.getProviderDisplayName(provider);
+          const item = document.createElement("div");
+          item.className = index >= 0 ? "dait-order-item dait-order-item-on" : "dait-order-item";
+          item.dataset.daitProvider = provider;
+          const position = document.createElement("span");
+          position.className = "dait-order-position";
+          position.setAttribute("aria-hidden", "true");
+          position.textContent = index >= 0 ? String(index + 1) : "";
+          item.appendChild(position);
+          const include = document.createElement("input");
+          include.type = "checkbox";
+          include.className = "dait-order-include";
+          include.id = this.createSettingsControlId();
+          include.checked = index >= 0;
+          include.addEventListener("change", () => {
+            const next = include.checked ? [...order, provider] : order.filter((item2) => item2 !== provider);
+            save(next, { provider, part: "include" });
+          });
+          item.appendChild(include);
+          const label = document.createElement("label");
+          label.className = "dait-order-name";
+          label.setAttribute("for", include.id);
+          label.textContent = name;
+          if (provider === current) {
+            const note = document.createElement("span");
+            note.className = "dait-order-note";
+            note.textContent = this.plugin.t("providerFallbackCurrent");
+            label.appendChild(note);
+          }
+          item.appendChild(label);
+          const move = (delta, part, labelKey) => {
+            const button = this.createSmallButton(delta < 0 ? "↑" : "↓", "outline");
+            button.className = `${button.className} dait-order-move`;
+            button.dataset.daitMove = part;
+            button.title = this.plugin.t(labelKey, { provider: name });
+            button.setAttribute("aria-label", this.plugin.t(labelKey, { provider: name }));
+            const target = index + delta;
+            button.disabled = index < 0 || target < 0 || target >= order.length;
+            button.addEventListener("click", () => {
+              if (button.disabled || index < 0 || target < 0 || target >= order.length) return;
+              const next = [...order];
+              next.splice(index, 1);
+              next.splice(target, 0, provider);
+              save(next, { provider, part });
+            });
+            return button;
+          };
+          item.appendChild(move(-1, "up", "providerFallbackMoveUp"));
+          item.appendChild(move(1, "down", "providerFallbackMoveDown"));
+          list.appendChild(item);
+        });
+        const row = list.closest?.(".dait-settings-row");
+        const parentPath = row?.dataset?.daitDependsOn;
+        if (row?.dataset?.daitLocked === "true" || parentPath && !this.plugin.getSetting(parentPath)) {
+          this.getSettingsRowControls(list).forEach((node) => {
+            node.disabled = true;
+          });
+        }
+        if (focusHint) {
+          const item = [...list.children || []].find((node) => node.dataset?.daitProvider === focusHint.provider);
+          const target = focusHint.part === "include" ? item?.querySelector?.(".dait-order-include") : [...item?.children || []].find((node) => node.dataset?.daitMove === focusHint.part && !node.disabled) || item?.querySelector?.(".dait-order-include");
+          this.focusSettingsElement(target);
+        }
+      },
+      createPublicBilingualSection() {
+        const section = this.createSettingsGroup(this.plugin.t("publicBilingualTitle"), "public-bilingual");
+        section.appendChild(this.plugin.createCheckboxRow("ui.publicBilingualInputButton", this.plugin.t("publicBilingualInputButton"), { description: this.plugin.t("publicBilingualInputButtonDesc") }));
+        section.appendChild(this.plugin.createCheckboxRow("ui.publicBilingualUseInitialOriginal", this.plugin.t("publicBilingualUseInitialOriginal"), { description: this.plugin.t("publicBilingualUseInitialOriginalDesc") }));
+        section.appendChild(this.plugin.createCheckboxRow("ui.publicBilingualAfterPolish", this.plugin.t("publicBilingualAfterPolish"), { description: this.plugin.t("publicBilingualAfterPolishDesc") }));
+        section.appendChild(this.plugin.createCheckboxRow("ui.publicBilingualPolishBeforeTranslate", this.plugin.t("publicBilingualPolishBeforeTranslate"), { description: this.plugin.t("publicBilingualPolishBeforeTranslateDesc") }));
+        section.appendChild(this.createPublicBilingualDependencyRow());
+        return section;
+      },
+      // Shows the service and target language the bilingual message really uses: the polish service when it is
+      // usable (otherwise the translation service), and the polish output language.
+      createPublicBilingualDependencyRow() {
+        const summary = document.createElement("div");
+        summary.className = "dait-provider-summary";
+        summary.textContent = this.getPublicBilingualFlowText();
+        if (typeof setTimeout === "function") {
+          this.plugin.unrefTimer(setTimeout(() => {
+            const root = summary.closest?.(".dait-settings") || summary.closest?.(".dait-settings-section");
+            root?.addEventListener?.("change", () => {
+              summary.textContent = this.getPublicBilingualFlowText();
+            });
+          }, 0));
+        }
+        return this.createRow(this.plugin.t("publicBilingualDependencyTitle"), summary, {
+          description: this.plugin.t("publicBilingualDependencyFlowDesc"),
+          wide: true
+        });
+      },
+      // What a bilingual message really goes through: the polish step only when a bilingual option runs it and
+      // polishing is on, the service picked by getPublicBilingualBaseConfig (the polish service when it is set up)
+      // and the language from getPublicBilingualTargetLanguage (the polish output language first).
+      getPublicBilingualFlowText() {
+        const polishRuns = Boolean(this.plugin.settings.polish?.enabled) && (this.plugin.isPublicBilingualPolishBeforeTranslateEnabled() || this.plugin.isPublicBilingualAfterPolishEnabled());
+        return this.plugin.t("publicBilingualDependencyStatus", {
+          polishProvider: polishRuns ? this.plugin.getProviderDisplayName(this.plugin.settings.polish?.provider) : this.plugin.t("publicBilingualDependencyPolishOff"),
+          translationProvider: this.plugin.getProviderDisplayName(this.plugin.getPublicBilingualBaseConfig()?.provider),
+          targetLanguage: this.plugin.getDisplayLanguage(this.plugin.getPublicBilingualTargetLanguage())
+        });
+      },
+      createDisplayBehaviorSection() {
+        const section = this.createSettingsGroup(this.plugin.t("settingsGroupTranslatedText"), "display");
+        section.appendChild(this.createSegmentedRow("ui.translationPosition", this.plugin.t("translationPosition"), [
+          ["before", this.plugin.t("translationPositionAbove")],
+          ["after", this.plugin.t("translationPositionBelow")]
+        ], { description: this.plugin.t("translationPositionDesc") }));
+        section.appendChild(this.plugin.createSelectRow("ui.translationStyle", this.plugin.t("translationStyle"), [
+          ["tint", this.plugin.t("translationStyleTint")],
+          ["muted", this.plugin.t("translationStyleMuted")],
+          ["tag", this.plugin.t("translationStyleTag")]
+        ], { description: this.plugin.t("translationStyleDesc") }));
+        section.appendChild(this.plugin.createSelectRow("ui.translationTextScale", this.plugin.t("translationTextScale"), [
+          ["100", "100%"],
+          ["90", "90%"]
+        ], { description: this.plugin.t("translationTextScaleDesc") }));
+        section.appendChild(this.plugin.createCheckboxRow("ui.maskTranslations", this.plugin.t("maskTranslations"), { description: this.plugin.t("maskTranslationsDesc") }));
+        section.appendChild(this.plugin.createCheckboxRow("ui.hideOriginalAfterTranslation", this.plugin.t("hideOriginalAfterTranslation"), { description: this.plugin.t("hideOriginalAfterTranslationDesc") }));
+        return section;
+      },
+      createDisplayNoticesSection() {
+        const section = this.createSettingsGroup(this.plugin.t("settingsGroupNotices"), "notices");
+        section.appendChild(this.plugin.createCheckboxRow("ui.showAutoTranslateWarnings", this.plugin.t("showAutoTranslateWarnings"), { description: this.plugin.t("showAutoTranslateWarningsDesc") }));
+        section.appendChild(this.plugin.createCheckboxRow("ui.showAutoTranslateToasts", this.plugin.t("showAutoTranslateToasts"), { description: this.plugin.t("showAutoTranslateToastsDesc") }));
+        section.appendChild(this.plugin.createCheckboxRow("ui.showQuickSettingsPanelButton", this.plugin.t("showQuickSettingsPanelButton"), { description: this.plugin.t("showQuickSettingsPanelButtonDesc") }));
+        return section;
+      },
+      createCacheSection() {
+        const section = this.createSettingsGroup(this.plugin.t("cacheSettingsTitle"), "cache");
+        section.appendChild(this.plugin.createSelectRow("ui.translationCacheTtlHours", this.plugin.t("translationCacheTtl"), TRANSLATION_CACHE_TTL_OPTIONS.map((value) => [String(value), this.getTranslationCacheTtlLabel(value)]), { description: this.plugin.t("translationCacheTtlDesc") }));
+        section.appendChild(this.createInputRow("ui.translationCacheMaxEntries", this.plugin.t("translationCacheMaxEntries"), "number", String(TRANSLATION_CACHE_DEFAULT_LIMIT), { min: String(TRANSLATION_CACHE_MIN_LIMIT), max: String(TRANSLATION_CACHE_MAX_LIMIT), step: "100" }, { description: this.plugin.t("translationCacheMaxEntriesDesc") }));
+        section.appendChild(this.createTranslationCacheStatsRow());
+        section.appendChild(this.createTranslationCacheClearRow());
+        return section;
+      },
+      // Test mode is gone: "Try a sentence" / "Try polishing" in the connection cards replace it. ui.testModeEnabled
+      // still loads from old settings and simply shows nothing.
+      createDiagnosticsSection(state = null) {
+        const section = this.createSettingsGroup(this.plugin.t("diagnosticsSettingsTitle"), "diagnostics");
+        section.appendChild(buildHostHealthCard(this.plugin, {
+          lazy: Boolean(state && state.activeTab !== SETTINGS_TAB_DATA)
+        }));
+        section.appendChild(this.plugin.createCheckboxRow("ui.diagnosticsEnabled", this.plugin.t("diagnosticLogs"), { description: this.plugin.t("diagnosticLogsDesc") }));
+        section.appendChild(this.createDiagnosticLogsRow());
+        section.appendChild(this.createDiagnosticLogsClearRow());
+        section.appendChild(this.createSettingsSnapshotRow());
+        section.appendChild(this.createDiagnosticSummaryRow());
+        return section;
+      },
+      runHostHealthCheck() {
+        return this.plugin.discordHost.runHealthCheck();
+      },
+      // Reset lives at the end of the data tab, away from navigation.
+      createSettingsDangerZone() {
+        const section = this.createSettingsGroup(this.plugin.t("settingsDangerZone"), "danger", { className: "dait-settings-danger-zone" });
+        const button = this.createSmallButton(this.plugin.t("reset"), "danger");
+        button.className = `${button.className} dait-settings-reset-button`;
+        button.dataset.daitAction = "resetSettings";
+        button.addEventListener("click", (event) => {
+          event?.preventDefault?.();
+          this.runSettingsResetFromUi(button);
+        });
+        section.appendChild(this.createRow(this.plugin.t("reset"), button, { description: this.plugin.t("settingsResetDesc") }));
+        return section;
+      },
+      // The reset dialog confirms, resets and refreshes every open settings panel itself.
+      runSettingsResetFromUi(source) {
+        const panel = source?.closest?.(".dait-settings") || null;
+        return this.plugin.openResetSettingsDialog({ panel, source });
+      },
+      // The data tab gives every action a row of its own (a destructive one always), so a row never mixes unrelated
+      // buttons: the stats rows show the counts, the clear rows below them update those counts.
+      createTranslationCacheStatsRow() {
+        const controls = document.createElement("div");
+        controls.className = "dait-cache-actions";
+        const clearStats = this.createSmallButton(this.plugin.t("clearTranslationCacheStats"));
+        clearStats.addEventListener("click", () => {
+          this.plugin.clearTranslationCacheStats();
+          this.refreshSettingsStatsRow(clearStats, "translation-cache");
+        });
+        controls.appendChild(clearStats);
+        const row = this.createRow(this.plugin.t("translationCacheStats"), controls, {
+          description: this.plugin.getTranslationCacheStatsText()
+        });
+        row.dataset.daitStats = "translation-cache";
+        return row;
+      },
+      createTranslationCacheClearRow() {
+        const controls = document.createElement("div");
+        controls.className = "dait-cache-actions";
+        const clearCache = this.createSmallButton(this.plugin.t("clearTranslationCache"), "danger");
+        clearCache.addEventListener("click", async () => {
+          const confirmed = await this.plugin.confirmAction({
+            title: this.plugin.t("clearTranslationCache"),
+            body: this.plugin.t("clearTranslationCacheConfirm"),
+            confirmText: this.plugin.t("clearTranslationCache"),
+            danger: true
+          });
+          if (!confirmed) return;
+          this.plugin.clearTranslationCache();
+          this.refreshSettingsStatsRow(clearCache, "translation-cache");
+        });
+        controls.appendChild(clearCache);
+        return this.createRow(this.plugin.t("clearTranslationCache"), controls, { description: this.plugin.t("clearTranslationCacheDesc") });
+      },
+      // Writes the current counts into the stats row of the same group ("translation-cache" or "diagnostic-logs").
+      refreshSettingsStatsRow(source, kind) {
+        const scope = source?.closest?.(".dait-settings-group") || source?.closest?.(".dait-settings");
+        const row = scope?.querySelector?.(`[data-dait-stats='${kind}']`);
+        const description = row?.querySelector?.(".dait-row-description");
+        if (!description) return;
+        description.textContent = kind === "translation-cache" ? this.plugin.getTranslationCacheStatsText() : this.plugin.getDiagnosticLogsStatsText();
+      },
+      // Copy and export: one small group of related buttons, with the log counts as the row's description.
+      createDiagnosticLogsRow() {
+        const controls = document.createElement("div");
+        controls.className = "dait-diagnostic-actions";
+        const copy = this.createSmallButton(this.plugin.t("copyDiagnosticLogs"));
+        const exportJson = this.createSmallButton(this.plugin.t("exportDiagnosticJson"));
+        const exportTxt = this.createSmallButton(this.plugin.t("exportDiagnosticTxt"));
+        const refreshDiagnostics = (button) => {
+          this.refreshSettingsStatsRow(button, "diagnostic-logs");
+          this.plugin.refreshDiagnosticSummary(button.closest(".dait-settings-group") || button.closest(".dait-settings"));
+        };
+        copy.addEventListener("click", async () => {
+          await this.plugin.copyDiagnosticLogs();
+          refreshDiagnostics(copy);
+        });
+        exportJson.addEventListener("click", async () => {
+          await this.plugin.exportDiagnosticLogs("json");
+          refreshDiagnostics(exportJson);
+        });
+        exportTxt.addEventListener("click", async () => {
+          await this.plugin.exportDiagnosticLogs("txt");
+          refreshDiagnostics(exportTxt);
+        });
+        controls.appendChild(copy);
+        controls.appendChild(exportJson);
+        controls.appendChild(exportTxt);
+        const row = this.createRow(this.plugin.t("exportDiagnosticLogs"), controls, {
+          description: this.plugin.getDiagnosticLogsStatsText()
+        });
+        row.dataset.daitStats = "diagnostic-logs";
+        return row;
+      },
+      createDiagnosticLogsClearRow() {
+        const controls = document.createElement("div");
+        controls.className = "dait-diagnostic-actions";
+        const clear = this.createSmallButton(this.plugin.t("clearDiagnosticLogs"), "danger");
+        clear.addEventListener("click", async () => {
+          const confirmed = await this.plugin.confirmAction({
+            title: this.plugin.t("clearDiagnosticLogs"),
+            body: this.plugin.t("clearDiagnosticLogsConfirm"),
+            confirmText: this.plugin.t("clearDiagnosticLogs"),
+            danger: true
+          });
+          if (!confirmed) return;
+          this.plugin.clearDiagnosticLogs();
+          this.refreshSettingsStatsRow(clear, "diagnostic-logs");
+          this.plugin.refreshDiagnosticSummary(clear.closest(".dait-settings-group") || clear.closest(".dait-settings"));
+        });
+        controls.appendChild(clear);
+        return this.createRow(this.plugin.t("clearDiagnosticLogs"), controls, { description: this.plugin.t("clearDiagnosticLogsDesc") });
+      },
+      createSettingsSnapshotRow() {
+        const controls = document.createElement("div");
+        controls.className = "dait-diagnostic-actions";
+        const button = this.createSmallButton(this.plugin.t("exportSettingsSnapshot"));
+        button.dataset.daitAction = "exportSettingsSnapshot";
+        button.addEventListener("click", () => this.plugin.exportSettingsSnapshot());
+        controls.appendChild(button);
+        return this.createRow(this.plugin.t("settingsSnapshot"), controls, { description: this.plugin.t("settingsSnapshotDesc") });
+      },
+      createDiagnosticSummaryRow() {
+        const summary = this.plugin.createDiagnosticSummary(this.plugin.diagnosticLogs);
+        const row = this.createRow(this.plugin.t("diagnosticSummary"), this.createDiagnosticSummaryPanel(summary), {
+          description: this.getDiagnosticSummaryStatsText(summary),
+          wide: true
+        });
+        row.classList.add("dait-diagnostic-summary-row");
+        return row;
+      },
+      refreshDiagnosticSummary(root) {
+        const row = root?.querySelector?.(".dait-diagnostic-summary-row");
+        if (!row) return;
+        const summary = this.plugin.createDiagnosticSummary(this.plugin.diagnosticLogs);
+        const description = row.querySelector?.(".dait-row-description");
+        if (description) description.textContent = this.getDiagnosticSummaryStatsText(summary);
+        const current = row.querySelector?.(".dait-diagnostic-summary");
+        if (current) current.replaceWith(this.createDiagnosticSummaryPanel(summary));
+      },
+      createDiagnosticSummaryPanel(summary = this.plugin.createDiagnosticSummary(this.plugin.diagnosticLogs)) {
+        const panel = document.createElement("div");
+        panel.className = "dait-diagnostic-summary";
+        const groups = [
+          [this.plugin.t("diagnosticSummaryStates"), summary.top?.messageStates || []],
+          [this.plugin.t("diagnosticSummaryReasons"), summary.top?.reasonCodes || []],
+          [this.plugin.t("diagnosticSummaryFlows"), summary.top?.flows || []],
+          [this.plugin.t("diagnosticSummaryQueues"), this.getDiagnosticSummaryQueueItems(summary)],
+          [this.plugin.t("diagnosticSummaryProviders"), summary.top?.providers || []],
+          [this.plugin.t("diagnosticSummaryFailures"), summary.top?.failureClasses?.length ? summary.top.failureClasses : summary.top?.failureTypes || []],
+          [this.plugin.t("diagnosticSummaryFailureLayers"), summary.top?.failureLayers || []],
+          [this.plugin.t("diagnosticSummaryFlowStages"), summary.top?.flowStages || []]
+        ].filter(([, items]) => Array.isArray(items) && items.length);
+        if (!groups.length) {
+          panel.hidden = true;
+          return panel;
+        }
+        groups.forEach(([label, items]) => panel.appendChild(this.createDiagnosticSummaryGroup(label, items)));
+        return panel;
+      },
+      // A chip shows a short label for its code (service names for services); the code stays in the tooltip.
+      getDiagnosticChipLabel(code) {
+        const value = String(code ?? "");
+        if (PROVIDER_ORDER.includes(value)) return this.plugin.getProviderDisplayName(value);
+        return getDiagnosticCodeLabel(value, this.plugin.getLocale());
+      },
+      createDiagnosticSummaryGroup(label, items = []) {
+        const group = document.createElement("div");
+        group.className = "dait-diagnostic-summary-group";
+        const title = document.createElement("span");
+        title.className = "dait-diagnostic-summary-title";
+        title.textContent = label;
+        group.appendChild(title);
+        const chips = document.createElement("div");
+        chips.className = "dait-diagnostic-summary-chips";
+        items.slice(0, 8).forEach((item) => {
+          const chip = document.createElement("span");
+          chip.className = "dait-diagnostic-chip";
+          chip.dataset.daitCode = String(item.key ?? "");
+          chip.textContent = `${this.getDiagnosticChipLabel(item.key)}: ${item.count}`;
+          chip.title = String(item.key ?? "");
+          chips.appendChild(chip);
+        });
+        group.appendChild(chips);
+        return group;
+      },
+      getDiagnosticSummaryQueueItems(summary = {}) {
+        const items = Array.isArray(summary.top?.queueTypes) ? [...summary.top.queueTypes] : [];
+        const queue = summary.queue || {};
+        [
+          ["queueLength", queue.queueLength],
+          ["inFlight", queue.inFlight],
+          ["inFlightItems", queue.inFlightItems],
+          ["prefetchInFlight", queue.prefetchInFlight],
+          ["pendingTargets", queue.pendingTargets]
+        ].forEach(([key, value]) => {
+          const count = Number(value || 0) || 0;
+          if (count > 0 && !items.some((item) => item.key === key)) items.push({ key, count });
+        });
+        return items;
+      },
+      getDiagnosticLogsStatsText() {
+        return this.plugin.t("diagnosticLogsStats", {
+          entries: this.plugin.diagnosticLogs.length,
+          compressed: this.plugin.diagnosticCompressedCount
+        });
+      },
+      // One sentence (UI-SPEC descriptions): the count, what the chips group by, and the latest event.
+      getDiagnosticSummaryStatsText(summary = this.plugin.createDiagnosticSummary(this.plugin.diagnosticLogs)) {
+        const events = Number(summary?.totalEvents || 0) || 0;
+        if (!events) return this.plugin.t("diagnosticSummaryEmpty");
+        const latest = this.formatDiagnosticSummaryTime(summary?.latestIso);
+        return this.plugin.t("diagnosticSummaryEvents", { events, latest });
+      },
+      formatDiagnosticSummaryTime(iso) {
+        if (!iso) return "-";
+        const date = new Date(iso);
+        if (!Number.isFinite(date.getTime())) return String(iso);
+        const locale = this.plugin.getLocale() === "en" ? "en-US" : "zh-CN";
+        try {
+          return date.toLocaleString(locale, { hour12: false });
+        } catch {
+          return date.toLocaleString();
+        }
+      },
+      getTranslationCacheStatsText() {
+        return this.plugin.t("translationCacheStatsDesc", {
+          hits: this.plugin.translationCacheStats.hits,
+          misses: this.plugin.translationCacheStats.misses,
+          memory: this.plugin.getTranslationCacheMessageCount(),
+          persistent: this.plugin.persistentTranslationCacheCount
+        });
+      },
+      getTranslationCacheTtlLabel(hours) {
+        const value = Number(hours);
+        const labels = {
+          3: this.plugin.t("cacheTtl3h"),
+          6: this.plugin.t("cacheTtl6h"),
+          12: this.plugin.t("cacheTtl12h"),
+          24: this.plugin.t("cacheTtl1d"),
+          48: this.plugin.t("cacheTtl2d"),
+          168: this.plugin.t("cacheTtl7d")
+        };
+        return labels[value] || `${value}h`;
+      }
+    };
+    module2.exports = methods;
+  }
+});
+
+// src/settings/ui/prompt-manager.js
+var require_prompt_manager = __commonJS({
+  "src/settings/ui/prompt-manager.js"(exports2, module2) {
+    "use strict";
+    var { POLISH_PROMPT_TEMPLATE_CATEGORIES } = require_constants();
+    function normalizePromptText(value) {
+      return String(value ?? "").replace(/\r\n?/g, "\n").trim();
+    }
+    var methods = {
+      buildPromptManagerHeader() {
+        const header = document.createElement("div");
+        header.className = "dait-prompt-manager-header";
+        const title = document.createElement("span");
+        title.textContent = this.plugin.t("promptTemplates");
+        header.appendChild(title);
+        const desc = document.createElement("p");
+        desc.className = "dait-row-description";
+        desc.textContent = this.plugin.t("promptTemplatesDesc");
+        header.appendChild(desc);
+        return header;
+      },
+      buildPromptTemplatePickerBlock(idBase) {
+        const tools = document.createElement("div");
+        tools.className = "dait-prompt-tools";
+        const search = document.createElement("input");
+        search.type = "search";
+        search.placeholder = this.plugin.t("promptSearch");
+        search.setAttribute("aria-label", this.plugin.t("promptSearch"));
+        tools.appendChild(search);
+        const select = document.createElement("select");
+        select.className = "dait-prompt-select";
+        select.setAttribute("aria-label", this.plugin.t("promptTemplateSelect"));
+        tools.appendChild(select);
+        const actions = document.createElement("div");
+        actions.className = "dait-prompt-actions";
+        const apply = this.createSmallButton(this.plugin.t("promptApply"), "primary");
+        apply.dataset.daitAction = "promptApply";
+        const remove = this.createSmallButton(this.plugin.t("promptDelete"), "danger");
+        remove.dataset.daitAction = "promptDelete";
+        actions.appendChild(apply);
+        actions.appendChild(remove);
+        tools.appendChild(actions);
+        const previewBlock = document.createElement("div");
+        previewBlock.className = "dait-prompt-preview-block";
+        const previewLabel = document.createElement("span");
+        previewLabel.className = "dait-prompt-preview-label";
+        previewLabel.id = `${idBase}-preview-label`;
+        previewBlock.appendChild(previewLabel);
+        const preview = document.createElement("div");
+        preview.className = "dait-prompt-preview";
+        preview.tabIndex = 0;
+        preview.setAttribute("role", "region");
+        preview.setAttribute("aria-labelledby", previewLabel.id);
+        previewBlock.appendChild(preview);
+        return { tools, search, select, apply, remove, previewBlock, previewLabel, preview };
+      },
+      buildPromptSaveRow(kind) {
+        const saveRow = document.createElement("div");
+        saveRow.className = kind === "polish" ? "dait-prompt-tools dait-prompt-save dait-prompt-save-categorized" : "dait-prompt-tools dait-prompt-save";
+        const nameInput = document.createElement("input");
+        nameInput.type = "text";
+        nameInput.maxLength = 80;
+        nameInput.placeholder = this.plugin.t("promptNamePlaceholder");
+        nameInput.setAttribute("aria-label", this.plugin.t("promptSaveNameLabel"));
+        saveRow.appendChild(nameInput);
+        let categorySelect = null;
+        if (kind === "polish") {
+          categorySelect = document.createElement("select");
+          categorySelect.className = "dait-prompt-category-select";
+          categorySelect.setAttribute("aria-label", this.plugin.t("promptTemplateCategoryLabel"));
+          const defaultCategory = this.plugin.getPolishTemplateCategory(this.plugin.getActivePolishTemplate());
+          POLISH_PROMPT_TEMPLATE_CATEGORIES.forEach((category) => {
+            const option = document.createElement("option");
+            option.value = category;
+            option.textContent = this.plugin.getPolishTemplateCategoryLabel(category);
+            option.selected = category === defaultCategory;
+            categorySelect.appendChild(option);
+          });
+          saveRow.appendChild(categorySelect);
+        }
+        const save = this.createSmallButton(this.plugin.t("promptSave"));
+        save.dataset.daitAction = "promptSave";
+        saveRow.appendChild(save);
+        return { saveRow, nameInput, categorySelect, save };
+      },
+      buildPromptEditorBlock(kind, idBase) {
+        const promptBlock = document.createElement("div");
+        promptBlock.className = "dait-prompt-editor";
+        const promptLabel = document.createElement("span");
+        promptLabel.id = `${idBase}-label`;
+        promptLabel.textContent = this.plugin.t("prompt");
+        promptBlock.appendChild(promptLabel);
+        const promptDesc = document.createElement("p");
+        promptDesc.className = "dait-row-description";
+        promptDesc.id = `${idBase}-desc`;
+        promptDesc.textContent = this.plugin.t("promptDesc");
+        promptBlock.appendChild(promptDesc);
+        const textarea = document.createElement("textarea");
+        textarea.dataset.daitPath = `${kind}.prompt`;
+        textarea.rows = 6;
+        textarea.value = this.plugin.getSetting(`${kind}.prompt`) ?? "";
+        textarea.setAttribute("aria-labelledby", promptLabel.id);
+        textarea.setAttribute("aria-describedby", `${promptDesc.id} ${idBase}-status`);
+        this.bindSettingsTextarea(textarea);
+        promptBlock.appendChild(textarea);
+        const footer = document.createElement("div");
+        footer.className = "dait-prompt-editor-footer";
+        const status = document.createElement("span");
+        status.className = "dait-prompt-status";
+        status.id = `${idBase}-status`;
+        footer.appendChild(status);
+        const editorActions = document.createElement("div");
+        editorActions.className = "dait-prompt-actions";
+        const update = this.createSmallButton(this.plugin.t("promptUpdate"));
+        update.dataset.daitAction = "promptUpdate";
+        const restorePresets = this.createSmallButton(this.plugin.t("promptRestorePresets"));
+        restorePresets.dataset.daitAction = "promptRestorePresets";
+        const copy = this.createSmallButton(this.plugin.t("promptCopy"));
+        editorActions.appendChild(update);
+        editorActions.appendChild(restorePresets);
+        editorActions.appendChild(copy);
+        footer.appendChild(editorActions);
+        promptBlock.appendChild(footer);
+        const saveControls = this.buildPromptSaveRow(kind);
+        promptBlock.appendChild(saveControls.saveRow);
+        return { promptBlock, textarea, status, update, restorePresets, copy, ...saveControls };
+      },
+      // Template picker (select only previews), read-only preview, the prompt editor and an inline "save as
+      // template" name field. Only "Use template" replaces the prompt, after a confirmation when the current
+      // prompt has edits that no template holds.
+      createPromptManager(kind) {
+        const manager = document.createElement("div");
+        manager.className = "dait-prompt-manager";
+        const idBase = `dait-prompt-${kind}-${Math.random().toString(36).slice(2, 8)}`;
+        manager.appendChild(this.buildPromptManagerHeader());
+        const picker = this.buildPromptTemplatePickerBlock(idBase);
+        manager.appendChild(picker.tools);
+        manager.appendChild(picker.previewBlock);
+        const editor = this.buildPromptEditorBlock(kind, idBase);
+        manager.appendChild(editor.promptBlock);
+        const { search, select, apply, remove, previewLabel, preview } = picker;
+        const { textarea, status, update, restorePresets, copy, nameInput, categorySelect, save } = editor;
+        const getPromptValue = () => textarea.value ?? this.plugin.settings[kind]?.prompt ?? "";
+        const findTemplate = (id) => (id ? this.plugin.getPromptTemplates(kind).find((template) => template.id === id) : null) || null;
+        const hasUnsavedEdits = (prompt) => Boolean(normalizePromptText(prompt)) && !this.plugin.getPromptTemplates(kind).some((template) => normalizePromptText(template.prompt) === normalizePromptText(prompt));
+        const syncStatus = () => {
+          const prompt = getPromptValue();
+          const active = findTemplate(this.plugin.settings[kind]?.activePromptTemplate);
+          const matching = active && normalizePromptText(active.prompt) === normalizePromptText(prompt) ? active : this.plugin.getPromptTemplates(kind).find((template) => normalizePromptText(template.prompt) === normalizePromptText(prompt)) || null;
+          status.textContent = matching ? this.plugin.t("promptUsingTemplate", { code: matching.serial, name: this.plugin.getPromptTemplateDisplayName(matching) }) : active && normalizePromptText(prompt) ? this.plugin.t("promptTemplateEdited", { code: active.serial, name: this.plugin.getPromptTemplateDisplayName(active) }) : this.plugin.t("promptTemplateCustom");
+          update.disabled = !active || !normalizePromptText(prompt) || normalizePromptText(active.prompt) === normalizePromptText(prompt);
+          update.title = active ? this.plugin.t("promptUpdateTitle", { code: active.serial, name: this.plugin.getPromptTemplateDisplayName(active) }) : "";
+          restorePresets.disabled = this.plugin.getMissingBuiltInPromptTemplates(kind).length === 0;
+        };
+        const syncPreview = () => {
+          const template = findTemplate(select.value);
+          const inUse = Boolean(template) && template.id === this.plugin.settings[kind]?.activePromptTemplate;
+          previewLabel.textContent = inUse ? `${this.plugin.t("promptPreview")} · ${this.plugin.t("promptPreviewActive")}` : this.plugin.t("promptPreview");
+          preview.textContent = template ? String(template.prompt || "") : this.plugin.t("promptNoTemplate");
+          apply.disabled = !template;
+          remove.disabled = !template;
+        };
+        const renderOptions = (preferredId = "") => {
+          const query = String(search.value || "").trim().toLowerCase();
+          const templates = this.plugin.getPromptTemplates(kind).filter((template) => !query || this.plugin.getPromptTemplateSearchText(template).includes(query));
+          const previous = preferredId || select.value;
+          select.textContent = "";
+          if (!templates.length) {
+            const option = document.createElement("option");
+            option.value = "";
+            option.textContent = this.plugin.t("promptNoTemplate");
+            select.appendChild(option);
+            syncPreview();
+            return;
+          }
+          const activeId = this.plugin.settings[kind]?.activePromptTemplate;
+          const selectedId = [previous, activeId].find((id) => id && templates.some((template) => template.id === id)) || templates[0].id;
+          const appendOption = (container, template) => {
+            const option = document.createElement("option");
+            option.value = template.id;
+            option.textContent = this.plugin.getPromptTemplateLabel(template);
+            option.selected = template.id === selectedId;
+            container.appendChild(option);
+          };
+          if (kind === "polish") {
+            POLISH_PROMPT_TEMPLATE_CATEGORIES.forEach((category) => {
+              const groupTemplates = templates.filter((template) => this.plugin.getPolishTemplateCategory(template) === category);
+              if (!groupTemplates.length) return;
+              const group = document.createElement("optgroup");
+              group.label = this.plugin.getPolishTemplateCategoryLabel(category);
+              groupTemplates.forEach((template) => appendOption(group, template));
+              select.appendChild(group);
+            });
+          } else {
+            templates.forEach((template) => appendOption(select, template));
+          }
+          syncPreview();
+        };
+        const commitPrompt = (prompt) => {
+          if (prompt !== this.plugin.settings[kind]?.prompt) this.plugin.setSetting(`${kind}.prompt`, prompt);
+        };
+        const saveTemplate = () => {
+          const name = String(nameInput.value || "").trim();
+          if (!name) {
+            this.plugin.showToast(this.plugin.t("promptNameRequired"), "error");
+            nameInput.focus?.();
+            return;
+          }
+          const prompt = getPromptValue();
+          commitPrompt(prompt);
+          this.plugin.savePromptTemplate(kind, name, prompt, categorySelect ? { category: categorySelect.value } : {});
+          nameInput.value = "";
+          search.value = "";
+          renderOptions(this.plugin.settings[kind]?.activePromptTemplate);
+          syncStatus();
+        };
+        textarea.addEventListener("change", () => this.plugin.preserveSettingsScroll(textarea, () => this.plugin.setSetting(`${kind}.prompt`, textarea.value)));
+        textarea.addEventListener("input", syncStatus);
+        textarea.__daitAfterSync = () => {
+          syncStatus();
+          syncPreview();
+        };
+        search.addEventListener("input", () => renderOptions());
+        select.addEventListener("change", syncPreview);
+        apply.addEventListener("click", async () => {
+          const template = findTemplate(select.value);
+          if (!template) return;
+          const current = getPromptValue();
+          if (normalizePromptText(current) !== normalizePromptText(template.prompt) && hasUnsavedEdits(current)) {
+            const confirmed = await this.plugin.confirmAction({
+              title: this.plugin.t("promptApplyUnsavedTitle"),
+              body: this.plugin.t("promptApplyUnsavedConfirm", { code: template.serial, name: this.plugin.getPromptTemplateDisplayName(template) }),
+              confirmText: this.plugin.t("promptApply"),
+              danger: true
+            });
+            if (!confirmed || !findTemplate(template.id)) return;
+          }
+          this.plugin.applyPromptTemplate(kind, template.id);
+          textarea.value = this.plugin.settings[kind]?.prompt ?? template.prompt;
+          renderOptions(template.id);
+          syncStatus();
+        });
+        save.addEventListener("click", saveTemplate);
+        nameInput.addEventListener("keydown", (event) => {
+          if (event.key !== "Enter" || event.isComposing) return;
+          event.preventDefault?.();
+          saveTemplate();
+        });
+        update.addEventListener("click", () => {
+          const active = findTemplate(this.plugin.settings[kind]?.activePromptTemplate);
+          if (!active) return;
+          const prompt = getPromptValue();
+          commitPrompt(prompt);
+          this.plugin.updatePromptTemplate(kind, active.id, prompt);
+          renderOptions();
+          syncStatus();
+        });
+        restorePresets.addEventListener("click", () => {
+          this.plugin.restoreMissingBuiltInPromptTemplates(kind);
+          renderOptions();
+          syncStatus();
+        });
+        copy.addEventListener("click", () => this.copyPromptText(textarea));
+        remove.addEventListener("click", async () => {
+          const template = findTemplate(select.value);
+          if (!template) return;
+          const fallback = template.id === this.plugin.settings[kind]?.activePromptTemplate ? this.plugin.getPromptTemplates(kind).find((item) => item.id !== template.id) || null : null;
+          const label = this.plugin.getPromptTemplateLabel(template);
+          const confirmed = await this.plugin.confirmAction({
+            title: this.plugin.t("promptDeleteConfirm"),
+            body: fallback && normalizePromptText(fallback.prompt) !== normalizePromptText(getPromptValue()) ? [label, this.plugin.t("promptDeleteActiveNote", { code: fallback.serial, name: this.plugin.getPromptTemplateDisplayName(fallback) })] : label,
+            confirmText: this.plugin.t("promptDelete"),
+            danger: true
+          });
+          if (!confirmed || !findTemplate(template.id)) return;
+          const wasActive = this.plugin.settings[kind]?.activePromptTemplate === template.id;
+          this.plugin.deletePromptTemplate(kind, template.id);
+          if (wasActive) textarea.value = this.plugin.settings[kind]?.prompt ?? "";
+          renderOptions();
+          syncStatus();
+        });
+        renderOptions();
+        syncStatus();
+        return manager;
+      },
+      async copyPromptText(textarea, successKey = "promptCopied") {
+        const text = String(textarea?.value || "");
+        const snapshot = this.plugin.getSettingsScrollSnapshot(textarea);
+        try {
+          await this.plugin.copyTextToClipboard(text);
+          this.restoreSettingsScroll(snapshot);
+          this.plugin.showToast(this.plugin.t(successKey), "success");
+        } catch (error) {
+          this.restoreSettingsScroll(snapshot);
+          this.plugin.showToast(this.plugin.t("promptCopyFailed", { error: this.plugin.formatError(error) }), "error");
+        }
+      },
+      async copyTextFromNode(node, successKey = "copiedToClipboard") {
+        const text = String(node?.textContent || "");
+        const snapshot = this.plugin.getSettingsScrollSnapshot(node);
+        try {
+          await this.plugin.copyTextToClipboard(text);
+          this.restoreSettingsScroll(snapshot);
+          this.plugin.showToast(this.plugin.t(successKey), "success");
+        } catch (error) {
+          this.restoreSettingsScroll(snapshot);
+          this.plugin.showToast(this.plugin.t("promptCopyFailed", { error: this.plugin.formatError(error) }), "error");
+        }
+      }
+    };
+    module2.exports = methods;
+  }
+});
+
+// src/settings/ui/settings-controls.js
+var require_settings_controls = __commonJS({
+  "src/settings/ui/settings-controls.js"(exports2, module2) {
+    "use strict";
+    var {
+      CUSTOM_LANGUAGE_VALUE,
+      AUTO_LANGUAGE_VALUE,
+      LANGUAGE_PRESETS,
+      DEFAULT_SETTINGS
+    } = require_constants();
+    var { SETTINGS_CONTROL_WIDTH } = require_settings_schema();
+    var methods = {
+      createCheckboxRow(path, labelText, rowOptions = {}) {
+        const input = document.createElement("input");
+        input.type = "checkbox";
+        input.className = "dait-switch";
+        input.setAttribute("role", "switch");
+        input.dataset.daitPath = path;
+        input.checked = Boolean(this.plugin.getSetting(path));
+        input.addEventListener("change", () => this.plugin.setSetting(path, input.checked));
+        return this.createRow(labelText, input, { ...rowOptions, checkbox: true });
+      },
+      createApiKeyRow(kind) {
+        const provider = String(this.plugin.settings[kind]?.provider || "");
+        const input = document.createElement("input");
+        input.type = "password";
+        input.dataset.daitPath = `${kind}.apiKey`;
+        input.placeholder = this.plugin.isProviderApiKeyOptional(provider) ? this.plugin.t("apiKeyOptionalPlaceholder") : ["deepseek", "openaiCompatible"].includes(provider) ? "sk-..." : "";
+        input.autocomplete = "off";
+        input.spellcheck = false;
+        input.value = this.plugin.getSetting(`${kind}.apiKey`) ?? "";
+        input.addEventListener("change", () => this.plugin.setSetting(`${kind}.apiKey`, input.value));
+        const row = this.createRow(this.plugin.t("apiKey"), input, { description: this.getProviderFieldHelp("apiKey", provider), stacked: true });
+        row.className = `${row.className} dait-api-key-field`;
+        return row;
+      },
+      // Service status with its Test button, as a row (the connection card shows the same in its header).
+      createProviderStatusRow(kind) {
+        return this.createRow(this.plugin.t("providerStatus"), this.createProviderConnectionStatus(kind), { description: this.plugin.t("providerStatusDesc") });
+      },
+      createHotkeyRow(rowOptions = {}) {
+        const controls = document.createElement("div");
+        controls.className = "dait-hotkey-controls";
+        const record = this.createSmallButton(this.plugin.getHotkeyLabel());
+        record.classList.add("dait-hotkey-recorder");
+        record.title = this.plugin.t("hotkeyRecord");
+        const reset = this.createSmallButton(this.plugin.t("hotkeyReset"), "link");
+        reset.addEventListener("click", () => {
+          this.plugin.setSetting("ui.polishHotkey", DEFAULT_SETTINGS.ui.polishHotkey);
+          record.textContent = this.plugin.getHotkeyLabel();
+          this.plugin.showToast(this.plugin.t("hotkeySaved", { shortcut: this.plugin.getHotkeyLabel() }), "success");
+        });
+        record.addEventListener("click", () => this.plugin.recordHotkey(record));
+        controls.appendChild(record);
+        controls.appendChild(reset);
+        return this.createRow(this.plugin.t("polishHotkey"), controls, { ...rowOptions, description: this.plugin.t("polishHotkeyDesc") });
+      },
+      createInputRow(path, labelText, type, placeholder, attrs = {}, rowOptions = {}) {
+        const input = document.createElement("input");
+        input.type = type;
+        input.dataset.daitPath = path;
+        input.placeholder = placeholder || "";
+        input.value = this.plugin.getSetting(path) ?? "";
+        Object.entries(attrs).forEach(([key, value]) => input.setAttribute(key, value));
+        const commit = (options = {}) => {
+          const saveOptions = options.immediate ? { save: "immediate", retryOnError: false } : options.live ? { save: "debounce", live: true } : void 0;
+          if (type !== "number") {
+            const rawText = String(input.value ?? "");
+            const trimOnCommit = options.immediate && (path.endsWith(".model") || path.endsWith(".endpoint"));
+            const nextText = trimOnCommit ? rawText.trim() : rawText;
+            if (trimOnCommit && nextText !== input.value) input.value = nextText;
+            this.plugin.setSetting(path, nextText, saveOptions);
+            if (options.immediate && path.endsWith(".model")) {
+              const kind = path.split(".")[0];
+              this.refreshModelHistoryDatalist(input, kind);
+            }
+            return;
+          }
+          const raw = String(input.value ?? "").trim();
+          if (!raw) {
+            if (options.force) this.plugin.syncSettingControls(path, this.plugin.getSetting(path));
+            return;
+          }
+          if (!options.force && input.validity && input.validity.valid === false) return;
+          this.plugin.setSetting(path, Number(raw), saveOptions);
+        };
+        if (type === "number") {
+          input.addEventListener("input", () => commit());
+          input.addEventListener("blur", () => commit({ force: true, immediate: true }));
+          input.addEventListener("pointerup", () => setTimeout(() => commit(), 0));
+          input.addEventListener("keyup", () => setTimeout(() => commit(), 0));
+        } else {
+          input.addEventListener("input", () => commit({ live: true }));
+          input.addEventListener("blur", () => commit({ force: true, immediate: true }));
+        }
+        input.addEventListener("change", () => commit({ force: true, immediate: true }));
+        return this.createRow(labelText, input, rowOptions);
+      },
+      createTextareaRow(path, labelText, rowOptions = {}) {
+        const textarea = document.createElement("textarea");
+        textarea.dataset.daitPath = path;
+        textarea.rows = 6;
+        textarea.value = this.plugin.getSetting(path) ?? "";
+        this.bindSettingsTextarea(textarea);
+        textarea.addEventListener("change", () => this.plugin.preserveSettingsScroll(textarea, () => this.plugin.setSetting(path, textarea.value)));
+        return this.createRow(labelText, textarea, { ...rowOptions, stacked: true });
+      },
+      createSelectRow(path, labelText, options, rowOptions = {}) {
+        const select = document.createElement("select");
+        select.dataset.daitPath = path;
+        const routeKey = typeof rowOptions.routeKey === "string" ? rowOptions.routeKey : null;
+        if (routeKey !== null) select.dataset.daitRouteKey = routeKey;
+        const current = routeKey !== null && path === "ui.currentChannelAutoTranslatePolicy" ? this.plugin.getCurrentChannelAutoTranslatePolicyMode(routeKey) : this.plugin.getSetting(path);
+        const appendOption = (parent, [value, text]) => {
+          const option = document.createElement("option");
+          option.value = value;
+          option.textContent = text;
+          option.selected = String(value) === String(current);
+          parent.appendChild(option);
+        };
+        options.forEach((entry) => {
+          if (entry && !Array.isArray(entry) && Array.isArray(entry.options)) {
+            const group = document.createElement("optgroup");
+            group.label = entry.label;
+            group.setAttribute("label", entry.label);
+            entry.options.forEach((option) => appendOption(group, option));
+            select.appendChild(group);
+            return;
+          }
+          appendOption(select, entry);
+        });
+        select.addEventListener("change", () => {
+          if (path.endsWith(".provider")) {
+            this.plugin.setTaskProvider(path.split(".")[0], select.value);
+            this.replaceSettingsPanelFrom(select);
+            return;
+          }
+          this.plugin.setSetting(path, select.value, routeKey !== null ? { routeKey } : void 0);
+          if (path === "ui.language") {
+            const panel = select.closest?.(".dait-settings");
+            if (panel) this.plugin.replaceSettingsPanelElement(panel);
+          }
+        });
+        return this.createRow(labelText, select, rowOptions);
+      },
+      createLanguageRow(kind, field, labelText, descriptionText, options = {}) {
+        const current = String(this.plugin.settings[kind]?.[field] || "");
+        const preset = LANGUAGE_PRESETS.find((language) => language.value === current);
+        const isAuto = options.allowAuto && current === AUTO_LANGUAGE_VALUE;
+        const isCustom = !preset && !isAuto;
+        const controls = document.createElement("div");
+        controls.className = "dait-language-controls";
+        const select = document.createElement("select");
+        select.className = "dait-language-select";
+        if (options.allowAuto) {
+          const autoOption = document.createElement("option");
+          autoOption.value = AUTO_LANGUAGE_VALUE;
+          autoOption.textContent = this.plugin.t("autoDetectLanguage");
+          autoOption.selected = isAuto;
+          select.appendChild(autoOption);
+        }
+        LANGUAGE_PRESETS.forEach((language) => {
+          const option = document.createElement("option");
+          option.value = language.value;
+          option.textContent = this.plugin.getLanguageLabel(language);
+          option.selected = language.value === current;
+          select.appendChild(option);
+        });
+        const customOption = document.createElement("option");
+        customOption.value = CUSTOM_LANGUAGE_VALUE;
+        customOption.textContent = this.plugin.t("customLanguage");
+        customOption.selected = isCustom;
+        select.appendChild(customOption);
+        const customInput = document.createElement("input");
+        customInput.type = "text";
+        customInput.className = "dait-language-custom";
+        customInput.placeholder = this.plugin.t("customLanguagePlaceholder");
+        customInput.title = this.plugin.t("customLanguageDesc");
+        customInput.setAttribute("aria-description", this.plugin.t("customLanguageDesc"));
+        customInput.setAttribute("aria-label", `${labelText}: ${this.plugin.t("customLanguage")}`);
+        customInput.value = isCustom ? current : "";
+        customInput.hidden = !isCustom;
+        select.addEventListener("change", () => {
+          if (select.value === AUTO_LANGUAGE_VALUE) {
+            customInput.hidden = true;
+            customInput.value = "";
+            this.plugin.setSetting(`${kind}.${field}`, AUTO_LANGUAGE_VALUE);
+            return;
+          }
+          if (select.value === CUSTOM_LANGUAGE_VALUE) {
+            customInput.hidden = false;
+            customInput.focus();
+            if (customInput.value.trim()) this.plugin.setSetting(`${kind}.${field}`, customInput.value.trim());
+            return;
+          }
+          customInput.hidden = true;
+          customInput.value = "";
+          this.plugin.setSetting(`${kind}.${field}`, select.value);
+        });
+        customInput.addEventListener("change", () => {
+          const value = customInput.value.trim();
+          if (value) this.plugin.setSetting(`${kind}.${field}`, value);
+        });
+        controls.appendChild(select);
+        controls.appendChild(customInput);
+        return this.createRow(labelText, controls, { description: descriptionText, labelFor: select });
+      },
+      createSmallButton(text, variant = "") {
+        const button = document.createElement("button");
+        button.className = `dait-small-button ${variant ? `dait-small-button-${variant}` : ""}`.trim();
+        button.type = "button";
+        button.textContent = text;
+        return button;
+      },
+      // One settings row (UI-SPEC): a div with the label and a one-line description on the left and the control on
+      // the right. Options:
+      //   description      help text under the label (aria-describedby on the control)
+      //   disabledReason   locks the control and shows the reason instead of the description
+      //   checkbox         the control is a switch
+      //   stacked / wide   label above a full-width control, help below (long values: URLs, keys, prompts)
+      //   dependsOn        { path, label }: indented under its parent switch and disabled, with the reason, while it is off
+      //   labelFor         the element inside a composite control that the <label> names
+      //   ariaTarget       a composite control (radiogroup) named through aria-labelledby
+      // Only form fields get a <label for>; rows of action buttons use a plain text label, so a click on the row text
+      // never presses a button.
+      createRow(labelText, control, options = {}) {
+        const id = this.createSettingsControlId();
+        const stacked = Boolean(options.stacked || options.wide);
+        const classes = ["dait-settings-row"];
+        if (options.checkbox) classes.push("dait-settings-row-switch");
+        if (stacked) classes.push("dait-settings-row-stacked");
+        if (options.dependsOn) classes.push("dait-settings-row-dependent");
+        if (options.disabledReason) classes.push("dait-settings-row-inactive");
+        const row = document.createElement("div");
+        row.className = classes.join(" ");
+        row.id = `${id}-row`;
+        const labelTarget = options.labelFor || (this.isSettingsLabelableControl(control) ? control : null);
+        const ariaTarget = labelTarget ? null : options.ariaTarget || null;
+        const text = document.createElement("div");
+        text.className = "dait-row-text";
+        const label = document.createElement(labelTarget ? "label" : "span");
+        label.className = "dait-row-label";
+        label.id = `${id}-label`;
+        label.textContent = labelText;
+        if (labelTarget) {
+          if (!labelTarget.id) labelTarget.id = id;
+          label.setAttribute("for", labelTarget.id);
+        } else if (ariaTarget) {
+          ariaTarget.setAttribute("aria-labelledby", label.id);
+        }
+        text.appendChild(label);
+        const descriptionText = options.disabledReason || options.description || "";
+        let description = null;
+        if (descriptionText || options.dependsOn) {
+          description = document.createElement("p");
+          description.className = "dait-row-description";
+          description.id = `${id}-desc`;
+          description.textContent = descriptionText;
+          description.hidden = !descriptionText;
+          text.appendChild(description);
+          (labelTarget || ariaTarget)?.setAttribute("aria-describedby", description.id);
+        }
+        const cell = document.createElement("div");
+        cell.className = "dait-row-control";
+        cell.appendChild(control);
+        row.appendChild(text);
+        row.appendChild(cell);
+        row.dataset.daitSearchLabel = String(labelText || "");
+        row.dataset.daitSearchDescription = String(options.description || "");
+        if (control?.dataset?.daitPath) row.dataset.daitRowPath = control.dataset.daitPath;
+        row.__daitDescription = description;
+        if (options.disabledReason) {
+          row.dataset.daitLocked = "true";
+          this.getSettingsRowControls(control).forEach((node) => {
+            node.disabled = true;
+          });
+        }
+        if (options.dependsOn?.path) {
+          row.dataset.daitDependsOn = options.dependsOn.path;
+          row.dataset.daitDependsOnLabel = String(options.dependsOn.label || "");
+          this.applySettingsRowDependency(row);
+        }
+        return row;
+      },
+      isSettingsLabelableControl(control) {
+        const tag = String(control?.tagName || "").toUpperCase();
+        if (tag === "SELECT" || tag === "TEXTAREA") return true;
+        return tag === "INPUT" && String(control.type || "").toLowerCase() !== "hidden";
+      },
+      // Form controls and buttons in a row (or the element itself when it is one), in document order.
+      getSettingsRowControls(root) {
+        const found = [];
+        const isControl = (node) => ["INPUT", "SELECT", "TEXTAREA", "BUTTON"].includes(String(node?.tagName || "").toUpperCase());
+        const visit = (node) => {
+          if (!node) return;
+          if (isControl(node)) found.push(node);
+          for (const child of node.children || []) visit(child);
+        };
+        visit(root);
+        return found;
+      },
+      // A dependent row is usable only while its parent switch is on; otherwise it says which switch to turn on.
+      applySettingsRowDependency(row) {
+        const path = row?.dataset?.daitDependsOn;
+        if (!path) return;
+        const inactive = !this.plugin.getSetting(path);
+        const locked = row.dataset.daitLocked === "true";
+        row.classList?.toggle?.("dait-settings-row-inactive", inactive || locked);
+        if (locked) return;
+        this.getSettingsRowControls(row.children?.[1] || row).forEach((node) => {
+          node.disabled = inactive;
+        });
+        if (!inactive) {
+          const list = row.children?.[1]?.children?.[0];
+          if (list?.dataset?.daitControl === "order-list") this.renderProviderFallbackOrderList(list);
+        }
+        const description = row.__daitDescription;
+        if (!description) return;
+        const text = inactive ? this.plugin.t("settingsRequiresParent", { parent: row.dataset.daitDependsOnLabel || "" }) : String(row.dataset.daitSearchDescription || "");
+        description.textContent = text;
+        description.hidden = !text;
+      },
+      syncSettingsDependentRows(root = null, changedPath = "") {
+        const scope = root || (typeof document !== "undefined" ? document : null);
+        let rows = [];
+        try {
+          rows = [...scope?.querySelectorAll?.(".dait-settings-row-dependent") || []];
+        } catch {
+          rows = [];
+        }
+        rows.forEach((row) => {
+          if (changedPath && row.dataset?.daitDependsOn !== changedPath) return;
+          this.applySettingsRowDependency(row);
+        });
+      },
+      // A segmented control (role=radiogroup) for a short list of exclusive choices. Arrow keys move the choice.
+      // Labels that do not fit the shared control width make the row a stacked one.
+      createSegmentedRow(path, labelText, choices, rowOptions = {}) {
+        const group = document.createElement("div");
+        group.className = "dait-segmented";
+        group.setAttribute("role", "radiogroup");
+        group.dataset.daitPath = path;
+        group.dataset.daitControl = "segmented";
+        const routeKey = typeof rowOptions.routeKey === "string" ? rowOptions.routeKey : null;
+        if (routeKey !== null) group.dataset.daitRouteKey = routeKey;
+        const current = routeKey !== null && path === "ui.currentChannelAutoTranslatePolicy" ? this.plugin.getCurrentChannelAutoTranslatePolicyMode(routeKey) : this.plugin.getSetting(path);
+        const choose = (value, focus = false) => {
+          this.syncSegmentedControl(group, value);
+          if (focus) this.focusSettingsElement(group.__daitSegmentedButtons.find((button) => button.dataset.daitValue === value));
+          this.plugin.setSetting(path, value, routeKey !== null ? { routeKey } : void 0);
+        };
+        group.__daitSegmentedButtons = choices.map(([value, text]) => {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "dait-segmented-option";
+          button.setAttribute("role", "radio");
+          button.dataset.daitValue = String(value);
+          button.textContent = text;
+          button.title = text;
+          button.addEventListener("click", () => choose(String(value)));
+          group.appendChild(button);
+          return button;
+        });
+        group.addEventListener("keydown", (event) => {
+          const buttons = group.__daitSegmentedButtons.filter((button) => !button.disabled);
+          if (!buttons.length) return;
+          const steps = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 };
+          const index = Math.max(0, buttons.findIndex((button) => button.getAttribute("aria-checked") === "true"));
+          let next = null;
+          if (steps[event?.key]) next = (index + steps[event.key] + buttons.length) % buttons.length;
+          else if (event?.key === "Home") next = 0;
+          else if (event?.key === "End") next = buttons.length - 1;
+          if (next === null) return;
+          event.preventDefault?.();
+          choose(buttons[next].dataset.daitValue, true);
+        });
+        this.syncSegmentedControl(group, current);
+        const stacked = rowOptions.stacked ?? !this.segmentedLabelsFit(choices.map(([, text]) => text));
+        return this.createRow(labelText, group, { ...rowOptions, ariaTarget: group, stacked });
+      },
+      syncSegmentedControl(group, value) {
+        const buttons = group?.__daitSegmentedButtons || [...group?.children || []];
+        const wanted = String(value ?? "");
+        const matched = buttons.some((button) => button.dataset?.daitValue === wanted);
+        buttons.forEach((button, index) => {
+          const checked = matched ? button.dataset?.daitValue === wanted : index === 0;
+          button.setAttribute("aria-checked", checked ? "true" : "false");
+          button.setAttribute("tabindex", checked ? "0" : "-1");
+        });
+        if (group?.dataset) group.dataset.daitValue = wanted;
+      },
+      // Rough text width at the segmented control's 15 px font: CJK characters are 1em, other characters ~0.55em (a
+      // generous estimate). Options are as wide as their labels plus 6 px padding on each side (css/04 .dait-segmented),
+      // so the labels fit when together they need no more than the control width less its 1 px border, 2 px padding
+      // and the 2 px gaps between options.
+      segmentedLabelsFit(labels, controlWidth = SETTINGS_CONTROL_WIDTH) {
+        const count = labels.length || 1;
+        const available = controlWidth - 6 - 2 * (count - 1);
+        const needed = labels.reduce((total, label) => total + 12 + [...String(label || "")].reduce((sum, char) => sum + (/[⺀-鿿豈-﫿＀-￯]/.test(char) ? 15 : 8.3), 0), 0);
+        return needed <= available;
+      },
+      syncSettingControls(path, value, options = {}) {
+        this.plugin.quickPanel?.handleSettingChanged(path);
+        if (typeof document === "undefined") return;
+        if (path === "ui.providerFallbackOrder") value = this.plugin.formatProviderFallbackOrder(value);
+        const channelRule = path === "ui.currentChannelAutoTranslatePolicy";
+        if (channelRule) value = this.plugin.normalizeChannelAutoTranslatePolicyMode(value);
+        const syncedChannel = channelRule && typeof options.routeKey === "string" ? this.plugin.getChannelAutoTranslatePolicyStorageKey(options.routeKey) : null;
+        document.querySelectorAll(`[data-dait-path='${path}']`).forEach((control) => {
+          if (control === document.activeElement && options.includeActive !== true) return;
+          if (syncedChannel !== null && typeof control.dataset?.daitRouteKey === "string" && this.plugin.getChannelAutoTranslatePolicyStorageKey(control.dataset.daitRouteKey) !== syncedChannel) return;
+          if (control.type === "checkbox") {
+            control.checked = Boolean(value);
+            return;
+          }
+          if (control.dataset?.daitControl === "segmented") {
+            this.syncSegmentedControl(control, value);
+            return;
+          }
+          if (control.dataset?.daitControl === "order-list") {
+            this.renderProviderFallbackOrderList(control);
+            return;
+          }
+          control.value = value ?? "";
+          if (typeof control.__daitAfterSync === "function") control.__daitAfterSync();
+        });
+        const modelKind = /^(polish|translation)\.model$/.exec(path)?.[1];
+        if (modelKind) {
+          document.querySelectorAll?.(`[data-dait-model-preset='${modelKind}']`)?.forEach((select) => {
+            const options2 = [...select.options || []];
+            select.value = options2.some((option) => option.value && option.value === value) ? value : "";
+          });
+        }
+        if (path === "ui.injectMessageButtons" || path === "ui.messageButtonVisibility") {
+          this.plugin.syncSettingControls("ui.messageButtonMode", this.getMessageButtonMode(), { includeActive: true });
+        }
+        this.syncSettingsDependentRows(null, path);
+        if (/^(polish|translation)\.(provider|apiKey|endpoint|model|enableThinking|region|deeplPlan|appId|secretKey)$/.test(path) || path === "googleTranslate.keyPoolText") {
+          this.refreshSavedServiceConfigControls();
+        }
+        this.scheduleOverviewStatusRefresh(path);
+      },
+      commitSettingsControls(root = null) {
+        const scope = root?.querySelectorAll ? root : typeof document !== "undefined" ? document : null;
+        if (!scope?.querySelectorAll) return;
+        scope.querySelectorAll("[data-dait-path]").forEach((control) => {
+          const path = String(control?.dataset?.daitPath || "");
+          if (!path) return;
+          if (path === "ui.currentChannelAutoTranslatePolicy") return;
+          let nextValue;
+          if (control.tagName === "TEXTAREA" || control.tagName === "SELECT") {
+            nextValue = control.value;
+          } else if (control.type === "checkbox") {
+            nextValue = Boolean(control.checked);
+          } else if (control.type === "number") {
+            const raw = String(control.value ?? "").trim();
+            if (!raw) return;
+            nextValue = Number(raw);
+          } else if (control.type) {
+            nextValue = control.value;
+          } else {
+            return;
+          }
+          if (Object.is(this.plugin.getSetting(path), nextValue)) return;
+          this.plugin.setSetting(path, nextValue);
+        });
+      },
+      bindSettingsTextarea(textarea) {
+        textarea.spellcheck = false;
+        ["contextmenu", "copy", "cut", "mouseup"].forEach((type) => {
+          textarea.addEventListener(type, () => this.restoreSettingsScrollSoon(textarea));
+        });
+      },
+      refreshLocalizedUi() {
+        if (typeof document === "undefined") return;
+        this.plugin.cancelLightweightButtonRecovery();
+        this.plugin.nonTranslatableMessageCache = typeof WeakMap === "function" ? /* @__PURE__ */ new WeakMap() : null;
+        this.plugin.lastMissingMessageButtonSweepAt = 0;
+        this.plugin.removePolishResultPanel();
+        this.plugin.removePolishRestoreControl();
+        this.plugin.removeInputActionMenu();
+        this.plugin.removePolishPresetMenu();
+        this.refreshSettingsWindowsLocale();
+        this.plugin.quickPanel?.rerender?.("language");
+        this.plugin.restoreAllTranslationSourceVisibility();
+        document.querySelectorAll(".dait-message-button, .dait-polish-button, .dait-polish-preset-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-menu-button, .dait-input-action-menu, .dait-polish-preset-menu, .dait-input-action-group, .dait-quick-settings-button").forEach((node) => node.remove());
+        document.querySelectorAll(".dait-translation-line, .dait-translation-box").forEach((node) => node.remove());
+        this.plugin.unpatchContextMenus();
+        this.plugin.patchMessageContextMenu();
+        this.plugin.queueScan();
+      },
+      // Rebuilds every open settings panel that still shows another language, in place and on the same tab (the
+      // panel keeps its scroll position and focused control), and renames the plugin's own settings window.
+      refreshSettingsWindowsLocale() {
+        if (typeof document === "undefined") return 0;
+        const locale = this.plugin.getLocale();
+        this.getQuickSettingsModalRoots().forEach((root) => {
+          this.findQuickSettingsDialog(root)?.setAttribute?.("aria-label", this.plugin.t("settingsTitle"));
+        });
+        let rebuilt = 0;
+        [...document.querySelectorAll?.(".dait-settings") || []].forEach((panel) => {
+          if (!panel || panel.isConnected === false || panel.dataset?.daitLocale === locale) return;
+          if (this.plugin.replaceSettingsPanelElement(panel)) rebuilt++;
+        });
+        return rebuilt;
+      }
+    };
+    module2.exports = methods;
+  }
+});
+
+// src/settings/ui/settings-modal.js
+var require_settings_modal = __commonJS({
+  "src/settings/ui/settings-modal.js"(exports2, module2) {
+    "use strict";
+    var { AUTO_TRANSLATE_VIEWPORT_STABLE_RESCAN_MS } = require_constants();
+    var methods = {
+      openQuickSettingsPanel(source = "quick", launcher = null) {
+        if (typeof document === "undefined" || !document.body) {
+          this.plugin.logQuickSettingsDiagnostic("open.start", "blocked", { reason: "missing-document-body", source });
+          return null;
+        }
+        if (!this.plugin.isStarted) return null;
+        const existingRoots = this.getQuickSettingsModalRoots();
+        existingRoots.slice(1).forEach((root2) => {
+          this.plugin.logQuickSettingsDiagnostic("open.start", "orphan-removed", {
+            source,
+            ...this.getQuickSettingsModalDebugMeta(root2)
+          });
+          root2.querySelectorAll?.(".dait-settings")?.forEach((panel) => this.destroySettingsModalSizing(panel));
+          root2.remove?.();
+        });
+        const existing = existingRoots[0] || null;
+        if (existing) {
+          const existingDialog = this.findQuickSettingsDialog(existing);
+          if (existingDialog) {
+            const hasPanel = Boolean(existingDialog.querySelector?.(".dait-settings"));
+            const hasFallback = Boolean(existingDialog.querySelector?.(".dait-quick-settings-error"));
+            if (!hasPanel && !hasFallback) {
+              this.plugin.logQuickSettingsDiagnostic("open.start", "stale-existing", {
+                source,
+                reason: "empty-dialog",
+                ...this.getQuickSettingsModalDebugMeta(existing, existingDialog)
+              });
+              existing.remove?.();
+            } else {
+              document.body.appendChild(existing);
+              this.plugin.quickSettingsModalRoot = existing;
+              if (launcher?.focus) {
+                this.plugin.quickSettingsPreviousFocus = launcher;
+              } else if (!existing.contains?.(document.activeElement)) {
+                this.plugin.quickSettingsPreviousFocus = document.activeElement || this.plugin.quickSettingsPreviousFocus || null;
+              }
+              this.setQuickSettingsLauncherButton(launcher || this.plugin.quickSettingsPreviousFocus || null, true);
+              this.plugin.syncQuickSettingsThemeTree(existing);
+              this.bindQuickSettingsModalKeydown(existing, existingDialog);
+              this.syncQuickSettingsScrollPosition(existingDialog);
+              this.bindSettingsScrollTracking(existingDialog.querySelector?.(".dait-settings"), existingDialog.querySelector?.(".dait-quick-settings-body"));
+              this.focusQuickSettingsInitialControl(existingDialog);
+              this.plugin.logQuickSettingsDiagnostic("open.start", "reuse-existing", {
+                source,
+                ...this.getQuickSettingsModalDebugMeta(existing, existingDialog)
+              });
+              this.scheduleQuickSettingsModalVerify(existing, existingDialog);
+              return existing;
+            }
+          } else {
+            this.plugin.logQuickSettingsDiagnostic("open.start", "stale-existing", {
+              source,
+              reason: "missing-dialog",
+              rootChildCount: this.getElementChildCount(existing)
+            });
+            existing.remove?.();
+          }
+        }
+        let root = null;
+        let dialog = null;
+        try {
+          this.plugin.quickSettingsPreviousFocus = launcher?.focus ? launcher : document.activeElement || null;
+          this.plugin.logQuickSettingsDiagnostic("open.start", "start", {
+            source,
+            viewportWidth: Number((typeof window !== "undefined" ? window.innerWidth : 0) || document.documentElement?.clientWidth || 0),
+            viewportHeight: Number((typeof window !== "undefined" ? window.innerHeight : 0) || document.documentElement?.clientHeight || 0)
+          });
+          root = document.createElement("div");
+          root.className = "dait-quick-settings-modal-root";
+          root.dataset.daitQuickSettingsSource = source;
+          this.setQuickSettingsLauncherButton(launcher || this.plugin.quickSettingsPreviousFocus || null, true);
+          this.plugin.applyPanelTheme(root);
+          const backdrop = document.createElement("div");
+          backdrop.className = "dait-quick-settings-backdrop";
+          root.appendChild(backdrop);
+          dialog = document.createElement("div");
+          dialog.className = "dait-quick-settings-dialog";
+          dialog.setAttribute("role", "dialog");
+          dialog.setAttribute("aria-modal", "true");
+          dialog.setAttribute("aria-label", this.plugin.t("settingsTitle"));
+          const body = document.createElement("div");
+          body.className = "dait-quick-settings-body";
+          const panelStartedAt = Date.now();
+          try {
+            const panel = this.plugin.getSettingsPanel({ quickSettings: true });
+            body.appendChild(panel);
+            this.bindSettingsScrollTracking(panel, body);
+            this.plugin.logQuickSettingsDiagnostic("panel.build", "success", {
+              source,
+              ms: Date.now() - panelStartedAt,
+              sectionCount: this.getQuickSettingsPanelSectionCount(panel),
+              dialogChildCount: this.getElementChildCount(dialog),
+              bodyChildCount: this.getElementChildCount(body)
+            });
+          } catch (error) {
+            body.appendChild(this.createQuickSettingsErrorPanel(error, () => this.plugin.closeQuickSettingsPanel(root, "done")));
+            this.plugin.logQuickSettingsDiagnostic("panel.build", "error", {
+              source,
+              ms: Date.now() - panelStartedAt,
+              errorName: error?.name || "",
+              errorText: this.plugin.formatError(error)
+            });
+            this.plugin.showToast(this.plugin.t("quickSettingsOpenFailed", { error: this.plugin.formatError(error) }), "error");
+          }
+          dialog.appendChild(body);
+          dialog.addEventListener("pointerdown", (event) => event.stopPropagation());
+          root.addEventListener("pointerdown", (event) => {
+            if (event.target === root || event.target === backdrop) this.plugin.closeQuickSettingsPanel(root, "backdrop");
+          });
+          root.appendChild(dialog);
+          this.plugin.quickSettingsModalRoot = root;
+          this.bindQuickSettingsModalKeydown(root, dialog);
+          document.body.appendChild(root);
+          this.plugin.syncQuickSettingsThemeTree(root);
+          this.syncQuickSettingsScrollPosition(dialog);
+          this.focusQuickSettingsInitialControl(dialog);
+          this.plugin.logQuickSettingsDiagnostic("dom.attach", "success", {
+            source,
+            ...this.getQuickSettingsModalDebugMeta(root, dialog)
+          });
+          this.scheduleQuickSettingsModalVerify(root, dialog);
+          return root;
+        } catch (error) {
+          if (this.plugin.quickSettingsModalKeydown && typeof document !== "undefined") {
+            document.removeEventListener?.("keydown", this.plugin.quickSettingsModalKeydown, true);
+          }
+          this.plugin.quickSettingsModalKeydown = null;
+          if (root?.remove) root.remove();
+          if (!root || root === this.plugin.quickSettingsModalRoot) this.plugin.quickSettingsModalRoot = null;
+          this.plugin.logQuickSettingsDiagnostic("open.error", "error", {
+            source,
+            errorName: error?.name || "",
+            errorText: this.plugin.formatError(error),
+            hasRoot: Boolean(root),
+            hasDialog: Boolean(dialog)
+          });
+          this.plugin.showToast(this.plugin.t("quickSettingsOpenFailed", { error: this.plugin.formatError(error) }), "error");
+          return null;
+        }
+      },
+      bindQuickSettingsModalKeydown(root, dialog) {
+        if (this.plugin.quickSettingsModalKeydown && typeof document !== "undefined") {
+          document.removeEventListener?.("keydown", this.plugin.quickSettingsModalKeydown, true);
+        }
+        this.plugin.quickSettingsModalKeydown = (event) => {
+          if (event?.isComposing) return;
+          if (this.isConfirmDialogOpen()) return;
+          const recorder = this.plugin.hotkeyRecordCleanup ? this.plugin.hotkeyRecordButton : null;
+          if (recorder && dialog?.contains?.(recorder)) {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              event.stopPropagation();
+              this.plugin.clearHotkeyRecording();
+            }
+            return;
+          }
+          if (event.key === "Escape") {
+            event.preventDefault();
+            event.stopPropagation();
+            this.plugin.closeQuickSettingsPanel(root, "escape");
+            return;
+          }
+          if (event.key === "Tab") {
+            this.trapQuickSettingsFocus(dialog, event);
+          }
+        };
+        document.addEventListener?.("keydown", this.plugin.quickSettingsModalKeydown, true);
+      },
+      setQuickSettingsLauncherButton(button, expanded) {
+        const previous = this.plugin.quickSettingsLauncherButton;
+        if (previous && previous !== button && this.plugin.elementHasClassName(previous, "dait-quick-settings-button")) {
+          previous.classList?.remove?.("dait-quick-settings-button-active");
+          previous.setAttribute?.("aria-expanded", "false");
+        }
+        this.plugin.quickSettingsLauncherButton = expanded && button?.focus ? button : null;
+        if (!button?.setAttribute || !this.plugin.elementHasClassName(button, "dait-quick-settings-button")) return;
+        button.classList?.toggle?.("dait-quick-settings-button-active", Boolean(expanded));
+        button.setAttribute("aria-expanded", expanded ? "true" : "false");
+      },
+      focusQuickSettingsInitialControl(dialog) {
+        const focusTarget = dialog?.querySelector?.(".dait-settings-close") || dialog?.querySelector?.(".dait-quick-settings-done") || this.getQuickSettingsFocusableElements(dialog)[0] || dialog;
+        try {
+          focusTarget?.focus?.({ preventScroll: true });
+        } catch {
+          try {
+            focusTarget?.focus?.();
+          } catch {
+          }
+        }
+      },
+      syncQuickSettingsScrollPosition(dialog) {
+        const body = dialog?.querySelector?.(".dait-quick-settings-body");
+        const panel = dialog?.querySelector?.(".dait-settings");
+        if (!body || !panel) return;
+        const active = this.getSettingsActiveTab();
+        if (!panel.querySelector?.(`[data-dait-settings-section='${active}']`)) {
+          body.scrollTop = 0;
+          return;
+        }
+        this.syncSettingsScrollPosition(panel, body, "auto");
+      },
+      trapQuickSettingsFocus(dialog, event) {
+        const focusable = this.getQuickSettingsFocusableElements(dialog);
+        if (!focusable.length) {
+          event.preventDefault?.();
+          dialog?.focus?.();
+          return;
+        }
+        const active = typeof document !== "undefined" ? document.activeElement : null;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (!active || !dialog?.contains?.(active)) {
+          event.preventDefault?.();
+          first.focus?.();
+          return;
+        }
+        if (event.shiftKey && active === first) {
+          event.preventDefault?.();
+          last.focus?.();
+          return;
+        }
+        if (!event.shiftKey && active === last) {
+          event.preventDefault?.();
+          first.focus?.();
+        }
+      },
+      getQuickSettingsFocusableElements(root) {
+        if (!root) return [];
+        const selector = [
+          "button:not([disabled])",
+          "[href]",
+          "input:not([disabled])",
+          "select:not([disabled])",
+          "textarea:not([disabled])",
+          "[tabindex]:not([tabindex='-1'])"
+        ].join(",");
+        const queried = [...root.querySelectorAll?.(selector) || []];
+        const fallback = [];
+        const visit = (node) => {
+          for (const child of node?.children || []) {
+            if (this.isFocusableQuickSettingsElement(child)) fallback.push(child);
+            visit(child);
+          }
+        };
+        visit(root);
+        return [.../* @__PURE__ */ new Set([...queried, ...fallback])].filter((element) => this.isFocusableQuickSettingsElement(element, root));
+      },
+      // Only controls the user can reach: not on a hidden tab page (or in another hidden part) and, where there is
+      // layout, rendered at all (a closed <details>, a display:none toolbar).
+      isFocusableQuickSettingsElement(element, root = null) {
+        if (!element || element.disabled || element.hidden || element.removed) return false;
+        for (let node = element.parentElement; node && node !== root; node = node.parentElement) {
+          if (node.hidden === true) return false;
+        }
+        if (typeof element.getClientRects === "function" && element.isConnected && !element.getClientRects().length) return false;
+        const tag = String(element.tagName || "").toLowerCase();
+        if (["button", "input", "select", "textarea", "a"].includes(tag)) return true;
+        const tabindex = element.getAttribute?.("tabindex");
+        return tabindex !== void 0 && tabindex !== null && tabindex !== "-1";
+      },
+      // Shown in the window when the panel cannot be built; without the panel's title bar it carries its own close button.
+      createQuickSettingsErrorPanel(error, onClose = null) {
+        const panel = document.createElement("div");
+        panel.className = "dait-quick-settings-error";
+        const title = document.createElement("h3");
+        title.textContent = this.plugin.t("quickSettingsFallbackTitle");
+        const detail = document.createElement("p");
+        detail.textContent = this.plugin.t("quickSettingsOpenFailed", { error: this.plugin.formatError(error) });
+        const hint = document.createElement("p");
+        hint.textContent = this.plugin.t("quickSettingsFallbackHint");
+        panel.appendChild(title);
+        panel.appendChild(detail);
+        panel.appendChild(hint);
+        if (typeof onClose === "function") {
+          const done = document.createElement("button");
+          done.className = "dait-quick-settings-done";
+          done.type = "button";
+          done.textContent = this.plugin.t("quickSettingsDone");
+          done.addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onClose();
+          });
+          panel.appendChild(done);
+        }
+        return panel;
+      },
+      findQuickSettingsDialog(root) {
+        if (!root) return null;
+        const direct = root.querySelector?.(".dait-quick-settings-dialog");
+        if (direct) return direct;
+        return [...root.children || []].find((child) => String(child.className || "").split(/\s+/).includes("dait-quick-settings-dialog")) || null;
+      },
+      getQuickSettingsModalRoots() {
+        if (typeof document === "undefined") return [];
+        try {
+          return [...document.querySelectorAll?.(".dait-quick-settings-modal-root") || []];
+        } catch {
+          const single = document.querySelector?.(".dait-quick-settings-modal-root");
+          return single ? [single] : [];
+        }
+      },
+      getQuickSettingsPanelSectionCount(panel) {
+        try {
+          return panel?.querySelectorAll?.("[data-dait-settings-section]")?.length || 0;
+        } catch {
+          return 0;
+        }
+      },
+      getElementChildCount(node) {
+        const count = Number(node?.childElementCount);
+        if (Number.isFinite(count) && count >= 0) return count;
+        return Array.isArray(node?.children) ? node.children.length : 0;
+      },
+      isNodeConnected(node) {
+        if (!node) return false;
+        if (typeof node.isConnected === "boolean") return node.isConnected;
+        try {
+          if (document?.body?.contains?.(node)) return true;
+        } catch {
+        }
+        return Boolean(node.parentElement);
+      },
+      getElementRectSummary(node) {
+        try {
+          const rect = node?.getBoundingClientRect?.();
+          if (!rect) return null;
+          return {
+            left: Math.round(Number(rect.left || 0)),
+            top: Math.round(Number(rect.top || 0)),
+            width: Math.round(Number(rect.width || 0)),
+            height: Math.round(Number(rect.height || 0))
+          };
+        } catch {
+          return null;
+        }
+      },
+      getElementStyleSummary(node) {
+        try {
+          const style = window?.getComputedStyle?.(node);
+          if (!style) return null;
+          return {
+            display: style.display || "",
+            visibility: style.visibility || "",
+            opacity: style.opacity || "",
+            zIndex: style.zIndex || ""
+          };
+        } catch {
+          return null;
+        }
+      },
+      isQuickSettingsPanelOpen() {
+        if (this.plugin.quickSettingsModalRoot && this.isNodeConnected(this.plugin.quickSettingsModalRoot)) return true;
+        if (typeof document === "undefined") return false;
+        try {
+          return Boolean(document.querySelector?.(".dait-quick-settings-modal-root"));
+        } catch {
+          return false;
+        }
+      },
+      resumeQuickSettingsDeferredWork(reason = "close") {
+        if (!this.plugin.isStarted || this.plugin.isQuickSettingsPanelOpen()) return;
+        const resumeScan = Boolean(this.plugin.quickSettingsScanDeferred);
+        const resumeRender = Boolean(this.plugin.quickSettingsRenderDeferred && this.plugin.autoTranslationRenderQueue.length);
+        this.plugin.quickSettingsScanDeferred = false;
+        this.plugin.quickSettingsRenderDeferred = false;
+        if (resumeScan) {
+          this.plugin.queueScan({ delayMs: AUTO_TRANSLATE_VIEWPORT_STABLE_RESCAN_MS, trailing: true });
+        }
+        if (resumeRender) {
+          this.plugin.scheduleAutoTranslationRenderQueue(AUTO_TRANSLATE_VIEWPORT_STABLE_RESCAN_MS);
+        }
+        if (resumeScan || resumeRender) {
+          this.plugin.logDiagnostic("quick.settings.resume", "ok", {
+            reason,
+            scan: resumeScan,
+            render: resumeRender,
+            renderQueue: this.plugin.autoTranslationRenderQueue.length
+          });
+        }
+      },
+      getQuickSettingsModalDebugMeta(root, dialog = null) {
+        const currentDialog = dialog || this.findQuickSettingsDialog(root);
+        const panel = currentDialog?.querySelector?.(".dait-settings") || [...currentDialog?.children || []].find((child) => String(child.className || "").split(/\s+/).includes("dait-settings")) || null;
+        const fallback = currentDialog?.querySelector?.(".dait-quick-settings-error") || [...currentDialog?.children || []].find((child) => String(child.className || "").split(/\s+/).includes("dait-quick-settings-error")) || null;
+        const meta = {
+          rootConnected: this.isNodeConnected(root),
+          dialogConnected: this.isNodeConnected(currentDialog),
+          panelConnected: this.isNodeConnected(panel),
+          fallbackConnected: this.isNodeConnected(fallback),
+          hasDialog: Boolean(currentDialog),
+          hasPanel: Boolean(panel),
+          hasFallback: Boolean(fallback),
+          rootChildCount: this.getElementChildCount(root),
+          dialogChildCount: this.getElementChildCount(currentDialog),
+          panelSectionCount: this.getQuickSettingsPanelSectionCount(panel)
+        };
+        if (this.plugin.settings?.ui?.diagnosticsEnabled) {
+          meta.rootRect = this.getElementRectSummary(root);
+          meta.dialogRect = this.getElementRectSummary(currentDialog);
+          meta.panelRect = this.getElementRectSummary(panel);
+          meta.rootStyle = this.getElementStyleSummary(root);
+          meta.dialogStyle = this.getElementStyleSummary(currentDialog);
+          meta.panelStyle = this.getElementStyleSummary(panel);
+        }
+        return meta;
+      },
+      scheduleQuickSettingsModalVerify(root, dialog = null) {
+        this.cancelQuickSettingsModalVerify();
+        const token = ++this.plugin.quickSettingsVerifyToken;
+        const verify = () => {
+          if (token !== this.plugin.quickSettingsVerifyToken) return;
+          this.plugin.quickSettingsVerifyRaf = null;
+          this.plugin.quickSettingsVerifyTimer = null;
+          if (!this.plugin.isStarted) return;
+          if (root !== this.plugin.quickSettingsModalRoot) return;
+          if (!root || !this.isNodeConnected(root)) return;
+          const currentDialog = dialog || this.findQuickSettingsDialog(root);
+          const meta = this.getQuickSettingsModalDebugMeta(root, currentDialog);
+          if (!meta.hasDialog) {
+            this.plugin.logQuickSettingsDiagnostic("visible.verify", "missing-dialog", meta);
+            this.plugin.closeQuickSettingsPanel(root, "verify-missing-dialog");
+            this.plugin.showToast(this.plugin.t("quickSettingsOpenFailed", { error: "missing dialog" }), "error");
+            return;
+          }
+          if (!meta.hasPanel && !meta.hasFallback) {
+            this.plugin.logQuickSettingsDiagnostic("visible.verify", "empty-dialog", meta);
+            this.plugin.closeQuickSettingsPanel(root, "verify-empty-dialog");
+            this.plugin.showToast(this.plugin.t("quickSettingsOpenFailed", { error: "empty dialog" }), "error");
+            return;
+          }
+          this.plugin.logQuickSettingsDiagnostic("visible.verify", "ok", meta);
+        };
+        const requestFrame = typeof window !== "undefined" && typeof window.requestAnimationFrame === "function" ? window.requestAnimationFrame.bind(window) : typeof requestAnimationFrame === "function" ? requestAnimationFrame : null;
+        if (requestFrame) this.plugin.quickSettingsVerifyRaf = requestFrame(verify);
+        else this.plugin.quickSettingsVerifyTimer = setTimeout(verify, 0);
+      },
+      cancelQuickSettingsModalVerify() {
+        this.plugin.quickSettingsVerifyToken++;
+        const cancelFrame = typeof window !== "undefined" && typeof window.cancelAnimationFrame === "function" ? window.cancelAnimationFrame.bind(window) : typeof cancelAnimationFrame === "function" ? cancelAnimationFrame : null;
+        if (this.plugin.quickSettingsVerifyRaf !== null && this.plugin.quickSettingsVerifyRaf !== void 0 && cancelFrame) {
+          cancelFrame(this.plugin.quickSettingsVerifyRaf);
+        }
+        if (this.plugin.quickSettingsVerifyTimer !== null && this.plugin.quickSettingsVerifyTimer !== void 0) {
+          clearTimeout(this.plugin.quickSettingsVerifyTimer);
+        }
+        this.plugin.quickSettingsVerifyRaf = null;
+        this.plugin.quickSettingsVerifyTimer = null;
+      },
+      closeQuickSettingsPanel(root = this.plugin.quickSettingsModalRoot, reason = "close") {
+        this.plugin.clearHotkeyRecordingWithin(root);
+        if (!root && typeof document !== "undefined") {
+          this.cancelQuickSettingsModalVerify();
+          const roots = this.getQuickSettingsModalRoots();
+          roots.forEach((node) => this.plugin.closeQuickSettingsPanel(node, reason));
+          if (this.plugin.quickSettingsModalKeydown) {
+            document.removeEventListener?.("keydown", this.plugin.quickSettingsModalKeydown, true);
+            this.plugin.quickSettingsModalKeydown = null;
+          }
+          this.plugin.quickSettingsModalRoot = null;
+          this.plugin.quickSettingsPreviousFocus = null;
+          this.setQuickSettingsLauncherButton(null, false);
+          this.resumeQuickSettingsDeferredWork(reason);
+          return;
+        }
+        this.cancelQuickSettingsModalVerify();
+        if (this.plugin.quickSettingsModalKeydown && typeof document !== "undefined") {
+          document.removeEventListener?.("keydown", this.plugin.quickSettingsModalKeydown, true);
+        }
+        this.plugin.quickSettingsModalKeydown = null;
+        if (root) {
+          this.plugin.commitSettingsControls(root);
+          this.plugin.flushSettings({ force: true, retryOnError: false });
+          root.querySelectorAll?.(".dait-settings")?.forEach((panel) => this.destroySettingsModalSizing(panel));
+        }
+        if (root && this.plugin.isStarted) {
+          this.plugin.logQuickSettingsDiagnostic("close", "ok", {
+            reason,
+            ...this.getQuickSettingsModalDebugMeta(root)
+          });
+        }
+        if (root?.remove) root.remove();
+        if (!root || root === this.plugin.quickSettingsModalRoot) this.plugin.quickSettingsModalRoot = null;
+        const previousFocus = this.plugin.quickSettingsPreviousFocus;
+        this.plugin.quickSettingsPreviousFocus = null;
+        this.setQuickSettingsLauncherButton(null, false);
+        if (previousFocus?.focus && this.isNodeConnected(previousFocus)) {
+          try {
+            previousFocus.focus({ preventScroll: true });
+          } catch {
+            try {
+              previousFocus.focus();
+            } catch {
+            }
+          }
+        }
+        this.resumeQuickSettingsDeferredWork(reason);
+      }
+    };
+    module2.exports = methods;
+  }
+});
+
+// src/settings/ui/confirm-dialog.js
+var require_confirm_dialog = __commonJS({
+  "src/settings/ui/confirm-dialog.js"(exports2, module2) {
+    "use strict";
+    var methods = {
+      // The one confirmation helper: BetterDiscord's confirmation modal (danger style for destructive actions),
+      // window.confirm only when that API is missing. Resolves true only when the user confirmed and the plugin
+      // is still running. body is a string or a list of paragraphs; preview is quoted text shown as typed;
+      // content (a React element) replaces both.
+      confirmAction({ title = "", body = "", preview = "", content = null, confirmText = "", cancelText = "", danger = false } = {}) {
+        const ui = globalThis.BdApi?.UI;
+        const lifecycleToken = this.plugin.getLifecycleToken();
+        const paragraphs = (Array.isArray(body) ? body : [body]).map((text) => String(text ?? "").trim()).filter(Boolean);
+        const previewText = String(preview ?? "").trim();
+        const confirmNatively = () => {
+          const text = [String(title || "").trim(), ...paragraphs, previewText].filter(Boolean).join("\n\n");
+          try {
+            return typeof window !== "undefined" && typeof window.confirm === "function" && Boolean(window.confirm(text));
+          } catch {
+            return false;
+          }
+        };
+        if (typeof ui?.showConfirmationModal !== "function") {
+          return Promise.resolve(confirmNatively() && this.plugin.isLifecycleTokenCurrent(lifecycleToken));
+        }
+        return new Promise((resolve) => {
+          let settled = false;
+          let stopWatching = null;
+          const release = this.holdConfirmDialogLayer();
+          const pending = this.plugin.pendingConfirmDialogs || (this.plugin.pendingConfirmDialogs = /* @__PURE__ */ new Set());
+          const settle = (confirmed) => {
+            if (settled) return;
+            settled = true;
+            pending.delete(settle);
+            stopWatching?.();
+            release();
+            resolve(Boolean(confirmed) && this.plugin.isLifecycleTokenCurrent(lifecycleToken));
+          };
+          pending.add(settle);
+          const dialogsBefore = this.getOpenDialogElements();
+          try {
+            ui.showConfirmationModal(title, content ?? this.createConfirmDialogContent(paragraphs, previewText), {
+              danger: Boolean(danger),
+              confirmText: confirmText || this.plugin.t("dialogConfirm"),
+              cancelText: cancelText || this.plugin.t("dialogCancel"),
+              onConfirm: () => settle(true),
+              onCancel: () => settle(false),
+              // Reported by newer BetterDiscord builds on Escape or a backdrop click. Deferred so a close
+              // that follows the confirm callback in the same click cannot turn it into a cancel. When the
+              // content failed to render, BetterDiscord closes this dialog and shows its fallback modal
+              // with the same callbacks instead; that close is not a cancel while the fallback is open.
+              onClose: () => setTimeout(() => {
+                if (!this.getNewConfirmDialogElements(dialogsBefore, ".bd-modal-wrapper").length) settle(false);
+              }, 0)
+            });
+          } catch (error) {
+            this.plugin.logDiagnostic("dialog.confirm", "error", { error: this.plugin.formatError(error) });
+            settle(confirmNatively());
+            return;
+          }
+          if (!settled) stopWatching = this.watchConfirmDialogDismiss(dialogsBefore, () => settle(false), release);
+        });
+      },
+      // Plugin stop: every open confirmation resolves false and the settings window leaves its paused state.
+      cancelPendingConfirmDialogs() {
+        [...this.plugin.pendingConfirmDialogs || []].forEach((settle) => settle(false));
+        this.plugin.pendingConfirmDialogs?.clear();
+        this.plugin.openConfirmDialogCount = 0;
+        this.syncConfirmDialogLayer();
+      },
+      // Paragraphs plus an optional quoted preview. React elements when BetterDiscord exposes React (the preview
+      // then stays plain text instead of going through Discord's Markdown), otherwise one string.
+      createConfirmDialogContent(paragraphs = [], preview = "") {
+        const React = globalThis.BdApi?.React;
+        if (typeof React?.createElement !== "function") {
+          return [...paragraphs, preview].filter(Boolean).join("\n\n");
+        }
+        const h = React.createElement;
+        return h(
+          "div",
+          { className: "dait-dialog", ...this.getDialogPanelThemeProps() },
+          ...paragraphs.map((text, index) => h("p", { className: "dait-dialog-text", key: `p${index}` }, text)),
+          preview ? h("div", { className: "dait-dialog-preview", key: "preview", tabIndex: 0 }, preview) : null
+        );
+      },
+      // Dialog content sits inside Discord's modal, between Discord's own title and buttons: it takes the palette of
+      // that modal, whatever ui.panelTheme says, so the dialog is one piece and its text always reads. Until the
+      // content is in the page it goes by Discord's theme; once mounted (the ref) it goes by the modal's actual
+      // background, and PanelTheme.refresh() checks it again when Discord's theme changes. Without a Discord theme or
+      // a readable modal background it brings its own background in the current palette (css/08-dialogs).
+      getDialogPanelThemeProps() {
+        const discordTheme = this.plugin.panelTheme.getDiscordTheme();
+        const props = {
+          "data-dait-panel-theme": discordTheme || this.plugin.resolvePanelTheme(),
+          ref: (node) => this.syncDialogPanelTheme(node)
+        };
+        if (!discordTheme) props["data-dait-dialog-surface"] = "true";
+        return props;
+      },
+      syncDialogPanelTheme(node) {
+        if (!node) return "";
+        try {
+          return this.plugin.panelTheme.syncDialog(node);
+        } catch (error) {
+          this.plugin.logDiagnostic?.("dialog.theme", "warn", { error: this.plugin.formatError?.(error) });
+          return "";
+        }
+      },
+      // Where a confirmation can show up: Discord's modal layer (role=dialog), BetterDiscord's modal root, and
+      // BetterDiscord's fallback modal (.bd-modal-wrapper, no role), used when Discord's modal API is missing or
+      // the dialog content failed to render.
+      getOpenDialogElements(selectors = ["[role='dialog']", ".bd-modal-root", ".bd-modal-wrapper"]) {
+        if (typeof document === "undefined" || !document.querySelectorAll) return /* @__PURE__ */ new Set();
+        const found = /* @__PURE__ */ new Set();
+        for (const selector of [].concat(selectors)) {
+          try {
+            document.querySelectorAll(selector).forEach((node) => found.add(node));
+          } catch {
+          }
+        }
+        return found;
+      },
+      // Dialog elements that opened after dialogsBefore was taken and are still in the document.
+      getNewConfirmDialogElements(dialogsBefore, selectors = void 0) {
+        return [...this.getOpenDialogElements(selectors)].filter((node) => !dialogsBefore?.has?.(node) && node.isConnected !== false && !node.closest?.(".dait-quick-settings-modal-root, .dait-settings"));
+      },
+      // Older BetterDiscord builds report neither Escape nor a backdrop click, and the fallback modal never reports
+      // a backdrop click. Once the dialog showed up, the confirmation counts as cancelled when no dialog that opened
+      // with it is left, so a dismissed dialog never leaves the settings window lowered. When no dialog shows up
+      // within 10 s, onNotFound gives the settings window its layer and keys back; the dialog's buttons still answer.
+      watchConfirmDialogDismiss(dialogsBefore, onDismiss, onNotFound = null) {
+        if (typeof document === "undefined" || typeof setInterval !== "function") return () => {
+        };
+        let seen = false;
+        let polls = 0;
+        let timer = null;
+        const stop = () => {
+          if (timer) clearInterval(timer);
+          timer = null;
+        };
+        timer = this.plugin.unrefTimer(setInterval(() => {
+          if (!this.plugin.isStarted) {
+            stop();
+            onDismiss();
+            return;
+          }
+          if (this.getNewConfirmDialogElements(dialogsBefore).length) {
+            seen = true;
+            return;
+          }
+          if (seen) {
+            stop();
+            onDismiss();
+            return;
+          }
+          if (++polls > 40) {
+            stop();
+            onNotFound?.();
+          }
+        }, 250));
+        return stop;
+      },
+      // The settings window sits above Discord's layers. While a BetterDiscord dialog is open it steps below
+      // them (see css/08-dialogs.js) and its own Escape and Tab handling pauses.
+      holdConfirmDialogLayer() {
+        this.plugin.openConfirmDialogCount = (Number(this.plugin.openConfirmDialogCount) || 0) + 1;
+        this.syncConfirmDialogLayer();
+        let released = false;
+        return () => {
+          if (released) return;
+          released = true;
+          this.plugin.openConfirmDialogCount = Math.max(0, (Number(this.plugin.openConfirmDialogCount) || 0) - 1);
+          this.syncConfirmDialogLayer();
+        };
+      },
+      isConfirmDialogOpen() {
+        return (Number(this.plugin.openConfirmDialogCount) || 0) > 0;
+      },
+      syncConfirmDialogLayer() {
+        if (typeof document === "undefined" || !document.querySelectorAll) return;
+        const open = this.isConfirmDialogOpen();
+        document.querySelectorAll(".dait-quick-settings-modal-root")?.forEach((root) => {
+          if (open) root.setAttribute?.("data-dait-confirm-open", "true");
+          else root.removeAttribute?.("data-dait-confirm-open");
+        });
+      },
+      // Reset dialog: says what returns to defaults and offers "keep API keys, key pool and templates" (ticked by
+      // default). The checkbox needs BdApi.React; without it the plain confirmation always keeps them.
+      async openResetSettingsDialog(options = {}) {
+        const bdApi = globalThis.BdApi;
+        const choice = { keepCredentials: true };
+        const canUseCheckbox = typeof bdApi?.React?.createElement === "function" && typeof bdApi?.UI?.showConfirmationModal === "function";
+        const confirmed = await this.plugin.confirmAction({
+          title: this.plugin.t("resetDialogTitle"),
+          ...canUseCheckbox ? { content: this.createResetDialogContent(bdApi.React, choice) } : { body: this.plugin.t("resetConfirm") },
+          confirmText: this.plugin.t("reset"),
+          danger: true
+        });
+        if (!confirmed) return false;
+        const keepCredentials = canUseCheckbox ? choice.keepCredentials !== false : true;
+        this.plugin.resetSettingsToDefaults({ keepCredentials });
+        this.plugin.refreshOpenSettingsPanels(options.panel || null);
+        return true;
+      },
+      createResetDialogContent(React, choice) {
+        const h = React.createElement;
+        const checkboxId = `dait-reset-keep-${Date.now().toString(36)}`;
+        const lead = this.plugin.t("resetDialogLead");
+        const items = ["resetDialogItemSettings", "resetDialogItemChannelRules", "resetDialogItemDisplay"].map((key) => this.plugin.t(key));
+        const credentials = this.plugin.t("resetDialogItemCredentials");
+        const credentialsNote = this.plugin.t("resetDialogItemCredentialsNote");
+        const keepLabel = this.plugin.t("resetKeepCredentials");
+        const useState = typeof React.useState === "function" ? React.useState : null;
+        const themeProps = this.getDialogPanelThemeProps();
+        const ResetDialogBody = () => {
+          const [keep, setKeep] = useState ? useState(choice.keepCredentials) : [choice.keepCredentials, null];
+          const onChange = (event) => {
+            choice.keepCredentials = Boolean(event?.target?.checked);
+            if (setKeep) setKeep(choice.keepCredentials);
+          };
+          return h(
+            "div",
+            { className: "dait-dialog", ...themeProps },
+            h("p", { className: "dait-dialog-text" }, lead),
+            h(
+              "ul",
+              { className: "dait-dialog-list" },
+              ...items.map((text, index) => h("li", { key: `i${index}` }, text)),
+              h(
+                "li",
+                { key: "credentials", className: `dait-dialog-list-conditional${keep ? "" : " dait-dialog-list-erased"}` },
+                credentials,
+                h("span", { className: "dait-dialog-note" }, credentialsNote)
+              )
+            ),
+            h(
+              "label",
+              { className: "dait-dialog-check", htmlFor: checkboxId },
+              h("input", setKeep ? { id: checkboxId, type: "checkbox", checked: keep, onChange } : { id: checkboxId, type: "checkbox", defaultChecked: true, onChange }),
+              h("span", null, keepLabel)
+            )
+          );
+        };
+        return h(ResetDialogBody);
+      }
+    };
+    module2.exports = methods;
+  }
+});
+
+// src/settings/ui/index.js
+var require_ui = __commonJS({
+  "src/settings/ui/index.js"(exports2, module2) {
+    "use strict";
+    var { attachControllerMethods } = require_delegate_methods();
+    var methodMaps = [
+      require_settings_shell(),
+      require_settings_search(),
+      require_settings_sizing(),
+      require_tab_overview(),
+      require_tab_services(),
+      require_tab_sections(),
+      require_prompt_manager(),
+      require_settings_controls(),
+      require_settings_modal(),
+      require_confirm_dialog()
+    ];
+    var SettingsUiController = class {
+      constructor(plugin) {
+        this.plugin = plugin;
+        this.events = plugin.events || null;
+        this.scope = plugin.runtimeScope ? plugin.runtimeScope.createChild() : null;
+      }
+    };
+    var SETTINGS_UI_METHOD_NAMES = attachControllerMethods(SettingsUiController, methodMaps);
+    module2.exports = {
+      SettingsUiController,
+      SETTINGS_UI_METHOD_NAMES
+    };
+  }
+});
+
 // src/quick-panel/quick-panel.js
 var require_quick_panel = __commonJS({
   "src/quick-panel/quick-panel.js"(exports2, module2) {
@@ -22280,116 +26793,6 @@ var require_host_adapter = __commonJS({
   }
 });
 
-// src/ui/host-health-card.js
-var require_host_health_card = __commonJS({
-  "src/ui/host-health-card.js"(exports2, module2) {
-    "use strict";
-    function buildHostHealthCard(plugin, options = {}) {
-      const card = document.createElement("div");
-      card.className = "dait-host-health-card dait-settings-search-target";
-      card.dataset.daitHostHealthCard = "true";
-      card.dataset.daitSearchLabel = plugin.t("hostHealthTitle");
-      card.dataset.daitSearchDescription = plugin.t("hostHealthDesc");
-      const head = document.createElement("div");
-      head.className = "dait-host-health-head";
-      const titleWrap = document.createElement("div");
-      titleWrap.className = "dait-host-health-title-wrap";
-      const title = document.createElement("div");
-      title.className = "dait-host-health-title";
-      title.textContent = plugin.t("hostHealthTitle");
-      titleWrap.appendChild(title);
-      const desc = document.createElement("div");
-      desc.className = "dait-host-health-desc";
-      desc.textContent = plugin.t("hostHealthDesc");
-      titleWrap.appendChild(desc);
-      const badge = document.createElement("span");
-      badge.className = "dait-host-health-summary";
-      head.appendChild(titleWrap);
-      head.appendChild(badge);
-      card.appendChild(head);
-      const list = document.createElement("ul");
-      list.className = "dait-host-health-list";
-      card.appendChild(list);
-      const actions = document.createElement("div");
-      actions.className = "dait-host-health-actions";
-      const recheckBtn = document.createElement("button");
-      recheckBtn.type = "button";
-      recheckBtn.className = "dait-small-button dait-small-button-primary";
-      recheckBtn.dataset.daitHostHealthAction = "recheck";
-      recheckBtn.textContent = plugin.t("hostHealthRecheck");
-      const copyBtn = document.createElement("button");
-      copyBtn.type = "button";
-      copyBtn.className = "dait-small-button dait-small-button-outline";
-      copyBtn.dataset.daitHostHealthAction = "copy";
-      copyBtn.textContent = plugin.t("hostHealthCopyReport");
-      actions.appendChild(recheckBtn);
-      actions.appendChild(copyBtn);
-      card.appendChild(actions);
-      let lastReport = null;
-      const render = () => {
-        lastReport = plugin.runHostHealthCheck();
-        const { summary, checks } = lastReport;
-        badge.className = `dait-host-health-summary dait-host-health-summary-${summary.overall}`;
-        if (summary.overall === "ok") {
-          badge.textContent = plugin.t("hostHealthSummaryOk", { ok: summary.ok, total: summary.total });
-        } else if (summary.overall === "warn") {
-          badge.textContent = plugin.t("hostHealthSummaryWarn", { ok: summary.ok, warn: summary.warn, error: summary.error });
-        } else {
-          badge.textContent = plugin.t("hostHealthSummaryError", { ok: summary.ok, warn: summary.warn, error: summary.error });
-        }
-        while (list.firstChild) list.firstChild.remove?.();
-        checks.forEach((item) => {
-          const li = document.createElement("li");
-          li.className = `dait-host-health-item dait-host-health-item-${item.status}`;
-          li.dataset.daitHostHealthCheck = item.id;
-          const dot = document.createElement("span");
-          dot.className = "dait-host-health-dot";
-          dot.setAttribute("aria-hidden", "true");
-          li.appendChild(dot);
-          const label = document.createElement("span");
-          label.className = "dait-host-health-label";
-          label.textContent = plugin.t(item.labelKey);
-          li.appendChild(label);
-          const state = document.createElement("span");
-          state.className = "dait-host-health-state";
-          state.textContent = plugin.t(
-            item.status === "ok" ? "hostHealthStateOk" : item.status === "warn" ? "hostHealthStateWarn" : "hostHealthStateError"
-          );
-          li.appendChild(state);
-          const detail = document.createElement("span");
-          detail.className = "dait-host-health-detail";
-          detail.textContent = item.detail || "";
-          detail.title = item.detail || "";
-          li.appendChild(detail);
-          list.appendChild(li);
-        });
-      };
-      recheckBtn.addEventListener("click", (event) => {
-        event?.preventDefault?.();
-        render();
-      });
-      copyBtn.addEventListener("click", async (event) => {
-        event?.preventDefault?.();
-        if (!lastReport) render();
-        const payload = JSON.stringify(lastReport, null, 2);
-        try {
-          await plugin.copyTextToClipboard(payload);
-          plugin.showToast(plugin.t("hostHealthCopied"), "success");
-        } catch (error) {
-          plugin.showToast(plugin.t("promptCopyFailed", { error: plugin.formatError(error) }), "error");
-        }
-      });
-      card.__daitEnsureHostHealthRendered = () => {
-        if (!lastReport) render();
-        return lastReport;
-      };
-      if (!options?.lazy) render();
-      return card;
-    }
-    module2.exports = { buildHostHealthCard };
-  }
-});
-
 // src/intake/discord-markup.js
 var require_discord_markup = __commonJS({
   "src/intake/discord-markup.js"(exports2, module2) {
@@ -24039,6 +28442,8 @@ var require_discord_ai_translator = __commonJS({
     var { PLUGIN_VERSION } = require_version();
     var { ProviderLayer } = require_provider_layer();
     var { SettingsStore } = require_settings_store();
+    var { SettingsUiController, SETTINGS_UI_METHOD_NAMES } = require_ui();
+    var { installPrototypeBridge } = require_delegate_methods();
     var { QuickPanel } = require_quick_panel();
     var { PanelTheme } = require_panel_theme();
     var { DiscordHostAdapter } = require_host_adapter();
@@ -24853,6 +29258,7 @@ var require_discord_ai_translator = __commonJS({
         this.translationCacheStore = new TranslationCacheStore(this);
         this.providerLayer = new ProviderLayer(this);
         this.settingsStore = new SettingsStore(this);
+        this.settingsUi = new SettingsUiController(this);
         this.settings = this.clone(DEFAULT_SETTINGS);
         this.isStarted = true;
         this.messageTracker = new MessageTracker(this);
@@ -25295,3227 +29701,6 @@ var require_discord_ai_translator = __commonJS({
       isLifecycleTokenCurrent(token) {
         return this.isStarted && Number(token) === Number(this.lifecycleToken);
       }
-      getSettingsPanel(options = {}) {
-        const startedAt = this.getDiagnosticTime();
-        const quickSettings = Boolean(options.quickSettings);
-        const panel = document.createElement("div");
-        panel.className = "dait-settings";
-        if (quickSettings) panel.dataset.daitQuickSettings = "true";
-        panel.dataset.daitLocale = this.getLocale();
-        this.applyPanelTheme(panel);
-        panel.appendChild(this.createSettingsHeader({ quickSettings }));
-        panel.appendChild(this.createSettingsLayout(panel));
-        if (!quickSettings) this.scheduleSettingsModalSizing(panel);
-        this.logSlowOperation("settings.panel.build", startedAt, {
-          tabs: SETTINGS_TAB_IDS.length,
-          quickSettings
-        });
-        return panel;
-      }
-      // Tab rail (search + tabs) on the left, one tab page at a time on the right. Every page is built up front so
-      // search and syncSettingControls see all controls; inactive pages are hidden.
-      createSettingsLayout(panel) {
-        const uid = this.createSettingsControlId("dait-settings");
-        const activeTab = this.getSettingsActiveTab();
-        const state = {
-          panel,
-          activeTab,
-          searchQuery: "",
-          tabs: this.getSettingsNavItems().map((tab) => ({ ...tab, tabId: `${uid}-tab-${tab.id}`, panelId: `${uid}-panel-${tab.id}` })),
-          resultsId: `${uid}-results`
-        };
-        if (panel) panel.__daitSettingsUi = state;
-        const layout = document.createElement("div");
-        layout.className = "dait-settings-body";
-        const content = document.createElement("div");
-        content.className = "dait-settings-content";
-        state.content = content;
-        content.appendChild(this.createSettingsSearchResults(state));
-        state.tabs.forEach((tab) => {
-          tab.tabpanel = this.createSettingsTabPanel(state, tab, tab.id === activeTab);
-          content.appendChild(tab.tabpanel);
-        });
-        layout.appendChild(this.createSettingsRail(state));
-        layout.appendChild(content);
-        return layout;
-      }
-      getSettingsActiveTab() {
-        return normalizeSettingsTabId(this.settings.ui?.settingsActiveTab);
-      }
-      getSettingsNavItems() {
-        return this.settingsSchema.getTabs().map((tab) => ({
-          id: tab.id,
-          label: this.t(tab.labelKey)
-        }));
-      }
-      createSettingsControlId(prefix = "dait-control") {
-        this.settingsControlIdCounter = (Number(this.settingsControlIdCounter) || 0) + 1;
-        return `${prefix}-${this.settingsControlIdCounter}`;
-      }
-      createSettingsRail(state) {
-        const rail = document.createElement("div");
-        rail.className = "dait-settings-rail";
-        rail.appendChild(this.createSettingsSearch(state));
-        const tablist = document.createElement("div");
-        tablist.className = "dait-settings-tabs";
-        tablist.setAttribute("role", "tablist");
-        tablist.setAttribute("aria-orientation", "vertical");
-        tablist.setAttribute("aria-label", this.t("settingsTabsLabel"));
-        state.tabs.forEach((tab) => {
-          const active = tab.id === state.activeTab;
-          const button = document.createElement("button");
-          button.type = "button";
-          button.className = "dait-settings-tab";
-          button.id = tab.tabId;
-          button.setAttribute("role", "tab");
-          button.setAttribute("aria-controls", tab.panelId);
-          button.setAttribute("aria-selected", active ? "true" : "false");
-          button.setAttribute("tabindex", active ? "0" : "-1");
-          button.dataset.daitSettingsTab = tab.id;
-          button.textContent = tab.label;
-          button.addEventListener("click", () => this.showSettingsTab(state, tab.id));
-          tab.button = button;
-          tablist.appendChild(button);
-        });
-        tablist.addEventListener("keydown", (event) => this.handleSettingsTabKeydown(state, event));
-        state.tablist = tablist;
-        rail.appendChild(tablist);
-        return rail;
-      }
-      createSettingsTabPanel(state, tab, active) {
-        const tabpanel = document.createElement("div");
-        tabpanel.className = "dait-settings-tabpanel";
-        tabpanel.id = tab.panelId;
-        tabpanel.setAttribute("role", "tabpanel");
-        tabpanel.setAttribute("aria-labelledby", tab.tabId);
-        tabpanel.dataset.daitSettingsTabPanel = tab.id;
-        tabpanel.dataset.daitSettingsSection = tab.id;
-        tabpanel.hidden = !active;
-        const heading = document.createElement("h2");
-        heading.className = "dait-settings-page-title";
-        heading.textContent = tab.label;
-        tabpanel.appendChild(heading);
-        const builders = {
-          [SETTINGS_TAB_OVERVIEW]: () => this.createOverviewTabContent(),
-          [SETTINGS_TAB_TRANSLATE]: () => this.createTranslateTabContent(),
-          [SETTINGS_TAB_COMPOSE]: () => this.createComposeTabContent(),
-          [SETTINGS_TAB_APPEARANCE]: () => this.createDisplayTabContent(),
-          [SETTINGS_TAB_ADVANCED]: () => this.createAdvancedTabContent(),
-          [SETTINGS_TAB_DATA]: () => this.createDataTabContent(state)
-        };
-        (builders[tab.id]?.() || []).forEach((node) => {
-          if (node) tabpanel.appendChild(node);
-        });
-        return tabpanel;
-      }
-      // Shows one tab page. Saving is debounced; a rebuilt panel opens on the same tab.
-      showSettingsTab(state, tabId, options = {}) {
-        if (!state?.tabs?.length) return null;
-        const id = normalizeSettingsTabId(tabId);
-        const target = state.tabs.find((tab) => tab.id === id) || state.tabs[0];
-        if (options.clearSearch !== false && state.searchQuery) this.clearSettingsSearch(state, { focus: false, showTab: false });
-        state.activeTab = target.id;
-        state.tabs.forEach((tab) => {
-          const active = tab === target;
-          tab.button?.setAttribute?.("aria-selected", active && !state.searchQuery ? "true" : "false");
-          tab.button?.setAttribute?.("tabindex", active ? "0" : "-1");
-          if (tab.tabpanel) tab.tabpanel.hidden = !active || Boolean(state.searchQuery);
-        });
-        if (options.resetScroll !== false && state.content) state.content.scrollTop = 0;
-        if (target.id === SETTINGS_TAB_OVERVIEW) this.refreshOverviewStatusSection(target.tabpanel);
-        if (target.id === SETTINGS_TAB_DATA) {
-          target.tabpanel?.querySelector?.("[data-dait-host-health-card='true']")?.__daitEnsureHostHealthRendered?.();
-        }
-        if (target.id === SETTINGS_TAB_TRANSLATE || target.id === SETTINGS_TAB_COMPOSE) {
-          const tabKind = target.id === SETTINGS_TAB_COMPOSE ? "polish" : "translation";
-          const renderedProvider = target.tabpanel?.querySelector?.(".dait-provider-settings-block")?.dataset?.daitProvider || "";
-          const currentProvider = String(this.settings[tabKind]?.provider || "");
-          if (renderedProvider && currentProvider && renderedProvider !== currentProvider && target.tabpanel?.replaceWith) {
-            const fresh = this.createSettingsTabPanel(state, target, !state.searchQuery);
-            target.tabpanel.replaceWith(fresh);
-            target.tabpanel = fresh;
-            this.syncSettingsDependentRows?.(fresh);
-          }
-          this.refreshSavedServiceConfigControls?.(target.tabpanel);
-        }
-        if (options.focusTab) this.focusSettingsElement(target.button);
-        if (options.save !== false && this.settings?.ui && this.settings.ui.settingsActiveTab !== target.id) {
-          this.settings.ui.settingsActiveTab = target.id;
-          this.saveSettings({ debounce: true });
-        }
-        return target.id;
-      }
-      // Arrow keys move along the rail (up/down, or left/right when it is a horizontal row); Home/End jump to the ends.
-      handleSettingsTabKeydown(state, event) {
-        const count = state?.tabs?.length || 0;
-        if (!count) return;
-        const steps = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 };
-        const current = Math.max(0, state.tabs.findIndex((tab) => tab.id === state.activeTab));
-        let next = null;
-        if (steps[event?.key]) next = (current + steps[event.key] + count) % count;
-        else if (event?.key === "Home") next = 0;
-        else if (event?.key === "End") next = count - 1;
-        if (next === null) return;
-        event.preventDefault?.();
-        event.stopPropagation?.();
-        this.showSettingsTab(state, state.tabs[next].id, { focusTab: true });
-      }
-      setSettingsActiveTab(tab, source = null) {
-        const id = normalizeSettingsTabId(tab);
-        const state = source?.closest?.(".dait-settings")?.__daitSettingsUi;
-        if (state) return this.showSettingsTab(state, id);
-        if (this.settings?.ui) this.settings.ui.settingsActiveTab = id;
-        this.saveSettings({ debounce: true });
-        return id;
-      }
-      focusSettingsElement(element) {
-        if (!element?.focus) return false;
-        try {
-          element.focus({ preventScroll: true });
-        } catch {
-          try {
-            element.focus();
-          } catch {
-            return false;
-          }
-        }
-        return true;
-      }
-      // --- Settings search: filters rows of every tab by label and description in the current UI language. ---
-      createSettingsSearch(state) {
-        const wrap = document.createElement("div");
-        wrap.className = "dait-settings-search";
-        const input = document.createElement("input");
-        input.type = "search";
-        input.className = "dait-settings-search-input";
-        input.placeholder = this.t("settingsSearchPlaceholder");
-        input.autocomplete = "off";
-        input.spellcheck = false;
-        input.setAttribute("aria-label", this.t("settingsSearchPlaceholder"));
-        input.setAttribute("aria-controls", state.resultsId);
-        input.addEventListener("input", () => this.runSettingsSearch(state, input.value));
-        input.addEventListener("keydown", (event) => this.handleSettingsSearchKeydown(state, event));
-        input.addEventListener("focus", () => this.bindSettingsSearchEscape(state));
-        state.searchInput = input;
-        wrap.appendChild(input);
-        return wrap;
-      }
-      createSettingsSearchResults(state) {
-        const results = document.createElement("div");
-        results.className = "dait-settings-search-results";
-        results.id = state.resultsId;
-        results.setAttribute("role", "region");
-        results.setAttribute("aria-label", this.t("settingsSearchPlaceholder"));
-        results.hidden = true;
-        const summary = document.createElement("p");
-        summary.className = "dait-settings-search-summary";
-        summary.setAttribute("aria-live", "polite");
-        results.appendChild(summary);
-        const list = document.createElement("ul");
-        list.className = "dait-settings-search-list";
-        results.appendChild(list);
-        state.results = results;
-        state.resultsSummary = summary;
-        state.resultsList = list;
-        return results;
-      }
-      // Every searchable row with the tab it lives on. Group titles and the row's own button texts (Clear stats,
-      // Export JSON, Test) take part in matching but are not shown.
-      getSettingsSearchEntries(state) {
-        const entries = [];
-        const visit = (node, tab, groupTitle) => {
-          for (const child of node?.children || []) {
-            const group = child.dataset?.daitSearchGroup;
-            const nextGroup = group !== void 0 ? group : groupTitle;
-            const classes = String(child.className || "").split(/\s+/);
-            if (classes.includes("dait-settings-row") || classes.includes("dait-settings-search-target")) {
-              const label = String(child.dataset?.daitSearchLabel || "").trim();
-              if (label) {
-                const description = String(child.dataset?.daitSearchDescription || "").trim();
-                entries.push({
-                  row: child,
-                  tabId: tab.id,
-                  tabLabel: tab.label,
-                  label,
-                  description,
-                  haystack: `${label} ${description} ${this.getSettingsSearchButtonText(child)} ${nextGroup || ""} ${tab.label}`.toLocaleLowerCase()
-                });
-              }
-            }
-            visit(child, tab, nextGroup);
-          }
-        };
-        (state?.tabs || []).forEach((tab) => visit(tab.tabpanel, tab, ""));
-        return entries;
-      }
-      // The texts of the buttons that belong to this row (not to a row nested in it).
-      getSettingsSearchButtonText(row) {
-        return [...row?.querySelectorAll?.("button") || []].filter((button) => button.closest?.(".dait-settings-row, .dait-settings-search-target") === row).map((button) => String(button.textContent || "").trim()).filter(Boolean).join(" ");
-      }
-      // A Latin or numeric term matches at the start of a word ("reset" is not found in "preset"); other scripts,
-      // which do not separate words with spaces, match anywhere.
-      matchesSettingsSearchTerm(haystack, term) {
-        if (!/^[a-z0-9]/.test(term)) return haystack.includes(term);
-        for (let index = haystack.indexOf(term); index >= 0; index = haystack.indexOf(term, index + 1)) {
-          if (index === 0 || !/[a-z0-9]/.test(haystack[index - 1])) return true;
-        }
-        return false;
-      }
-      runSettingsSearch(state, rawQuery) {
-        if (!state) return [];
-        const query = String(rawQuery || "").trim().toLocaleLowerCase();
-        state.searchQuery = query;
-        if (!query) {
-          this.clearSettingsSearch(state, { focus: false, keepInput: true });
-          return [];
-        }
-        const terms = query.split(/\s+/).filter(Boolean);
-        const entries = this.getSettingsSearchEntries(state).filter((entry) => terms.every((term) => this.matchesSettingsSearchTerm(entry.haystack, term)));
-        state.searchEntries = entries;
-        state.tabs.forEach((tab) => {
-          if (tab.tabpanel) tab.tabpanel.hidden = true;
-          tab.button?.setAttribute?.("aria-selected", "false");
-        });
-        if (state.results) state.results.hidden = false;
-        if (state.resultsSummary) {
-          state.resultsSummary.textContent = entries.length ? this.t("settingsSearchResults", { count: entries.length }) : this.t("settingsSearchEmpty", { query: String(rawQuery || "").trim() });
-        }
-        if (state.resultsList) {
-          state.resultsList.textContent = "";
-          entries.forEach((entry, index) => {
-            const item = document.createElement("li");
-            item.className = "dait-settings-search-item";
-            const button = document.createElement("button");
-            button.type = "button";
-            button.className = "dait-settings-search-result";
-            const label = document.createElement("span");
-            label.className = "dait-settings-search-result-label";
-            label.textContent = entry.label;
-            button.appendChild(label);
-            const tab = document.createElement("span");
-            tab.className = "dait-settings-search-result-tab";
-            tab.textContent = entry.tabLabel;
-            button.appendChild(tab);
-            if (entry.description) {
-              const description = document.createElement("span");
-              description.className = "dait-settings-search-result-description";
-              description.textContent = entry.description;
-              button.appendChild(description);
-            }
-            button.addEventListener("click", () => this.openSettingsSearchResult(state, entry));
-            button.addEventListener("keydown", (event) => this.handleSettingsSearchResultKeydown(state, event, index));
-            entry.button = button;
-            item.appendChild(button);
-            state.resultsList.appendChild(item);
-          });
-        }
-        if (state.content) state.content.scrollTop = 0;
-        return entries;
-      }
-      clearSettingsSearch(state, options = {}) {
-        if (!state) return;
-        state.searchQuery = "";
-        state.searchEntries = [];
-        if (state.searchInput && !options.keepInput) state.searchInput.value = "";
-        if (state.results) state.results.hidden = true;
-        if (state.resultsList) state.resultsList.textContent = "";
-        if (state.resultsSummary) state.resultsSummary.textContent = "";
-        if (options.showTab !== false) {
-          state.tabs.forEach((tab) => {
-            if (tab.tabpanel) tab.tabpanel.hidden = tab.id !== state.activeTab;
-            tab.button?.setAttribute?.("aria-selected", tab.id === state.activeTab ? "true" : "false");
-          });
-        }
-        if (options.focus) this.focusSettingsElement(state.searchInput);
-      }
-      handleSettingsSearchKeydown(state, event) {
-        const entries = state?.searchEntries || [];
-        if (event?.key === "Enter") {
-          event.preventDefault?.();
-          if (entries.length) this.openSettingsSearchResult(state, entries[0]);
-          return;
-        }
-        if (event?.key === "ArrowDown" && entries.length) {
-          event.preventDefault?.();
-          this.focusSettingsElement(entries[0].button);
-          return;
-        }
-        if (event?.key === "Escape" && (state.searchQuery || state.searchInput?.value)) {
-          event.preventDefault?.();
-          event.stopPropagation?.();
-          this.clearSettingsSearch(state, { focus: true });
-        }
-      }
-      handleSettingsSearchResultKeydown(state, event, index) {
-        const entries = state?.searchEntries || [];
-        if (event?.key === "ArrowDown" || event?.key === "ArrowUp") {
-          event.preventDefault?.();
-          const next = index + (event.key === "ArrowDown" ? 1 : -1);
-          if (next < 0) this.focusSettingsElement(state.searchInput);
-          else if (entries[next]) this.focusSettingsElement(entries[next].button);
-          return;
-        }
-        if (event?.key === "Escape") {
-          event.preventDefault?.();
-          event.stopPropagation?.();
-          this.clearSettingsSearch(state, { focus: true });
-        }
-      }
-      // Esc with a query clears the search instead of closing the window. The quick-settings window listens on the
-      // document in the capture phase, so this listener sits one step earlier, on window, while the panel is open.
-      // Only a running plugin with the panel on the page binds it: a BetterDiscord settings panel left open across a
-      // plugin reload would otherwise keep the listener (and the panel) alive with nothing left to remove them.
-      bindSettingsSearchEscape(state) {
-        if (!state || state.searchEscapeListener || typeof window === "undefined" || typeof window.addEventListener !== "function") return;
-        if (!this.isStarted || state.panel && state.panel.isConnected === false) return;
-        state.searchEscapeListener = (event) => {
-          if (state.panel && state.panel.isConnected === false) {
-            this.cleanupSettingsPanelListeners(state.panel);
-            return;
-          }
-          if (event?.key !== "Escape" || !(state.searchQuery || state.searchInput?.value)) return;
-          const active = typeof document !== "undefined" ? document.activeElement : null;
-          if (!active || !(active === state.searchInput || state.results?.contains?.(active))) return;
-          event.preventDefault?.();
-          event.stopPropagation?.();
-          event.stopImmediatePropagation?.();
-          this.clearSettingsSearch(state, { focus: true });
-        };
-        window.addEventListener("keydown", state.searchEscapeListener, true);
-      }
-      openSettingsSearchResult(state, entry) {
-        if (!state || !entry?.row) return false;
-        this.clearSettingsSearch(state, { focus: false, showTab: false });
-        this.showSettingsTab(state, entry.tabId, { clearSearch: false });
-        for (let node = entry.row.parentElement; node && node !== entry.row.closest?.(".dait-settings-tabpanel"); node = node.parentElement) {
-          if (String(node.tagName || "").toUpperCase() === "DETAILS") node.open = true;
-        }
-        entry.row.scrollIntoView?.({ block: "center", behavior: "auto" });
-        entry.row.classList?.add?.("dait-settings-row-found");
-        const timer = setTimeout(() => entry.row.classList?.remove?.("dait-settings-row-found"), 1600);
-        this.unrefTimer(timer);
-        const target = this.getSettingsRowControls(entry.row).find((control) => !control.disabled && !control.hidden && control.getAttribute?.("tabindex") !== "-1") || this.getSettingsRowControls(entry.row).find((control) => !control.disabled && !control.hidden);
-        if (target) return this.focusSettingsElement(target);
-        entry.row.setAttribute?.("tabindex", "-1");
-        return this.focusSettingsElement(entry.row);
-      }
-      // --- Header ---
-      // The one title bar of every settings window: the plugin's own window has no header of its own, so the panel
-      // shows the title and the close button there too.
-      createSettingsHeader() {
-        const header = document.createElement("div");
-        header.className = "dait-settings-header";
-        const logo = document.createElement("div");
-        logo.className = "dait-settings-logo";
-        logo.setAttribute("aria-hidden", "true");
-        logo.textContent = "AI";
-        header.appendChild(logo);
-        const title = document.createElement("h2");
-        title.className = "dait-settings-title";
-        title.textContent = this.t("settingsTitle");
-        header.appendChild(title);
-        const versionChip = document.createElement("span");
-        versionChip.className = "dait-settings-version";
-        versionChip.dataset.daitVersion = PLUGIN_VERSION;
-        versionChip.textContent = `v${PLUGIN_VERSION}`;
-        header.appendChild(versionChip);
-        header.appendChild(this.createSettingsHeaderStatus());
-        const close = document.createElement("button");
-        close.type = "button";
-        close.className = "dait-settings-close";
-        close.title = this.t("settingsClose");
-        close.setAttribute("aria-label", this.t("settingsClose"));
-        close.appendChild(this.createWindowIcon("close"));
-        close.addEventListener("click", (event) => {
-          event?.preventDefault?.();
-          this.closeSettingsWindow(close);
-        });
-        header.appendChild(close);
-        return header;
-      }
-      // An icon for an icon button in a plugin window (css/01-theme-tokens .dait-icon); the button carries the label.
-      createWindowIcon(name) {
-        const icon = document.createElement("span");
-        icon.className = `dait-icon dait-icon-${name}`;
-        icon.setAttribute("aria-hidden", "true");
-        return icon;
-      }
-      createSettingsHero(options = {}) {
-        return this.createSettingsHeader(options);
-      }
-      // "<status> · <translation service>" for the header; the status badge updates live after a test.
-      createSettingsHeaderStatus() {
-        const wrap = document.createElement("span");
-        wrap.className = "dait-settings-header-status";
-        wrap.title = this.t("translationTitle");
-        wrap.appendChild(this.createApiStatusBadge("translation"));
-        const provider = document.createElement("span");
-        provider.className = "dait-settings-header-provider";
-        provider.textContent = this.getProviderDisplayName(this.settings.translation?.provider);
-        wrap.appendChild(provider);
-        return wrap;
-      }
-      createApiStatusBadge(kind) {
-        const status = document.createElement("span");
-        const savedStatus = this.getApiStatus(kind);
-        status.dataset.daitKind = kind;
-        this.renderApiStatusBadge(status, kind, savedStatus.state, this.getApiStatusText(savedStatus.state), savedStatus.message || "");
-        return status;
-      }
-      // What a status badge shows: "Not set up" (with the "needs you" mark) while the service is missing a required
-      // field, the same name the quick panel and the overview cards use; otherwise the saved or live state. A test
-      // that is running still shows as testing.
-      getApiStatusBadgeState(kind, state = this.getApiStatus(kind).state) {
-        if (state === "testing" || !kind) return state;
-        let configured = true;
-        try {
-          configured = Boolean(this.hasUsableApiConfig(kind));
-        } catch {
-          configured = true;
-        }
-        return configured ? state : "unconfigured";
-      }
-      renderApiStatusBadge(badge, kind, state, text = this.getApiStatusText(state), title = "") {
-        if (!badge) return;
-        const shown = this.getApiStatusBadgeState(kind, state);
-        badge.className = `dait-api-status dait-api-status-${shown}`;
-        badge.textContent = shown === state ? text : this.getApiStatusText(shown);
-        badge.title = shown === state ? title || "" : this.t("overviewServiceMissing", { field: this.getSettingLabelForPath(this.getMissingServiceSettingPath(kind)) });
-      }
-      // The close button closes whichever window holds the panel: the plugin's own settings window, or
-      // BetterDiscord's plugin-settings modal (through its own footer button, or Escape as a last resort).
-      closeSettingsWindow(source) {
-        const quickRoot = source?.closest?.(".dait-quick-settings-modal-root");
-        if (quickRoot) {
-          this.closeQuickSettingsPanel(quickRoot, "button");
-          return true;
-        }
-        const modal = source?.closest?.("[data-dait-settings-modal-root='true']") || source?.closest?.("[role='dialog']");
-        const hostButtons = [...modal?.querySelectorAll?.("button") || []].filter((button) => !button.closest?.(".dait-settings"));
-        const hostClose = hostButtons[hostButtons.length - 1];
-        if (hostClose?.click) {
-          hostClose.click();
-          return true;
-        }
-        if (typeof document === "undefined" || typeof KeyboardEvent !== "function") return false;
-        const target = document.activeElement || document.body;
-        target?.dispatchEvent?.(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", keyCode: 27, which: 27, bubbles: true, cancelable: true }));
-        return true;
-      }
-      // --- Panel replacement and sizing ---
-      replaceSettingsPanelFrom(source) {
-        const panel = source?.closest?.(".dait-settings");
-        if (panel) this.replaceSettingsPanelElement(panel);
-      }
-      // Rebuilds the panel in place (provider or language change, reset) and keeps the tab, the scroll position and
-      // the focused control.
-      replaceSettingsPanelElement(panel, nextPanel = null) {
-        if (!panel) return null;
-        if (panel.__daitReplacedBy && panel.isConnected === false) return panel.__daitReplacedBy;
-        const scrollTop = Number(panel.__daitSettingsUi?.content?.scrollTop || 0);
-        const active = typeof document !== "undefined" ? document.activeElement : null;
-        const focusPath = active && panel.contains?.(active) ? String(active.dataset?.daitPath || "") : "";
-        const focusSavedKind = !focusPath && active && panel.contains?.(active) ? String(active.dataset?.daitSavedConfigs || "") : "";
-        const activeTab = panel.__daitSettingsUi?.activeTab;
-        if (activeTab && this.settings?.ui) this.settings.ui.settingsActiveTab = activeTab;
-        nextPanel = nextPanel || this.getSettingsPanel({ quickSettings: panel.dataset?.daitQuickSettings === "true" });
-        ["--dait-host-chrome", "--dait-host-max"].forEach((name) => {
-          const value = panel.style?.getPropertyValue?.(name);
-          if (value) nextPanel.style?.setProperty?.(name, value);
-        });
-        this.destroySettingsModalSizing(panel);
-        panel.replaceWith?.(nextPanel);
-        panel.__daitReplacedBy = nextPanel;
-        const content = nextPanel.__daitSettingsUi?.content;
-        if (content && scrollTop) content.scrollTop = scrollTop;
-        if (focusPath) {
-          const control = [...nextPanel.querySelectorAll?.(`[data-dait-path='${focusPath}']`) || []].find((node) => !node.closest?.("[hidden]"));
-          this.focusSettingsElement(control);
-        } else if (focusSavedKind) {
-          const control = [...nextPanel.querySelectorAll?.(`[data-dait-saved-configs='${focusSavedKind}']`) || []].find((node) => !node.closest?.("[hidden]"));
-          this.focusSettingsElement(control);
-        }
-        if (nextPanel.dataset?.daitQuickSettings === "true") this.syncSettingsPanelHeight(nextPanel);
-        return nextPanel;
-      }
-      // Kept for the quick-settings window, which calls it after inserting the panel. The tabbed window has no
-      // scroll-spy; this shows the saved tab and fits the panel to its host.
-      bindSettingsScrollTracking(panel, scroller = null) {
-        const state = panel?.__daitSettingsUi;
-        if (state) this.showSettingsTab(state, this.getSettingsActiveTab(), { save: false, resetScroll: false });
-        this.syncSettingsPanelHeight(panel, scroller);
-      }
-      syncSettingsScrollPosition(panel, scroller = null) {
-        const state = panel?.__daitSettingsUi;
-        if (state) this.showSettingsTab(state, this.getSettingsActiveTab(), { save: false });
-        this.syncSettingsPanelHeight(panel, scroller);
-      }
-      scheduleSettingsModalSizing(panel) {
-        this.clearSettingsModalSizingSchedule(panel);
-        const apply = () => this.applySettingsModalSizing(panel);
-        const schedule = { raf: null, timers: [] };
-        if (panel) panel.__daitSettingsModalSizingSchedule = schedule;
-        if (panel?.isConnected) apply();
-        if (typeof requestAnimationFrame === "function") {
-          schedule.raf = requestAnimationFrame(() => {
-            schedule.raf = null;
-            apply();
-          });
-        }
-        schedule.timers.push(setTimeout(apply, 50));
-        schedule.timers.push(setTimeout(apply, 250));
-        if (panel?.isConnected) this.watchSettingsModalSizingCleanup(panel);
-      }
-      // BetterDiscord 1.14+ renders plugin settings inline inside Discord's Settings content column (not a popup modal).
-      // Detect inline views via both class hints and live geometry (handles obfuscated/renamed Discord class hashes)
-      // so we never force a 920 px popup-modal width inside a narrower column beside Discord's Settings sidebar.
-      isSettingsPanelInInlineDiscordView(panel) {
-        if (!panel) return false;
-        let inInlineColumn = false;
-        for (let node = panel.parentElement; node && node !== document.body; node = node.parentElement) {
-          const className = String(node.className?.baseVal ?? node.className ?? "");
-          const role = String(node.getAttribute?.("role") || "");
-          if (/(?:^|\s)(?:dait-quick-settings-dialog|bd-modal-root|bd-modal-wrapper)(?:\s|$)/.test(className) || /focusLock/i.test(className) || role === "dialog") {
-            return false;
-          }
-          if (/(?:standardSidebarView|contentRegion|contentColumn|settingsContent|bd-addon-views|bd-settings)/i.test(className)) {
-            inInlineColumn = true;
-          }
-        }
-        if (inInlineColumn) return true;
-        try {
-          const viewportWidth = Number(
-            (typeof window !== "undefined" ? window.visualViewport?.width || window.innerWidth : 0) || (typeof document !== "undefined" ? document.documentElement?.clientWidth : 0) || 0
-          );
-          const panelRect = panel.getBoundingClientRect?.();
-          const parentRect = panel.parentElement?.getBoundingClientRect?.();
-          if (viewportWidth > 0 && panelRect && parentRect && Number(panelRect.left || 0) >= 160 && Number(parentRect.width || 0) > 0 && Number(parentRect.width || 0) < viewportWidth - 140 && Number(parentRect.right || 0) >= viewportWidth - 96) {
-            return true;
-          }
-        } catch {
-        }
-        return false;
-      }
-      // Computes the tightest visible width budget for the settings panel from both the live visualViewport
-      // (reacts to Windows DPI & Electron Ctrl+/-/0 zoom) and any overflow-clipping ancestor containers.
-      computeSettingsPanelDynamicWidth(panel) {
-        if (!panel?.isConnected || typeof window === "undefined") return 0;
-        const viewportWidth = Number(
-          window.visualViewport?.width || window.innerWidth || (typeof document !== "undefined" ? document.documentElement?.clientWidth : 0) || 0
-        );
-        if (!viewportWidth) return 0;
-        let maxWidth = Math.max(280, Math.floor(viewportWidth - 20));
-        try {
-          const panelRect = panel.getBoundingClientRect?.();
-          const left = Number(panelRect?.left || 0);
-          if (Number.isFinite(left) && left > 0 && left < viewportWidth - 200) {
-            maxWidth = Math.min(maxWidth, Math.max(280, Math.floor(viewportWidth - left - 16)));
-          }
-          let current = panel.parentElement;
-          let depth = 0;
-          while (current && current !== document.body && depth < 10) {
-            if (current.dataset?.daitSettingsModal !== "true") {
-              const style = typeof getComputedStyle === "function" ? getComputedStyle(current) : null;
-              const overflowX = String(style?.overflowX || "");
-              if (/(hidden|clip|auto|scroll)/.test(overflowX)) {
-                const rect = current.getBoundingClientRect?.();
-                const padLeft = Number.parseFloat(style?.paddingLeft) || 0;
-                const padRight = Number.parseFloat(style?.paddingRight) || 0;
-                const inner = Number(rect?.width || 0) - padLeft - padRight;
-                if (Number.isFinite(inner) && inner >= 260) {
-                  maxWidth = Math.min(maxWidth, Math.floor(inner));
-                }
-              }
-            }
-            current = current.parentElement;
-            depth++;
-          }
-        } catch {
-        }
-        return Math.min(SETTINGS_WINDOW_MAX_WIDTH, Math.max(280, maxWidth));
-      }
-      // BetterDiscord's plugin-settings modal is narrow; widen it to a moderate window (at most 920 px). The
-      // panel works without this too: below 640 px its tab rail becomes a row and rows stack.
-      applySettingsModalSizing(panel) {
-        if (!this.isStarted || !panel?.isConnected || typeof window === "undefined") {
-          this.cleanupSettingsModalSizing(panel);
-          return;
-        }
-        if (panel.closest?.(".dait-quick-settings-dialog")) return;
-        if (this.isSettingsPanelInInlineDiscordView(panel)) {
-          this.cleanupSettingsModalSizing(panel);
-          if (panel.dataset) panel.dataset.daitSettingsInline = "true";
-          this.syncSettingsPanelHeight(panel);
-          this.watchSettingsModalSizingCleanup(panel);
-          return;
-        }
-        if (panel.dataset?.daitSettingsInline) delete panel.dataset.daitSettingsInline;
-        const documentWidth = typeof document !== "undefined" ? Number(document.documentElement?.clientWidth || 0) : 0;
-        const viewportWidth = Number(window.innerWidth || documentWidth || 0);
-        const desiredWidth = Math.min(SETTINGS_WINDOW_MAX_WIDTH, viewportWidth ? viewportWidth - 48 : SETTINGS_WINDOW_MAX_WIDTH);
-        let current = panel.parentElement;
-        const candidateNodes = [];
-        while (current && current !== document.body && candidateNodes.length < 5) {
-          const rect = current.getBoundingClientRect?.();
-          const width = Number(rect?.width || 0);
-          if (viewportWidth && width >= viewportWidth - 1) break;
-          if (!width || width <= desiredWidth + 80) {
-            candidateNodes.push(current);
-          }
-          current = current.parentElement;
-        }
-        let root = null;
-        const markedNodes = [];
-        for (const node of candidateNodes) {
-          if (node.dataset.daitSettingsModal !== "true") node.dataset.daitSettingsModal = "true";
-          root = node;
-          markedNodes.push(node);
-        }
-        if (root) {
-          if (root.dataset.daitSettingsModalRoot !== "true") root.dataset.daitSettingsModalRoot = "true";
-          if (!markedNodes.includes(root)) markedNodes.push(root);
-        }
-        const nextNodes = new Set(markedNodes);
-        const previousNodes = Array.isArray(panel.__daitSettingsModalMarkedNodes) ? panel.__daitSettingsModalMarkedNodes : [];
-        previousNodes.forEach((node) => {
-          if (!nextNodes.has(node)) this.cleanupSettingsModalNode(node);
-        });
-        panel.__daitSettingsModalMarkedNodes = markedNodes;
-        this.syncSettingsPanelHeight(panel);
-        this.watchSettingsModalSizingCleanup(panel);
-      }
-      // The panel is as tall as the window allows (min(760px, 100vh - 64px)) minus what its host draws around it:
-      // BetterDiscord's modal header and footer, or the quick-settings window's header and footer. The content pane
-      // scrolls inside, so the header and the tab rail stay put.
-      syncSettingsPanelHeight(panel, scroller = null) {
-        if (!panel?.isConnected || !panel.style?.setProperty || typeof getComputedStyle !== "function") return false;
-        this.bindSettingsTabOrientation(panel);
-        const isInline = panel.dataset?.daitSettingsInline === "true";
-        const host = scroller || this.getSettingsHostScroller(panel);
-        const modalRoot = panel.closest?.("[data-dait-settings-modal-root='true']");
-        const frame = panel.closest?.(".dait-quick-settings-dialog") || modalRoot || host;
-        const viewportHeight = Number(
-          (typeof window !== "undefined" ? window.visualViewport?.height || window.innerHeight : 0) || (typeof document !== "undefined" ? document.documentElement?.clientHeight : 0) || 0
-        );
-        const dynamicMaxW = this.computeSettingsPanelDynamicWidth(panel);
-        const applyDynamicWidth = () => {
-          if (dynamicMaxW > 0) {
-            panel.style.setProperty("--dait-dynamic-max-w", `${dynamicMaxW}px`);
-            if (modalRoot?.style?.setProperty) modalRoot.style.setProperty("--dait-dynamic-max-w", `${dynamicMaxW}px`);
-          } else {
-            panel.style.removeProperty?.("--dait-dynamic-max-w");
-          }
-        };
-        if (isInline) {
-          try {
-            const panelRect = panel.getBoundingClientRect?.();
-            const top = Number(panelRect?.top || 0);
-            const available = viewportHeight > 0 && Number.isFinite(top) && top >= 0 && top < viewportHeight ? Math.max(260, Math.floor(viewportHeight - top - 24)) : 0;
-            applyDynamicWidth();
-            panel.style.setProperty("--dait-host-chrome", "0px");
-            if (available > 0) panel.style.setProperty("--dait-host-max", `${available}px`);
-            else panel.style.removeProperty?.("--dait-host-max");
-            this.bindSettingsPanelResize(panel);
-            return true;
-          } catch {
-            applyDynamicWidth();
-            return false;
-          }
-        }
-        if (!host || !frame?.getBoundingClientRect) {
-          applyDynamicWidth();
-          return false;
-        }
-        try {
-          const hostStyle = getComputedStyle(host);
-          const hostRect = host.getBoundingClientRect();
-          const panelRect = panel.getBoundingClientRect();
-          const frameRect = frame.getBoundingClientRect();
-          const rawFrameMax = Number.parseFloat(getComputedStyle(frame).maxHeight);
-          const above = Math.max(0, panelRect.top - hostRect.top - Number(host.clientTop || 0) + Number(host.scrollTop || 0));
-          const below = Number.parseFloat(hostStyle.paddingBottom) || 0;
-          const chrome = frameRect.height - Number(host.clientHeight || 0) + above + below;
-          const safeChrome = Number.isFinite(chrome) && chrome >= 0 ? Math.ceil(chrome) : 0;
-          let effectiveMax = Number.isFinite(rawFrameMax) && rawFrameMax > 0 ? Math.floor(rawFrameMax) : 0;
-          if (viewportHeight > 0 && Number.isFinite(panelRect.top) && panelRect.top > 0 && panelRect.top < viewportHeight) {
-            const viewportCap = Math.max(260, Math.floor(viewportHeight - panelRect.top - 16)) + safeChrome;
-            effectiveMax = effectiveMax > 0 ? Math.min(effectiveMax, viewportCap) : viewportCap;
-          }
-          applyDynamicWidth();
-          if (Number.isFinite(chrome) && chrome >= 0) panel.style.setProperty("--dait-host-chrome", `${safeChrome}px`);
-          if (effectiveMax > 0) panel.style.setProperty("--dait-host-max", `${effectiveMax}px`);
-          else panel.style.removeProperty?.("--dait-host-max");
-          this.bindSettingsPanelResize(panel);
-          return true;
-        } catch {
-          applyDynamicWidth();
-          return false;
-        }
-      }
-      // The tab rail is a vertical list, or a row once the panel is 760 px wide or less (the @container rule in
-      // css/04-settings.js); aria-orientation follows the panel's width as it changes. Uses one ResizeObserver per panel.
-      bindSettingsTabOrientation(panel) {
-        this.syncSettingsTabOrientation(panel);
-        if (!panel || panel.__daitSettingsOrientationObserver || typeof ResizeObserver !== "function") return;
-        try {
-          const observer = new ResizeObserver(() => {
-            this.syncSettingsTabOrientation(panel);
-            if (panel.dataset?.daitSettingsInline === "true") panel.__daitSettingsResize?.listener?.();
-          });
-          observer.observe(panel);
-          panel.__daitSettingsOrientationObserver = observer;
-        } catch {
-        }
-      }
-      syncSettingsTabOrientation(panel) {
-        const tablist = panel?.__daitSettingsUi?.tablist;
-        const width = Number(panel?.clientWidth || panel?.getBoundingClientRect?.()?.width || 0);
-        if (!tablist?.setAttribute || !width) return "";
-        const orientation = width <= 760 ? "horizontal" : "vertical";
-        if (tablist.getAttribute?.("aria-orientation") !== orientation) tablist.setAttribute("aria-orientation", orientation);
-        if (panel.dataset) {
-          const tier = width <= 600 ? "compact" : width <= 860 ? "medium" : "wide";
-          if (panel.dataset.daitSizeTier !== tier) panel.dataset.daitSizeTier = tier;
-        }
-        return orientation;
-      }
-      getSettingsHostScroller(panel) {
-        for (let node = panel?.parentElement; node && node !== document.body; node = node.parentElement) {
-          try {
-            if (/(auto|scroll)/.test(getComputedStyle(node).overflowY)) return node;
-          } catch {
-            return null;
-          }
-        }
-        return null;
-      }
-      // A host whose max-height follows the viewport changes size with the window or browser/DPI zoom.
-      bindSettingsPanelResize(panel) {
-        if (!panel || panel.__daitSettingsResize || typeof window === "undefined" || typeof window.addEventListener !== "function") return;
-        const state = { raf: null };
-        state.listener = () => {
-          if (state.raf !== null || typeof requestAnimationFrame !== "function") return;
-          state.raf = requestAnimationFrame(() => {
-            state.raf = null;
-            if (panel.isConnected) this.syncSettingsPanelHeight(panel);
-            else this.cleanupSettingsPanelListeners(panel);
-          });
-        };
-        panel.__daitSettingsResize = state;
-        window.addEventListener("resize", state.listener, { passive: true });
-        window.visualViewport?.addEventListener?.("resize", state.listener, { passive: true });
-      }
-      cleanupSettingsPanelListeners(panel) {
-        const resize = panel?.__daitSettingsResize;
-        if (resize) {
-          if (resize.raf !== null && typeof cancelAnimationFrame === "function") cancelAnimationFrame(resize.raf);
-          if (typeof window !== "undefined") {
-            window.removeEventListener?.("resize", resize.listener, { passive: true });
-            window.visualViewport?.removeEventListener?.("resize", resize.listener, { passive: true });
-          }
-          panel.__daitSettingsResize = null;
-        }
-        if (panel?.__daitSettingsOrientationObserver) {
-          panel.__daitSettingsOrientationObserver.disconnect?.();
-          panel.__daitSettingsOrientationObserver = null;
-        }
-        const state = panel?.__daitSettingsUi;
-        if (state?.searchEscapeListener) {
-          if (typeof window !== "undefined") window.removeEventListener?.("keydown", state.searchEscapeListener, true);
-          state.searchEscapeListener = null;
-        }
-      }
-      cleanupSettingsModalSizing(panel) {
-        const nodes = new Set(Array.isArray(panel?.__daitSettingsModalMarkedNodes) ? panel.__daitSettingsModalMarkedNodes : []);
-        nodes.forEach((node) => this.cleanupSettingsModalNode(node));
-        if (panel) panel.__daitSettingsModalMarkedNodes = [];
-      }
-      cleanupSettingsModalNode(node) {
-        if (node?.dataset?.daitSettingsModal) delete node.dataset.daitSettingsModal;
-        if (node?.dataset?.daitSettingsModalRoot) delete node.dataset.daitSettingsModalRoot;
-        if (node?.dataset?.daitDiscordTheme) delete node.dataset.daitDiscordTheme;
-        if (node?.style?.removeProperty) {
-          node.style.removeProperty("--dait-dynamic-max-w");
-          DISCORD_THEME_VARIABLES.forEach((name) => node.style.removeProperty(name));
-        }
-      }
-      clearSettingsModalSizingSchedule(panel) {
-        const schedule = panel?.__daitSettingsModalSizingSchedule;
-        if (!schedule) return;
-        if (schedule.raf !== null && schedule.raf !== void 0 && typeof cancelAnimationFrame === "function") {
-          cancelAnimationFrame(schedule.raf);
-        }
-        (schedule.timers || []).forEach((timer) => clearTimeout(timer));
-        if (panel) panel.__daitSettingsModalSizingSchedule = null;
-      }
-      destroySettingsModalSizing(panel) {
-        this.clearHotkeyRecordingWithin(panel);
-        this.cleanupSettingsPanelListeners(panel);
-        this.clearSettingsModalSizingSchedule(panel);
-        if (panel?.__daitSettingsModalCleanupObserver) {
-          panel.__daitSettingsModalCleanupObserver.disconnect?.();
-          panel.__daitSettingsModalCleanupObserver = null;
-        }
-        this.cleanupSettingsModalSizing(panel);
-      }
-      watchSettingsModalSizingCleanup(panel) {
-        if (!panel?.isConnected || panel.__daitSettingsModalCleanupObserver || typeof MutationObserver !== "function" || typeof document === "undefined" || !document.body) return;
-        const observedAncestors = /* @__PURE__ */ new Set();
-        const observeChain = (obs) => {
-          let observed = false;
-          let current = panel.parentElement;
-          while (current) {
-            if (!observedAncestors.has(current)) {
-              try {
-                obs.observe(current, { childList: true, subtree: false });
-                observedAncestors.add(current);
-                observed = true;
-              } catch {
-              }
-            } else {
-              observed = true;
-            }
-            if (current === document.body) break;
-            current = current.parentElement;
-          }
-          return observed;
-        };
-        const observer = new MutationObserver(() => {
-          if (panel.isConnected) {
-            if (panel.parentElement && !observedAncestors.has(panel.parentElement)) {
-              observeChain(observer);
-            }
-            return;
-          }
-          this.clearHotkeyRecordingWithin(panel);
-          this.cleanupSettingsPanelListeners(panel);
-          this.clearSettingsModalSizingSchedule(panel);
-          this.cleanupSettingsModalSizing(panel);
-          observer.disconnect?.();
-          panel.__daitSettingsModalCleanupObserver = null;
-        });
-        if (!observeChain(observer)) observer.observe(document.body, { childList: true, subtree: true });
-        panel.__daitSettingsModalCleanupObserver = observer;
-      }
-      // --- Tab pages (UI-SPEC information architecture) ---
-      createSettingsGroup(titleText, key, options = {}) {
-        const group = document.createElement("section");
-        group.className = `dait-settings-group dait-settings-group-${key}${options.className ? ` ${options.className}` : ""}`;
-        group.dataset.daitSettingsGroup = key;
-        group.dataset.daitSearchGroup = titleText || "";
-        if (titleText) {
-          const title = document.createElement("h3");
-          title.className = "dait-settings-group-title";
-          title.textContent = titleText;
-          group.appendChild(title);
-        }
-        if (options.description) {
-          const note = document.createElement("p");
-          note.className = "dait-settings-group-note";
-          note.textContent = options.description;
-          group.appendChild(note);
-        }
-        return group;
-      }
-      createOverviewTabContent() {
-        return [this.createOverviewStatusSection(), this.createGeneralSection()];
-      }
-      // Setup checklist (hidden once everything is done) and the status of the two services, each with a Test button.
-      // Rebuilt in place when the overview is shown, after a test and when a setting it reports on changes.
-      createOverviewStatusSection() {
-        const section = document.createElement("section");
-        section.className = "dait-settings-group dait-overview-status";
-        section.dataset.daitSettingsGroup = "overview-status";
-        section.dataset.daitSearchGroup = "";
-        const items = this.getOverviewSetupItems();
-        const done = items.filter((item) => item.done).length;
-        if (done < items.length) section.appendChild(this.createOverviewSetupCard(items, done));
-        const title = document.createElement("h3");
-        title.className = "dait-settings-group-title";
-        title.textContent = this.t("overviewServicesTitle");
-        section.appendChild(title);
-        const cards = document.createElement("div");
-        cards.className = "dait-service-cards";
-        ["translation", "polish"].forEach((kind) => cards.appendChild(this.createOverviewServiceCard(kind)));
-        section.appendChild(cards);
-        return section;
-      }
-      // One entry per setup step: { id, label, state, done, detail, action }. state is the icon: done, todo, error,
-      // busy or off (a step that does not apply, which counts as done). action: { key, text, run } or
-      // { key, text, tab, path } (opens that tab and focuses the control).
-      getOverviewSetupItems() {
-        const translation = this.settings.translation || {};
-        const providerName = this.getProviderDisplayName(translation.provider);
-        const enabled = translation.enabled !== false;
-        const configured = enabled && this.hasUsableApiConfig("translation");
-        const status = this.getApiStatus("translation");
-        const routeKey = this.getCurrentRouteKey();
-        const hasChannel = Boolean(this.getChannelAutoTranslatePolicyStorageKey(routeKey));
-        const rule = hasChannel ? this.getCurrentChannelAutoTranslatePolicyMode(routeKey) : "";
-        const autoOn = Boolean(this.settings.ui?.autoTranslateMessages);
-        const target = String(translation.targetLanguage || "").trim();
-        const items = [];
-        items.push({
-          id: "service",
-          label: this.t("overviewSetupService"),
-          done: configured,
-          state: configured ? "done" : "todo",
-          detail: !enabled ? this.t("overviewSetupServiceOff") : configured ? providerName : this.t("overviewSetupServiceMissing", { provider: providerName }),
-          action: configured ? null : { key: "setup", text: this.t("overviewSetUp"), tab: SETTINGS_TAB_TRANSLATE, path: enabled ? this.getMissingServiceSettingPath("translation") : "translation.enabled" }
-        });
-        const tested = status.state === "success";
-        items.push({
-          id: "test",
-          label: this.t("overviewSetupTest"),
-          done: tested,
-          state: tested ? "done" : status.state === "failed" ? "error" : status.state === "testing" ? "busy" : "todo",
-          detail: !configured && !tested ? this.t("overviewSetupTestBlocked") : this.getApiTestSummaryText("translation"),
-          action: tested || !configured ? null : { key: "test", text: this.t("apiTest"), run: "test" }
-        });
-        items.push({
-          id: "target",
-          label: this.t("overviewSetupTarget"),
-          done: Boolean(target),
-          state: target ? "done" : "todo",
-          detail: target ? this.getDisplayLanguage(target) : "",
-          action: target ? null : { key: "setup", text: this.t("overviewSetUp"), tab: SETTINGS_TAB_TRANSLATE, path: "translation.targetLanguage" }
-        });
-        const autoDone = autoOn || rule === "enabled";
-        items.push({
-          id: "auto",
-          label: this.t("overviewSetupAuto"),
-          done: autoDone,
-          state: autoDone ? "done" : "todo",
-          detail: autoOn ? this.t("overviewSetupAutoOn") : autoDone ? this.t("overviewSetupAutoChannel") : this.t("overviewSetupAutoOff"),
-          action: autoDone ? null : { key: "auto", text: this.t("overviewTurnOn"), run: "autoTranslate" }
-        });
-        const channelLabel = hasChannel ? this.getSettingsChannelLabel(routeKey) : "";
-        const channelDetail = !hasChannel ? this.t("overviewSetupChannelNone") : rule === "disabled" ? this.t("overviewSetupChannelNever") : rule === "enabled" ? this.t("channelRuleAlways") : this.t("channelRuleFollow");
-        items.push({
-          id: "channel",
-          label: this.t("overviewSetupChannel"),
-          done: rule !== "disabled",
-          state: !hasChannel ? "off" : rule === "disabled" ? "todo" : "done",
-          detail: channelLabel ? `${channelLabel} · ${channelDetail}` : channelDetail,
-          action: rule === "disabled" ? { key: "channel", text: this.t("overviewChange"), tab: SETTINGS_TAB_OVERVIEW, path: "ui.currentChannelAutoTranslatePolicy" } : null
-        });
-        return items;
-      }
-      createOverviewSetupCard(items, done) {
-        const card = document.createElement("div");
-        card.className = "dait-setup-card";
-        const titleId = this.createSettingsControlId("dait-setup-title");
-        card.setAttribute("role", "region");
-        card.setAttribute("aria-labelledby", titleId);
-        const head = document.createElement("div");
-        head.className = "dait-setup-head";
-        const title = document.createElement("h3");
-        title.className = "dait-setup-title";
-        title.id = titleId;
-        title.textContent = this.t("overviewSetupTitle", { count: items.length - done });
-        head.appendChild(title);
-        const progress = document.createElement("span");
-        progress.className = "dait-setup-progress";
-        progress.textContent = this.t("overviewSetupProgress", { done, total: items.length });
-        head.appendChild(progress);
-        card.appendChild(head);
-        const list = document.createElement("ul");
-        list.className = "dait-setup-list";
-        items.forEach((item) => {
-          const entry = document.createElement("li");
-          entry.className = `dait-setup-item dait-setup-item-${item.state}`;
-          entry.dataset.daitSetupItem = item.id;
-          const icon = document.createElement("span");
-          icon.className = "dait-setup-icon";
-          const iconText = document.createElement("span");
-          iconText.className = "dait-visually-hidden";
-          iconText.textContent = this.t(item.done ? "overviewStateDone" : "overviewStateTodo");
-          icon.appendChild(iconText);
-          entry.appendChild(icon);
-          const label = document.createElement("span");
-          label.className = "dait-setup-label";
-          label.textContent = item.label;
-          entry.appendChild(label);
-          const detail = document.createElement("span");
-          detail.className = "dait-setup-detail";
-          detail.textContent = item.detail || "";
-          detail.title = item.detail || "";
-          entry.appendChild(detail);
-          if (item.action) entry.appendChild(this.createOverviewActionButton(item.action, item.label));
-          list.appendChild(entry);
-        });
-        card.appendChild(list);
-        return card;
-      }
-      createOverviewActionButton(action, context = "") {
-        const button = this.createSmallButton(action.text, action.run === "autoTranslate" || action.run === "test" ? "primary" : "outline");
-        button.dataset.daitOverviewAction = action.key;
-        if (context) button.setAttribute("aria-label", `${action.text}: ${context}`);
-        button.addEventListener("click", (event) => {
-          event?.preventDefault?.();
-          if (action.run === "test") {
-            this.runOverviewApiTest("translation", button);
-            return;
-          }
-          if (action.run === "autoTranslate") {
-            this.setSetting("ui.autoTranslateMessages", true);
-            this.refreshOverviewStatusSection(button.closest?.(".dait-settings") || null);
-            return;
-          }
-          this.openSettingsControl(button, action.tab, action.path);
-        });
-        return button;
-      }
-      // Service card: task and service name, the connection state (the same live badge as the connection card), a
-      // detail line and Test, or "Set up" while the service is off or missing a field.
-      createOverviewServiceCard(kind) {
-        const task = this.settings[kind] || {};
-        const card = document.createElement("div");
-        card.className = "dait-service-card";
-        card.dataset.daitKind = kind;
-        const text = document.createElement("div");
-        text.className = "dait-service-card-text";
-        const title = document.createElement("div");
-        title.className = "dait-service-card-title";
-        title.textContent = `${this.t(kind === "polish" ? "overviewCardPolish" : "overviewCardTranslation")} · ${this.getProviderDisplayName(task.provider)}`;
-        text.appendChild(title);
-        const line = document.createElement("div");
-        line.className = "dait-service-card-status";
-        const enabled = task.enabled !== false;
-        const configured = enabled && this.hasUsableApiConfig(kind);
-        let action = null;
-        if (!enabled || !configured) {
-          const mark = document.createElement("span");
-          mark.className = `dait-status-mark dait-status-mark-${enabled ? "needs" : "off"}`;
-          mark.textContent = enabled ? this.t("overviewServiceMissing", { field: this.getSettingLabelForPath(this.getMissingServiceSettingPath(kind)) }) : this.t("overviewServiceOff");
-          line.appendChild(mark);
-          action = { key: "setup", text: this.t("overviewSetUp"), tab: kind === "polish" ? SETTINGS_TAB_COMPOSE : SETTINGS_TAB_TRANSLATE, path: enabled ? this.getMissingServiceSettingPath(kind) : `${kind}.enabled` };
-        } else {
-          line.appendChild(this.createApiStatusBadge(kind));
-          line.appendChild(this.createApiTestDetail(kind));
-        }
-        text.appendChild(line);
-        card.appendChild(text);
-        if (action) {
-          const setup = this.createOverviewActionButton(action, title.textContent);
-          card.appendChild(setup);
-        } else {
-          const test = this.createSmallButton(this.t("apiTest"));
-          test.dataset.daitAction = "apiTest";
-          test.dataset.daitKind = kind;
-          test.setAttribute("aria-label", `${this.t("apiTest")}: ${title.textContent}`);
-          test.addEventListener("click", (event) => {
-            event?.preventDefault?.();
-            this.runOverviewApiTest(kind, test, line.querySelector?.(".dait-api-status"));
-          });
-          card.appendChild(test);
-        }
-        return card;
-      }
-      // A test started from the overview: the card's badge shows it, then every view of this task's status follows.
-      runOverviewApiTest(kind, button, badge = null) {
-        const status = badge || this.createApiStatusBadge(kind);
-        return Promise.resolve(this.testApiConnection(kind, button, status)).then((committed) => {
-          if (committed !== false) this.refreshApiTestViews(kind);
-          return committed;
-        });
-      }
-      // The first field a task's service still needs, or its provider select.
-      getMissingServiceSettingPath(kind) {
-        const config = this.getTaskConfig(kind) || {};
-        const provider = String(config.provider || "");
-        const defaults = this.getProviderDefaults(provider) || {};
-        const ui = this.getProviderCapabilities(provider)?.ui || {};
-        if (provider === "baidu") {
-          if (!String(config.appId || "").trim()) return `${kind}.appId`;
-          if (!String(config.secretKey || "").trim()) return `${kind}.secretKey`;
-        }
-        if (provider === "googleCloud" && !this.getEffectiveRequestApiKey(config)) return "googleTranslate.keyPoolText";
-        if (ui.apiKey && !this.isProviderApiKeyOptional(provider) && !String(config.apiKey || "").trim()) return `${kind}.apiKey`;
-        if (ui.endpoint && !String(config.endpoint || defaults.endpoint || "").trim()) return `${kind}.endpoint`;
-        if (ui.model && !String(config.model || defaults.model || "").trim()) return `${kind}.model`;
-        return `${kind}.provider`;
-      }
-      getSettingLabelForPath(path) {
-        const field = String(path || "").split(".").pop();
-        const keys = {
-          apiKey: "apiKey",
-          endpoint: "endpoint",
-          model: "model",
-          appId: "baiduAppId",
-          secretKey: "baiduSecretKey",
-          keyPoolText: "googleTranslateKeys",
-          provider: "provider",
-          enabled: "enabled"
-        };
-        return this.t(keys[field] || "provider");
-      }
-      // "#general" for the current channel when Discord's store knows it.
-      getSettingsChannelLabel(routeKey = this.getCurrentRouteKey()) {
-        if (!this.getChannelAutoTranslatePolicyStorageKey(routeKey)) return "";
-        const channelId = String(routeKey || "").split(":")[1] || "";
-        try {
-          const name = String(this.getDiscordNamedStore?.("ChannelStore")?.getChannel?.(channelId)?.name || "").trim();
-          return name ? `#${name}` : "";
-        } catch {
-          return "";
-        }
-      }
-      // Opens a tab and brings one control into view with focus (the overview's "Set up" / "Change" buttons).
-      openSettingsControl(source, tabId, path) {
-        const panel = source?.closest?.(".dait-settings");
-        const state = panel?.__daitSettingsUi;
-        if (!state) return false;
-        const tab = state.tabs.find((item) => item.id === normalizeSettingsTabId(tabId)) || state.tabs[0];
-        const control = [...tab.tabpanel?.querySelectorAll?.(`[data-dait-path='${path}']`) || []][0] || null;
-        const row = control?.closest?.(".dait-settings-row") || null;
-        if (!row) {
-          this.showSettingsTab(state, tab.id);
-          return false;
-        }
-        return this.openSettingsSearchResult(state, { row, tabId: tab.id });
-      }
-      // Rebuilds the overview status sections under root (a panel, a tab page, or the whole document), keeping the
-      // keyboard focus on the same kind of button when it was inside.
-      refreshOverviewStatusSection(root = null) {
-        const scope = root || (typeof document !== "undefined" ? document : null);
-        let sections = [];
-        try {
-          sections = [...scope?.querySelectorAll?.(".dait-overview-status") || []];
-        } catch {
-          sections = [];
-        }
-        sections = sections.filter((section) => section?.replaceWith && !section.__daitReplaced && section.isConnected !== false);
-        sections.forEach((section) => {
-          section.__daitReplaced = true;
-          const active = typeof document !== "undefined" ? document.activeElement : null;
-          const hadFocus = Boolean(active && section.contains?.(active));
-          const focusAction = hadFocus ? String(active.dataset?.daitOverviewAction || active.dataset?.daitAction || "") : "";
-          const focusKind = hadFocus ? String(active.closest?.(".dait-service-card")?.dataset?.daitKind || "") : "";
-          const next = this.createOverviewStatusSection();
-          section.replaceWith(next);
-          if (!hadFocus) return;
-          const candidates = [...next.querySelectorAll?.("button") || []];
-          const target = candidates.find((button) => (button.dataset?.daitOverviewAction || button.dataset?.daitAction) === focusAction && String(button.closest?.(".dait-service-card")?.dataset?.daitKind || "") === focusKind) || candidates.find((button) => !button.disabled);
-          this.focusSettingsElement(target);
-        });
-        return sections.length;
-      }
-      // Setting writes the overview reports on refresh it once, after the current event.
-      scheduleOverviewStatusRefresh(path = "") {
-        if (!/^(translation|polish|googleTranslate)\./.test(path) && !["ui.autoTranslateMessages", "ui.currentChannelAutoTranslatePolicy"].includes(path)) return;
-        if (this.overviewStatusRefreshTimer || typeof setTimeout !== "function") return;
-        this.overviewStatusRefreshTimer = setTimeout(() => {
-          this.overviewStatusRefreshTimer = null;
-          if (!this.isStarted || typeof document === "undefined") return;
-          this.refreshOverviewStatusSection();
-        }, 0);
-        this.unrefTimer(this.overviewStatusRefreshTimer);
-      }
-      // After a connection test: every badge, detail line and overview of this task shows the new state.
-      refreshApiTestViews(kind) {
-        if (typeof document === "undefined") return;
-        const status = this.getApiStatus(kind);
-        let badges = [];
-        let details = [];
-        try {
-          badges = [...document.querySelectorAll?.(`.dait-api-status[data-dait-kind='${kind}']`) || []];
-          details = [...document.querySelectorAll?.(`.dait-api-test-detail[data-dait-kind='${kind}']`) || []];
-        } catch {
-        }
-        badges.forEach((badge) => this.renderApiStatusBadge(badge, kind, status.state, this.getApiStatusText(status.state), status.message || ""));
-        details.forEach((detail) => this.syncApiTestDetail(detail, kind));
-        this.refreshSavedServiceConfigControls();
-        this.refreshOverviewStatusSection();
-      }
-      // Text after the status badge: "Hy-MT2 · 820 ms · just now" after a passed test, the error after a failed one.
-      createApiTestDetail(kind) {
-        const detail = document.createElement("span");
-        detail.className = "dait-api-test-detail";
-        detail.dataset.daitKind = kind;
-        this.syncApiTestDetail(detail, kind);
-        return detail;
-      }
-      syncApiTestDetail(detail, kind) {
-        if (!detail) return;
-        const status = this.getApiStatus(kind);
-        const result = this.getLastApiTestResult(kind);
-        let text = "";
-        if (status.state === "success") text = result?.ok ? this.formatApiTestResult(result) : "";
-        else if (status.state === "failed") text = status.message || result?.message || "";
-        detail.dataset.daitFor = status.state;
-        detail.textContent = text;
-        detail.title = text;
-        detail.hidden = !text;
-      }
-      // "Hy-MT2 · 820 ms · just now"
-      formatApiTestResult(result) {
-        if (!result) return "";
-        return [
-          result.model || "",
-          this.formatLatency(result.latencyMs),
-          this.formatTimeAgo(result.at)
-        ].filter(Boolean).join(" · ");
-      }
-      // One line for the overview checklist: the result of the last test, or that none ran.
-      getApiTestSummaryText(kind) {
-        const status = this.getApiStatus(kind);
-        const result = this.getLastApiTestResult(kind);
-        if (status.state === "success") {
-          const details = result?.ok ? this.formatApiTestResult(result) : "";
-          return details ? `${this.t("apiStatusSuccess")} · ${details}` : this.t("apiStatusSuccess");
-        }
-        if (status.state === "failed") return status.message || this.t("apiStatusFailed");
-        if (status.state === "testing") return this.t("apiStatusTesting");
-        return this.t("apiTestNotYet");
-      }
-      formatLatency(ms) {
-        if (ms === null || ms === void 0 || ms === "") return "";
-        const value = Number(ms);
-        if (!Number.isFinite(value) || value < 0) return "";
-        if (value < 1e3) return `${Math.round(value)} ms`;
-        return `${(value / 1e3).toFixed(1)} s`;
-      }
-      formatTimeAgo(at, now = Date.now()) {
-        const time = Number(at);
-        if (!Number.isFinite(time) || time <= 0) return "";
-        const elapsed = Math.max(0, now - time);
-        if (elapsed < 60 * 1e3) return this.t("apiTestJustNow");
-        if (elapsed < 60 * 60 * 1e3) return this.t("apiTestMinutesAgo", { count: Math.floor(elapsed / 6e4) });
-        if (elapsed < 24 * 60 * 60 * 1e3) return this.t("apiTestHoursAgo", { count: Math.floor(elapsed / 36e5) });
-        return this.formatDiagnosticSummaryTime(new Date(time).toISOString());
-      }
-      createGeneralSection() {
-        const group = this.createSettingsGroup(this.t("settingsGroupCommon"), "general");
-        group.appendChild(this.createCheckboxRow("ui.autoTranslateMessages", this.t("autoTranslateMessages"), { description: this.t("autoTranslateMessagesDesc") }));
-        group.appendChild(this.createCurrentChannelPolicyRow());
-        group.appendChild(this.createSelectRow("ui.language", this.t("interfaceLanguage"), [
-          ["zh-CN", this.t("languageZh")],
-          ["en", this.t("languageEn")]
-        ], { description: this.t("interfaceLanguageDesc") }));
-        return group;
-      }
-      createTranslateTabContent() {
-        return [
-          this.createTaskSection("translation", this.t("translationTitle"), this.t("translationDescription")),
-          this.createAutoTranslateSection(),
-          this.createTranslationControlsSection(),
-          this.createTaskPromptSection("translation")
-        ];
-      }
-      createComposeTabContent() {
-        return [
-          this.createTaskSection("polish", this.t("polishTitle"), this.t("polishDescription")),
-          this.createTaskPromptSection("polish"),
-          this.createPolishControlsSection(),
-          this.createPublicBilingualSection()
-        ];
-      }
-      createDisplayTabContent() {
-        return [this.createDisplayWindowSection(), this.createDisplayBehaviorSection(), this.createDisplayNoticesSection()];
-      }
-      // The palette of the plugin's own windows (ui.panelTheme); changing it restyles every open window in place.
-      createDisplayWindowSection() {
-        const section = this.createSettingsGroup(this.t("settingsGroupWindows"), "windows");
-        section.appendChild(this.createSegmentedRow("ui.panelTheme", this.t("panelTheme"), [
-          ["auto", this.t("panelThemeAuto")],
-          ["light", this.t("panelThemeLight")],
-          ["dark", this.t("panelThemeDark")]
-        ], { description: this.t("panelThemeDesc") }));
-        return section;
-      }
-      createAdvancedTabContent() {
-        const local = this.isLocalTranslationProvider(this.settings.translation);
-        return [
-          this.createAdvancedSection(),
-          this.createHistoryBackfillSection(),
-          this.createProviderFallbackSection(local)
-        ];
-      }
-      createDataTabContent(state = null) {
-        return [
-          this.createCacheSection(),
-          this.createDiagnosticsSection(state),
-          this.createSettingsDangerZone()
-        ];
-      }
-      createTaskSection(kind, titleText, descriptionText) {
-        const section = this.createSettingsGroup(titleText, kind, { description: descriptionText });
-        section.appendChild(this.createCheckboxRow(`${kind}.enabled`, this.t("enabled"), { description: this.t("enabledDesc") }));
-        section.appendChild(this.createSavedServiceConfigsRow(kind));
-        section.appendChild(this.createSelectRow(`${kind}.provider`, this.t("provider"), this.getGroupedProviderOptionsForTask(kind), {
-          description: this.t(kind === "polish" ? "providerPolishDesc" : "providerDesc")
-        }));
-        const capabilities = this.getProviderCapabilities(this.settings[kind]?.provider);
-        const ui = capabilities.ui || {};
-        const providerSettings = this.createTaskProviderSettingsBlock(kind, ui);
-        if (providerSettings) section.appendChild(providerSettings);
-        if (ui.sourceLanguage) {
-          const sourceKey = kind === "polish" ? "inputLanguage" : "messageLanguage";
-          section.appendChild(this.createLanguageRow(kind, "sourceLanguage", this.t(sourceKey), this.t(`${sourceKey}Desc`), { allowAuto: true }));
-        }
-        if (ui.targetLanguage) section.appendChild(this.createLanguageRow(kind, "targetLanguage", kind === "polish" ? this.t("outputLanguage") : this.t("targetLanguage"), kind === "polish" ? this.t("outputLanguageDesc") : this.t("targetLanguageDesc")));
-        if (kind === "polish") {
-          section.appendChild(this.createSelectRow("polish.afterAction", this.t("afterPolishing"), [
-            ["replace", this.t("afterReplace")],
-            ["confirmSend", this.t("afterConfirmSend")]
-          ], { description: this.t("afterPolishingDesc") }));
-          section.appendChild(this.createSelectRow("polish.repolishSource", this.t("repolishSource"), [
-            [POLISH_REPOLISH_SOURCE_ORIGINAL, this.t("repolishSourceOriginal")],
-            [POLISH_REPOLISH_SOURCE_LAST_RESULT, this.t("repolishSourceLastResult")]
-          ], { description: this.t("repolishSourceDesc") }));
-        }
-        return section;
-      }
-      // Translation providers are listed in two groups: LLMs (also usable for polishing) and translation engines.
-      getGroupedProviderOptionsForTask(kind) {
-        const options = this.getProviderOptionsForTask(kind);
-        const machine = options.filter(([provider]) => this.isDirectTranslateProvider(provider));
-        if (!machine.length) return options;
-        const models = options.filter(([provider]) => !this.isDirectTranslateProvider(provider));
-        return [
-          { label: this.t("providerGroupAi"), options: models },
-          { label: this.t("providerGroupMachine"), options: machine }
-        ];
-      }
-      // Shared verified service configs: any passing connection test saves a reusable preset here, so users can
-      // apply the same provider + credentials + model across translation and polishing in one click (or sync directly).
-      createSavedServiceConfigsRow(kind) {
-        const bar = document.createElement("div");
-        bar.className = "dait-service-config-bar";
-        bar.dataset.daitSavedConfigBar = kind;
-        const select = document.createElement("select");
-        select.className = "dait-service-config-select";
-        select.dataset.daitSavedConfigs = kind;
-        select.setAttribute("aria-label", this.t("savedServiceConfigs"));
-        bar.appendChild(select);
-        const otherKind = kind === "translation" ? "polish" : "translation";
-        const syncButton = this.createSmallButton(this.t(kind === "translation" ? "syncConfigToPolish" : "syncConfigToTranslation"), "outline");
-        syncButton.classList.add("dait-service-config-sync");
-        syncButton.dataset.daitAction = "syncServiceConfig";
-        syncButton.dataset.daitKind = kind;
-        bar.appendChild(syncButton);
-        const deleteButton = this.createSmallButton(this.t("savedServiceConfigDelete"), "danger");
-        deleteButton.classList.add("dait-service-config-delete");
-        deleteButton.dataset.daitAction = "deleteSavedServiceConfig";
-        deleteButton.dataset.daitKind = kind;
-        bar.appendChild(deleteButton);
-        this.renderSavedServiceConfigBar(bar, kind);
-        select.addEventListener("change", () => {
-          const configId = String(select.value || "").trim();
-          if (!configId) return;
-          if (this.applySavedServiceConfig(kind, configId)) {
-            this.replaceSettingsPanelFrom(select);
-          }
-        });
-        syncButton.addEventListener("click", (event) => {
-          event?.preventDefault?.();
-          event?.stopPropagation?.();
-          this.syncTaskServiceConfig(kind, otherKind);
-        });
-        deleteButton.addEventListener("click", (event) => {
-          event?.preventDefault?.();
-          event?.stopPropagation?.();
-          const matched = this.findMatchingSavedServiceConfig(kind);
-          if (!matched) return;
-          this.deleteSavedServiceConfig(matched.id);
-        });
-        return this.createRow(this.t("savedServiceConfigs"), bar, {
-          description: this.t("savedServiceConfigsDesc"),
-          stacked: true,
-          labelFor: select
-        });
-      }
-      renderSavedServiceConfigBar(bar, kind) {
-        if (!bar) return;
-        const select = bar.querySelector?.(`[data-dait-saved-configs='${kind}']`);
-        const syncButton = bar.querySelector?.("[data-dait-action='syncServiceConfig']");
-        const deleteButton = bar.querySelector?.("[data-dait-action='deleteSavedServiceConfig']");
-        const configs = this.getSavedServiceConfigsForTask(kind);
-        const matched = this.findMatchingSavedServiceConfig(kind);
-        const matchedId = matched?.id || "";
-        if (select) {
-          [...select.children || []].forEach((child) => child.remove?.());
-          select.textContent = "";
-          const placeholder = document.createElement("option");
-          placeholder.value = "";
-          placeholder.textContent = configs.length ? this.t("savedServiceConfigsPlaceholder", { count: configs.length }) : this.t("savedServiceConfigsEmpty");
-          placeholder.selected = !matchedId;
-          select.appendChild(placeholder);
-          configs.forEach((entry) => {
-            const option = document.createElement("option");
-            option.value = entry.id;
-            option.textContent = this.formatServiceConfigLabel(entry);
-            option.selected = entry.id === matchedId;
-            select.appendChild(option);
-          });
-          select.value = matchedId;
-          select.disabled = !configs.length;
-        }
-        if (syncButton) {
-          const otherKind = kind === "translation" ? "polish" : "translation";
-          const currentProvider = String(this.settings[kind]?.provider || "");
-          const allowed = this.isProviderAllowedForTask(otherKind, currentProvider);
-          const usable = this.hasUsableApiConfig(kind);
-          syncButton.disabled = !allowed || !usable;
-          syncButton.title = !allowed ? this.t("syncConfigUnsupportedPolish") : !usable ? this.t("syncConfigMissing") : this.t(kind === "translation" ? "syncConfigToPolish" : "syncConfigToTranslation");
-        }
-        if (deleteButton) {
-          deleteButton.hidden = !matchedId;
-          deleteButton.disabled = !matchedId;
-        }
-      }
-      refreshSavedServiceConfigControls(root = null) {
-        if (typeof document === "undefined") return;
-        const scope = root?.querySelectorAll ? root : document;
-        let bars = [];
-        try {
-          bars = [...scope?.querySelectorAll?.("[data-dait-saved-config-bar]") || []];
-        } catch {
-          bars = [];
-        }
-        bars.forEach((bar) => {
-          const kind = String(bar?.dataset?.daitSavedConfigBar || "");
-          if (kind === "translation" || kind === "polish") this.renderSavedServiceConfigBar(bar, kind);
-        });
-        if (!root) this.quickPanel?.scheduleUpdate?.();
-      }
-      // The connection card: status and Test in its header, then only the fields the selected provider uses.
-      // Rarely changed model parameters and an optional API key sit behind <details>.
-      createTaskProviderSettingsBlock(kind, ui = this.getProviderCapabilities(this.settings[kind]?.provider).ui || {}) {
-        const provider = String(this.settings[kind]?.provider || "");
-        const defaults = this.getProviderDefaults(provider) || {};
-        const block = document.createElement("div");
-        block.className = "dait-provider-settings-block";
-        block.dataset.daitProvider = provider;
-        const header = document.createElement("div");
-        header.className = "dait-provider-settings-header";
-        const title = document.createElement("span");
-        title.className = "dait-provider-settings-title";
-        title.textContent = `${this.t("providerSettingsTitle")} · ${this.getProviderDisplayName(provider)}`;
-        title.title = this.t("providerSettingsDesc");
-        header.appendChild(title);
-        if (ui.apiTest || ui.apiKey) {
-          header.appendChild(this.createProviderConnectionStatus(kind));
-          header.className = `${header.className} dait-settings-search-target`;
-          header.dataset.daitSearchLabel = title.textContent;
-          header.dataset.daitSearchDescription = this.t("providerStatusDesc");
-        }
-        block.appendChild(header);
-        let hasRows = false;
-        const append = (node, parent = block) => {
-          if (!node) return;
-          hasRows = true;
-          parent.appendChild(node);
-        };
-        const apiKeyOptional = Boolean(ui.apiKey && this.isProviderApiKeyOptional(provider));
-        if (ui.apiKey && !apiKeyOptional) append(this.createApiKeyRow(kind));
-        if (ui.endpoint) append(this.createInputRow(`${kind}.endpoint`, this.t("endpoint"), "text", defaults.endpoint || "", {}, { description: this.getProviderFieldHelp("endpoint", provider), stacked: true }));
-        if (ui.region) append(this.createInputRow(`${kind}.region`, this.t("providerRegion"), "text", "eastus", {}, { description: this.t("providerRegionDesc") }));
-        if (ui.deeplPlan) append(this.createSelectRow(`${kind}.deeplPlan`, this.t("deeplPlan"), [
-          ["free", this.t("deeplPlanFree")],
-          ["pro", this.t("deeplPlanPro")]
-        ], { description: this.t("deeplPlanDesc") }));
-        if (ui.baiduCredentials) {
-          append(this.createInputRow(`${kind}.appId`, this.t("baiduAppId"), "text", "", {}, { description: this.t("baiduAppIdDesc") }));
-          append(this.createInputRow(`${kind}.secretKey`, this.t("baiduSecretKey"), "password", "", {}, { description: this.t("baiduSecretKeyDesc"), stacked: true }));
-        }
-        if (ui.deepseekPreset) append(this.createDeepSeekModelRow(kind));
-        if (ui.model && this.isModelDetectionProvider(provider)) {
-          const modelRow = this.createModelFieldRow(kind);
-          append(modelRow);
-          const detectUi = modelRow?.__daitModelDetectUi;
-          const endpointInput = block.querySelector?.(`[data-dait-path='${kind}.endpoint']`);
-          if (detectUi && endpointInput?.addEventListener) {
-            let previousOrigin = this.getProviderEndpointOrigin(this.getTaskConfig(kind));
-            let lastDetection = null;
-            let detectionTimer = null;
-            endpointInput.addEventListener("change", () => {
-              clearTimeout(detectionTimer);
-              const config = this.getTaskConfig(kind);
-              const { endpoint, apiKey, apiKeyOrigin } = config;
-              const origin = this.getProviderEndpointOrigin(config);
-              const originChanged = origin !== previousOrigin;
-              previousOrigin = origin;
-              if (!this.isStarted || config.provider !== provider || originChanged || !origin || !String(endpoint || "").trim()) return;
-              if ((apiKeyOrigin ?? origin) !== origin || !this.isLoopbackEndpoint(origin) && !String(apiKey || "").trim()) return;
-              const snapshot = { provider, endpoint, apiKey, apiKeyOrigin };
-              const lifecycleToken = this.getLifecycleToken();
-              detectionTimer = setTimeout(() => {
-                if (!endpointInput.isConnected || !this.isLifecycleTokenCurrent(lifecycleToken) || !this.matchesModelDetectionConfig(kind, snapshot) || lastDetection && Object.keys(snapshot).every((field) => snapshot[field] === lastDetection[field])) return;
-                lastDetection = snapshot;
-                this.runModelDetection(kind, { ...detectUi, auto: true });
-              }, 0);
-            });
-          }
-        } else if (ui.model) {
-          const row = this.createInputRow(`${kind}.model`, this.t("model"), "text", defaults.model || "", { spellcheck: "false", autocomplete: "off" }, { description: this.getProviderFieldHelp("model", provider), stacked: true });
-          const modelInput = row?.querySelector?.(`[data-dait-path='${kind}.model']`);
-          if (modelInput) this.attachModelHistoryDatalist(modelInput, kind, modelInput.parentElement);
-          append(row);
-        }
-        if (kind === "translation" && ui.googleTranslateSettings) append(this.createGoogleTranslateSettings());
-        if (ui.enableThinking || ui.temperature || ui.maxTokens) {
-          const details = this.createSettingsDetails(this.t("settingsMoreModelParams"), "model-params");
-          if (ui.enableThinking) append(this.createCheckboxRow(`${kind}.enableThinking`, this.t("thinkingMode"), { description: this.t("thinkingModeDesc") }), details);
-          if (ui.temperature) append(this.createInputRow(`${kind}.temperature`, this.t("temperature"), "number", "0.4", { min: "0", max: "2", step: "0.1" }, { description: this.t("temperatureDesc") }), details);
-          if (ui.maxTokens) append(this.createInputRow(`${kind}.maxTokens`, this.t("maxTokens"), "number", "800", { min: "1", step: "1" }, { description: this.t("maxTokensDesc") }), details);
-          block.appendChild(details);
-        }
-        if (apiKeyOptional) {
-          const details = this.createSettingsDetails(this.t("settingsApiKeyOptional"), "api-key");
-          details.open = Boolean(String(this.settings[kind]?.apiKey || "").trim());
-          append(this.createApiKeyRow(kind), details);
-          block.appendChild(details);
-        }
-        if (hasRows) block.appendChild(this.createTryTaskRow(kind));
-        return hasRows ? block : null;
-      }
-      // Help text that fits the selected service (endpoint, model, API key); other services use the general text.
-      getProviderFieldHelp(field, provider) {
-        const keys = {
-          endpoint: { deepseek: "endpointDeepSeekDesc", openaiCompatible: "endpointOpenAIDesc", sakuraLocal: "endpointLocalDesc", microsoft: "endpointMicrosoftDesc", baidu: "endpointBaiduDesc" },
-          model: { deepseek: "modelDesc", openaiCompatible: "modelOpenAIDesc", sakuraLocal: "modelLocalDesc" },
-          apiKey: { deepseek: "apiKeyDeepSeekDesc", openaiCompatible: "apiKeyOpenAIDesc", sakuraLocal: "apiKeyLocalDesc", microsoft: "apiKeyMicrosoftDesc", deepl: "apiKeyDeepLDesc" }
-        };
-        const fallback = { endpoint: "endpointDesc", model: "modelDesc", apiKey: "apiKeyDesc" }[field] || "";
-        const key = keys[field]?.[String(provider || "")] || fallback;
-        return key ? this.t(key) : "";
-      }
-      // The model field of Sakura local and OpenAI-compatible: the name, "Detect models", and a picker below with the
-      // server's models (after detection) and, for Sakura, "use the loaded model" plus common models. The picker
-      // follows the field (data-dait-model-preset), and picking writes the field.
-      createModelFieldRow(kind) {
-        const provider = String(this.settings[kind]?.provider || "");
-        const defaults = this.getProviderDefaults(provider) || {};
-        const local = this.isLocalTranslationProvider(provider);
-        const field = document.createElement("div");
-        field.className = "dait-model-field";
-        const line = document.createElement("div");
-        line.className = "dait-model-field-line";
-        const input = document.createElement("input");
-        input.type = "text";
-        input.dataset.daitPath = `${kind}.model`;
-        input.placeholder = defaults.model || "";
-        input.spellcheck = false;
-        input.autocomplete = "off";
-        input.value = this.getSetting(`${kind}.model`) ?? "";
-        const commitModel = (immediate = false) => {
-          const raw = String(input.value ?? "");
-          const next = immediate ? raw.trim() : raw;
-          if (immediate && next !== input.value) input.value = next;
-          this.setSetting(`${kind}.model`, next, immediate ? { save: "immediate", retryOnError: false } : { save: "debounce", live: true });
-          if (immediate) this.refreshModelHistoryDatalist(input, kind);
-        };
-        input.addEventListener("input", () => commitModel(false));
-        input.addEventListener("blur", () => commitModel(true));
-        input.addEventListener("change", () => commitModel(true));
-        line.appendChild(input);
-        this.attachModelHistoryDatalist(input, kind, field);
-        const detect = this.createSmallButton(this.t("modelDetect"), "outline");
-        detect.dataset.daitAction = "detectModels";
-        detect.dataset.daitKind = kind;
-        line.appendChild(detect);
-        field.appendChild(line);
-        const picker = document.createElement("select");
-        picker.className = "dait-model-picker";
-        picker.dataset.daitModelPreset = kind;
-        picker.setAttribute("aria-label", this.t("modelPicker"));
-        this.renderModelPickerOptions(picker, kind, []);
-        picker.hidden = !local;
-        picker.addEventListener("change", () => {
-          if (!picker.value) {
-            this.focusSettingsElement(input);
-            return;
-          }
-          this.setSetting(`${kind}.model`, picker.value);
-        });
-        field.appendChild(picker);
-        let description = this.getProviderFieldHelp("model", provider);
-        if (local && this.isLocalProviderAutoModelValue(this.settings[kind]?.model)) {
-          const snapshot = this.getLocalProviderDetectedModelSnapshot(this.settings[kind]);
-          if (snapshot?.model) description = this.t("modelLocalLoadedDesc", { model: snapshot.model });
-        }
-        const row = this.createRow(this.t("model"), field, { description, stacked: true, labelFor: input });
-        row.classList.add("dait-model-field-row");
-        const status = row.__daitDescription;
-        status?.setAttribute?.("aria-live", "polite");
-        const detectUi = { button: detect, picker, status, input };
-        row.__daitModelDetectUi = detectUi;
-        detect.addEventListener("click", (event) => {
-          event?.preventDefault?.();
-          this.runModelDetection(kind, detectUi);
-        });
-        return row;
-      }
-      renderModelPickerOptions(picker, kind, detected = [], loaded = "") {
-        if (!picker) return;
-        const provider = String(this.settings[kind]?.provider || "");
-        const local = this.isLocalTranslationProvider(provider);
-        const current = String(this.settings[kind]?.model || "");
-        [...picker.children || []].forEach((child) => child.remove?.());
-        picker.textContent = "";
-        const option = (parent, value, text) => {
-          const node = document.createElement("option");
-          node.value = value;
-          node.textContent = text;
-          node.selected = value === current;
-          parent.appendChild(node);
-          return node;
-        };
-        const group = (label) => {
-          const node = document.createElement("optgroup");
-          node.label = label;
-          node.setAttribute("label", label);
-          picker.appendChild(node);
-          return node;
-        };
-        const listed = /* @__PURE__ */ new Set();
-        if (local) {
-          option(picker, LOCAL_PROVIDER_AUTO_MODEL_VALUE, this.t("modelPickerServerLoaded"));
-          listed.add(LOCAL_PROVIDER_AUTO_MODEL_VALUE);
-        }
-        const fresh = detected.filter((model) => model && !listed.has(model));
-        if (fresh.length) {
-          const parent = group(this.t("modelPickerDetected"));
-          fresh.forEach((model) => {
-            listed.add(model);
-            option(parent, model, model === loaded ? this.t("modelPickerLoadedTag", { model: this.getDiagnosticModelLabel(model) }) : model);
-          });
-        }
-        if (local) {
-          const presets = LOCAL_MODEL_PRESETS.filter(([value]) => !listed.has(value));
-          if (presets.length) {
-            const parent = group(this.t("modelPickerPresets"));
-            presets.forEach(([value, text]) => option(parent, value, text));
-          }
-        }
-        const other = option(picker, "", this.t("modelPickerOther"));
-        const known = [...picker.querySelectorAll?.("option") || []].some((node) => node.value && node.value === current);
-        if (!known) other.selected = true;
-        picker.value = known ? current : "";
-      }
-      getProviderEndpointOrigin(config) {
-        try {
-          const url = new URL(this.getEffectiveChatCompletionEndpoint(config));
-          return url.protocol === "https:" || url.protocol === "http:" ? url.origin : "";
-        } catch {
-          return "";
-        }
-      }
-      hasApiKeyOriginMismatch(config) {
-        return this.isModelDetectionProvider(config?.provider) && typeof config.apiKeyOrigin === "string" && Boolean(String(config.apiKey || "").trim()) && config.apiKeyOrigin !== this.getProviderEndpointOrigin(config);
-      }
-      matchesModelDetectionConfig(kind, snapshot) {
-        const current = this.getTaskConfig(kind);
-        return Object.keys(snapshot).every((field) => snapshot[field] === current[field]);
-      }
-      // "Detect models": asks the server for its models, fills the picker + input datalist, and says what it found.
-      async runModelDetection(kind, { button = null, picker = null, status = null, input = null, auto = false } = {}) {
-        const lifecycleToken = this.getLifecycleToken();
-        if (!this.isLifecycleTokenCurrent(lifecycleToken)) return null;
-        const { provider, endpoint, apiKey, apiKeyOrigin, model } = this.getTaskConfig(kind);
-        let snapshot = Object.freeze({ provider, endpoint, apiKey, apiKeyOrigin, model });
-        const origin = this.getProviderEndpointOrigin(snapshot);
-        const previousOrigin = apiKeyOrigin ?? origin;
-        if (auto && (!origin || previousOrigin !== origin)) return null;
-        const runs = this.modelDetectionRuns ??= /* @__PURE__ */ new Map();
-        const previous = runs.get(kind);
-        const sequence = (previous?.sequence || 0) + 1;
-        const controller = new AbortController();
-        const { signal } = controller;
-        const isLatest = () => runs.get(kind)?.sequence === sequence;
-        const isCurrent = () => isLatest() && !signal.aborted && this.isLifecycleTokenCurrent(lifecycleToken) && this.matchesModelDetectionConfig(kind, snapshot);
-        runs.set(kind, { sequence, controller, button, lifecycleToken });
-        previous?.controller?.abort();
-        if (previous?.button && previous.button !== button && this.isLifecycleTokenCurrent(previous.lifecycleToken)) {
-          this.setButtonBusy(previous.button, false, this.t("modelDetect"));
-        }
-        this.setButtonBusy(button, true, this.t("modelDetectBusy"));
-        try {
-          let omitApiKey = false;
-          if (origin && previousOrigin !== origin) {
-            const hasKey = Boolean(String(apiKey || "").trim());
-            const loopback = this.isLoopbackEndpoint(origin);
-            if (hasKey && !loopback) {
-              const confirmed = await this.confirmAction({
-                title: this.t("modelDetectConfirmOrigin"),
-                body: this.t("modelDetectConfirmOriginDesc", { origin }),
-                confirmText: this.t("modelDetect")
-              });
-              if (!confirmed || !isCurrent()) return null;
-            }
-            omitApiKey = hasKey && loopback && !this.isLoopbackEndpoint(previousOrigin);
-            if (!omitApiKey) {
-              if (!isCurrent()) return null;
-              this.getTaskConfig(kind).apiKeyOrigin = origin;
-              snapshot = Object.freeze({ ...snapshot, apiKeyOrigin: origin });
-              this.saveSettings({ debounce: true });
-              this.refreshApiTestViews(kind);
-              if (kind === "translation") this.queueScan();
-            }
-          }
-          if (!isCurrent()) return null;
-          const { models, loaded } = await this.detectProviderModels(kind, { config: snapshot, omitApiKey, signal, isCurrent });
-          if (!isCurrent()) return null;
-          this.renderModelPickerOptions(picker, kind, models, loaded);
-          if (picker && models.length) picker.hidden = false;
-          if (input && models.length) this.refreshModelHistoryDatalist(input, kind, models);
-          const text = !models.length ? this.t("modelDetectNone") : loaded ? this.t("modelDetectFoundLoaded", { count: models.length, model: this.getDiagnosticModelLabel(loaded) }) : this.t("modelDetectFound", { count: models.length });
-          if (status) {
-            status.textContent = text;
-            status.hidden = false;
-            status.classList?.remove?.("dait-row-description-error");
-          }
-          return { models, loaded };
-        } catch (error) {
-          if (!isCurrent() || this.isRequestCancelled(error)) return null;
-          const text = this.t("modelDetectFailed", { error: this.formatError(error) });
-          if (status) {
-            status.textContent = text;
-            status.hidden = false;
-            status.classList?.add?.("dait-row-description-error");
-          }
-          return null;
-        } finally {
-          if (isLatest()) {
-            runs.set(kind, { sequence });
-            if (this.isLifecycleTokenCurrent(lifecycleToken)) this.setButtonBusy(button, false, this.t("modelDetect"));
-          }
-        }
-      }
-      // "Try a sentence" (translation) / "Try polishing" (composer), at the end of the connection card: runs one
-      // sentence through the task with the settings as they are now (like the old test mode) and shows the result with
-      // the time it took. Nothing is sent to Discord.
-      createTryTaskRow(kind) {
-        const polish = kind === "polish";
-        const wrap = document.createElement("div");
-        wrap.className = "dait-try-field";
-        const line = document.createElement("div");
-        line.className = "dait-try-line";
-        const input = document.createElement("input");
-        input.type = "text";
-        input.className = "dait-try-input";
-        input.placeholder = this.t(polish ? "tryPolishPlaceholder" : "tryTranslatePlaceholder");
-        input.autocomplete = "off";
-        line.appendChild(input);
-        const run = this.createSmallButton(this.t(polish ? "tryPolishRun" : "tryTranslateRun"));
-        run.dataset.daitAction = "tryTask";
-        run.dataset.daitKind = kind;
-        line.appendChild(run);
-        wrap.appendChild(line);
-        const result = document.createElement("p");
-        result.className = "dait-try-result";
-        result.setAttribute("aria-live", "polite");
-        result.hidden = true;
-        const output = document.createElement("span");
-        output.className = "dait-try-output";
-        result.appendChild(output);
-        const time = document.createElement("span");
-        time.className = "dait-try-time";
-        result.appendChild(time);
-        wrap.appendChild(result);
-        const tryHistory = { text: "", results: [] };
-        const start = () => this.runTryTask(kind, input.value, { button: run, result, output, time, tryHistory });
-        run.addEventListener("click", (event) => {
-          event?.preventDefault?.();
-          start();
-        });
-        input.addEventListener("keydown", (event) => {
-          if (event?.key !== "Enter" || event.isComposing) return;
-          event.preventDefault?.();
-          start();
-        });
-        const row = this.createRow(this.t(polish ? "tryPolish" : "tryTranslate"), wrap, {
-          description: this.t(polish ? "tryPolishDesc" : "tryTranslateDesc"),
-          stacked: true,
-          labelFor: input
-        });
-        row.classList.add("dait-try-row");
-        return row;
-      }
-      async runTryTask(kind, text, { button = null, result = null, output = null, time = null, tryHistory = null } = {}) {
-        const sample = String(text || "").trim();
-        const show = (value, seconds = "", failed = false) => {
-          if (output) output.textContent = value;
-          if (time) {
-            time.textContent = seconds ? this.t("tryResultTime", { time: seconds }) : "";
-            time.hidden = !seconds;
-          }
-          if (result) {
-            result.hidden = !value;
-            result.classList?.toggle?.("dait-try-result-error", Boolean(failed));
-          }
-        };
-        if (!sample) {
-          show(this.t("tryInputRequired"), "", true);
-          return null;
-        }
-        const lifecycleToken = this.getLifecycleToken();
-        const label = button?.textContent || "";
-        this.setButtonBusy(button, true, this.t("tryBusy"));
-        const startedAt = Date.now();
-        try {
-          let translated;
-          if (kind === "polish") {
-            const sameSample = tryHistory && tryHistory.text === sample;
-            const previousResults = sameSample ? tryHistory.results.slice(-5) : [];
-            translated = await this.runPolishWithGuards(sample, {
-              mode: "test",
-              previousResults,
-              enforceRepolishVariation: previousResults.length > 0,
-              isStillCurrent: () => this.isLifecycleTokenCurrent(lifecycleToken)
-            });
-            if (tryHistory && String(translated || "").trim()) {
-              if (tryHistory.text !== sample) {
-                tryHistory.text = sample;
-                tryHistory.results = [];
-              }
-              const cleaned = String(translated).trim();
-              if (!tryHistory.results.includes(cleaned)) {
-                tryHistory.results.push(cleaned);
-                if (tryHistory.results.length > 5) tryHistory.results = tryHistory.results.slice(-5);
-              }
-            }
-          } else {
-            translated = await this.runModelTask(kind, sample, { mode: "test" });
-          }
-          if (!this.isLifecycleTokenCurrent(lifecycleToken)) return null;
-          show(String(translated ?? ""), this.formatLatency(Date.now() - startedAt));
-          return translated;
-        } catch (error) {
-          if (!this.isLifecycleTokenCurrent(lifecycleToken)) return null;
-          show(this.formatError(error), this.formatLatency(Date.now() - startedAt), true);
-          return null;
-        } finally {
-          if (this.isLifecycleTokenCurrent(lifecycleToken)) this.setButtonBusy(button, false, label);
-        }
-      }
-      createSettingsDetails(summaryText, key) {
-        const details = document.createElement("details");
-        details.className = `dait-settings-details dait-settings-details-${key}`;
-        const summary = document.createElement("summary");
-        summary.className = "dait-settings-details-summary";
-        summary.textContent = summaryText;
-        details.appendChild(summary);
-        return details;
-      }
-      // Status badge, the last test's details ("Hy-MT2 · 820 ms · just now") and Test.
-      createProviderConnectionStatus(kind) {
-        const wrap = document.createElement("span");
-        wrap.className = "dait-provider-connection";
-        const status = this.createApiStatusBadge(kind);
-        wrap.appendChild(status);
-        wrap.appendChild(this.createApiTestDetail(kind));
-        const test = this.createSmallButton(this.t("apiTest"));
-        test.dataset.daitAction = "apiTest";
-        test.dataset.daitKind = kind;
-        test.addEventListener("click", (event) => {
-          event?.preventDefault?.();
-          event?.stopPropagation?.();
-          this.runOverviewApiTest(kind, test, status);
-        });
-        wrap.appendChild(test);
-        return wrap;
-      }
-      // Prompt templates and the prompt editor belong to the task, not to the provider connection.
-      createTaskPromptSection(kind) {
-        const ui = this.getProviderCapabilities(this.settings[kind]?.provider)?.ui || {};
-        if (!ui.promptManager) return null;
-        const group = this.createSettingsGroup("", `${kind}-prompt`);
-        const manager = this.createPromptManager(kind);
-        manager.className = `${manager.className || ""} dait-settings-search-target`.trim();
-        manager.dataset.daitSearchLabel = this.t("promptTemplates");
-        manager.dataset.daitSearchDescription = this.t("promptTemplatesDesc");
-        group.appendChild(manager);
-        return group;
-      }
-      createPolishControlsSection() {
-        const section = this.createSettingsGroup(this.t("polishControlsTitle"), "polish-controls");
-        section.appendChild(this.createCheckboxRow("ui.injectInputButton", this.t("showPolishButton"), { description: this.t("showPolishButtonDesc") }));
-        section.appendChild(this.createCheckboxRow("ui.enablePolishHotkey", this.t("enableHotkey"), { description: this.t("enableHotkeyDesc") }));
-        section.appendChild(this.createHotkeyRow({ dependsOn: { path: "ui.enablePolishHotkey", label: this.t("enableHotkey") } }));
-        return section;
-      }
-      createTranslationControlsSection() {
-        const section = this.createSettingsGroup(this.t("translationControlsTitle"), "translation-controls");
-        section.appendChild(this.createMessageButtonModeRow());
-        section.appendChild(this.createCheckboxRow("ui.injectMessageContextMenu", this.t("showContextMenu"), { description: this.t("showContextMenuDesc") }));
-        return section;
-      }
-      // One select for the message Translate button: on hover / always / off.
-      createMessageButtonModeRow() {
-        return this.createSelectRow("ui.messageButtonMode", this.t("messageButtonMode"), [
-          [MESSAGE_BUTTON_VISIBILITY_HOVER, this.t("messageButtonModeHover")],
-          [MESSAGE_BUTTON_VISIBILITY_ALWAYS, this.t("messageButtonModeAlways")],
-          [MESSAGE_BUTTON_MODE_OFF, this.t("messageButtonModeOff")]
-        ], { description: this.t("messageButtonModeDesc") });
-      }
-      getMessageButtonMode() {
-        if (this.settings.ui?.injectMessageButtons === false) return MESSAGE_BUTTON_MODE_OFF;
-        return this.getMessageButtonVisibility();
-      }
-      // Stored as ui.injectMessageButtons + ui.messageButtonVisibility, each through setSetting so its own effects run.
-      setMessageButtonMode(mode, options = {}) {
-        const value = [MESSAGE_BUTTON_VISIBILITY_HOVER, MESSAGE_BUTTON_VISIBILITY_ALWAYS, MESSAGE_BUTTON_MODE_OFF].includes(mode) ? mode : MESSAGE_BUTTON_VISIBILITY_ALWAYS;
-        if (value === MESSAGE_BUTTON_MODE_OFF) {
-          this.setSetting("ui.injectMessageButtons", false, options);
-        } else {
-          this.setSetting("ui.messageButtonVisibility", value, options);
-          this.setSetting("ui.injectMessageButtons", true, options);
-        }
-        this.syncSettingControls("ui.messageButtonMode", this.getMessageButtonMode(), { includeActive: true });
-        return value;
-      }
-      createAutoTranslateSection() {
-        const section = this.createSettingsGroup(this.t("settingsGroupAutoTranslate"), "auto-translate");
-        section.appendChild(this.createCheckboxRow("ui.autoTranslateMessages", this.t("autoTranslateMessages"), { description: this.t("autoTranslateMessagesDesc") }));
-        section.appendChild(this.createCheckboxRow("ui.autoTranslatePrefetch", this.t("autoTranslatePrefetch"), { description: this.t("autoTranslatePrefetchDesc") }));
-        section.appendChild(this.createSelectRow("ui.autoTranslatePrefetchRange", this.t("autoTranslatePrefetchRange"), AUTO_TRANSLATE_PREFETCH_RANGES.map((value) => [String(value), String(value)]), {
-          description: this.t("autoTranslatePrefetchRangeDesc"),
-          dependsOn: { path: "ui.autoTranslatePrefetch", label: this.t("autoTranslatePrefetch") }
-        }));
-        section.appendChild(this.createCurrentChannelPolicyRow());
-        return section;
-      }
-      // Tuning that rarely needs a change: concurrency, how messages are found, strict retry.
-      createAdvancedSection() {
-        const section = this.createSettingsGroup(this.t("autoTranslateSettingsTitle"), "advanced");
-        const provider = this.getProviderDefaults(this.settings.translation.provider);
-        const local = this.isLocalTranslationProvider(this.settings.translation);
-        const concurrencyRange = { min: AUTO_TRANSLATE_MIN_CONCURRENCY, max: AUTO_TRANSLATE_MAX_CONCURRENCY, default: AUTO_TRANSLATE_DEFAULT_CONCURRENCY };
-        section.appendChild(this.createInputRow("ui.autoTranslateConcurrency", this.t("autoTranslateConcurrency"), "number", String(AUTO_TRANSLATE_DEFAULT_CONCURRENCY), { min: String(AUTO_TRANSLATE_MIN_CONCURRENCY), max: String(AUTO_TRANSLATE_MAX_CONCURRENCY), step: "1" }, { description: this.t(local ? "localConcurrencyDesc" : "autoTranslateConcurrencyDesc", concurrencyRange) }));
-        section.appendChild(this.createSelectRow("ui.autoTranslateIntakeMode", this.t("autoTranslateIntakeMode"), [
-          ["auto", this.t("autoTranslateIntakeAuto")],
-          ["dom", this.t("autoTranslateIntakeDom")],
-          ["bdfdb", this.t("autoTranslateIntakeBdfdb")]
-        ], { description: this.t("autoTranslateIntakeModeDesc"), disabledReason: provider?.autoTranslateIntakeMode && this.t("localIntakeFixed") }));
-        section.appendChild(this.createCheckboxRow("ui.autoTranslateStrictRetry", this.t("autoTranslateStrictRetry"), { description: this.t("autoTranslateStrictRetryDesc") }));
-        return section;
-      }
-      createHistoryBackfillSection() {
-        const section = this.createSettingsGroup(this.t("settingsGroupHistoryBackfill"), "history-backfill");
-        const dependsOn = { path: "ui.historyBackfillEnabled", label: this.t("historyBackfillEnabled") };
-        section.appendChild(this.createCheckboxRow("ui.historyBackfillEnabled", this.t("historyBackfillEnabled"), { description: this.t("historyBackfillEnabledDesc") }));
-        section.appendChild(this.createInputRow("ui.historyBackfillLimit", this.t("historyBackfillLimit"), "number", String(DEFAULT_SETTINGS.ui.historyBackfillLimit), { min: "1", max: "100", step: "1" }, { description: this.t("historyBackfillLimitDesc"), dependsOn }));
-        section.appendChild(this.createHistoryBackfillActionRow({ dependsOn }));
-        return section;
-      }
-      createProviderFallbackSection(local = this.isLocalTranslationProvider(this.settings.translation)) {
-        const section = this.createSettingsGroup(this.t("settingsGroupFallback"), "provider-fallback");
-        section.appendChild(this.createCheckboxRow("ui.providerFallbackEnabled", this.t("providerFallbackEnabled"), { description: this.t("providerFallbackEnabledDesc"), disabledReason: local && this.t("localFallbackUnavailable") }));
-        section.appendChild(this.createProviderFallbackOrderRow(local));
-        return section;
-      }
-      createCurrentChannelPolicyRow() {
-        const routeKey = this.getCurrentRouteKey();
-        const noChannel = !this.getChannelAutoTranslatePolicyStorageKey(routeKey);
-        const row = this.createSegmentedRow("ui.currentChannelAutoTranslatePolicy", this.t("currentChannelAutoTranslatePolicy"), [
-          ["inherit", this.t("channelRuleFollow")],
-          ["enabled", this.t("channelRuleAlways")],
-          ["disabled", this.t("channelRuleNever")]
-        ], {
-          description: this.t("currentChannelAutoTranslatePolicyDesc"),
-          disabledReason: noChannel && this.t("quickPanelRuleCaptionNoChannel"),
-          routeKey
-        });
-        if (noChannel) {
-          const control = row?.querySelectorAll?.("[data-dait-path='ui.currentChannelAutoTranslatePolicy']")?.[0];
-          if (control) this.setChannelRuleControlDisabled(control, true);
-        }
-        return row;
-      }
-      // The rule control is a radiogroup of buttons; "disabled" has to reach every button.
-      setChannelRuleControlDisabled(control, disabled) {
-        control.disabled = Boolean(disabled);
-        if (disabled) control.setAttribute?.("aria-disabled", "true");
-        else control.removeAttribute?.("aria-disabled");
-        [...control.children || []].filter((child) => child?.tagName === "BUTTON").forEach((button) => {
-          button.disabled = Boolean(disabled);
-        });
-      }
-      isChannelRuleControlDisabled(control) {
-        return Boolean(control?.disabled) || control?.getAttribute?.("aria-disabled") === "true";
-      }
-      createHistoryBackfillActionRow(rowOptions = {}) {
-        const controls = document.createElement("div");
-        controls.className = "dait-history-backfill-actions";
-        const button = this.createSmallButton(this.t("historyBackfillRun"));
-        button.dataset.daitAction = "historyBackfillRun";
-        button.addEventListener("click", (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          this.runExplicitHistoryBackfillFromUi(button, { source: "settings" });
-        });
-        controls.appendChild(button);
-        return this.createRow(this.t("historyBackfillRun"), controls, { ...rowOptions, description: this.t("historyBackfillRunDesc") });
-      }
-      // The manual-translation fallback services as an ordered list: tick the services to use and move them with the
-      // arrow buttons (no typing of provider ids). Local services cannot be a fallback, so they are not listed.
-      createProviderFallbackOrderRow(local) {
-        const list = document.createElement("div");
-        list.className = "dait-order-list";
-        list.setAttribute("role", "group");
-        list.dataset.daitPath = "ui.providerFallbackOrder";
-        list.dataset.daitControl = "order-list";
-        this.renderProviderFallbackOrderList(list);
-        return this.createRow(this.t("providerFallbackOrder"), list, {
-          description: this.t("providerFallbackOrderListDesc"),
-          disabledReason: local && this.t("localFallbackUnavailable"),
-          dependsOn: { path: "ui.providerFallbackEnabled", label: this.t("providerFallbackEnabled") },
-          stacked: true,
-          ariaTarget: list
-        });
-      }
-      getProviderFallbackCandidates() {
-        return PROVIDER_ORDER.filter((provider) => !this.isLocalTranslationProvider(provider));
-      }
-      // Chosen services first, in their saved order, then the others.
-      renderProviderFallbackOrderList(list) {
-        if (!list) return;
-        const candidates = this.getProviderFallbackCandidates();
-        const order = this.parseProviderFallbackOrderText(this.settings.ui?.providerFallbackOrder).filter((provider) => candidates.includes(provider));
-        const current = String(this.settings.translation?.provider || "");
-        const focusHint = list.__daitFocusHint || null;
-        list.__daitFocusHint = null;
-        [...list.children || []].forEach((child) => child.remove?.());
-        list.textContent = "";
-        const save = (next, hint) => {
-          list.__daitFocusHint = hint;
-          this.setSetting("ui.providerFallbackOrder", next);
-        };
-        [...order, ...candidates.filter((provider) => !order.includes(provider))].forEach((provider) => {
-          const index = order.indexOf(provider);
-          const name = this.getProviderDisplayName(provider);
-          const item = document.createElement("div");
-          item.className = index >= 0 ? "dait-order-item dait-order-item-on" : "dait-order-item";
-          item.dataset.daitProvider = provider;
-          const position = document.createElement("span");
-          position.className = "dait-order-position";
-          position.setAttribute("aria-hidden", "true");
-          position.textContent = index >= 0 ? String(index + 1) : "";
-          item.appendChild(position);
-          const include = document.createElement("input");
-          include.type = "checkbox";
-          include.className = "dait-order-include";
-          include.id = this.createSettingsControlId();
-          include.checked = index >= 0;
-          include.addEventListener("change", () => {
-            const next = include.checked ? [...order, provider] : order.filter((item2) => item2 !== provider);
-            save(next, { provider, part: "include" });
-          });
-          item.appendChild(include);
-          const label = document.createElement("label");
-          label.className = "dait-order-name";
-          label.setAttribute("for", include.id);
-          label.textContent = name;
-          if (provider === current) {
-            const note = document.createElement("span");
-            note.className = "dait-order-note";
-            note.textContent = this.t("providerFallbackCurrent");
-            label.appendChild(note);
-          }
-          item.appendChild(label);
-          const move = (delta, part, labelKey) => {
-            const button = this.createSmallButton(delta < 0 ? "↑" : "↓", "outline");
-            button.className = `${button.className} dait-order-move`;
-            button.dataset.daitMove = part;
-            button.title = this.t(labelKey, { provider: name });
-            button.setAttribute("aria-label", this.t(labelKey, { provider: name }));
-            const target = index + delta;
-            button.disabled = index < 0 || target < 0 || target >= order.length;
-            button.addEventListener("click", () => {
-              if (button.disabled || index < 0 || target < 0 || target >= order.length) return;
-              const next = [...order];
-              next.splice(index, 1);
-              next.splice(target, 0, provider);
-              save(next, { provider, part });
-            });
-            return button;
-          };
-          item.appendChild(move(-1, "up", "providerFallbackMoveUp"));
-          item.appendChild(move(1, "down", "providerFallbackMoveDown"));
-          list.appendChild(item);
-        });
-        const row = list.closest?.(".dait-settings-row");
-        const parentPath = row?.dataset?.daitDependsOn;
-        if (row?.dataset?.daitLocked === "true" || parentPath && !this.getSetting(parentPath)) {
-          this.getSettingsRowControls(list).forEach((node) => {
-            node.disabled = true;
-          });
-        }
-        if (focusHint) {
-          const item = [...list.children || []].find((node) => node.dataset?.daitProvider === focusHint.provider);
-          const target = focusHint.part === "include" ? item?.querySelector?.(".dait-order-include") : [...item?.children || []].find((node) => node.dataset?.daitMove === focusHint.part && !node.disabled) || item?.querySelector?.(".dait-order-include");
-          this.focusSettingsElement(target);
-        }
-      }
-      createPublicBilingualSection() {
-        const section = this.createSettingsGroup(this.t("publicBilingualTitle"), "public-bilingual");
-        section.appendChild(this.createCheckboxRow("ui.publicBilingualInputButton", this.t("publicBilingualInputButton"), { description: this.t("publicBilingualInputButtonDesc") }));
-        section.appendChild(this.createCheckboxRow("ui.publicBilingualUseInitialOriginal", this.t("publicBilingualUseInitialOriginal"), { description: this.t("publicBilingualUseInitialOriginalDesc") }));
-        section.appendChild(this.createCheckboxRow("ui.publicBilingualAfterPolish", this.t("publicBilingualAfterPolish"), { description: this.t("publicBilingualAfterPolishDesc") }));
-        section.appendChild(this.createCheckboxRow("ui.publicBilingualPolishBeforeTranslate", this.t("publicBilingualPolishBeforeTranslate"), { description: this.t("publicBilingualPolishBeforeTranslateDesc") }));
-        section.appendChild(this.createPublicBilingualDependencyRow());
-        return section;
-      }
-      // Shows the service and target language the bilingual message really uses: the polish service when it is
-      // usable (otherwise the translation service), and the polish output language.
-      createPublicBilingualDependencyRow() {
-        const summary = document.createElement("div");
-        summary.className = "dait-provider-summary";
-        summary.textContent = this.getPublicBilingualFlowText();
-        if (typeof setTimeout === "function") {
-          this.unrefTimer(setTimeout(() => {
-            const root = summary.closest?.(".dait-settings") || summary.closest?.(".dait-settings-section");
-            root?.addEventListener?.("change", () => {
-              summary.textContent = this.getPublicBilingualFlowText();
-            });
-          }, 0));
-        }
-        return this.createRow(this.t("publicBilingualDependencyTitle"), summary, {
-          description: this.t("publicBilingualDependencyFlowDesc"),
-          wide: true
-        });
-      }
-      // What a bilingual message really goes through: the polish step only when a bilingual option runs it and
-      // polishing is on, the service picked by getPublicBilingualBaseConfig (the polish service when it is set up)
-      // and the language from getPublicBilingualTargetLanguage (the polish output language first).
-      getPublicBilingualFlowText() {
-        const polishRuns = Boolean(this.settings.polish?.enabled) && (this.isPublicBilingualPolishBeforeTranslateEnabled() || this.isPublicBilingualAfterPolishEnabled());
-        return this.t("publicBilingualDependencyStatus", {
-          polishProvider: polishRuns ? this.getProviderDisplayName(this.settings.polish?.provider) : this.t("publicBilingualDependencyPolishOff"),
-          translationProvider: this.getProviderDisplayName(this.getPublicBilingualBaseConfig()?.provider),
-          targetLanguage: this.getDisplayLanguage(this.getPublicBilingualTargetLanguage())
-        });
-      }
-      createDisplayBehaviorSection() {
-        const section = this.createSettingsGroup(this.t("settingsGroupTranslatedText"), "display");
-        section.appendChild(this.createSegmentedRow("ui.translationPosition", this.t("translationPosition"), [
-          ["before", this.t("translationPositionAbove")],
-          ["after", this.t("translationPositionBelow")]
-        ], { description: this.t("translationPositionDesc") }));
-        section.appendChild(this.createSelectRow("ui.translationStyle", this.t("translationStyle"), [
-          ["tint", this.t("translationStyleTint")],
-          ["muted", this.t("translationStyleMuted")],
-          ["tag", this.t("translationStyleTag")]
-        ], { description: this.t("translationStyleDesc") }));
-        section.appendChild(this.createSelectRow("ui.translationTextScale", this.t("translationTextScale"), [
-          ["100", "100%"],
-          ["90", "90%"]
-        ], { description: this.t("translationTextScaleDesc") }));
-        section.appendChild(this.createCheckboxRow("ui.maskTranslations", this.t("maskTranslations"), { description: this.t("maskTranslationsDesc") }));
-        section.appendChild(this.createCheckboxRow("ui.hideOriginalAfterTranslation", this.t("hideOriginalAfterTranslation"), { description: this.t("hideOriginalAfterTranslationDesc") }));
-        return section;
-      }
-      createDisplayNoticesSection() {
-        const section = this.createSettingsGroup(this.t("settingsGroupNotices"), "notices");
-        section.appendChild(this.createCheckboxRow("ui.showAutoTranslateWarnings", this.t("showAutoTranslateWarnings"), { description: this.t("showAutoTranslateWarningsDesc") }));
-        section.appendChild(this.createCheckboxRow("ui.showAutoTranslateToasts", this.t("showAutoTranslateToasts"), { description: this.t("showAutoTranslateToastsDesc") }));
-        section.appendChild(this.createCheckboxRow("ui.showQuickSettingsPanelButton", this.t("showQuickSettingsPanelButton"), { description: this.t("showQuickSettingsPanelButtonDesc") }));
-        return section;
-      }
-      createCacheSection() {
-        const section = this.createSettingsGroup(this.t("cacheSettingsTitle"), "cache");
-        section.appendChild(this.createSelectRow("ui.translationCacheTtlHours", this.t("translationCacheTtl"), TRANSLATION_CACHE_TTL_OPTIONS.map((value) => [String(value), this.getTranslationCacheTtlLabel(value)]), { description: this.t("translationCacheTtlDesc") }));
-        section.appendChild(this.createInputRow("ui.translationCacheMaxEntries", this.t("translationCacheMaxEntries"), "number", String(TRANSLATION_CACHE_DEFAULT_LIMIT), { min: String(TRANSLATION_CACHE_MIN_LIMIT), max: String(TRANSLATION_CACHE_MAX_LIMIT), step: "100" }, { description: this.t("translationCacheMaxEntriesDesc") }));
-        section.appendChild(this.createTranslationCacheStatsRow());
-        section.appendChild(this.createTranslationCacheClearRow());
-        return section;
-      }
-      // Test mode is gone: "Try a sentence" / "Try polishing" in the connection cards replace it. ui.testModeEnabled
-      // still loads from old settings and simply shows nothing.
-      createDiagnosticsSection(state = null) {
-        const section = this.createSettingsGroup(this.t("diagnosticsSettingsTitle"), "diagnostics");
-        section.appendChild(buildHostHealthCard(this, {
-          lazy: Boolean(state && state.activeTab !== SETTINGS_TAB_DATA)
-        }));
-        section.appendChild(this.createCheckboxRow("ui.diagnosticsEnabled", this.t("diagnosticLogs"), { description: this.t("diagnosticLogsDesc") }));
-        section.appendChild(this.createDiagnosticLogsRow());
-        section.appendChild(this.createDiagnosticLogsClearRow());
-        section.appendChild(this.createSettingsSnapshotRow());
-        section.appendChild(this.createDiagnosticSummaryRow());
-        return section;
-      }
-      runHostHealthCheck() {
-        return this.discordHost.runHealthCheck();
-      }
-      // Reset lives at the end of the data tab, away from navigation.
-      createSettingsDangerZone() {
-        const section = this.createSettingsGroup(this.t("settingsDangerZone"), "danger", { className: "dait-settings-danger-zone" });
-        const button = this.createSmallButton(this.t("reset"), "danger");
-        button.className = `${button.className} dait-settings-reset-button`;
-        button.dataset.daitAction = "resetSettings";
-        button.addEventListener("click", (event) => {
-          event?.preventDefault?.();
-          this.runSettingsResetFromUi(button);
-        });
-        section.appendChild(this.createRow(this.t("reset"), button, { description: this.t("settingsResetDesc") }));
-        return section;
-      }
-      // The reset dialog confirms, resets and refreshes every open settings panel itself.
-      runSettingsResetFromUi(source) {
-        const panel = source?.closest?.(".dait-settings") || null;
-        return this.openResetSettingsDialog({ panel, source });
-      }
-      createCheckboxRow(path, labelText, rowOptions = {}) {
-        const input = document.createElement("input");
-        input.type = "checkbox";
-        input.className = "dait-switch";
-        input.setAttribute("role", "switch");
-        input.dataset.daitPath = path;
-        input.checked = Boolean(this.getSetting(path));
-        input.addEventListener("change", () => this.setSetting(path, input.checked));
-        return this.createRow(labelText, input, { ...rowOptions, checkbox: true });
-      }
-      createApiKeyRow(kind) {
-        const provider = String(this.settings[kind]?.provider || "");
-        const input = document.createElement("input");
-        input.type = "password";
-        input.dataset.daitPath = `${kind}.apiKey`;
-        input.placeholder = this.isProviderApiKeyOptional(provider) ? this.t("apiKeyOptionalPlaceholder") : ["deepseek", "openaiCompatible"].includes(provider) ? "sk-..." : "";
-        input.autocomplete = "off";
-        input.spellcheck = false;
-        input.value = this.getSetting(`${kind}.apiKey`) ?? "";
-        input.addEventListener("change", () => this.setSetting(`${kind}.apiKey`, input.value));
-        const row = this.createRow(this.t("apiKey"), input, { description: this.getProviderFieldHelp("apiKey", provider), stacked: true });
-        row.className = `${row.className} dait-api-key-field`;
-        return row;
-      }
-      // Service status with its Test button, as a row (the connection card shows the same in its header).
-      createProviderStatusRow(kind) {
-        return this.createRow(this.t("providerStatus"), this.createProviderConnectionStatus(kind), { description: this.t("providerStatusDesc") });
-      }
-      createHotkeyRow(rowOptions = {}) {
-        const controls = document.createElement("div");
-        controls.className = "dait-hotkey-controls";
-        const record = this.createSmallButton(this.getHotkeyLabel());
-        record.classList.add("dait-hotkey-recorder");
-        record.title = this.t("hotkeyRecord");
-        const reset = this.createSmallButton(this.t("hotkeyReset"), "link");
-        reset.addEventListener("click", () => {
-          this.setSetting("ui.polishHotkey", DEFAULT_SETTINGS.ui.polishHotkey);
-          record.textContent = this.getHotkeyLabel();
-          this.showToast(this.t("hotkeySaved", { shortcut: this.getHotkeyLabel() }), "success");
-        });
-        record.addEventListener("click", () => this.recordHotkey(record));
-        controls.appendChild(record);
-        controls.appendChild(reset);
-        return this.createRow(this.t("polishHotkey"), controls, { ...rowOptions, description: this.t("polishHotkeyDesc") });
-      }
-      // The data tab gives every action a row of its own (a destructive one always), so a row never mixes unrelated
-      // buttons: the stats rows show the counts, the clear rows below them update those counts.
-      createTranslationCacheStatsRow() {
-        const controls = document.createElement("div");
-        controls.className = "dait-cache-actions";
-        const clearStats = this.createSmallButton(this.t("clearTranslationCacheStats"));
-        clearStats.addEventListener("click", () => {
-          this.clearTranslationCacheStats();
-          this.refreshSettingsStatsRow(clearStats, "translation-cache");
-        });
-        controls.appendChild(clearStats);
-        const row = this.createRow(this.t("translationCacheStats"), controls, {
-          description: this.getTranslationCacheStatsText()
-        });
-        row.dataset.daitStats = "translation-cache";
-        return row;
-      }
-      createTranslationCacheClearRow() {
-        const controls = document.createElement("div");
-        controls.className = "dait-cache-actions";
-        const clearCache = this.createSmallButton(this.t("clearTranslationCache"), "danger");
-        clearCache.addEventListener("click", async () => {
-          const confirmed = await this.confirmAction({
-            title: this.t("clearTranslationCache"),
-            body: this.t("clearTranslationCacheConfirm"),
-            confirmText: this.t("clearTranslationCache"),
-            danger: true
-          });
-          if (!confirmed) return;
-          this.clearTranslationCache();
-          this.refreshSettingsStatsRow(clearCache, "translation-cache");
-        });
-        controls.appendChild(clearCache);
-        return this.createRow(this.t("clearTranslationCache"), controls, { description: this.t("clearTranslationCacheDesc") });
-      }
-      // Writes the current counts into the stats row of the same group ("translation-cache" or "diagnostic-logs").
-      refreshSettingsStatsRow(source, kind) {
-        const scope = source?.closest?.(".dait-settings-group") || source?.closest?.(".dait-settings");
-        const row = scope?.querySelector?.(`[data-dait-stats='${kind}']`);
-        const description = row?.querySelector?.(".dait-row-description");
-        if (!description) return;
-        description.textContent = kind === "translation-cache" ? this.getTranslationCacheStatsText() : this.getDiagnosticLogsStatsText();
-      }
-      // Copy and export: one small group of related buttons, with the log counts as the row's description.
-      createDiagnosticLogsRow() {
-        const controls = document.createElement("div");
-        controls.className = "dait-diagnostic-actions";
-        const copy = this.createSmallButton(this.t("copyDiagnosticLogs"));
-        const exportJson = this.createSmallButton(this.t("exportDiagnosticJson"));
-        const exportTxt = this.createSmallButton(this.t("exportDiagnosticTxt"));
-        const refreshDiagnostics = (button) => {
-          this.refreshSettingsStatsRow(button, "diagnostic-logs");
-          this.refreshDiagnosticSummary(button.closest(".dait-settings-group") || button.closest(".dait-settings"));
-        };
-        copy.addEventListener("click", async () => {
-          await this.copyDiagnosticLogs();
-          refreshDiagnostics(copy);
-        });
-        exportJson.addEventListener("click", async () => {
-          await this.exportDiagnosticLogs("json");
-          refreshDiagnostics(exportJson);
-        });
-        exportTxt.addEventListener("click", async () => {
-          await this.exportDiagnosticLogs("txt");
-          refreshDiagnostics(exportTxt);
-        });
-        controls.appendChild(copy);
-        controls.appendChild(exportJson);
-        controls.appendChild(exportTxt);
-        const row = this.createRow(this.t("exportDiagnosticLogs"), controls, {
-          description: this.getDiagnosticLogsStatsText()
-        });
-        row.dataset.daitStats = "diagnostic-logs";
-        return row;
-      }
-      createDiagnosticLogsClearRow() {
-        const controls = document.createElement("div");
-        controls.className = "dait-diagnostic-actions";
-        const clear = this.createSmallButton(this.t("clearDiagnosticLogs"), "danger");
-        clear.addEventListener("click", async () => {
-          const confirmed = await this.confirmAction({
-            title: this.t("clearDiagnosticLogs"),
-            body: this.t("clearDiagnosticLogsConfirm"),
-            confirmText: this.t("clearDiagnosticLogs"),
-            danger: true
-          });
-          if (!confirmed) return;
-          this.clearDiagnosticLogs();
-          this.refreshSettingsStatsRow(clear, "diagnostic-logs");
-          this.refreshDiagnosticSummary(clear.closest(".dait-settings-group") || clear.closest(".dait-settings"));
-        });
-        controls.appendChild(clear);
-        return this.createRow(this.t("clearDiagnosticLogs"), controls, { description: this.t("clearDiagnosticLogsDesc") });
-      }
-      createSettingsSnapshotRow() {
-        const controls = document.createElement("div");
-        controls.className = "dait-diagnostic-actions";
-        const button = this.createSmallButton(this.t("exportSettingsSnapshot"));
-        button.dataset.daitAction = "exportSettingsSnapshot";
-        button.addEventListener("click", () => this.exportSettingsSnapshot());
-        controls.appendChild(button);
-        return this.createRow(this.t("settingsSnapshot"), controls, { description: this.t("settingsSnapshotDesc") });
-      }
-      createDiagnosticSummaryRow() {
-        const summary = this.createDiagnosticSummary(this.diagnosticLogs);
-        const row = this.createRow(this.t("diagnosticSummary"), this.createDiagnosticSummaryPanel(summary), {
-          description: this.getDiagnosticSummaryStatsText(summary),
-          wide: true
-        });
-        row.classList.add("dait-diagnostic-summary-row");
-        return row;
-      }
-      refreshDiagnosticSummary(root) {
-        const row = root?.querySelector?.(".dait-diagnostic-summary-row");
-        if (!row) return;
-        const summary = this.createDiagnosticSummary(this.diagnosticLogs);
-        const description = row.querySelector?.(".dait-row-description");
-        if (description) description.textContent = this.getDiagnosticSummaryStatsText(summary);
-        const current = row.querySelector?.(".dait-diagnostic-summary");
-        if (current) current.replaceWith(this.createDiagnosticSummaryPanel(summary));
-      }
-      createDiagnosticSummaryPanel(summary = this.createDiagnosticSummary(this.diagnosticLogs)) {
-        const panel = document.createElement("div");
-        panel.className = "dait-diagnostic-summary";
-        const groups = [
-          [this.t("diagnosticSummaryStates"), summary.top?.messageStates || []],
-          [this.t("diagnosticSummaryReasons"), summary.top?.reasonCodes || []],
-          [this.t("diagnosticSummaryFlows"), summary.top?.flows || []],
-          [this.t("diagnosticSummaryQueues"), this.getDiagnosticSummaryQueueItems(summary)],
-          [this.t("diagnosticSummaryProviders"), summary.top?.providers || []],
-          [this.t("diagnosticSummaryFailures"), summary.top?.failureClasses?.length ? summary.top.failureClasses : summary.top?.failureTypes || []],
-          [this.t("diagnosticSummaryFailureLayers"), summary.top?.failureLayers || []],
-          [this.t("diagnosticSummaryFlowStages"), summary.top?.flowStages || []]
-        ].filter(([, items]) => Array.isArray(items) && items.length);
-        if (!groups.length) {
-          panel.hidden = true;
-          return panel;
-        }
-        groups.forEach(([label, items]) => panel.appendChild(this.createDiagnosticSummaryGroup(label, items)));
-        return panel;
-      }
-      // A chip shows a short label for its code (service names for services); the code stays in the tooltip.
-      getDiagnosticChipLabel(code) {
-        const value = String(code ?? "");
-        if (PROVIDER_ORDER.includes(value)) return this.getProviderDisplayName(value);
-        return getDiagnosticCodeLabel(value, this.getLocale());
-      }
-      createDiagnosticSummaryGroup(label, items = []) {
-        const group = document.createElement("div");
-        group.className = "dait-diagnostic-summary-group";
-        const title = document.createElement("span");
-        title.className = "dait-diagnostic-summary-title";
-        title.textContent = label;
-        group.appendChild(title);
-        const chips = document.createElement("div");
-        chips.className = "dait-diagnostic-summary-chips";
-        items.slice(0, 8).forEach((item) => {
-          const chip = document.createElement("span");
-          chip.className = "dait-diagnostic-chip";
-          chip.dataset.daitCode = String(item.key ?? "");
-          chip.textContent = `${this.getDiagnosticChipLabel(item.key)}: ${item.count}`;
-          chip.title = String(item.key ?? "");
-          chips.appendChild(chip);
-        });
-        group.appendChild(chips);
-        return group;
-      }
-      getDiagnosticSummaryQueueItems(summary = {}) {
-        const items = Array.isArray(summary.top?.queueTypes) ? [...summary.top.queueTypes] : [];
-        const queue = summary.queue || {};
-        [
-          ["queueLength", queue.queueLength],
-          ["inFlight", queue.inFlight],
-          ["inFlightItems", queue.inFlightItems],
-          ["prefetchInFlight", queue.prefetchInFlight],
-          ["pendingTargets", queue.pendingTargets]
-        ].forEach(([key, value]) => {
-          const count = Number(value || 0) || 0;
-          if (count > 0 && !items.some((item) => item.key === key)) items.push({ key, count });
-        });
-        return items;
-      }
-      createGoogleTranslateSettings() {
-        const block = document.createElement("div");
-        block.className = "dait-google-settings";
-        const header = document.createElement("div");
-        header.className = "dait-settings-subheading";
-        const title = document.createElement("span");
-        title.textContent = this.t("googleTranslateTitle");
-        header.appendChild(title);
-        block.appendChild(header);
-        block.appendChild(this.createTextareaRow("googleTranslate.keyPoolText", this.t("googleTranslateKeys"), {
-          description: this.t("googleTranslateKeysDesc")
-        }));
-        block.appendChild(this.createInputRow("googleTranslate.defaultMonthlyLimit", this.t("googleTranslateDefaultLimit"), "number", String(GOOGLE_TRANSLATE_DEFAULT_MONTHLY_LIMIT), {
-          min: "1",
-          max: String(GOOGLE_TRANSLATE_MAX_MONTHLY_LIMIT),
-          step: "1000"
-        }, { description: this.t("googleTranslateDefaultLimitDesc") }));
-        block.appendChild(this.createCheckboxRow("googleTranslate.allowPrefetch", this.t("googleTranslateAllowPrefetch"), {
-          description: this.t("googleTranslateAllowPrefetchDesc")
-        }));
-        block.appendChild(this.createGoogleTranslateStatsRow());
-        return block;
-      }
-      createGoogleTranslateStatsRow() {
-        const controls = document.createElement("div");
-        controls.className = "dait-cache-actions";
-        const reset = this.createSmallButton(this.t("googleTranslateResetStats"), "danger");
-        reset.addEventListener("click", async () => {
-          const confirmed = await this.confirmAction({
-            title: this.t("googleTranslateResetStats"),
-            body: this.t("googleTranslateResetConfirm"),
-            confirmText: this.t("googleTranslateResetStats"),
-            danger: true
-          });
-          if (!confirmed) return;
-          this.resetGoogleTranslateUsageStats();
-          const row = reset.closest(".dait-settings-row");
-          const description = row?.querySelector?.(".dait-row-description");
-          if (description) description.textContent = this.getGoogleTranslateStatsText();
-        });
-        controls.appendChild(reset);
-        return this.createRow(this.t("googleTranslateStats"), controls, {
-          description: this.getGoogleTranslateStatsText()
-        });
-      }
-      getDiagnosticLogsStatsText() {
-        return this.t("diagnosticLogsStats", {
-          entries: this.diagnosticLogs.length,
-          compressed: this.diagnosticCompressedCount
-        });
-      }
-      // One sentence (UI-SPEC descriptions): the count, what the chips group by, and the latest event.
-      getDiagnosticSummaryStatsText(summary = this.createDiagnosticSummary(this.diagnosticLogs)) {
-        const events = Number(summary?.totalEvents || 0) || 0;
-        if (!events) return this.t("diagnosticSummaryEmpty");
-        const latest = this.formatDiagnosticSummaryTime(summary?.latestIso);
-        return this.t("diagnosticSummaryEvents", { events, latest });
-      }
-      formatDiagnosticSummaryTime(iso) {
-        if (!iso) return "-";
-        const date = new Date(iso);
-        if (!Number.isFinite(date.getTime())) return String(iso);
-        const locale = this.getLocale() === "en" ? "en-US" : "zh-CN";
-        try {
-          return date.toLocaleString(locale, { hour12: false });
-        } catch {
-          return date.toLocaleString();
-        }
-      }
-      getGoogleTranslateStatsText() {
-        const stats = this.getGoogleTranslateUsageSummary();
-        const text = this.t("googleTranslateStatsDesc", {
-          used: stats.used,
-          limit: stats.limit,
-          available: stats.available,
-          total: stats.total,
-          month: stats.monthKey
-        });
-        if (!stats.coolingDown) return text;
-        return `${text} ${this.t("googleTranslateStatsCooldown", {
-          count: stats.coolingDown,
-          time: this.formatDiagnosticSummaryTime(stats.nextCooldownEndsAt)
-        })}`;
-      }
-      getTranslationCacheStatsText() {
-        return this.t("translationCacheStatsDesc", {
-          hits: this.translationCacheStats.hits,
-          misses: this.translationCacheStats.misses,
-          memory: this.getTranslationCacheMessageCount(),
-          persistent: this.persistentTranslationCacheCount
-        });
-      }
-      getTranslationCacheTtlLabel(hours) {
-        const value = Number(hours);
-        const labels = {
-          3: this.t("cacheTtl3h"),
-          6: this.t("cacheTtl6h"),
-          12: this.t("cacheTtl12h"),
-          24: this.t("cacheTtl1d"),
-          48: this.t("cacheTtl2d"),
-          168: this.t("cacheTtl7d")
-        };
-        return labels[value] || `${value}h`;
-      }
-      createInputRow(path, labelText, type, placeholder, attrs = {}, rowOptions = {}) {
-        const input = document.createElement("input");
-        input.type = type;
-        input.dataset.daitPath = path;
-        input.placeholder = placeholder || "";
-        input.value = this.getSetting(path) ?? "";
-        Object.entries(attrs).forEach(([key, value]) => input.setAttribute(key, value));
-        const commit = (options = {}) => {
-          const saveOptions = options.immediate ? { save: "immediate", retryOnError: false } : options.live ? { save: "debounce", live: true } : void 0;
-          if (type !== "number") {
-            const rawText = String(input.value ?? "");
-            const trimOnCommit = options.immediate && (path.endsWith(".model") || path.endsWith(".endpoint"));
-            const nextText = trimOnCommit ? rawText.trim() : rawText;
-            if (trimOnCommit && nextText !== input.value) input.value = nextText;
-            this.setSetting(path, nextText, saveOptions);
-            if (options.immediate && path.endsWith(".model")) {
-              const kind = path.split(".")[0];
-              this.refreshModelHistoryDatalist(input, kind);
-            }
-            return;
-          }
-          const raw = String(input.value ?? "").trim();
-          if (!raw) {
-            if (options.force) this.syncSettingControls(path, this.getSetting(path));
-            return;
-          }
-          if (!options.force && input.validity && input.validity.valid === false) return;
-          this.setSetting(path, Number(raw), saveOptions);
-        };
-        if (type === "number") {
-          input.addEventListener("input", () => commit());
-          input.addEventListener("blur", () => commit({ force: true, immediate: true }));
-          input.addEventListener("pointerup", () => setTimeout(() => commit(), 0));
-          input.addEventListener("keyup", () => setTimeout(() => commit(), 0));
-        } else {
-          input.addEventListener("input", () => commit({ live: true }));
-          input.addEventListener("blur", () => commit({ force: true, immediate: true }));
-        }
-        input.addEventListener("change", () => commit({ force: true, immediate: true }));
-        return this.createRow(labelText, input, rowOptions);
-      }
-      createTextareaRow(path, labelText, rowOptions = {}) {
-        const textarea = document.createElement("textarea");
-        textarea.dataset.daitPath = path;
-        textarea.rows = 6;
-        textarea.value = this.getSetting(path) ?? "";
-        this.bindSettingsTextarea(textarea);
-        textarea.addEventListener("change", () => this.preserveSettingsScroll(textarea, () => this.setSetting(path, textarea.value)));
-        return this.createRow(labelText, textarea, { ...rowOptions, stacked: true });
-      }
-      createSelectRow(path, labelText, options, rowOptions = {}) {
-        const select = document.createElement("select");
-        select.dataset.daitPath = path;
-        const routeKey = typeof rowOptions.routeKey === "string" ? rowOptions.routeKey : null;
-        if (routeKey !== null) select.dataset.daitRouteKey = routeKey;
-        const current = routeKey !== null && path === "ui.currentChannelAutoTranslatePolicy" ? this.getCurrentChannelAutoTranslatePolicyMode(routeKey) : this.getSetting(path);
-        const appendOption = (parent, [value, text]) => {
-          const option = document.createElement("option");
-          option.value = value;
-          option.textContent = text;
-          option.selected = String(value) === String(current);
-          parent.appendChild(option);
-        };
-        options.forEach((entry) => {
-          if (entry && !Array.isArray(entry) && Array.isArray(entry.options)) {
-            const group = document.createElement("optgroup");
-            group.label = entry.label;
-            group.setAttribute("label", entry.label);
-            entry.options.forEach((option) => appendOption(group, option));
-            select.appendChild(group);
-            return;
-          }
-          appendOption(select, entry);
-        });
-        select.addEventListener("change", () => {
-          if (path.endsWith(".provider")) {
-            this.setTaskProvider(path.split(".")[0], select.value);
-            this.replaceSettingsPanelFrom(select);
-            return;
-          }
-          this.setSetting(path, select.value, routeKey !== null ? { routeKey } : void 0);
-          if (path === "ui.language") {
-            const panel = select.closest?.(".dait-settings");
-            if (panel) this.replaceSettingsPanelElement(panel);
-          }
-        });
-        return this.createRow(labelText, select, rowOptions);
-      }
-      createLanguageRow(kind, field, labelText, descriptionText, options = {}) {
-        const current = String(this.settings[kind]?.[field] || "");
-        const preset = LANGUAGE_PRESETS.find((language) => language.value === current);
-        const isAuto = options.allowAuto && current === AUTO_LANGUAGE_VALUE;
-        const isCustom = !preset && !isAuto;
-        const controls = document.createElement("div");
-        controls.className = "dait-language-controls";
-        const select = document.createElement("select");
-        select.className = "dait-language-select";
-        if (options.allowAuto) {
-          const autoOption = document.createElement("option");
-          autoOption.value = AUTO_LANGUAGE_VALUE;
-          autoOption.textContent = this.t("autoDetectLanguage");
-          autoOption.selected = isAuto;
-          select.appendChild(autoOption);
-        }
-        LANGUAGE_PRESETS.forEach((language) => {
-          const option = document.createElement("option");
-          option.value = language.value;
-          option.textContent = this.getLanguageLabel(language);
-          option.selected = language.value === current;
-          select.appendChild(option);
-        });
-        const customOption = document.createElement("option");
-        customOption.value = CUSTOM_LANGUAGE_VALUE;
-        customOption.textContent = this.t("customLanguage");
-        customOption.selected = isCustom;
-        select.appendChild(customOption);
-        const customInput = document.createElement("input");
-        customInput.type = "text";
-        customInput.className = "dait-language-custom";
-        customInput.placeholder = this.t("customLanguagePlaceholder");
-        customInput.title = this.t("customLanguageDesc");
-        customInput.setAttribute("aria-description", this.t("customLanguageDesc"));
-        customInput.setAttribute("aria-label", `${labelText}: ${this.t("customLanguage")}`);
-        customInput.value = isCustom ? current : "";
-        customInput.hidden = !isCustom;
-        select.addEventListener("change", () => {
-          if (select.value === AUTO_LANGUAGE_VALUE) {
-            customInput.hidden = true;
-            customInput.value = "";
-            this.setSetting(`${kind}.${field}`, AUTO_LANGUAGE_VALUE);
-            return;
-          }
-          if (select.value === CUSTOM_LANGUAGE_VALUE) {
-            customInput.hidden = false;
-            customInput.focus();
-            if (customInput.value.trim()) this.setSetting(`${kind}.${field}`, customInput.value.trim());
-            return;
-          }
-          customInput.hidden = true;
-          customInput.value = "";
-          this.setSetting(`${kind}.${field}`, select.value);
-        });
-        customInput.addEventListener("change", () => {
-          const value = customInput.value.trim();
-          if (value) this.setSetting(`${kind}.${field}`, value);
-        });
-        controls.appendChild(select);
-        controls.appendChild(customInput);
-        return this.createRow(labelText, controls, { description: descriptionText, labelFor: select });
-      }
-      // Template picker (select only previews), read-only preview, the prompt editor and an inline "save as
-      // template" name field. Only "Use template" replaces the prompt, after a confirmation when the current
-      // prompt has edits that no template holds.
-      createPromptManager(kind) {
-        const manager = document.createElement("div");
-        manager.className = "dait-prompt-manager";
-        const idBase = `dait-prompt-${kind}-${Math.random().toString(36).slice(2, 8)}`;
-        const header = document.createElement("div");
-        header.className = "dait-prompt-manager-header";
-        const title = document.createElement("span");
-        title.textContent = this.t("promptTemplates");
-        header.appendChild(title);
-        const desc = document.createElement("p");
-        desc.className = "dait-row-description";
-        desc.textContent = this.t("promptTemplatesDesc");
-        header.appendChild(desc);
-        manager.appendChild(header);
-        const tools = document.createElement("div");
-        tools.className = "dait-prompt-tools";
-        const search = document.createElement("input");
-        search.type = "search";
-        search.placeholder = this.t("promptSearch");
-        search.setAttribute("aria-label", this.t("promptSearch"));
-        tools.appendChild(search);
-        const select = document.createElement("select");
-        select.className = "dait-prompt-select";
-        select.setAttribute("aria-label", this.t("promptTemplateSelect"));
-        tools.appendChild(select);
-        const actions = document.createElement("div");
-        actions.className = "dait-prompt-actions";
-        const apply = this.createSmallButton(this.t("promptApply"), "primary");
-        apply.dataset.daitAction = "promptApply";
-        const remove = this.createSmallButton(this.t("promptDelete"), "danger");
-        remove.dataset.daitAction = "promptDelete";
-        actions.appendChild(apply);
-        actions.appendChild(remove);
-        tools.appendChild(actions);
-        manager.appendChild(tools);
-        const previewBlock = document.createElement("div");
-        previewBlock.className = "dait-prompt-preview-block";
-        const previewLabel = document.createElement("span");
-        previewLabel.className = "dait-prompt-preview-label";
-        previewLabel.id = `${idBase}-preview-label`;
-        previewBlock.appendChild(previewLabel);
-        const preview = document.createElement("div");
-        preview.className = "dait-prompt-preview";
-        preview.tabIndex = 0;
-        preview.setAttribute("role", "region");
-        preview.setAttribute("aria-labelledby", previewLabel.id);
-        previewBlock.appendChild(preview);
-        manager.appendChild(previewBlock);
-        const promptBlock = document.createElement("div");
-        promptBlock.className = "dait-prompt-editor";
-        const promptLabel = document.createElement("span");
-        promptLabel.id = `${idBase}-label`;
-        promptLabel.textContent = this.t("prompt");
-        promptBlock.appendChild(promptLabel);
-        const promptDesc = document.createElement("p");
-        promptDesc.className = "dait-row-description";
-        promptDesc.id = `${idBase}-desc`;
-        promptDesc.textContent = this.t("promptDesc");
-        promptBlock.appendChild(promptDesc);
-        const textarea = document.createElement("textarea");
-        textarea.dataset.daitPath = `${kind}.prompt`;
-        textarea.rows = 6;
-        textarea.value = this.getSetting(`${kind}.prompt`) ?? "";
-        textarea.setAttribute("aria-labelledby", promptLabel.id);
-        textarea.setAttribute("aria-describedby", `${promptDesc.id} ${idBase}-status`);
-        this.bindSettingsTextarea(textarea);
-        promptBlock.appendChild(textarea);
-        const footer = document.createElement("div");
-        footer.className = "dait-prompt-editor-footer";
-        const status = document.createElement("span");
-        status.className = "dait-prompt-status";
-        status.id = `${idBase}-status`;
-        footer.appendChild(status);
-        const editorActions = document.createElement("div");
-        editorActions.className = "dait-prompt-actions";
-        const update = this.createSmallButton(this.t("promptUpdate"));
-        update.dataset.daitAction = "promptUpdate";
-        const restorePresets = this.createSmallButton(this.t("promptRestorePresets"));
-        restorePresets.dataset.daitAction = "promptRestorePresets";
-        const copy = this.createSmallButton(this.t("promptCopy"));
-        editorActions.appendChild(update);
-        editorActions.appendChild(restorePresets);
-        editorActions.appendChild(copy);
-        footer.appendChild(editorActions);
-        promptBlock.appendChild(footer);
-        const saveRow = document.createElement("div");
-        saveRow.className = kind === "polish" ? "dait-prompt-tools dait-prompt-save dait-prompt-save-categorized" : "dait-prompt-tools dait-prompt-save";
-        const nameInput = document.createElement("input");
-        nameInput.type = "text";
-        nameInput.maxLength = 80;
-        nameInput.placeholder = this.t("promptNamePlaceholder");
-        nameInput.setAttribute("aria-label", this.t("promptSaveNameLabel"));
-        saveRow.appendChild(nameInput);
-        let categorySelect = null;
-        if (kind === "polish") {
-          categorySelect = document.createElement("select");
-          categorySelect.className = "dait-prompt-category-select";
-          categorySelect.setAttribute("aria-label", this.t("promptTemplateCategoryLabel"));
-          const defaultCategory = this.getPolishTemplateCategory(this.getActivePolishTemplate());
-          POLISH_PROMPT_TEMPLATE_CATEGORIES.forEach((category) => {
-            const option = document.createElement("option");
-            option.value = category;
-            option.textContent = this.getPolishTemplateCategoryLabel(category);
-            option.selected = category === defaultCategory;
-            categorySelect.appendChild(option);
-          });
-          saveRow.appendChild(categorySelect);
-        }
-        const save = this.createSmallButton(this.t("promptSave"));
-        save.dataset.daitAction = "promptSave";
-        saveRow.appendChild(save);
-        promptBlock.appendChild(saveRow);
-        manager.appendChild(promptBlock);
-        const normalize = (value) => String(value ?? "").replace(/\r\n?/g, "\n").trim();
-        const getPromptValue = () => textarea.value ?? this.settings[kind]?.prompt ?? "";
-        const findTemplate = (id) => (id ? this.getPromptTemplates(kind).find((template) => template.id === id) : null) || null;
-        const hasUnsavedEdits = (prompt) => Boolean(normalize(prompt)) && !this.getPromptTemplates(kind).some((template) => normalize(template.prompt) === normalize(prompt));
-        const syncStatus = () => {
-          const prompt = getPromptValue();
-          const active = findTemplate(this.settings[kind]?.activePromptTemplate);
-          const matching = active && normalize(active.prompt) === normalize(prompt) ? active : this.getPromptTemplates(kind).find((template) => normalize(template.prompt) === normalize(prompt)) || null;
-          status.textContent = matching ? this.t("promptUsingTemplate", { code: matching.serial, name: this.getPromptTemplateDisplayName(matching) }) : active && normalize(prompt) ? this.t("promptTemplateEdited", { code: active.serial, name: this.getPromptTemplateDisplayName(active) }) : this.t("promptTemplateCustom");
-          update.disabled = !active || !normalize(prompt) || normalize(active.prompt) === normalize(prompt);
-          update.title = active ? this.t("promptUpdateTitle", { code: active.serial, name: this.getPromptTemplateDisplayName(active) }) : "";
-          restorePresets.disabled = this.getMissingBuiltInPromptTemplates(kind).length === 0;
-        };
-        const syncPreview = () => {
-          const template = findTemplate(select.value);
-          const inUse = Boolean(template) && template.id === this.settings[kind]?.activePromptTemplate;
-          previewLabel.textContent = inUse ? `${this.t("promptPreview")} · ${this.t("promptPreviewActive")}` : this.t("promptPreview");
-          preview.textContent = template ? String(template.prompt || "") : this.t("promptNoTemplate");
-          apply.disabled = !template;
-          remove.disabled = !template;
-        };
-        const renderOptions = (preferredId = "") => {
-          const query = String(search.value || "").trim().toLowerCase();
-          const templates = this.getPromptTemplates(kind).filter((template) => !query || this.getPromptTemplateSearchText(template).includes(query));
-          const previous = preferredId || select.value;
-          select.textContent = "";
-          if (!templates.length) {
-            const option = document.createElement("option");
-            option.value = "";
-            option.textContent = this.t("promptNoTemplate");
-            select.appendChild(option);
-            syncPreview();
-            return;
-          }
-          const activeId = this.settings[kind]?.activePromptTemplate;
-          const selectedId = [previous, activeId].find((id) => id && templates.some((template) => template.id === id)) || templates[0].id;
-          const appendOption = (container, template) => {
-            const option = document.createElement("option");
-            option.value = template.id;
-            option.textContent = this.getPromptTemplateLabel(template);
-            option.selected = template.id === selectedId;
-            container.appendChild(option);
-          };
-          if (kind === "polish") {
-            POLISH_PROMPT_TEMPLATE_CATEGORIES.forEach((category) => {
-              const groupTemplates = templates.filter((template) => this.getPolishTemplateCategory(template) === category);
-              if (!groupTemplates.length) return;
-              const group = document.createElement("optgroup");
-              group.label = this.getPolishTemplateCategoryLabel(category);
-              groupTemplates.forEach((template) => appendOption(group, template));
-              select.appendChild(group);
-            });
-          } else {
-            templates.forEach((template) => appendOption(select, template));
-          }
-          syncPreview();
-        };
-        const commitPrompt = (prompt) => {
-          if (prompt !== this.settings[kind]?.prompt) this.setSetting(`${kind}.prompt`, prompt);
-        };
-        const saveTemplate = () => {
-          const name = String(nameInput.value || "").trim();
-          if (!name) {
-            this.showToast(this.t("promptNameRequired"), "error");
-            nameInput.focus?.();
-            return;
-          }
-          const prompt = getPromptValue();
-          commitPrompt(prompt);
-          this.savePromptTemplate(kind, name, prompt, categorySelect ? { category: categorySelect.value } : {});
-          nameInput.value = "";
-          search.value = "";
-          renderOptions(this.settings[kind]?.activePromptTemplate);
-          syncStatus();
-        };
-        textarea.addEventListener("change", () => this.preserveSettingsScroll(textarea, () => this.setSetting(`${kind}.prompt`, textarea.value)));
-        textarea.addEventListener("input", syncStatus);
-        textarea.__daitAfterSync = () => {
-          syncStatus();
-          syncPreview();
-        };
-        search.addEventListener("input", () => renderOptions());
-        select.addEventListener("change", syncPreview);
-        apply.addEventListener("click", async () => {
-          const template = findTemplate(select.value);
-          if (!template) return;
-          const current = getPromptValue();
-          if (normalize(current) !== normalize(template.prompt) && hasUnsavedEdits(current)) {
-            const confirmed = await this.confirmAction({
-              title: this.t("promptApplyUnsavedTitle"),
-              body: this.t("promptApplyUnsavedConfirm", { code: template.serial, name: this.getPromptTemplateDisplayName(template) }),
-              confirmText: this.t("promptApply"),
-              danger: true
-            });
-            if (!confirmed || !findTemplate(template.id)) return;
-          }
-          this.applyPromptTemplate(kind, template.id);
-          textarea.value = this.settings[kind]?.prompt ?? template.prompt;
-          renderOptions(template.id);
-          syncStatus();
-        });
-        save.addEventListener("click", saveTemplate);
-        nameInput.addEventListener("keydown", (event) => {
-          if (event.key !== "Enter" || event.isComposing) return;
-          event.preventDefault?.();
-          saveTemplate();
-        });
-        update.addEventListener("click", () => {
-          const active = findTemplate(this.settings[kind]?.activePromptTemplate);
-          if (!active) return;
-          const prompt = getPromptValue();
-          commitPrompt(prompt);
-          this.updatePromptTemplate(kind, active.id, prompt);
-          renderOptions();
-          syncStatus();
-        });
-        restorePresets.addEventListener("click", () => {
-          this.restoreMissingBuiltInPromptTemplates(kind);
-          renderOptions();
-          syncStatus();
-        });
-        copy.addEventListener("click", () => this.copyPromptText(textarea));
-        remove.addEventListener("click", async () => {
-          const template = findTemplate(select.value);
-          if (!template) return;
-          const fallback = template.id === this.settings[kind]?.activePromptTemplate ? this.getPromptTemplates(kind).find((item) => item.id !== template.id) || null : null;
-          const label = this.getPromptTemplateLabel(template);
-          const confirmed = await this.confirmAction({
-            title: this.t("promptDeleteConfirm"),
-            body: fallback && normalize(fallback.prompt) !== normalize(getPromptValue()) ? [label, this.t("promptDeleteActiveNote", { code: fallback.serial, name: this.getPromptTemplateDisplayName(fallback) })] : label,
-            confirmText: this.t("promptDelete"),
-            danger: true
-          });
-          if (!confirmed || !findTemplate(template.id)) return;
-          const wasActive = this.settings[kind]?.activePromptTemplate === template.id;
-          this.deletePromptTemplate(kind, template.id);
-          if (wasActive) textarea.value = this.settings[kind]?.prompt ?? "";
-          renderOptions();
-          syncStatus();
-        });
-        renderOptions();
-        syncStatus();
-        return manager;
-      }
-      createSmallButton(text, variant = "") {
-        const button = document.createElement("button");
-        button.className = `dait-small-button ${variant ? `dait-small-button-${variant}` : ""}`.trim();
-        button.type = "button";
-        button.textContent = text;
-        return button;
-      }
-      createDeepSeekModelRow(kind) {
-        const select = document.createElement("select");
-        select.dataset.daitModelPreset = kind;
-        const current = this.settings[kind]?.model;
-        const custom = document.createElement("option");
-        custom.value = "";
-        custom.textContent = this.t("customModel");
-        custom.selected = !DEEPSEEK_MODELS.some(([value]) => value === current);
-        select.appendChild(custom);
-        DEEPSEEK_MODELS.forEach(([value, text]) => {
-          const option = document.createElement("option");
-          option.value = value;
-          option.textContent = text;
-          option.selected = value === current;
-          select.appendChild(option);
-        });
-        select.addEventListener("change", () => {
-          if (!select.value) return;
-          this.setSetting(`${kind}.model`, select.value);
-          this.showToast(this.t("modelSet", { model: select.options[select.selectedIndex].textContent }), "success");
-        });
-        return this.createRow(this.t("deepseekPreset"), select, { description: this.t("deepseekPresetDesc") });
-      }
-      // One settings row (UI-SPEC): a div with the label and a one-line description on the left and the control on
-      // the right. Options:
-      //   description      help text under the label (aria-describedby on the control)
-      //   disabledReason   locks the control and shows the reason instead of the description
-      //   checkbox         the control is a switch
-      //   stacked / wide   label above a full-width control, help below (long values: URLs, keys, prompts)
-      //   dependsOn        { path, label }: indented under its parent switch and disabled, with the reason, while it is off
-      //   labelFor         the element inside a composite control that the <label> names
-      //   ariaTarget       a composite control (radiogroup) named through aria-labelledby
-      // Only form fields get a <label for>; rows of action buttons use a plain text label, so a click on the row text
-      // never presses a button.
-      createRow(labelText, control, options = {}) {
-        const id = this.createSettingsControlId();
-        const stacked = Boolean(options.stacked || options.wide);
-        const classes = ["dait-settings-row"];
-        if (options.checkbox) classes.push("dait-settings-row-switch");
-        if (stacked) classes.push("dait-settings-row-stacked");
-        if (options.dependsOn) classes.push("dait-settings-row-dependent");
-        if (options.disabledReason) classes.push("dait-settings-row-inactive");
-        const row = document.createElement("div");
-        row.className = classes.join(" ");
-        row.id = `${id}-row`;
-        const labelTarget = options.labelFor || (this.isSettingsLabelableControl(control) ? control : null);
-        const ariaTarget = labelTarget ? null : options.ariaTarget || null;
-        const text = document.createElement("div");
-        text.className = "dait-row-text";
-        const label = document.createElement(labelTarget ? "label" : "span");
-        label.className = "dait-row-label";
-        label.id = `${id}-label`;
-        label.textContent = labelText;
-        if (labelTarget) {
-          if (!labelTarget.id) labelTarget.id = id;
-          label.setAttribute("for", labelTarget.id);
-        } else if (ariaTarget) {
-          ariaTarget.setAttribute("aria-labelledby", label.id);
-        }
-        text.appendChild(label);
-        const descriptionText = options.disabledReason || options.description || "";
-        let description = null;
-        if (descriptionText || options.dependsOn) {
-          description = document.createElement("p");
-          description.className = "dait-row-description";
-          description.id = `${id}-desc`;
-          description.textContent = descriptionText;
-          description.hidden = !descriptionText;
-          text.appendChild(description);
-          (labelTarget || ariaTarget)?.setAttribute("aria-describedby", description.id);
-        }
-        const cell = document.createElement("div");
-        cell.className = "dait-row-control";
-        cell.appendChild(control);
-        row.appendChild(text);
-        row.appendChild(cell);
-        row.dataset.daitSearchLabel = String(labelText || "");
-        row.dataset.daitSearchDescription = String(options.description || "");
-        if (control?.dataset?.daitPath) row.dataset.daitRowPath = control.dataset.daitPath;
-        row.__daitDescription = description;
-        if (options.disabledReason) {
-          row.dataset.daitLocked = "true";
-          this.getSettingsRowControls(control).forEach((node) => {
-            node.disabled = true;
-          });
-        }
-        if (options.dependsOn?.path) {
-          row.dataset.daitDependsOn = options.dependsOn.path;
-          row.dataset.daitDependsOnLabel = String(options.dependsOn.label || "");
-          this.applySettingsRowDependency(row);
-        }
-        return row;
-      }
-      isSettingsLabelableControl(control) {
-        const tag = String(control?.tagName || "").toUpperCase();
-        if (tag === "SELECT" || tag === "TEXTAREA") return true;
-        return tag === "INPUT" && String(control.type || "").toLowerCase() !== "hidden";
-      }
-      // Form controls and buttons in a row (or the element itself when it is one), in document order.
-      getSettingsRowControls(root) {
-        const found = [];
-        const isControl = (node) => ["INPUT", "SELECT", "TEXTAREA", "BUTTON"].includes(String(node?.tagName || "").toUpperCase());
-        const visit = (node) => {
-          if (!node) return;
-          if (isControl(node)) found.push(node);
-          for (const child of node.children || []) visit(child);
-        };
-        visit(root);
-        return found;
-      }
-      // A dependent row is usable only while its parent switch is on; otherwise it says which switch to turn on.
-      applySettingsRowDependency(row) {
-        const path = row?.dataset?.daitDependsOn;
-        if (!path) return;
-        const inactive = !this.getSetting(path);
-        const locked = row.dataset.daitLocked === "true";
-        row.classList?.toggle?.("dait-settings-row-inactive", inactive || locked);
-        if (locked) return;
-        this.getSettingsRowControls(row.children?.[1] || row).forEach((node) => {
-          node.disabled = inactive;
-        });
-        if (!inactive) {
-          const list = row.children?.[1]?.children?.[0];
-          if (list?.dataset?.daitControl === "order-list") this.renderProviderFallbackOrderList(list);
-        }
-        const description = row.__daitDescription;
-        if (!description) return;
-        const text = inactive ? this.t("settingsRequiresParent", { parent: row.dataset.daitDependsOnLabel || "" }) : String(row.dataset.daitSearchDescription || "");
-        description.textContent = text;
-        description.hidden = !text;
-      }
-      syncSettingsDependentRows(root = null, changedPath = "") {
-        const scope = root || (typeof document !== "undefined" ? document : null);
-        let rows = [];
-        try {
-          rows = [...scope?.querySelectorAll?.(".dait-settings-row-dependent") || []];
-        } catch {
-          rows = [];
-        }
-        rows.forEach((row) => {
-          if (changedPath && row.dataset?.daitDependsOn !== changedPath) return;
-          this.applySettingsRowDependency(row);
-        });
-      }
-      // A segmented control (role=radiogroup) for a short list of exclusive choices. Arrow keys move the choice.
-      // Labels that do not fit the shared control width make the row a stacked one.
-      createSegmentedRow(path, labelText, choices, rowOptions = {}) {
-        const group = document.createElement("div");
-        group.className = "dait-segmented";
-        group.setAttribute("role", "radiogroup");
-        group.dataset.daitPath = path;
-        group.dataset.daitControl = "segmented";
-        const routeKey = typeof rowOptions.routeKey === "string" ? rowOptions.routeKey : null;
-        if (routeKey !== null) group.dataset.daitRouteKey = routeKey;
-        const current = routeKey !== null && path === "ui.currentChannelAutoTranslatePolicy" ? this.getCurrentChannelAutoTranslatePolicyMode(routeKey) : this.getSetting(path);
-        const choose = (value, focus = false) => {
-          this.syncSegmentedControl(group, value);
-          if (focus) this.focusSettingsElement(group.__daitSegmentedButtons.find((button) => button.dataset.daitValue === value));
-          this.setSetting(path, value, routeKey !== null ? { routeKey } : void 0);
-        };
-        group.__daitSegmentedButtons = choices.map(([value, text]) => {
-          const button = document.createElement("button");
-          button.type = "button";
-          button.className = "dait-segmented-option";
-          button.setAttribute("role", "radio");
-          button.dataset.daitValue = String(value);
-          button.textContent = text;
-          button.title = text;
-          button.addEventListener("click", () => choose(String(value)));
-          group.appendChild(button);
-          return button;
-        });
-        group.addEventListener("keydown", (event) => {
-          const buttons = group.__daitSegmentedButtons.filter((button) => !button.disabled);
-          if (!buttons.length) return;
-          const steps = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 };
-          const index = Math.max(0, buttons.findIndex((button) => button.getAttribute("aria-checked") === "true"));
-          let next = null;
-          if (steps[event?.key]) next = (index + steps[event.key] + buttons.length) % buttons.length;
-          else if (event?.key === "Home") next = 0;
-          else if (event?.key === "End") next = buttons.length - 1;
-          if (next === null) return;
-          event.preventDefault?.();
-          choose(buttons[next].dataset.daitValue, true);
-        });
-        this.syncSegmentedControl(group, current);
-        const stacked = rowOptions.stacked ?? !this.segmentedLabelsFit(choices.map(([, text]) => text));
-        return this.createRow(labelText, group, { ...rowOptions, ariaTarget: group, stacked });
-      }
-      syncSegmentedControl(group, value) {
-        const buttons = group?.__daitSegmentedButtons || [...group?.children || []];
-        const wanted = String(value ?? "");
-        const matched = buttons.some((button) => button.dataset?.daitValue === wanted);
-        buttons.forEach((button, index) => {
-          const checked = matched ? button.dataset?.daitValue === wanted : index === 0;
-          button.setAttribute("aria-checked", checked ? "true" : "false");
-          button.setAttribute("tabindex", checked ? "0" : "-1");
-        });
-        if (group?.dataset) group.dataset.daitValue = wanted;
-      }
-      // Rough text width at the segmented control's 15 px font: CJK characters are 1em, other characters ~0.55em (a
-      // generous estimate). Options are as wide as their labels plus 6 px padding on each side (css/04 .dait-segmented),
-      // so the labels fit when together they need no more than the control width less its 1 px border, 2 px padding
-      // and the 2 px gaps between options.
-      segmentedLabelsFit(labels, controlWidth = SETTINGS_CONTROL_WIDTH) {
-        const count = labels.length || 1;
-        const available = controlWidth - 6 - 2 * (count - 1);
-        const needed = labels.reduce((total, label) => total + 12 + [...String(label || "")].reduce((sum, char) => sum + (/[⺀-鿿豈-﫿＀-￯]/.test(char) ? 15 : 8.3), 0), 0);
-        return needed <= available;
-      }
       getLanguageLabel(language) {
         return this.getLocale() === "en" ? language.en : `${language.zh} - ${language.en}`;
       }
@@ -28848,40 +30033,6 @@ var require_discord_ai_translator = __commonJS({
           ordered.push(text);
         }
         return ordered;
-      }
-      attachModelHistoryDatalist(input, kind, host = null) {
-        if (!input || typeof document === "undefined" || !document.createElement) return null;
-        const provider = String(this.settings[kind]?.provider || "");
-        const listId = `dait-model-history-${kind}-${provider}-${Math.random().toString(36).slice(2, 8)}`;
-        const datalist = document.createElement("datalist");
-        datalist.id = listId;
-        datalist.dataset.daitModelHistory = `${kind}:${provider}`;
-        input.setAttribute("list", listId);
-        input.__daitModelDatalist = datalist;
-        (host || input.parentElement)?.appendChild?.(datalist);
-        this.refreshModelHistoryDatalist(input, kind);
-        return datalist;
-      }
-      refreshModelHistoryDatalist(input, kind, extraModels = []) {
-        const datalist = input?.__daitModelDatalist;
-        if (!datalist || typeof document === "undefined") return;
-        const provider = String(this.settings[kind]?.provider || "");
-        const baseModels = this.getRememberedModelsForProvider(kind, provider);
-        const merged = [];
-        const seen = /* @__PURE__ */ new Set();
-        for (const candidate of [...baseModels, ...Array.isArray(extraModels) ? extraModels : []]) {
-          const text = String(candidate || "").trim();
-          if (!text || seen.has(text)) continue;
-          seen.add(text);
-          merged.push(text);
-        }
-        [...datalist.children || []].forEach((child) => child.remove?.());
-        datalist.textContent = "";
-        merged.forEach((modelName) => {
-          const option = document.createElement("option");
-          option.value = modelName;
-          datalist.appendChild(option);
-        });
       }
       normalizeSavedServiceConfigEntry(entry) {
         if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
@@ -29279,112 +30430,6 @@ var require_discord_ai_translator = __commonJS({
           this.restoreTranslationSourceVisibility(this.getTranslationContentForLine(line));
           line.remove();
         });
-      }
-      syncSettingControls(path, value, options = {}) {
-        this.quickPanel?.handleSettingChanged(path);
-        if (typeof document === "undefined") return;
-        if (path === "ui.providerFallbackOrder") value = this.formatProviderFallbackOrder(value);
-        const channelRule = path === "ui.currentChannelAutoTranslatePolicy";
-        if (channelRule) value = this.normalizeChannelAutoTranslatePolicyMode(value);
-        const syncedChannel = channelRule && typeof options.routeKey === "string" ? this.getChannelAutoTranslatePolicyStorageKey(options.routeKey) : null;
-        document.querySelectorAll(`[data-dait-path='${path}']`).forEach((control) => {
-          if (control === document.activeElement && options.includeActive !== true) return;
-          if (syncedChannel !== null && typeof control.dataset?.daitRouteKey === "string" && this.getChannelAutoTranslatePolicyStorageKey(control.dataset.daitRouteKey) !== syncedChannel) return;
-          if (control.type === "checkbox") {
-            control.checked = Boolean(value);
-            return;
-          }
-          if (control.dataset?.daitControl === "segmented") {
-            this.syncSegmentedControl(control, value);
-            return;
-          }
-          if (control.dataset?.daitControl === "order-list") {
-            this.renderProviderFallbackOrderList(control);
-            return;
-          }
-          control.value = value ?? "";
-          if (typeof control.__daitAfterSync === "function") control.__daitAfterSync();
-        });
-        const modelKind = /^(polish|translation)\.model$/.exec(path)?.[1];
-        if (modelKind) {
-          document.querySelectorAll?.(`[data-dait-model-preset='${modelKind}']`)?.forEach((select) => {
-            const options2 = [...select.options || []];
-            select.value = options2.some((option) => option.value && option.value === value) ? value : "";
-          });
-        }
-        if (path === "ui.injectMessageButtons" || path === "ui.messageButtonVisibility") {
-          this.syncSettingControls("ui.messageButtonMode", this.getMessageButtonMode(), { includeActive: true });
-        }
-        this.syncSettingsDependentRows(null, path);
-        if (/^(polish|translation)\.(provider|apiKey|endpoint|model|enableThinking|region|deeplPlan|appId|secretKey)$/.test(path) || path === "googleTranslate.keyPoolText") {
-          this.refreshSavedServiceConfigControls();
-        }
-        this.scheduleOverviewStatusRefresh(path);
-      }
-      commitSettingsControls(root = null) {
-        const scope = root?.querySelectorAll ? root : typeof document !== "undefined" ? document : null;
-        if (!scope?.querySelectorAll) return;
-        scope.querySelectorAll("[data-dait-path]").forEach((control) => {
-          const path = String(control?.dataset?.daitPath || "");
-          if (!path) return;
-          if (path === "ui.currentChannelAutoTranslatePolicy") return;
-          let nextValue;
-          if (control.tagName === "TEXTAREA" || control.tagName === "SELECT") {
-            nextValue = control.value;
-          } else if (control.type === "checkbox") {
-            nextValue = Boolean(control.checked);
-          } else if (control.type === "number") {
-            const raw = String(control.value ?? "").trim();
-            if (!raw) return;
-            nextValue = Number(raw);
-          } else if (control.type) {
-            nextValue = control.value;
-          } else {
-            return;
-          }
-          if (Object.is(this.getSetting(path), nextValue)) return;
-          this.setSetting(path, nextValue);
-        });
-      }
-      bindSettingsTextarea(textarea) {
-        textarea.spellcheck = false;
-        ["contextmenu", "copy", "cut", "mouseup"].forEach((type) => {
-          textarea.addEventListener(type, () => this.restoreSettingsScrollSoon(textarea));
-        });
-      }
-      preserveSettingsScroll(anchor, action) {
-        const snapshot = this.getSettingsScrollSnapshot(anchor);
-        const result = action();
-        this.restoreSettingsScroll(snapshot);
-        return result;
-      }
-      restoreSettingsScrollSoon(anchor) {
-        const snapshot = this.getSettingsScrollSnapshot(anchor);
-        this.restoreSettingsScroll(snapshot);
-      }
-      async copyPromptText(textarea, successKey = "promptCopied") {
-        const text = String(textarea?.value || "");
-        const snapshot = this.getSettingsScrollSnapshot(textarea);
-        try {
-          await this.copyTextToClipboard(text);
-          this.restoreSettingsScroll(snapshot);
-          this.showToast(this.t(successKey), "success");
-        } catch (error) {
-          this.restoreSettingsScroll(snapshot);
-          this.showToast(this.t("promptCopyFailed", { error: this.formatError(error) }), "error");
-        }
-      }
-      async copyTextFromNode(node, successKey = "copiedToClipboard") {
-        const text = String(node?.textContent || "");
-        const snapshot = this.getSettingsScrollSnapshot(node);
-        try {
-          await this.copyTextToClipboard(text);
-          this.restoreSettingsScroll(snapshot);
-          this.showToast(this.t(successKey), "success");
-        } catch (error) {
-          this.restoreSettingsScroll(snapshot);
-          this.showToast(this.t("promptCopyFailed", { error: this.formatError(error) }), "error");
-        }
       }
       inferDiagnosticStageFromAction(action = "", status = "", meta = {}) {
         const value = String(action || "");
@@ -29822,38 +30867,6 @@ var require_discord_ai_translator = __commonJS({
         }
         if (!ok) throw Object.assign(new Error(this.t("clipboardUnavailable")), { code: "CLIPBOARD_UNAVAILABLE" });
       }
-      getSettingsScrollSnapshot(anchor) {
-        const scroller = this.getSettingsScrollContainer(anchor);
-        return {
-          scroller,
-          top: scroller?.scrollTop ?? 0,
-          left: scroller?.scrollLeft ?? 0
-        };
-      }
-      restoreSettingsScroll(snapshot) {
-        if (!snapshot?.scroller) return;
-        const restore = () => {
-          snapshot.scroller.scrollTop = snapshot.top;
-          snapshot.scroller.scrollLeft = snapshot.left;
-        };
-        restore();
-        if (typeof requestAnimationFrame === "function") requestAnimationFrame(restore);
-        setTimeout(restore, 0);
-        setTimeout(restore, 80);
-        setTimeout(restore, 180);
-        setTimeout(restore, 420);
-      }
-      getSettingsScrollContainer(anchor) {
-        let node = anchor?.parentElement;
-        while (node && node !== document.body) {
-          const style = getComputedStyle(node);
-          if (/(auto|scroll)/.test(style.overflowY) && node.scrollHeight > node.clientHeight) {
-            return node;
-          }
-          node = node.parentElement;
-        }
-        return document.scrollingElement || document.documentElement;
-      }
       getApiStatusText(state) {
         const key = {
           testing: "apiStatusTesting",
@@ -29869,39 +30882,6 @@ var require_discord_ai_translator = __commonJS({
       }
       getTestModeKind() {
         return ["polish", "translation"].includes(this.settings.ui?.testModeKind) ? this.settings.ui.testModeKind : DEFAULT_SETTINGS.ui.testModeKind;
-      }
-      refreshLocalizedUi() {
-        if (typeof document === "undefined") return;
-        this.cancelLightweightButtonRecovery();
-        this.nonTranslatableMessageCache = typeof WeakMap === "function" ? /* @__PURE__ */ new WeakMap() : null;
-        this.lastMissingMessageButtonSweepAt = 0;
-        this.removePolishResultPanel();
-        this.removePolishRestoreControl();
-        this.removeInputActionMenu();
-        this.removePolishPresetMenu();
-        this.refreshSettingsWindowsLocale();
-        this.quickPanel?.rerender?.("language");
-        this.restoreAllTranslationSourceVisibility();
-        document.querySelectorAll(".dait-message-button, .dait-polish-button, .dait-polish-preset-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-menu-button, .dait-input-action-menu, .dait-polish-preset-menu, .dait-input-action-group, .dait-quick-settings-button").forEach((node) => node.remove());
-        document.querySelectorAll(".dait-translation-line, .dait-translation-box").forEach((node) => node.remove());
-        this.unpatchContextMenus();
-        this.patchMessageContextMenu();
-        this.queueScan();
-      }
-      // Rebuilds every open settings panel that still shows another language, in place and on the same tab (the
-      // panel keeps its scroll position and focused control), and renames the plugin's own settings window.
-      refreshSettingsWindowsLocale() {
-        if (typeof document === "undefined") return 0;
-        const locale = this.getLocale();
-        this.getQuickSettingsModalRoots().forEach((root) => {
-          this.findQuickSettingsDialog(root)?.setAttribute?.("aria-label", this.t("settingsTitle"));
-        });
-        let rebuilt = 0;
-        [...document.querySelectorAll?.(".dait-settings") || []].forEach((panel) => {
-          if (!panel || panel.isConnected === false || panel.dataset?.daitLocale === locale) return;
-          if (this.replaceSettingsPanelElement(panel)) rebuilt++;
-        });
-        return rebuilt;
       }
       getLocale() {
         return I18N[this.settings.ui?.language] ? this.settings.ui.language : "zh-CN";
@@ -31612,293 +32592,6 @@ var require_discord_ai_translator = __commonJS({
         }
         return current?.parentElement === container ? current : null;
       }
-      openQuickSettingsPanel(source = "quick", launcher = null) {
-        if (typeof document === "undefined" || !document.body) {
-          this.logQuickSettingsDiagnostic("open.start", "blocked", { reason: "missing-document-body", source });
-          return null;
-        }
-        if (!this.isStarted) return null;
-        const existingRoots = this.getQuickSettingsModalRoots();
-        existingRoots.slice(1).forEach((root2) => {
-          this.logQuickSettingsDiagnostic("open.start", "orphan-removed", {
-            source,
-            ...this.getQuickSettingsModalDebugMeta(root2)
-          });
-          root2.querySelectorAll?.(".dait-settings")?.forEach((panel) => this.destroySettingsModalSizing(panel));
-          root2.remove?.();
-        });
-        const existing = existingRoots[0] || null;
-        if (existing) {
-          const existingDialog = this.findQuickSettingsDialog(existing);
-          if (existingDialog) {
-            const hasPanel = Boolean(existingDialog.querySelector?.(".dait-settings"));
-            const hasFallback = Boolean(existingDialog.querySelector?.(".dait-quick-settings-error"));
-            if (!hasPanel && !hasFallback) {
-              this.logQuickSettingsDiagnostic("open.start", "stale-existing", {
-                source,
-                reason: "empty-dialog",
-                ...this.getQuickSettingsModalDebugMeta(existing, existingDialog)
-              });
-              existing.remove?.();
-            } else {
-              document.body.appendChild(existing);
-              this.quickSettingsModalRoot = existing;
-              if (launcher?.focus) {
-                this.quickSettingsPreviousFocus = launcher;
-              } else if (!existing.contains?.(document.activeElement)) {
-                this.quickSettingsPreviousFocus = document.activeElement || this.quickSettingsPreviousFocus || null;
-              }
-              this.setQuickSettingsLauncherButton(launcher || this.quickSettingsPreviousFocus || null, true);
-              this.syncQuickSettingsThemeTree(existing);
-              this.bindQuickSettingsModalKeydown(existing, existingDialog);
-              this.syncQuickSettingsScrollPosition(existingDialog);
-              this.bindSettingsScrollTracking(existingDialog.querySelector?.(".dait-settings"), existingDialog.querySelector?.(".dait-quick-settings-body"));
-              this.focusQuickSettingsInitialControl(existingDialog);
-              this.logQuickSettingsDiagnostic("open.start", "reuse-existing", {
-                source,
-                ...this.getQuickSettingsModalDebugMeta(existing, existingDialog)
-              });
-              this.scheduleQuickSettingsModalVerify(existing, existingDialog);
-              return existing;
-            }
-          } else {
-            this.logQuickSettingsDiagnostic("open.start", "stale-existing", {
-              source,
-              reason: "missing-dialog",
-              rootChildCount: this.getElementChildCount(existing)
-            });
-            existing.remove?.();
-          }
-        }
-        let root = null;
-        let dialog = null;
-        try {
-          this.quickSettingsPreviousFocus = launcher?.focus ? launcher : document.activeElement || null;
-          this.logQuickSettingsDiagnostic("open.start", "start", {
-            source,
-            viewportWidth: Number((typeof window !== "undefined" ? window.innerWidth : 0) || document.documentElement?.clientWidth || 0),
-            viewportHeight: Number((typeof window !== "undefined" ? window.innerHeight : 0) || document.documentElement?.clientHeight || 0)
-          });
-          root = document.createElement("div");
-          root.className = "dait-quick-settings-modal-root";
-          root.dataset.daitQuickSettingsSource = source;
-          this.setQuickSettingsLauncherButton(launcher || this.quickSettingsPreviousFocus || null, true);
-          this.applyPanelTheme(root);
-          const backdrop = document.createElement("div");
-          backdrop.className = "dait-quick-settings-backdrop";
-          root.appendChild(backdrop);
-          dialog = document.createElement("div");
-          dialog.className = "dait-quick-settings-dialog";
-          dialog.setAttribute("role", "dialog");
-          dialog.setAttribute("aria-modal", "true");
-          dialog.setAttribute("aria-label", this.t("settingsTitle"));
-          const body = document.createElement("div");
-          body.className = "dait-quick-settings-body";
-          const panelStartedAt = Date.now();
-          try {
-            const panel = this.getSettingsPanel({ quickSettings: true });
-            body.appendChild(panel);
-            this.bindSettingsScrollTracking(panel, body);
-            this.logQuickSettingsDiagnostic("panel.build", "success", {
-              source,
-              ms: Date.now() - panelStartedAt,
-              sectionCount: this.getQuickSettingsPanelSectionCount(panel),
-              dialogChildCount: this.getElementChildCount(dialog),
-              bodyChildCount: this.getElementChildCount(body)
-            });
-          } catch (error) {
-            body.appendChild(this.createQuickSettingsErrorPanel(error, () => this.closeQuickSettingsPanel(root, "done")));
-            this.logQuickSettingsDiagnostic("panel.build", "error", {
-              source,
-              ms: Date.now() - panelStartedAt,
-              errorName: error?.name || "",
-              errorText: this.formatError(error)
-            });
-            this.showToast(this.t("quickSettingsOpenFailed", { error: this.formatError(error) }), "error");
-          }
-          dialog.appendChild(body);
-          dialog.addEventListener("pointerdown", (event) => event.stopPropagation());
-          root.addEventListener("pointerdown", (event) => {
-            if (event.target === root || event.target === backdrop) this.closeQuickSettingsPanel(root, "backdrop");
-          });
-          root.appendChild(dialog);
-          this.quickSettingsModalRoot = root;
-          this.bindQuickSettingsModalKeydown(root, dialog);
-          document.body.appendChild(root);
-          this.syncQuickSettingsThemeTree(root);
-          this.syncQuickSettingsScrollPosition(dialog);
-          this.focusQuickSettingsInitialControl(dialog);
-          this.logQuickSettingsDiagnostic("dom.attach", "success", {
-            source,
-            ...this.getQuickSettingsModalDebugMeta(root, dialog)
-          });
-          this.scheduleQuickSettingsModalVerify(root, dialog);
-          return root;
-        } catch (error) {
-          if (this.quickSettingsModalKeydown && typeof document !== "undefined") {
-            document.removeEventListener?.("keydown", this.quickSettingsModalKeydown, true);
-          }
-          this.quickSettingsModalKeydown = null;
-          if (root?.remove) root.remove();
-          if (!root || root === this.quickSettingsModalRoot) this.quickSettingsModalRoot = null;
-          this.logQuickSettingsDiagnostic("open.error", "error", {
-            source,
-            errorName: error?.name || "",
-            errorText: this.formatError(error),
-            hasRoot: Boolean(root),
-            hasDialog: Boolean(dialog)
-          });
-          this.showToast(this.t("quickSettingsOpenFailed", { error: this.formatError(error) }), "error");
-          return null;
-        }
-      }
-      bindQuickSettingsModalKeydown(root, dialog) {
-        if (this.quickSettingsModalKeydown && typeof document !== "undefined") {
-          document.removeEventListener?.("keydown", this.quickSettingsModalKeydown, true);
-        }
-        this.quickSettingsModalKeydown = (event) => {
-          if (event?.isComposing) return;
-          if (this.isConfirmDialogOpen()) return;
-          const recorder = this.hotkeyRecordCleanup ? this.hotkeyRecordButton : null;
-          if (recorder && dialog?.contains?.(recorder)) {
-            if (event.key === "Escape") {
-              event.preventDefault();
-              event.stopPropagation();
-              this.clearHotkeyRecording();
-            }
-            return;
-          }
-          if (event.key === "Escape") {
-            event.preventDefault();
-            event.stopPropagation();
-            this.closeQuickSettingsPanel(root, "escape");
-            return;
-          }
-          if (event.key === "Tab") {
-            this.trapQuickSettingsFocus(dialog, event);
-          }
-        };
-        document.addEventListener?.("keydown", this.quickSettingsModalKeydown, true);
-      }
-      setQuickSettingsLauncherButton(button, expanded) {
-        const previous = this.quickSettingsLauncherButton;
-        if (previous && previous !== button && this.elementHasClassName(previous, "dait-quick-settings-button")) {
-          previous.classList?.remove?.("dait-quick-settings-button-active");
-          previous.setAttribute?.("aria-expanded", "false");
-        }
-        this.quickSettingsLauncherButton = expanded && button?.focus ? button : null;
-        if (!button?.setAttribute || !this.elementHasClassName(button, "dait-quick-settings-button")) return;
-        button.classList?.toggle?.("dait-quick-settings-button-active", Boolean(expanded));
-        button.setAttribute("aria-expanded", expanded ? "true" : "false");
-      }
-      focusQuickSettingsInitialControl(dialog) {
-        const focusTarget = dialog?.querySelector?.(".dait-settings-close") || dialog?.querySelector?.(".dait-quick-settings-done") || this.getQuickSettingsFocusableElements(dialog)[0] || dialog;
-        try {
-          focusTarget?.focus?.({ preventScroll: true });
-        } catch {
-          try {
-            focusTarget?.focus?.();
-          } catch {
-          }
-        }
-      }
-      syncQuickSettingsScrollPosition(dialog) {
-        const body = dialog?.querySelector?.(".dait-quick-settings-body");
-        const panel = dialog?.querySelector?.(".dait-settings");
-        if (!body || !panel) return;
-        const active = this.getSettingsActiveTab();
-        if (!panel.querySelector?.(`[data-dait-settings-section='${active}']`)) {
-          body.scrollTop = 0;
-          return;
-        }
-        this.syncSettingsScrollPosition(panel, body, "auto");
-      }
-      trapQuickSettingsFocus(dialog, event) {
-        const focusable = this.getQuickSettingsFocusableElements(dialog);
-        if (!focusable.length) {
-          event.preventDefault?.();
-          dialog?.focus?.();
-          return;
-        }
-        const active = typeof document !== "undefined" ? document.activeElement : null;
-        const first = focusable[0];
-        const last = focusable[focusable.length - 1];
-        if (!active || !dialog?.contains?.(active)) {
-          event.preventDefault?.();
-          first.focus?.();
-          return;
-        }
-        if (event.shiftKey && active === first) {
-          event.preventDefault?.();
-          last.focus?.();
-          return;
-        }
-        if (!event.shiftKey && active === last) {
-          event.preventDefault?.();
-          first.focus?.();
-        }
-      }
-      getQuickSettingsFocusableElements(root) {
-        if (!root) return [];
-        const selector = [
-          "button:not([disabled])",
-          "[href]",
-          "input:not([disabled])",
-          "select:not([disabled])",
-          "textarea:not([disabled])",
-          "[tabindex]:not([tabindex='-1'])"
-        ].join(",");
-        const queried = [...root.querySelectorAll?.(selector) || []];
-        const fallback = [];
-        const visit = (node) => {
-          for (const child of node?.children || []) {
-            if (this.isFocusableQuickSettingsElement(child)) fallback.push(child);
-            visit(child);
-          }
-        };
-        visit(root);
-        return [.../* @__PURE__ */ new Set([...queried, ...fallback])].filter((element) => this.isFocusableQuickSettingsElement(element, root));
-      }
-      // Only controls the user can reach: not on a hidden tab page (or in another hidden part) and, where there is
-      // layout, rendered at all (a closed <details>, a display:none toolbar).
-      isFocusableQuickSettingsElement(element, root = null) {
-        if (!element || element.disabled || element.hidden || element.removed) return false;
-        for (let node = element.parentElement; node && node !== root; node = node.parentElement) {
-          if (node.hidden === true) return false;
-        }
-        if (typeof element.getClientRects === "function" && element.isConnected && !element.getClientRects().length) return false;
-        const tag = String(element.tagName || "").toLowerCase();
-        if (["button", "input", "select", "textarea", "a"].includes(tag)) return true;
-        const tabindex = element.getAttribute?.("tabindex");
-        return tabindex !== void 0 && tabindex !== null && tabindex !== "-1";
-      }
-      // Shown in the window when the panel cannot be built; without the panel's title bar it carries its own close button.
-      createQuickSettingsErrorPanel(error, onClose = null) {
-        const panel = document.createElement("div");
-        panel.className = "dait-quick-settings-error";
-        const title = document.createElement("h3");
-        title.textContent = this.t("quickSettingsFallbackTitle");
-        const detail = document.createElement("p");
-        detail.textContent = this.t("quickSettingsOpenFailed", { error: this.formatError(error) });
-        const hint = document.createElement("p");
-        hint.textContent = this.t("quickSettingsFallbackHint");
-        panel.appendChild(title);
-        panel.appendChild(detail);
-        panel.appendChild(hint);
-        if (typeof onClose === "function") {
-          const done = document.createElement("button");
-          done.className = "dait-quick-settings-done";
-          done.type = "button";
-          done.textContent = this.t("quickSettingsDone");
-          done.addEventListener("click", (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            onClose();
-          });
-          panel.appendChild(done);
-        }
-        return panel;
-      }
       getFastRootDiscordThemeClass() {
         if (typeof document === "undefined") return "";
         return this.getElementDiscordThemeExplicitClass(document.body) || this.getElementDiscordThemeExplicitClass(document.documentElement) || this.getElementDiscordThemeClassNameClass(document.body) || this.getElementDiscordThemeClassNameClass(document.documentElement) || "";
@@ -32144,217 +32837,6 @@ var require_discord_ai_translator = __commonJS({
         if (!node || !className) return false;
         if (node.classList?.contains?.(className)) return true;
         return String(node.className || "").split(/\s+/).includes(className);
-      }
-      findQuickSettingsDialog(root) {
-        if (!root) return null;
-        const direct = root.querySelector?.(".dait-quick-settings-dialog");
-        if (direct) return direct;
-        return [...root.children || []].find((child) => String(child.className || "").split(/\s+/).includes("dait-quick-settings-dialog")) || null;
-      }
-      getQuickSettingsModalRoots() {
-        if (typeof document === "undefined") return [];
-        try {
-          return [...document.querySelectorAll?.(".dait-quick-settings-modal-root") || []];
-        } catch {
-          const single = document.querySelector?.(".dait-quick-settings-modal-root");
-          return single ? [single] : [];
-        }
-      }
-      getQuickSettingsPanelSectionCount(panel) {
-        try {
-          return panel?.querySelectorAll?.("[data-dait-settings-section]")?.length || 0;
-        } catch {
-          return 0;
-        }
-      }
-      getElementChildCount(node) {
-        const count = Number(node?.childElementCount);
-        if (Number.isFinite(count) && count >= 0) return count;
-        return Array.isArray(node?.children) ? node.children.length : 0;
-      }
-      isNodeConnected(node) {
-        if (!node) return false;
-        if (typeof node.isConnected === "boolean") return node.isConnected;
-        try {
-          if (document?.body?.contains?.(node)) return true;
-        } catch {
-        }
-        return Boolean(node.parentElement);
-      }
-      getElementRectSummary(node) {
-        try {
-          const rect = node?.getBoundingClientRect?.();
-          if (!rect) return null;
-          return {
-            left: Math.round(Number(rect.left || 0)),
-            top: Math.round(Number(rect.top || 0)),
-            width: Math.round(Number(rect.width || 0)),
-            height: Math.round(Number(rect.height || 0))
-          };
-        } catch {
-          return null;
-        }
-      }
-      getElementStyleSummary(node) {
-        try {
-          const style = window?.getComputedStyle?.(node);
-          if (!style) return null;
-          return {
-            display: style.display || "",
-            visibility: style.visibility || "",
-            opacity: style.opacity || "",
-            zIndex: style.zIndex || ""
-          };
-        } catch {
-          return null;
-        }
-      }
-      isQuickSettingsPanelOpen() {
-        if (this.quickSettingsModalRoot && this.isNodeConnected(this.quickSettingsModalRoot)) return true;
-        if (typeof document === "undefined") return false;
-        try {
-          return Boolean(document.querySelector?.(".dait-quick-settings-modal-root"));
-        } catch {
-          return false;
-        }
-      }
-      resumeQuickSettingsDeferredWork(reason = "close") {
-        if (!this.isStarted || this.isQuickSettingsPanelOpen()) return;
-        const resumeScan = Boolean(this.quickSettingsScanDeferred);
-        const resumeRender = Boolean(this.quickSettingsRenderDeferred && this.autoTranslationRenderQueue.length);
-        this.quickSettingsScanDeferred = false;
-        this.quickSettingsRenderDeferred = false;
-        if (resumeScan) {
-          this.queueScan({ delayMs: AUTO_TRANSLATE_VIEWPORT_STABLE_RESCAN_MS, trailing: true });
-        }
-        if (resumeRender) {
-          this.scheduleAutoTranslationRenderQueue(AUTO_TRANSLATE_VIEWPORT_STABLE_RESCAN_MS);
-        }
-        if (resumeScan || resumeRender) {
-          this.logDiagnostic("quick.settings.resume", "ok", {
-            reason,
-            scan: resumeScan,
-            render: resumeRender,
-            renderQueue: this.autoTranslationRenderQueue.length
-          });
-        }
-      }
-      getQuickSettingsModalDebugMeta(root, dialog = null) {
-        const currentDialog = dialog || this.findQuickSettingsDialog(root);
-        const panel = currentDialog?.querySelector?.(".dait-settings") || [...currentDialog?.children || []].find((child) => String(child.className || "").split(/\s+/).includes("dait-settings")) || null;
-        const fallback = currentDialog?.querySelector?.(".dait-quick-settings-error") || [...currentDialog?.children || []].find((child) => String(child.className || "").split(/\s+/).includes("dait-quick-settings-error")) || null;
-        const meta = {
-          rootConnected: this.isNodeConnected(root),
-          dialogConnected: this.isNodeConnected(currentDialog),
-          panelConnected: this.isNodeConnected(panel),
-          fallbackConnected: this.isNodeConnected(fallback),
-          hasDialog: Boolean(currentDialog),
-          hasPanel: Boolean(panel),
-          hasFallback: Boolean(fallback),
-          rootChildCount: this.getElementChildCount(root),
-          dialogChildCount: this.getElementChildCount(currentDialog),
-          panelSectionCount: this.getQuickSettingsPanelSectionCount(panel)
-        };
-        if (this.settings?.ui?.diagnosticsEnabled) {
-          meta.rootRect = this.getElementRectSummary(root);
-          meta.dialogRect = this.getElementRectSummary(currentDialog);
-          meta.panelRect = this.getElementRectSummary(panel);
-          meta.rootStyle = this.getElementStyleSummary(root);
-          meta.dialogStyle = this.getElementStyleSummary(currentDialog);
-          meta.panelStyle = this.getElementStyleSummary(panel);
-        }
-        return meta;
-      }
-      scheduleQuickSettingsModalVerify(root, dialog = null) {
-        this.cancelQuickSettingsModalVerify();
-        const token = ++this.quickSettingsVerifyToken;
-        const verify = () => {
-          if (token !== this.quickSettingsVerifyToken) return;
-          this.quickSettingsVerifyRaf = null;
-          this.quickSettingsVerifyTimer = null;
-          if (!this.isStarted) return;
-          if (root !== this.quickSettingsModalRoot) return;
-          if (!root || !this.isNodeConnected(root)) return;
-          const currentDialog = dialog || this.findQuickSettingsDialog(root);
-          const meta = this.getQuickSettingsModalDebugMeta(root, currentDialog);
-          if (!meta.hasDialog) {
-            this.logQuickSettingsDiagnostic("visible.verify", "missing-dialog", meta);
-            this.closeQuickSettingsPanel(root, "verify-missing-dialog");
-            this.showToast(this.t("quickSettingsOpenFailed", { error: "missing dialog" }), "error");
-            return;
-          }
-          if (!meta.hasPanel && !meta.hasFallback) {
-            this.logQuickSettingsDiagnostic("visible.verify", "empty-dialog", meta);
-            this.closeQuickSettingsPanel(root, "verify-empty-dialog");
-            this.showToast(this.t("quickSettingsOpenFailed", { error: "empty dialog" }), "error");
-            return;
-          }
-          this.logQuickSettingsDiagnostic("visible.verify", "ok", meta);
-        };
-        const requestFrame = typeof window !== "undefined" && typeof window.requestAnimationFrame === "function" ? window.requestAnimationFrame.bind(window) : typeof requestAnimationFrame === "function" ? requestAnimationFrame : null;
-        if (requestFrame) this.quickSettingsVerifyRaf = requestFrame(verify);
-        else this.quickSettingsVerifyTimer = setTimeout(verify, 0);
-      }
-      cancelQuickSettingsModalVerify() {
-        this.quickSettingsVerifyToken++;
-        const cancelFrame = typeof window !== "undefined" && typeof window.cancelAnimationFrame === "function" ? window.cancelAnimationFrame.bind(window) : typeof cancelAnimationFrame === "function" ? cancelAnimationFrame : null;
-        if (this.quickSettingsVerifyRaf !== null && this.quickSettingsVerifyRaf !== void 0 && cancelFrame) {
-          cancelFrame(this.quickSettingsVerifyRaf);
-        }
-        if (this.quickSettingsVerifyTimer !== null && this.quickSettingsVerifyTimer !== void 0) {
-          clearTimeout(this.quickSettingsVerifyTimer);
-        }
-        this.quickSettingsVerifyRaf = null;
-        this.quickSettingsVerifyTimer = null;
-      }
-      closeQuickSettingsPanel(root = this.quickSettingsModalRoot, reason = "close") {
-        this.clearHotkeyRecordingWithin(root);
-        if (!root && typeof document !== "undefined") {
-          this.cancelQuickSettingsModalVerify();
-          const roots = this.getQuickSettingsModalRoots();
-          roots.forEach((node) => this.closeQuickSettingsPanel(node, reason));
-          if (this.quickSettingsModalKeydown) {
-            document.removeEventListener?.("keydown", this.quickSettingsModalKeydown, true);
-            this.quickSettingsModalKeydown = null;
-          }
-          this.quickSettingsModalRoot = null;
-          this.quickSettingsPreviousFocus = null;
-          this.setQuickSettingsLauncherButton(null, false);
-          this.resumeQuickSettingsDeferredWork(reason);
-          return;
-        }
-        this.cancelQuickSettingsModalVerify();
-        if (this.quickSettingsModalKeydown && typeof document !== "undefined") {
-          document.removeEventListener?.("keydown", this.quickSettingsModalKeydown, true);
-        }
-        this.quickSettingsModalKeydown = null;
-        if (root) {
-          this.commitSettingsControls(root);
-          this.flushSettings({ force: true, retryOnError: false });
-          root.querySelectorAll?.(".dait-settings")?.forEach((panel) => this.destroySettingsModalSizing(panel));
-        }
-        if (root && this.isStarted) {
-          this.logQuickSettingsDiagnostic("close", "ok", {
-            reason,
-            ...this.getQuickSettingsModalDebugMeta(root)
-          });
-        }
-        if (root?.remove) root.remove();
-        if (!root || root === this.quickSettingsModalRoot) this.quickSettingsModalRoot = null;
-        const previousFocus = this.quickSettingsPreviousFocus;
-        this.quickSettingsPreviousFocus = null;
-        this.setQuickSettingsLauncherButton(null, false);
-        if (previousFocus?.focus && this.isNodeConnected(previousFocus)) {
-          try {
-            previousFocus.focus({ preventScroll: true });
-          } catch {
-            try {
-              previousFocus.focus();
-            } catch {
-            }
-          }
-        }
-        this.resumeQuickSettingsDeferredWork(reason);
       }
       // --- Delegators to QuickPanel (the launcher's compact popover and status badge). ---
       toggleQuickPopover(...args) {
@@ -41610,246 +42092,6 @@ ${raw}`;
         }
         console.log(`[${PLUGIN_NAME}] ${message}`);
       }
-      // The one confirmation helper: BetterDiscord's confirmation modal (danger style for destructive actions),
-      // window.confirm only when that API is missing. Resolves true only when the user confirmed and the plugin
-      // is still running. body is a string or a list of paragraphs; preview is quoted text shown as typed;
-      // content (a React element) replaces both.
-      confirmAction({ title = "", body = "", preview = "", content = null, confirmText = "", cancelText = "", danger = false } = {}) {
-        const ui = globalThis.BdApi?.UI;
-        const lifecycleToken = this.getLifecycleToken();
-        const paragraphs = (Array.isArray(body) ? body : [body]).map((text) => String(text ?? "").trim()).filter(Boolean);
-        const previewText = String(preview ?? "").trim();
-        const confirmNatively = () => {
-          const text = [String(title || "").trim(), ...paragraphs, previewText].filter(Boolean).join("\n\n");
-          try {
-            return typeof window !== "undefined" && typeof window.confirm === "function" && Boolean(window.confirm(text));
-          } catch {
-            return false;
-          }
-        };
-        if (typeof ui?.showConfirmationModal !== "function") {
-          return Promise.resolve(confirmNatively() && this.isLifecycleTokenCurrent(lifecycleToken));
-        }
-        return new Promise((resolve) => {
-          let settled = false;
-          let stopWatching = null;
-          const release = this.holdConfirmDialogLayer();
-          const pending = this.pendingConfirmDialogs || (this.pendingConfirmDialogs = /* @__PURE__ */ new Set());
-          const settle = (confirmed) => {
-            if (settled) return;
-            settled = true;
-            pending.delete(settle);
-            stopWatching?.();
-            release();
-            resolve(Boolean(confirmed) && this.isLifecycleTokenCurrent(lifecycleToken));
-          };
-          pending.add(settle);
-          const dialogsBefore = this.getOpenDialogElements();
-          try {
-            ui.showConfirmationModal(title, content ?? this.createConfirmDialogContent(paragraphs, previewText), {
-              danger: Boolean(danger),
-              confirmText: confirmText || this.t("dialogConfirm"),
-              cancelText: cancelText || this.t("dialogCancel"),
-              onConfirm: () => settle(true),
-              onCancel: () => settle(false),
-              // Reported by newer BetterDiscord builds on Escape or a backdrop click. Deferred so a close
-              // that follows the confirm callback in the same click cannot turn it into a cancel. When the
-              // content failed to render, BetterDiscord closes this dialog and shows its fallback modal
-              // with the same callbacks instead; that close is not a cancel while the fallback is open.
-              onClose: () => setTimeout(() => {
-                if (!this.getNewConfirmDialogElements(dialogsBefore, ".bd-modal-wrapper").length) settle(false);
-              }, 0)
-            });
-          } catch (error) {
-            this.logDiagnostic("dialog.confirm", "error", { error: this.formatError(error) });
-            settle(confirmNatively());
-            return;
-          }
-          if (!settled) stopWatching = this.watchConfirmDialogDismiss(dialogsBefore, () => settle(false), release);
-        });
-      }
-      // Plugin stop: every open confirmation resolves false and the settings window leaves its paused state.
-      cancelPendingConfirmDialogs() {
-        [...this.pendingConfirmDialogs || []].forEach((settle) => settle(false));
-        this.pendingConfirmDialogs?.clear();
-        this.openConfirmDialogCount = 0;
-        this.syncConfirmDialogLayer();
-      }
-      // Paragraphs plus an optional quoted preview. React elements when BetterDiscord exposes React (the preview
-      // then stays plain text instead of going through Discord's Markdown), otherwise one string.
-      createConfirmDialogContent(paragraphs = [], preview = "") {
-        const React = globalThis.BdApi?.React;
-        if (typeof React?.createElement !== "function") {
-          return [...paragraphs, preview].filter(Boolean).join("\n\n");
-        }
-        const h = React.createElement;
-        return h(
-          "div",
-          { className: "dait-dialog", ...this.getDialogPanelThemeProps() },
-          ...paragraphs.map((text, index) => h("p", { className: "dait-dialog-text", key: `p${index}` }, text)),
-          preview ? h("div", { className: "dait-dialog-preview", key: "preview", tabIndex: 0 }, preview) : null
-        );
-      }
-      // Dialog content sits inside Discord's modal, between Discord's own title and buttons: it takes the palette of
-      // that modal, whatever ui.panelTheme says, so the dialog is one piece and its text always reads. Until the
-      // content is in the page it goes by Discord's theme; once mounted (the ref) it goes by the modal's actual
-      // background, and PanelTheme.refresh() checks it again when Discord's theme changes. Without a Discord theme or
-      // a readable modal background it brings its own background in the current palette (css/08-dialogs).
-      getDialogPanelThemeProps() {
-        const discordTheme = this.panelTheme.getDiscordTheme();
-        const props = {
-          "data-dait-panel-theme": discordTheme || this.resolvePanelTheme(),
-          ref: (node) => this.syncDialogPanelTheme(node)
-        };
-        if (!discordTheme) props["data-dait-dialog-surface"] = "true";
-        return props;
-      }
-      syncDialogPanelTheme(node) {
-        if (!node) return "";
-        try {
-          return this.panelTheme.syncDialog(node);
-        } catch (error) {
-          this.logDiagnostic?.("dialog.theme", "warn", { error: this.formatError?.(error) });
-          return "";
-        }
-      }
-      // Where a confirmation can show up: Discord's modal layer (role=dialog), BetterDiscord's modal root, and
-      // BetterDiscord's fallback modal (.bd-modal-wrapper, no role), used when Discord's modal API is missing or
-      // the dialog content failed to render.
-      getOpenDialogElements(selectors = ["[role='dialog']", ".bd-modal-root", ".bd-modal-wrapper"]) {
-        if (typeof document === "undefined" || !document.querySelectorAll) return /* @__PURE__ */ new Set();
-        const found = /* @__PURE__ */ new Set();
-        for (const selector of [].concat(selectors)) {
-          try {
-            document.querySelectorAll(selector).forEach((node) => found.add(node));
-          } catch {
-          }
-        }
-        return found;
-      }
-      // Dialog elements that opened after dialogsBefore was taken and are still in the document.
-      getNewConfirmDialogElements(dialogsBefore, selectors = void 0) {
-        return [...this.getOpenDialogElements(selectors)].filter((node) => !dialogsBefore?.has?.(node) && node.isConnected !== false && !node.closest?.(".dait-quick-settings-modal-root, .dait-settings"));
-      }
-      // Older BetterDiscord builds report neither Escape nor a backdrop click, and the fallback modal never reports
-      // a backdrop click. Once the dialog showed up, the confirmation counts as cancelled when no dialog that opened
-      // with it is left, so a dismissed dialog never leaves the settings window lowered. When no dialog shows up
-      // within 10 s, onNotFound gives the settings window its layer and keys back; the dialog's buttons still answer.
-      watchConfirmDialogDismiss(dialogsBefore, onDismiss, onNotFound = null) {
-        if (typeof document === "undefined" || typeof setInterval !== "function") return () => {
-        };
-        let seen = false;
-        let polls = 0;
-        let timer = null;
-        const stop = () => {
-          if (timer) clearInterval(timer);
-          timer = null;
-        };
-        timer = this.unrefTimer(setInterval(() => {
-          if (!this.isStarted) {
-            stop();
-            onDismiss();
-            return;
-          }
-          if (this.getNewConfirmDialogElements(dialogsBefore).length) {
-            seen = true;
-            return;
-          }
-          if (seen) {
-            stop();
-            onDismiss();
-            return;
-          }
-          if (++polls > 40) {
-            stop();
-            onNotFound?.();
-          }
-        }, 250));
-        return stop;
-      }
-      // The settings window sits above Discord's layers. While a BetterDiscord dialog is open it steps below
-      // them (see css/08-dialogs.js) and its own Escape and Tab handling pauses.
-      holdConfirmDialogLayer() {
-        this.openConfirmDialogCount = (Number(this.openConfirmDialogCount) || 0) + 1;
-        this.syncConfirmDialogLayer();
-        let released = false;
-        return () => {
-          if (released) return;
-          released = true;
-          this.openConfirmDialogCount = Math.max(0, (Number(this.openConfirmDialogCount) || 0) - 1);
-          this.syncConfirmDialogLayer();
-        };
-      }
-      isConfirmDialogOpen() {
-        return (Number(this.openConfirmDialogCount) || 0) > 0;
-      }
-      syncConfirmDialogLayer() {
-        if (typeof document === "undefined" || !document.querySelectorAll) return;
-        const open = this.isConfirmDialogOpen();
-        document.querySelectorAll(".dait-quick-settings-modal-root")?.forEach((root) => {
-          if (open) root.setAttribute?.("data-dait-confirm-open", "true");
-          else root.removeAttribute?.("data-dait-confirm-open");
-        });
-      }
-      // Reset dialog: says what returns to defaults and offers "keep API keys, key pool and templates" (ticked by
-      // default). The checkbox needs BdApi.React; without it the plain confirmation always keeps them.
-      async openResetSettingsDialog(options = {}) {
-        const bdApi = globalThis.BdApi;
-        const choice = { keepCredentials: true };
-        const canUseCheckbox = typeof bdApi?.React?.createElement === "function" && typeof bdApi?.UI?.showConfirmationModal === "function";
-        const confirmed = await this.confirmAction({
-          title: this.t("resetDialogTitle"),
-          ...canUseCheckbox ? { content: this.createResetDialogContent(bdApi.React, choice) } : { body: this.t("resetConfirm") },
-          confirmText: this.t("reset"),
-          danger: true
-        });
-        if (!confirmed) return false;
-        const keepCredentials = canUseCheckbox ? choice.keepCredentials !== false : true;
-        this.resetSettingsToDefaults({ keepCredentials });
-        this.refreshOpenSettingsPanels(options.panel || null);
-        return true;
-      }
-      createResetDialogContent(React, choice) {
-        const h = React.createElement;
-        const checkboxId = `dait-reset-keep-${Date.now().toString(36)}`;
-        const lead = this.t("resetDialogLead");
-        const items = ["resetDialogItemSettings", "resetDialogItemChannelRules", "resetDialogItemDisplay"].map((key) => this.t(key));
-        const credentials = this.t("resetDialogItemCredentials");
-        const credentialsNote = this.t("resetDialogItemCredentialsNote");
-        const keepLabel = this.t("resetKeepCredentials");
-        const useState = typeof React.useState === "function" ? React.useState : null;
-        const themeProps = this.getDialogPanelThemeProps();
-        const ResetDialogBody = () => {
-          const [keep, setKeep] = useState ? useState(choice.keepCredentials) : [choice.keepCredentials, null];
-          const onChange = (event) => {
-            choice.keepCredentials = Boolean(event?.target?.checked);
-            if (setKeep) setKeep(choice.keepCredentials);
-          };
-          return h(
-            "div",
-            { className: "dait-dialog", ...themeProps },
-            h("p", { className: "dait-dialog-text" }, lead),
-            h(
-              "ul",
-              { className: "dait-dialog-list" },
-              ...items.map((text, index) => h("li", { key: `i${index}` }, text)),
-              h(
-                "li",
-                { key: "credentials", className: `dait-dialog-list-conditional${keep ? "" : " dait-dialog-list-erased"}` },
-                credentials,
-                h("span", { className: "dait-dialog-note" }, credentialsNote)
-              )
-            ),
-            h(
-              "label",
-              { className: "dait-dialog-check", htmlFor: checkboxId },
-              h("input", setKeep ? { id: checkboxId, type: "checkbox", checked: keep, onChange } : { id: checkboxId, type: "checkbox", defaultChecked: true, onChange }),
-              h("span", null, keepLabel)
-            )
-          );
-        };
-        return h(ResetDialogBody);
-      }
       // Rebuilds every open settings panel (BetterDiscord's plugin settings and the settings window) so they
       // show the values after a reset. Each one opens on the tab it showed, and the stored tab is the one of the
       // panel the reset came from, whose new reset button takes the focus.
@@ -43566,6 +43808,7 @@ ${raw}`;
         return this.taskState.checkInvariants();
       }
     };
+    installPrototypeBridge(module2.exports.prototype, "settingsUi", SETTINGS_UI_METHOD_NAMES);
   }
 });
 
