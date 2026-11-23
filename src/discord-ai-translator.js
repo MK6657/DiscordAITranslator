@@ -2,6 +2,8 @@
 
 const { TranslationRenderer } = require("./auto-translation/translation-renderer");
 const { ComposerWriter } = require("./composer/composer-writer");
+const { DisposableScope } = require("./core/disposable-scope");
+const { EventBus } = require("./core/event-bus");
 const {
     SettingsSchema,
     SETTINGS_TAB_OVERVIEW,
@@ -921,6 +923,8 @@ class TranslationScheduler {
 
 module.exports = class DiscordAITranslator {
     constructor() {
+        this.events = new EventBus();
+        this.runtimeScope = new DisposableScope();
         this.autoRequestPipeline = new AutoTranslationRequestPipeline(this);
         this.autoQueueCore = new AutoTranslationQueueCore(this);
         this.diagnosticsRecorder = new DiagnosticsRecorder(this);
@@ -1081,7 +1085,6 @@ module.exports = class DiscordAITranslator {
         this.cacheOnlyScanTimer = null;
         this.cacheOnlyScanDueAt = 0;
         this.scanProtectedUntil = 0;
-        this.autoTranslationRenderDueAt = 0;
         this.mediaViewerQuietUntil = 0;
         this.mediaViewerProbeAt = 0;
         this.mediaViewerProbeOpen = false;
@@ -1124,6 +1127,7 @@ module.exports = class DiscordAITranslator {
         this.lifecycleToken++;
         this.isStarted = true;
         this.apiRequestsClosed = false;
+        this.runtimeScope.reset();
         try {
             this.resetDiscordMessageStoreCache();
             const unsavedDiagnostics = Boolean(this.diagnosticLogsDirty);
@@ -1187,6 +1191,7 @@ module.exports = class DiscordAITranslator {
         this.isStarted = false;
         this.lifecycleStarted = false;
         this.lifecycleToken++;
+        this.runtimeScope.dispose();
         if (this.observer) this.observer.disconnect();
         if (this.observerLifecycle) this.observerLifecycle.disconnect();
         this.panelTheme.stopWatching();
@@ -13568,9 +13573,6 @@ module.exports = class DiscordAITranslator {
                 const meaningfulLetters = meaningfulWords.join("").replace(/[^\p{L}]/gu, "");
                 if (meaningfulWords.length >= 2) return true;
                 return meaningfulLetters.length >= 8;
-                const words = segment.text.match(/[A-Za-zÀ-ɏ]{2,}/g) || [];
-                if (words.length >= 2) return true;
-                return letters.length >= 8 && !this.isLikelyPreservedTokenLine(segment.text);
             }
             if (["cyrillic", "arabic", "devanagari", "hangul", "kana"].includes(segment.script)) {
                 return letters.length >= 2;
@@ -14119,10 +14121,6 @@ module.exports = class DiscordAITranslator {
 
     isLikelyJapaneseHanPhrase(text) {
         return this.isLikelyJapaneseHanText(text);
-        const compact = String(text || "").replace(/[^\p{Script=Han}]/gu, "");
-        if (compact.length < 2 || compact.length > 6) return false;
-        const phrases = new Set(["大丈夫", "今日", "明日", "昨日", "本当", "最高", "無料", "登録", "確認", "必要", "了解"]);
-        return phrases.has(compact);
     }
 
     isMostlyScript(text, script) {

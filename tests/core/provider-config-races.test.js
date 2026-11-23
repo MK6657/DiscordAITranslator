@@ -43,7 +43,7 @@ function fakeDocument(t) {
         const element = createElement(tagName);
         Object.defineProperty(element, "id", {
             get: () => element.getAttribute("id") || "",
-            set: value => element.setAttribute("id", value)
+            set: value => { element.setAttribute("id", value); }
         });
         return element;
     };

@@ -187,6 +187,332 @@ var require_composer_writer = __commonJS({
   }
 });
 
+// src/core/disposable-scope.js
+var require_disposable_scope = __commonJS({
+  "src/core/disposable-scope.js"(exports2, module2) {
+    "use strict";
+    var DisposableScope = class _DisposableScope {
+      constructor() {
+        this.cleanups = /* @__PURE__ */ new Set();
+        this.children = /* @__PURE__ */ new Set();
+        this.disposed = false;
+      }
+      /**
+       * Registers a cleanup function. If already disposed, invokes it immediately.
+       * @param {() => void} cleanup
+       * @returns {() => void} Idempotent release function
+       */
+      add(cleanup) {
+        if (typeof cleanup !== "function") return () => {
+        };
+        if (this.disposed) {
+          try {
+            cleanup();
+          } catch {
+          }
+          return () => {
+          };
+        }
+        let released = false;
+        const release = () => {
+          if (released) return;
+          released = true;
+          this.cleanups.delete(release);
+          try {
+            cleanup();
+          } catch {
+          }
+        };
+        this.cleanups.add(release);
+        return release;
+      }
+      /**
+       * Schedules a timeout that auto-clears on dispose.
+       * @param {() => void} fn
+       * @param {number} delayMs
+       * @returns {() => void}
+       */
+      setTimeout(fn, delayMs) {
+        if (this.disposed || typeof fn !== "function") return () => {
+        };
+        let timer = null;
+        const release = this.add(() => {
+          if (timer !== null) {
+            clearTimeout(timer);
+            timer = null;
+          }
+        });
+        timer = setTimeout(() => {
+          timer = null;
+          this.cleanups.delete(release);
+          if (!this.disposed) fn();
+        }, delayMs);
+        return release;
+      }
+      /**
+       * Schedules an interval that auto-clears on dispose.
+       * @param {() => void} fn
+       * @param {number} intervalMs
+       * @returns {() => void}
+       */
+      setInterval(fn, intervalMs) {
+        if (this.disposed || typeof fn !== "function") return () => {
+        };
+        let timer = setInterval(() => {
+          if (!this.disposed) fn();
+        }, intervalMs);
+        return this.add(() => {
+          if (timer !== null) {
+            clearInterval(timer);
+            timer = null;
+          }
+        });
+      }
+      /**
+       * Schedules requestAnimationFrame (falling back to setTimeout when unavailable).
+       * @param {() => void} fn
+       * @returns {() => void}
+       */
+      requestAnimationFrame(fn) {
+        if (this.disposed || typeof fn !== "function") return () => {
+        };
+        if (typeof requestAnimationFrame !== "function") {
+          return this.setTimeout(fn, 16);
+        }
+        let rafId = null;
+        const release = this.add(() => {
+          if (rafId !== null && typeof cancelAnimationFrame === "function") {
+            cancelAnimationFrame(rafId);
+            rafId = null;
+          }
+        });
+        rafId = requestAnimationFrame(() => {
+          rafId = null;
+          this.cleanups.delete(release);
+          if (!this.disposed) fn();
+        });
+        return release;
+      }
+      /**
+       * Schedules requestIdleCallback (falling back to setTimeout when unavailable).
+       * @param {(deadline?: { didTimeout: boolean, timeRemaining: () => number }) => void} fn
+       * @param {{ timeout?: number }} [options]
+       * @returns {() => void}
+       */
+      requestIdleCallback(fn, options) {
+        if (this.disposed || typeof fn !== "function") return () => {
+        };
+        if (typeof requestIdleCallback !== "function") {
+          return this.setTimeout(() => fn({ didTimeout: true, timeRemaining: () => 0 }), 0);
+        }
+        let idleId = null;
+        const release = this.add(() => {
+          if (idleId !== null && typeof cancelIdleCallback === "function") {
+            cancelIdleCallback(idleId);
+            idleId = null;
+          }
+        });
+        idleId = requestIdleCallback((deadline) => {
+          idleId = null;
+          this.cleanups.delete(release);
+          if (!this.disposed) fn(deadline);
+        }, options);
+        return release;
+      }
+      /**
+       * Attaches a DOM/EventTarget listener and auto-removes it on dispose.
+       * @param {any} target
+       * @param {string} event
+       * @param {Function} handler
+       * @param {any} [options]
+       * @returns {() => void}
+       */
+      on(target, event, handler, options) {
+        if (this.disposed || !target?.addEventListener || typeof handler !== "function") return () => {
+        };
+        target.addEventListener(event, handler, options);
+        return this.add(() => {
+          target.removeEventListener?.(event, handler, options);
+        });
+      }
+      /**
+       * Creates an AbortController that automatically aborts on dispose.
+       * @returns {AbortController}
+       */
+      createAbortController() {
+        const controller = new AbortController();
+        if (this.disposed) {
+          try {
+            controller.abort();
+          } catch {
+          }
+          return controller;
+        }
+        this.add(() => {
+          if (!controller.signal.aborted) {
+            try {
+              controller.abort();
+            } catch {
+            }
+          }
+        });
+        return controller;
+      }
+      /**
+       * Creates a child scope bound to this parent's lifetime.
+       * @returns {DisposableScope}
+       */
+      createChild() {
+        const child = new _DisposableScope();
+        if (this.disposed) {
+          child.dispose();
+          return child;
+        }
+        this.children.add(child);
+        const detach = () => {
+          this.children.delete(child);
+        };
+        child.add(detach);
+        return child;
+      }
+      /**
+       * Disposes all child scopes and registered cleanups idempotently.
+       */
+      dispose() {
+        if (this.disposed) return;
+        this.disposed = true;
+        const children = [...this.children];
+        this.children.clear();
+        for (const child of children) {
+          try {
+            child.dispose();
+          } catch {
+          }
+        }
+        const cleanups = [...this.cleanups];
+        this.cleanups.clear();
+        for (const release of cleanups) {
+          try {
+            release();
+          } catch {
+          }
+        }
+      }
+      /**
+       * Resets a root scope so a stopped plugin instance can be started again cleanly.
+       */
+      reset() {
+        this.dispose();
+        this.disposed = false;
+      }
+    };
+    module2.exports = { DisposableScope };
+  }
+});
+
+// src/core/event-bus.js
+var require_event_bus = __commonJS({
+  "src/core/event-bus.js"(exports2, module2) {
+    "use strict";
+    var EventBus = class {
+      constructor() {
+        this.listeners = /* @__PURE__ */ new Map();
+      }
+      /**
+       * Subscribes to a named event.
+       * @param {string} event
+       * @param {(payload: any) => void} handler
+       * @returns {() => void} Unsubscribe callback
+       */
+      on(event, handler) {
+        const name = String(event || "").trim();
+        if (!name || typeof handler !== "function") return () => {
+        };
+        let set = this.listeners.get(name);
+        if (!set) {
+          set = /* @__PURE__ */ new Set();
+          this.listeners.set(name, set);
+        }
+        set.add(handler);
+        return () => this.off(name, handler);
+      }
+      /**
+       * Subscribes once and auto-unsubscribes before invoking handler.
+       * @param {string} event
+       * @param {(payload: any) => void} handler
+       * @returns {() => void}
+       */
+      once(event, handler) {
+        if (typeof handler !== "function") return () => {
+        };
+        let unsub = () => {
+        };
+        const wrapped = (payload) => {
+          unsub();
+          handler(payload);
+        };
+        unsub = this.on(event, wrapped);
+        return unsub;
+      }
+      /**
+       * Unsubscribes a listener from an event.
+       * @param {string} event
+       * @param {(payload: any) => void} handler
+       */
+      off(event, handler) {
+        const set = this.listeners.get(String(event || "").trim());
+        if (!set) return;
+        set.delete(handler);
+        if (set.size === 0) this.listeners.delete(String(event || "").trim());
+      }
+      /**
+       * Emits an event to all current listeners, isolating listener exceptions.
+       * @param {string} event
+       * @param {any} [payload]
+       * @returns {number} Number of listeners invoked
+       */
+      emit(event, payload) {
+        const set = this.listeners.get(String(event || "").trim());
+        if (!set || set.size === 0) return 0;
+        let count = 0;
+        for (const handler of [...set]) {
+          count++;
+          try {
+            handler(payload);
+          } catch {
+          }
+        }
+        return count;
+      }
+      /**
+       * Removes listeners for one event or all events.
+       * @param {string} [event]
+       */
+      clear(event) {
+        if (event !== void 0) {
+          this.listeners.delete(String(event || "").trim());
+          return;
+        }
+        this.listeners.clear();
+      }
+      /**
+       * Returns current subscriber count for an event (or total when omitted).
+       * @param {string} [event]
+       * @returns {number}
+       */
+      listenerCount(event) {
+        if (event !== void 0) {
+          return this.listeners.get(String(event || "").trim())?.size || 0;
+        }
+        let total = 0;
+        for (const set of this.listeners.values()) total += set.size;
+        return total;
+      }
+    };
+    module2.exports = { EventBus };
+  }
+});
+
 // src/settings/settings-schema.js
 var require_settings_schema = __commonJS({
   "src/settings/settings-schema.js"(exports2, module2) {
@@ -19134,7 +19460,12 @@ var require_settings_store = __commonJS({
         }
         if (path === "ui.panelTheme") {
           this.plugin.refreshPanelThemes();
+          this.plugin.events?.emit("theme:changed", { theme: value });
         }
+        if (path === "ui.language") {
+          this.plugin.events?.emit("language:changed", { language: value });
+        }
+        this.plugin.events?.emit("settings:changed", { path, value, options });
         this.plugin.queueScan();
       }
       // Restores the defaults. With keepCredentials (default) it keeps API keys and the other credential fields of
@@ -19156,6 +19487,7 @@ var require_settings_store = __commonJS({
         this.plugin.ensureSettingsShape();
         const saved = this.plugin.saveSettings();
         this.plugin.applySettingsResetEffects(previous);
+        this.plugin.events?.emit("settings:reset", { keepCredentials: Boolean(keepCredentials), keepLanguage: Boolean(keepLanguage) });
         this.plugin.logDiagnostic("settings.reset", saved === false ? "not-saved" : "ok", { keepCredentials: Boolean(keepCredentials) });
         return saved !== false;
       }
@@ -23583,6 +23915,8 @@ var require_discord_ai_translator = __commonJS({
     "use strict";
     var { TranslationRenderer } = require_translation_renderer();
     var { ComposerWriter } = require_composer_writer();
+    var { DisposableScope } = require_disposable_scope();
+    var { EventBus } = require_event_bus();
     var {
       SettingsSchema,
       SETTINGS_TAB_OVERVIEW,
@@ -24413,6 +24747,8 @@ var require_discord_ai_translator = __commonJS({
     };
     module2.exports = class DiscordAITranslator {
       constructor() {
+        this.events = new EventBus();
+        this.runtimeScope = new DisposableScope();
         this.autoRequestPipeline = new AutoTranslationRequestPipeline(this);
         this.autoQueueCore = new AutoTranslationQueueCore(this);
         this.diagnosticsRecorder = new DiagnosticsRecorder(this);
@@ -24569,7 +24905,6 @@ var require_discord_ai_translator = __commonJS({
         this.cacheOnlyScanTimer = null;
         this.cacheOnlyScanDueAt = 0;
         this.scanProtectedUntil = 0;
-        this.autoTranslationRenderDueAt = 0;
         this.mediaViewerQuietUntil = 0;
         this.mediaViewerProbeAt = 0;
         this.mediaViewerProbeOpen = false;
@@ -24611,6 +24946,7 @@ var require_discord_ai_translator = __commonJS({
         this.lifecycleToken++;
         this.isStarted = true;
         this.apiRequestsClosed = false;
+        this.runtimeScope.reset();
         try {
           this.resetDiscordMessageStoreCache();
           const unsavedDiagnostics = Boolean(this.diagnosticLogsDirty);
@@ -24674,6 +25010,7 @@ var require_discord_ai_translator = __commonJS({
         this.isStarted = false;
         this.lifecycleStarted = false;
         this.lifecycleToken++;
+        this.runtimeScope.dispose();
         if (this.observer) this.observer.disconnect();
         if (this.observerLifecycle) this.observerLifecycle.disconnect();
         this.panelTheme.stopWatching();
@@ -35769,9 +36106,6 @@ var require_discord_ai_translator = __commonJS({
             const meaningfulLetters = meaningfulWords.join("").replace(/[^\p{L}]/gu, "");
             if (meaningfulWords.length >= 2) return true;
             return meaningfulLetters.length >= 8;
-            const words = segment.text.match(/[A-Za-zÀ-ɏ]{2,}/g) || [];
-            if (words.length >= 2) return true;
-            return letters.length >= 8 && !this.isLikelyPreservedTokenLine(segment.text);
           }
           if (["cyrillic", "arabic", "devanagari", "hangul", "kana"].includes(segment.script)) {
             return letters.length >= 2;
@@ -36376,10 +36710,6 @@ var require_discord_ai_translator = __commonJS({
       }
       isLikelyJapaneseHanPhrase(text) {
         return this.isLikelyJapaneseHanText(text);
-        const compact = String(text || "").replace(/[^\p{Script=Han}]/gu, "");
-        if (compact.length < 2 || compact.length > 6) return false;
-        const phrases = /* @__PURE__ */ new Set(["大丈夫", "今日", "明日", "昨日", "本当", "最高", "無料", "登録", "確認", "必要", "了解"]);
-        return phrases.has(compact);
       }
       isMostlyScript(text, script) {
         const counts = this.countTextScripts(text);

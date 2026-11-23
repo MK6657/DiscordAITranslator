@@ -12,13 +12,15 @@
     "build": "node scripts/build-plugin.js",
     "build:check": "node scripts/build-plugin.js --check",
     "check": "node scripts/check-source.js",
+    "lint": "eslint src scripts tests",
+    "typecheck": "tsc -p jsconfig.json --noEmit",
     "artifact:check": "node scripts/check-artifact.js",
     "test:core": "node --test tests/core/*.test.js",
     "test:plugin": "node scripts/verify-plugin.js",
     "test:installer": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/test-install-plugin.ps1",
     "test": "npm run test:core && npm run test:plugin",
-    "verify": "npm run build && npm run check && npm test && npm run test:installer && npm run artifact:check",
-    "ci": "npm run check && npm run build:check && npm test && npm run test:installer && npm run artifact:check",
+    "verify": "npm run build && npm run check && npm run lint && npm run typecheck && npm test && npm run test:installer && npm run artifact:check",
+    "ci": "npm run check && npm run lint && npm run typecheck && npm run build:check && npm test && npm run test:installer && npm run artifact:check",
     "release:check": "node scripts/release-check.js",
     "plugin:install": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/install-plugin.ps1",
     "plugin:install:dry-run": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/install-plugin.ps1 -WhatIf",
@@ -31,6 +33,8 @@
     "windows"
   ],
   "devDependencies": {
-    "esbuild": "0.28.1"
+    "esbuild": "0.28.1",
+    "eslint": "^10.15.0",
+    "typescript": "^7.0.2"
   }
 }

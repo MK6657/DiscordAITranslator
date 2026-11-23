@@ -1136,7 +1136,12 @@ class SettingsStore {
         // The open windows restyle in place; nothing is rebuilt.
         if (path === "ui.panelTheme") {
             this.plugin.refreshPanelThemes();
+            this.plugin.events?.emit("theme:changed", { theme: value });
         }
+        if (path === "ui.language") {
+            this.plugin.events?.emit("language:changed", { language: value });
+        }
+        this.plugin.events?.emit("settings:changed", { path, value, options });
         this.plugin.queueScan();
     }
 
@@ -1161,6 +1166,7 @@ class SettingsStore {
         this.plugin.ensureSettingsShape();
         const saved = this.plugin.saveSettings();
         this.plugin.applySettingsResetEffects(previous);
+        this.plugin.events?.emit("settings:reset", { keepCredentials: Boolean(keepCredentials), keepLanguage: Boolean(keepLanguage) });
         this.plugin.logDiagnostic("settings.reset", saved === false ? "not-saved" : "ok", { keepCredentials: Boolean(keepCredentials) });
         return saved !== false;
     }
