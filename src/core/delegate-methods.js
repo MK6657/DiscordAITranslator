@@ -49,7 +49,28 @@ function attachControllerMethods(ControllerClass, methodMaps) {
     return names;
 }
 
+/**
+ * Defines getter/setter property proxies on a prototype forwarding legacy flat field names
+ * to an encapsulated state container (such as AutoTranslationStateMachine or CooldownStore).
+ *
+ * @param {object} targetProto
+ * @param {string} storeProp
+ * @param {Record<string, string>} fieldMap  Map of legacyPropName -> targetFieldName
+ */
+function installStateProxies(targetProto, storeProp, fieldMap) {
+    for (const [legacyProp, targetField] of Object.entries(fieldMap)) {
+        if (Object.prototype.hasOwnProperty.call(targetProto, legacyProp)) continue;
+        Object.defineProperty(targetProto, legacyProp, {
+            configurable: true,
+            enumerable: false,
+            get() { return this[storeProp][targetField]; },
+            set(value) { this[storeProp][targetField] = value; }
+        });
+    }
+}
+
 module.exports = {
     installPrototypeBridge,
-    attachControllerMethods
+    attachControllerMethods,
+    installStateProxies
 };

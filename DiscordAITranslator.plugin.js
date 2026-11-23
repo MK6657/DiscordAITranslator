@@ -218,9 +218,25 @@ var require_delegate_methods = __commonJS({
       }
       return names;
     }
+    function installStateProxies(targetProto, storeProp, fieldMap) {
+      for (const [legacyProp, targetField] of Object.entries(fieldMap)) {
+        if (Object.prototype.hasOwnProperty.call(targetProto, legacyProp)) continue;
+        Object.defineProperty(targetProto, legacyProp, {
+          configurable: true,
+          enumerable: false,
+          get() {
+            return this[storeProp][targetField];
+          },
+          set(value) {
+            this[storeProp][targetField] = value;
+          }
+        });
+      }
+    }
     module2.exports = {
       installPrototypeBridge,
-      attachControllerMethods
+      attachControllerMethods,
+      installStateProxies
     };
   }
 });
@@ -10490,84 +10506,348 @@ var require_task_state = __commonJS({
         this.plugin = plugin;
       }
       getTaskSnapshot(cacheKey) {
-        const plugin = this.plugin;
+        const failure = this.plugin.autoCooldowns?.failures?.get?.(String(cacheKey || "")) || this.plugin.autoTranslationFailures?.get?.(String(cacheKey || "")) || null;
+        return this.plugin.autoStateMachine.getTaskSnapshot(cacheKey, failure);
+      }
+      listTrackedKeys() {
+        return this.plugin.autoStateMachine.listTrackedKeys();
+      }
+      checkInvariants() {
+        return this.plugin.autoStateMachine.checkInvariants();
+      }
+    };
+    module2.exports = { AutoTranslationTaskState };
+  }
+});
+
+// src/auto-translation/state-machine.js
+var require_state_machine = __commonJS({
+  "src/auto-translation/state-machine.js"(exports2, module2) {
+    "use strict";
+    var AutoTranslationStateMachine = class {
+      constructor() {
+        this.queue = [];
+        this.queueSortDirty = false;
+        this.queuedKeys = /* @__PURE__ */ new Set();
+        this.pendingTargets = /* @__PURE__ */ new Map();
+        this.inFlight = 0;
+        this.inFlightKeys = /* @__PURE__ */ new Set();
+        this.visibleLongInFlightKeys = /* @__PURE__ */ new Set();
+        this.inFlightStartedAt = /* @__PURE__ */ new Map();
+        this.inFlightTokens = /* @__PURE__ */ new Map();
+        this.inFlightTokenCounter = 0;
+        this.inFlightItems = 0;
+        this.prefetchInFlight = 0;
+        this.renderQueue = [];
+        this.renderQueuedKeys = /* @__PURE__ */ new Set();
+        this.renderQueuedTasks = /* @__PURE__ */ new Map();
+        this.renderPendingKeys = /* @__PURE__ */ new Set();
+        this.renderQueueDirty = false;
+        this.renderRaf = null;
+        this.renderTimer = null;
+        this.renderDueAt = 0;
+        this.configVersion = 0;
+        this.recentRenders = /* @__PURE__ */ new Map();
+        this.lastDecisions = /* @__PURE__ */ new Map();
+      }
+      /**
+       * Atomically enqueues a translation item into queue + queuedKeys.
+       * @param {any} item
+       * @returns {boolean}
+       */
+      enqueue(item) {
+        const key = String(item?.cacheKey || "");
+        if (!key || this.queuedKeys.has(key)) return false;
+        this.queue.push(item);
+        this.queuedKeys.add(key);
+        this.queueSortDirty = true;
+        return true;
+      }
+      /**
+       * Atomically removes a queued item by cacheKey.
+       * @param {string} cacheKey
+       * @returns {boolean}
+       */
+      removeQueued(cacheKey) {
         const key = String(cacheKey || "");
-        const queuedItem = (plugin.autoTranslationQueue || []).find((item) => item?.cacheKey === key) || null;
-        const renderQueued = (plugin.autoTranslationRenderQueue || []).some((task) => task?.cacheKey === key);
+        if (!key) return false;
+        const hadKey = this.queuedKeys.delete(key);
+        const before = this.queue.length;
+        this.queue = this.queue.filter((item) => item?.cacheKey !== key);
+        return hadKey || this.queue.length !== before;
+      }
+      /**
+       * Atomically transitions a batch of items into the in-flight state.
+       * @param {any[]} batch
+       * @param {{ isPrefetch?: boolean, startedAt?: number, isVisibleLong?: (item: any) => boolean }} [options]
+       * @returns {number[]} Allocated per-item tokens
+       */
+      beginInFlightBatch(batch, options = {}) {
+        if (!Array.isArray(batch) || !batch.length) return [];
+        const isPrefetch = Boolean(options.isPrefetch);
+        const startedAt = Number(options.startedAt || Date.now());
+        this.inFlight++;
+        this.inFlightItems += batch.length;
+        if (isPrefetch) this.prefetchInFlight++;
+        const tokens = [];
+        for (const item of batch) {
+          const key = String(item?.cacheKey || "");
+          const token = ++this.inFlightTokenCounter;
+          tokens.push(token);
+          if (!key) continue;
+          this.inFlightKeys.add(key);
+          this.inFlightStartedAt.set(key, startedAt);
+          this.inFlightTokens.set(key, token);
+          if (typeof options.isVisibleLong === "function" && options.isVisibleLong(item)) {
+            this.visibleLongInFlightKeys.add(key);
+          }
+          if (item && typeof item === "object") {
+            item.daitInFlightToken = token;
+            item.daitPrefetchRequest = isPrefetch;
+          }
+        }
+        return tokens;
+      }
+      /**
+       * Atomically clears in-flight tracking for a single item when its token matches.
+       * @param {string} cacheKey
+       * @param {number} [token]
+       * @returns {boolean}
+       */
+      finishInFlightItem(cacheKey, token) {
+        const key = String(cacheKey || "");
+        if (!key) return false;
+        if (token !== void 0 && this.inFlightTokens.has(key) && this.inFlightTokens.get(key) !== token) {
+          return false;
+        }
+        this.inFlightKeys.delete(key);
+        this.visibleLongInFlightKeys.delete(key);
+        this.inFlightStartedAt.delete(key);
+        this.inFlightTokens.delete(key);
+        this.queuedKeys.delete(key);
+        return true;
+      }
+      /**
+       * Atomically decrements batch counters, clamping at 0 so I5 never breaks.
+       * @param {{ batchSize?: number, isPrefetch?: boolean }} [options]
+       */
+      finishInFlightBatch(options = {}) {
+        const size = Math.max(0, Number(options.batchSize || 0));
+        this.inFlight = Math.max(0, this.inFlight - 1);
+        this.inFlightItems = Math.max(0, this.inFlightItems - size);
+        if (options.isPrefetch) {
+          this.prefetchInFlight = Math.max(0, this.prefetchInFlight - 1);
+        }
+        if (this.prefetchInFlight > this.inFlight) {
+          this.prefetchInFlight = this.inFlight;
+        }
+      }
+      /**
+       * Atomically enqueues a render task across renderQueue, renderQueuedKeys, and renderQueuedTasks.
+       * @param {any} task
+       * @returns {boolean}
+       */
+      enqueueRenderTask(task) {
+        const key = String(task?.key || "");
+        if (!key) return false;
+        if (this.renderQueuedKeys.has(key)) {
+          this.renderQueuedTasks.set(key, task);
+          const idx = this.renderQueue.findIndex((item) => item?.key === key);
+          if (idx >= 0) this.renderQueue[idx] = task;
+          this.renderQueueDirty = true;
+          return false;
+        }
+        this.renderQueue.push(task);
+        this.renderQueuedKeys.add(key);
+        this.renderQueuedTasks.set(key, task);
+        if (task?.cacheKey) this.renderPendingKeys.add(String(task.cacheKey));
+        this.renderQueueDirty = true;
+        return true;
+      }
+      /**
+       * Atomically clears the render queue and its auxiliary index structures.
+       */
+      clearRenderQueue() {
+        this.renderQueue = [];
+        this.renderQueuedKeys.clear();
+        this.renderQueuedTasks.clear();
+        this.renderPendingKeys.clear();
+        this.renderQueueDirty = false;
+        this.renderDueAt = 0;
+      }
+      /**
+       * Clears in-flight structures and counters atomically.
+       */
+      clearInFlight() {
+        this.inFlight = 0;
+        this.inFlightKeys.clear();
+        this.visibleLongInFlightKeys.clear();
+        this.inFlightStartedAt.clear();
+        this.inFlightTokens.clear();
+        this.inFlightItems = 0;
+        this.prefetchInFlight = 0;
+      }
+      /**
+       * Resets all runtime task/render/queue collections on plugin stop.
+       */
+      resetAll() {
+        this.queue = [];
+        this.queueSortDirty = false;
+        this.queuedKeys.clear();
+        this.pendingTargets.clear();
+        this.clearInFlight();
+        this.clearRenderQueue();
+        this.recentRenders.clear();
+        this.lastDecisions.clear();
+        this.configVersion++;
+      }
+      /**
+       * Returns whether any runtime queue/in-flight/render work exists.
+       * @returns {boolean}
+       */
+      hasActiveWork() {
+        return Boolean(
+          this.queue.length || this.queuedKeys.size || this.pendingTargets.size || this.inFlightKeys.size || this.inFlightItems || this.renderQueue.length
+        );
+      }
+      /**
+       * Projects the per-key task snapshot (compatible with AutoTranslationTaskState).
+       * @param {string} cacheKey
+       * @param {any} [failure]
+       */
+      getTaskSnapshot(cacheKey, failure = null) {
+        const key = String(cacheKey || "");
+        const queuedItem = this.queue.find((item) => item?.cacheKey === key) || null;
+        const renderQueued = this.renderQueue.some((task) => task?.cacheKey === key);
         return {
           cacheKey: key,
           queued: Boolean(queuedItem),
-          queuedKey: Boolean(plugin.autoTranslationQueuedKeys?.has?.(key)),
-          inFlight: Boolean(plugin.autoTranslationInFlightKeys?.has?.(key)),
-          visibleLongInFlight: Boolean(plugin.autoTranslationVisibleLongInFlightKeys?.has?.(key)),
+          queuedKey: this.queuedKeys.has(key),
+          inFlight: this.inFlightKeys.has(key),
+          visibleLongInFlight: this.visibleLongInFlightKeys.has(key),
           renderQueued,
-          renderPending: Boolean(plugin.autoTranslationRenderPendingKeys?.has?.(key)),
-          pendingTargets: Boolean(plugin.autoTranslationPendingTargets?.has?.(key)),
-          failure: plugin.autoTranslationFailures?.get?.(key) || null,
+          renderPending: this.renderPendingKeys.has(key),
+          pendingTargets: this.pendingTargets.has(key),
+          failure,
           priority: queuedItem?.priority ?? null
         };
       }
+      /**
+       * Lists every cacheKey currently tracked across all active task stages.
+       * @returns {string[]}
+       */
       listTrackedKeys() {
-        const plugin = this.plugin;
         const keys = /* @__PURE__ */ new Set();
-        (plugin.autoTranslationQueue || []).forEach((item) => {
+        for (const item of this.queue) {
           if (item?.cacheKey) keys.add(item.cacheKey);
-        });
-        for (const key of plugin.autoTranslationQueuedKeys || []) keys.add(key);
-        for (const key of plugin.autoTranslationInFlightKeys || []) keys.add(key);
-        (plugin.autoTranslationRenderQueue || []).forEach((task) => {
+        }
+        for (const key of this.queuedKeys) keys.add(key);
+        for (const key of this.inFlightKeys) keys.add(key);
+        for (const task of this.renderQueue) {
           if (task?.cacheKey) keys.add(task.cacheKey);
-        });
-        for (const key of plugin.autoTranslationRenderPendingKeys || []) keys.add(key);
-        for (const key of (plugin.autoTranslationPendingTargets || /* @__PURE__ */ new Map()).keys()) keys.add(key);
+        }
+        for (const key of this.renderPendingKeys) keys.add(key);
+        for (const key of this.pendingTargets.keys()) keys.add(key);
         return [...keys];
       }
-      // Invariants the current parallel collections are expected to uphold. Each rule
-      // was derived from the writer sites (enqueue/take/finish/remove/render queue).
-      // Returns a list of violations; empty means consistent.
+      /**
+       * Verifies all five structural invariants (I1-I5). Empty array means consistent.
+       * @returns {Array<{ rule: string, key?: string }>}
+       */
       checkInvariants() {
-        const plugin = this.plugin;
         const violations = [];
-        const queueKeys = new Set((plugin.autoTranslationQueue || []).map((item) => item?.cacheKey).filter(Boolean));
+        const queueKeys = new Set(this.queue.map((item) => item?.cacheKey).filter(Boolean));
         for (const key of queueKeys) {
-          if (!plugin.autoTranslationQueuedKeys.has(key)) violations.push({ rule: "queued-item-without-key", key });
+          if (!this.queuedKeys.has(key)) violations.push({ rule: "queued-item-without-key", key });
         }
-        for (const key of plugin.autoTranslationQueuedKeys) {
-          if (!queueKeys.has(key) && !plugin.autoTranslationInFlightKeys.has(key)) {
+        for (const key of this.queuedKeys) {
+          if (!queueKeys.has(key) && !this.inFlightKeys.has(key)) {
             violations.push({ rule: "queued-key-without-item", key });
           }
         }
-        for (const key of plugin.autoTranslationInFlightKeys) {
-          if (!plugin.autoTranslationInFlightTokens.has(key)) violations.push({ rule: "in-flight-without-token", key });
-          if (!plugin.autoTranslationInFlightStartedAt.has(key)) violations.push({ rule: "in-flight-without-started-at", key });
+        for (const key of this.inFlightKeys) {
+          if (!this.inFlightTokens.has(key)) violations.push({ rule: "in-flight-without-token", key });
+          if (!this.inFlightStartedAt.has(key)) violations.push({ rule: "in-flight-without-started-at", key });
         }
-        for (const key of plugin.autoTranslationInFlightTokens.keys()) {
-          if (!plugin.autoTranslationInFlightKeys.has(key)) violations.push({ rule: "token-without-in-flight", key });
+        for (const key of this.inFlightTokens.keys()) {
+          if (!this.inFlightKeys.has(key)) violations.push({ rule: "token-without-in-flight", key });
         }
-        for (const key of plugin.autoTranslationVisibleLongInFlightKeys) {
-          if (!plugin.autoTranslationInFlightKeys.has(key)) violations.push({ rule: "visible-long-without-in-flight", key });
+        for (const key of this.visibleLongInFlightKeys) {
+          if (!this.inFlightKeys.has(key)) violations.push({ rule: "visible-long-without-in-flight", key });
         }
-        const renderQueueKeys = new Set((plugin.autoTranslationRenderQueue || []).map((task) => task?.key).filter(Boolean));
-        for (const key of plugin.autoTranslationRenderQueuedKeys) {
+        const renderQueueKeys = new Set(this.renderQueue.map((task) => task?.key).filter(Boolean));
+        for (const key of this.renderQueuedKeys) {
           if (!renderQueueKeys.has(key)) violations.push({ rule: "render-key-without-task", key });
         }
         for (const key of renderQueueKeys) {
-          if (!plugin.autoTranslationRenderQueuedKeys.has(key)) violations.push({ rule: "render-task-without-key", key });
-          if (!plugin.autoTranslationRenderQueuedTasks.has(key)) violations.push({ rule: "render-task-without-map-entry", key });
+          if (!this.renderQueuedKeys.has(key)) violations.push({ rule: "render-task-without-key", key });
+          if (!this.renderQueuedTasks.has(key)) violations.push({ rule: "render-task-without-map-entry", key });
         }
-        for (const key of plugin.autoTranslationRenderQueuedTasks.keys()) {
+        for (const key of this.renderQueuedTasks.keys()) {
           if (!renderQueueKeys.has(key)) violations.push({ rule: "render-map-entry-without-task", key });
         }
-        if (plugin.autoTranslationInFlight < 0) violations.push({ rule: "negative-in-flight-count" });
-        if (plugin.autoTranslationInFlightItems < 0) violations.push({ rule: "negative-in-flight-items" });
-        if (plugin.autoTranslationPrefetchInFlight < 0) violations.push({ rule: "negative-prefetch-count" });
-        if (plugin.autoTranslationPrefetchInFlight > plugin.autoTranslationInFlight) {
+        if (this.inFlight < 0) violations.push({ rule: "negative-in-flight-count" });
+        if (this.inFlightItems < 0) violations.push({ rule: "negative-in-flight-items" });
+        if (this.prefetchInFlight < 0) violations.push({ rule: "negative-prefetch-count" });
+        if (this.prefetchInFlight > this.inFlight) {
           violations.push({ rule: "prefetch-exceeds-in-flight" });
         }
         return violations;
       }
     };
-    module2.exports = { AutoTranslationTaskState };
+    module2.exports = { AutoTranslationStateMachine };
+  }
+});
+
+// src/auto-translation/cooldown-store.js
+var require_cooldown_store = __commonJS({
+  "src/auto-translation/cooldown-store.js"(exports2, module2) {
+    "use strict";
+    var AutoTranslationCooldownStore = class {
+      constructor() {
+        this.failures = /* @__PURE__ */ new Map();
+        this.failureHistory = /* @__PURE__ */ new Map();
+        this.providerFailures = /* @__PURE__ */ new Map();
+        this.providerNoticeAt = /* @__PURE__ */ new Map();
+        this.precheckSkips = /* @__PURE__ */ new Map();
+        this.retryTimer = null;
+        this.retryAt = 0;
+        this.lastToastAt = 0;
+      }
+      /**
+       * Clears the scheduled retry timer if active.
+       */
+      clearRetryTimer() {
+        if (this.retryTimer) {
+          clearTimeout(this.retryTimer);
+          this.retryTimer = null;
+        }
+        this.retryAt = 0;
+      }
+      /**
+       * Clears message & provider cooldown maps with optional notice preservation.
+       * @param {{ preserveNotices?: boolean }} [options]
+       */
+      clearFailures(options = {}) {
+        this.failures.clear();
+        this.providerFailures.clear();
+        if (!options.preserveNotices) {
+          this.providerNoticeAt.clear();
+        }
+      }
+      /**
+       * Clears all cooldown, history, skip, and timer state on plugin stop.
+       */
+      clearAll() {
+        this.clearRetryTimer();
+        this.failures.clear();
+        this.failureHistory.clear();
+        this.providerFailures.clear();
+        this.providerNoticeAt.clear();
+        this.precheckSkips.clear();
+      }
+    };
+    module2.exports = { AutoTranslationCooldownStore };
   }
 });
 
@@ -13413,26 +13693,16 @@ var require_queue_core = __commonJS({
           }
           this.plugin.abortAutoTranslationRequests("invalidated");
           this.plugin.autoTranslationPartialResults?.clear?.();
-          this.plugin.autoTranslationInFlight = 0;
-          this.plugin.autoTranslationInFlightKeys.clear();
-          this.plugin.autoTranslationVisibleLongInFlightKeys.clear();
-          this.plugin.autoTranslationInFlightStartedAt.clear();
-          this.plugin.autoTranslationInFlightTokens.clear();
-          this.plugin.autoTranslationInFlightItems = 0;
-          this.plugin.autoTranslationPrefetchInFlight = 0;
-          this.plugin.autoTranslationPrecheckSkips.clear();
-          this.plugin.autoTranslationRecentRenders.clear();
-          this.plugin.lastAutoTranslationDecisions.clear();
+          this.plugin.autoStateMachine.clearInFlight();
+          this.plugin.autoCooldowns.precheckSkips.clear();
+          this.plugin.autoStateMachine.recentRenders.clear();
+          this.plugin.autoStateMachine.lastDecisions.clear();
         }
         if (!options.preserveFailures) {
-          this.plugin.autoTranslationFailures.clear();
-          this.plugin.autoTranslationProviderFailures.clear();
-          if (!options.preserveNotices) this.plugin.autoTranslationProviderNoticeAt.clear();
+          this.plugin.autoCooldowns.clearFailures({ preserveNotices: Boolean(options.preserveNotices) });
         }
-        if (this.plugin.autoTranslationRetryTimer && !options.preserveRetry && (!options.preserveFailures || options.clearRetryTimer)) {
-          clearTimeout(this.plugin.autoTranslationRetryTimer);
-          this.plugin.autoTranslationRetryTimer = null;
-          this.plugin.autoTranslationRetryAt = 0;
+        if (this.plugin.autoCooldowns.retryTimer && !options.preserveRetry && (!options.preserveFailures || options.clearRetryTimer)) {
+          this.plugin.autoCooldowns.clearRetryTimer();
         }
         if (!options.preserveNodes) {
           for (const [cacheKey, entry] of this.plugin.autoTranslationPendingTargets) {
@@ -14316,9 +14586,9 @@ var require_queue_core = __commonJS({
         return Boolean(this.plugin.isStarted && this.plugin.settings?.translation?.enabled && this.plugin.isCurrentChannelAutoTranslateAllowed());
       }
       cancelAutoTranslationRuntimeWork(reason = "disabled", { staleRouteOnly = false } = {}) {
-        const hasRetryTimer = Boolean(this.plugin.autoTranslationRetryTimer);
+        const hasRetryTimer = Boolean(this.plugin.autoCooldowns.retryTimer);
         const hasWork = Boolean(
-          this.plugin.autoTranslationQueue?.length || this.plugin.autoTranslationQueuedKeys?.size || this.plugin.autoTranslationPendingTargets?.size || this.plugin.autoTranslationInFlightKeys?.size || this.plugin.autoTranslationInFlightItems || this.plugin.autoTranslationRenderQueue?.length || staleRouteOnly && this.plugin.localProviderHealthChecks?.size
+          this.plugin.autoStateMachine.hasActiveWork() || staleRouteOnly && this.plugin.localProviderHealthChecks?.size
         );
         if (!hasRetryTimer && !hasWork) return false;
         if (staleRouteOnly) {
@@ -31281,6 +31551,8 @@ var require_discord_ai_translator = __commonJS({
     } = require_settings_schema();
     var { PLUGIN_CSS } = require_styles();
     var { AutoTranslationTaskState } = require_task_state();
+    var { AutoTranslationStateMachine } = require_state_machine();
+    var { AutoTranslationCooldownStore } = require_cooldown_store();
     var { AutoTranslationRequestPipeline } = require_request_pipeline();
     var { AutoTranslationQueueCore } = require_queue_core();
     var { DiagnosticsRecorder } = require_diagnostics_recorder();
@@ -31291,7 +31563,7 @@ var require_discord_ai_translator = __commonJS({
     var { ProviderLayer } = require_provider_layer();
     var { SettingsStore } = require_settings_store();
     var { SettingsUiController, SETTINGS_UI_METHOD_NAMES } = require_ui();
-    var { installPrototypeBridge } = require_delegate_methods();
+    var { installPrototypeBridge, installStateProxies } = require_delegate_methods();
     var { QuickPanel } = require_quick_panel();
     var { PanelTheme } = require_panel_theme();
     var { DiscordHostAdapter } = require_host_adapter();
@@ -32098,6 +32370,8 @@ var require_discord_ai_translator = __commonJS({
       constructor() {
         this.events = new EventBus();
         this.runtimeScope = new DisposableScope();
+        this.autoStateMachine = new AutoTranslationStateMachine();
+        this.autoCooldowns = new AutoTranslationCooldownStore();
         this.autoRequestPipeline = new AutoTranslationRequestPipeline(this);
         this.autoQueueCore = new AutoTranslationQueueCore(this);
         this.diagnosticsRecorder = new DiagnosticsRecorder(this);
@@ -32152,17 +32426,8 @@ var require_discord_ai_translator = __commonJS({
         this.diagnosticLogsDirty = false;
         this.diagnosticLogsPersistenceDeferredSince = 0;
         this.translationRequests = /* @__PURE__ */ new Map();
-        this.autoTranslationQueue = [];
-        this.autoTranslationQueuedKeys = /* @__PURE__ */ new Set();
-        this.autoTranslationPendingTargets = /* @__PURE__ */ new Map();
-        this.autoTranslationFailures = /* @__PURE__ */ new Map();
-        this.autoTranslationFailureHistory = /* @__PURE__ */ new Map();
-        this.autoTranslationProviderFailures = /* @__PURE__ */ new Map();
-        this.autoTranslationProviderNoticeAt = /* @__PURE__ */ new Map();
         this.dismissedTranslationMessages = /* @__PURE__ */ new Map();
         this.translationLineTexts = typeof WeakMap === "function" ? /* @__PURE__ */ new WeakMap() : null;
-        this.autoTranslationPrecheckSkips = /* @__PURE__ */ new Map();
-        this.autoTranslationRecentRenders = /* @__PURE__ */ new Map();
         this.autoTranslationLastExternalScrollAt = 0;
         this.autoTranslationOwnScrolls = /* @__PURE__ */ new WeakMap();
         this.cachedTranslationDrawTimer = null;
@@ -32170,24 +32435,11 @@ var require_discord_ai_translator = __commonJS({
         this.cachedDrawMemo = /* @__PURE__ */ new Map();
         this.cachedDrawMessageMemo = /* @__PURE__ */ new WeakMap();
         this.cachedDrawScroller = null;
-        this.lastAutoTranslationDecisions = /* @__PURE__ */ new Map();
         this.localProviderHealthChecks = /* @__PURE__ */ new Map();
         this.localProviderHealthProbeStartedAt = /* @__PURE__ */ new Map();
         this.localProviderHealthyKeys = /* @__PURE__ */ new Set();
         this.localProviderDetectedModels = /* @__PURE__ */ new Map();
         this.localProviderModelDetections = /* @__PURE__ */ new Map();
-        this.autoTranslationInFlight = 0;
-        this.autoTranslationInFlightKeys = /* @__PURE__ */ new Set();
-        this.autoTranslationVisibleLongInFlightKeys = /* @__PURE__ */ new Set();
-        this.autoTranslationInFlightStartedAt = /* @__PURE__ */ new Map();
-        this.autoTranslationInFlightTokens = /* @__PURE__ */ new Map();
-        this.autoTranslationInFlightTokenCounter = 0;
-        this.autoTranslationInFlightItems = 0;
-        this.autoTranslationPrefetchInFlight = 0;
-        this.autoTranslationLastToastAt = 0;
-        this.autoTranslationRetryTimer = null;
-        this.autoTranslationRetryAt = 0;
-        this.autoTranslationConfigVersion = 0;
         this.lifecycleToken = 0;
         this.autoTranslationViewportBusyUntil = 0;
         this.autoTranslationViewportStableAnchor = "";
@@ -32195,14 +32447,6 @@ var require_discord_ai_translator = __commonJS({
         this.autoTranslationViewportRequiresStableScan = false;
         this.autoTranslationJumpCooldownUntil = 0;
         this.autoTranslationRenderPausedUntil = 0;
-        this.autoTranslationRenderQueue = [];
-        this.autoTranslationRenderQueuedKeys = /* @__PURE__ */ new Set();
-        this.autoTranslationRenderQueuedTasks = /* @__PURE__ */ new Map();
-        this.autoTranslationRenderPendingKeys = /* @__PURE__ */ new Set();
-        this.autoTranslationRenderQueueDirty = false;
-        this.autoTranslationRenderRaf = null;
-        this.autoTranslationRenderTimer = null;
-        this.autoTranslationRenderDueAt = 0;
         this.autoTranslationLastScrollY = null;
         this.autoTranslationLastScrollByTarget = typeof WeakMap === "function" ? /* @__PURE__ */ new WeakMap() : null;
         this.translationSourceStyleMutationCounts = typeof WeakMap === "function" ? /* @__PURE__ */ new WeakMap() : null;
@@ -32454,15 +32698,8 @@ var require_discord_ai_translator = __commonJS({
         this.diagnosticLogsDirty = !diagnosticLogsPersisted;
         this.diagnosticLogsPersistenceDeferredSince = 0;
         this.translationRequests.clear();
-        this.autoTranslationQueue = [];
-        this.autoTranslationQueueSortDirty = false;
-        this.autoTranslationQueuedKeys.clear();
-        this.autoTranslationPendingTargets.clear();
-        this.autoTranslationFailures.clear();
-        this.autoTranslationFailureHistory.clear();
-        this.autoTranslationProviderFailures.clear();
-        this.autoTranslationProviderNoticeAt.clear();
-        this.autoTranslationRecentRenders.clear();
+        this.autoStateMachine.resetAll();
+        this.autoCooldowns.clearAll();
         this.cancelCachedTranslationDrawPass();
         this.cachedDrawMemo.clear();
         this.cachedDrawMessageMemo = /* @__PURE__ */ new WeakMap();
@@ -32472,15 +32709,6 @@ var require_discord_ai_translator = __commonJS({
         this.pendingMutationScanRoots?.clear?.();
         this.autoTranslationOwnScrolls = /* @__PURE__ */ new WeakMap();
         this.autoTranslationLastExternalScrollAt = 0;
-        this.lastAutoTranslationDecisions.clear();
-        this.autoTranslationInFlight = 0;
-        this.autoTranslationInFlightKeys.clear();
-        this.autoTranslationVisibleLongInFlightKeys.clear();
-        this.autoTranslationInFlightStartedAt.clear();
-        this.autoTranslationInFlightTokens.clear();
-        this.autoTranslationInFlightItems = 0;
-        this.autoTranslationPrefetchInFlight = 0;
-        this.autoTranslationConfigVersion++;
         this.observer = null;
         this.observerRoot = null;
         this.observerLifecycle = null;
@@ -44304,6 +44532,41 @@ ${raw}`;
     };
     installPrototypeBridge(module2.exports.prototype, "settingsUi", SETTINGS_UI_METHOD_NAMES);
     installPrototypeBridge(module2.exports.prototype, "composerUi", COMPOSER_UI_METHOD_NAMES);
+    installStateProxies(module2.exports.prototype, "autoStateMachine", {
+      autoTranslationQueue: "queue",
+      autoTranslationQueueSortDirty: "queueSortDirty",
+      autoTranslationQueuedKeys: "queuedKeys",
+      autoTranslationPendingTargets: "pendingTargets",
+      autoTranslationInFlight: "inFlight",
+      autoTranslationInFlightKeys: "inFlightKeys",
+      autoTranslationVisibleLongInFlightKeys: "visibleLongInFlightKeys",
+      autoTranslationInFlightStartedAt: "inFlightStartedAt",
+      autoTranslationInFlightTokens: "inFlightTokens",
+      autoTranslationInFlightTokenCounter: "inFlightTokenCounter",
+      autoTranslationInFlightItems: "inFlightItems",
+      autoTranslationPrefetchInFlight: "prefetchInFlight",
+      autoTranslationRenderQueue: "renderQueue",
+      autoTranslationRenderQueuedKeys: "renderQueuedKeys",
+      autoTranslationRenderQueuedTasks: "renderQueuedTasks",
+      autoTranslationRenderPendingKeys: "renderPendingKeys",
+      autoTranslationRenderQueueDirty: "renderQueueDirty",
+      autoTranslationRenderRaf: "renderRaf",
+      autoTranslationRenderTimer: "renderTimer",
+      autoTranslationRenderDueAt: "renderDueAt",
+      autoTranslationConfigVersion: "configVersion",
+      autoTranslationRecentRenders: "recentRenders",
+      lastAutoTranslationDecisions: "lastDecisions"
+    });
+    installStateProxies(module2.exports.prototype, "autoCooldowns", {
+      autoTranslationFailures: "failures",
+      autoTranslationFailureHistory: "failureHistory",
+      autoTranslationProviderFailures: "providerFailures",
+      autoTranslationProviderNoticeAt: "providerNoticeAt",
+      autoTranslationPrecheckSkips: "precheckSkips",
+      autoTranslationRetryTimer: "retryTimer",
+      autoTranslationRetryAt: "retryAt",
+      autoTranslationLastToastAt: "lastToastAt"
+    });
   }
 });
 

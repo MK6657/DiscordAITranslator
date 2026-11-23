@@ -104,26 +104,16 @@ class AutoTranslationQueueCore {
             // keep a local server busy while the next scan starts new ones.
             this.plugin.abortAutoTranslationRequests("invalidated");
             this.plugin.autoTranslationPartialResults?.clear?.();
-            this.plugin.autoTranslationInFlight = 0;
-            this.plugin.autoTranslationInFlightKeys.clear();
-            this.plugin.autoTranslationVisibleLongInFlightKeys.clear();
-            this.plugin.autoTranslationInFlightStartedAt.clear();
-            this.plugin.autoTranslationInFlightTokens.clear();
-            this.plugin.autoTranslationInFlightItems = 0;
-            this.plugin.autoTranslationPrefetchInFlight = 0;
-            this.plugin.autoTranslationPrecheckSkips.clear();
-            this.plugin.autoTranslationRecentRenders.clear();
-            this.plugin.lastAutoTranslationDecisions.clear();
+            this.plugin.autoStateMachine.clearInFlight();
+            this.plugin.autoCooldowns.precheckSkips.clear();
+            this.plugin.autoStateMachine.recentRenders.clear();
+            this.plugin.autoStateMachine.lastDecisions.clear();
         }
         if (!options.preserveFailures) {
-            this.plugin.autoTranslationFailures.clear();
-            this.plugin.autoTranslationProviderFailures.clear();
-            if (!options.preserveNotices) this.plugin.autoTranslationProviderNoticeAt.clear();
+            this.plugin.autoCooldowns.clearFailures({ preserveNotices: Boolean(options.preserveNotices) });
         }
-        if (this.plugin.autoTranslationRetryTimer && !options.preserveRetry && (!options.preserveFailures || options.clearRetryTimer)) {
-            clearTimeout(this.plugin.autoTranslationRetryTimer);
-            this.plugin.autoTranslationRetryTimer = null;
-            this.plugin.autoTranslationRetryAt = 0;
+        if (this.plugin.autoCooldowns.retryTimer && !options.preserveRetry && (!options.preserveFailures || options.clearRetryTimer)) {
+            this.plugin.autoCooldowns.clearRetryTimer();
         }
         if (!options.preserveNodes) {
             for (const [cacheKey, entry] of this.plugin.autoTranslationPendingTargets) {
@@ -1119,14 +1109,9 @@ class AutoTranslationQueueCore {
     }
 
     cancelAutoTranslationRuntimeWork(reason = "disabled", { staleRouteOnly = false } = {}) {
-        const hasRetryTimer = Boolean(this.plugin.autoTranslationRetryTimer);
+        const hasRetryTimer = Boolean(this.plugin.autoCooldowns.retryTimer);
         const hasWork = Boolean(
-            this.plugin.autoTranslationQueue?.length
-            || this.plugin.autoTranslationQueuedKeys?.size
-            || this.plugin.autoTranslationPendingTargets?.size
-            || this.plugin.autoTranslationInFlightKeys?.size
-            || this.plugin.autoTranslationInFlightItems
-            || this.plugin.autoTranslationRenderQueue?.length
+            this.plugin.autoStateMachine.hasActiveWork()
             || (staleRouteOnly && this.plugin.localProviderHealthChecks?.size)
         );
         if (!hasRetryTimer && !hasWork) return false;

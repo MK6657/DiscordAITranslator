@@ -128,7 +128,14 @@ module.exports = [
     },
     {
         // Stricter rules for newly created V0.5 modular code
-        files: ["src/core/**/*.js", "src/presets/**/*.js", "src/providers/registry.js", "src/providers/adapters/**/*.js"],
+        files: [
+            "src/core/**/*.js",
+            "src/presets/**/*.js",
+            "src/providers/registry.js",
+            "src/providers/adapters/**/*.js",
+            "src/auto-translation/state-machine.js",
+            "src/auto-translation/cooldown-store.js"
+        ],
         rules: {
             "no-unused-vars": ["error", { argsIgnorePattern: "^_", varsIgnorePattern: "^_", caughtErrorsIgnorePattern: "^_" }]
         }

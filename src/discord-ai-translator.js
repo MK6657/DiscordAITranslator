@@ -22,6 +22,8 @@ const {
 } = require("./settings/settings-schema");
 const { PLUGIN_CSS } = require("./styles");
 const { AutoTranslationTaskState } = require("./auto-translation/task-state");
+const { AutoTranslationStateMachine } = require("./auto-translation/state-machine");
+const { AutoTranslationCooldownStore } = require("./auto-translation/cooldown-store");
 const { AutoTranslationRequestPipeline } = require("./auto-translation/request-pipeline");
 const { AutoTranslationQueueCore } = require("./auto-translation/queue-core");
 const { DiagnosticsRecorder } = require("./diagnostics/diagnostics-recorder");
@@ -32,7 +34,7 @@ const { PLUGIN_VERSION } = require("./version");
 const { ProviderLayer } = require("./providers/provider-layer");
 const { SettingsStore } = require("./settings/settings-store");
 const { SettingsUiController, SETTINGS_UI_METHOD_NAMES } = require("./settings/ui");
-const { installPrototypeBridge } = require("./core/delegate-methods");
+const { installPrototypeBridge, installStateProxies } = require("./core/delegate-methods");
 const { QuickPanel } = require("./quick-panel/quick-panel");
 const { PanelTheme } = require("./settings/panel-theme");
 const { DiscordHostAdapter } = require("./discord/host-adapter");
@@ -928,6 +930,8 @@ module.exports = class DiscordAITranslator {
     constructor() {
         this.events = new EventBus();
         this.runtimeScope = new DisposableScope();
+        this.autoStateMachine = new AutoTranslationStateMachine();
+        this.autoCooldowns = new AutoTranslationCooldownStore();
         this.autoRequestPipeline = new AutoTranslationRequestPipeline(this);
         this.autoQueueCore = new AutoTranslationQueueCore(this);
         this.diagnosticsRecorder = new DiagnosticsRecorder(this);
@@ -982,19 +986,9 @@ module.exports = class DiscordAITranslator {
         this.diagnosticLogsDirty = false;
         this.diagnosticLogsPersistenceDeferredSince = 0;
         this.translationRequests = new Map();
-        this.autoTranslationQueue = [];
-        this.autoTranslationQueuedKeys = new Set();
-        this.autoTranslationPendingTargets = new Map();
-        this.autoTranslationFailures = new Map();
-        this.autoTranslationFailureHistory = new Map();
-        this.autoTranslationProviderFailures = new Map();
-        // Errors only the user can fix: provider key -> { at, types } for the current episode (one toast each).
-        this.autoTranslationProviderNoticeAt = new Map();
         // Messages whose translation line the user hid: dismiss key -> hiddenAt.
         this.dismissedTranslationMessages = new Map();
         this.translationLineTexts = typeof WeakMap === "function" ? new WeakMap() : null;
-        this.autoTranslationPrecheckSkips = new Map();
-        this.autoTranslationRecentRenders = new Map();
         this.autoTranslationLastExternalScrollAt = 0;
         this.autoTranslationOwnScrolls = new WeakMap();
         this.cachedTranslationDrawTimer = null;
@@ -1002,24 +996,11 @@ module.exports = class DiscordAITranslator {
         this.cachedDrawMemo = new Map();
         this.cachedDrawMessageMemo = new WeakMap();
         this.cachedDrawScroller = null;
-        this.lastAutoTranslationDecisions = new Map();
         this.localProviderHealthChecks = new Map();
         this.localProviderHealthProbeStartedAt = new Map();
         this.localProviderHealthyKeys = new Set();
         this.localProviderDetectedModels = new Map();
         this.localProviderModelDetections = new Map();
-        this.autoTranslationInFlight = 0;
-        this.autoTranslationInFlightKeys = new Set();
-        this.autoTranslationVisibleLongInFlightKeys = new Set();
-        this.autoTranslationInFlightStartedAt = new Map();
-        this.autoTranslationInFlightTokens = new Map();
-        this.autoTranslationInFlightTokenCounter = 0;
-        this.autoTranslationInFlightItems = 0;
-        this.autoTranslationPrefetchInFlight = 0;
-        this.autoTranslationLastToastAt = 0;
-        this.autoTranslationRetryTimer = null;
-        this.autoTranslationRetryAt = 0;
-        this.autoTranslationConfigVersion = 0;
         this.lifecycleToken = 0;
         this.autoTranslationViewportBusyUntil = 0;
         this.autoTranslationViewportStableAnchor = "";
@@ -1027,14 +1008,6 @@ module.exports = class DiscordAITranslator {
         this.autoTranslationViewportRequiresStableScan = false;
         this.autoTranslationJumpCooldownUntil = 0;
         this.autoTranslationRenderPausedUntil = 0;
-        this.autoTranslationRenderQueue = [];
-        this.autoTranslationRenderQueuedKeys = new Set();
-        this.autoTranslationRenderQueuedTasks = new Map();
-        this.autoTranslationRenderPendingKeys = new Set();
-        this.autoTranslationRenderQueueDirty = false;
-        this.autoTranslationRenderRaf = null;
-        this.autoTranslationRenderTimer = null;
-        this.autoTranslationRenderDueAt = 0;
         this.autoTranslationLastScrollY = null;
         this.autoTranslationLastScrollByTarget = typeof WeakMap === "function" ? new WeakMap() : null;
         this.translationSourceStyleMutationCounts = typeof WeakMap === "function" ? new WeakMap() : null;
@@ -1289,15 +1262,8 @@ module.exports = class DiscordAITranslator {
         this.diagnosticLogsDirty = !diagnosticLogsPersisted;
         this.diagnosticLogsPersistenceDeferredSince = 0;
         this.translationRequests.clear();
-        this.autoTranslationQueue = [];
-        this.autoTranslationQueueSortDirty = false;
-        this.autoTranslationQueuedKeys.clear();
-        this.autoTranslationPendingTargets.clear();
-        this.autoTranslationFailures.clear();
-        this.autoTranslationFailureHistory.clear();
-        this.autoTranslationProviderFailures.clear();
-        this.autoTranslationProviderNoticeAt.clear();
-        this.autoTranslationRecentRenders.clear();
+        this.autoStateMachine.resetAll();
+        this.autoCooldowns.clearAll();
         this.cancelCachedTranslationDrawPass();
         this.cachedDrawMemo.clear();
         this.cachedDrawMessageMemo = new WeakMap();
@@ -1309,15 +1275,6 @@ module.exports = class DiscordAITranslator {
         this.pendingMutationScanRoots?.clear?.();
         this.autoTranslationOwnScrolls = new WeakMap();
         this.autoTranslationLastExternalScrollAt = 0;
-        this.lastAutoTranslationDecisions.clear();
-        this.autoTranslationInFlight = 0;
-        this.autoTranslationInFlightKeys.clear();
-        this.autoTranslationVisibleLongInFlightKeys.clear();
-        this.autoTranslationInFlightStartedAt.clear();
-        this.autoTranslationInFlightTokens.clear();
-        this.autoTranslationInFlightItems = 0;
-        this.autoTranslationPrefetchInFlight = 0;
-        this.autoTranslationConfigVersion++;
         this.observer = null;
         this.observerRoot = null;
         this.observerLifecycle = null;
@@ -13189,3 +13146,38 @@ module.exports = class DiscordAITranslator {
 
 installPrototypeBridge(module.exports.prototype, "settingsUi", SETTINGS_UI_METHOD_NAMES);
 installPrototypeBridge(module.exports.prototype, "composerUi", COMPOSER_UI_METHOD_NAMES);
+installStateProxies(module.exports.prototype, "autoStateMachine", {
+    autoTranslationQueue: "queue",
+    autoTranslationQueueSortDirty: "queueSortDirty",
+    autoTranslationQueuedKeys: "queuedKeys",
+    autoTranslationPendingTargets: "pendingTargets",
+    autoTranslationInFlight: "inFlight",
+    autoTranslationInFlightKeys: "inFlightKeys",
+    autoTranslationVisibleLongInFlightKeys: "visibleLongInFlightKeys",
+    autoTranslationInFlightStartedAt: "inFlightStartedAt",
+    autoTranslationInFlightTokens: "inFlightTokens",
+    autoTranslationInFlightTokenCounter: "inFlightTokenCounter",
+    autoTranslationInFlightItems: "inFlightItems",
+    autoTranslationPrefetchInFlight: "prefetchInFlight",
+    autoTranslationRenderQueue: "renderQueue",
+    autoTranslationRenderQueuedKeys: "renderQueuedKeys",
+    autoTranslationRenderQueuedTasks: "renderQueuedTasks",
+    autoTranslationRenderPendingKeys: "renderPendingKeys",
+    autoTranslationRenderQueueDirty: "renderQueueDirty",
+    autoTranslationRenderRaf: "renderRaf",
+    autoTranslationRenderTimer: "renderTimer",
+    autoTranslationRenderDueAt: "renderDueAt",
+    autoTranslationConfigVersion: "configVersion",
+    autoTranslationRecentRenders: "recentRenders",
+    lastAutoTranslationDecisions: "lastDecisions"
+});
+installStateProxies(module.exports.prototype, "autoCooldowns", {
+    autoTranslationFailures: "failures",
+    autoTranslationFailureHistory: "failureHistory",
+    autoTranslationProviderFailures: "providerFailures",
+    autoTranslationProviderNoticeAt: "providerNoticeAt",
+    autoTranslationPrecheckSkips: "precheckSkips",
+    autoTranslationRetryTimer: "retryTimer",
+    autoTranslationRetryAt: "retryAt",
+    autoTranslationLastToastAt: "lastToastAt"
+});
