@@ -1,216 +1,201 @@
+<div align="center">
+
 # Discord AI Translator
 
-[中文](README.md) | [English](README.en.md)
+**面向 Windows BetterDiscord 的 AI 频道消息翻译、输入润色与公开双语插件**
 
-后续维护先读：[2026-10-22 维护交接](docs/maintenance-handoff-2026-10-22.md)（新维护分支、三项已确认待修问题、验证边界与接手步骤）。历史进度与完整验收清单见 [优化清单与接手说明](docs/optimization-handoff.md)。
+[![Windows CI](https://github.com/MK6657/DiscordAITranslator/actions/workflows/ci.yml/badge.svg)](https://github.com/MK6657/DiscordAITranslator/actions/workflows/ci.yml)
+![Preview](https://img.shields.io/badge/preview-v0.4.0-5865F2)
+![Release](https://img.shields.io/badge/release-v0.3.0-2EA043)
+![Platform](https://img.shields.io/badge/platform-Windows%20BetterDiscord-0078D4)
+![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
-Discord AI Translator 是一个 BetterDiscord 桌面插件，用于输入润色、公开双语输入、手动消息翻译和频道自动翻译。
+**简体中文** | [English](README.en.md)
 
-## 当前分支
+</div>
 
-当前分支的源码预览版本为 `v0.4.0`。
+---
 
-版本号显示在设置窗口标题栏、插件启动提示和 BetterDiscord 插件列表中；改动见 [CHANGELOG.md](CHANGELOG.md)。
+Discord AI Translator 专为跨语言交流与高频聊天场景打造：既支持 **DeepSeek / OpenAI 兼容接口 / 本机 Sakura 模型** 与 **Google / Microsoft / DeepL / 百度** 等 7 大服务商，也内置了 **59 套写作润色风格（常规语气、22 种中国方言、29 位历史与全球名人风味）**，并通过双模式快捷面板、频道级自动翻译规则与无卡顿渲染，让翻译和写作自然融入 Discord 原生体验。
 
-源码检查、构建一致性、离线回归（模块测试和产物回归）、安装器安装与回滚、产物结构均已在本地验证。v0.4.0 重做了设置窗口、快捷面板、译文行和错误行。新界面及“发送前询问”的真实 Discord 验收清单见 [宿主记录](docs/host-smoke-test.md) 和 [接手说明](docs/optimization-handoff.md)。
+> [!NOTE]
+> 本项目为第三方 BetterDiscord 插件，并非 Discord 官方产品。使用前请了解第三方客户端插件的相关规则与风险，建议先在测试频道验证后再开启自动翻译。
 
-本项目是第三方插件，并非 Discord 官方产品。使用前请自行了解客户端修改的相关规则和风险；不要用重要账号或敏感频道做首次测试。
+## 核心功能一览
 
-## 已实现
+### 💬 频道消息翻译（手动 & 自动）
+- **多种手动触发**：每条消息支持一键翻译按钮（可设悬停显示 / 常驻 / 关闭）及右键菜单翻译，完整支持**回复预览翻译**与**超长文本分段救援**（单段失败时保留已译片段并标注缺失段落，支持一键重试）。
+- **智能自动翻译**：支持可见消息自动翻译、**独立频道规则**（跟随总开关 / 总是翻译白名单 / 永不翻译黑名单）、显式历史消息补翻、临近消息预取、1–10 并发调节、服务商冷却退避与终止失败保护。
+- **灵活展示与译文交互**：支持译文显示在原文上方或下方、三种样式（淡色背景 / 柔和文字 / `译` 标签）、字号切换（100% / 90%）、**遮蔽译文**（点击或回车/空格展开）、**译后遮挡原文**（悬停或键盘聚焦查看原文），以及阿拉伯语/希伯来语/波斯语等 **RTL 从右到左排版**。
+- **译文行悬浮工具栏**：鼠标悬停或键盘 Tab 聚焦任意译文行，即可一键**复制译文**、**无视缓存重新翻译**或**隐藏译文**。
+- **可操作的错误提示**：翻译失败时直接在消息下方用清晰中文说明原因，并按场景给出「打开设置」「测试连接」「重试」或限流倒计时。
 
-- 中文/英文界面。左下角 AI 按钮打开快捷面板，按钮上的状态标记显示翻译服务当前是否正常。
-- 完整设置窗口分六个标签页，带设置搜索、上手清单、服务状态卡片、模型检测和“试译一句/试润色”。
-- 输入润色、重复润色、恢复原文、发送前询问、可录制的润色快捷键和公开双语输入。
-- 消息按钮与右键菜单手动翻译，支持回复预览和长文本救援；译文行可复制、不用缓存重新翻译或隐藏，部分译文会标出缺了哪几段。
-- 翻译失败时，消息下的错误行直接说明原因，并给出“打开设置”“测试连接”“重试”或等待时间。
-- 可见消息自动翻译、频道规则（跟随总开关 / 总是翻译 / 不翻译）、显式历史补翻、预取、并发控制、服务商冷却和终止失败保护。
-- 内存及持久化翻译缓存（按消息计数）、请求去重、输出校验、诊断日志和失败原因追踪。
-- 多套润色/翻译提示词模板，以及每个服务商独立的配置档案。
-- DeepSeek、OpenAI-compatible、Sakura local、Google Cloud Translation、Microsoft Translator、DeepL 和百度翻译。
-- 可选的手动翻译备用服务（fallback）；默认关闭，Sakura local 不会自动回退到云端。
+### ✨ 输入框 AI 润色 & 59 套内置风格预设
+- **输入框分裂式润色按钮**：在 Discord 输入框旁一键润色，点击下拉箭头即可直接呼出**快捷语气选择器**（按「常规 / 方言 / 大能」三类标签页与分组浏览，无需打开设置窗口）。
+- **完整写作工作流**：支持**重复润色**（可选择基于原文或上次润色结果继续优化）、**一键恢复原文**、**发送前确认弹窗**、**自定义快捷键录制**（默认 `Ctrl+Alt+P`）以及自定义保存归类提示词模板。
+- **格式与安全保护**：润色过程中自动保留换行、@提及、身份组与频道提及、自定义表情、引用块、代码块与零宽空格；若结果返回时草稿已变动或切换了频道，会弹出结果面板供复制或手动写入，避免覆盖新输入。
 
-## 设置入口
+| 分类 | 内置数量 | 覆盖场景 / 代表风格 |
+| --- | :---: | --- |
+| **常规风格** | 8 套 | 自然聊天、礼貌清晰、简短直接、地道口语（去翻译腔）、技术 / Bug 反馈、游戏 / 开黑社区、高情商 / 委婉沟通、正式 / 公告与合作 |
+| **中国方言** | 22 套 | 覆盖**华南闽台**（粤语/港味/潮汕/客家/闽南/台湾腔等）、**西南**（川渝/云贵）、**北方**（东北/京味/天津/陕西/河南/山东/新疆）、**华东华中**（上海/江浙/南京/武汉/湖南） |
+| **大能风味** | 29 套 | 覆盖**帝王将相**（秦始皇/朱元璋/曹操/雍正朱批等）、**谋士名将**（诸葛亮/司马懿/孙子/项羽）、**文人墨客**（鲁迅/林黛玉/苏轼/王阳明/庄子/郭德纲等）、**全球名宿**（莎士比亚/特朗普/尼采/马克思/拿破仑/丘吉尔/马斯克） |
 
-- **快捷面板**：点 Discord 左下角用户栏（设置齿轮附近）的 AI 按钮。面板里有自动翻译开关、本频道规则、翻译成哪种语言、遮蔽译文、翻译后遮挡原文、译文位置和“测试”按钮；“打开完整设置”在面板底部和右上角齿轮。Esc 关闭。
-- **状态标记**：AI 按钮右下角的小标记用形状和颜色同时表示状态。绿色实心点 = 正常；琥珀色圆环 = 正在翻译或测试；琥珀色三角 = 请求太多或冷却中，稍后自动继续；红色“!” = 需要你处理（缺少或被拒绝的 API Key、额度用完、本地服务没响应、测试没通过、接口地址不可用、找不到接口或模型）；灰色短横 = 本频道不自动翻译。鼠标悬停可看到文字说明。
-- **完整设置**：六个标签页是 概览、翻译消息、输入框工具、显示、高级、数据与诊断。顶部搜索框可以按名称或说明找到任意设置并直接跳过去。也可以从 BetterDiscord 插件列表里的设置按钮打开。
-- **频道规则**：“跟随总开关”随自动翻译总开关；“总是翻译”相当于白名单，即使总开关关闭，这个频道也会自动翻译；“不翻译”总是优先。手动翻译不受频道规则影响。从 v0.3.0 升级时，“继承全局”和“本频道启用”都变为“跟随总开关”（0.3.0 的“本频道启用”实际就是跟随总开关），“本频道禁用”变为“不翻译”，所以升级后不会有频道自己开始自动翻译。
-- **恢复默认设置**：在“数据与诊断”最下方的“危险操作”里。确认对话框会列出将恢复默认的内容；“保留 API Key、Google Key 池和提示词模板”默认勾选，界面语言也保持不变。取消勾选才会一并清除这些内容。
+<details>
+<summary>展开查看全部 59 套内置润色风格 & 6 套内置翻译模板</summary>
 
-## 文件
+- **常规润色（8 套）**：自然聊天润色、礼貌清晰、简短直接、地道口语（去翻译腔）、技术 / Bug 反馈、游戏 / 开黑社区、高情商 / 委婉沟通、正式 / 公告与合作
+- **中国方言（22 套）**：
+  - 华南与闽台：广府白话、港式粤语、客家话、潮汕话、广西老表、闽南话、台湾腔
+  - 西南：川渝话、云南话、贵州话
+  - 北方：东北话、京味儿、天津话、陕西话、河南话、山东话、新疆话
+  - 华东与华中：上海话、江浙软语、南京话、武汉话、湖南话
+- **大能风味（29 套）**：
+  - 帝王将相：秦始皇、汉武帝、朱元璋、蒋介石、曹操、唐太宗、雍正
+  - 谋士名将：诸葛亮、司马懿、孙子、项羽
+  - 文人墨客：鲁迅、林黛玉、王阳明、李白、苏轼、孔子、庄子、张爱玲、钱钟书、王小波、郭德纲
+  - 全球名宿：莎士比亚、特朗普、尼采、马克思、拿破仑、丘吉尔、马斯克
+- **消息翻译模板（6 套）**：自然翻译、准确直译、社区梗与口语（接地气）、技术 / AI / 开发频道、游戏 / 二次元社区、官方公告 / 更新日志
 
-- `src/`：唯一应手工修改的源码目录。
-- `DiscordAITranslator.plugin.js`：由 esbuild 生成并提交的 BetterDiscord 单文件发布产物，普通用户无需 Node.js。
-- `tests/core/`：已抽离模块的聚焦测试。
-- `scripts/verify-plugin.js`：根插件离线回归脚本。
-- `scripts/install-plugin.ps1`：Windows 安装、备份、SHA256 校验和可选自动启用脚本。
-- `docs/architecture.md`：源码/生成物边界与后续拆分顺序。
-- `docs/critical-chain-contracts.md`：重构不可破坏的关键链行为契约。
-- `docs/host-smoke-test.md`：真实 Win11 + Discord + BetterDiscord 宿主冒烟记录。
+</details>
+
+### 🌐 公开双语输入（Public Bilingual）
+- 输入框旁提供一键**公开双语**按钮，自动将你的草稿译为目标语言并与原文合并输出，方便在多语言服务器中直接发言。
+- 支持开启**润色后自动衔接公开双语**；自动保护代码块、提及、自定义表情与剧透标记，重复点击不会嵌套旧译文。
+
+### ⚡ 双模式快捷面板 & 完整设置中心
+- **左下角 AI 按钮快捷面板**：无需进入 Discord 设置即可快速切换操作，支持 **翻译** / **润色** 双标签页：
+  - **翻译模式**：切换已保存服务配置、自动翻译开关、当前频道规则、目标语言（13 种常用语言预设 + 自定义语言）、翻译提示词模板、遮蔽/隐藏原文、译文位置与一键连接测试。
+  - **润色模式**：切换润色服务配置、润色总开关、输出语言、润色语气模板、创意度（Temperature）滑块与「稳健 / 均衡 / 创意」三档预设、润色后动作、重复润色基准、公开双语开关，以及内嵌**快捷试润色**抽屉。
+- **AI 按钮实时状态徽章**（颜色 + 形状双重识别，悬停显示完整摘要）：
+
+| 状态徽章 | 含义 |
+| --- | --- |
+| 🟢 绿色实心点 | 服务正常，自动翻译运行中 |
+| 🟠 琥珀色圆环 | 正在执行翻译或连接测试 |
+| 🔺 琥珀色三角 | 触发限流或短暂冷却中，稍后自动恢复 |
+| ❗ 红色叹号 | 需要你处理（缺少或无效 API Key、额度耗尽、本地服务离线、接口或模型错误） |
+| ➖ 灰色短横 | 当前频道未启用自动翻译 |
+
+- **6 标签完整设置窗口**：包含 **概览**（含新手上手清单与服务状态卡片）、**翻译消息**、**输入框工具**、**显示**（支持跟随 Discord / 浅色 / 深色三套窗口主题）、**高级**、**数据与诊断**（含宿主健康检查）。顶部支持**全文搜索设置项**直达定位，内置**本机/兼容接口模型自动检测**与**试译一句 / 试润色**，切换中英文界面原地即时刷新。
+
+## 支持的服务商
+
+消息翻译与输入润色**各自独立保存**服务商、凭据、目标语言、模型参数与提示词，并支持保存多套服务配置档案快速切换。
+
+| 服务商 | 输入润色 | 消息翻译 | 核心配置与特性 |
+| --- | :---: | :---: | --- |
+| **DeepSeek** | ✅ | ✅ | API Key、Endpoint、Model（支持思考开关） |
+| **OpenAI-compatible** | ✅ | ✅ | API Key、Endpoint、Model，支持一键检测服务模型列表 |
+| **Sakura local** | ✅ | ✅ | 本机 Endpoint（如 `127.0.0.1:8080`）、模型自动检测；API Key 可留空，**绝不自动回退云端** |
+| **Google Cloud Translation** | — | ✅ | 支持多 Key 轮询池、月度字符额度追踪与单 Key 冷却调度 |
+| **Microsoft Translator** | — | ✅ | API Key、Region、Endpoint |
+| **DeepL** | — | ✅ | API Key、Free / Pro 方案，支持繁体中文 |
+| **百度翻译** | — | ✅ | App ID、Secret Key、Endpoint，完整识别错误码 |
+
+> 手动翻译可选开启**备用服务（Fallback）**（默认关闭，支持勾选与拖拽排序）；当主服务为 `Sakura local` 时，为保护本地隐私不会自动回退至云端服务。
 
 ## 插件安装（无需 Node.js）
 
-**已发布的固定版本**为 `v0.3.0`，于 2026 年 9 月 25 日预发布。
+当前已发布的固定版本为 `v0.3.0`（2026-09-25 预发布）：
 
-1. 安装 BetterDiscord。
-2. 打开 Discord 设置中的 `BetterDiscord` -> `Plugins`。
-3. 点击 `Open Plugins Folder`。
-4. 下载 [v0.3.0 Release 的 DiscordAITranslator.plugin.js](https://github.com/MK6657/DiscordAITranslator/releases/download/v0.3.0/DiscordAITranslator.plugin.js)，放入插件目录并启用。
-
-插件安装只需这个 `.plugin.js` 文件。自动翻译会将消息发给所选服务，建议先在专用频道手动测试。
+1. 为 Discord 桌面端安装 [BetterDiscord](https://betterdiscord.app/)。
+2. 打开 Discord 设置 -> `BetterDiscord` -> `Plugins` -> 点击 `Open Plugins Folder`。
+3. 下载 [v0.3.0 正式发布版 DiscordAITranslator.plugin.js](https://github.com/MK6657/DiscordAITranslator/releases/download/v0.3.0/DiscordAITranslator.plugin.js)。
+4. 将文件放入插件目录并在插件列表中启用，随后点击左下角 AI 按钮配置服务商。
 
 常见 Windows 插件目录：
-
 ```text
-C:\Users\<你的用户名>\AppData\Roaming\BetterDiscord\plugins
+%APPDATA%\BetterDiscord\plugins
 ```
 
 ### 当前分支源码预览
 
-体验当前分支的 `v0.4.0` 源码预览时，可下载仓库根目录的 [DiscordAITranslator.plugin.js](DiscordAITranslator.plugin.js) 原始文件，或克隆当前分支并运行 `npm run build` 重新生成。
+如果你希望体验包含**双模式快捷面板、输入框分裂式语气选择器、59 套方言/名人润色预设、新版 6 标签设置窗口与渲染性能优化**在内的最新 `v0.4.0` 源码预览版（改动详情见 [CHANGELOG.md](CHANGELOG.md)）：
 
-本地预览也可使用安装脚本。脚本会检查语法和 SHA256，为已有插件创建备份，并原子更新 BetterDiscord profile 的启用状态。
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-plugin.ps1
-```
-
-先预览而不写入：
+- **方式一（直接下载单文件）**：直接下载仓库根目录的 [DiscordAITranslator.plugin.js](DiscordAITranslator.plugin.js) 原始文件，放入 BetterDiscord 插件目录即可（无需安装 Node.js）。
+- **方式二（使用 Windows 安装脚本）**：克隆仓库后，在开始菜单打开**普通 Windows PowerShell** 运行（自动校验语法与 SHA256、备份旧版并事务式启用）：
 
 ```powershell
+# 先预览目标路径而不写入
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-plugin.ps1 -WhatIf
+
+# 安装并自动启用（如需仅安装不启用，追加 -NoEnable）
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-plugin.ps1
+
+# 校验已安装插件与仓库构建版本/SHA256 是否一致
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\check-installed-plugin.ps1
 ```
 
-只安装、不自动启用：
+> [!TIP]
+> 请勿在会重定向 `%APPDATA%` 的打包桌面应用内置终端中运行安装脚本（安装脚本会自动拦截并以退出码 `2` 提示，避免装到 Discord 读不到的私有目录）；如需自定义目录可使用 `-PluginsDir` / `-ProfileDir`，确需写入重定向目录可加 `-AllowRedirectedAppData`。
+
+## 隐私、安全与本地数据
+
+- **严格网络边界**：远程 API 强制要求 HTTPS（仅 `localhost`、回环地址与本机通配地址允许 HTTP），拒绝在 URL 中嵌入用户名/密码。
+- **禁止 HTTP 自动重定向**：所有 API 请求均关闭自动跳转（拦截 `301/302/303/307/308`），防止消息文本或 API Key 被转发到非信任地址；请直接填写最终规范的接口 URL。
+- **分文件本地存储**：插件通过 `BdApi.Data` 将数据保存在 BetterDiscord 插件目录下，互不干扰：
+  - `DiscordAITranslator.config.json`：插件设置与服务商凭据（BetterDiscord 不提供系统级凭据保险库，请妥善保护本机目录权限）。
+  - `DiscordAITranslator.cache.config.json`：翻译缓存（默认 48 小时过期、最多保留 4,000 条消息，可在「数据与诊断」一键清空）。
+  - `DiscordAITranslator.diagnostics.config.json`：脱敏诊断日志（仅记录哈希、状态、错误元数据与模型文件名，不保存原始 API Key 或完整消息正文）。
+- **安全的恢复默认**：位于「数据与诊断 -> 危险操作」，默认勾选「保留 API Key、Google Key 池与提示词模板」且保持界面语言不变，防止误删凭据。
+- 发现安全隐患请参考 [SECURITY.md](SECURITY.md)，切勿在 Issue 中贴出真实 API Key、消息原文或未脱敏日志。
+
+## 从源码构建与验证（开发者）
+
+验证基线：Windows 11 + Node.js 22 / 24 LTS + Windows PowerShell 5.1（离线测试无需安装 Discord 或真实 API Key）。
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-plugin.ps1 -NoEnable
-```
-
-指定 `-PluginsDir` 时，脚本查找与插件目录同级的 `data` 下的 BetterDiscord profile。可用 `-ProfileDir` 选中单一包含 `plugins.json` 的 profile 目录。
-
-安装目标位于 `%APPDATA%` 时，脚本会在安装或 `-WhatIf` 预览前检查应用包重定向。遇到重定向时，脚本会提示原因并以退出码 2 结束。请在开始菜单打开普通 PowerShell，重新运行安装，再用 `npm run plugin:check` 确认。若要装入当前应用的私有副本，使用 `-AllowRedirectedAppData`。
-
-### 确认装的是哪个版本
-
-```powershell
-npm run plugin:check
-```
-
-该命令需要本仓库的克隆以及 Node.js/npm；没有 npm 时也可在仓库目录运行 `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\check-installed-plugin.ps1`。只下载了插件文件的用户，可直接看设置页顶部显示的版本号。它会列出仓库构建与已安装插件的版本和 SHA256，并检查三种“装了却没生效”的情况：某个应用（例如 AI 桌面应用）保存的私有 BetterDiscord 副本、当前窗口的写入被重定向到应用私有目录、Discord 启动文件没有加载 BetterDiscord。安装和检查都请在开始菜单打开的普通 PowerShell 窗口中运行，不要在 AI 应用的内置终端里运行。
-
-自动化可用 `npm run plugin:check -- -Strict`，将目标 profile 未启用或 Discord 加载条件未确认视为检查失败。
-
-## Windows 11 从源码运行
-
-准备环境：
-
-- Windows 11。
-- Node.js 22 或 24 LTS，安装时包含 npm。
-- Windows PowerShell 5.1（Win11 自带，安装器和 CI 以此为验证基线）。
-- BetterDiscord；只有实际安装/宿主验证需要 Discord。
-
-在项目目录依次运行：
-
-```powershell
-npm ci
-npm run verify
-npm run plugin:install:dry-run
-npm run plugin:install
-```
-
-`npm run verify` 会重新生成根插件、检查全部 JavaScript、运行模块测试、运行 2,300+ 条发布产物回归、在临时 BetterDiscord 目录验证安装/启用/回滚，并检查生成物元数据和导出形态。
-
-日常开发命令：
-
-```powershell
-npm run build          # 从 src/ 生成根插件
-npm run build:check    # 确认生成物没有漂移
-npm test               # 模块测试 + 根插件完整回归
-npm run ci             # 源码、生成物、回归和安装器门禁
-npm run release:check  # 与 GitHub Windows CI 相同的完整发布门禁
-```
-
-不要直接修改 `DiscordAITranslator.plugin.js`；修改 `src/` 后运行 `npm run build`。
-
-## Provider 配置
-
-| Provider | 润色 | 消息翻译 | 主要配置 |
-| --- | --- | --- | --- |
-| DeepSeek | 支持 | 支持 | API key、endpoint、model |
-| OpenAI-compatible | 支持 | 支持 | API key、endpoint、model |
-| Sakura local | 支持 | 支持 | 本机 endpoint、model；API key 可留空 |
-| Google Cloud Translation | 不支持 | 支持 | Key 池、月度字符额度 |
-| Microsoft Translator | 不支持 | 支持 | API key、region、endpoint |
-| DeepL | 不支持 | 支持 | API key、Free/Pro 方案 |
-| 百度翻译 | 不支持 | 支持 | App ID、Secret Key、endpoint |
-
-输入语言默认自动检测，目标语言可从预设选择，也可以填写自定义语言名称。润色和消息翻译各自保存 provider、凭据、目标语言、模型参数和提示词。
-
-远程 API endpoint 必须使用 HTTPS。只有 `localhost`、IPv4/IPv6 loopback 和本机通配地址允许 HTTP；URL 中不允许嵌入用户名或密码。
-
-所有 API 请求都禁止自动重定向，避免把消息文本或服务凭据转发到未指定的地址。请直接填写最终可信的 API URL（包括正确路径和末尾斜杠），不要依赖 301/302/303/307/308 跳转。
-
-## 数据边界
-
-插件使用 `BdApi.Data` 在 BetterDiscord 本地数据目录保存以下内容：
-
-- 设置和服务商凭据（`DiscordAITranslator.config.json`），包括 API key、Google Key 池、百度 App ID/Secret Key。BetterDiscord 没有提供跨平台系统凭据保险库，这些值会存在本机数据文件中，请限制该目录的访问权限。
-- 翻译缓存（`DiscordAITranslator.cache.config.json`），默认保留 48 小时、最多 4000 条消息。缓存包含译文和用于区分频道/消息/配置的身份键，可在“数据与诊断”标签页清空。
-- 诊断日志（`DiscordAITranslator.diagnostics.config.json`）。日志设计为保存哈希、状态和错误元数据，不保存原始 API key 或完整消息文本，模型只记录文件名；导出前仍建议检查内容。
-
-v0.4.0 起缓存和诊断日志不再与设置存在同一个文件里；首次启动时旧数据会自动迁移，新文件保存成功之前不会删除旧数据。“恢复默认设置”默认保留 API Key、Google Key 池（含本月用量）和提示词模板。
-
-插件不会把凭据写入 Discord 消息。自定义 endpoint 会收到待润色/翻译文本，因此只应配置你信任的服务。
-
-## 本地验证
-
-推荐使用统一入口，且不需要 Discord 或真实 API key：
-
-```powershell
+git clone https://github.com/MK6657/DiscordAITranslator.git
+cd DiscordAITranslator
 npm ci
 npm run verify
 ```
 
-`scripts/verify-plugin.js` 直接加载根目录插件，覆盖配置迁移、provider 请求与解析、fallback 凭据隔离、缓存、自动翻译队列、长文本、诊断、生命周期和 DOM mock 回归。
+| 命令 | 说明 |
+| --- | --- |
+| `npm run build` | 从 `src/` 使用 esbuild 重新生成根目录 `DiscordAITranslator.plugin.js`（**请勿直接手改生成产物**） |
+| `npm run build:check` | 检查根目录插件产物与源码是否完全同步 |
+| `npm test` | 运行核心模块单测（`tests/core/`）与根插件离线回归（`scripts/verify-plugin.js`） |
+| `npm run ci` | 执行源码检查、产物一致性、全套测试、安装脚本回滚测试与产物完整性检查 |
+| `npm run verify` | 先重新构建，再执行完整验证链 |
+| `npm run release:check` | 与 GitHub Windows CI 一致的完整发布门禁（含许可证、敏感信息、追踪文件与快照一致性校验） |
+| `npm run plugin:install` / `plugin:check` | 本地安装插件 / 校验当前已安装版本与 BetterDiscord 加载状态（自动化可加 `-- -Strict`） |
 
-GitHub Actions 在 `windows-latest` 上使用 Node 22 和 Node 24 执行 `npm ci` 与 `npm run release:check`。标签推送校验该标签对应的提交并记录插件 SHA-256。本地有暂存改动时，发布门禁要求工作树与暂存区一致。暂存区无改动时，命令验证当前工作树。
+### 仓库结构
 
-## 更新和卸载
+- `src/`：唯一手工维护的源码目录，按职责拆分为 `settings/`、`providers/`、`cache/`、`validation/`、`diagnostics/`、`auto-translation/`、`quick-panel/`、`intake/`、`composer/`、`discord/`、`ui/`、`css/`。
+- `DiscordAITranslator.plugin.js`：由 `npm run build` 生成并提交的单文件 BetterDiscord 发布产物。
+- `tests/core/` & `scripts/`：核心模块单测、根插件离线回归、Windows 安装与校验脚本及发布门禁。
+- `docs/`：架构说明、关键链契约、宿主验收记录与维护交接文档。
 
-- 更新：替换根插件后重新启用；安装脚本会保留带时间戳的旧插件备份。
-- 卸载：在 BetterDiscord 插件页面禁用并删除 `DiscordAITranslator.plugin.js`。
-- 清理本地数据：先在插件设置中清空缓存和诊断，再按需删除 BetterDiscord 插件目录中的 `DiscordAITranslator.config.json`、`DiscordAITranslator.cache.config.json` 和 `DiscordAITranslator.diagnostics.config.json`。操作前保留需要的服务商配置。
+<details>
+<summary>更新、卸载与常见问题排查</summary>
 
-## 故障排查
+- **更新**：覆盖替换 `DiscordAITranslator.plugin.js` 后重新启用即可；使用安装脚本会自动创建带时间戳的备份文件。从 `v0.3.0` 升级至 `v0.4.0` 会自动将缓存与诊断日志迁移至独立文件，并平滑转换频道规则（不会擅自对任何频道开启自动翻译）。
+- **卸载与清理**：在 BetterDiscord 中禁用并删除 `DiscordAITranslator.plugin.js`；如需彻底清除数据，可再删除同目录下的 `DiscordAITranslator.config.json`、`DiscordAITranslator.cache.config.json` 与 `DiscordAITranslator.diagnostics.config.json`。
+- **`npm ci` 失败**：确认 Node 版本为 22 / 24 LTS，删除残缺的 `node_modules` 后重试（不要删除 `package-lock.json`）。
+- **`build:check` 提示产物过期**：运行 `npm run build`。
+- **BetterDiscord 看不到插件 / 未生效**：在普通 PowerShell 中运行 `npm run plugin:check` 检查是否被 AppData 重定向或 BetterDiscord 未注入启动文件。
+- **Discord 更新导致按钮消失或异常**：先在「数据与诊断」导出脱敏诊断信息并查看宿主健康卡片，再提交 Issue。
 
-- `npm ci` 失败：确认 Node 是 22/24 LTS，并删除未完成的 `node_modules` 后重试；不要删除 `package-lock.json`。
-- `build:check` 报生成物过期：运行 `npm run build`。
-- 安装脚本找不到插件：先运行 `npm run build`。
-- BetterDiscord 看不到插件：运行 `npm run plugin:install:dry-run` 检查目标路径，再确认 BetterDiscord profile 已启用插件。
-- Discord 更新后按钮消失：先导出脱敏诊断并运行 `npm test`，再检查 Discord DOM/BetterDiscord API 兼容性。
+</details>
 
-## 开源状态
+<details>
+<summary>当前已知边界与维护文档索引</summary>
 
-项目采用 MIT 许可证。历史来源/相似性审计记录的结论为独立实现、低风险通过；本次整理并未重新开展法律审计。`external/` 和内部研究资料不会进入仓库或发布产物，`npm run release:check` 会校验许可证、来源记录、敏感信息模式、构建、回归和安装器；模式扫描不能代替完整安全审计。详情见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) 与 [docs/provenance-review.md](docs/provenance-review.md)。
+- 仅面向桌面端 BetterDiscord（Android 移动端不支持）；Discord DOM、内部 Webpack 模块与 BetterDiscord API 的上游变动可能影响挂载兼容性。
+- 当前验证基线为 Windows 11 + Discord Stable；`v0.4.0` 新界面与部分服务商错误分支已通过大规模离线与模拟 DOM 回归，真机验收持续推进中。
+- 维护与贡献参考：
+  - [CHANGELOG.md](CHANGELOG.md) — 详细版本变更日志
+  - [CONTRIBUTING.md](CONTRIBUTING.md) — 贡献与提交流程
+  - [docs/architecture.md](docs/architecture.md) — 源码/产物边界与模块架构
+  - [docs/critical-chain-contracts.md](docs/critical-chain-contracts.md) — 重构不可破坏的关键链行为契约
+  - [docs/host-smoke-test.md](docs/host-smoke-test.md) — 真机宿主冒烟记录
+  - [docs/optimization-handoff.md](docs/optimization-handoff.md) & [docs/maintenance-handoff-2026-10-22.md](docs/maintenance-handoff-2026-10-22.md) — 历史验收清单与维护交接
 
-## 当前限制
+</details>
 
-- Discord DOM、Webpack 模块和 BetterDiscord API 更新仍可能影响按钮、菜单、observer 和消息身份解析。
-- v0.4.0 的新界面只在离线测试和浏览器模拟页面中检查过，尚未在真实 Discord 中验收：快捷面板与状态标记、设置标签页与搜索、恢复默认对话框、快捷键录制、模型检测、试译一句，以及从 v0.3.0 升级后缓存译文的保留与频道规则的转换。
-- “发送前询问”确认后通过向输入框发送回车来发送；润色和公开双语的写入依赖 Discord 输入框（Slate 编辑器）的内部结构。离线测试使用模拟输入框，真实输入框的写入和发送仍需验收。
-- Google、百度、DeepL 的新错误提示目前只用模拟的服务商回复测试过，尚未用真实账号逐一触发。
-- 真实宿主记录只覆盖 v0.2.0 的加载/设置/启停和 9 月 8 日的有限本地模型冒烟测试；v0.3.0 与 v0.4.0 都没有完成完整的真机验收。
-- 已拆出设置、服务商、缓存、校验、诊断、自动翻译队列/请求、快捷面板等模块；主实现仍约 17,700 行，离线回归脚本也较大。
-- Android 端不能直接使用 BetterDiscord 插件。
-- API key 由 BetterDiscord 本地数据存储保存，当前没有 Windows Credential Manager 等系统级加密集成。
+## 开源协议
 
-## 下一阶段
-
-1. 优先完成 v0.4.0 的真机验收（清单见 [接手说明](docs/optimization-handoff.md) 和 [宿主记录](docs/host-smoke-test.md)）：快捷面板、设置窗口、恢复默认、发送前询问、快捷键录制、真实服务商的错误提示、本地模型检测，以及启停、滚动、编辑和停止后的晚到响应。
-2. 验收通过后，将自动翻译的多套 Set/Map/Array 收敛为单一任务状态机，再抽离 Discord 适配层。
-3. 后续考虑仅内存缓存选项、设置导入导出、更明确的数据清理入口，以及随缓存格式升级把缓存键中的消息身份改为哈希。
-
-`HANDOFF.md`、`BASELINE-2026-07-26b.md`、`BASELINE-2026-07-26c.md` 为历史记录。旧源码快照、回退压缩包、运行配置及依赖目录不随仓库提交。安全问题请参阅 [SECURITY.md](SECURITY.md)，不要把真实 key、消息正文或未脱敏日志放进 issue。
-
-9 月 8 日的安装器回滚与 API 重定向修复、回归覆盖及当时的产物指纹见 [2026-09-08 复查记录](docs/review-2026-09-08.md)；v0.4.0 的构建指纹见 [接手说明](docs/optimization-handoff.md)。
+本项目基于 [MIT License](LICENSE) 开源。请保留 [LICENSE](LICENSE) 与 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)；独立实现来源复核记录见 [docs/provenance-review.md](docs/provenance-review.md)。

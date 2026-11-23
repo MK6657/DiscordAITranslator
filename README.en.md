@@ -1,166 +1,201 @@
+<div align="center">
+
 # Discord AI Translator
 
-[中文](README.md) | [English](README.en.md)
+**A Windows-first BetterDiscord plugin for AI message translation, writing polish, and public bilingual chat**
 
-Continuing maintenance? Start with the [October 22 maintenance handoff](docs/maintenance-handoff-2026-10-22.md), including the new branch, three confirmed open issues, evidence limits, next steps, and an English summary. The [optimization handoff](docs/optimization-handoff.md) retains the feature history and full host acceptance checklist.
+[![Windows CI](https://github.com/MK6657/DiscordAITranslator/actions/workflows/ci.yml/badge.svg)](https://github.com/MK6657/DiscordAITranslator/actions/workflows/ci.yml)
+![Preview](https://img.shields.io/badge/preview-v0.4.0-5865F2)
+![Release](https://img.shields.io/badge/release-v0.3.0-2EA043)
+![Platform](https://img.shields.io/badge/platform-Windows%20BetterDiscord-0078D4)
+![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
-A Windows-first BetterDiscord desktop plugin for message translation, writing assistance, and public bilingual messages. This is a third-party project, not an official Discord product. Review the rules and risks of client modifications before using it; use a dedicated test account and channel for initial testing.
+[简体中文](README.md) | **English**
 
-## Current branch
+</div>
 
-The current branch contains the **v0.4.0 source preview**.
+---
 
-The version appears in the settings window's title bar, in the start notification and in BetterDiscord's plugin list. Changes are listed in [CHANGELOG.md](CHANGELOG.md).
+Discord AI Translator brings seamless multilingual communication and expressive writing directly into Discord. It supports **7 AI & machine translation providers** (including local models via Sakura), **59 built-in writing polish presets** (general tones, Chinese regional dialects, and historical/global personas), **public bilingual messaging**, a **dual-mode quick panel**, and smooth, jank-free rendering.
 
-Local validation covers source syntax, reproducible builds, offline module and artifact regressions, installer rollback, and artifact structure. v0.4.0 rebuilds the settings window, adds a quick panel, and reworks the translation and error lines in chat. The live Discord checks for the new interface and "Ask before sending" are listed in the [host smoke record](docs/host-smoke-test.md) and the [optimization handoff](docs/optimization-handoff.md).
+> [!NOTE]
+> This is an independent third-party BetterDiscord plugin and is not affiliated with Discord. Review the rules and risks of client modifications before use, and start with manual translation in a dedicated test channel before enabling automatic translation.
 
-## Features
+## Highlights
 
-- Chinese and English interface. The AI button in Discord's user panel opens a quick panel, and a status badge on it shows whether the translation service is working.
-- A full settings window with six tabs, settings search, a setup checklist, service status cards, model detection, and "Try a sentence" / "Try polishing".
-- Polish drafts, polish again, restore the original, ask before sending, and a recordable polishing hotkey.
-- Compose public bilingual messages containing both a translation and the original.
-- Translate messages through message buttons or context menus, including reply previews and long-text recovery. Translated lines can be copied, translated again without the cache, or hidden, and partial translations say which parts are missing.
-- When a translation fails, the error line under the message says why and offers "Open settings", "Test connection", "Retry" or the wait time.
-- Optional visible-message automatic translation, channel rules (follow main switch / always translate / never translate), history backfill, prefetch, concurrency limits, and service cooldowns.
-- Memory/persistent translation caches (counted in messages), request deduplication, output validation, and diagnostics.
-- Separate writing/translation profiles and prompt templates.
-- Optional manual-translation fallback services, disabled by default; Sakura local does not automatically fall back to the cloud.
+### 💬 Channel Message Translation (Manual & Automatic)
+- **Flexible manual triggers**: Per-message Translate button (on hover / always / off) and right-click context menu, with support for **reply preview translation** and **long-text chunked recovery** (preserving translated segments and marking missing parts for one-click retry).
+- **Smart automatic translation**: Visible-message auto-translation, **per-channel rules** (*Follow main switch* / *Always translate* allow-list / *Never translate* block-list), explicit history backfill, nearby-message prefetch, configurable 1–10 concurrency, cooldown backoff, and terminal-failure protection.
+- **Customizable display & inline actions**: Place translations above or below the original message, pick from 3 visual styles (tinted background / muted text / `TR` tag) and 2 font scales (100% / 90%), **mask translations** (click or press Enter/Space to reveal), **hide original after translation** (hover or focus to peek), and automatic **RTL layout** for Arabic, Hebrew, Persian, and other right-to-left languages.
+- **Hover / keyboard toolbar**: Hover or Tab onto any translated line to **Copy**, **Retranslate (bypass cache)**, or **Hide**.
+- **Actionable inline error lines**: Failed translations explain what went wrong in plain language right below the message with direct buttons for *Open settings*, *Test connection*, *Retry*, or a live cooldown timer.
 
-## Settings at a glance
+### ✨ Composer AI Polish & 59 Built-In Style Presets
+- **Split Polish button & quick tone picker**: Polish drafts right inside Discord's message composer, or open the split dropdown to switch presets in one click—organized by **General / Dialect / Persona** tabs and grouped sections without opening full settings.
+- **Complete writing workflow**: Supports **re-polishing** (from either the original draft or the latest result), **one-click Restore original**, **Ask before sending** confirmation dialog, a **recordable polish hotkey** (default `Ctrl+Alt+P`), and categorized custom user templates.
+- **Format & draft safety**: Preserves line breaks, user/role/channel mentions, custom emoji, block quotes, code blocks, and zero-width spaces. If a result arrives after you changed the draft or switched channels, it opens in a non-destructive result panel with Copy and Insert actions instead of overwriting your typing.
 
-- **Quick panel:** click the AI button next to Discord's settings gear in the lower-left user panel. It holds the auto-translate switch, this channel's rule, the target language, mask translations, hide original, translation position and a Test button. "Open full settings" is at the bottom and behind the gear icon at the top. Esc closes it.
-- **Status badge:** the small mark on the AI button's corner uses shape as well as colour. Green dot = working; amber ring = translating or testing; amber triangle = rate-limited or cooling down, resumes by itself; red "!" = needs you (missing or rejected API key, quota used up, local service not responding, failed test, unusable API URL, URL or model not found); grey dash = not auto-translating in this channel. Hover it for a text summary.
-- **Full settings:** six tabs, Overview, Translate messages, Composer tools, Display, Advanced, and Data & diagnostics. The search box above the tabs finds any setting by name or description and jumps to it. BetterDiscord's plugin list opens the same settings.
-- **Channel rule:** "Follow main switch" follows the auto-translate switch; "Always translate" is an allow-list, so the channel is auto-translated even while the main switch is off; "Never translate" always wins. Manual translation ignores channel rules. When updating from v0.3.0, "Inherit global" and "Enable in this channel" both become "Follow main switch" (in v0.3.0 "Enable in this channel" already followed the main switch) and "Disable in this channel" becomes "Never translate", so no channel starts auto-translating after the update.
-- **Reset to defaults:** in the Danger zone at the end of Data & diagnostics. The dialog lists what returns to defaults. "Keep API keys, the Google key pool and prompt templates" is ticked by default and the interface language stays; untick the box to erase those too.
+| Category | Built-in Presets | Highlights |
+| --- | :---: | --- |
+| **General** | 8 | Natural Chat, Polite & Clear, Short & Direct, Native Casual, Tech / Bug Report, Gaming / Squad Chat, Tactful / High-EQ, Formal / Announcement |
+| **Chinese Dialects** | 22 | Grouped across **South China & Min-Tai** (Cantonese, HK Cantonese, Hakka, Chaoshan, Minnan, Taiwanese, etc.), **Southwest** (Sichuan-Chongqing, Yunnan, Guizhou), **North** (Dongbei, Beijing, Tianjin, Shaanxi, Henan, Shandong, Xinjiang), and **East & Central** (Shanghainese, Wu, Nanjing, Wuhan, Hunan) |
+| **Personas** | 29 | Grouped across **Monarchs & Rulers** (Qin Shi Huang, Zhu Yuanzhang, Cao Cao, Yongzheng, etc.), **Strategists & Generals** (Zhuge Liang, Sima Yi, Sun Tzu, Xiang Yu), **Writers & Thinkers** (Lu Xun, Lin Daiyu, Su Shi, Wang Yangming, Zhuangzi, Guo Degang, etc.), and **Global Icons** (Shakespeare, Donald Trump, Nietzsche, Karl Marx, Napoleon, Churchill, Elon Musk) |
+
+<details>
+<summary>Browse all 59 built-in polish presets & 6 translation prompt templates</summary>
+
+- **General Polish (8)**: Natural Chat, Polite & Clear, Short & Direct, Native Casual, Tech / Bug Report, Gaming / Squad Chat, Tactful / High-EQ, Formal / Announcement
+- **Chinese Dialects (22)**:
+  - South China & Min-Tai: Guangfu Cantonese, HK Cantonese, Hakka, Chaoshan, Guangxi Nanpu, Minnan, Taiwanese
+  - Southwest: Sichuan-Chongqing, Yunnan, Guizhou
+  - North: Dongbei, Beijing, Tianjin, Shaanxi, Henan, Shandong, Xinjiang
+  - East & Central: Shanghainese, Suzhou & Hangzhou Wu, Nanjing, Wuhan, Hunan
+- **Personas (29)**:
+  - Monarchs & Rulers: Qin Shi Huang, Emperor Wu of Han, Zhu Yuanzhang, Chiang Kai-shek, Cao Cao, Emperor Taizong, Yongzheng
+  - Strategists & Generals: Zhuge Liang, Sima Yi, Sun Tzu, Xiang Yu
+  - Writers & Thinkers: Lu Xun, Lin Daiyu, Wang Yangming, Li Bai, Su Shi, Confucius, Zhuangzi, Eileen Chang, Qian Zhongshu, Wang Xiaobo, Guo Degang
+  - Global Icons: Shakespeare, Donald Trump, Nietzsche, Karl Marx, Napoleon, Churchill, Elon Musk
+- **Message Translation Templates (6)**: Natural, Literal, Slang & Casual Chat, Tech / AI / Dev, Gaming / ACG Community, Official Announcements / Changelogs
+
+</details>
+
+### 🌐 Public Bilingual Messaging
+- Click the **Bilingual** button beside the composer to translate your draft and format it as a public bilingual message (translation + original) for multilingual servers.
+- Optional **Bilingual after Polish** workflow; preserves code blocks, mentions, custom emoji, and spoiler tags without nesting previous translations when re-run.
+
+### ⚡ Dual-Mode Quick Panel & Full Settings Window
+- **User-panel AI launcher**: Click the AI button in Discord's bottom-left user bar to open a compact **two-tab quick panel** (*Translation* / *Polish*):
+  - **Translation tab**: Switch saved service profiles, toggle auto-translate, set the current channel rule, pick target language (13 presets + custom), select translation prompt template, toggle mask/hide original, switch translation position, and test the connection.
+  - **Polish tab**: Switch polish service profiles, toggle composer polish, set output language and tone preset, adjust creativity (temperature slider + *Steady / Balanced / Creative* presets), choose after-polish action and re-polish source, toggle public bilingual, and test lines in the built-in **Quick Try Polish** drawer.
+- **Live status badge** (distinct shape and color, with hover tooltip summary):
+
+| Badge | Meaning |
+| --- | --- |
+| 🟢 Green dot | Connected and operating normally |
+| 🟠 Amber ring | Actively translating or running a connection test |
+| 🔺 Amber triangle | Rate-limited or cooling down; resumes automatically |
+| ❗ Red `!` | Needs attention (missing/rejected API key, quota exhausted, local service offline, invalid URL/model) |
+| ➖ Grey dash | Auto-translation is off for the current channel |
+
+- **6-tab full settings window**: *Overview* (setup checklist + live service status cards), *Translate messages*, *Composer tools*, *Display* (including *Follow Discord / Light / Dark* window themes), *Advanced*, and *Data & diagnostics* (including a host-health diagnostics card). Includes instant **settings search**, **model auto-detection** for local/OpenAI-compatible endpoints, built-in **Try a sentence / Try polishing**, and live in-place Chinese/English UI switching.
+
+## Supported Providers
+
+Message translation and composer polishing store **separate** provider profiles, credentials, target languages, model parameters, and prompt templates, and let you save multiple service profiles for quick switching.
+
+| Provider | Composer Polish | Message Translation | Key Settings & Capabilities |
+| --- | :---: | :---: | --- |
+| **DeepSeek** | ✅ | ✅ | API key, endpoint, model (thinking toggle supported) |
+| **OpenAI-compatible** | ✅ | ✅ | API key, endpoint, model, one-click server model detection |
+| **Sakura local** | ✅ | ✅ | Local endpoint (e.g. `127.0.0.1:8080`), model auto-detection; optional key, **never falls back to cloud** |
+| **Google Cloud Translation** | — | ✅ | Multi-key rotation pool, monthly character budget tracking, per-key cooldowns |
+| **Microsoft Translator** | — | ✅ | API key, region, endpoint |
+| **DeepL** | — | ✅ | API key, Free / Pro plan, Traditional Chinese support |
+| **Baidu Translate** | — | ✅ | App ID, Secret Key, endpoint, granular Baidu error handling |
+
+> Optional **manual-translation fallback providers** can be enabled and ordered in settings (off by default). When `Sakura local` is the primary provider, cloud fallback is disabled to keep local text private.
 
 ## Install the plugin
 
-The **published fixed version** is `v0.3.0`, released as a pre-release on September 25, 2026.
+The **published fixed version** is `v0.3.0` (pre-released on September 25, 2026):
 
-1. Set up BetterDiscord for the Discord desktop client.
-2. Open Discord settings → BetterDiscord → Plugins → Open Plugins Folder.
+1. Install [BetterDiscord](https://betterdiscord.app/) for the Discord desktop client.
+2. Open Discord Settings -> `BetterDiscord` -> `Plugins` -> `Open Plugins Folder`.
 3. Download [DiscordAITranslator.plugin.js from the v0.3.0 Release](https://github.com/MK6657/DiscordAITranslator/releases/download/v0.3.0/DiscordAITranslator.plugin.js).
-4. Copy the file into the plugins folder and enable it.
-5. Configure your chosen provider in plugin settings. Start with manual translation in a dedicated test channel before enabling automatic translation.
+4. Place the file into your plugins folder, enable it, and configure your provider from the bottom-left AI button.
 
-A typical Windows plugin directory is `%APPDATA%\BetterDiscord\plugins`.
+Typical Windows plugins directory:
+```text
+%APPDATA%\BetterDiscord\plugins
+```
 
 ### Current branch source preview
 
-To try the branch's `v0.4.0` source preview, download the raw [DiscordAITranslator.plugin.js](DiscordAITranslator.plugin.js) from the repository root or clone this branch and run `npm run build`.
+To try the latest `v0.4.0` source preview (featuring the dual-mode quick panel, split composer tone picker, 59 dialect/persona polish presets, redesigned 6-tab settings window, and performance optimizations; see [CHANGELOG.md](CHANGELOG.md)):
 
-The Windows installer looks for BetterDiscord profiles in the `data` directory next to a custom `-PluginsDir`. Use `-ProfileDir` to select one profile directory containing `plugins.json`.
+- **Option 1 (Direct file download)**: Download the raw [DiscordAITranslator.plugin.js](DiscordAITranslator.plugin.js) directly from the repository root and place it in your BetterDiscord plugins folder (no Node.js required).
+- **Option 2 (Windows installer script)**: Clone the repository and run from a **standard Windows PowerShell** opened from the Start menu (verifies syntax & SHA-256, backs up any previous version, and transactionally enables the plugin):
 
-### Check which version is installed
+```powershell
+# Preview target paths without writing
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-plugin.ps1 -WhatIf
 
-From a clone of this repository, run `npm run plugin:check`. It lists the version and SHA256 of the repository build and of the installed plugin, and checks three reasons an install may not take effect: a private BetterDiscord copy kept by another app (such as an AI desktop app), this window's writes being redirected into an app's private storage, and Discord's startup file not loading BetterDiscord. Run installs and checks from a normal PowerShell window opened from the Start menu, not from an AI app's built-in terminal.
+# Install and enable (add -NoEnable to install without auto-enabling)
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-plugin.ps1
 
-Use `npm run plugin:check -- -Strict` in automation to require an enabled profile and a confirmed Discord loading path.
+# Verify installed plugin version & SHA-256 against the repository build
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\check-installed-plugin.ps1
+```
 
-## Providers
+> [!TIP]
+> Run the installer from a standard Start-menu PowerShell window rather than a packaged desktop app's embedded terminal. If `%APPDATA%` writes are redirected to a private app container, the installer detects it and exits with code `2` without making changes (use `-PluginsDir` / `-ProfileDir` for custom paths, or `-AllowRedirectedAppData` only when intentionally targeting a private copy).
 
-| Provider | Writing assistance | Message translation | Main configuration |
-| --- | --- | --- | --- |
-| DeepSeek | Yes | Yes | API key, endpoint, model |
-| OpenAI-compatible | Yes | Yes | API key, endpoint, model |
-| Sakura local | Yes | Yes | Local endpoint, model; key may be empty |
-| Google Cloud Translation | No | Yes | Key pool, monthly character budget |
-| Microsoft Translator | No | Yes | API key, region, endpoint |
-| DeepL | No | Yes | API key, Free/Pro plan |
-| Baidu Translate | No | Yes | App ID, Secret Key, endpoint |
+## Privacy, Security & Local Data
 
-Writing and translation keep separate provider, credentials, language, model, and prompt settings. The plugin does not supply a translation service; usage may incur charges with your provider.
+- **Strict endpoint policy**: Remote endpoints must use HTTPS. HTTP is accepted only for recognized local endpoints (`localhost`, IPv4/IPv6 loopback, and `0.0.0.0`). Embedded URL usernames/passwords are rejected.
+- **No automatic HTTP redirects**: All API requests disable redirect following (`301/302/303/307/308`) so message contents and credentials are never forwarded to an unspecified destination. Always enter the canonical endpoint URL.
+- **Split local storage**: Data is stored locally in BetterDiscord's plugins directory via `BdApi.Data`:
+  - `DiscordAITranslator.config.json`: settings and provider credentials (BetterDiscord does not provide an OS credential vault; protect access to your BetterDiscord directory).
+  - `DiscordAITranslator.cache.config.json`: translation cache (default 48-hour TTL, up to 4,000 messages; clearable in *Data & diagnostics*).
+  - `DiscordAITranslator.diagnostics.config.json`: redacted diagnostics (records hashes, statuses, error metadata, and model filenames—not raw keys or full message bodies).
+- **Safe Reset to defaults**: Located in *Data & diagnostics -> Danger zone*, keeping API keys, the Google key pool (with monthly usage), prompt templates, and UI language checked by default.
+- For security reports, see [SECURITY.md](SECURITY.md). Never share real API keys, raw private messages, or unredacted logs in public issues.
 
-Remote endpoints must use HTTPS. HTTP is accepted only for local endpoints recognized by the plugin, including localhost, loopback addresses, and 0.0.0.0. Embedded URL usernames/passwords are rejected. Configure only endpoints you trust: they receive the text being translated or polished.
+## Development & Verification
 
-All API requests reject automatic redirects, preventing message bodies and provider headers from being forwarded to an unspecified destination. Configure the final trusted URL directly, including the correct path and trailing slash; do not rely on HTTP 301/302/303/307/308 redirects.
-
-## Privacy and local data
-
-The plugin uses BetterDiscord's `BdApi.Data` storage:
-
-- Settings and provider credentials are stored locally in `DiscordAITranslator.config.json`. There is no Windows Credential Manager integration or system-vault encryption; protect the BetterDiscord data directory.
-- Translation caches (`DiscordAITranslator.cache.config.json`) default to a 48-hour TTL and up to 4,000 messages. They contain translations and identity keys used to distinguish messages/channels/configurations. Clear them in Data & diagnostics when needed.
-- Diagnostics (`DiscordAITranslator.diagnostics.config.json`) are designed to store hashes, status, and error metadata rather than raw keys or full message text; models are recorded by file name only. Always inspect exported logs before sharing them.
-
-Since v0.4.0 the cache and the diagnostics log no longer share the settings file. Existing data moves over on first start, and the old copy is removed only after the new file is saved. "Reset to defaults" keeps API keys, the Google key pool (with this month's usage) and prompt templates unless you untick that option.
-
-Translation requests send text to the configured service. Public bilingual output is visible to message recipients; displaying a received-message translation locally does not itself send a Discord message. Never commit real provider settings, runtime data, or unredacted logs. See [SECURITY.md](SECURITY.md) for reporting guidance.
-
-## Develop and verify on Windows
-
-The validation target is Windows 11 with Node.js 22 or 24 and Windows PowerShell 5.1. Discord and BetterDiscord are needed only for actual installation and host tests; offline validation requires no real API keys.
+Validation baseline: Windows 11, Node.js 22 or 24 LTS, and Windows PowerShell 5.1 (offline verification requires neither Discord nor real API keys).
 
 ```powershell
 git clone https://github.com/MK6657/DiscordAITranslator.git
 cd DiscordAITranslator
 npm ci
-npm run release:check
+npm run verify
 ```
 
-The release gate requires a Git repository rooted at this project directory and checks tracked files, sensitive-data patterns, licensing records, and the full CI suite. For a source ZIP without Git metadata, use `npm run ci` instead. The sensitive-data scan is a safeguard, not a comprehensive security audit.
+| Command | Description |
+| --- | --- |
+| `npm run build` | Rebuild `DiscordAITranslator.plugin.js` from `src/` via esbuild (**never hand-edit the generated bundle**) |
+| `npm run build:check` | Verify that the committed plugin bundle matches `src/` |
+| `npm test` | Run core module tests (`tests/core/`) and full offline artifact regressions (`scripts/verify-plugin.js`) |
+| `npm run ci` | Run source checks, build consistency, unit/artifact tests, installer rollback tests, and artifact checks |
+| `npm run verify` | Rebuild first, then run the full validation suite |
+| `npm run release:check` | Full release gate identical to GitHub Windows CI (license, secrets, tracked files, snapshot & CI checks) |
+| `npm run plugin:install` / `plugin:check` | Install into BetterDiscord / compare installed vs. repo build (pass `-- -Strict` in automation) |
 
-```powershell
-npm run build          # Regenerate the root plugin from src/
-npm run build:check    # Check the artifact without changing it
-npm run check          # Check JavaScript source syntax
-npm test               # Core module tests and offline plugin regressions
-npm run test:installer # Temporary-directory installation/rollback tests
-npm run ci             # Source, build consistency, tests, and artifact checks
-npm run verify         # Rebuild first, then run validation
-npm run release:check  # Full repository release gate
-```
+### Repository Layout
 
-GitHub Actions runs the release gate on Windows with Node 22 and 24. Tag pushes verify the tagged commit and record the plugin's SHA-256. For local checks with staged changes, the gate requires the working tree to match the index. With no staged changes, it verifies the working tree. Installer tests use temporary BetterDiscord profiles.
+- `src/`: Canonical source organized into `settings/`, `providers/`, `cache/`, `validation/`, `diagnostics/`, `auto-translation/`, `quick-panel/`, `intake/`, `composer/`, `discord/`, `ui/`, and `css/`.
+- `DiscordAITranslator.plugin.js`: Reproducible single-file BetterDiscord plugin generated by `npm run build`.
+- `tests/core/` & `scripts/`: Focused module test suites, offline artifact regressions, Windows installer/check scripts, and release gates.
+- `docs/`: Architecture docs, critical-chain contracts, host smoke records, and maintenance handoffs.
 
-To install into your actual profile after validation:
+<details>
+<summary>Updates, Removal & Troubleshooting</summary>
 
-```powershell
-npm run plugin:install:dry-run
-npm run plugin:install
-# Or install without automatically enabling the plugin:
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/install-plugin.ps1 -NoEnable
-```
+- **Updating**: Replace `DiscordAITranslator.plugin.js` and re-enable it; the installer automatically creates a timestamped backup. Upgrading from `v0.3.0` to `v0.4.0` automatically migrates cache and diagnostic logs into separate files and preserves existing channel-rule semantics without enabling auto-translation on unexpected channels.
+- **Uninstalling**: Disable and delete `DiscordAITranslator.plugin.js` in BetterDiscord. To remove local data as well, delete `DiscordAITranslator.config.json`, `DiscordAITranslator.cache.config.json`, and `DiscordAITranslator.diagnostics.config.json` from your plugins directory.
+- **`npm ci` fails**: Ensure Node.js 22 or 24 LTS is installed, remove a partial `node_modules` folder, and retry (keep `package-lock.json`).
+- **`build:check` reports a stale bundle**: Run `npm run build`.
+- **Plugin missing or not updating in BetterDiscord**: Run `npm run plugin:check` from a normal Start-menu PowerShell to detect AppData redirection or missing BetterDiscord injection.
+- **Discord update breaks UI or buttons**: Export redacted diagnostics from *Data & diagnostics*, inspect the Host Health card, and open an issue.
 
-The installer checks syntax and SHA256, backs up an existing plugin, and supports rollback when profile updates fail.
+</details>
 
-Before it writes anything (and also with `-WhatIf`), the installer checks whether the window runs inside a packaged desktop app, such as an AI app's built-in terminal. Such a window's new `%APPDATA%` files are redirected into the app's private storage, which a normally started Discord never reads. In that case the installer explains why, changes nothing and exits with code 2. Run it again from a normal PowerShell window opened from the Start menu and confirm with `npm run plugin:check`. Add `-AllowRedirectedAppData` only if you really want to install into that app's private copy.
+<details>
+<summary>Known Limitations & Maintainer Docs</summary>
 
-## Repository layout
+- Desktop BetterDiscord only (Android/mobile clients are not supported). Upstream Discord DOM, Webpack module, and BetterDiscord API changes remain ongoing compatibility risks.
+- Validated on Windows 11 + Discord Stable; `v0.4.0` UI and provider error paths have extensive offline/simulated DOM coverage while full live host acceptance continues.
+- Documentation & maintenance links:
+  - [CHANGELOG.md](CHANGELOG.md) — Version history and upgrade/downgrade notes
+  - [CONTRIBUTING.md](CONTRIBUTING.md) — Contribution guidelines
+  - [docs/architecture.md](docs/architecture.md) — Source/artifact boundary and module architecture
+  - [docs/critical-chain-contracts.md](docs/critical-chain-contracts.md) — Behavioral contracts for refactors
+  - [docs/host-smoke-test.md](docs/host-smoke-test.md) — Live Discord host smoke test records
+  - [docs/optimization-handoff.md](docs/optimization-handoff.md) & [docs/maintenance-handoff-2026-10-22.md](docs/maintenance-handoff-2026-10-22.md) — Acceptance checklists and maintenance handoff notes
 
-- `src/`: canonical implementation. Edit these sources, not the generated plugin.
-- `DiscordAITranslator.plugin.js`: committed, reproducible, single-file plugin.
-- `src/settings/`, `providers/`, `cache/`, `validation/`, `diagnostics/`: extracted settings/provider/cache/output/diagnostic modules.
-- `src/auto-translation/`: queue core, request pipeline, read-only task-state view, channel-rule helper, and render scheduling helpers.
-- `src/quick-panel/`, `src/intake/`, `src/composer/` and `src/css/`: the quick panel, Discord message markup reading, composer write coordination, and the ordered stylesheet modules.
-- `tests/core/` and `scripts/verify-plugin.js`: focused tests and offline artifact regressions.
-- `scripts/`: build/check scripts and Windows installer/tests.
-- `docs/architecture.md` and `docs/critical-chain-contracts.md`: architecture and behavior contracts.
-- `HANDOFF.md` and `BASELINE-2026-07-26*.md`: historical snapshot records, not current setup instructions.
-
-Old source snapshots, rollback ZIPs, local reference checkouts, credentials, and `node_modules/` are excluded from the repository. The original packaging manifest is not included; the intake record contains the runtime artifact hash.
-
-The [September 8 follow-up review](docs/review-2026-09-08.md) records the installer rollback and redirect fixes of that time, their regression coverage, and that day's artifact hash. The intake hash describes the original c baseline, not the hardened artifact. The v0.4.0 build fingerprint is in the [optimization handoff](docs/optimization-handoff.md).
-
-## Updates, removal, and troubleshooting
-
-- Update by replacing the plugin and re-enabling it. The installer retains timestamped backups.
-- Remove by disabling the plugin and deleting its `.plugin.js` file. Clear caches/diagnostics first if you also want to remove local data, then delete `DiscordAITranslator.config.json`, `DiscordAITranslator.cache.config.json` and `DiscordAITranslator.diagnostics.config.json` from the BetterDiscord plugins folder; preserve needed provider settings before deleting any BetterDiscord data.
-- If dependency installation fails, check Node/npm and registry connectivity, then retry `npm ci`. Preserve `package-lock.json`.
-- If `build:check` reports a stale artifact, run `npm run build` and recheck.
-- If the plugin is missing, inspect the target with `npm run plugin:install:dry-run` and confirm BetterDiscord is available.
-- If Discord updates break buttons or translation, collect sanitized diagnostics and run `npm test`; offline success cannot prove live DOM/API compatibility.
-
-## Limitations and next steps
-
-The v0.4.0 interface has been checked only by offline tests and in browser test pages that imitate Discord, not in live Discord: the quick panel and status badge, the settings tabs and search, the reset dialog, the hotkey recorder, model detection, "Try a sentence", and keeping v0.3.0 cached translations and channel rules after the update. "Ask before sending" sends by pressing Enter in the message box, and Polish and public bilingual write through the internals of Discord's message box (a Slate editor); offline tests use a simulated message box, so real writes and sends still need acceptance. The new Google, Baidu and DeepL error messages have been tested only against simulated service replies.
-
-Live host records cover only v0.2.0 loading, settings and lifecycle, plus a limited local-model smoke test on September 8; neither v0.3.0 nor v0.4.0 has completed live acceptance. The main implementation is roughly 17,700 lines, and the offline regression script is large. Discord DOM, internal Webpack modules, and BetterDiscord APIs remain compatibility risks. Android/mobile use is unsupported; Windows 10, other operating systems, and Discord PTB/Canary have not been validated here.
-
-Next, complete live acceptance of v0.4.0 using the checklist in the [optimization handoff](docs/optimization-handoff.md): quick panel, settings window, reset, ask before sending, hotkey recorder, real service errors, local model detection, plus lifecycle cycles, scrolling, message edits and late responses after stopping. Only then proceed with the planned unified automatic-translation state machine and Discord adapter extraction. Memory-only cache, settings import/export, and hashing the message identity inside cache keys (with a cache format upgrade) remain future work.
+</details>
 
 ## License
 
-MIT. Preserve [LICENSE](LICENSE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). The historical [provenance review](docs/provenance-review.md) records a passed independent-implementation review; it has not been rerun as a new legal audit during this repository intake. Local GPL reference checkouts and internal research are not distributed with this repository.
+Released under the [MIT License](LICENSE). Preserve [LICENSE](LICENSE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). See [docs/provenance-review.md](docs/provenance-review.md) for the independent-implementation provenance review record.
