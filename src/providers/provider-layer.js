@@ -28,14 +28,16 @@ const {
     SETTINGS_WRITE_DEBOUNCE_MS
 } = require("../constants");
 const { attachControllerMethods } = require("../core/delegate-methods");
+const { createPluginContext } = require("../core/plugin-context");
 const { createDefaultProviderRegistry } = require("./adapters");
 const localModelHealthMethods = require("./local-model-health");
 const googleKeyPoolMethods = require("./google-key-pool");
 const providerCodecMethods = require("./provider-codecs");
 
 class ProviderLayer {
-    constructor(plugin) {
+    constructor(plugin, ctx = createPluginContext(plugin)) {
         this.plugin = plugin;
+        this.ctx = ctx;
         this.registry = createDefaultProviderRegistry();
         // The last connection test per task (in memory only): what the settings and the quick panel show next to
         // the status, e.g. "Hy-MT2 · 820 ms · just now".
@@ -74,10 +76,10 @@ class ProviderLayer {
 
     isDirectTranslateProvider(configOrProvider) {
         if (this.registry.isDirectTranslate(configOrProvider)) return true;
-        return this.plugin.isGoogleTranslateProvider(configOrProvider)
-            || this.plugin.isMicrosoftTranslateProvider(configOrProvider)
-            || this.plugin.isDeepLTranslateProvider(configOrProvider)
-            || this.plugin.isBaiduTranslateProvider(configOrProvider);
+        return this.isGoogleTranslateProvider(configOrProvider)
+            || this.isMicrosoftTranslateProvider(configOrProvider)
+            || this.isDeepLTranslateProvider(configOrProvider)
+            || this.isBaiduTranslateProvider(configOrProvider);
     }
 
     isLocalTranslationProvider(configOrProvider) {
@@ -98,7 +100,7 @@ class ProviderLayer {
                 url.pathname = `${trimmedPath}/chat/completions`;
                 return url.toString();
             }
-            if (!trimmedPath && this.plugin.isLoopbackEndpoint(raw)) {
+            if (!trimmedPath && this.isLoopbackEndpoint(raw)) {
                 url.pathname = "/v1/chat/completions";
                 return url.toString();
             }
@@ -137,8 +139,8 @@ class ProviderLayer {
         return Object.assign(new Error("Request cancelled"), { name: "AbortError", code: "REQUEST_CANCELLED" });
     }
 
-    throwIfProviderRequestCancelled(signal, lifecycleToken = this.plugin.getLifecycleToken()) {
-        if (signal?.aborted || this.plugin.apiRequestsClosed || lifecycleToken !== this.plugin.getLifecycleToken()) {
+    throwIfProviderRequestCancelled(signal, lifecycleToken = this.ctx.getLifecycleToken()) {
+        if (signal?.aborted || this.plugin.apiRequestsClosed || lifecycleToken !== this.ctx.getLifecycleToken()) {
             throw this.createProviderRequestCancelledError();
         }
     }
@@ -198,7 +200,7 @@ class ProviderLayer {
 
     getEffectiveRequestApiKey(config) {
         if (config?.provider === "googleCloud") {
-            return this.plugin.peekGoogleTranslateAvailableKey(1)?.apiKey || "";
+            return this.peekGoogleTranslateAvailableKey(1)?.apiKey || "";
         }
         if (config?.provider === "baidu") {
             return String(config?.secretKey || "").trim();
@@ -235,14 +237,14 @@ class ProviderLayer {
         const config = this.plugin.getEffectiveTaskConfig(kind, configOverrides);
         if (this.plugin.hasApiKeyOriginMismatch(config)) return false;
         const defaults = DEFAULT_SETTINGS[kind] || {};
-        const providerDefaults = this.plugin.getProviderDefaults(config.provider) || {};
+        const providerDefaults = this.getProviderDefaults(config.provider) || {};
         const endpoint = String(config.endpoint || providerDefaults.endpoint || defaults.endpoint || "").trim();
         const model = String(config.model || providerDefaults.model || defaults.model || "").trim();
         if (config.provider === "baidu") {
             return Boolean(endpoint && String(config.appId || "").trim() && String(config.secretKey || "").trim());
         }
         const requiresModel = this.plugin.isChatCompletionProvider(config);
-        return Boolean(endpoint && (!requiresModel || model) && this.plugin.getEffectiveRequestApiKey(config));
+        return Boolean(endpoint && (!requiresModel || model) && this.getEffectiveRequestApiKey(config));
     }
 
     // Badges are drawn by renderApiStatusBadge, which shows "Not set up" while a required field is missing.
@@ -257,26 +259,36 @@ class ProviderLayer {
     }
 
     setApiStatus(status, state, text, title = "", kind = status?.dataset?.daitKind) {
-        if (!status) return;
-        this.renderStatusBadge(status, kind, state, text, title);
-        if (kind && this.plugin.settings[kind]) {
-            this.plugin.settings[kind].apiStatus = { state, message: title || "" };
-            this.plugin.saveSettings({ debounce: true });
+        try {
+            if (!status) return;
+            this.renderStatusBadge(status, kind, state, text, title);
+            if (kind && this.plugin.settings[kind]) {
+                this.plugin.settings[kind].apiStatus = { state, message: title || "" };
+                this.plugin.saveSettings({ debounce: true });
+            }
+        }
+        finally {
+            this.ctx.events?.emit("api:status", { kind, state });
         }
     }
 
     setApiRuntimeStatus(kind, state, text = this.plugin.getApiStatusText(state), title = "") {
-        if (!kind || !this.plugin.settings[kind]) return;
-        const next = { state, message: title || "" };
-        const previous = this.plugin.getApiStatus(kind);
-        if (previous.state !== next.state || previous.message !== next.message) {
-            this.plugin.settings[kind].apiStatus = next;
-            this.plugin.saveSettings({ debounce: true, delayMs: SETTINGS_WRITE_DEBOUNCE_MS });
-            // An open overview's checklist and cards follow the new state.
-            this.plugin.scheduleOverviewStatusRefresh?.(`${kind}.apiStatus`);
+        try {
+            if (!kind || !this.plugin.settings[kind]) return;
+            const next = { state, message: title || "" };
+            const previous = this.getApiStatus(kind);
+            if (previous.state !== next.state || previous.message !== next.message) {
+                this.plugin.settings[kind].apiStatus = next;
+                this.plugin.saveSettings({ debounce: true, delayMs: SETTINGS_WRITE_DEBOUNCE_MS });
+                // An open overview's checklist and cards follow the new state.
+                this.plugin.scheduleOverviewStatusRefresh?.(`${kind}.apiStatus`);
+            }
+            if (typeof document === "undefined") return;
+            document.querySelectorAll(`.dait-api-status[data-dait-kind='${kind}']`).forEach(status => this.renderStatusBadge(status, kind, state, text, title));
         }
-        if (typeof document === "undefined") return;
-        document.querySelectorAll(`.dait-api-status[data-dait-kind='${kind}']`).forEach(status => this.renderStatusBadge(status, kind, state, text, title));
+        finally {
+            this.ctx.events?.emit("api:status", { kind, state });
+        }
     }
 
     // { ok, model, latencyMs, at, message } of the last connection test of this task, or null when none ran since
@@ -312,7 +324,7 @@ class ProviderLayer {
     // The model named in a chat-completions reply ("model": "..."), shortened to its file name.
     getReportedResponseModel(raw) {
         try {
-            const data = typeof raw === "string" ? this.plugin.parseApiJson(raw) : raw;
+            const data = typeof raw === "string" ? this.parseApiJson(raw) : raw;
             const model = typeof data?.model === "string" ? data.model.trim() : "";
             return model ? this.plugin.getDiagnosticModelLabel(model) : "";
         }
@@ -322,8 +334,8 @@ class ProviderLayer {
     }
 
     getApiTestModel(config = {}, request = {}, reportedModel = "") {
-        if (this.plugin.isDirectTranslateProvider(config)) return "";
-        if (reportedModel && (this.plugin.isLocalTranslationProvider(config) || config?.provider === "openaiCompatible")) return reportedModel;
+        if (this.isDirectTranslateProvider(config)) return "";
+        if (reportedModel && (this.isLocalTranslationProvider(config) || config?.provider === "openaiCompatible")) return reportedModel;
         return this.plugin.getDiagnosticModelLabel(String(request?.body?.model || config?.model || ""));
     }
 
@@ -351,18 +363,18 @@ class ProviderLayer {
         if (kind !== "translation") return [];
         if (this.plugin.settings.ui?.providerFallbackEnabled !== true) return [];
         const currentProvider = String(this.plugin.settings.translation?.provider || "");
-        if (this.plugin.isLocalTranslationProvider({ provider: currentProvider })) return [];
+        if (this.isLocalTranslationProvider({ provider: currentProvider })) return [];
         return (this.plugin.settings.ui?.providerFallbackOrder || [])
             .filter(provider => PROVIDER_ORDER.includes(provider))
             .filter(provider => provider !== currentProvider)
-            .filter(provider => !this.plugin.isLocalTranslationProvider({ provider }));
+            .filter(provider => !this.isLocalTranslationProvider({ provider }));
     }
 
     shouldTryProviderFallback(kind, options = {}, currentConfig = this.plugin.getTaskConfig(kind), error = null) {
         if (kind !== "translation") return false;
         if (options.allowProviderFallback === false) return false;
         if (this.plugin.settings.ui?.providerFallbackEnabled !== true) return false;
-        if (this.plugin.isLocalTranslationProvider(currentConfig)) return false;
+        if (this.isLocalTranslationProvider(currentConfig)) return false;
         const mode = String(options.mode || options.configOverrides?.mode || "");
         if (!/^manual/.test(mode) && !/^public-bilingual(?:-|$)/.test(mode)) return false;
         const type = this.plugin.getAutoTranslationFailureType(error);
@@ -371,7 +383,7 @@ class ProviderLayer {
 
     getProviderFallbackConfig(kind, provider, baseConfig = this.plugin.getTaskConfig(kind)) {
         if (kind !== "translation" || !PROVIDER_ORDER.includes(provider)) return null;
-        const defaults = this.plugin.getProviderDefaults(provider);
+        const defaults = this.getProviderDefaults(provider);
         if (!defaults) return null;
         const profile = this.plugin.getTaskProviderProfile(kind, provider) || {};
         return {
@@ -393,12 +405,12 @@ class ProviderLayer {
     }
 
     async tryProviderFallbackModelTask(kind, input, options = {}, firstError = null, currentConfig = this.plugin.getTaskConfig(kind), diagnosticMode = kind) {
-        if (!this.plugin.shouldTryProviderFallback(kind, options, currentConfig, firstError)) return null;
-        const order = this.plugin.getProviderFallbackOrder(kind);
+        if (!this.shouldTryProviderFallback(kind, options, currentConfig, firstError)) return null;
+        const order = this.getProviderFallbackOrder(kind);
         if (!order.length) return null;
         const firstType = this.plugin.getAutoTranslationFailureType(firstError);
         for (const provider of order) {
-            const fallbackConfig = this.plugin.getProviderFallbackConfig(kind, provider, currentConfig);
+            const fallbackConfig = this.getProviderFallbackConfig(kind, provider, currentConfig);
             if (!fallbackConfig) continue;
             if (!this.plugin.hasUsableApiConfig(kind, fallbackConfig)) {
                 this.plugin.logDiagnostic("model.provider-fallback", "skipped", {
@@ -452,7 +464,7 @@ class ProviderLayer {
             }
             catch (error) {
                 // A cancelled attempt ends the fallback chain; never hand the text to the next provider.
-                if (this.plugin.isRequestCancelled(error)) throw error;
+                if (this.isRequestCancelled(error)) throw error;
                 this.plugin.logDiagnostic("model.provider-fallback", "failed", {
                     ...this.plugin.getDiagnosticBaseMeta("model", `${diagnosticMode}-fallback`, "request-error", { failureType: this.plugin.getAutoTranslationFailureType(error) }),
                     fromProvider: currentConfig?.provider || "",
@@ -470,7 +482,7 @@ class ProviderLayer {
     getAutoTranslationProviderKey(requestOptions = this.plugin.getAutoTranslationOptions()) {
         if (requestOptions?.providerKey) return requestOptions.providerKey;
         const config = this.plugin.getCacheConfigSnapshot("translation", this.plugin.getEffectiveTaskConfig("translation", requestOptions?.configOverrides));
-        if (config.provider === "googleCloud") return this.plugin.getGoogleTranslateProviderKey();
+        if (config.provider === "googleCloud") return this.getGoogleTranslateProviderKey();
         const rawConfig = this.plugin.getEffectiveTaskConfig("translation", requestOptions?.configOverrides);
         const apiKeySource = rawConfig.provider === "baidu"
             ? `${rawConfig.appId || ""}:${rawConfig.secretKey || ""}`
@@ -500,21 +512,21 @@ class ProviderLayer {
     async runModelTaskWithResult(kind, input, options = {}) {
         const { signal, requestContext } = options;
         const diagnosticMode = options?.mode || options?.configOverrides?.mode || kind;
-        const lifecycleToken = this.plugin.getLifecycleToken();
+        const lifecycleToken = this.ctx.getLifecycleToken();
         const startedAt = Date.now();
         let endpoint = "";
         let request;
         let body = {};
         let taskConfig;
         let providerSnapshotKey = "";
-        const requestStillCurrent = () => this.plugin.isLifecycleTokenCurrent(lifecycleToken)
+        const requestStillCurrent = () => this.ctx.isLifecycleTokenCurrent(lifecycleToken)
             && (!providerSnapshotKey || this.plugin.isAutoTranslationProviderSnapshotCurrent(providerSnapshotKey, { configOverrides: taskConfig }));
 
         this.throwIfProviderRequestCancelled(signal, lifecycleToken);
         try {
             taskConfig = { ...this.plugin.getEffectiveTaskConfig(kind, options.configOverrides) };
             const defaultConfig = DEFAULT_SETTINGS[kind] || {};
-            if (this.plugin.shouldAutoDetectLocalProviderModel(taskConfig, defaultConfig)) {
+            if (this.shouldAutoDetectLocalProviderModel(taskConfig, defaultConfig)) {
                 // Never forward generation timeoutMs (45-90s) into the shared /v1/models probe,
                 // so a stalled local server fails fast at LOCAL_PROVIDER_MODEL_DETECTION_TIMEOUT_MS (5s).
                 await this.plugin.refreshLocalProviderDetectedModel(taskConfig, {
@@ -527,20 +539,20 @@ class ProviderLayer {
                 this.throwIfProviderRequestCancelled(signal, lifecycleToken);
             }
             if (kind === "translation" && !options.providerProfilePinned) {
-                providerSnapshotKey = this.plugin.getAutoTranslationProviderKey({ configOverrides: taskConfig });
+                providerSnapshotKey = this.getAutoTranslationProviderKey({ configOverrides: taskConfig });
             }
 
             const buildOptions = { ...options, configOverrides: taskConfig, reserveGoogleTranslateQuota: false };
             const translateAsArray = Boolean(options.translateAsArray || options.googleTranslateAsArray);
             const getRequestKey = () => JSON.stringify([
-                this.plugin.getModelRequestKey(endpoint, request, input),
+                this.getModelRequestKey(endpoint, request, input),
                 Boolean(request?.responseParser && translateAsArray)
             ]);
             const requests = this.plugin.translationRequests;
-            ({ endpoint, request } = this.plugin.buildModelRequest(kind, input, { ...buildOptions, deferGoogleTranslateReservation: true }));
+            ({ endpoint, request } = this.buildModelRequest(kind, input, { ...buildOptions, deferGoogleTranslateReservation: true }));
             let requestKey = getRequestKey();
             if (request?.provider === "googleCloud" && !requests.has(requestKey)) {
-                ({ endpoint, request } = this.plugin.buildModelRequest(kind, input, { ...buildOptions, deferGoogleTranslateReservation: false }));
+                ({ endpoint, request } = this.buildModelRequest(kind, input, { ...buildOptions, deferGoogleTranslateReservation: false }));
                 requestKey = getRequestKey();
             }
             body = request?.body || {};
@@ -581,16 +593,16 @@ class ProviderLayer {
             });
             this.throwIfProviderRequestCancelled(signal);
             if (requestStillCurrent()) {
-                if (providerSnapshotKey && this.plugin.isLocalTranslationProvider(taskConfig)) {
-                    this.plugin.markLocalProviderHealthy(providerSnapshotKey);
+                if (providerSnapshotKey && this.isLocalTranslationProvider(taskConfig)) {
+                    this.markLocalProviderHealthy(providerSnapshotKey);
                     this.plugin.setApiRuntimeStatus("translation", "success", this.plugin.t("apiStatusSuccess"));
                 }
                 else if (providerSnapshotKey && taskConfig.provider === this.plugin.settings.translation?.provider
-                    && this.plugin.getApiStatus("translation").state === "failed") {
+                    && this.getApiStatus("translation").state === "failed") {
                     this.plugin.setApiRuntimeStatus("translation", "success", this.plugin.t("apiStatusSuccess"));
                 }
                 if (kind === "translation" && this.plugin.autoTranslationProviderNoticeAt?.size) {
-                    this.plugin.endTranslationAttentionEpisode?.(providerSnapshotKey || this.plugin.getAutoTranslationProviderKey({ configOverrides: taskConfig }));
+                    this.plugin.endTranslationAttentionEpisode?.(providerSnapshotKey || this.getAutoTranslationProviderKey({ configOverrides: taskConfig }));
                 }
                 this.plugin.logDiagnostic("model.request", "success", {
                     ...this.plugin.getDiagnosticBaseMeta("model", diagnosticMode, "request-success"),
@@ -606,11 +618,11 @@ class ProviderLayer {
         }
         catch (failure) {
             this.throwIfProviderRequestCancelled(signal);
-            if (this.plugin.isRequestCancelled(failure)) throw failure;
+            if (this.isRequestCancelled(failure)) throw failure;
             const error = failure instanceof Error
                 ? Object.assign(new Error(failure.message, { cause: failure.cause }), failure, { name: failure.name, stack: failure.stack })
                 : failure;
-            this.plugin.annotateModelRequestError(error, kind, endpoint, taskConfig, options);
+            this.annotateModelRequestError(error, kind, endpoint, taskConfig, options);
             if (!requestStillCurrent()) throw error;
             this.plugin.logDiagnostic("model.request", "error", {
                 ...this.plugin.getDiagnosticBaseMeta("model", diagnosticMode, "request-error", { failureType: this.plugin.getAutoTranslationFailureType(error) }),
@@ -665,27 +677,27 @@ class ProviderLayer {
             if (adapter?.parseResponse) {
                 return adapter.parseResponse(raw, request, options, this.plugin);
             }
-            return this.plugin.parseModelResponse(raw);
+            return this.parseModelResponse(raw);
         }
         catch (error) {
             // Queued work orphaned by a settings change is aborted, but Google already received the
             // request and counts its characters: so does the key's monthly usage.
-            if (request?.responseParser === "googleTranslate" && error?.requestSent && this.plugin.isRequestCancelled(error)) {
-                this.plugin.markGoogleTranslateKeyUsage(request.googleTranslate?.apiKey, request.googleTranslate?.charCount || 0);
+            if (request?.responseParser === "googleTranslate" && error?.requestSent && this.isRequestCancelled(error)) {
+                this.markGoogleTranslateKeyUsage(request.googleTranslate?.apiKey, request.googleTranslate?.charCount || 0);
             }
             throw error;
         }
         finally {
-            this.plugin.releaseGoogleTranslateRequestReservation(request);
+            this.releaseGoogleTranslateRequestReservation(request);
         }
     }
 
     annotateModelRequestError(error, kind, endpoint, config, options = {}) {
         if (!error || kind !== "translation") return error;
-        if (this.plugin.isLocalProviderUnavailableError(error, endpoint, config, options)) {
+        if (this.isLocalProviderUnavailableError(error, endpoint, config, options)) {
             error.localProviderUnavailable = true;
             error.retryAfterMs = Math.max(Number(error.retryAfterMs || 0), LOCAL_PROVIDER_UNAVAILABLE_RETRY_MS);
-            error.providerKey = error.providerKey || this.plugin.getAutoTranslationProviderKey({ configOverrides: options.configOverrides });
+            error.providerKey = error.providerKey || this.getAutoTranslationProviderKey({ configOverrides: options.configOverrides });
             // The address that did not answer, for the message: the settings may name another service by then.
             error.localProviderEndpoint = error.localProviderEndpoint || String(endpoint || config?.endpoint || "");
         }
@@ -694,12 +706,12 @@ class ProviderLayer {
 
     isLocalProviderUnavailableError(error, endpoint, config, options = {}) {
         if (error?.localProviderUnavailable) return true;
-        if (!this.plugin.isLocalTranslationProvider(config) || !this.plugin.isLoopbackEndpoint(endpoint || config?.endpoint)) return false;
+        if (!this.isLocalTranslationProvider(config) || !this.isLoopbackEndpoint(endpoint || config?.endpoint)) return false;
         const status = Number(error?.status || 0);
         // A long request, or the larger retry after a cut-off output, can time out on a healthy
         // service that is just generating slowly.
-        if (this.plugin.isTimeoutError(error)) return !options?.truncationRetry && !this.plugin.isLongAutoTranslationRequestOptions(options);
-        if (this.plugin.isNetworkError(error)) return true;
+        if (this.isTimeoutError(error)) return !options?.truncationRetry && !this.plugin.isLongAutoTranslationRequestOptions(options);
+        if (this.isNetworkError(error)) return true;
         // An empty or unparseable reply to a successful HTTP request is a bad answer to
         // this one message, not a sign that the service is down.
         return status >= 500;
@@ -736,14 +748,14 @@ class ProviderLayer {
             throw error;
         }
         if (parsed.protocol === "https:") return parsed.href;
-        if (parsed.protocol === "http:" && this.plugin.isLoopbackEndpoint(parsed.href)) return parsed.href;
+        if (parsed.protocol === "http:" && this.isLoopbackEndpoint(parsed.href)) return parsed.href;
         const error = new Error("Remote API endpoints must use HTTPS; HTTP is allowed only for loopback endpoints.");
         error.code = "UNSAFE_API_ENDPOINT";
         throw error;
     }
 
     isTimeoutError(error) {
-        if (this.plugin.isRequestCancelled(error)) return false;
+        if (this.isRequestCancelled(error)) return false;
         return error?.code === "REQUEST_TIMEOUT" || error?.name === "TimeoutError" || /timed out|timeout|ETIMEDOUT/i.test(this.plugin.getErrorSignalText(error));
     }
 
@@ -752,7 +764,7 @@ class ProviderLayer {
     }
 
     isNetworkError(error) {
-        if (this.plugin.isRequestCancelled(error)) return false;
+        if (this.isRequestCancelled(error)) return false;
         return /Failed to fetch|NetworkError|Load failed|fetch failed|Network request failed|ERR_[A-Z_]+|ECONNREFUSED|ECONNRESET|ECONNABORTED|ENOTFOUND|EHOSTUNREACH|ENETUNREACH|connection refused|connection reset|socket hang up|NS_ERROR_CONNECTION_REFUSED/i
             .test(this.plugin.getErrorSignalText(error));
     }
@@ -775,7 +787,7 @@ class ProviderLayer {
     }
 
     async fetchApiResponseText(endpoint, request, timeoutMs = MODEL_REQUEST_TIMEOUT_MS, callerOptions = {}) {
-        const { origin, protocol } = new URL(this.plugin.assertSafeRequestEndpoint(endpoint));
+        const { origin, protocol } = new URL(this.assertSafeRequestEndpoint(endpoint));
         const effectiveTimeoutMs = Number(timeoutMs) > 0 ? Number(timeoutMs) : MODEL_REQUEST_TIMEOUT_MS;
         const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
         if (controller) this.plugin.activeApiControllers.add(controller);
@@ -828,8 +840,8 @@ class ProviderLayer {
                 catch (fetchError) {
                     sent = !this.isBrowserRequestUnsent(fetchError);
                     const canFallbackBdNet = hasBdNet && !controller?.signal.aborted
-                        && !this.plugin.isRequestCancelled(fetchError) && !this.plugin.isTimeoutError(fetchError)
-                        && (!sent || (readOnly && this.plugin.isNetworkError(fetchError)));
+                        && !this.isRequestCancelled(fetchError) && !this.isTimeoutError(fetchError)
+                        && (!sent || (readOnly && this.isNetworkError(fetchError)));
                     if (!canFallbackBdNet) throw fetchError;
                     sent = true;
                     response = await this.fetchViaBetterDiscordNet(endpoint, fetchOptions, controller?.signal || null, effectiveTimeoutMs);
@@ -844,10 +856,10 @@ class ProviderLayer {
             if (!response.ok) {
                 const apiError = this.plugin.createApiError(response, raw);
                 if (request?.provider === "googleCloud") {
-                    this.plugin.annotateGoogleTranslateApiError(apiError, raw, request);
+                    this.annotateGoogleTranslateApiError(apiError, raw, request);
                 }
                 this.plugin.annotateTranslateProviderApiError(apiError, raw, request);
-                this.plugin.annotateChatCompletionApiError(apiError, raw, request);
+                this.annotateChatCompletionApiError(apiError, raw, request);
                 throw apiError;
             }
 
@@ -861,7 +873,7 @@ class ProviderLayer {
             // nor our own cancel path aborted, treat it as a retryable timeout instead of silent cancellation.
             const transportTimedOut = !callerCancelled
                 && (!controllerAborted || controllerTimedOut)
-                && (controllerTimedOut || error?.name === "TimeoutError" || error?.name === "AbortError" || this.plugin.isTimeoutError(error));
+                && (controllerTimedOut || error?.name === "TimeoutError" || error?.name === "AbortError" || this.isTimeoutError(error));
             if (!controllerAborted && error?.name !== "AbortError" && !transportTimedOut) throw error;
             const timedOut = Boolean(controllerTimedOut || transportTimedOut);
             throw Object.assign(new Error(timedOut
@@ -997,13 +1009,13 @@ class ProviderLayer {
     }
 
     async testApiConnection(kind, button, status, { onStart } = {}) {
-        const lifecycleToken = this.plugin.getLifecycleToken();
-        if (!this.plugin.isLifecycleTokenCurrent(lifecycleToken)) return false;
+        const lifecycleToken = this.ctx.getLifecycleToken();
+        if (!this.ctx.isLifecycleTokenCurrent(lifecycleToken)) return false;
         const config = this.plugin.getTaskConfig(kind);
         const fields = ["enabled", "provider", "endpoint", "apiKey", "apiKeyOrigin", "model", "enableThinking",
             "region", "deeplPlan", "appId", "secretKey", "targetLanguage"];
         const testConfig = Object.freeze(Object.fromEntries(fields.map(field => [field, config[field]])));
-        const getGooglePoolConfig = () => this.plugin.normalizeGoogleTranslateKeyPool().keyPoolText;
+        const getGooglePoolConfig = () => this.normalizeGoogleTranslateKeyPool().keyPoolText;
         const googlePoolConfig = testConfig.provider === "googleCloud" ? getGooglePoolConfig() : null;
         const runs = this.apiTestRuns ??= new Map();
         const previous = runs.get(kind);
@@ -1012,7 +1024,7 @@ class ProviderLayer {
         const { signal } = controller;
         const isLatest = () => runs.get(kind)?.sequence === sequence;
         const isCurrent = () => {
-            if (!isLatest() || signal.aborted || !this.plugin.isLifecycleTokenCurrent(lifecycleToken)) return false;
+            if (!isLatest() || signal.aborted || !this.ctx.isLifecycleTokenCurrent(lifecycleToken)) return false;
             const current = this.plugin.getTaskConfig(kind);
             return fields.every(field => testConfig[field] === current[field])
                 && (googlePoolConfig === null || googlePoolConfig === getGooglePoolConfig());
@@ -1021,7 +1033,7 @@ class ProviderLayer {
         runs.set(kind, { sequence, controller, button, lifecycleToken });
         this.runningApiTests.set(kind, sequence);
         previous?.controller?.abort();
-        if (previous?.button && previous.button !== button && this.plugin.isLifecycleTokenCurrent(previous.lifecycleToken)) {
+        if (previous?.button && previous.button !== button && this.ctx.isLifecycleTokenCurrent(previous.lifecycleToken)) {
             this.plugin.setButtonBusy(previous.button, false, this.plugin.t("apiTest"));
         }
 
@@ -1033,7 +1045,7 @@ class ProviderLayer {
         let reportedModel = "";
         const record = (ok, message = "") => this.plugin.recordApiTestResult?.(kind, {
             ok,
-            model: this.plugin.getApiTestModel(testConfig, testRequest, reportedModel),
+            model: this.getApiTestModel(testConfig, testRequest, reportedModel),
             latencyMs: requestStartedAt ? Date.now() - requestStartedAt : null,
             message
         });
@@ -1043,7 +1055,7 @@ class ProviderLayer {
             const recorded = record(true);
             this.plugin.setApiStatus(status, "success", this.plugin.t("apiStatusSuccess"));
             this.plugin.clearAutoTranslationProviderFailureForCurrentConfig(kind);
-            if (kind === "translation" && this.plugin.isLocalTranslationProvider(testConfig)) this.plugin.markLocalProviderHealthy(providerSnapshotKey);
+            if (kind === "translation" && this.isLocalTranslationProvider(testConfig)) this.markLocalProviderHealthy(providerSnapshotKey);
             if (!isCurrent()) return false;
             const saved = this.plugin.saveVerifiedServiceConfig?.(kind, testConfig, {
                 latencyMs: recorded?.latencyMs,
@@ -1070,17 +1082,17 @@ class ProviderLayer {
             this.plugin.setApiStatus(status, "testing", this.plugin.t("apiStatusTesting"));
             this.plugin.setButtonBusy(button, true, this.plugin.t("apiTestBusy"));
             providerSnapshotKey = kind === "translation"
-                ? this.plugin.getAutoTranslationProviderKey({ configOverrides: testConfig })
+                ? this.getAutoTranslationProviderKey({ configOverrides: testConfig })
                 : "";
             const defaultConfig = DEFAULT_SETTINGS[kind] || {};
-            if (this.plugin.shouldAutoDetectLocalProviderModel(testConfig, defaultConfig)) {
+            if (this.shouldAutoDetectLocalProviderModel(testConfig, defaultConfig)) {
                 if (!isCurrent()) return false;
                 await this.plugin.refreshLocalProviderDetectedModel(testConfig, {
                     configOverrides: testConfig, defaultConfig, force: true, signal, isCurrent
                 });
             }
             if (!isCurrent()) return false;
-            const test = this.plugin.buildConnectionTestRequest(kind, testConfig);
+            const test = this.buildConnectionTestRequest(kind, testConfig);
             if (!isCurrent()) return false;
             endpoint = test.endpoint;
             testRequest = test.request;
@@ -1089,12 +1101,12 @@ class ProviderLayer {
                 lifecycleToken,
                 signal,
                 connectionTest: true,
-                onRawResponse: raw => { reportedModel = this.plugin.getReportedResponseModel(raw); }
+                onRawResponse: raw => { reportedModel = this.getReportedResponseModel(raw); }
             });
             return completeSuccess();
         }
         catch (error) {
-            if (!isCurrent() || this.plugin.isRequestCancelled(error)) return false;
+            if (!isCurrent() || this.isRequestCancelled(error)) return false;
             if (this.plugin.isAcceptableConnectionTestTruncation(error, kind, testConfig)) {
                 this.plugin.logDiagnostic("api.test", "truncated-ok", {
                     ...this.plugin.getDiagnosticBaseMeta(kind, "test", "request-success"),
@@ -1105,11 +1117,11 @@ class ProviderLayer {
                 return completeSuccess();
             }
             if (kind === "translation") {
-                this.plugin.annotateModelRequestError(error, kind, endpoint || testConfig.endpoint, testConfig, { configOverrides: testConfig });
+                this.annotateModelRequestError(error, kind, endpoint || testConfig.endpoint, testConfig, { configOverrides: testConfig });
                 if (error?.googleTranslateApiKey) this.plugin.markGoogleTranslateKeyFailure(error.googleTranslateApiKey, error);
                 if (error.localProviderUnavailable) this.plugin.markAutoTranslationProviderFailure(this.plugin.getAutoTranslationOptions(), error);
             }
-            const message = this.plugin.formatGoogleTranslateKeyError(error);
+            const message = this.formatGoogleTranslateKeyError(error);
             if (!isCurrent()) return false;
             record(false, message);
             this.plugin.setApiStatus(status, "failed", this.plugin.t("apiStatusFailed"), message);
@@ -1120,7 +1132,7 @@ class ProviderLayer {
             if (isLatest()) {
                 runs.set(kind, { sequence });
                 this.runningApiTests.delete(kind);
-                if (this.plugin.isLifecycleTokenCurrent(lifecycleToken)) {
+                if (this.ctx.isLifecycleTokenCurrent(lifecycleToken)) {
                     this.plugin.setButtonBusy(button, false, this.plugin.t("apiTest"));
                     this.plugin.requestLauncherStatusUpdate?.();
                 }
@@ -1129,28 +1141,28 @@ class ProviderLayer {
     }
 
     buildConnectionTestRequest(kind, config = this.plugin.getTaskConfig(kind)) {
-        if (this.plugin.isDirectTranslateProvider(config)) {
+        if (this.isDirectTranslateProvider(config)) {
             // Test the language pair the user actually translates into: some targets are
             // rejected by some services. When every Google key is cooling down, a cooling key
             // is tested, so a passing test can bring it back.
             const testConfig = {
                 ...config,
                 sourceLanguage: AUTO_LANGUAGE_VALUE,
-                targetLanguageCode: this.plugin.getTargetLanguageCode(config.targetLanguage)
+                targetLanguageCode: this.getTargetLanguageCode(config.targetLanguage)
             };
-            if (this.plugin.isGoogleTranslateProvider(config)) return this.plugin.buildGoogleTranslateRequest("hello", testConfig, { ignoreCooldown: true });
-            if (this.plugin.isMicrosoftTranslateProvider(config)) return this.plugin.buildMicrosoftTranslateRequest("hello", testConfig);
-            if (this.plugin.isDeepLTranslateProvider(config)) return this.plugin.buildDeepLTranslateRequest("hello", testConfig);
-            return this.plugin.buildBaiduTranslateRequest("hello", testConfig);
+            if (this.isGoogleTranslateProvider(config)) return this.buildGoogleTranslateRequest("hello", testConfig, { ignoreCooldown: true });
+            if (this.isMicrosoftTranslateProvider(config)) return this.buildMicrosoftTranslateRequest("hello", testConfig);
+            if (this.isDeepLTranslateProvider(config)) return this.buildDeepLTranslateRequest("hello", testConfig);
+            return this.buildBaiduTranslateRequest("hello", testConfig);
         }
         const defaultConfig = DEFAULT_SETTINGS[kind] || {};
-        const apiKey = this.plugin.getEffectiveRequestApiKey(config);
+        const apiKey = this.getEffectiveRequestApiKey(config);
         if (!apiKey) throw new Error(kind === "polish" ? this.plugin.t("apiKeyMissingPolish") : this.plugin.t("apiKeyMissingTranslation"));
-        const endpoint = this.plugin.getEffectiveChatCompletionEndpoint(config, defaultConfig);
-        const model = this.plugin.getEffectiveChatCompletionModel(kind, config, defaultConfig);
+        const endpoint = this.getEffectiveChatCompletionEndpoint(config, defaultConfig);
+        const model = this.getEffectiveChatCompletionModel(kind, config, defaultConfig);
         if (!endpoint) throw new Error(this.plugin.t("endpointMissing"));
         if (this.plugin.isChatCompletionProvider(config) && !model) throw new Error(this.plugin.t("modelMissing"));
-        const body = this.plugin.applyProviderBodyOptions(config, {
+        const body = this.applyProviderBodyOptions(config, {
             model,
             messages: [
                 { role: "user", content: "Reply with OK only." }
@@ -1164,8 +1176,8 @@ class ProviderLayer {
             endpoint,
             request: {
                 provider: config.provider,
-                providerKey: kind === "translation" ? this.plugin.getAutoTranslationProviderKey({ configOverrides: config }) : "",
-                headers: this.plugin.getRequestHeaders(config, apiKey),
+                providerKey: kind === "translation" ? this.getAutoTranslationProviderKey({ configOverrides: config }) : "",
+                headers: this.getRequestHeaders(config, apiKey),
                 body
             }
         };
@@ -1181,7 +1193,7 @@ class ProviderLayer {
         if (adapter?.buildRequest) {
             return adapter.buildRequest(kind, input, effectiveConfig, defaultConfig, options, this.plugin);
         }
-        return this.plugin.buildChatCompletionRequest(kind, input, effectiveConfig, defaultConfig);
+        return this.buildChatCompletionRequest(kind, input, effectiveConfig, defaultConfig);
     }
 
     applyProviderBodyOptions(config, body) {

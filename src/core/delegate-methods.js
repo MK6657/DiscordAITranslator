@@ -69,8 +69,32 @@ function installStateProxies(targetProto, storeProp, fieldMap) {
     }
 }
 
+/**
+ * Installs prototype forwarding methods for all public methods on a class prototype
+ * (excluding constructor, private underscore-prefixed methods, explicit exclusions,
+ * and methods already defined on targetProto).
+ *
+ * @param {object} targetProto
+ * @param {string} controllerProp
+ * @param {Function} SourceClass
+ * @param {Iterable<string>} [excludeNames]
+ * @returns {string[]} List of installed bridge method names
+ */
+function installClassPrototypeBridge(targetProto, controllerProp, SourceClass, excludeNames = []) {
+    const excluded = new Set(excludeNames);
+    const proto = SourceClass?.prototype;
+    if (!proto) return [];
+    const methodNames = Object.getOwnPropertyNames(proto).filter(name => {
+        if (name === "constructor" || name.startsWith("_") || excluded.has(name)) return false;
+        const desc = Object.getOwnPropertyDescriptor(proto, name);
+        return Boolean(desc && typeof desc.value === "function");
+    });
+    return installPrototypeBridge(targetProto, controllerProp, methodNames);
+}
+
 module.exports = {
     installPrototypeBridge,
+    installClassPrototypeBridge,
     attachControllerMethods,
     installStateProxies
 };

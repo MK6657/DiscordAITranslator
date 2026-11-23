@@ -4,6 +4,32 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## 0.5.0 - 2026-11-24
+
+Architecture overhaul and long-term maintainability release (preserving all v0.4.0 user features, settings compatibility, and critical-chain behavior contracts; offline/CI gates pass 100%, live Discord acceptance checklist prepared).
+
+### Architecture & Modularization
+
+- **Thin plugin lifecycle shell**: Reduced `src/discord-ai-translator.js` from 20,495 lines (1,529 methods) to **~758 lines (30 class methods)** by extracting all remaining UI, host, and domain subsystems and retiring 535 hand-written 1-line delegator methods in favor of declarative prototype bridges (`src/core/delegate-methods.js`).
+- **Core primitives & event-driven wiring (`src/core/`)**: Added `DisposableScope`, `EventBus`, and `createPluginContext`. Provider status updates, request tracking, queue invalidations/drains, provider failures, and plugin start/stop transitions now emit typed domain events consumed by `QuickPanel` without direct cross-subsystem coupling.
+- **Pluggable provider adapter architecture (`src/providers/`)**: Introduced `ProviderRegistry`, a shared `createOpenAIChatAdapter` factory, and 7 independent adapters under `src/providers/adapters/` (`deepseek`, `openai-compatible`, `sakura-local`, `google-cloud`, `microsoft`, `deepl`, `baidu`), plus split out `google-key-pool.js`, `local-model-health.js`, and `provider-codecs.js`. Adding a new translation/polish provider now takes one adapter file plus one registration line; cache key scoping delegates to `adapter.applyCacheScope(...)`.
+- **Unified auto-translation state machine & cooldown store (`src/auto-translation/`)**: Consolidated 31 flat `autoTranslation*` fields from `DiscordAITranslator` into `AutoTranslationStateMachine` and `AutoTranslationCooldownStore`, wired directly behind `AutoTranslationTaskState`, `AutoTranslationQueueCore`, and `AutoTranslationRequestPipeline`, and extracted `TranslationScheduler` (`scheduler.js`) and `ManualTranslationController` (`manual-translation.js`).
+- **Settings & Composer UI extraction**: Extracted 209 settings window/dialog methods into 11 focused modules under `src/settings/ui/` (and refactored `createPromptManager` into modular sub-builders), 74 service-profile methods into `src/settings/service-profiles.js`, 68 prompt-policy methods into `src/validation/prompt-policy.js`, and 112 composer/polish/bilingual methods into 6 modules under `src/composer/`.
+- **Unified Discord host boundary (`src/discord/`)**: Consolidated all Discord DOM, Webpack Store, context menu, chat observer, launcher/theme, message extraction, scroll anchoring, translation line rendering, and Slate composer modules behind `DiscordHostAdapter` (`src/discord/host-adapter.js`).
+- **Independent preset data (`src/presets/`)**: Extracted all 59 built-in polish style presets (general, 22 dialects, 29 personas) and 6 translation prompt templates out of `src/constants.js` (reducing `src/constants.js` from 2,036 to 855 lines).
+
+### Engineering Quality, Testing & Bug Fixes
+
+- **Static analysis guardrails**: Added `eslint` (`eslint.config.js`, `npm run lint`) and TypeScript JSDoc checking (`jsconfig.json`, `npm run typecheck` covering 35 modules across `src/core/`, `src/presets/`, `src/providers/adapters/`, `src/discord/`, and state/intake helpers) as dev-only dependencies (never bundled into `DiscordAITranslator.plugin.js`). Wired both into `npm run verify`, `npm run ci`, and GitHub Windows CI.
+- **i18n & extensibility tests**: Added `tests/core/i18n-integrity.test.js` (verifying 745/745 zh-CN/en key parity and zero broken `this.t(...)` references), `tests/core/core-primitives.test.js`, `tests/core/presets-and-css-build.test.js`, `tests/core/provider-plugin-extensibility.test.js`, and `tests/core/auto-state-machine.test.js`.
+- **Modularized artifact regression suite**: Decomposed the 14,029-line `scripts/verify-plugin.js` monolith into 9 focused domain suites under `tests/integration/suites/` plus a `node:test` wrapper (`tests/integration/artifact-regression.test.js`) and a slim 38-line `scripts/verify-plugin.js` runner, preserving 100% of existing artifact assertions.
+- **Dead-code & correctness fixes discovered by ESLint**: Removed two unreachable code blocks in the message/provider flow, fixed a duplicate constructor initialization (`autoTranslationRenderDueAt`), and fixed a `no-setter-return` defect in `tests/core/provider-config-races.test.js`.
+- **Artifact size**: Reduced the generated `DiscordAITranslator.plugin.js` bundle to **~2.20 MB** (~300 KB below the 2.50 MB artifact ceiling).
+
+### Upgrade Notes
+
+- Fully compatible with existing `0.3.0` and `0.4.0` configuration files (`DiscordAITranslator.config.json`, `DiscordAITranslator.cache.config.json`, `DiscordAITranslator.diagnostics.config.json`), saved service profiles, Google key pool usage, custom prompt templates, and per-channel rules. No manual migration is required.
+
 ## 0.4.0 - 2026-09-26
 
 Pre-release: offline, installer and artifact checks pass; live Discord acceptance of the new settings window, quick panel and composer send path is pending.

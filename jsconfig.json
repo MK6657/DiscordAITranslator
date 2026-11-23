@@ -20,10 +20,7 @@
     "src/providers/adapters/**/*.js",
     "src/auto-translation/state-machine.js",
     "src/auto-translation/cooldown-store.js",
-    "src/discord/selectors.js",
-    "src/discord/stores.js",
-    "src/discord/host-health.js",
-    "src/discord/host-adapter.js",
+    "src/discord/**/*.js",
     "src/auto-translation/channel-rule.js",
     "src/intake/emoji-text.js"
   ]

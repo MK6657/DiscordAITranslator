@@ -33,12 +33,17 @@ const {
     MODEL_REQUEST_TIMEOUT_MS,
     TRANSLATION_VALIDATION_QUALITIES
 } = require("../constants");
+const { createPluginContext } = require("../core/plugin-context");
 const { removeStandardEmoji } = require("../intake/emoji-text");
 
 class AutoTranslationRequestPipeline {
-    constructor(plugin) {
+    constructor(plugin, ctx = createPluginContext(plugin)) {
         this.plugin = plugin;
+        this.ctx = ctx;
     }
+
+    get stateMachine() { return this.ctx.stateMachine; }
+    get cooldowns() { return this.ctx.cooldowns; }
 
     scheduleCacheOnlyAutoTranslationScan(reason = "deferred", delayMs = 0) {
         if (!this.plugin.isAutoTranslateEnabled()) {
@@ -53,7 +58,7 @@ class AutoTranslationRequestPipeline {
         this.plugin.cacheOnlyScanTimer = setTimeout(() => {
             this.plugin.cacheOnlyScanTimer = null;
             this.plugin.cacheOnlyScanDueAt = 0;
-            this.plugin.runCacheOnlyAutoTranslationScan(reason);
+            this.runCacheOnlyAutoTranslationScan(reason);
         }, delay);
         this.plugin.unrefTimer?.(this.plugin.cacheOnlyScanTimer);
     }
@@ -114,7 +119,7 @@ class AutoTranslationRequestPipeline {
         const batchSize = this.plugin.getAutoTranslateBatchSize();
         const queueLimit = this.plugin.getAutoTranslateQueueLimit();
         const messageNodes = context.messageNodes;
-        const requestOptions = this.plugin.getAutoTranslationOptions();
+        const requestOptions = this.getAutoTranslationOptions();
         const hasUsableApi = this.plugin.hasUsableApiConfig("translation", requestOptions?.configOverrides);
         const renderPaused = this.plugin.isAutoTranslationRenderPaused(now);
         const viewportSettling = this.plugin.isAutoTranslationViewportSettling(now);
@@ -219,7 +224,7 @@ class AutoTranslationRequestPipeline {
             for (const candidate of candidates) {
                 work.scanStats.seen++;
                 const decision = this.plugin.evaluateAutoTranslationCandidate(candidate, work.scanState);
-                this.plugin.applyAutoTranslationDecision(candidate, decision, work.scanStats);
+                this.applyAutoTranslationDecision(candidate, decision, work.scanStats);
             }
         }
         finally {
@@ -253,8 +258,8 @@ class AutoTranslationRequestPipeline {
                 intakeMode: context.autoTranslateIntake?.mode || this.plugin.normalizeAutoTranslateIntakeMode(this.plugin.settings.ui?.autoTranslateIntakeMode),
                 intakeSource: context.autoTranslateIntake?.source || "dom",
                 bdfdbAvailable: Boolean(context.autoTranslateIntake?.bdfdbAvailable),
-                queueLength: this.plugin.autoTranslationQueue.length,
-                inFlight: this.plugin.autoTranslationInFlight
+                queueLength: this.stateMachine.queue.length,
+                inFlight: this.stateMachine.inFlight
             });
         }
         if (!apiWorkBlocked) this.plugin.drainAutoTranslationQueue();
@@ -266,7 +271,7 @@ class AutoTranslationRequestPipeline {
     evaluateAutoTranslationCandidate(candidate, scanState = {}) {
         const target = candidate || {};
         const text = String(target.text || "");
-        const requestOptions = scanState.requestOptions || this.plugin.getAutoTranslationOptions();
+        const requestOptions = scanState.requestOptions || this.getAutoTranslationOptions();
         const now = Number(scanState.now || Date.now());
         const precheckSkipReason = this.plugin.getAutoTranslationPrecheckSkipReason(text, requestOptions);
         if (precheckSkipReason) {
@@ -309,8 +314,8 @@ class AutoTranslationRequestPipeline {
             };
         }
 
-        const targetRequestOptions = this.plugin.withAutoTranslationCandidateIdentity(
-            this.plugin.getAutoTranslationRequestOptionsForText(text, requestOptions),
+        const targetRequestOptions = this.withAutoTranslationCandidateIdentity(
+            this.getAutoTranslationRequestOptionsForText(text, requestOptions),
             target
         );
         const targetWithOptions = { ...target, requestOptions: targetRequestOptions };
@@ -470,9 +475,9 @@ class AutoTranslationRequestPipeline {
         // Work for this message may run under its key naming the local model known when it was queued.
         const activeKey = this.plugin.resolveActiveAutoTranslationKey(cacheKey);
         const workKey = activeKey || cacheKey;
-        const hasPendingTargets = this.plugin.autoTranslationPendingTargets.has(workKey);
+        const hasPendingTargets = this.stateMachine.pendingTargets.has(workKey);
         const hasActiveKey = Boolean(activeKey);
-        const hasInFlightKey = this.plugin.autoTranslationInFlightKeys.has(workKey);
+        const hasInFlightKey = this.stateMachine.inFlightKeys.has(workKey);
         if (hasPendingTargets && !hasActiveKey) {
             return {
                 action: "clear-stale-pending",
@@ -603,7 +608,7 @@ class AutoTranslationRequestPipeline {
             if (decision.action === "clear-stale-pending") this.plugin.clearAutoTranslationPendingTargets(decision.cacheKey);
             if (decision.action === "clear-weak-failure") this.plugin.clearAutoTranslationFailure(decision.cacheKey, decision.requestOptions);
             const nextDecision = this.plugin.evaluateAutoTranslationCandidate(candidate, scanState);
-            this.plugin.applyAutoTranslationDecision(candidate, nextDecision, scanStats);
+            this.applyAutoTranslationDecision(candidate, nextDecision, scanStats);
             return;
         }
 
@@ -629,7 +634,7 @@ class AutoTranslationRequestPipeline {
                 DIAGNOSTIC_REASON_CODES.INVALID_CACHE
             );
             const nextDecision = this.plugin.evaluateAutoTranslationCandidate(candidate, scanState);
-            this.plugin.applyAutoTranslationDecision(candidate, nextDecision, scanStats);
+            this.applyAutoTranslationDecision(candidate, nextDecision, scanStats);
             return;
         }
 
@@ -698,9 +703,9 @@ class AutoTranslationRequestPipeline {
 
         if (decision.reasonCode === DIAGNOSTIC_REASON_CODES.DEDUPE_ACTIVE) {
             this.plugin.addAutoTranslationPendingTarget(decision.cacheKey, item);
-            if (this.plugin.autoTranslationQueuedKeys.has(decision.cacheKey)) {
-                if (this.plugin.autoTranslationQueue.some(queued => queued?.cacheKey === decision.cacheKey)) this.plugin.promoteQueuedAutoTranslationItem(decision.cacheKey, item);
-                else this.plugin.autoTranslationQueuedKeys.delete(decision.cacheKey);
+            if (this.stateMachine.queuedKeys.has(decision.cacheKey)) {
+                if (this.stateMachine.queue.some(queued => queued?.cacheKey === decision.cacheKey)) this.plugin.promoteQueuedAutoTranslationItem(decision.cacheKey, item);
+                else this.stateMachine.queuedKeys.delete(decision.cacheKey);
             }
             return;
         }
@@ -728,7 +733,7 @@ class AutoTranslationRequestPipeline {
         if (!this.plugin.isLongAutoTranslationItem(item)) return false;
         if (options.visibility !== "visible") return false;
         if (options.batch?.length) return false;
-        const visibleLongInFlight = this.plugin.getVisibleLongAutoTranslationInFlightCount();
+        const visibleLongInFlight = this.getVisibleLongAutoTranslationInFlightCount();
         if (!visibleLongInFlight) return false;
         const longTextSlots = 1;
         if (visibleLongInFlight < longTextSlots) return false;
@@ -737,17 +742,17 @@ class AutoTranslationRequestPipeline {
     }
 
     hasVisibleLongAutoTranslationInFlight() {
-        return this.plugin.getVisibleLongAutoTranslationInFlightCount() > 0;
+        return this.getVisibleLongAutoTranslationInFlightCount() > 0;
     }
 
     getVisibleLongAutoTranslationInFlightCount() {
         let count = 0;
-        for (const key of [...(this.plugin.autoTranslationVisibleLongInFlightKeys || [])]) {
-            if (this.plugin.autoTranslationInFlightKeys.has(key)) {
+        for (const key of [...(this.stateMachine.visibleLongInFlightKeys || [])]) {
+            if (this.stateMachine.inFlightKeys.has(key)) {
                 count++;
                 continue;
             }
-            this.plugin.autoTranslationVisibleLongInFlightKeys.delete(key);
+            this.stateMachine.visibleLongInFlightKeys.delete(key);
         }
         return count;
     }
@@ -755,7 +760,7 @@ class AutoTranslationRequestPipeline {
     hasReadyVisibleLongAutoTranslationCandidate(referenceItem, options = {}) {
         if ((options.visibility || "") !== "visible") return false;
         const now = Date.now();
-        for (const queued of this.plugin.autoTranslationQueue) {
+        for (const queued of this.stateMachine.queue) {
             if (!queued?.cacheKey || queued.cacheKey === referenceItem?.cacheKey) continue;
             const requeueAfter = Number(queued?.daitRequeueAfter || 0);
             if (requeueAfter > now) continue;
@@ -773,7 +778,7 @@ class AutoTranslationRequestPipeline {
     }
 
     async runAutoTranslationFallbackItems(pending, taskOptions = {}) {
-        const queue = this.plugin.takeAutoTranslationFallbackQueue(pending, taskOptions);
+        const queue = this.takeAutoTranslationFallbackQueue(pending, taskOptions);
         if (queue.length) this.plugin.logDiagnostic("auto.fallback", "start", { count: queue.length, pending: pending.size });
         for (const item of queue) {
             if (!item) continue;
@@ -782,7 +787,7 @@ class AutoTranslationRequestPipeline {
                 continue;
             }
             if (this.plugin.isAutoTranslationProviderCoolingDown(item.requestOptions)) {
-                this.plugin.requeueRemainingAutoTranslationFallbackItems(pending, taskOptions);
+                this.requeueRemainingAutoTranslationFallbackItems(pending, taskOptions);
                 return;
             }
             taskOptions?.heartbeat?.(pending);
@@ -820,7 +825,7 @@ class AutoTranslationRequestPipeline {
                 this.plugin.markAutoTranslationFailureSafely(item, error);
                 pending.delete(item);
                 if (this.plugin.isAutoTranslationProviderCoolingDown(item.requestOptions)) {
-                    this.plugin.requeueRemainingAutoTranslationFallbackItems(pending, taskOptions);
+                    this.requeueRemainingAutoTranslationFallbackItems(pending, taskOptions);
                     return;
                 }
                 continue;
@@ -906,7 +911,7 @@ class AutoTranslationRequestPipeline {
                     pending.delete(item);
                     return;
                 }
-                const { translated, invalidReason } = this.plugin.validateAutoTranslationBatchRow(item, translations[index]);
+                const { translated, invalidReason } = this.validateAutoTranslationBatchRow(item, translations[index]);
                 if (invalidReason) {
                     invalid++;
                     this.plugin.logAutoTranslationMessageState(
@@ -946,7 +951,7 @@ class AutoTranslationRequestPipeline {
                     return;
                 }
                 if (this.plugin.isAutoBatchFallbackError(error)) return;
-                if (this.plugin.shouldFallbackAutoTranslationBatchRequestError(error)) {
+                if (this.shouldFallbackAutoTranslationBatchRequestError(error)) {
                     this.plugin.logDiagnostic("auto.batch.retry", "fallback", {
                         count: items.length,
                         type: this.plugin.getAutoTranslationFailureType(error)
@@ -986,15 +991,15 @@ class AutoTranslationRequestPipeline {
         return !["cancelled", "auth", "quota", "rate-limit", "server", "local-unavailable"].includes(type);
     }
 
-    buildPromptPolicyAutoTranslationPrompt(options = this.plugin.getAutoTranslationOptions()) {
+    buildPromptPolicyAutoTranslationPrompt(options = this.getAutoTranslationOptions()) {
         return this.plugin.buildPromptPolicyPrompt("auto", {
-            targetLanguage: this.plugin.getAutoTranslationTargetInstruction(this.plugin.getAutoTranslationTargetLanguage(options)),
+            targetLanguage: this.getAutoTranslationTargetInstruction(this.getAutoTranslationTargetLanguage(options)),
             basePrompt: options?.configOverrides?.prompt || this.plugin.settings.translation.prompt
         });
     }
 
-    buildCompactLocalAutoTranslationPrompt(options = this.plugin.getAutoTranslationOptions(), variant = "auto") {
-        const targetLanguage = this.plugin.getAutoTranslationTargetInstruction(this.plugin.getAutoTranslationTargetLanguage(options));
+    buildCompactLocalAutoTranslationPrompt(options = this.getAutoTranslationOptions(), variant = "auto") {
+        const targetLanguage = this.getAutoTranslationTargetInstruction(this.getAutoTranslationTargetLanguage(options));
         const variantLines = {
             retry: [
                 "The previous output was rejected because it was not a clean translation.",
@@ -1032,24 +1037,24 @@ class AutoTranslationRequestPipeline {
         return String(input ?? "");
     }
 
-    isLocalAutoTranslationOptions(options = this.plugin.getAutoTranslationOptions()) {
+    isLocalAutoTranslationOptions(options = this.getAutoTranslationOptions()) {
         return this.plugin.isLocalTranslationProvider(this.plugin.getEffectiveTaskConfig("translation", options?.configOverrides));
     }
 
-    buildPromptPolicyLongTextPrompt(options = this.plugin.getAutoTranslationOptions()) {
+    buildPromptPolicyLongTextPrompt(options = this.getAutoTranslationOptions()) {
         return this.plugin.buildPromptPolicyPrompt("longText", {
-            targetLanguage: this.plugin.getAutoTranslationTargetInstruction(this.plugin.getAutoTranslationTargetLanguage(options)),
+            targetLanguage: this.getAutoTranslationTargetInstruction(this.getAutoTranslationTargetLanguage(options)),
             basePrompt: options?.configOverrides?.prompt || this.plugin.settings.translation.prompt
         });
     }
 
-    getAutoTranslationRequestOptionsForText(text, options = this.plugin.getAutoTranslationOptions()) {
-        if (!this.plugin.isLongAutoTranslationText(text)) return options;
-        return this.plugin.getLongTextTranslationOptions(options, text);
+    getAutoTranslationRequestOptionsForText(text, options = this.getAutoTranslationOptions()) {
+        if (!this.isLongAutoTranslationText(text)) return options;
+        return this.getLongTextTranslationOptions(options, text);
     }
 
-    getLongTextTranslationOptions(options = this.plugin.getAutoTranslationOptions(), text = "") {
-        const requestSnapshot = this.plugin.getAutoTranslationRequestSnapshot(options);
+    getLongTextTranslationOptions(options = this.getAutoTranslationOptions(), text = "") {
+        const requestSnapshot = this.getAutoTranslationRequestSnapshot(options);
         const isLocalProvider = this.plugin.isLocalTranslationProvider(requestSnapshot);
         const baseMaxTokens = this.plugin.normalizeRequestNumber(
             requestSnapshot.maxTokens,
@@ -1057,22 +1062,22 @@ class AutoTranslationRequestPipeline {
             { min: 1, integer: true }
         );
         const sourceLength = String(text || "").length;
-        const dynamicMaxTokens = this.plugin.getLongTextMaxTokensForLength(sourceLength, this.plugin.getAutoTranslationTargetLanguage(options));
+        const dynamicMaxTokens = this.getLongTextMaxTokensForLength(sourceLength, this.getAutoTranslationTargetLanguage(options));
         const maxTokens = isLocalProvider
-            ? this.plugin.getLocalAutoTranslationMaxTokensForLength(sourceLength, this.plugin.getAutoTranslationTargetLanguage(options), baseMaxTokens)
+            ? this.plugin.getLocalAutoTranslationMaxTokensForLength(sourceLength, this.getAutoTranslationTargetLanguage(options), baseMaxTokens)
             : Math.max(baseMaxTokens, AUTO_TRANSLATE_LONG_TEXT_MIN_MAX_TOKENS, dynamicMaxTokens);
         const configOverrides = {
             ...requestSnapshot,
             sourceLanguage: AUTO_LANGUAGE_VALUE,
-            targetLanguage: this.plugin.getAutoTranslationTargetInstruction(this.plugin.getAutoTranslationTargetLanguage(options)),
+            targetLanguage: this.getAutoTranslationTargetInstruction(this.getAutoTranslationTargetLanguage(options)),
             temperature: 0,
             maxTokens,
             enableThinking: false,
             promptPolicyVersion: this.plugin.getPromptPolicyVersion("longText"),
             localCompactPrompt: isLocalProvider,
             prompt: isLocalProvider
-                ? this.plugin.buildCompactLocalAutoTranslationPrompt(options, "longText")
-                : this.plugin.buildPromptPolicyLongTextPrompt(options)
+                ? this.buildCompactLocalAutoTranslationPrompt(options, "longText")
+                : this.buildPromptPolicyLongTextPrompt(options)
         };
         return {
             ...options,
@@ -1102,7 +1107,7 @@ class AutoTranslationRequestPipeline {
         return this.plugin.translationScheduler.isUltraLongText(text);
     }
 
-    getLongAutoTranslationChunkLength(options = this.plugin.getAutoTranslationOptions()) {
+    getLongAutoTranslationChunkLength(options = this.getAutoTranslationOptions()) {
         const config = this.plugin.getEffectiveTaskConfig("translation", options?.configOverrides);
         const fallback = this.plugin.isLocalTranslationProvider(config)
             ? AUTO_TRANSLATE_LOCAL_LONG_TEXT_CHUNK_LENGTH
@@ -1117,7 +1122,7 @@ class AutoTranslationRequestPipeline {
         const limit = Math.max(200, Number(maxLength) || AUTO_TRANSLATE_LONG_TEXT_CHUNK_LENGTH);
         if (source.length <= limit) return [source];
 
-        const units = this.plugin.getLongAutoTranslationChunkUnits(source);
+        const units = this.getLongAutoTranslationChunkUnits(source);
         if (units.length > 1) {
             const chunks = [];
             let current = "";
@@ -1131,7 +1136,7 @@ class AutoTranslationRequestPipeline {
                 if (!value.trim()) continue;
                 if (value.length > limit) {
                     flush();
-                    this.plugin.splitOversizedLongAutoTranslationUnit(value, limit).forEach(part => {
+                    this.splitOversizedLongAutoTranslationUnit(value, limit).forEach(part => {
                         const chunk = String(part || "").trim();
                         if (chunk) chunks.push(chunk);
                     });
@@ -1249,15 +1254,15 @@ class AutoTranslationRequestPipeline {
         return parts.length ? parts : [source];
     }
 
-    async runLongAutoTranslationTask(text, options = this.plugin.getAutoTranslationOptions(), taskOptions = {}) {
-        const longOptions = options?.mode === "long-text" ? options : this.plugin.getLongTextTranslationOptions(options, text);
+    async runLongAutoTranslationTask(text, options = this.getAutoTranslationOptions(), taskOptions = {}) {
+        const longOptions = options?.mode === "long-text" ? options : this.getLongTextTranslationOptions(options, text);
         // The partial result is reported on this call's taskOptions (longTextPartialInfo), never by
         // writing to the request options, which are shared with the queued item and its retries.
         delete taskOptions.longTextPartial;
         delete taskOptions.longTextFailedChunks;
         delete taskOptions.longTextSuccessfulChunks;
         delete taskOptions.longTextPartialInfo;
-        const chunks = this.plugin.splitLongAutoTranslationText(text, this.plugin.getLongAutoTranslationChunkLength(longOptions));
+        const chunks = this.plugin.splitLongAutoTranslationText(text, this.getLongAutoTranslationChunkLength(longOptions));
         if (chunks.length <= 1) return this.plugin.runAutoTranslationTaskWithOptions(text, longOptions, taskOptions);
 
         const translatedChunks = [];
@@ -1270,24 +1275,24 @@ class AutoTranslationRequestPipeline {
         // chunks would fail too, so no more are sent. A timeout or network error after some chunks
         // succeeded keeps those as a partial result; otherwise the whole message fails now.
         const stopOnChunkError = chunkError => {
-            if (!this.plugin.shouldStopLongAutoTranslationOnChunkError(chunkError)) return false;
-            if (!this.plugin.shouldKeepLongAutoTranslationChunksOnError(chunkError) || !hasFinishedChunk()) throw chunkError;
+            if (!this.shouldStopLongAutoTranslationOnChunkError(chunkError)) return false;
+            if (!this.shouldKeepLongAutoTranslationChunksOnError(chunkError) || !hasFinishedChunk()) throw chunkError;
             stopError = chunkError;
             return true;
         };
         for (let index = 0; index < chunks.length; index++) {
             if (typeof taskOptions.heartbeat === "function" && taskOptions.heartbeat() === false) {
-                throw this.plugin.createAutoTranslationStaleError("long-text-stale-before-chunk");
+                throw this.createAutoTranslationStaleError("long-text-stale-before-chunk");
             }
-            const chunkOptions = this.plugin.getLongTextChunkTranslationOptions(longOptions, chunks[index], index, chunks.length, sourceHash);
+            const chunkOptions = this.getLongTextChunkTranslationOptions(longOptions, chunks[index], index, chunks.length, sourceHash);
             let translated = "";
             try {
                 translated = await this.plugin.runAutoTranslationTaskWithOptions(chunks[index], chunkOptions, taskOptions);
             }
             catch (error) {
-                if (this.plugin.isAbandonedTranslationError(error)) throw error;
+                if (this.isAbandonedTranslationError(error)) throw error;
                 stopOnChunkError(error);
-                if (this.plugin.isAutoTranslationRequestBudgetError(error)) budgetError = error;
+                if (this.isAutoTranslationRequestBudgetError(error)) budgetError = error;
                 let rescued = null;
                 if (taskOptions?.manualRescue && !budgetError && !stopError) {
                     // The rescue may not spend the requests the later chunks need: one each is held back.
@@ -1301,9 +1306,9 @@ class AutoTranslationRequestPipeline {
                         });
                     }
                     catch (rescueError) {
-                        if (this.plugin.isAbandonedTranslationError(rescueError)) throw rescueError;
+                        if (this.isAbandonedTranslationError(rescueError)) throw rescueError;
                         stopOnChunkError(rescueError);
-                        if (this.plugin.isAutoTranslationRequestBudgetError(rescueError) && !rescueError.requestBudgetReserved) budgetError = rescueError;
+                        if (this.isAutoTranslationRequestBudgetError(rescueError) && !rescueError.requestBudgetReserved) budgetError = rescueError;
                         rescued = { translated: "", error };
                     }
                     finally {
@@ -1334,7 +1339,7 @@ class AutoTranslationRequestPipeline {
                 }
             }
             if (typeof taskOptions.heartbeat === "function" && taskOptions.heartbeat() === false) {
-                throw this.plugin.createAutoTranslationStaleError("long-text-stale-after-chunk");
+                throw this.createAutoTranslationStaleError("long-text-stale-after-chunk");
             }
             translatedChunks.push(String(translated || "").trim());
             if (budgetError || stopError) {
@@ -1378,8 +1383,8 @@ class AutoTranslationRequestPipeline {
             .filter(chunk => chunk && !this.plugin.hasLongAutoTranslationChunkFailurePlaceholder(chunk))
             .join("\n\n")
             .trim();
-        if (!merged) throw this.plugin.createFinalInvalidAutoTranslationError("empty-long-merge");
-        const targetLanguage = this.plugin.getAutoTranslationTargetLanguage(longOptions);
+        if (!merged) throw this.createFinalInvalidAutoTranslationError("empty-long-merge");
+        const targetLanguage = this.getAutoTranslationTargetLanguage(longOptions);
         const validationOptions = {
             mergedLongText: true,
             partialLongText: chunkFailures.length > 0
@@ -1391,8 +1396,8 @@ class AutoTranslationRequestPipeline {
         const invalidReason = validation.reasonCode || "";
         if (invalidReason
             && !chunkFailures.length
-            && !this.plugin.isMergedLongAutoTranslationAcceptable(text, merged, targetLanguage)) {
-            throw this.plugin.createFinalInvalidAutoTranslationError(invalidReason);
+            && !this.isMergedLongAutoTranslationAcceptable(text, merged, targetLanguage)) {
+            throw this.createFinalInvalidAutoTranslationError(invalidReason);
         }
         return merged;
     }
@@ -1401,7 +1406,7 @@ class AutoTranslationRequestPipeline {
         if (!this.plugin.isManualRescueRetryableError(firstError)) return null;
         const attempts = [
             { name: "chunk-force-target", options: this.plugin.getAutoTranslationRetryOptions(chunkText, "", chunkOptions) },
-            { name: "chunk-repair", options: this.plugin.getAutoTranslationFinalFallbackOptions(chunkText, chunkOptions) }
+            { name: "chunk-repair", options: this.getAutoTranslationFinalFallbackOptions(chunkText, chunkOptions) }
         ];
         let lastError = firstError;
         for (let attemptIndex = 0; attemptIndex < attempts.length; attemptIndex++) {
@@ -1415,8 +1420,8 @@ class AutoTranslationRequestPipeline {
                 const validation = this.plugin.getAutoTranslationOutputValidationResult(
                     chunkText,
                     translated,
-                    this.plugin.getAutoTranslationTargetLanguage(attempt.options),
-                    this.plugin.getAutoTranslationOutputValidationOptions(chunkText, translated, attempt.options),
+                    this.getAutoTranslationTargetLanguage(attempt.options),
+                    this.getAutoTranslationOutputValidationOptions(chunkText, translated, attempt.options),
                     attempt.options
                 );
                 this.plugin.logDiagnostic("auto.long-text.chunk-rescue", validation.renderable ? "success" : "failed", {
@@ -1432,13 +1437,13 @@ class AutoTranslationRequestPipeline {
                     outputLength: String(translated || "").length
                 });
                 if (validation.renderable) return { translated, validation, attemptName: attempt.name };
-                lastError = this.plugin.createFinalInvalidAutoTranslationError(validation.reasonCode || "invalid-output", {
+                lastError = this.createFinalInvalidAutoTranslationError(validation.reasonCode || "invalid-output", {
                     terminal: false,
                     validationQuality: validation.quality
                 });
             }
             catch (error) {
-                if (this.plugin.isAbandonedTranslationError(error)) throw error;
+                if (this.isAbandonedTranslationError(error)) throw error;
                 lastError = error;
                 this.plugin.logDiagnostic("auto.long-text.chunk-rescue", "failed", {
                     sourceHash: meta.sourceHash || this.plugin.getStrongTextFingerprint(chunkText),
@@ -1454,7 +1459,7 @@ class AutoTranslationRequestPipeline {
                 if (!this.plugin.isManualRescueRetryableError(error)) throw error;
             }
         }
-        const subchunkRescue = await this.plugin.runLongAutoTranslationSubchunkManualRescue(chunkText, chunkOptions, taskOptions, meta);
+        const subchunkRescue = await this.runLongAutoTranslationSubchunkManualRescue(chunkText, chunkOptions, taskOptions, meta);
         if (subchunkRescue?.translated) return subchunkRescue;
         return { translated: "", error: lastError };
     }
@@ -1473,7 +1478,7 @@ class AutoTranslationRequestPipeline {
         const failures = [];
         for (let index = 0; index < parts.length; index++) {
             const part = parts[index];
-            const partOptions = this.plugin.getLongTextChunkTranslationOptions(chunkOptions, part, index, parts.length, meta.sourceHash || this.plugin.getStrongTextFingerprint(text));
+            const partOptions = this.getLongTextChunkTranslationOptions(chunkOptions, part, index, parts.length, meta.sourceHash || this.plugin.getStrongTextFingerprint(text));
             try {
                 const translated = await this.plugin.runAutoTranslationTaskWithOptions(part, partOptions, {
                     ...taskOptions,
@@ -1484,8 +1489,8 @@ class AutoTranslationRequestPipeline {
                 const validation = this.plugin.getAutoTranslationOutputValidationResult(
                     part,
                     translated,
-                    this.plugin.getAutoTranslationTargetLanguage(partOptions),
-                    this.plugin.getAutoTranslationOutputValidationOptions(part, translated, partOptions),
+                    this.getAutoTranslationTargetLanguage(partOptions),
+                    this.getAutoTranslationOutputValidationOptions(part, translated, partOptions),
                     partOptions
                 );
                 this.plugin.logDiagnostic("auto.long-text.subchunk-rescue", validation.renderable ? "success" : "failed", {
@@ -1504,7 +1509,7 @@ class AutoTranslationRequestPipeline {
                 else failures.push({ index, reason: validation.reasonCode || "invalid-output" });
             }
             catch (error) {
-                if (this.plugin.isAbandonedTranslationError(error)) throw error;
+                if (this.isAbandonedTranslationError(error)) throw error;
                 failures.push({ index, reason: error?.autoTranslationInvalidReason || this.plugin.getAutoTranslationFailureType(error) });
                 this.plugin.logDiagnostic("auto.long-text.subchunk-rescue", "failed", {
                     sourceHash: meta.sourceHash || this.plugin.getStrongTextFingerprint(text),
@@ -1546,18 +1551,18 @@ class AutoTranslationRequestPipeline {
         const chunkLength = String(chunkText || "").length;
         const baseOptions = options?.mode === "long-text"
             ? { ...options, longTextSourceLength: chunkLength, longTextChunk: true }
-            : this.plugin.getLongTextTranslationOptions(options, chunkText);
-        const isLocalProvider = this.plugin.isLocalAutoTranslationOptions(baseOptions);
+            : this.getLongTextTranslationOptions(options, chunkText);
+        const isLocalProvider = this.isLocalAutoTranslationOptions(baseOptions);
         const baseMaxTokens = this.plugin.normalizeRequestNumber(
             baseOptions.longTextBaseMaxTokens ?? this.plugin.settings.translation.maxTokens,
             DEFAULT_SETTINGS.translation.maxTokens,
             { min: 1, integer: true }
         );
-        const dynamicMaxTokens = this.plugin.getLongTextMaxTokensForLength(chunkLength, this.plugin.getAutoTranslationTargetLanguage(baseOptions));
+        const dynamicMaxTokens = this.getLongTextMaxTokensForLength(chunkLength, this.getAutoTranslationTargetLanguage(baseOptions));
         const chunkPrompt = isLocalProvider
-            ? this.plugin.buildCompactLocalAutoTranslationPrompt(baseOptions, "chunk")
+            ? this.buildCompactLocalAutoTranslationPrompt(baseOptions, "chunk")
             : this.plugin.joinPromptPolicyLines([
-                baseOptions.configOverrides?.prompt || this.plugin.buildPromptPolicyLongTextPrompt(options),
+                baseOptions.configOverrides?.prompt || this.buildPromptPolicyLongTextPrompt(options),
                 "",
                 `Chunk ${index + 1}/${total}; source hash ${sourceHash || this.plugin.getStrongTextFingerprint(chunkText)}.`,
                 "Translate only this chunk. Do not summarize, skip, merge with other chunks, or output the chunk label."
@@ -1565,7 +1570,7 @@ class AutoTranslationRequestPipeline {
         const configOverrides = {
             ...baseOptions.configOverrides,
             maxTokens: isLocalProvider
-                ? this.plugin.getLocalAutoTranslationMaxTokensForLength(chunkLength, this.plugin.getAutoTranslationTargetLanguage(baseOptions), baseMaxTokens)
+                ? this.plugin.getLocalAutoTranslationMaxTokensForLength(chunkLength, this.getAutoTranslationTargetLanguage(baseOptions), baseMaxTokens)
                 : Math.max(baseMaxTokens, AUTO_TRANSLATE_LONG_TEXT_MIN_MAX_TOKENS, dynamicMaxTokens),
             localCompactPrompt: isLocalProvider,
             prompt: chunkPrompt
@@ -1582,10 +1587,10 @@ class AutoTranslationRequestPipeline {
         };
     }
 
-    async runAutoTranslationModelAttempt(text, options = this.plugin.getAutoTranslationOptions(), taskOptions = {}) {
-        const timeoutMs = this.plugin.getAutoTranslationRequestTimeoutMs(options, text);
+    async runAutoTranslationModelAttempt(text, options = this.getAutoTranslationOptions(), taskOptions = {}) {
+        const timeoutMs = this.getAutoTranslationRequestTimeoutMs(options, text);
         const isCurrent = () => this.isAutoTranslationAttemptCurrent(options, taskOptions);
-        if (!isCurrent()) throw this.plugin.createAutoTranslationStaleError("model-attempt-stale");
+        if (!isCurrent()) throw this.createAutoTranslationStaleError("model-attempt-stale");
         const translated = await this.plugin.runModelTask("translation", text, {
             configOverrides: options.configOverrides,
             timeoutMs,
@@ -1597,7 +1602,7 @@ class AutoTranslationRequestPipeline {
             ...(options.truncationRetry ? { truncationRetry: true } : {}),
             ...(taskOptions?.signal ? { signal: taskOptions.signal } : {})
         });
-        return this.plugin.sanitizeAutoTranslationOutput(text, translated, this.plugin.getAutoTranslationTargetLanguage(options), this.plugin.getAutoTranslationOutputValidationOptions(text, translated, options));
+        return this.plugin.sanitizeAutoTranslationOutput(text, translated, this.getAutoTranslationTargetLanguage(options), this.getAutoTranslationOutputValidationOptions(text, translated, options));
     }
 
     shouldSkipQuotedAutoTranslationCandidates(sourceText, translatedText, options = {}) {
@@ -1607,7 +1612,7 @@ class AutoTranslationRequestPipeline {
         return Math.max(sourceLength, outputLength) >= AUTO_TRANSLATE_FORCE_SINGLE_TEXT_LENGTH || outputLength >= 160;
     }
 
-    getAutoTranslationOutputValidationOptions(text, translated, requestOptions = this.plugin.getAutoTranslationOptions()) {
+    getAutoTranslationOutputValidationOptions(text, translated, requestOptions = this.getAutoTranslationOptions()) {
         const isMergedLongText = requestOptions?.longTextMerged === true
             || (requestOptions?.mode === "long-text"
                 && requestOptions?.longTextChunkIndex === undefined
@@ -1620,28 +1625,28 @@ class AutoTranslationRequestPipeline {
 
     validateAutoTranslationBatchRow(item, output) {
         const { text, requestOptions } = item;
-        const targetLanguage = this.plugin.getAutoTranslationTargetLanguage(requestOptions);
-        const trustProvider = this.plugin.getAutoTranslationValidationPolicy(requestOptions) === "trust-provider";
-        const outputOptions = trustProvider ? this.plugin.getAutoTranslationOutputValidationOptions(text, output, requestOptions) : {};
+        const targetLanguage = this.getAutoTranslationTargetLanguage(requestOptions);
+        const trustProvider = this.getAutoTranslationValidationPolicy(requestOptions) === "trust-provider";
+        const outputOptions = trustProvider ? this.getAutoTranslationOutputValidationOptions(text, output, requestOptions) : {};
         const translated = this.plugin.sanitizeAutoTranslationOutput(text, output, targetLanguage, outputOptions);
         if (!translated) return { translated, invalidReason: "empty" };
         if (!trustProvider) {
             const invalidReason = this.plugin.getAutoTranslationInvalidOutputReason(text, translated, targetLanguage) || "";
             return { translated, invalidReason };
         }
-        const validationOptions = this.plugin.getAutoTranslationOutputValidationOptions(text, translated, requestOptions);
+        const validationOptions = this.getAutoTranslationOutputValidationOptions(text, translated, requestOptions);
         const validation = this.plugin.getAutoTranslationOutputValidationResult(text, translated, targetLanguage, validationOptions, requestOptions);
         return { translated, invalidReason: validation.renderable ? "" : (validation.reasonCode || "invalid-output") };
     }
 
-    getAutoTranslationValidationPolicy(requestOptions = this.plugin.getAutoTranslationOptions()) {
+    getAutoTranslationValidationPolicy(requestOptions = this.getAutoTranslationOptions()) {
         const config = this.plugin.getEffectiveTaskConfig("translation", requestOptions?.configOverrides);
         if (this.plugin.isDirectTranslateProvider(config)) return "trust-provider";
         if (this.plugin.isLocalTranslationProvider(config)) return "best-effort";
         return "normal";
     }
 
-    getAutoTranslationOutputValidationResult(sourceText, translatedText, targetLanguage = this.plugin.settings.translation.targetLanguage, options = {}, requestOptions = this.plugin.getAutoTranslationOptions()) {
+    getAutoTranslationOutputValidationResult(sourceText, translatedText, targetLanguage = this.plugin.settings.translation.targetLanguage, options = {}, requestOptions = this.getAutoTranslationOptions()) {
         const source = String(sourceText || "").trim();
         const output = String(translatedText || "").trim();
         const targetScript = this.plugin.getTargetLanguageScript(targetLanguage);
@@ -1680,7 +1685,7 @@ class AutoTranslationRequestPipeline {
             };
         }
 
-        const policy = this.plugin.getAutoTranslationValidationPolicy(requestOptions);
+        const policy = this.getAutoTranslationValidationPolicy(requestOptions);
         if (this.plugin.hasLongAutoTranslationChunkFailurePlaceholder(output)) {
             return {
                 ...base,
@@ -1693,7 +1698,7 @@ class AutoTranslationRequestPipeline {
         }
 
         const invalidReason = this.plugin.getAutoTranslationInvalidOutputReason(source, output, targetLanguage, options) || "";
-        if (this.plugin.isHardInvalidAutoTranslationReason(invalidReason) || sameAsSource) {
+        if (this.isHardInvalidAutoTranslationReason(invalidReason) || sameAsSource) {
             return {
                 ...base,
                 quality: sameAsSource ? TRANSLATION_VALIDATION_QUALITIES.BAD : base.quality,
@@ -1736,9 +1741,9 @@ class AutoTranslationRequestPipeline {
         }
 
         if (partialLongText
-            && !this.plugin.isHardInvalidAutoTranslationReason(invalidReason)
+            && !this.isHardInvalidAutoTranslationReason(invalidReason)
             && !sameAsSource
-            && this.plugin.isRenderableBestEffortAutoTranslation(source, output, targetLanguage, {
+            && this.isRenderableBestEffortAutoTranslation(source, output, targetLanguage, {
                 invalidReason,
                 targetScript,
                 targetLetters,
@@ -1757,7 +1762,7 @@ class AutoTranslationRequestPipeline {
             };
         }
 
-        if (policy === "best-effort" && this.plugin.isRenderableBestEffortAutoTranslation(source, output, targetLanguage, {
+        if (policy === "best-effort" && this.isRenderableBestEffortAutoTranslation(source, output, targetLanguage, {
             invalidReason,
             targetScript,
             targetLetters,
@@ -1766,7 +1771,7 @@ class AutoTranslationRequestPipeline {
             sourceTargetLetters,
             targetLanguageRatio
         })) {
-            const quality = this.plugin.getBestEffortAutoTranslationQuality(invalidReason, {
+            const quality = this.getBestEffortAutoTranslationQuality(invalidReason, {
                 targetLetters,
                 outputLetters,
                 sourceLetters,
@@ -1782,7 +1787,7 @@ class AutoTranslationRequestPipeline {
             };
         }
 
-        if (policy === "normal" && this.plugin.isUsableResidualAutoTranslation(source, output, targetLanguage, {
+        if (policy === "normal" && this.isUsableResidualAutoTranslation(source, output, targetLanguage, {
             invalidReason,
             targetLetters,
             outputLetters,
@@ -1860,47 +1865,47 @@ class AutoTranslationRequestPipeline {
         return Number(meta.targetLetters || 0) >= 2 && Number(meta.targetLanguageRatio || 0) >= 0.25;
     }
 
-    getRaisedAutoTranslationMaxTokens(options = this.plugin.getAutoTranslationOptions(), text = "", multiplier = 1.6) {
+    getRaisedAutoTranslationMaxTokens(options = this.getAutoTranslationOptions(), text = "", multiplier = 1.6) {
         const config = this.plugin.getEffectiveTaskConfig("translation", options?.configOverrides);
         const current = this.plugin.normalizeRequestNumber(config.maxTokens, DEFAULT_SETTINGS.translation.maxTokens, { min: 1, integer: true });
         const sourceLength = Math.max(String(text || "").length, Number(options?.longTextSourceLength || 0) || 0);
-        const dynamic = this.plugin.getLongTextMaxTokensForLength(sourceLength, this.plugin.getAutoTranslationTargetLanguage(options));
+        const dynamic = this.getLongTextMaxTokensForLength(sourceLength, this.getAutoTranslationTargetLanguage(options));
         const target = Math.ceil(Math.max(current, dynamic, 256) * Math.max(1, Number(multiplier) || 1));
         const cap = this.plugin.isLocalTranslationProvider(config) ? 2400 : 6000;
         return Math.max(current + 128, Math.min(cap, target));
     }
 
-    withRaisedAutoTranslationMaxTokens(options = this.plugin.getAutoTranslationOptions(), text = "", multiplier = 1.6) {
+    withRaisedAutoTranslationMaxTokens(options = this.getAutoTranslationOptions(), text = "", multiplier = 1.6) {
         return {
             ...options,
             configOverrides: {
                 ...options.configOverrides,
-                maxTokens: this.plugin.getRaisedAutoTranslationMaxTokens(options, text, multiplier)
+                maxTokens: this.getRaisedAutoTranslationMaxTokens(options, text, multiplier)
             }
         };
     }
 
-    async runAutoTranslationTask(text, options = this.plugin.getAutoTranslationOptions(), taskOptions = {}) {
-        if (this.plugin.isLongAutoTranslationText(text) && taskOptions.longTextStrategy !== false) {
-            return this.plugin.runLongAutoTranslationTask(text, options, taskOptions);
+    async runAutoTranslationTask(text, options = this.getAutoTranslationOptions(), taskOptions = {}) {
+        if (this.isLongAutoTranslationText(text) && taskOptions.longTextStrategy !== false) {
+            return this.runLongAutoTranslationTask(text, options, taskOptions);
         }
         return this.plugin.runAutoTranslationTaskWithOptions(text, options, taskOptions);
     }
 
-    async runAutoTranslationTaskWithOptions(text, options = this.plugin.getAutoTranslationOptions(), taskOptions = {}) {
+    async runAutoTranslationTaskWithOptions(text, options = this.getAutoTranslationOptions(), taskOptions = {}) {
         let translated = "";
         let firstInvalidReason = "";
         let firstValidation = null;
         try {
-            this.plugin.consumeAutoTranslationRequestBudget(taskOptions);
+            this.consumeAutoTranslationRequestBudget(taskOptions);
             translated = await this.plugin.runAutoTranslationModelAttempt(text, options, taskOptions);
-            const firstValidationOptions = this.plugin.getAutoTranslationOutputValidationOptions(text, translated, options);
-            firstValidation = this.plugin.getAutoTranslationOutputValidationResult(text, translated, this.plugin.getAutoTranslationTargetLanguage(options), firstValidationOptions, options);
+            const firstValidationOptions = this.getAutoTranslationOutputValidationOptions(text, translated, options);
+            firstValidation = this.plugin.getAutoTranslationOutputValidationResult(text, translated, this.getAutoTranslationTargetLanguage(options), firstValidationOptions, options);
             firstInvalidReason = firstValidation.reasonCode || "";
         }
         catch (error) {
             if (!error?.modelOutputTruncated || taskOptions.retryInvalidOutput === false) throw error;
-            if (!this.plugin.isAutoTranslationStrictRetryEnabled()) return this.plugin.runTruncatedAutoTranslationRetry(text, options, taskOptions, error);
+            if (!this.isAutoTranslationStrictRetryEnabled()) return this.runTruncatedAutoTranslationRetry(text, options, taskOptions, error);
             firstInvalidReason = "truncated";
         }
         if (firstValidation?.renderable) {
@@ -1916,28 +1921,28 @@ class AutoTranslationRequestPipeline {
             return translated;
         }
         if (!firstInvalidReason) return translated;
-        if (this.plugin.shouldRunLocalAutoTranslationRepairRetry(firstInvalidReason, text, translated, options, taskOptions)) {
-            let repairOptions = this.plugin.getAutoTranslationFinalFallbackOptions(text, options);
-            if (firstInvalidReason === "truncated") repairOptions = this.plugin.withRaisedAutoTranslationMaxTokens(repairOptions, text, 1.8);
-            this.plugin.consumeAutoTranslationRequestBudget(taskOptions);
+        if (this.shouldRunLocalAutoTranslationRepairRetry(firstInvalidReason, text, translated, options, taskOptions)) {
+            let repairOptions = this.getAutoTranslationFinalFallbackOptions(text, options);
+            if (firstInvalidReason === "truncated") repairOptions = this.withRaisedAutoTranslationMaxTokens(repairOptions, text, 1.8);
+            this.consumeAutoTranslationRequestBudget(taskOptions);
             const repaired = await this.plugin.runAutoTranslationModelAttempt(text, repairOptions, taskOptions);
-            const repairValidationOptions = this.plugin.getAutoTranslationOutputValidationOptions(text, repaired, repairOptions);
-            const repairValidation = this.plugin.getAutoTranslationOutputValidationResult(text, repaired, this.plugin.getAutoTranslationTargetLanguage(repairOptions), repairValidationOptions, repairOptions);
+            const repairValidationOptions = this.getAutoTranslationOutputValidationOptions(text, repaired, repairOptions);
+            const repairValidation = this.plugin.getAutoTranslationOutputValidationResult(text, repaired, this.getAutoTranslationTargetLanguage(repairOptions), repairValidationOptions, repairOptions);
             const repairInvalidReason = repairValidation.reasonCode || "";
             if (repairValidation.renderable) return repaired;
-            throw this.plugin.createFinalInvalidAutoTranslationError(repairInvalidReason);
+            throw this.createFinalInvalidAutoTranslationError(repairInvalidReason);
         }
-        if (taskOptions.retryInvalidOutput === false || !this.plugin.isAutoTranslationStrictRetryEnabled()) throw this.plugin.createFinalInvalidAutoTranslationError(firstInvalidReason);
+        if (taskOptions.retryInvalidOutput === false || !this.isAutoTranslationStrictRetryEnabled()) throw this.createFinalInvalidAutoTranslationError(firstInvalidReason);
 
         let retryOptions = this.plugin.getAutoTranslationRetryOptions(text, translated, options);
-        if (firstInvalidReason === "truncated") retryOptions = this.plugin.withRaisedAutoTranslationMaxTokens(retryOptions, text, 1.8);
+        if (firstInvalidReason === "truncated") retryOptions = this.withRaisedAutoTranslationMaxTokens(retryOptions, text, 1.8);
         let retried = "";
         let retryInvalidReason = "";
         try {
-            this.plugin.consumeAutoTranslationRequestBudget(taskOptions);
+            this.consumeAutoTranslationRequestBudget(taskOptions);
             retried = await this.plugin.runAutoTranslationModelAttempt(text, retryOptions, taskOptions);
-            const retryValidationOptions = this.plugin.getAutoTranslationOutputValidationOptions(text, retried, retryOptions);
-            const retryValidation = this.plugin.getAutoTranslationOutputValidationResult(text, retried, this.plugin.getAutoTranslationTargetLanguage(retryOptions), retryValidationOptions, retryOptions);
+            const retryValidationOptions = this.getAutoTranslationOutputValidationOptions(text, retried, retryOptions);
+            const retryValidation = this.plugin.getAutoTranslationOutputValidationResult(text, retried, this.getAutoTranslationTargetLanguage(retryOptions), retryValidationOptions, retryOptions);
             retryInvalidReason = retryValidation.reasonCode || "";
             if (retryValidation.renderable) return retried;
         }
@@ -1946,16 +1951,16 @@ class AutoTranslationRequestPipeline {
             retryInvalidReason = "truncated";
         }
 
-        let lastChanceOptions = this.plugin.getAutoTranslationFinalFallbackOptions(text, options);
-        if (retryInvalidReason === "truncated" || firstInvalidReason === "truncated") lastChanceOptions = this.plugin.withRaisedAutoTranslationMaxTokens(lastChanceOptions, text, 2.2);
-        this.plugin.consumeAutoTranslationRequestBudget(taskOptions);
+        let lastChanceOptions = this.getAutoTranslationFinalFallbackOptions(text, options);
+        if (retryInvalidReason === "truncated" || firstInvalidReason === "truncated") lastChanceOptions = this.withRaisedAutoTranslationMaxTokens(lastChanceOptions, text, 2.2);
+        this.consumeAutoTranslationRequestBudget(taskOptions);
         const finalText = await this.plugin.runAutoTranslationModelAttempt(text, lastChanceOptions, taskOptions);
-        const finalValidationOptions = this.plugin.getAutoTranslationOutputValidationOptions(text, finalText, lastChanceOptions);
-        const finalValidation = this.plugin.getAutoTranslationOutputValidationResult(text, finalText, this.plugin.getAutoTranslationTargetLanguage(lastChanceOptions), finalValidationOptions, lastChanceOptions);
+        const finalValidationOptions = this.getAutoTranslationOutputValidationOptions(text, finalText, lastChanceOptions);
+        const finalValidation = this.plugin.getAutoTranslationOutputValidationResult(text, finalText, this.getAutoTranslationTargetLanguage(lastChanceOptions), finalValidationOptions, lastChanceOptions);
         const finalInvalidReason = finalValidation.reasonCode || "";
         if (finalValidation.renderable) return finalText;
 
-        throw this.plugin.createFinalInvalidAutoTranslationError(finalInvalidReason);
+        throw this.createFinalInvalidAutoTranslationError(finalInvalidReason);
     }
 
     // With strict retry off, a cut-off output still gets one retry with a larger max_tokens. If
@@ -1963,25 +1968,25 @@ class AutoTranslationRequestPipeline {
     // The retry may generate more tokens, so its timeout grows with max_tokens (bounded). A
     // looping model that is still too slow for it ends as the first truncation, never as a
     // timeout that would mark a healthy local service unavailable.
-    async runTruncatedAutoTranslationRetry(text, options = this.plugin.getAutoTranslationOptions(), taskOptions = {}, truncatedError = null) {
+    async runTruncatedAutoTranslationRetry(text, options = this.getAutoTranslationOptions(), taskOptions = {}, truncatedError = null) {
         const raisedOptions = {
-            ...this.plugin.withRaisedAutoTranslationMaxTokens(options, text, 1.8),
+            ...this.withRaisedAutoTranslationMaxTokens(options, text, 1.8),
             truncationRetry: true
         };
-        raisedOptions.requestTimeoutMs = this.plugin.getTruncatedAutoTranslationRetryTimeoutMs(options, raisedOptions, text);
+        raisedOptions.requestTimeoutMs = this.getTruncatedAutoTranslationRetryTimeoutMs(options, raisedOptions, text);
         this.plugin.logDiagnostic("auto.truncated", "retry", {
             sourceHash: this.plugin.getStrongTextFingerprint(text),
             mode: options?.mode || "auto",
             maxTokens: Number(raisedOptions?.configOverrides?.maxTokens || 0),
             timeoutMs: raisedOptions.requestTimeoutMs
         });
-        this.plugin.consumeAutoTranslationRequestBudget(taskOptions);
+        this.consumeAutoTranslationRequestBudget(taskOptions);
         let retried = "";
         try {
             retried = await this.plugin.runAutoTranslationModelAttempt(text, raisedOptions, taskOptions);
         }
         catch (error) {
-            if (truncatedError && !this.plugin.isAbandonedTranslationError(error) && this.plugin.isTimeoutError(error)) {
+            if (truncatedError && !this.isAbandonedTranslationError(error) && this.plugin.isTimeoutError(error)) {
                 truncatedError.truncationRetryTimedOut = true;
                 throw truncatedError;
             }
@@ -1990,12 +1995,12 @@ class AutoTranslationRequestPipeline {
         const validation = this.plugin.getAutoTranslationOutputValidationResult(
             text,
             retried,
-            this.plugin.getAutoTranslationTargetLanguage(raisedOptions),
-            this.plugin.getAutoTranslationOutputValidationOptions(text, retried, raisedOptions),
+            this.getAutoTranslationTargetLanguage(raisedOptions),
+            this.getAutoTranslationOutputValidationOptions(text, retried, raisedOptions),
             raisedOptions
         );
         if (validation.renderable) return retried;
-        throw this.plugin.createFinalInvalidAutoTranslationError(validation.reasonCode || "invalid-output", { validationQuality: validation.quality });
+        throw this.createFinalInvalidAutoTranslationError(validation.reasonCode || "invalid-output", { validationQuality: validation.quality });
     }
 
     // A per-click budget of model requests (manual translation). Every attempt, rescue and chunk
@@ -2007,9 +2012,9 @@ class AutoTranslationRequestPipeline {
     // A long message needs one request per chunk (plus the whole pass), so its click budget grows
     // with the chunk count, with a small rescue allowance on top, and stays bounded.
     getManualTranslationRequestBudgetLimit(text = "", requestOptions = this.plugin.getManualTranslationRequestOptions()) {
-        if (!this.plugin.isLongAutoTranslationText(text)) return MANUAL_TRANSLATION_REQUEST_BUDGET;
-        const longOptions = requestOptions?.mode === "long-text" ? requestOptions : this.plugin.getLongTextTranslationOptions(requestOptions, text);
-        const chunkCount = this.plugin.splitLongAutoTranslationText(text, this.plugin.getLongAutoTranslationChunkLength(longOptions)).length;
+        if (!this.isLongAutoTranslationText(text)) return MANUAL_TRANSLATION_REQUEST_BUDGET;
+        const longOptions = requestOptions?.mode === "long-text" ? requestOptions : this.getLongTextTranslationOptions(requestOptions, text);
+        const chunkCount = this.plugin.splitLongAutoTranslationText(text, this.getLongAutoTranslationChunkLength(longOptions)).length;
         const wholePass = String(text || "").length <= MANUAL_LONG_TEXT_WHOLE_PASS_MAX_LENGTH ? 1 : 0;
         const planned = chunkCount + wholePass + MANUAL_TRANSLATION_RESCUE_REQUEST_ALLOWANCE;
         return Math.min(MANUAL_TRANSLATION_REQUEST_BUDGET_MAX, Math.max(MANUAL_TRANSLATION_REQUEST_BUDGET, planned));
@@ -2018,7 +2023,7 @@ class AutoTranslationRequestPipeline {
     consumeAutoTranslationRequestBudget(taskOptions = {}) {
         const budget = taskOptions?.requestBudget;
         if (!budget) return;
-        if (this.plugin.isAutoTranslationRequestBudgetExhausted(budget)) {
+        if (this.isAutoTranslationRequestBudgetExhausted(budget)) {
             const error = new Error("REQUEST_BUDGET_EXHAUSTED");
             error.code = "REQUEST_BUDGET_EXHAUSTED";
             error.autoTranslationRequestBudgetExhausted = true;
@@ -2050,9 +2055,9 @@ class AutoTranslationRequestPipeline {
         return ["network", "timeout"].includes(this.plugin.getAutoTranslationFailureType(error));
     }
 
-    shouldRunLocalAutoTranslationRepairRetry(reason, text, translated, options = this.plugin.getAutoTranslationOptions(), taskOptions = {}) {
+    shouldRunLocalAutoTranslationRepairRetry(reason, text, translated, options = this.getAutoTranslationOptions(), taskOptions = {}) {
         if (taskOptions.retryInvalidOutput === false) return false;
-        if (this.plugin.isAutoTranslationStrictRetryEnabled()) return false;
+        if (this.isAutoTranslationStrictRetryEnabled()) return false;
         const config = this.plugin.getEffectiveTaskConfig("translation", options?.configOverrides);
         if (!this.plugin.isLocalTranslationProvider(config)) return false;
         if (options?.longTextChunk || options?.mode === "long-text") return false;
@@ -2077,7 +2082,7 @@ class AutoTranslationRequestPipeline {
     // The truncation retry's timeout: the normal one scaled by how much max_tokens grew, capped at
     // the long-text maximum (and never shorter than the normal timeout).
     getTruncatedAutoTranslationRetryTimeoutMs(options, raisedOptions, text = "") {
-        const baseTimeoutMs = this.plugin.getAutoTranslationRequestTimeoutMs(options, text);
+        const baseTimeoutMs = this.getAutoTranslationRequestTimeoutMs(options, text);
         const currentMaxTokens = this.plugin.normalizeRequestNumber(
             this.plugin.getEffectiveTaskConfig("translation", options?.configOverrides).maxTokens,
             DEFAULT_SETTINGS.translation.maxTokens,
@@ -2088,7 +2093,7 @@ class AutoTranslationRequestPipeline {
         return Math.max(baseTimeoutMs, Math.min(AUTO_TRANSLATE_LONG_TEXT_TIMEOUT_MAX_MS, scaled));
     }
 
-    getAutoTranslationRequestTimeoutMs(options = this.plugin.getAutoTranslationOptions(), text = "") {
+    getAutoTranslationRequestTimeoutMs(options = this.getAutoTranslationOptions(), text = "") {
         if (Number(options?.requestTimeoutMs) > 0) return Number(options.requestTimeoutMs);
         const config = this.plugin.getEffectiveTaskConfig("translation", options?.configOverrides);
         const longLength = Math.max(String(text || "").length, Number(options?.longTextSourceLength || 0) || 0);
@@ -2130,7 +2135,7 @@ class AutoTranslationRequestPipeline {
         return Boolean(error?.autoTranslationStale) || this.plugin.isRequestCancelled(error);
     }
 
-    async runAutoTranslationStrictFallbackTask(text, options = this.plugin.getAutoTranslationOptions(), taskOptions = {}) {
+    async runAutoTranslationStrictFallbackTask(text, options = this.getAutoTranslationOptions(), taskOptions = {}) {
         const strictOptions = this.plugin.getAutoTranslationRetryOptions(text, "", options);
         const signalOptions = taskOptions?.signal ? { signal: taskOptions.signal } : {};
         try {
@@ -2138,23 +2143,23 @@ class AutoTranslationRequestPipeline {
         }
         catch (error) {
             if (!error?.autoTranslationFinalInvalidOutput) throw error;
-            const lastChanceOptions = this.plugin.getAutoTranslationFinalFallbackOptions(text, options);
+            const lastChanceOptions = this.getAutoTranslationFinalFallbackOptions(text, options);
             const translated = await this.plugin.runAutoTranslationModelAttempt(text, lastChanceOptions, signalOptions);
             const finalInvalidReason = this.plugin.getAutoTranslationInvalidOutputReason(
                 text,
                 translated,
-                this.plugin.getAutoTranslationTargetLanguage(lastChanceOptions),
-                this.plugin.getAutoTranslationOutputValidationOptions(text, translated, lastChanceOptions)
+                this.getAutoTranslationTargetLanguage(lastChanceOptions),
+                this.getAutoTranslationOutputValidationOptions(text, translated, lastChanceOptions)
             );
             if (!finalInvalidReason) return translated;
-            throw this.plugin.createFinalInvalidAutoTranslationError(finalInvalidReason || error?.autoTranslationInvalidReason || "invalid-output");
+            throw this.createFinalInvalidAutoTranslationError(finalInvalidReason || error?.autoTranslationInvalidReason || "invalid-output");
         }
     }
 
-    async runAutoTranslationBatchTask(texts, options = this.plugin.getAutoTranslationOptions(), taskOptions = {}) {
+    async runAutoTranslationBatchTask(texts, options = this.getAutoTranslationOptions(), taskOptions = {}) {
         const isCurrent = () => this.isAutoTranslationAttemptCurrent(options, taskOptions);
-        if (!isCurrent()) throw this.plugin.createAutoTranslationStaleError("batch-attempt-stale");
-        if ((texts || []).some(text => this.plugin.isLongAutoTranslationText(text))) {
+        if (!isCurrent()) throw this.createAutoTranslationStaleError("batch-attempt-stale");
+        if ((texts || []).some(text => this.isLongAutoTranslationText(text))) {
             throw this.plugin.createAutoBatchParseError("Long text is handled by LongTextStrategy");
         }
         if (this.plugin.isDirectTranslateProvider(this.plugin.getEffectiveTaskConfig("translation", options?.configOverrides))) {
@@ -2165,9 +2170,9 @@ class AutoTranslationRequestPipeline {
             text
         }));
         const batchOptions = taskOptions.retry
-            ? this.plugin.getAutoTranslationBatchRetryOptions(batch.length, options)
-            : this.plugin.getAutoTranslationBatchOptions(batch.length, options);
-        const baseTimeoutMs = this.plugin.getAutoTranslationRequestTimeoutMs(batchOptions);
+            ? this.getAutoTranslationBatchRetryOptions(batch.length, options)
+            : this.getAutoTranslationBatchOptions(batch.length, options);
+        const baseTimeoutMs = this.getAutoTranslationRequestTimeoutMs(batchOptions);
         const batchTimeoutMs = Math.min(
             AUTO_TRANSLATE_CLOUD_LONG_TEXT_TIMEOUT_MAX_MS,
             baseTimeoutMs + Math.max(0, batch.length - 1) * 3000
@@ -2179,7 +2184,7 @@ class AutoTranslationRequestPipeline {
             isCurrent,
             ...(taskOptions?.signal ? { signal: taskOptions.signal } : {})
         });
-        const rows = this.plugin.parseAutoTranslationBatchOutput(output);
+        const rows = this.parseAutoTranslationBatchOutput(output);
         const byId = new Map();
         const expectedIds = new Set(batch.map(item => item.id));
         if (rows.length > batch.length) throw this.plugin.createAutoBatchParseError("Too many batch rows");
@@ -2216,10 +2221,10 @@ class AutoTranslationRequestPipeline {
     }
 
     getAutoTranslationOptions() {
-        const configOverrides = this.plugin.getAutoTranslationOverrides();
+        const configOverrides = this.getAutoTranslationOverrides();
         return {
             mode: "auto",
-            version: this.plugin.autoTranslationConfigVersion,
+            version: this.stateMachine.configVersion,
             routeKey: this.plugin.getCurrentRouteKey(),
             targetLanguage: this.plugin.settings.translation.targetLanguage,
             providerKey: this.plugin.getAutoTranslationProviderKey({ configOverrides }),
@@ -2227,7 +2232,7 @@ class AutoTranslationRequestPipeline {
         };
     }
 
-    getAutoTranslationTargetLanguage(options = this.plugin.getAutoTranslationOptions()) {
+    getAutoTranslationTargetLanguage(options = this.getAutoTranslationOptions()) {
         return options?.targetLanguage || this.plugin.settings.translation.targetLanguage;
     }
 
@@ -2236,13 +2241,13 @@ class AutoTranslationRequestPipeline {
         return this.plugin.settings.ui?.autoTranslateStrictRetry !== false;
     }
 
-    getAutoTranslationBatchGroupKey(options = this.plugin.getAutoTranslationOptions()) {
+    getAutoTranslationBatchGroupKey(options = this.getAutoTranslationOptions()) {
         const config = this.plugin.getCacheConfigSnapshot("translation", this.plugin.getEffectiveTaskConfig("translation", options?.configOverrides));
         return [
             options?.mode || "auto",
-            options?.version ?? this.plugin.autoTranslationConfigVersion,
+            options?.version ?? this.stateMachine.configVersion,
             options?.routeKey || "",
-            this.plugin.getAutoTranslationTargetLanguage(options),
+            this.getAutoTranslationTargetLanguage(options),
             config.provider,
             config.endpoint,
             config.model,
@@ -2259,18 +2264,18 @@ class AutoTranslationRequestPipeline {
         ].join("\n---\n");
     }
 
-    getAutoTranslationBatchOptions(count, options = this.plugin.getAutoTranslationOptions()) {
-        const targetLanguage = this.plugin.getAutoTranslationTargetInstruction(this.plugin.getAutoTranslationTargetLanguage(options));
+    getAutoTranslationBatchOptions(count, options = this.getAutoTranslationOptions()) {
+        const targetLanguage = this.getAutoTranslationTargetInstruction(this.getAutoTranslationTargetLanguage(options));
 
         return {
             mode: "auto-batch",
-            version: options?.version ?? this.plugin.autoTranslationConfigVersion,
+            version: options?.version ?? this.stateMachine.configVersion,
             promptPolicyVersion: this.plugin.getPromptPolicyVersion("autoBatch"),
             routeKey: options?.routeKey || this.plugin.getCurrentRouteKey(),
-            targetLanguage: this.plugin.getAutoTranslationTargetLanguage(options),
+            targetLanguage: this.getAutoTranslationTargetLanguage(options),
             providerKey: this.plugin.getAutoTranslationProviderKey(options),
             configOverrides: {
-                ...this.plugin.getAutoTranslationRequestSnapshot(options),
+                ...this.getAutoTranslationRequestSnapshot(options),
                 sourceLanguage: AUTO_LANGUAGE_VALUE,
                 targetLanguage,
                 temperature: 0,
@@ -2281,18 +2286,18 @@ class AutoTranslationRequestPipeline {
         };
     }
 
-    getAutoTranslationBatchRetryOptions(count, options = this.plugin.getAutoTranslationOptions()) {
-        const targetLanguage = this.plugin.getAutoTranslationTargetInstruction(this.plugin.getAutoTranslationTargetLanguage(options));
+    getAutoTranslationBatchRetryOptions(count, options = this.getAutoTranslationOptions()) {
+        const targetLanguage = this.getAutoTranslationTargetInstruction(this.getAutoTranslationTargetLanguage(options));
 
         return {
             mode: "auto-batch-retry",
-            version: options?.version ?? this.plugin.autoTranslationConfigVersion,
+            version: options?.version ?? this.stateMachine.configVersion,
             promptPolicyVersion: this.plugin.getPromptPolicyVersion("autoBatchRetry"),
             routeKey: options?.routeKey || this.plugin.getCurrentRouteKey(),
-            targetLanguage: this.plugin.getAutoTranslationTargetLanguage(options),
+            targetLanguage: this.getAutoTranslationTargetLanguage(options),
             providerKey: this.plugin.getAutoTranslationProviderKey(options),
             configOverrides: {
-                ...this.plugin.getAutoTranslationRequestSnapshot(options),
+                ...this.getAutoTranslationRequestSnapshot(options),
                 sourceLanguage: AUTO_LANGUAGE_VALUE,
                 targetLanguage,
                 temperature: 0,
@@ -2329,7 +2334,7 @@ class AutoTranslationRequestPipeline {
             }
         }
 
-        const rows = this.plugin.normalizeAutoTranslationBatchRows(parsed);
+        const rows = this.normalizeAutoTranslationBatchRows(parsed);
         if (!Array.isArray(rows)) throw this.plugin.createAutoBatchParseError(this.plugin.t("invalidJson"));
         return rows;
     }
@@ -2356,14 +2361,14 @@ class AutoTranslationRequestPipeline {
         });
     }
 
-    getAutoTranslationRetryOptions(sourceText, badOutput = "", options = this.plugin.getAutoTranslationOptions()) {
-        const targetLanguageValue = this.plugin.getAutoTranslationTargetLanguage(options);
-        const targetLanguage = this.plugin.getAutoTranslationTargetInstruction(targetLanguageValue);
-        const isLocalProvider = this.plugin.isLocalAutoTranslationOptions(options);
+    getAutoTranslationRetryOptions(sourceText, badOutput = "", options = this.getAutoTranslationOptions()) {
+        const targetLanguageValue = this.getAutoTranslationTargetLanguage(options);
+        const targetLanguage = this.getAutoTranslationTargetInstruction(targetLanguageValue);
+        const isLocalProvider = this.isLocalAutoTranslationOptions(options);
 
         return {
             mode: "auto-retry",
-            version: options?.version ?? this.plugin.autoTranslationConfigVersion,
+            version: options?.version ?? this.stateMachine.configVersion,
             promptPolicyVersion: this.plugin.getPromptPolicyVersion("autoRetry"),
             routeKey: options?.routeKey || this.plugin.getCurrentRouteKey(),
             targetLanguage: targetLanguageValue,
@@ -2371,7 +2376,7 @@ class AutoTranslationRequestPipeline {
             longTextChunk: Boolean(options?.longTextChunk || options?.mode === "long-text"),
             longTextSourceLength: Number(options?.longTextSourceLength || String(sourceText || "").length) || 0,
             configOverrides: {
-                ...this.plugin.getAutoTranslationRequestSnapshot(options),
+                ...this.getAutoTranslationRequestSnapshot(options),
                 sourceLanguage: AUTO_LANGUAGE_VALUE,
                 targetLanguage,
                 temperature: 0,
@@ -2379,20 +2384,20 @@ class AutoTranslationRequestPipeline {
                 promptPolicyVersion: this.plugin.getPromptPolicyVersion("autoRetry"),
                 localCompactPrompt: isLocalProvider,
                 prompt: isLocalProvider
-                    ? this.plugin.buildCompactLocalAutoTranslationPrompt(options, "retry")
+                    ? this.buildCompactLocalAutoTranslationPrompt(options, "retry")
                     : this.plugin.buildPromptPolicyAutoRetryPrompt(sourceText, badOutput, options)
             }
         };
     }
 
-    getAutoTranslationFinalFallbackOptions(sourceText, options = this.plugin.getAutoTranslationOptions()) {
-        const targetLanguageValue = this.plugin.getAutoTranslationTargetLanguage(options);
-        const targetLanguage = this.plugin.getAutoTranslationTargetInstruction(targetLanguageValue);
-        const isLocalProvider = this.plugin.isLocalAutoTranslationOptions(options);
+    getAutoTranslationFinalFallbackOptions(sourceText, options = this.getAutoTranslationOptions()) {
+        const targetLanguageValue = this.getAutoTranslationTargetLanguage(options);
+        const targetLanguage = this.getAutoTranslationTargetInstruction(targetLanguageValue);
+        const isLocalProvider = this.isLocalAutoTranslationOptions(options);
 
         return {
             mode: "auto-final-fallback",
-            version: options?.version ?? this.plugin.autoTranslationConfigVersion,
+            version: options?.version ?? this.stateMachine.configVersion,
             promptPolicyVersion: this.plugin.getPromptPolicyVersion("autoFinalFallback"),
             routeKey: options?.routeKey || this.plugin.getCurrentRouteKey(),
             targetLanguage: targetLanguageValue,
@@ -2400,7 +2405,7 @@ class AutoTranslationRequestPipeline {
             longTextChunk: Boolean(options?.longTextChunk || options?.mode === "long-text"),
             longTextSourceLength: Number(options?.longTextSourceLength || String(sourceText || "").length) || 0,
             configOverrides: {
-                ...this.plugin.getAutoTranslationRequestSnapshot(options),
+                ...this.getAutoTranslationRequestSnapshot(options),
                 sourceLanguage: AUTO_LANGUAGE_VALUE,
                 targetLanguage,
                 temperature: 0,
@@ -2408,14 +2413,14 @@ class AutoTranslationRequestPipeline {
                 promptPolicyVersion: this.plugin.getPromptPolicyVersion("autoFinalFallback"),
                 localCompactPrompt: isLocalProvider,
                 prompt: isLocalProvider
-                    ? this.plugin.buildCompactLocalAutoTranslationPrompt(options, "final")
+                    ? this.buildCompactLocalAutoTranslationPrompt(options, "final")
                     : this.plugin.buildPromptPolicyAutoFinalFallbackPrompt(sourceText, options)
             }
         };
     }
 
     getAutoTranslationOverrides() {
-        const targetLanguage = this.plugin.getAutoTranslationTargetInstruction(this.plugin.settings.translation.targetLanguage);
+        const targetLanguage = this.getAutoTranslationTargetInstruction(this.plugin.settings.translation.targetLanguage);
         const isLocalProvider = this.plugin.isLocalTranslationProvider({ provider: this.plugin.settings.translation.provider });
 
         return {
@@ -2433,7 +2438,7 @@ class AutoTranslationRequestPipeline {
             promptPolicyVersion: this.plugin.getPromptPolicyVersion("auto"),
             localCompactPrompt: isLocalProvider,
             prompt: isLocalProvider
-                ? this.plugin.buildCompactLocalAutoTranslationPrompt({ targetLanguage: this.plugin.settings.translation.targetLanguage }, "auto")
+                ? this.buildCompactLocalAutoTranslationPrompt({ targetLanguage: this.plugin.settings.translation.targetLanguage }, "auto")
                 : this.plugin.buildPromptPolicyPrompt("auto", {
                     targetLanguage,
                     basePrompt: this.plugin.settings.translation.prompt
@@ -2456,7 +2461,7 @@ class AutoTranslationRequestPipeline {
             maxTokens: config.maxTokens,
             // Builders replace targetLanguage with the LLM instruction; direct translation
             // APIs read this raw code instead.
-            targetLanguageCode: this.plugin.getTargetLanguageCode(this.plugin.getAutoTranslationTargetLanguage(options || {}))
+            targetLanguageCode: this.plugin.getTargetLanguageCode(this.getAutoTranslationTargetLanguage(options || {}))
         };
     }
 
@@ -2498,8 +2503,8 @@ class AutoTranslationRequestPipeline {
         const outputLetterCount = Number(outputCounts.total || 0);
         if (sourceLetters >= 180 && outputLetterCount < 80 && targetLetters / Math.max(1, sourceLetters) < 0.16) return true;
         if (sourceLetters >= 80 && outputLetterCount < 40 && targetLetters / Math.max(1, sourceLetters) < 0.12) return true;
-        if (sourceLetters >= 120 && targetLetters < this.plugin.getMinimumAutoTranslationTargetLetters(sourceLetters, targetScript)) return true;
-        if (this.plugin.hasCollapsedAutoTranslationSentenceCoverage(source, output, targetLanguage, sourceLetters, targetLetters)) return true;
+        if (sourceLetters >= 120 && targetLetters < this.getMinimumAutoTranslationTargetLetters(sourceLetters, targetScript)) return true;
+        if (this.hasCollapsedAutoTranslationSentenceCoverage(source, output, targetLanguage, sourceLetters, targetLetters)) return true;
         return false;
     }
 
@@ -2513,7 +2518,7 @@ class AutoTranslationRequestPipeline {
     hasCollapsedAutoTranslationSentenceCoverage(sourceText, translatedText, targetLanguage, sourceLetters = null, targetLetters = null) {
         const targetScript = this.plugin.getTargetLanguageScript(targetLanguage);
         if (targetScript === "unknown") return false;
-        const sourceChunks = this.plugin.getTranslatableAutoTranslationSentenceChunks(sourceText, targetLanguage);
+        const sourceChunks = this.getTranslatableAutoTranslationSentenceChunks(sourceText, targetLanguage);
         if (sourceChunks.length < 3) return false;
 
         const outputChunks = this.plugin.getSentenceLikeChunks(translatedText)
@@ -2535,22 +2540,22 @@ class AutoTranslationRequestPipeline {
     }
 
     hasMissingAutoTranslationLines(sourceText, translatedText, targetLanguage, options = {}) {
-        const sourceLines = this.plugin.getTranslatableAutoTranslationLines(sourceText, targetLanguage);
+        const sourceLines = this.getTranslatableAutoTranslationLines(sourceText, targetLanguage);
         if (sourceLines.length <= 1) return false;
-        if (!this.plugin.shouldPreserveAutoTranslationLineCount(sourceText, sourceLines)) return false;
+        if (!this.shouldPreserveAutoTranslationLineCount(sourceText, sourceLines)) return false;
 
         const translatedLines = String(translatedText || "")
             .split(/\n+/)
             .map(line => line.trim())
             .filter(line => this.plugin.hasLetters(line));
         if (translatedLines.length < sourceLines.length) {
-            if (this.plugin.isMergedShortAutoTranslationLinesAcceptable(sourceLines, translatedText, targetLanguage, options)) return false;
+            if (this.isMergedShortAutoTranslationLinesAcceptable(sourceLines, translatedText, targetLanguage, options)) return false;
             return true;
         }
 
         const targetScript = this.plugin.getTargetLanguageScript(targetLanguage);
         if (targetScript === "unknown") return false;
-        return sourceLines.some((sourceLine, index) => this.plugin.isAutoTranslationLineUndercovered(sourceLine, translatedLines[index], targetLanguage, targetScript));
+        return sourceLines.some((sourceLine, index) => this.isAutoTranslationLineUndercovered(sourceLine, translatedLines[index], targetLanguage, targetScript));
     }
 
     isMergedShortAutoTranslationLinesAcceptable(sourceLines = [], translatedText = "", targetLanguage = this.plugin.settings.translation.targetLanguage, options = {}) {
@@ -2558,7 +2563,7 @@ class AutoTranslationRequestPipeline {
         const lines = sourceLines.map(line => String(line || "").trim()).filter(Boolean);
         if (lines.length < 2 || lines.length > 4) return false;
         if (lines.some(line => line.length > 80)) return false;
-        if (lines.some(line => this.plugin.getAutoTranslationLineWordCount(line, targetLanguage) > 2)) return false;
+        if (lines.some(line => this.getAutoTranslationLineWordCount(line, targetLanguage) > 2)) return false;
         const output = String(translatedText || "").trim();
         if (!output) return false;
         if (!this.plugin.isLikelyTargetLanguage(output, targetLanguage) && !this.plugin.isTargetLanguageDominantBySentence(output, targetLanguage, { allowPureTarget: true })) return false;
@@ -2599,9 +2604,9 @@ class AutoTranslationRequestPipeline {
         const output = String(translatedLine || "").trim();
         if (!source) return false;
         if (!output) return true;
-        if (this.plugin.hasResidualAutoTranslationSourceText(output, targetLanguage, source)) return true;
-        const anchors = this.plugin.getAutoTranslationCoverageAnchors(source);
-        if (anchors.length && !this.plugin.hasAutoTranslationCoverageAnchors(output, anchors)) return true;
+        if (this.hasResidualAutoTranslationSourceText(output, targetLanguage, source)) return true;
+        const anchors = this.getAutoTranslationCoverageAnchors(source);
+        if (anchors.length && !this.hasAutoTranslationCoverageAnchors(output, anchors)) return true;
 
         const sourceCounts = this.plugin.countTextScriptsForValidation(source);
         const outputCounts = this.plugin.countTextScriptsForValidation(output);
@@ -2611,7 +2616,7 @@ class AutoTranslationRequestPipeline {
         const targetLetters = Number(outputCounts[targetScript] || 0);
         if (targetLetters <= 0) return true;
         if (sourceLetters < 80) return targetLetters < Math.max(2, Math.round(sourceLetters * 0.08));
-        return targetLetters < Math.max(8, Math.round(this.plugin.getMinimumAutoTranslationTargetLetters(sourceLetters, targetScript) * 0.6));
+        return targetLetters < Math.max(8, Math.round(this.getMinimumAutoTranslationTargetLetters(sourceLetters, targetScript) * 0.6));
     }
 
     getTranslatableAutoTranslationSentenceChunks(text, targetLanguage) {
@@ -2625,7 +2630,7 @@ class AutoTranslationRequestPipeline {
         const anchors = [];
         const pushMatches = pattern => {
             for (const match of source.match(pattern) || []) {
-                const normalized = this.plugin.normalizeAutoTranslationCoverageAnchor(match);
+                const normalized = this.normalizeAutoTranslationCoverageAnchor(match);
                 if (normalized && !anchors.includes(normalized)) anchors.push(normalized);
             }
         };
@@ -2656,13 +2661,13 @@ class AutoTranslationRequestPipeline {
         return anchors.every(anchor => normalizedOutput.includes(anchor));
     }
 
-    isMergedLongAutoTranslationAcceptable(sourceText, translatedText, targetLanguage, sourceLines = this.plugin.getTranslatableAutoTranslationLines(sourceText, targetLanguage)) {
+    isMergedLongAutoTranslationAcceptable(sourceText, translatedText, targetLanguage, sourceLines = this.getTranslatableAutoTranslationLines(sourceText, targetLanguage)) {
         if (sourceLines.length < 3) return false;
         const source = String(sourceText || "").trim();
         const output = String(translatedText || "").trim();
         if (!source || !output) return false;
-        if (this.plugin.hasResidualAutoTranslationSourceText(output, targetLanguage, source)) return false;
-        if (this.plugin.hasUndertranslatedAutoTranslationOutput(source, output, targetLanguage)) return false;
+        if (this.hasResidualAutoTranslationSourceText(output, targetLanguage, source)) return false;
+        if (this.hasUndertranslatedAutoTranslationOutput(source, output, targetLanguage)) return false;
 
         const targetScript = this.plugin.getTargetLanguageScript(targetLanguage);
         if (targetScript === "unknown") return this.plugin.isTargetLanguageDominantBySentence(output, targetLanguage);
@@ -2727,14 +2732,14 @@ class AutoTranslationRequestPipeline {
         });
     }
 
-    getAutoTranslationPrecheckSkipReason(text, requestOptions = this.plugin.getAutoTranslationOptions()) {
+    getAutoTranslationPrecheckSkipReason(text, requestOptions = this.getAutoTranslationOptions()) {
         const value = String(text || "").trim();
-        const targetLanguage = this.plugin.getAutoTranslationTargetLanguage(requestOptions);
-        const cached = this.plugin.getAutoTranslationPrecheckSkipReasonFromCache(value, targetLanguage, requestOptions);
+        const targetLanguage = this.getAutoTranslationTargetLanguage(requestOptions);
+        const cached = this.getAutoTranslationPrecheckSkipReasonFromCache(value, targetLanguage, requestOptions);
         if (cached !== null) return cached;
 
-        const reason = this.plugin.computeAutoTranslationPrecheckSkipReason(value, targetLanguage);
-        if (reason) this.plugin.cacheAutoTranslationPrecheckSkipReason(value, targetLanguage, requestOptions, reason);
+        const reason = this.computeAutoTranslationPrecheckSkipReason(value, targetLanguage);
+        if (reason) this.cacheAutoTranslationPrecheckSkipReason(value, targetLanguage, requestOptions, reason);
         return reason;
     }
 
@@ -2748,8 +2753,8 @@ class AutoTranslationRequestPipeline {
         const value = withoutEmoji === source ? source : this.plugin.normalizeExtractedText(withoutEmoji);
         if (value.length < 2) return "too-short";
         if (!this.plugin.hasLetters(value)) return "no-letters";
-        if (this.plugin.isAutoTranslationLinkOnlyText(value)) return "link-only";
-        if (this.plugin.isAutoTranslationCodeOnlyText(value)) return "code-only";
+        if (this.isAutoTranslationLinkOnlyText(value)) return "link-only";
+        if (this.isAutoTranslationCodeOnlyText(value)) return "code-only";
         if (this.plugin.isLowInformationRepeatedText(value)) return "low-information-repeat";
         if (this.plugin.isLikelyPreservedTokenLine(value)) return "preserved-token";
         if (this.plugin.isCommonTargetShortText(value, targetLanguage)) return "common-target-short";
@@ -2757,32 +2762,32 @@ class AutoTranslationRequestPipeline {
         return "";
     }
 
-    getAutoTranslationPrecheckSkipReasonFromCache(text, targetLanguage, requestOptions = this.plugin.getAutoTranslationOptions(), now = Date.now()) {
-        const key = this.plugin.getAutoTranslationPrecheckSkipCacheKey(text, targetLanguage, requestOptions);
-        if (!key || !this.plugin.autoTranslationPrecheckSkips?.has?.(key)) return null;
-        const entry = this.plugin.autoTranslationPrecheckSkips.get(key);
+    getAutoTranslationPrecheckSkipReasonFromCache(text, targetLanguage, requestOptions = this.getAutoTranslationOptions(), now = Date.now()) {
+        const key = this.getAutoTranslationPrecheckSkipCacheKey(text, targetLanguage, requestOptions);
+        if (!key || !this.cooldowns.precheckSkips?.has?.(key)) return null;
+        const entry = this.cooldowns.precheckSkips.get(key);
         if (!entry || Number(entry.expiresAt || 0) <= now) {
-            this.plugin.autoTranslationPrecheckSkips.delete(key);
+            this.cooldowns.precheckSkips.delete(key);
             return null;
         }
         return entry.reason || "";
     }
 
-    cacheAutoTranslationPrecheckSkipReason(text, targetLanguage, requestOptions = this.plugin.getAutoTranslationOptions(), reason = "") {
+    cacheAutoTranslationPrecheckSkipReason(text, targetLanguage, requestOptions = this.getAutoTranslationOptions(), reason = "") {
         if (!reason) return;
-        if (!this.plugin.autoTranslationPrecheckSkips?.set) this.plugin.autoTranslationPrecheckSkips = new Map();
-        const key = this.plugin.getAutoTranslationPrecheckSkipCacheKey(text, targetLanguage, requestOptions);
+        if (!this.cooldowns.precheckSkips?.set) this.cooldowns.precheckSkips = new Map();
+        const key = this.getAutoTranslationPrecheckSkipCacheKey(text, targetLanguage, requestOptions);
         if (!key) return;
         const now = Date.now();
-        this.plugin.autoTranslationPrecheckSkips.delete(key);
-        this.plugin.autoTranslationPrecheckSkips.set(key, {
+        this.cooldowns.precheckSkips.delete(key);
+        this.cooldowns.precheckSkips.set(key, {
             reason,
             expiresAt: now + AUTO_TRANSLATE_PRECHECK_SKIP_TTL_MS
         });
-        this.plugin.pruneAutoTranslationPrecheckSkipCache(now);
+        this.pruneAutoTranslationPrecheckSkipCache(now);
     }
 
-    getAutoTranslationPrecheckSkipCacheKey(text, targetLanguage, requestOptions = this.plugin.getAutoTranslationOptions()) {
+    getAutoTranslationPrecheckSkipCacheKey(text, targetLanguage, requestOptions = this.getAutoTranslationOptions()) {
         const value = String(text || "").trim();
         if (!value) return "";
         return [
@@ -2793,7 +2798,7 @@ class AutoTranslationRequestPipeline {
     }
 
     pruneAutoTranslationPrecheckSkipCache(now = Date.now()) {
-        const map = this.plugin.autoTranslationPrecheckSkips;
+        const map = this.cooldowns.precheckSkips;
         if (!map?.size) return;
         // Fixed TTL + delete-before-set guarantees oldest-expiry entries are first.
         for (const [key, entry] of map) {
@@ -2863,11 +2868,11 @@ class AutoTranslationRequestPipeline {
     }
 
     getManualLongTextWholePassOptions(plan, requestOptions = plan?.requestOptions || this.plugin.getManualTranslationRequestOptions()) {
-        const raised = this.plugin.withRaisedAutoTranslationMaxTokens(requestOptions, plan?.text || "", 2);
+        const raised = this.withRaisedAutoTranslationMaxTokens(requestOptions, plan?.text || "", 2);
         const config = this.plugin.getEffectiveTaskConfig("translation", raised?.configOverrides);
         const prompt = this.plugin.isLocalTranslationProvider(config)
-            ? this.plugin.buildCompactLocalAutoTranslationPrompt(raised, "longText")
-            : this.plugin.buildPromptPolicyLongTextPrompt(raised);
+            ? this.buildCompactLocalAutoTranslationPrompt(raised, "longText")
+            : this.buildPromptPolicyLongTextPrompt(raised);
         return {
             ...raised,
             mode: `${requestOptions?.mode || "manual"}-whole`,
@@ -2877,8 +2882,8 @@ class AutoTranslationRequestPipeline {
             configOverrides: {
                 ...raised.configOverrides,
                 sourceLanguage: AUTO_LANGUAGE_VALUE,
-                targetLanguage: this.plugin.getAutoTranslationTargetInstruction(this.plugin.getAutoTranslationTargetLanguage(raised)),
-                targetLanguageCode: this.plugin.getTargetLanguageCode(this.plugin.getAutoTranslationTargetLanguage(raised)),
+                targetLanguage: this.getAutoTranslationTargetInstruction(this.getAutoTranslationTargetLanguage(raised)),
+                targetLanguageCode: this.plugin.getTargetLanguageCode(this.getAutoTranslationTargetLanguage(raised)),
                 temperature: 0,
                 enableThinking: false,
                 promptPolicyVersion: this.plugin.getPromptPolicyVersion("longText"),
@@ -2889,10 +2894,10 @@ class AutoTranslationRequestPipeline {
     }
 
     async runManualLongTextWholePass(plan, requestOptions, taskOptions = {}) {
-        if (!this.plugin.isLongAutoTranslationText(plan?.text)) return null;
+        if (!this.isLongAutoTranslationText(plan?.text)) return null;
         const sourceLength = String(plan?.text || "").length;
         if (sourceLength > MANUAL_LONG_TEXT_WHOLE_PASS_MAX_LENGTH) return null;
-        const wholeOptions = this.plugin.getManualLongTextWholePassOptions(plan, requestOptions);
+        const wholeOptions = this.getManualLongTextWholePassOptions(plan, requestOptions);
         this.plugin.logDiagnostic("manual.long-text.whole-pass", "start", {
             ...this.plugin.getTranslationDiagnosticMeta("manual", {
                 requestOptions: wholeOptions,
@@ -2930,11 +2935,11 @@ class AutoTranslationRequestPipeline {
             return translated;
         }
         catch (error) {
-            if (this.plugin.isAbandonedTranslationError(error)) throw error;
+            if (this.isAbandonedTranslationError(error)) throw error;
             // A provider-wide failure (or no requests left) ends the click here. A timeout may be
             // down to the size of the whole pass, so the smaller chunk requests still get a turn.
-            if (this.plugin.isAutoTranslationRequestBudgetError(error)
-                || (this.plugin.shouldStopLongAutoTranslationOnChunkError(error) && !this.plugin.isTimeoutError(error))) {
+            if (this.isAutoTranslationRequestBudgetError(error)
+                || (this.shouldStopLongAutoTranslationOnChunkError(error) && !this.plugin.isTimeoutError(error))) {
                 throw error;
             }
             this.plugin.logDiagnostic("manual.long-text.whole-pass", "failed", {

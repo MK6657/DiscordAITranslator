@@ -17,14 +17,16 @@ const {
     HEAVY_PERSISTENCE_DEFER_MS,
     PLUGIN_NAME
 } = require("../constants");
+const { createPluginContext } = require("../core/plugin-context");
 const { PLUGIN_VERSION } = require("../version");
 
 const KNOWN_DIAGNOSTIC_MESSAGE_STATES = new Set(Object.values(DIAGNOSTIC_MESSAGE_STATES));
 const KNOWN_DIAGNOSTIC_REASON_CODES = new Set(Object.values(DIAGNOSTIC_REASON_CODES));
 
 class DiagnosticsRecorder {
-    constructor(plugin) {
+    constructor(plugin, ctx = createPluginContext(plugin)) {
         this.plugin = plugin;
+        this.ctx = ctx;
     }
 
     warnSanitized(message, error = null, meta = {}) {
@@ -69,13 +71,13 @@ class DiagnosticsRecorder {
     }
 
     getDiagnosticBaseMeta(flow = "", mode = "", reasonCode = "", extra = {}) {
-        const normalizedReasonCode = this.plugin.getDiagnosticReasonCode(reasonCode);
+        const normalizedReasonCode = this.getDiagnosticReasonCode(reasonCode);
         return {
             schemaVersion: 1,
             ...(flow ? { flow } : {}),
             ...(mode ? { mode } : {}),
             ...(normalizedReasonCode ? { reasonCode: normalizedReasonCode } : {}),
-            routeKeyHash: this.plugin.getDiagnosticRouteKeyHash(),
+            routeKeyHash: this.getDiagnosticRouteKeyHash(),
             ...extra
         };
     }
@@ -93,7 +95,7 @@ class DiagnosticsRecorder {
     enrichDiagnosticMeta(action = "", status = "info", meta = {}) {
         const source = meta && typeof meta === "object" ? meta : {};
         const flowStage = source.flowStage || this.plugin.inferDiagnosticStageFromAction(action, status, source);
-        const failure = this.plugin.classifyDiagnosticFailure(action, status, source, flowStage);
+        const failure = this.classifyDiagnosticFailure(action, status, source, flowStage);
         return {
             ...source,
             ...(flowStage ? { flowStage } : {}),
@@ -144,11 +146,11 @@ class DiagnosticsRecorder {
         const text = String(item?.text || "");
         const cacheKey = String(item?.cacheKey || "");
         const identity = this.plugin.getTranslationIdentitySummary(requestOptions?.messageIdentity || "");
-        const messageState = this.plugin.getDiagnosticMessageState(state || item?.daitDiagnosticState);
-        const normalizedReasonCode = this.plugin.getDiagnosticReasonCode(reasonCode || item?.daitDiagnosticReason);
+        const messageState = this.getDiagnosticMessageState(state || item?.daitDiagnosticState);
+        const normalizedReasonCode = this.getDiagnosticReasonCode(reasonCode || item?.daitDiagnosticReason);
         return {
-            ...this.plugin.getDiagnosticBaseMeta("auto", requestOptions?.mode || "auto", normalizedReasonCode, {
-                routeKeyHash: this.plugin.getDiagnosticRouteKeyHash(requestOptions?.routeKey || this.plugin.getCurrentRouteKey())
+            ...this.getDiagnosticBaseMeta("auto", requestOptions?.mode || "auto", normalizedReasonCode, {
+                routeKeyHash: this.getDiagnosticRouteKeyHash(requestOptions?.routeKey || this.plugin.getCurrentRouteKey())
             }),
             ...(messageState ? { messageState } : {}),
             ...(cacheKey ? { key: this.plugin.getTextFingerprint(cacheKey), cacheHash: this.plugin.getTextFingerprint(cacheKey) } : {}),
@@ -178,11 +180,11 @@ class DiagnosticsRecorder {
         const text = String(options.text || "");
         const cacheKey = String(options.cacheKey || "");
         const identity = this.plugin.getTranslationIdentitySummary(requestOptions?.messageIdentity || "");
-        const messageState = this.plugin.getDiagnosticMessageState(options.messageState);
-        const reasonCode = this.plugin.getDiagnosticReasonCode(options.reasonCode);
+        const messageState = this.getDiagnosticMessageState(options.messageState);
+        const reasonCode = this.getDiagnosticReasonCode(options.reasonCode);
         return {
-            ...this.plugin.getDiagnosticBaseMeta(flow, options.mode || requestOptions?.mode || flow, reasonCode, {
-                routeKeyHash: this.plugin.getDiagnosticRouteKeyHash(requestOptions?.routeKey || this.plugin.getCurrentRouteKey())
+            ...this.getDiagnosticBaseMeta(flow, options.mode || requestOptions?.mode || flow, reasonCode, {
+                routeKeyHash: this.getDiagnosticRouteKeyHash(requestOptions?.routeKey || this.plugin.getCurrentRouteKey())
             }),
             ...(messageState ? { messageState } : {}),
             ...(cacheKey ? { key: this.plugin.getTextFingerprint(cacheKey), cacheHash: this.plugin.getTextFingerprint(cacheKey) } : {}),
@@ -209,13 +211,13 @@ class DiagnosticsRecorder {
             previous.meta = entry.meta;
             if (Number.isFinite(Number(entry.ms))) previous.ms = entry.ms;
             this.plugin.diagnosticCompressedCount++;
-            this.plugin.scheduleDiagnosticLogsPersist();
+            this.scheduleDiagnosticLogsPersist();
             return previous;
         }
 
         this.plugin.diagnosticLogs.push(entry);
         while (this.plugin.diagnosticLogs.length > DIAGNOSTICS_MAX_ENTRIES) this.plugin.diagnosticLogs.shift();
-        this.plugin.scheduleDiagnosticLogsPersist();
+        this.scheduleDiagnosticLogsPersist();
         return entry;
     }
 
@@ -279,18 +281,18 @@ class DiagnosticsRecorder {
             const count = Math.max(1, Number(entry?.count || 1) || 1);
             summary.totalEvents += count;
             summary.latestIso = entry?.lastIso || entry?.iso || summary.latestIso;
-            this.plugin.addDiagnosticSummaryCount(summary.byAction, entry?.action, count);
-            this.plugin.addDiagnosticSummaryCount(summary.byStatus, entry?.status, count);
-            this.plugin.addDiagnosticSummaryCount(summary.byFlow, meta.flow || this.plugin.inferDiagnosticFlowFromAction(entry?.action), count);
-            this.plugin.addDiagnosticSummaryCount(summary.byMessageState, meta.messageState, count);
-            this.plugin.addDiagnosticSummaryCount(summary.byReasonCode, meta.reasonCode || meta.reason || meta.blockReason, count);
-            this.plugin.addDiagnosticSummaryCount(summary.byProvider, meta.provider, count);
-            this.plugin.addDiagnosticSummaryCount(summary.byQueueType, meta.queueType, count);
-            this.plugin.addDiagnosticSummaryCount(summary.byFailureType, meta.failureType || meta.type, count);
-            this.plugin.addDiagnosticSummaryCount(summary.byFailureClass, meta.failureClass, count);
-            this.plugin.addDiagnosticSummaryCount(summary.byFailureLayer, meta.failureLayer, count);
-            this.plugin.addDiagnosticSummaryCount(summary.byFlowStage, meta.flowStage, count);
-            this.plugin.addDiagnosticSummaryCount(summary.byValidationQuality, meta.validationQuality || meta.quality, count);
+            this.addDiagnosticSummaryCount(summary.byAction, entry?.action, count);
+            this.addDiagnosticSummaryCount(summary.byStatus, entry?.status, count);
+            this.addDiagnosticSummaryCount(summary.byFlow, meta.flow || this.plugin.inferDiagnosticFlowFromAction(entry?.action), count);
+            this.addDiagnosticSummaryCount(summary.byMessageState, meta.messageState, count);
+            this.addDiagnosticSummaryCount(summary.byReasonCode, meta.reasonCode || meta.reason || meta.blockReason, count);
+            this.addDiagnosticSummaryCount(summary.byProvider, meta.provider, count);
+            this.addDiagnosticSummaryCount(summary.byQueueType, meta.queueType, count);
+            this.addDiagnosticSummaryCount(summary.byFailureType, meta.failureType || meta.type, count);
+            this.addDiagnosticSummaryCount(summary.byFailureClass, meta.failureClass, count);
+            this.addDiagnosticSummaryCount(summary.byFailureLayer, meta.failureLayer, count);
+            this.addDiagnosticSummaryCount(summary.byFlowStage, meta.flowStage, count);
+            this.addDiagnosticSummaryCount(summary.byValidationQuality, meta.validationQuality || meta.quality, count);
         }
 
         summary.top = {
@@ -344,7 +346,7 @@ class DiagnosticsRecorder {
     }
 
     getDiagnosticLogsSnapshot() {
-        const summary = this.plugin.createDiagnosticSummary(this.plugin.diagnosticLogs);
+        const summary = this.createDiagnosticSummary(this.plugin.diagnosticLogs);
         return {
             plugin: PLUGIN_NAME,
             version: PLUGIN_VERSION,
@@ -414,7 +416,7 @@ class DiagnosticsRecorder {
         this.plugin.diagnosticCompressedCount = Math.max(0, Number(payload?.compressed || 0) || 0) + loggedCompressed;
         this.plugin.diagnosticLogsLoaded = true;
         this.plugin.diagnosticLogsDirty = logged.length > 0;
-        if (logged.length && options.schedulePersist !== false) this.plugin.scheduleDiagnosticLogsPersist();
+        if (logged.length && options.schedulePersist !== false) this.scheduleDiagnosticLogsPersist();
         return true;
     }
 
@@ -490,14 +492,14 @@ class DiagnosticsRecorder {
             this.plugin.diagnosticLogsDirtyAt = 0;
             this.plugin.scheduleHeavyPersistenceIdle("diagnostics", () => this.plugin.flushDiagnosticLogs({ scheduled: true }));
         }, delay);
-        this.plugin.unrefTimer(this.plugin.diagnosticLogsDirtyTimer);
+        this.ctx.unrefTimer(this.plugin.diagnosticLogsDirtyTimer);
     }
 
     flushDiagnosticLogs(options = {}) {
         if (!this.plugin.diagnosticLogsDirty) return true;
         if (!options.scheduled) this.plugin.cancelHeavyPersistenceIdle("diagnostics");
         if (options.scheduled && this.plugin.shouldDeferHeavyPersistence("diagnostics")) {
-            this.plugin.scheduleDiagnosticLogsPersist(HEAVY_PERSISTENCE_DEFER_MS, { force: true });
+            this.scheduleDiagnosticLogsPersist(HEAVY_PERSISTENCE_DEFER_MS, { force: true });
             return true;
         }
         const readyToSave = this.plugin.diagnosticLogsLoaded
@@ -508,11 +510,11 @@ class DiagnosticsRecorder {
         }
         this.plugin.diagnosticLogsDirtyAt = 0;
         if (!readyToSave) {
-            if (options.retryOnError !== false) this.plugin.scheduleDiagnosticLogsPersist(DIAGNOSTICS_WRITE_DEBOUNCE_MS, { force: true });
+            if (options.retryOnError !== false) this.scheduleDiagnosticLogsPersist(DIAGNOSTICS_WRITE_DEBOUNCE_MS, { force: true });
             return false;
         }
         try {
-            if (this.plugin.saveData(DIAGNOSTIC_DATA_KEY, this.plugin.createPersistedDiagnosticLogsPayload()) !== true) throw new Error("DATA_SAVE_FAILED");
+            if (this.plugin.saveData(DIAGNOSTIC_DATA_KEY, this.createPersistedDiagnosticLogsPayload()) !== true) throw new Error("DATA_SAVE_FAILED");
             this.plugin.dataLoadFailures.delete(DIAGNOSTIC_DATA_KEY);
             this.plugin.diagnosticLogsDirty = false;
             this.plugin.diagnosticLogsPersistenceDeferredSince = 0;
@@ -521,13 +523,13 @@ class DiagnosticsRecorder {
         catch (error) {
             this.plugin.warnSanitized("Failed to persist diagnostic logs", error);
             this.plugin.diagnosticLogsDirty = true;
-            if (options.retryOnError !== false) this.plugin.scheduleDiagnosticLogsPersist(DIAGNOSTICS_WRITE_DEBOUNCE_MS, { force: true });
+            if (options.retryOnError !== false) this.scheduleDiagnosticLogsPersist(DIAGNOSTICS_WRITE_DEBOUNCE_MS, { force: true });
             return false;
         }
     }
 
     serializeDiagnosticLogs(format = "json") {
-        const snapshot = this.plugin.getDiagnosticLogsSnapshot();
+        const snapshot = this.getDiagnosticLogsSnapshot();
         if (format === "txt") {
             const lines = [
                 `${snapshot.plugin} v${snapshot.version} diagnostics exported at ${snapshot.exportedAt}`,
@@ -587,7 +589,7 @@ class DiagnosticsRecorder {
         this.plugin.diagnosticLogsDirty = false;
         this.plugin.diagnosticLogsDirtyAt = 0;
         try {
-            if (this.plugin.saveData(DIAGNOSTIC_DATA_KEY, this.plugin.createPersistedDiagnosticLogsPayload()) !== true) throw new Error("DATA_SAVE_FAILED");
+            if (this.plugin.saveData(DIAGNOSTIC_DATA_KEY, this.createPersistedDiagnosticLogsPayload()) !== true) throw new Error("DATA_SAVE_FAILED");
         }
         catch (error) {
             this.plugin.diagnosticLogs = previousLogs;
@@ -598,7 +600,7 @@ class DiagnosticsRecorder {
             this.plugin.diagnosticLogsDirtyAt = previousDirtyAt;
             if (previousDirty) {
                 const remainingMs = previousDirtyAt ? Math.max(0, previousDirtyAt - Date.now()) : DIAGNOSTICS_WRITE_DEBOUNCE_MS;
-                this.plugin.scheduleDiagnosticLogsPersist(remainingMs);
+                this.scheduleDiagnosticLogsPersist(remainingMs);
             }
             this.plugin.showToast(this.plugin.formatError(error), "error");
             return false;
@@ -612,7 +614,7 @@ class DiagnosticsRecorder {
 
     logAutoTranslationIntakeState(status, intake = {}) {
         this.plugin.logDiagnostic("auto.intake", status, {
-            ...this.plugin.getDiagnosticBaseMeta("auto", "intake", intake.reason || ""),
+            ...this.getDiagnosticBaseMeta("auto", "intake", intake.reason || ""),
             mode: intake.mode || "",
             source: intake.source || "dom",
             bdfdbAvailable: Boolean(intake.bdfdbAvailable),

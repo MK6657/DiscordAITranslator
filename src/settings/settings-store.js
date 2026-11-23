@@ -24,6 +24,7 @@ const {
     TRANSLATION_LINE_STYLES,
     TRANSLATION_LINE_TEXT_SCALES
 } = require("../constants");
+const { createPluginContext } = require("../core/plugin-context");
 const { normalizeSettingsTabId } = require("./settings-schema");
 const { normalizePanelTheme } = require("./panel-theme");
 
@@ -53,8 +54,9 @@ function normalizeQuickPanelTab(value) {
 }
 
 class SettingsStore {
-    constructor(plugin) {
+    constructor(plugin, ctx = createPluginContext(plugin)) {
         this.plugin = plugin;
+        this.ctx = ctx;
     }
 
     getPromptTemplates(kind) {
@@ -62,7 +64,7 @@ class SettingsStore {
         if (!Array.isArray(this.plugin.settings[kind].promptTemplates)) {
             this.plugin.settings[kind].promptTemplates = this.plugin.clone(DEFAULT_PROMPT_TEMPLATES[kind] || []);
         }
-        this.plugin.ensurePromptTemplateSerials(kind);
+        this.ensurePromptTemplateSerials(kind);
         return this.plugin.settings[kind].promptTemplates;
     }
 
@@ -92,7 +94,7 @@ class SettingsStore {
                 used.add(serial);
             }
             else {
-                template.serial = this.plugin.getNextPromptTemplateSerial(used);
+                template.serial = this.getNextPromptTemplateSerial(used);
                 used.add(template.serial);
                 changed = true;
             }
@@ -131,12 +133,12 @@ class SettingsStore {
         let changed = false;
         const templates = Array.isArray(translation.promptTemplates) ? translation.promptTemplates : [];
         const naturalTemplate = templates.find(template => template?.id === "translation-natural");
-        if (naturalTemplate && this.plugin.isLegacyTranslationNaturalPrompt(naturalTemplate.prompt)) {
+        if (naturalTemplate && this.isLegacyTranslationNaturalPrompt(naturalTemplate.prompt)) {
             naturalTemplate.prompt = defaultPrompt;
             changed = true;
         }
 
-        if (this.plugin.isLegacyTranslationNaturalPrompt(translation.prompt)) {
+        if (this.isLegacyTranslationNaturalPrompt(translation.prompt)) {
             translation.prompt = defaultPrompt;
             if (!translation.activePromptTemplate) translation.activePromptTemplate = "translation-natural";
             changed = true;
@@ -146,10 +148,10 @@ class SettingsStore {
     }
 
     isLegacyTranslationNaturalPrompt(prompt) {
-        const normalized = this.plugin.normalizePromptForMigration(prompt);
+        const normalized = this.normalizePromptForMigration(prompt);
         if (!normalized) return false;
         return LEGACY_TRANSLATION_NATURAL_PROMPTS
-            .map(value => this.plugin.normalizePromptForMigration(value))
+            .map(value => this.normalizePromptForMigration(value))
             .includes(normalized);
     }
 
@@ -171,7 +173,7 @@ class SettingsStore {
     }
 
     applyPromptTemplate(kind, templateId) {
-        const template = this.plugin.getPromptTemplates(kind).find(item => item.id === templateId);
+        const template = this.getPromptTemplates(kind).find(item => item.id === templateId);
         if (!template) return;
 
         this.plugin.settings[kind].activePromptTemplate = template.id;
@@ -185,11 +187,11 @@ class SettingsStore {
     }
 
     savePromptTemplate(kind, name, prompt, options = {}) {
-        const templates = this.plugin.getPromptTemplates(kind);
+        const templates = this.getPromptTemplates(kind);
         const used = new Set(templates.map(template => template.serial).filter(Boolean));
         const template = {
             id: `${kind}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-            serial: this.plugin.getNextPromptTemplateSerial(used),
+            serial: this.getNextPromptTemplateSerial(used),
             ...(kind === "polish" ? { category: this.normalizePromptTemplateCategory("polish", options?.category) } : {}),
             name,
             prompt
@@ -204,7 +206,7 @@ class SettingsStore {
     }
 
     updatePromptTemplate(kind, templateId, prompt) {
-        const template = this.plugin.getPromptTemplates(kind).find(item => item.id === templateId);
+        const template = this.getPromptTemplates(kind).find(item => item.id === templateId);
         if (!template) return;
 
         template.prompt = prompt;
@@ -224,7 +226,7 @@ class SettingsStore {
     }
 
     deletePromptTemplate(kind, templateId) {
-        const templates = this.plugin.getPromptTemplates(kind);
+        const templates = this.getPromptTemplates(kind);
         const index = templates.findIndex(item => item.id === templateId);
         if (index < 0) return;
 
@@ -261,7 +263,7 @@ class SettingsStore {
     }
 
     getMissingBuiltInPromptTemplates(kind) {
-        const templates = this.plugin.getPromptTemplates(kind);
+        const templates = this.getPromptTemplates(kind);
         const existingIds = new Set(templates.map(template => template?.id).filter(Boolean));
         return (DEFAULT_PROMPT_TEMPLATES[kind] || []).filter(template => !existingIds.has(template.id));
     }
@@ -282,7 +284,7 @@ class SettingsStore {
         const missing = defaults.filter(template => !existingIds.has(template.id) && !dismissed.has(template.id));
         if (!missing.length) return false;
         missing.forEach(template => task.promptTemplates.push(this.plugin.clone(template)));
-        this.plugin.ensurePromptTemplateSerials(kind);
+        this.ensurePromptTemplateSerials(kind);
         return true;
     }
 
@@ -297,9 +299,9 @@ class SettingsStore {
             if (options.silent !== true) this.plugin.showToast(this.plugin.t("promptPresetsComplete"), "info");
             return 0;
         }
-        const templates = this.plugin.getPromptTemplates(kind);
+        const templates = this.getPromptTemplates(kind);
         missing.forEach(template => templates.push(this.plugin.clone(template)));
-        this.plugin.ensurePromptTemplateSerials(kind);
+        this.ensurePromptTemplateSerials(kind);
         if (options.save !== false) this.plugin.saveSettings();
         if (kind === "polish") this.plugin.syncPolishPresetControls?.();
         this.plugin.quickPanel?.scheduleUpdate?.();
@@ -329,8 +331,8 @@ class SettingsStore {
         }
         const stored = storedValue || {};
         this.diagnosticsDisabledInStoredSettings = stored.ui?.diagnosticsEnabled === false;
-        this.plugin.settings = this.plugin.mergeSettings(DEFAULT_SETTINGS, stored);
-        this.plugin.ensureSettingsShape(stored);
+        this.plugin.settings = this.mergeSettings(DEFAULT_SETTINGS, stored);
+        this.ensureSettingsShape(stored);
         return true;
     }
 
@@ -393,10 +395,10 @@ class SettingsStore {
             if (this.seedMissingBuiltInPromptTemplates(kind)) {
                 changed = true;
             }
-            if (this.plugin.ensurePromptTemplateSerials(kind)) {
+            if (this.ensurePromptTemplateSerials(kind)) {
                 changed = true;
             }
-            if (kind === "translation" && this.plugin.migrateDefaultTranslationPrompt()) {
+            if (kind === "translation" && this.migrateDefaultTranslationPrompt()) {
                 changed = true;
             }
             if (typeof this.plugin.settings[kind].enableThinking !== "boolean") {
@@ -807,7 +809,7 @@ class SettingsStore {
         const bdApi = globalThis.BdApi;
         const hasReadApi = Boolean(bdApi?.Data?.load || bdApi?.loadData);
         if (!hasReadApi && key !== DIAGNOSTIC_DATA_KEY) return null;
-        const storeName = this.plugin.getDataStoreName(key);
+        const storeName = this.getDataStoreName(key);
         let value = null;
         try {
             if (!hasReadApi) throw new Error("DATA_LOAD_UNAVAILABLE");
@@ -816,7 +818,7 @@ class SettingsStore {
         }
         catch (error) {
             this.plugin.dataLoadFailures.add(key);
-            this.plugin.recordDataIoFailure("load", key, error);
+            this.recordDataIoFailure("load", key, error);
             value = null;
         }
         if (storeName !== PLUGIN_NAME && (value === null || value === undefined)) {
@@ -828,7 +830,7 @@ class SettingsStore {
             catch (error) {
                 if (key === DIAGNOSTIC_DATA_KEY && !this.plugin.dataLoadFailures.has(key)) {
                     this.plugin.dataLoadFailures.add(key);
-                    this.plugin.recordDataIoFailure("load", key, error);
+                    this.recordDataIoFailure("load", key, error);
                 }
             }
         }
@@ -839,17 +841,17 @@ class SettingsStore {
         try {
             const bdApi = globalThis.BdApi;
             if (!bdApi) {
-                if (key !== DIAGNOSTIC_DATA_KEY) this.plugin.recordDataIoFailure("save", key, new Error("DATA_SAVE_UNAVAILABLE"));
+                if (key !== DIAGNOSTIC_DATA_KEY) this.recordDataIoFailure("save", key, new Error("DATA_SAVE_UNAVAILABLE"));
                 return false;
             }
             if (bdApi.Data?.save || bdApi.saveData) {
-                return this.writeDataStore(this.plugin.getDataStoreName(key), key, value);
+                return this.writeDataStore(this.getDataStoreName(key), key, value);
             }
-            if (key !== DIAGNOSTIC_DATA_KEY) this.plugin.recordDataIoFailure("save", key, new Error("DATA_SAVE_UNAVAILABLE"));
+            if (key !== DIAGNOSTIC_DATA_KEY) this.recordDataIoFailure("save", key, new Error("DATA_SAVE_UNAVAILABLE"));
             return false;
         }
         catch (error) {
-            if (key !== DIAGNOSTIC_DATA_KEY) this.plugin.recordDataIoFailure("save", key, error);
+            if (key !== DIAGNOSTIC_DATA_KEY) this.recordDataIoFailure("save", key, error);
             return false;
         }
     }
@@ -866,14 +868,14 @@ class SettingsStore {
     }
 
     migrateLegacyDataStoreKey(key) {
-        const storeName = this.plugin.getDataStoreName(key);
+        const storeName = this.getDataStoreName(key);
         if (storeName === PLUGIN_NAME) return "not-separated";
         let legacy;
         try {
             legacy = this.readDataStore(PLUGIN_NAME, key);
         }
         catch (error) {
-            this.plugin.recordDataIoFailure("load", `legacy:${key}`, error);
+            this.recordDataIoFailure("load", `legacy:${key}`, error);
             return "legacy-unreadable";
         }
         if (legacy === null || legacy === undefined) return "none";
@@ -882,23 +884,23 @@ class SettingsStore {
             current = this.readDataStore(storeName, key);
         }
         catch (error) {
-            this.plugin.recordDataIoFailure("load", key, error);
+            this.recordDataIoFailure("load", key, error);
             return "store-unreadable";
         }
         const hasCurrent = current !== null && current !== undefined;
-        const payload = hasCurrent ? this.plugin.mergeLegacyDataPayload(key, current, legacy) : legacy;
+        const payload = hasCurrent ? this.mergeLegacyDataPayload(key, current, legacy) : legacy;
         try {
             if (this.writeDataStore(storeName, key, payload) !== true) throw new Error("DATA_SAVE_FAILED");
         }
         catch (error) {
-            this.plugin.recordDataIoFailure("save", key, error);
+            this.recordDataIoFailure("save", key, error);
             return "save-failed";
         }
         try {
             if (this.deleteDataStoreKey(PLUGIN_NAME, key) !== true) throw new Error("DATA_DELETE_FAILED");
         }
         catch (error) {
-            this.plugin.recordDataIoFailure("save", `legacy:${key}`, error);
+            this.recordDataIoFailure("save", `legacy:${key}`, error);
             return "delete-failed";
         }
         try {
@@ -1039,7 +1041,7 @@ class SettingsStore {
                 this.plugin.settings.googleTranslate.usageById = normalized.usageById;
             }
         }
-        if (path === "translation.provider") this.plugin.applyProviderIntakeMode(value);
+        if (path === "translation.provider") this.applyProviderIntakeMode(value);
         if (["polish", "translation"].includes(parts[0]) && parts[1] === "model") {
             const currentProvider = this.plugin.normalizeProviderForTask(parts[0], this.plugin.settings[parts[0]]?.provider);
             if (currentProvider) {
@@ -1058,7 +1060,7 @@ class SettingsStore {
         if (options.save === false) {}
         else if (options.save === "immediate") this.plugin.saveSettings({ retryOnError: options.retryOnError });
         else this.plugin.saveSettings({ debounce: true, delayMs: options.delayMs });
-        this.plugin.syncSettingControls(path, this.plugin.getSetting(path), { includeActive: options.live !== true });
+        this.plugin.syncSettingControls(path, this.getSetting(path), { includeActive: options.live !== true });
         if (["polish", "translation"].includes(parts[0]) && ["apiKey", "endpoint", "model", "provider", "region", "deeplPlan", "appId", "secretKey"].includes(parts[1])) {
             this.plugin.resetApiStatus(parts[0], { save: "debounce" });
         }
@@ -1163,9 +1165,9 @@ class SettingsStore {
         const language = previous.ui?.language;
         if (keepLanguage && typeof language === "string" && language) next.ui.language = language;
         this.plugin.settings = next;
-        this.plugin.ensureSettingsShape();
+        this.ensureSettingsShape();
         const saved = this.plugin.saveSettings();
-        this.plugin.applySettingsResetEffects(previous);
+        this.applySettingsResetEffects(previous);
         this.plugin.events?.emit("settings:reset", { keepCredentials: Boolean(keepCredentials), keepLanguage: Boolean(keepLanguage) });
         this.plugin.logDiagnostic("settings.reset", saved === false ? "not-saved" : "ok", { keepCredentials: Boolean(keepCredentials) });
         return saved !== false;
@@ -1256,7 +1258,7 @@ class SettingsStore {
         const ui = this.plugin.settings.ui;
         const changed = key => !Object.is(prevUi[key], ui[key]);
         const turnedOff = key => ui[key] === false && prevUi[key] !== false;
-        this.plugin.syncAllSettingControls();
+        this.syncAllSettingControls();
         this.plugin.invalidateAutoTranslationQueue();
         if (!this.plugin.isAutoTranslateEnabled()) this.plugin.cancelAutoTranslationRuntimeWork("settings-reset");
         if (changed("language")) {
@@ -1303,7 +1305,7 @@ class SettingsStore {
             const path = String(control?.dataset?.daitPath || "");
             if (path) paths.add(path);
         });
-        paths.forEach(path => this.plugin.syncSettingControls(path, this.plugin.getSetting(path), { includeActive: true }));
+        paths.forEach(path => this.plugin.syncSettingControls(path, this.getSetting(path), { includeActive: true }));
     }
 
     setTaskProvider(kind, provider) {
@@ -1315,7 +1317,7 @@ class SettingsStore {
         }
         this.plugin.settings[kind].provider = nextProvider;
         this.plugin.applyProviderPreset(kind, nextProvider, { restoreProfile: true, save: false, syncControls: false, invalidate: false });
-        if (kind === "translation") this.plugin.applyProviderIntakeMode(nextProvider);
+        if (kind === "translation") this.applyProviderIntakeMode(nextProvider);
         this.plugin.resetApiStatus(kind, { save: false });
         this.plugin.saveSettings({ debounce: true });
         this.plugin.syncSettingControls(`${kind}.provider`, nextProvider);

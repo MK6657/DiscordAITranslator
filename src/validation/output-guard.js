@@ -10,9 +10,12 @@ const LIKELY_SIMPLIFIED_HAN_RE = new RegExp(`[${LIKELY_SIMPLIFIED_HAN_CHARS}]`);
 const LIKELY_TRADITIONAL_HAN_GLOBAL_RE = new RegExp(`[${LIKELY_TRADITIONAL_HAN_CHARS}]`, "g");
 const LIKELY_SIMPLIFIED_HAN_GLOBAL_RE = new RegExp(`[${LIKELY_SIMPLIFIED_HAN_CHARS}]`, "g");
 
+const { createPluginContext } = require("../core/plugin-context");
+
 class OutputGuard {
-    constructor(plugin) {
+    constructor(plugin, ctx = createPluginContext(plugin)) {
         this.plugin = plugin;
+        this.ctx = ctx;
     }
 
     getLongAutoTranslationChunkFailurePlaceholder(index = 0, total = 1, error = null, targetLanguage = this.plugin.settings.translation.targetLanguage) {
@@ -31,7 +34,7 @@ class OutputGuard {
         const raw = String(translatedText || "").trim();
         if (!raw) return raw;
         const validationOptions = { ...options, skipCandidateExtraction: true };
-        const candidates = this.plugin.extractAutoTranslationOutputCandidates(raw, {
+        const candidates = this.extractAutoTranslationOutputCandidates(raw, {
             includeQuoted: !this.plugin.shouldSkipQuotedAutoTranslationCandidates(sourceText, raw, options),
             allowQuotedFragments: () => Boolean(this.plugin.getAutoTranslationInvalidOutputReason(sourceText, raw, targetLanguage, validationOptions))
         });
@@ -116,8 +119,8 @@ class OutputGuard {
     }
 
     hasDiscordEmojiTokenMismatch(sourceText, translatedText) {
-        const sourceCounts = this.plugin.getDiscordEmojiTokenCounts(sourceText);
-        const outputCounts = this.plugin.getDiscordEmojiTokenCounts(translatedText);
+        const sourceCounts = this.getDiscordEmojiTokenCounts(sourceText);
+        const outputCounts = this.getDiscordEmojiTokenCounts(translatedText);
         if (sourceCounts.size !== outputCounts.size) return true;
         for (const [name, count] of sourceCounts) {
             if (Number(outputCounts.get(name) || 0) !== count) return true;
@@ -180,11 +183,11 @@ class OutputGuard {
     getAutoTranslationInvalidOutputReason(sourceText, translatedText, targetLanguage = this.plugin.settings.translation.targetLanguage, options = {}) {
         const output = String(translatedText || "").trim();
         if (!output) return "empty";
-        if (this.plugin.hasLongAutoTranslationChunkFailurePlaceholder(output)) return "chunk-failure-placeholder";
+        if (this.hasLongAutoTranslationChunkFailurePlaceholder(output)) return "chunk-failure-placeholder";
 
         const source = String(sourceText || "").trim();
         if (!options?.skipCandidateExtraction) {
-            const candidate = this.plugin.sanitizeAutoTranslationOutput(source, output, targetLanguage, {
+            const candidate = this.sanitizeAutoTranslationOutput(source, output, targetLanguage, {
                 ...options,
                 skipCandidateExtraction: true
             });
@@ -201,16 +204,16 @@ class OutputGuard {
             && (this.plugin.shouldAutoTranslateText(source, targetLanguage) || this.plugin.isLowInformationRepeatedText(source))) {
             return "same-as-source";
         }
-        if (this.plugin.hasDiscordEmojiTokenMismatch(source, output)) return "emoji-mismatch";
-        if (this.plugin.hasPromptLeakageAutoTranslationOutput(source, output, targetLanguage)) return "prompt-leakage";
-        if (this.plugin.hasRefusalAutoTranslationOutput(output)) return "refusal-output";
-        if (this.plugin.hasDictionaryStyleAutoTranslationOutput(source, output, targetLanguage)) return "dictionary-output";
-        if (this.plugin.hasExplanatoryAutoTranslationOutput(source, output)) return "explanatory-output";
-        if (this.plugin.hasLabeledAutoTranslationOutput(output)) return "labeled-output";
-        if (this.plugin.isTraditionalChineseTarget(targetLanguage) && this.plugin.hasLikelySimplifiedHan(output) && !this.plugin.isAcceptableChineseVariantMix(output, targetLanguage)) return "script-mismatch";
-        if (this.plugin.isSimplifiedChineseTarget(targetLanguage) && this.plugin.hasLikelyTraditionalHan(output) && !this.plugin.isAcceptableChineseVariantMix(output, targetLanguage)) return "script-mismatch";
-        if (this.plugin.isAcceptableTargetShortTranslation(output, targetLanguage, source)) return "";
-        if (this.plugin.hasSuspiciousChineseAutoTranslationOutput(output, targetLanguage)) return "suspicious-chinese";
+        if (this.hasDiscordEmojiTokenMismatch(source, output)) return "emoji-mismatch";
+        if (this.hasPromptLeakageAutoTranslationOutput(source, output, targetLanguage)) return "prompt-leakage";
+        if (this.hasRefusalAutoTranslationOutput(output)) return "refusal-output";
+        if (this.hasDictionaryStyleAutoTranslationOutput(source, output, targetLanguage)) return "dictionary-output";
+        if (this.hasExplanatoryAutoTranslationOutput(source, output)) return "explanatory-output";
+        if (this.hasLabeledAutoTranslationOutput(output)) return "labeled-output";
+        if (this.isTraditionalChineseTarget(targetLanguage) && this.hasLikelySimplifiedHan(output) && !this.isAcceptableChineseVariantMix(output, targetLanguage)) return "script-mismatch";
+        if (this.isSimplifiedChineseTarget(targetLanguage) && this.hasLikelyTraditionalHan(output) && !this.isAcceptableChineseVariantMix(output, targetLanguage)) return "script-mismatch";
+        if (this.isAcceptableTargetShortTranslation(output, targetLanguage, source)) return "";
+        if (this.hasSuspiciousChineseAutoTranslationOutput(output, targetLanguage)) return "suspicious-chinese";
         if (this.plugin.hasSuspiciousResidualAutoTranslationForeignText(source, output, targetLanguage)) return "residual-source";
         if (!options?.partialLongText && !options?.mergedLongText && this.plugin.hasMissingAutoTranslationLines(source, output, targetLanguage, options)) return "missing-lines";
         if (!options?.partialLongText && this.plugin.hasUndertranslatedAutoTranslationOutput(source, output, targetLanguage)) return "undertranslated";
@@ -248,8 +251,8 @@ class OutputGuard {
         if (!hanCount) return true;
         const simplifiedCount = (value.match(LIKELY_SIMPLIFIED_HAN_GLOBAL_RE) || []).length;
         const traditionalCount = (value.match(LIKELY_TRADITIONAL_HAN_GLOBAL_RE) || []).length;
-        const offCount = this.plugin.isTraditionalChineseTarget(targetLanguage) ? simplifiedCount : traditionalCount;
-        const onCount = this.plugin.isTraditionalChineseTarget(targetLanguage) ? traditionalCount : simplifiedCount;
+        const offCount = this.isTraditionalChineseTarget(targetLanguage) ? simplifiedCount : traditionalCount;
+        const onCount = this.isTraditionalChineseTarget(targetLanguage) ? traditionalCount : simplifiedCount;
         if (offCount <= 0) return true;
         if (offCount <= 1 && onCount >= 1) return true;
         return offCount / Math.max(1, hanCount) <= 0.12 && onCount >= offCount;
@@ -301,7 +304,7 @@ class OutputGuard {
         const markerCount = markers.reduce((count, pattern) => count + (pattern.test(output) ? 1 : 0), 0);
         const sourceMarkerCount = markers.reduce((count, pattern) => count + (pattern.test(source) ? 1 : 0), 0);
         if (sourceMarkerCount >= markerCount && sourceComparable.length > outputComparable.length * 0.6) return false;
-        if (this.plugin.isShortSourcePromptLeakageShape(source, output, markerCount)) return true;
+        if (this.isShortSourcePromptLeakageShape(source, output, markerCount)) return true;
 
         const hasInstructionFrame = /(^|\n|\s)(task|requirements?|任务|要求)\s*[:：]/i.test(output);
         const hasReturnOnly = /return only|仅返回|只返回|不要添加|no explanations|do not add/i.test(output);
@@ -443,8 +446,8 @@ class OutputGuard {
         const value = String(output || "").trim();
         if (!value || value.length > 24) return false;
         if (/<\/?[A-Za-z][^>]*>/.test(value)) return false;
-        if (this.plugin.hasRefusalAutoTranslationOutput(value) || this.plugin.hasLabeledAutoTranslationOutput(value)) return false;
-        if (this.plugin.hasDictionaryStyleAutoTranslationOutput(sourceText, value, targetLanguage)) return false;
+        if (this.hasRefusalAutoTranslationOutput(value) || this.hasLabeledAutoTranslationOutput(value)) return false;
+        if (this.hasDictionaryStyleAutoTranslationOutput(sourceText, value, targetLanguage)) return false;
         const normalizedSource = String(sourceText || "").replace(/\s+/g, " ").trim().toLocaleLowerCase();
         const normalizedValue = value.replace(/\s+/g, " ").trim().toLocaleLowerCase();
         if (normalizedSource && normalizedSource === normalizedValue) return false;
