@@ -130,19 +130,22 @@ class DiscordSelectors {
             if (rootRect.left > Math.min(460, viewportWidth * 0.45)) continue;
             if (rootRect.top < viewportHeight - 240) continue;
 
-            const iconButtons = [...(root.querySelectorAll?.("button, [role='button']") || [])].filter(btn => {
-                if (!btn || isOwnElement?.(btn)) return false;
+            const iconButtons = [];
+            for (const btn of (root.querySelectorAll?.("button, [role='button']") || [])) {
+                if (!btn || isOwnElement?.(btn)) continue;
                 const r = btn.getBoundingClientRect?.();
-                if (!r || !r.width || !r.height) return false;
+                if (!r || !r.width || !r.height) continue;
                 // User panel icon buttons (mic, headphones, settings gear) are compact squares near the bottom-left.
-                return r.width >= 20 && r.width <= 48 && r.height >= 20 && r.height <= 48
+                if (r.width >= 20 && r.width <= 48 && r.height >= 20 && r.height <= 48
                     && r.left <= Math.min(440, viewportWidth * 0.45)
                     && r.bottom >= viewportHeight - 140
-                    && Boolean(btn.querySelector?.("svg"));
-            });
+                    && Boolean(btn.querySelector?.("svg"))) {
+                    iconButtons.push({ btn, left: r.left || 0 });
+                }
+            }
             if (iconButtons.length >= 3) {
-                iconButtons.sort((a, b) => (a.getBoundingClientRect().left || 0) - (b.getBoundingClientRect().left || 0));
-                return iconButtons[iconButtons.length - 1];
+                iconButtons.sort((a, b) => a.left - b.left);
+                return iconButtons[iconButtons.length - 1].btn;
             }
         }
         return null;

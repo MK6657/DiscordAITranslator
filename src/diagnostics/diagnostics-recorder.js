@@ -19,6 +19,9 @@ const {
 } = require("../constants");
 const { PLUGIN_VERSION } = require("../version");
 
+const KNOWN_DIAGNOSTIC_MESSAGE_STATES = new Set(Object.values(DIAGNOSTIC_MESSAGE_STATES));
+const KNOWN_DIAGNOSTIC_REASON_CODES = new Set(Object.values(DIAGNOSTIC_REASON_CODES));
+
 class DiagnosticsRecorder {
     constructor(plugin) {
         this.plugin = plugin;
@@ -79,14 +82,12 @@ class DiagnosticsRecorder {
 
     getDiagnosticMessageState(state) {
         const value = String(state || "").trim();
-        const known = new Set(Object.values(DIAGNOSTIC_MESSAGE_STATES));
-        return known.has(value) ? value : "";
+        return KNOWN_DIAGNOSTIC_MESSAGE_STATES.has(value) ? value : "";
     }
 
     getDiagnosticReasonCode(reasonCode) {
         const value = String(reasonCode || "").trim();
-        const known = new Set(Object.values(DIAGNOSTIC_REASON_CODES));
-        return known.has(value) ? value : value.slice(0, 80);
+        return KNOWN_DIAGNOSTIC_REASON_CODES.has(value) ? value : value.slice(0, 80);
     }
 
     enrichDiagnosticMeta(action = "", status = "info", meta = {}) {

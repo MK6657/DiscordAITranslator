@@ -18,6 +18,7 @@ const {
     TRANSLATION_CACHE_NEGATIVE_LOOKUP_MAX,
     TRANSLATION_CACHE_NEGATIVE_LOOKUP_TTL_MS,
     TRANSLATION_CACHE_TOUCH_DEBOUNCE_MS,
+    TRANSLATION_CACHE_TOUCH_IDLE_PERSIST_MS,
     TRANSLATION_CACHE_TOUCH_PERSIST_THRESHOLD,
     TRANSLATION_CACHE_TTL_OPTIONS,
     TRANSLATION_CACHE_WRITE_DEBOUNCE_MS
@@ -48,9 +49,14 @@ const SHA256_K = new Uint32Array([
     0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
 ]);
 
+let sharedTextEncoder = null;
+
 function encodeUtf8Bytes(text) {
     const value = String(text ?? "");
-    if (typeof TextEncoder === "function") return new TextEncoder().encode(value);
+    if (typeof TextEncoder === "function") {
+        if (!sharedTextEncoder) sharedTextEncoder = new TextEncoder();
+        return sharedTextEncoder.encode(value);
+    }
     const bytes = [];
     for (let index = 0; index < value.length; index++) {
         let code = value.charCodeAt(index);
@@ -414,42 +420,83 @@ class TranslationCacheStore {
     }
 
     getTranslationCacheAliases(text, options = {}, aliasOptions = {}) {
-        const primaryKey = this.plugin.getTranslationCacheKey(text, options);
         const strongTextHash = this.plugin.getStrongTextFingerprint(text);
         const legacyTextHash = this.plugin.getTextFingerprint(text);
-        const legacyKey = this.plugin.getLegacyTranslationCacheKey(text, options);
-        const fullConfigKey = this.plugin.getFullConfigTranslationCacheKey(text, options, strongTextHash);
-        const fullConfigLegacyKey = this.plugin.getFullConfigTranslationCacheKey(text, options, legacyTextHash);
-        const aliases = [
-            legacyKey,
-            fullConfigKey,
-            fullConfigLegacyKey
+        const taskConfig = this.plugin.getEffectiveTaskConfig("translation", options.configOverrides);
+        const config = this.plugin.getCacheConfigSnapshot("translation", taskConfig, {
+            servedModel: true,
+            legacyModel: false
+        });
+        config.endpoint = this.getTranslationCacheEndpoint(taskConfig);
+        config.promptPolicyVersion = this.plugin.getPromptPolicyCacheVersion("translation", options, config);
+        const mode = options.mode || "manual";
+        const normalizedIdentity = this.plugin.normalizeTranslationMessageIdentity(options.messageIdentity);
+        const strongIdentity = normalizedIdentity || `text:${strongTextHash}`;
+        const legacyIdentity = normalizedIdentity || `text:${legacyTextHash}`;
+        const compactParts = this.plugin.getCompactTranslationCacheConfigParts(config);
+        const fullParts = [
+            config.provider,
+            config.endpoint,
+            config.model,
+            config.sourceLanguage,
+            config.targetLanguage,
+            config.region || "",
+            config.deeplPlan || "",
+            config.appIdHash || "",
+            config.temperature,
+            config.maxTokens,
+            config.enableThinking ? "thinking:on" : "thinking:off",
+            config.promptPolicyVersion,
+            config.prompt
         ];
-        if (aliasOptions.includePreMessageIdentity !== false) {
+        const compactBody = compactParts.join("\n---\n");
+        const fullBody = fullParts.join("\n---\n");
+        const joinWith = (body, hash, identity, omitIdentity = false) => omitIdentity
+            ? `${mode}\n---\n${body}\n---\n${hash}`
+            : `${mode}\n---\n${identity}\n---\n${body}\n---\n${hash}`;
+
+        const primaryKey = joinWith(compactBody, strongTextHash, strongIdentity);
+        const aliases = [
+            joinWith(compactBody, legacyTextHash, legacyIdentity),
+            joinWith(fullBody, strongTextHash, strongIdentity),
+            joinWith(fullBody, legacyTextHash, legacyIdentity)
+        ];
+        const includePreMessageIdentity = aliasOptions.includePreMessageIdentity !== false;
+        if (includePreMessageIdentity) {
             aliases.push(
-                this.plugin.getPreMessageIdentityTranslationCacheKey(text, options, strongTextHash),
-                this.plugin.getPreMessageIdentityTranslationCacheKey(text, options, legacyTextHash),
-                this.plugin.getPreMessageIdentityTranslationCacheKey(text, options, strongTextHash, { fullConfig: true }),
-                this.plugin.getPreMessageIdentityTranslationCacheKey(text, options, legacyTextHash, { fullConfig: true })
+                joinWith(compactBody, strongTextHash, strongIdentity, true),
+                joinWith(compactBody, legacyTextHash, legacyIdentity, true),
+                joinWith(fullBody, strongTextHash, strongIdentity, true),
+                joinWith(fullBody, legacyTextHash, legacyIdentity, true)
             );
         }
         // A line drawn before the served model was first detected carries the placeholder-model key.
         if (aliasOptions.includePlaceholderModel && this.plugin.localProviderModelFirstDetected) {
             aliases.push(this.getPlaceholderModelTranslationCacheKey(text, options));
         }
-        for (const legacyEndpoint of this.getCompatibleLegacyTranslationCacheEndpoints(options)) {
-            const build = (hash, cacheOptions = {}) => this.buildTranslationCacheKey(text, options, hash, { ...cacheOptions, legacyEndpoint });
-            aliases.push(build(strongTextHash), build(legacyTextHash), build(strongTextHash, { fullConfig: true }), build(legacyTextHash, { fullConfig: true }));
-            if (aliasOptions.includePreMessageIdentity !== false) {
+        for (const legacyEndpoint of this.getCompatibleLegacyTranslationCacheEndpoints(options, taskConfig, config.endpoint)) {
+            const legacyCompactParts = compactParts.slice();
+            legacyCompactParts[1] = `endpoint:${this.plugin.getStrongTextFingerprint(legacyEndpoint)}`;
+            const legacyCompactBody = legacyCompactParts.join("\n---\n");
+            const legacyFullParts = fullParts.slice();
+            legacyFullParts[1] = legacyEndpoint;
+            const legacyFullBody = legacyFullParts.join("\n---\n");
+            aliases.push(
+                joinWith(legacyCompactBody, strongTextHash, strongIdentity),
+                joinWith(legacyCompactBody, legacyTextHash, legacyIdentity),
+                joinWith(legacyFullBody, strongTextHash, strongIdentity),
+                joinWith(legacyFullBody, legacyTextHash, legacyIdentity)
+            );
+            if (includePreMessageIdentity) {
                 aliases.push(
-                    build(strongTextHash, { omitMessageIdentity: true }),
-                    build(legacyTextHash, { omitMessageIdentity: true }),
-                    build(strongTextHash, { fullConfig: true, omitMessageIdentity: true }),
-                    build(legacyTextHash, { fullConfig: true, omitMessageIdentity: true })
+                    joinWith(legacyCompactBody, strongTextHash, strongIdentity, true),
+                    joinWith(legacyCompactBody, legacyTextHash, legacyIdentity, true),
+                    joinWith(legacyFullBody, strongTextHash, strongIdentity, true),
+                    joinWith(legacyFullBody, legacyTextHash, legacyIdentity, true)
                 );
             }
             if (aliasOptions.includePlaceholderModel && this.plugin.localProviderModelFirstDetected && this.getTranslationCacheServedModelState(options) === true) {
-                aliases.push(build(strongTextHash, { legacyModel: true }));
+                aliases.push(this.buildTranslationCacheKey(text, options, strongTextHash, { legacyModel: true, legacyEndpoint }));
             }
         }
         this.adoptLegacyTranslationCacheEntries(text, options, primaryKey);
@@ -507,12 +554,12 @@ class TranslationCacheStore {
         return endpoint;
     }
 
-    getCompatibleLegacyTranslationCacheEndpoints(options) {
-        const config = this.plugin.getEffectiveTaskConfig("translation", options.configOverrides);
+    getCompatibleLegacyTranslationCacheEndpoints(options, precomputedTaskConfig = null, precomputedCacheEndpoint = null) {
+        const config = precomputedTaskConfig || this.plugin.getEffectiveTaskConfig("translation", options.configOverrides);
         const defaults = DEFAULT_SETTINGS.translation;
         const provider = this.plugin.providerLayer;
         const endpoint = provider.getProviderEndpointIdentity(config, defaults);
-        const cacheEndpoint = this.getTranslationCacheEndpoint(config);
+        const cacheEndpoint = precomputedCacheEndpoint || this.getTranslationCacheEndpoint(config);
         const legacyFallback = String(defaults.endpoint || "").trim();
         const oldEndpoint = this.plugin.getCacheConfigSnapshot("translation", config).endpoint;
         const candidates = new Set([oldEndpoint, endpoint, PROVIDER_DEFAULTS[config.provider]?.endpoint]);
@@ -717,33 +764,39 @@ class TranslationCacheStore {
                 this.deleteTranslationCacheEntry(hitKey);
                 this.plugin.translationCacheMeta.delete(hitKey);
                 this.plugin.scheduleTranslationCachePersist();
-                this.plugin.logDiagnostic("cache.lookup", "expired", {
-                    ...this.plugin.getDiagnosticBaseMeta("cache", this.plugin.getTranslationCacheMode(hitKey), "cache-expired"),
-                    cacheHash: this.plugin.getTextFingerprint(hitKey)
-                });
+                if (this.plugin.settings.ui?.diagnosticsEnabled) {
+                    this.plugin.logDiagnostic("cache.lookup", "expired", {
+                        ...this.plugin.getDiagnosticBaseMeta("cache", this.plugin.getTranslationCacheMode(hitKey), "cache-expired"),
+                        cacheHash: this.plugin.getTextFingerprint(hitKey)
+                    });
+                }
                 continue;
             }
 
             this.plugin.translationCacheStats.hits++;
             this.plugin.touchTranslationCache(hitKey, { extendExpiry: true, persistDelayMs: TRANSLATION_CACHE_TOUCH_DEBOUNCE_MS });
             const value = this.plugin.translationCache.get(hitKey);
-            this.plugin.logDiagnostic("cache.lookup", "hit", {
-                ...this.plugin.getDiagnosticBaseMeta("cache", this.plugin.getTranslationCacheMode(hitKey), DIAGNOSTIC_REASON_CODES.CACHE_HIT),
-                cacheHash: this.plugin.getTextFingerprint(hitKey),
-                alias: Boolean(key && hitKey !== key),
-                size: this.plugin.translationCache.size
-            });
+            if (this.plugin.settings.ui?.diagnosticsEnabled) {
+                this.plugin.logDiagnostic("cache.lookup", "hit", {
+                    ...this.plugin.getDiagnosticBaseMeta("cache", this.plugin.getTranslationCacheMode(hitKey), DIAGNOSTIC_REASON_CODES.CACHE_HIT),
+                    cacheHash: this.plugin.getTextFingerprint(hitKey),
+                    alias: Boolean(key && hitKey !== key),
+                    size: this.plugin.translationCache.size
+                });
+            }
             if (key && hitKey !== key) this.plugin.promoteTranslationCacheAlias(hitKey, key);
             return value;
         }
 
         this.plugin.translationCacheStats.misses++;
-        this.plugin.logDiagnostic("cache.lookup", "miss", {
-            ...this.plugin.getDiagnosticBaseMeta("cache", this.plugin.getTranslationCacheMode(key), "cache-miss"),
-            cacheHash: this.plugin.getTextFingerprint(key),
-            aliases: aliases.length,
-            size: this.plugin.translationCache.size
-        });
+        if (this.plugin.settings.ui?.diagnosticsEnabled) {
+            this.plugin.logDiagnostic("cache.lookup", "miss", {
+                ...this.plugin.getDiagnosticBaseMeta("cache", this.plugin.getTranslationCacheMode(key), "cache-miss"),
+                cacheHash: this.plugin.getTextFingerprint(key),
+                aliases: aliases.length,
+                size: this.plugin.translationCache.size
+            });
+        }
         return null;
     }
 
@@ -822,13 +875,25 @@ class TranslationCacheStore {
             expiresAt: nextExpiresAt,
             volatile: Boolean(meta.volatile || this.plugin.isVolatileTranslationCacheKey(key))
         });
+        const expiryExtended = nextExpiresAt > currentExpiresAt;
         if (options.extendExpiry || options.persistDelayMs) {
-            this.plugin.translationCacheTouchDirtyCount = Math.max(0, Number(this.plugin.translationCacheTouchDirtyCount || 0)) + 1;
-            const thresholdReached = this.plugin.translationCacheTouchDirtyCount >= TRANSLATION_CACHE_TOUCH_PERSIST_THRESHOLD;
-            this.plugin.scheduleTranslationCachePersist(thresholdReached
-                ? TRANSLATION_CACHE_WRITE_DEBOUNCE_MS
-                : (options.persistDelayMs || TRANSLATION_CACHE_TOUCH_DEBOUNCE_MS));
-            if (thresholdReached) this.plugin.translationCacheTouchDirtyCount = 0;
+            if (expiryExtended) {
+                this.plugin.translationCacheTouchDirtyCount = Math.max(0, Number(this.plugin.translationCacheTouchDirtyCount || 0)) + 1;
+                const thresholdReached = this.plugin.translationCacheTouchDirtyCount >= TRANSLATION_CACHE_TOUCH_PERSIST_THRESHOLD;
+                this.plugin.scheduleTranslationCachePersist(thresholdReached
+                    ? TRANSLATION_CACHE_WRITE_DEBOUNCE_MS
+                    : (options.persistDelayMs || TRANSLATION_CACHE_TOUCH_DEBOUNCE_MS));
+                if (thresholdReached) this.plugin.translationCacheTouchDirtyCount = 0;
+            }
+            else {
+                // Pure LRU timestamp refresh (no expiry extension): mark dirty so stop()/pagehide
+                // and normal writes persist it, and use a low-frequency idle persist instead of
+                // triggering 5s/30s full-cache disk writes while scrolling cached channels.
+                this.plugin.scheduleTranslationCachePersist(Math.max(
+                    Number(options.persistDelayMs || 0),
+                    TRANSLATION_CACHE_TOUCH_IDLE_PERSIST_MS
+                ));
+            }
         }
     }
 
@@ -963,7 +1028,9 @@ class TranslationCacheStore {
             : (hasCurrent && this.getLegacyTranslationCacheReceipt(current).fingerprint === receipt.fingerprint);
         const payload = committed ? current : (hasCurrent ? this.mergePersistedTranslationCachePayloads(current, legacy, receipt) : legacy);
         if (!committed) {
-            const expectedFingerprint = this.getLegacyTranslationCacheReceipt(payload).fingerprint;
+            const expectedFingerprint = payload === legacy
+                ? receipt.fingerprint
+                : this.getLegacyTranslationCacheReceipt(payload).fingerprint;
             try {
                 if (storage.writeDataStore(storeName, CACHE_DATA_KEY, payload) !== true) throw new Error("DATA_SAVE_FAILED");
             }

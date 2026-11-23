@@ -84,14 +84,16 @@ class OutputGuard {
             }
         }
 
-        try {
-            const parsed = JSON.parse(raw);
-            push(this.plugin.extractTranslationValue(parsed));
-            if (Array.isArray(parsed)) {
-                parsed.forEach(item => push(this.plugin.extractTranslationValue(item)));
+        if (raw[0] === "{" || raw[0] === "[" || raw[0] === "\"") {
+            try {
+                const parsed = JSON.parse(raw);
+                push(this.plugin.extractTranslationValue(parsed));
+                if (Array.isArray(parsed)) {
+                    parsed.forEach(item => push(this.plugin.extractTranslationValue(item)));
+                }
             }
+            catch {}
         }
-        catch {}
 
         return candidates;
     }
@@ -209,14 +211,13 @@ class OutputGuard {
         if (this.plugin.isSimplifiedChineseTarget(targetLanguage) && this.plugin.hasLikelyTraditionalHan(output) && !this.plugin.isAcceptableChineseVariantMix(output, targetLanguage)) return "script-mismatch";
         if (this.plugin.isAcceptableTargetShortTranslation(output, targetLanguage, source)) return "";
         if (this.plugin.hasSuspiciousChineseAutoTranslationOutput(output, targetLanguage)) return "suspicious-chinese";
-        if (this.plugin.isTargetLanguageDominantBySentence(output, targetLanguage, { allowPureTarget: true }) || this.plugin.isTargetLanguageWithPreservedSourceTerms(output, targetLanguage, source)) {
-            if (!this.plugin.hasSuspiciousResidualAutoTranslationForeignText(source, output, targetLanguage)
-                && (options?.partialLongText || options?.mergedLongText || !this.plugin.hasMissingAutoTranslationLines(source, output, targetLanguage, options))
-                && (options?.partialLongText || !this.plugin.hasUndertranslatedAutoTranslationOutput(source, output, targetLanguage))) return "";
-        }
         if (this.plugin.hasSuspiciousResidualAutoTranslationForeignText(source, output, targetLanguage)) return "residual-source";
         if (!options?.partialLongText && !options?.mergedLongText && this.plugin.hasMissingAutoTranslationLines(source, output, targetLanguage, options)) return "missing-lines";
         if (!options?.partialLongText && this.plugin.hasUndertranslatedAutoTranslationOutput(source, output, targetLanguage)) return "undertranslated";
+        if (this.plugin.isTargetLanguageDominantBySentence(output, targetLanguage, { allowPureTarget: true })
+            || this.plugin.isTargetLanguageWithPreservedSourceTerms(output, targetLanguage, source)) {
+            return "";
+        }
         if (this.plugin.hasResidualAutoTranslationSourceText(output, targetLanguage, source)) return "residual-source";
         if (this.plugin.isLikelyTargetLanguage(output, targetLanguage)) return "";
         if (!this.plugin.hasLetters(output)) return this.plugin.hasLetters(source) ? "no-letters" : "";
@@ -276,8 +277,8 @@ class OutputGuard {
             /实时字幕层/,
             /翻译\s*Discord\s*聊天消息/i,
             /自动频道翻译模式/,
-            /严格.*频道.*翻译.*重试/,
-            /最终.*严格.*翻译/,
+            /严格.{0,40}频道.{0,40}翻译.{0,40}重试/,
+            /最终.{0,40}严格.{0,40}翻译/,
             /仅返回翻译后的消息/,
             /不要添加解释、注释、引用、摘要/
         ];

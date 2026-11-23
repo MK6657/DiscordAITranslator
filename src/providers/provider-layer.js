@@ -30,6 +30,17 @@ const {
 
 // Text shaped like a Google API key ("AIza" and at least 10 more key characters; real keys have 35).
 const GOOGLE_API_KEY_PATTERN = /AIza[0-9A-Za-z_-]{10,}/;
+const GOOGLE_TRANSLATE_PROTECT_PATTERNS = [
+    /```[\s\S]*?```/g,
+    /`[^`\n]+`/g,
+    /https?:\/\/[^\s<>"']+/gi,
+    /<a?:[A-Za-z0-9_~.-]+:\d{15,}>/g,
+    /<[@#][!&]?\d{15,}>/g,
+    /<@&\d{15,}>/g,
+    /<t:\d{1,12}(?::[tTdDfFR])?>/g,
+    /:[A-Za-z0-9_~.-]{2,}:/g,
+    /\b[A-Za-z]:\\[^\s]+/g
+];
 
 class ProviderLayer {
     constructor(plugin) {
@@ -1397,7 +1408,15 @@ class ProviderLayer {
             taskConfig = { ...this.plugin.getEffectiveTaskConfig(kind, options.configOverrides) };
             const defaultConfig = DEFAULT_SETTINGS[kind] || {};
             if (this.plugin.shouldAutoDetectLocalProviderModel(taskConfig, defaultConfig)) {
-                await this.plugin.refreshLocalProviderDetectedModel(taskConfig, { ...options, defaultConfig });
+                // Never forward generation timeoutMs (45-90s) into the shared /v1/models probe,
+                // so a stalled local server fails fast at LOCAL_PROVIDER_MODEL_DETECTION_TIMEOUT_MS (5s).
+                await this.plugin.refreshLocalProviderDetectedModel(taskConfig, {
+                    defaultConfig,
+                    signal: options.signal,
+                    isCurrent: options.isCurrent,
+                    force: options.force,
+                    omitApiKey: options.omitApiKey
+                });
                 this.throwIfProviderRequestCancelled(signal, lifecycleToken);
             }
             if (kind === "translation" && !options.providerProfilePinned) {
@@ -2406,8 +2425,8 @@ class ProviderLayer {
     protectGoogleTranslateText(text) {
         const source = String(text || "");
         const spans = [];
-        const addMatches = pattern => {
-            const regex = new RegExp(pattern.source, pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`);
+        for (const regex of GOOGLE_TRANSLATE_PROTECT_PATTERNS) {
+            regex.lastIndex = 0;
             let match = null;
             while ((match = regex.exec(source)) !== null) {
                 const value = String(match[0] || "");
@@ -2415,18 +2434,7 @@ class ProviderLayer {
                 spans.push({ start: match.index, end: match.index + value.length, value });
                 if (match.index === regex.lastIndex) regex.lastIndex++;
             }
-        };
-        [
-            /```[\s\S]*?```/g,
-            /`[^`\n]+`/g,
-            /https?:\/\/[^\s<>"']+/gi,
-            /<a?:[A-Za-z0-9_~.-]+:\d{15,}>/g,
-            /<[@#][!&]?\d{15,}>/g,
-            /<@&\d{15,}>/g,
-            /<t:\d{1,12}(?::[tTdDfFR])?>/g,
-            /:[A-Za-z0-9_~.-]{2,}:/g,
-            /\b[A-Za-z]:\\[^\s]+/g
-        ].forEach(addMatches);
+        }
 
         spans.sort((left, right) => left.start - right.start || right.end - left.end);
         const selected = [];
@@ -2668,6 +2676,7 @@ class ProviderLayer {
 
     decodeHtmlEntities(text) {
         const value = String(text || "");
+        if (!value || !value.includes("&")) return value;
         if (typeof document !== "undefined") {
             const textarea = document.createElement?.("textarea");
             if (textarea) {

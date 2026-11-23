@@ -3999,6 +3999,108 @@ var require_quick_popover = __commonJS({
     --dait-qp-icon-image: ${PIXEL_CLOSE_ICON};
 }
 
+.dait-qp-mode-bar {
+    background: var(--dait-rail);
+    border-bottom: 1px solid var(--dait-divider);
+    flex: 0 0 auto;
+    padding: 8px 16px;
+}
+
+.dait-qp-tabs {
+    background: var(--dait-input-bg);
+    border: 1px solid var(--dait-input-border);
+    border-radius: var(--dait-radius-control);
+    box-shadow: inset 1px 1px 0 var(--dait-pixel-shade);
+    display: grid;
+    gap: 2px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding: 2px;
+}
+
+.dait-qp-tab {
+    align-items: center;
+    background: transparent;
+    border: 0;
+    border-radius: 1px;
+    color: var(--dait-text);
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    font-family: inherit;
+    font-size: var(--dait-font-body);
+    font-weight: 600;
+    gap: 2px;
+    line-height: var(--dait-line);
+    min-width: 0;
+    padding: 4px 6px;
+    text-align: center;
+}
+
+.dait-qp-tab:hover:not([aria-selected="true"]) {
+    background: var(--dait-raised);
+    color: var(--dait-heading);
+}
+
+.dait-qp-tab[aria-selected="true"] {
+    background: var(--dait-brand);
+    box-shadow: inset 0 1px 0 var(--dait-pixel-highlight);
+    color: var(--dait-on-fill);
+}
+
+.dait-qp-tab-head {
+    align-items: center;
+    display: inline-flex;
+    gap: 6px;
+    max-width: 100%;
+    min-width: 0;
+}
+
+.dait-qp-tab-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dait-qp-tab-dot {
+    background: var(--dait-placeholder);
+    border-radius: 1px;
+    display: inline-block;
+    flex: 0 0 auto;
+    height: 7px;
+    width: 7px;
+}
+
+.dait-qp-tab-dot[data-dait-active="on"] {
+    background: var(--dait-qp-ok);
+}
+
+.dait-qp-tab[aria-selected="true"] .dait-qp-tab-dot[data-dait-active="on"] {
+    background: var(--dait-on-fill);
+}
+
+.dait-qp-tab[aria-selected="true"] .dait-qp-tab-dot[data-dait-active="manual"],
+.dait-qp-tab[aria-selected="true"] .dait-qp-tab-dot[data-dait-active="off"] {
+    background: color-mix(in srgb, var(--dait-on-fill) 55%, transparent);
+}
+
+.dait-qp-tab-summary {
+    background: transparent;
+    border-color: transparent;
+    box-shadow: none;
+    color: inherit;
+    font-weight: 400;
+    line-height: 1.3;
+    max-width: 100%;
+    overflow: hidden;
+    padding: 0 2px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dait-qp-tabpanel[hidden] {
+    display: none;
+}
+
 .dait-qp-body {
     flex: 1 1 auto;
     min-height: 0;
@@ -4295,13 +4397,228 @@ label.dait-qp-label {
     padding: 0 30px 0 10px;
 }
 
-.dait-qp-select:hover {
+.dait-qp-select:hover:not(:disabled) {
     border-color: var(--dait-placeholder);
+}
+
+.dait-qp-select:disabled {
+    cursor: default;
+    opacity: 0.55;
+}
+
+.dait-qp-select-full {
+    justify-self: stretch;
+    width: 100%;
 }
 
 .dait-qp-select option {
     background: var(--dait-input-bg);
     color: var(--dait-text);
+}
+
+.dait-qp-switch:disabled {
+    cursor: default;
+    opacity: 0.55;
+}
+
+.dait-qp-row[hidden] {
+    display: none;
+}
+
+.dait-qp-row-sub {
+    border-left: 2px solid var(--dait-brand);
+    padding-left: 10px;
+}
+
+.dait-qp-label-inline {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.dait-qp-service-chip {
+    margin-left: auto;
+}
+
+.dait-qp-service-chip[data-dait-relation="separate"] {
+    border-color: var(--dait-accent-gold);
+}
+
+.dait-qp-inline-chip[hidden] {
+    display: none;
+}
+
+.dait-qp-temp-head {
+    align-items: center;
+    display: flex;
+    gap: 8px;
+    justify-content: space-between;
+}
+
+.dait-qp-temp-title {
+    cursor: pointer;
+}
+
+.dait-qp-temp-value {
+    font-variant-numeric: tabular-nums;
+}
+
+.dait-qp-range {
+    accent-color: var(--dait-brand);
+    cursor: pointer;
+    margin: 2px 0;
+    width: 100%;
+}
+
+.dait-qp-range:disabled {
+    cursor: default;
+    opacity: 0.55;
+}
+
+.dait-qp-presets {
+    display: grid;
+    gap: 4px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.dait-qp-preset {
+    background: var(--dait-surface);
+    border: 1px solid var(--dait-input-border);
+    border-radius: var(--dait-radius-control);
+    color: var(--dait-text);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: var(--dait-font-body);
+    font-weight: 500;
+    line-height: var(--dait-line);
+    min-height: 32px;
+    overflow: hidden;
+    padding: 0 4px;
+    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dait-qp-preset:hover:not(:disabled):not([aria-pressed="true"]) {
+    background: var(--dait-raised);
+}
+
+.dait-qp-preset[aria-pressed="true"] {
+    background: var(--dait-brand);
+    border-color: var(--dait-brand);
+    box-shadow: inset 0 1px 0 var(--dait-pixel-highlight);
+    color: var(--dait-on-fill);
+}
+
+.dait-qp-preset:disabled {
+    cursor: default;
+    opacity: 0.55;
+}
+
+.dait-qp-try-drawer {
+    background: var(--dait-surface);
+    border: 1px solid var(--dait-divider);
+    border-radius: var(--dait-radius-card);
+    margin-top: 8px;
+    overflow: hidden;
+}
+
+.dait-qp-try-toggle {
+    align-items: center;
+    background: transparent;
+    border: 0;
+    color: var(--dait-text);
+    cursor: pointer;
+    display: flex;
+    font-family: inherit;
+    font-size: var(--dait-font-body);
+    font-weight: 600;
+    justify-content: space-between;
+    line-height: var(--dait-line);
+    min-height: var(--dait-control-h);
+    padding: 4px 10px;
+    width: 100%;
+}
+
+.dait-qp-try-toggle:hover {
+    background: var(--dait-raised);
+}
+
+.dait-qp-try-body {
+    border-top: 1px solid var(--dait-divider);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 8px 10px 10px;
+}
+
+.dait-qp-try-body[hidden] {
+    display: none;
+}
+
+.dait-qp-try-bar {
+    display: flex;
+    gap: 6px;
+}
+
+.dait-qp-input {
+    background: var(--dait-input-bg);
+    border: 1px solid var(--dait-input-border);
+    border-radius: var(--dait-radius-control);
+    box-shadow: inset 1px 1px 0 var(--dait-pixel-shade);
+    color: var(--dait-text);
+    flex: 1 1 auto;
+    font-family: inherit;
+    font-size: var(--dait-font-body);
+    height: var(--dait-control-h);
+    line-height: var(--dait-line);
+    min-width: 0;
+    padding: 0 10px;
+}
+
+.dait-qp-input::placeholder {
+    color: var(--dait-placeholder);
+}
+
+.dait-qp-input:disabled {
+    cursor: default;
+    opacity: 0.55;
+}
+
+.dait-qp-try-result {
+    background: var(--dait-bg);
+    border: 1px dashed var(--dait-input-border);
+    border-radius: var(--dait-radius-control);
+    color: var(--dait-text);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 8px 10px;
+}
+
+.dait-qp-try-result[hidden],
+.dait-qp-try-time[hidden] {
+    display: none;
+}
+
+.dait-qp-try-result.dait-try-result-error,
+.dait-qp-try-result-error {
+    border-color: var(--dait-danger);
+    color: var(--dait-danger);
+}
+
+.dait-qp-try-output {
+    font-size: var(--dait-font-body);
+    line-height: var(--dait-line);
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+}
+
+.dait-qp-try-time {
+    color: var(--dait-placeholder);
+    font-size: var(--dait-font-body);
+    font-variant-numeric: tabular-nums;
 }
 
 .dait-qp-segmented {
@@ -4406,7 +4723,8 @@ label.dait-qp-label {
     outline-offset: 2px;
 }
 
-.dait-quick-popover .dait-qp-segment:focus-visible {
+.dait-quick-popover .dait-qp-segment:focus-visible,
+.dait-quick-popover .dait-qp-tab:focus-visible {
     outline-offset: -2px;
 }
 
@@ -4527,6 +4845,9 @@ label.dait-qp-label {
 
     .dait-qp-switch,
     .dait-qp-segment,
+    .dait-qp-tab,
+    .dait-qp-preset,
+    .dait-qp-try-toggle,
     .dait-qp-icon-button {
         transition: background-color 0.15s ease, color 0.15s ease;
     }
@@ -5293,6 +5614,7 @@ var require_constants = __commonJS({
     var TRANSLATION_LINE_STYLES = Object.freeze(["tint", "muted", "tag"]);
     var TRANSLATION_LINE_TEXT_SCALES = Object.freeze([100, 90]);
     var PANEL_THEMES = Object.freeze(["auto", "light", "dark"]);
+    var QUICK_PANEL_TABS = Object.freeze(["translation", "polish"]);
     var RTL_LANGUAGE_CODES = Object.freeze(["ar", "fa", "he", "iw", "ur", "ps", "yi", "dv", "ug", "ckb", "sd"]);
     var POLISH_REPOLISH_SOURCE_ORIGINAL = "original";
     var POLISH_REPOLISH_SOURCE_LAST_RESULT = "lastResult";
@@ -5301,6 +5623,7 @@ var require_constants = __commonJS({
     var TRANSLATION_CACHE_HIT_EXTEND_MS = 6 * 60 * 60 * 1e3;
     var TRANSLATION_CACHE_WRITE_DEBOUNCE_MS = 5e3;
     var TRANSLATION_CACHE_TOUCH_DEBOUNCE_MS = 3e4;
+    var TRANSLATION_CACHE_TOUCH_IDLE_PERSIST_MS = 5 * 60 * 1e3;
     var TRANSLATION_CACHE_TOUCH_PERSIST_THRESHOLD = 80;
     var TRANSLATION_CACHE_DEFAULT_LIMIT = 4e3;
     var TRANSLATION_CACHE_MIN_LIMIT = 100;
@@ -5721,6 +6044,8 @@ var require_constants = __commonJS({
         settingsVersion: 2,
         // One of the settings tabs in src/settings/settings-schema.js.
         settingsActiveTab: "overview",
+        // Last active mode tab in the user-panel quick popover ("translation" | "polish").
+        quickPanelActiveTab: "translation",
         language: "zh-CN",
         showQuickSettingsRailButton: false,
         showQuickSettingsPanelButton: true,
@@ -5875,6 +6200,7 @@ var require_constants = __commonJS({
       TRANSLATION_LINE_STYLES,
       TRANSLATION_LINE_TEXT_SCALES,
       PANEL_THEMES,
+      QUICK_PANEL_TABS,
       RTL_LANGUAGE_CODES,
       POLISH_REPOLISH_SOURCE_ORIGINAL,
       POLISH_REPOLISH_SOURCE_LAST_RESULT,
@@ -5883,6 +6209,7 @@ var require_constants = __commonJS({
       TRANSLATION_CACHE_HIT_EXTEND_MS,
       TRANSLATION_CACHE_WRITE_DEBOUNCE_MS,
       TRANSLATION_CACHE_TOUCH_DEBOUNCE_MS,
+      TRANSLATION_CACHE_TOUCH_IDLE_PERSIST_MS,
       TRANSLATION_CACHE_TOUCH_PERSIST_THRESHOLD,
       TRANSLATION_CACHE_DEFAULT_LIMIT,
       TRANSLATION_CACHE_MIN_LIMIT,
@@ -6010,14 +6337,26 @@ var require_request_pipeline = __commonJS({
           this.plugin.cacheOnlyScanDueAt = 0;
           this.plugin.runCacheOnlyAutoTranslationScan(reason);
         }, delay);
+        this.plugin.unrefTimer?.(this.plugin.cacheOnlyScanTimer);
       }
       runCacheOnlyAutoTranslationScan(reason = "deferred") {
         if (!this.plugin.isAutoTranslateEnabled()) {
           this.plugin.cancelAutoTranslationRuntimeWork("auto-disabled");
           return 0;
         }
-        if (this.plugin.isDiscordMediaViewerQuiet() || this.plugin.isDiscordMediaViewerOpen() || this.plugin.isQuickSettingsPanelOpen() || this.plugin.isDiscordSettingsSurfaceOpen()) {
-          this.plugin.scheduleCacheOnlyAutoTranslationScan(reason, Math.max(AUTO_TRANSLATE_VIEWPORT_STABLE_RESCAN_MS, this.plugin.getDiscordMediaViewerQuietRemainingMs()) + 80);
+        if (this.plugin.isQuickSettingsPanelOpen()) {
+          this.plugin.quickSettingsScanDeferred = true;
+          return 0;
+        }
+        if (this.plugin.isDiscordSettingsSurfaceOpen()) {
+          return 0;
+        }
+        const mediaQuietMs = this.plugin.getDiscordMediaViewerQuietRemainingMs();
+        if (mediaQuietMs > 0) {
+          this.plugin.scheduleCacheOnlyAutoTranslationScan(reason, Math.max(AUTO_TRANSLATE_VIEWPORT_STABLE_RESCAN_MS, mediaQuietMs) + 80);
+          return 0;
+        }
+        if (this.plugin.isDiscordMediaViewerOpen()) {
           return 0;
         }
         const stabilityDelay = Math.max(
@@ -6067,7 +6406,7 @@ var require_request_pipeline = __commonJS({
           this.plugin.scheduleAutoTranslationRetryScan(this.plugin.getAutoTranslationRenderPauseRemainingMs(now), { minDelayMs: AUTO_TRANSLATE_VIEWPORT_STABLE_RESCAN_MS });
         }
         const providerFailure = this.plugin.getAutoTranslationProviderFailure(requestOptions);
-        if (providerFailure && !this.plugin.isAutoTranslationFailureExpired(providerFailure, now)) {
+        if (providerFailure && !this.plugin.isAutoTranslationFailureExpired(providerFailure, now) && !providerFailure.terminal) {
           this.plugin.scheduleAutoTranslationRetryScan(this.plugin.getAutoTranslationFailureRemainingMs(providerFailure, now));
         }
         const providerCoolingDown = Boolean(providerFailure && !this.plugin.isAutoTranslationFailureExpired(providerFailure, now));
@@ -6135,16 +6474,28 @@ var require_request_pipeline = __commonJS({
       }
       processAutoTranslationScanCandidates(work, candidates = []) {
         if (!work?.scanState || !work?.scanStats) return 0;
-        for (const candidate of candidates) {
-          work.scanStats.seen++;
-          const decision = this.plugin.evaluateAutoTranslationCandidate(candidate, work.scanState);
-          this.plugin.applyAutoTranslationDecision(candidate, decision, work.scanStats);
+        if (candidates.length) {
+          this.plugin.pruneAutoTranslationActiveState();
+          work.scanState.deferEnqueueSort = true;
+        }
+        try {
+          for (const candidate of candidates) {
+            work.scanStats.seen++;
+            const decision = this.plugin.evaluateAutoTranslationCandidate(candidate, work.scanState);
+            this.plugin.applyAutoTranslationDecision(candidate, decision, work.scanStats);
+          }
+        } finally {
+          work.scanState.deferEnqueueSort = false;
         }
         return candidates.length;
       }
       finishAutoTranslationScanWork(work) {
         if (!work?.scanState || !work?.scanStats) return;
         const { scanState, scanStats, context, requestOptions } = work;
+        if (scanState.enqueueSortPending) {
+          scanState.enqueueSortPending = false;
+          this.plugin.sortAutoTranslationQueue();
+        }
         const { apiWorkBlocked, blockReason, localProviderHealthBlocked } = scanState;
         if (scanStats.eligible || scanStats.cacheHits || scanStats.textCacheHits || scanStats.enqueued || scanStats.blocked || scanStats.failures) {
           this.plugin.logDiagnostic("auto.scan", apiWorkBlocked ? "blocked" : "ok", {
@@ -6233,7 +6584,6 @@ var require_request_pipeline = __commonJS({
           };
         }
         const cacheKey = this.plugin.getTranslationCacheKey(text, targetRequestOptions);
-        const cacheAliases = this.plugin.getTranslationCacheAliases(text, targetRequestOptions);
         const lineCacheAliases = this.plugin.getTranslationLineCacheAliases(text, targetRequestOptions);
         const canRenderCacheHit = targetVisible && !scanState.renderPaused && !scanState.layoutUnstable;
         if (this.plugin.hasCurrentTranslationLine(target.content, cacheKey, this.plugin.getAutoTranslationTargetDomText(target), lineCacheAliases, targetRequestOptions, text)) {
@@ -6258,6 +6608,7 @@ var require_request_pipeline = __commonJS({
             counts: { eligible: 1, skippedCurrent: 1 }
           };
         }
+        const cacheAliases = this.plugin.getTranslationCacheAliases(text, targetRequestOptions);
         if (this.plugin.hasTranslationCacheCandidate(cacheKey, cacheAliases)) {
           const cachedTranslation = this.plugin.getTranslationCacheValueCached(cacheKey, cacheAliases, scanState.context);
           if (cachedTranslation !== null) {
@@ -6557,9 +6908,11 @@ var require_request_pipeline = __commonJS({
           }
           this.plugin.addAutoTranslationPendingTarget(decision.cacheKey, item);
           this.plugin.setAutoTranslationDiagnosticState(item, this.plugin.getAutoTranslationQueuedDiagnosticState(item), DIAGNOSTIC_REASON_CODES.ENQUEUED);
-          if (this.plugin.enqueueAutoTranslationItem(item)) {
+          const deferEnqueueSort = Boolean(decision.scanState?.deferEnqueueSort);
+          if (this.plugin.enqueueAutoTranslationItem(item, deferEnqueueSort ? { deferSort: true, skipPrune: true } : void 0)) {
             decision.scanState.queued = Number(decision.scanState.queued || 0) + 1;
             scanStats.enqueued = Number(scanStats.enqueued || 0) + 1;
+            if (deferEnqueueSort) decision.scanState.enqueueSortPending = true;
           }
           return;
         }
@@ -6640,7 +6993,7 @@ var require_request_pipeline = __commonJS({
         return this.plugin.translationScheduler.isLongItem(item);
       }
       async runAutoTranslationFallbackItems(pending, taskOptions = {}) {
-        const queue = this.plugin.takeAutoTranslationFallbackQueue(pending);
+        const queue = this.plugin.takeAutoTranslationFallbackQueue(pending, taskOptions);
         if (queue.length) this.plugin.logDiagnostic("auto.fallback", "start", { count: queue.length, pending: pending.size });
         for (const item of queue) {
           if (!item) continue;
@@ -6649,9 +7002,10 @@ var require_request_pipeline = __commonJS({
             continue;
           }
           if (this.plugin.isAutoTranslationProviderCoolingDown(item.requestOptions)) {
-            this.plugin.requeueRemainingAutoTranslationFallbackItems(pending);
+            this.plugin.requeueRemainingAutoTranslationFallbackItems(pending, taskOptions);
             return;
           }
+          taskOptions?.heartbeat?.(pending);
           let translated = "";
           try {
             this.plugin.logAutoTranslationMessageState(
@@ -6680,10 +7034,11 @@ var require_request_pipeline = __commonJS({
               DIAGNOSTIC_REASON_CODES.FAILURE,
               { type: this.plugin.getAutoTranslationFailureType(error) }
             );
+            taskOptions?.releaseBatchItem?.(item);
             this.plugin.markAutoTranslationFailureSafely(item, error);
             pending.delete(item);
             if (this.plugin.isAutoTranslationProviderCoolingDown(item.requestOptions)) {
-              this.plugin.requeueRemainingAutoTranslationFallbackItems(pending);
+              this.plugin.requeueRemainingAutoTranslationFallbackItems(pending, taskOptions);
               return;
             }
             continue;
@@ -6701,17 +7056,18 @@ var require_request_pipeline = __commonJS({
           pending.delete(item);
         }
       }
-      requeueRemainingAutoTranslationFallbackItems(pending) {
+      requeueRemainingAutoTranslationFallbackItems(pending, taskOptions = {}) {
         pending.forEach((item) => {
           if (!this.plugin.isAutoTranslationWorkCurrent(item)) {
             pending.delete(item);
             return;
           }
+          taskOptions?.releaseBatchItem?.(item);
           this.plugin.requeueAutoTranslationItem(item, { allowActiveRequeue: true });
           pending.delete(item);
         });
       }
-      takeAutoTranslationFallbackQueue(pending) {
+      takeAutoTranslationFallbackQueue(pending, taskOptions = {}) {
         const queue = [];
         for (const item of [...pending]) {
           if (!this.plugin.isAutoTranslationWorkCurrent(item)) {
@@ -6730,6 +7086,7 @@ var require_request_pipeline = __commonJS({
             DIAGNOSTIC_REASON_CODES.REQUEUED,
             { reason: "fallback-limit" }
           );
+          taskOptions?.releaseBatchItem?.(item);
           this.plugin.requeueAutoTranslationItem(item, { delayMs: AUTO_TRANSLATE_FALLBACK_REQUEUE_DELAY_MS, allowActiveRequeue: true });
           pending.delete(item);
         }
@@ -8409,11 +8766,13 @@ var require_request_pipeline = __commonJS({
         if (!this.plugin.autoTranslationPrecheckSkips?.set) this.plugin.autoTranslationPrecheckSkips = /* @__PURE__ */ new Map();
         const key = this.plugin.getAutoTranslationPrecheckSkipCacheKey(text, targetLanguage, requestOptions);
         if (!key) return;
+        const now = Date.now();
+        this.plugin.autoTranslationPrecheckSkips.delete(key);
         this.plugin.autoTranslationPrecheckSkips.set(key, {
           reason,
-          expiresAt: Date.now() + AUTO_TRANSLATE_PRECHECK_SKIP_TTL_MS
+          expiresAt: now + AUTO_TRANSLATE_PRECHECK_SKIP_TTL_MS
         });
-        this.plugin.pruneAutoTranslationPrecheckSkipCache();
+        this.plugin.pruneAutoTranslationPrecheckSkipCache(now);
       }
       getAutoTranslationPrecheckSkipCacheKey(text, targetLanguage, requestOptions = this.plugin.getAutoTranslationOptions()) {
         const value = String(text || "").trim();
@@ -8425,13 +8784,15 @@ var require_request_pipeline = __commonJS({
         ].join("\n---\n");
       }
       pruneAutoTranslationPrecheckSkipCache(now = Date.now()) {
-        if (!this.plugin.autoTranslationPrecheckSkips?.size) return;
-        for (const [key, entry] of this.plugin.autoTranslationPrecheckSkips) {
-          if (Number(entry?.expiresAt || 0) <= now) this.plugin.autoTranslationPrecheckSkips.delete(key);
+        const map = this.plugin.autoTranslationPrecheckSkips;
+        if (!map?.size) return;
+        for (const [key, entry] of map) {
+          if (Number(entry?.expiresAt || 0) <= now) map.delete(key);
+          else break;
         }
-        while (this.plugin.autoTranslationPrecheckSkips.size > AUTO_TRANSLATE_PRECHECK_SKIP_MAX) {
-          const oldestKey = this.plugin.autoTranslationPrecheckSkips.keys().next().value;
-          this.plugin.autoTranslationPrecheckSkips.delete(oldestKey);
+        while (map.size > AUTO_TRANSLATE_PRECHECK_SKIP_MAX) {
+          const oldestKey = map.keys().next().value;
+          map.delete(oldestKey);
         }
       }
       isAutoTranslationLinkOnlyText(text) {
@@ -8696,6 +9057,7 @@ var require_queue_core = __commonJS({
       constructor(plugin) {
         this.plugin = plugin;
         this.routeChangePending = false;
+        this.scrollRelevanceCache = /* @__PURE__ */ new WeakMap();
       }
       shouldInvalidateAutoTranslationForSetting(path) {
         if (["ui.autoTranslateMessages", "ui.autoTranslatePrefetch", "ui.autoTranslatePrefetchRange", "ui.autoTranslateIntakeMode", "ui.autoTranslateConcurrency", "ui.autoTranslateStrictRetry"].includes(path)) return true;
@@ -8725,8 +9087,15 @@ var require_queue_core = __commonJS({
         this.plugin.cancelIncrementalMessageScan();
         this.plugin.cancelAutoTranslationRenderQueue();
         this.plugin.autoTranslationQueue = [];
+        this.plugin.autoTranslationQueueSortDirty = false;
         this.plugin.autoTranslationQueuedKeys.clear();
         if (!options.preserveVersion) {
+          this.scrollRelevanceCache = /* @__PURE__ */ new WeakMap();
+          if (this.plugin.cacheOnlyScanTimer) {
+            clearTimeout(this.plugin.cacheOnlyScanTimer);
+            this.plugin.cacheOnlyScanTimer = null;
+            this.plugin.cacheOnlyScanDueAt = 0;
+          }
           this.plugin.abortAutoTranslationRequests("invalidated");
           this.plugin.autoTranslationPartialResults?.clear?.();
           this.plugin.autoTranslationInFlight = 0;
@@ -8853,9 +9222,12 @@ var require_queue_core = __commonJS({
         const requestStarted = reasonCode === DIAGNOSTIC_REASON_CODES.REQUEST_STARTED || messageState === DIAGNOSTIC_MESSAGE_STATES.IN_FLIGHT && String(decision.status || "").toLowerCase() === "start";
         const decisionQueueItem = candidate || decision?.item || {};
         const decisionQueueType = this.plugin.getAutoTranslationDiagnosticQueueType(decisionQueueItem);
+        const decisionIdentity = requestOptions?.messageIdentity || candidate?.messageIdentity || "";
+        const decisionIdentityHash = this.plugin.getTextFingerprint(decisionIdentity);
+        const now = Date.now();
         const entry = {
-          at: Date.now(),
-          iso: (/* @__PURE__ */ new Date()).toISOString(),
+          at: now,
+          iso: new Date(now).toISOString(),
           action: this.plugin.getAutoTranslationDecisionAction(decision.status, messageState, reasonCode),
           status: String(decision.status || ""),
           state: this.plugin.getAutoTranslationLastDecisionState(decision.status, messageState, reasonCode),
@@ -8868,9 +9240,9 @@ var require_queue_core = __commonJS({
           source: candidate?.source || "dom",
           queueType: decisionQueueType,
           queuePriority: this.plugin.getAutoTranslationDiagnosticQueuePriority(decisionQueueItem, decisionQueueType),
-          identityHash: this.plugin.getTextFingerprint(requestOptions?.messageIdentity || candidate?.messageIdentity || ""),
-          messageIdentityHash: this.plugin.getTextFingerprint(requestOptions?.messageIdentity || candidate?.messageIdentity || ""),
-          messageIdentityKind: this.plugin.getTranslationIdentitySummary(requestOptions?.messageIdentity || candidate?.messageIdentity || "").kind || "",
+          identityHash: decisionIdentityHash,
+          messageIdentityHash: decisionIdentityHash,
+          messageIdentityKind: this.plugin.getTranslationIdentitySummary(decisionIdentity).kind || "",
           textHash: this.plugin.getStrongTextFingerprint(candidate?.text || ""),
           cacheHash: this.plugin.getTextFingerprint(candidate?.cacheKey || decision?.cacheKey || ""),
           canRender: Boolean(decision?.extra?.canRender),
@@ -8964,8 +9336,11 @@ var require_queue_core = __commonJS({
         if (!element || element.nodeType !== 1) return true;
         if (this.plugin.isInsideDiscordSettingsSurface(element)) return false;
         if (this.plugin.isInsideDiscordMediaViewer(element) || this.plugin.isMediaOnlyMutationElement(element)) return false;
-        if (element.closest?.(".dait-settings, .dait-quick-settings-modal-root, .dait-polish-result-panel, .dait-polish-restore-control, .dait-translation-line, .dait-translation-box")) return false;
+        if (element.closest?.(".dait-settings, .dait-quick-settings-modal-root, .dait-quick-popover, .dait-polish-result-panel, .dait-polish-restore-control, .dait-translation-line, .dait-translation-box")) return false;
         if (element.closest?.("[class*='channelTextArea'], [role='textbox']")) return false;
+        const now = Date.now();
+        const cached = this.scrollRelevanceCache?.get?.(element);
+        if (cached && now >= cached.at && now - cached.at < (cached.relevant ? 500 : 100)) return cached.relevant;
         const selector = [
           DISCORD_MESSAGE_NODE_SELECTOR,
           "[data-list-id*='chat-messages']",
@@ -8973,7 +9348,9 @@ var require_queue_core = __commonJS({
           "[class*='scrollerInner']",
           "[class*='chatContent']"
         ].join(",");
-        return Boolean(element.matches?.(selector) || element.closest?.(selector) || element.querySelector?.(DISCORD_MESSAGE_NODE_SELECTOR));
+        const relevant = Boolean(element.matches?.(selector) || element.closest?.(selector) || element.querySelector?.(DISCORD_MESSAGE_NODE_SELECTOR));
+        this.scrollRelevanceCache?.set?.(element, { relevant, at: now });
+        return relevant;
       }
       markAutoTranslationViewportBusy(type = "scroll", event = null, { routeScopeChanged = false } = {}) {
         const now = Date.now();
@@ -9119,7 +9496,10 @@ var require_queue_core = __commonJS({
             continue;
           }
           this.plugin.autoTranslationPendingTargets.set(item.cacheKey, { targets: readyTargets });
-          next.push(this.plugin.withAutoTranslationPriority({ ...item, ...this.plugin.getAutoTranslationPrimaryTarget(readyTargets[0]) }));
+          next.push(this.plugin.withAutoTranslationPriority(
+            { ...item, ...this.plugin.getAutoTranslationPrimaryTarget(readyTargets[0]) },
+            { preserveExisting: true }
+          ));
         }
         this.plugin.autoTranslationQueue = next;
         this.plugin.sortAutoTranslationQueue();
@@ -9187,15 +9567,29 @@ var require_queue_core = __commonJS({
               const retryMs = this.plugin.getAutoTranslationFailureRemainingMs(providerFailure);
               const retainedKeys = this.plugin.retainProviderBlockedVisibleAutoTranslationBatch(batch, retryMs, DIAGNOSTIC_REASON_CODES.LOCAL_UNAVAILABLE);
               this.plugin.discardAutoTranslationProviderWork(providerKey, { retryMs, skipCacheKeys: retainedKeys });
-            } else {
-              const retryMs = this.plugin.getAutoTranslationFailureRemainingMs(providerFailure);
+            } else if (providerFailure.terminal) {
+              const providerKey = this.plugin.getAutoTranslationItemProviderKey(batch[0]);
               batch.forEach((item) => {
-                item.daitRequeueAfter = Date.now() + retryMs;
+                this.plugin.removeAutoTranslationLoadingForItem(item, { force: true });
+                this.plugin.discardAutoTranslationItemWork(item);
+              });
+              this.plugin.discardAutoTranslationProviderWork(providerKey, { retryMs: 0, retainVisible: false });
+            } else {
+              const providerKey = this.plugin.getAutoTranslationItemProviderKey(batch[0]);
+              const retryMs = this.plugin.getAutoTranslationFailureRemainingMs(providerFailure);
+              const delayMs = Math.max(1e3, retryMs);
+              const requeueAfter = Date.now() + delayMs;
+              batch.forEach((item) => {
+                item.daitRequeueAfter = requeueAfter;
+                this.plugin.removeAutoTranslationLoadingForItem(item);
+              });
+              this.plugin.autoTranslationQueue.forEach((item) => {
+                if (!item || this.plugin.getAutoTranslationItemProviderKey(item) !== providerKey) return;
+                item.daitRequeueAfter = Math.max(Number(item.daitRequeueAfter || 0), requeueAfter);
                 this.plugin.removeAutoTranslationLoadingForItem(item);
               });
               this.plugin.restoreAutoTranslationBatch(batch);
-              this.plugin.scheduleAutoTranslationRetryScan(retryMs);
-              continue;
+              this.plugin.scheduleAutoTranslationRetryScan(delayMs);
             }
             if (blockedPrefetch.length) this.plugin.restoreBlockedAutoTranslationPrefetch(blockedPrefetch);
             return;
@@ -9245,8 +9639,7 @@ var require_queue_core = __commonJS({
               { concurrency }
             ));
             blockedPrefetch.push(...batch);
-            if (!this.plugin.autoTranslationQueue.length) break;
-            continue;
+            break;
           }
           this.plugin.autoTranslationInFlight++;
           this.plugin.autoTranslationInFlightItems += batch.length;
@@ -9358,7 +9751,9 @@ var require_queue_core = __commonJS({
       }
       discardAutoTranslationProviderWork(providerKey, options = {}) {
         if (!providerKey) return;
-        const retryMs = Math.max(0, Number(options.retryMs) || LOCAL_PROVIDER_UNAVAILABLE_RETRY_MS);
+        const rawRetryMs = options.retryMs === void 0 ? LOCAL_PROVIDER_UNAVAILABLE_RETRY_MS : Number(options.retryMs);
+        const retryMs = Number.isFinite(rawRetryMs) ? Math.max(0, rawRetryMs) : LOCAL_PROVIDER_UNAVAILABLE_RETRY_MS;
+        const retainVisible = options.retainVisible !== false;
         const skipCacheKeys = options.skipCacheKeys instanceof Set ? options.skipCacheKeys : /* @__PURE__ */ new Set();
         const keep = [];
         for (const item of this.plugin.autoTranslationQueue) {
@@ -9367,7 +9762,7 @@ var require_queue_core = __commonJS({
             continue;
           }
           if (this.plugin.getAutoTranslationItemProviderKey(item) === providerKey) {
-            if (this.plugin.shouldRetainAutoTranslationProviderBlockedItem(item)) {
+            if (retainVisible && this.plugin.shouldRetainAutoTranslationProviderBlockedItem(item)) {
               const retained = { ...item, daitRequeueAfter: Date.now() + retryMs };
               delete retained.daitPrefetchRequest;
               this.plugin.removeAutoTranslationLoadingForItem(retained, { force: true });
@@ -9389,7 +9784,7 @@ var require_queue_core = __commonJS({
           for (const target of targets) {
             if (this.plugin.getAutoTranslationItemProviderKey(target) === providerKey) {
               this.plugin.removeAutoTranslationLoadingNode(target, cacheKey, { force: true });
-              if (this.plugin.shouldRetainAutoTranslationProviderBlockedItem({ ...target, cacheKey })) {
+              if (retainVisible && this.plugin.shouldRetainAutoTranslationProviderBlockedItem({ ...target, cacheKey })) {
                 remaining.push(target);
               }
               continue;
@@ -9436,14 +9831,20 @@ var require_queue_core = __commonJS({
         });
       }
       takeAutoTranslationBatch(options = {}) {
+        if (this.plugin.autoTranslationQueueSortDirty && this.plugin.autoTranslationQueue.length > 1) {
+          this.plugin.sortAutoTranslationQueue();
+        } else {
+          this.plugin.autoTranslationQueueSortDirty = false;
+        }
         const batch = [];
         const deferred = [];
         let batchGroupKey = "";
         let batchPrefetchState = null;
+        let batchLimit = AUTO_TRANSLATE_PROVIDER_REQUEST_BATCH_MAX;
         let nextReadyAt = 0;
         const now = Date.now();
         const visibility = options.visibility || "";
-        while (batch.length < AUTO_TRANSLATE_PROVIDER_REQUEST_BATCH_MAX && this.plugin.autoTranslationQueue.length) {
+        while (batch.length < batchLimit && this.plugin.autoTranslationQueue.length) {
           const item = this.plugin.autoTranslationQueue.shift();
           const requeueAfter = Number(item?.daitRequeueAfter || 0);
           if (requeueAfter > now) {
@@ -9517,6 +9918,12 @@ var require_queue_core = __commonJS({
             continue;
           }
           batch.push(readyItem);
+          if (batch.length === 1) {
+            batchLimit = Math.min(
+              AUTO_TRANSLATE_PROVIDER_REQUEST_BATCH_MAX,
+              Math.max(1, Number(this.plugin.getAutoTranslationRequestBatchSize(readyItem.requestOptions)) || 1)
+            );
+          }
           delete readyItem.daitLongTextDeferrals;
           if (readyItem?.cacheKey) this.plugin.autoTranslationQueuedKeys.delete(readyItem.cacheKey);
         }
@@ -9859,13 +10266,35 @@ var require_queue_core = __commonJS({
         const pending = new Set(items);
         const renderedItems = /* @__PURE__ */ new Set();
         const startedAt = Date.now();
+        const batchConfigVersion = Number(this.plugin.autoTranslationConfigVersion || 0);
+        const batchResetVersion = Number(this.plugin.autoTranslationInFlightResetVersion || 0);
+        const isPrefetchBatch = items.some((item) => Boolean(item?.daitPrefetchRequest));
+        let releasedEarlyCount = 0;
+        const heartbeat = (targetItems = pending) => {
+          const now = Date.now();
+          targetItems.forEach((item) => {
+            if (item?.cacheKey && this.plugin.isAutoTranslationInFlightItemCurrent(item)) {
+              this.plugin.autoTranslationInFlightStartedAt.set(item.cacheKey, now);
+            }
+          });
+        };
+        const releaseBatchItem = (item) => {
+          if (!item || !this.plugin.finishAutoTranslationInFlightItem(item)) return false;
+          releasedEarlyCount++;
+          this.plugin.autoTranslationInFlightItems = Math.max(0, this.plugin.autoTranslationInFlightItems - 1);
+          return true;
+        };
         try {
           items.forEach((item) => {
             if (this.plugin.isAutoTranslationWorkCurrent(item)) this.plugin.renderPendingAutoTranslationLoadingSafely(item);
           });
           let translations = [];
           let requestError = null;
-          const taskOptions = { signal: this.plugin.getAutoTranslationAbortSignal() };
+          const taskOptions = {
+            signal: this.plugin.getAutoTranslationAbortSignal(),
+            heartbeat,
+            releaseBatchItem
+          };
           try {
             translations = await this.plugin.runAutoTranslationBatchTask(items.map((item) => item.text), items[0]?.requestOptions, taskOptions);
           } catch (error) {
@@ -9973,7 +10402,9 @@ var require_queue_core = __commonJS({
               pending.delete(item);
             });
           } else {
+            heartbeat(pending);
             await this.plugin.runAutoTranslationBatchRetryItems(pending, taskOptions);
+            heartbeat(pending);
             await this.plugin.runAutoTranslationFallbackItems(pending, taskOptions);
           }
           pending.forEach((item) => {
@@ -9993,10 +10424,14 @@ var require_queue_core = __commonJS({
           });
         } finally {
           const currentItems = items.filter((item) => this.plugin.finishAutoTranslationInFlightItem(item));
+          const sameConfigGeneration = Number(this.plugin.autoTranslationConfigVersion || 0) === batchConfigVersion;
+          const sameResetVersion = Number(this.plugin.autoTranslationInFlightResetVersion || 0) === batchResetVersion;
           if (currentItems.length) {
-            this.plugin.autoTranslationInFlight = Math.max(0, this.plugin.autoTranslationInFlight - 1);
             this.plugin.autoTranslationInFlightItems = Math.max(0, this.plugin.autoTranslationInFlightItems - currentItems.length);
-            if (currentItems.some((item) => item.daitPrefetchRequest)) this.plugin.autoTranslationPrefetchInFlight = Math.max(0, this.plugin.autoTranslationPrefetchInFlight - 1);
+          }
+          if (sameConfigGeneration && (currentItems.length > 0 || releasedEarlyCount === items.length && sameResetVersion)) {
+            this.plugin.autoTranslationInFlight = Math.max(0, this.plugin.autoTranslationInFlight - 1);
+            if (isPrefetchBatch) this.plugin.autoTranslationPrefetchInFlight = Math.max(0, this.plugin.autoTranslationPrefetchInFlight - 1);
           }
           items.forEach((item) => {
             if (!renderedItems.has(item) && !item.daitRequeued && !this.plugin.hasActiveAutoTranslationKey(item.cacheKey)) {
@@ -10083,13 +10518,13 @@ var require_queue_core = __commonJS({
           );
         }
       }
-      enqueueAutoTranslationItem(item) {
+      enqueueAutoTranslationItem(item, options = {}) {
         if (!item?.cacheKey) return false;
         if (!this.plugin.isAutoTranslateEnabled()) {
           this.plugin.cancelAutoTranslationRuntimeWork("auto-disabled");
           return false;
         }
-        this.plugin.pruneAutoTranslationActiveState();
+        if (!options.skipPrune) this.plugin.pruneAutoTranslationActiveState();
         const queuedItem = this.plugin.withAutoTranslationPriority(item);
         const allowActiveRequeue = Boolean(queuedItem.daitAllowActiveRequeue);
         delete queuedItem.daitAllowActiveRequeue;
@@ -10107,7 +10542,8 @@ var require_queue_core = __commonJS({
           this.plugin.autoTranslationQueue.push(queuedItem);
         }
         this.plugin.autoTranslationQueuedKeys.add(queuedItem.cacheKey);
-        this.plugin.sortAutoTranslationQueue();
+        if (options.deferSort) this.plugin.autoTranslationQueueSortDirty = true;
+        else this.plugin.sortAutoTranslationQueue();
         this.plugin.logDiagnostic("auto.queue.enqueue", "ok", {
           ...this.plugin.getAutoTranslationDiagnosticMeta(queuedItem, this.plugin.getAutoTranslationQueuedDiagnosticState(queuedItem), DIAGNOSTIC_REASON_CODES.ENQUEUED),
           key: this.plugin.getTextFingerprint(queuedItem.cacheKey),
@@ -10176,11 +10612,23 @@ var require_queue_core = __commonJS({
             }
           });
         }
+        if (this.plugin.autoTranslationPendingTargets?.size) {
+          for (const [cacheKey, entry] of this.plugin.autoTranslationPendingTargets) {
+            if (this.plugin.autoTranslationQueuedKeys.has(cacheKey) || this.plugin.autoTranslationInFlightKeys.has(cacheKey) || this.plugin.autoTranslationRenderPendingKeys?.has?.(cacheKey)) {
+              continue;
+            }
+            const targets = entry?.targets || [];
+            const connected = targets.filter((target) => target?.messageNode?.isConnected && target?.content?.isConnected);
+            if (!connected.length) this.plugin.autoTranslationPendingTargets.delete(cacheKey);
+            else if (connected.length !== targets.length) this.plugin.autoTranslationPendingTargets.set(cacheKey, { targets: connected });
+          }
+        }
         if (!this.plugin.autoTranslationInFlightKeys.size) {
           this.plugin.autoTranslationInFlightStartedAt.clear();
           this.plugin.autoTranslationInFlightTokens.clear();
           this.plugin.autoTranslationVisibleLongInFlightKeys.clear();
           if (this.plugin.autoTranslationInFlight || this.plugin.autoTranslationInFlightItems || this.plugin.autoTranslationPrefetchInFlight) {
+            this.plugin.autoTranslationInFlightResetVersion = Number(this.plugin.autoTranslationInFlightResetVersion || 0) + 1;
             this.plugin.autoTranslationInFlight = 0;
             this.plugin.autoTranslationInFlightItems = 0;
             this.plugin.autoTranslationPrefetchInFlight = 0;
@@ -10210,13 +10658,18 @@ var require_queue_core = __commonJS({
         if (!removed) return;
         this.plugin.autoTranslationInFlightItems = Math.min(this.plugin.autoTranslationInFlightItems, this.plugin.autoTranslationInFlightKeys.size);
         if (!this.plugin.autoTranslationInFlightKeys.size) {
+          this.plugin.autoTranslationInFlightResetVersion = Number(this.plugin.autoTranslationInFlightResetVersion || 0) + 1;
           this.plugin.autoTranslationInFlight = 0;
           this.plugin.autoTranslationInFlightItems = 0;
           this.plugin.autoTranslationPrefetchInFlight = 0;
           this.plugin.autoTranslationVisibleLongInFlightKeys.clear();
           return;
         }
-        this.plugin.autoTranslationInFlight = Math.min(this.plugin.autoTranslationInFlight, this.plugin.autoTranslationInFlightKeys.size);
+        const nextInFlight = Math.min(this.plugin.autoTranslationInFlight, this.plugin.autoTranslationInFlightKeys.size);
+        if (nextInFlight !== this.plugin.autoTranslationInFlight) {
+          this.plugin.autoTranslationInFlightResetVersion = Number(this.plugin.autoTranslationInFlightResetVersion || 0) + 1;
+          this.plugin.autoTranslationInFlight = nextInFlight;
+        }
         this.plugin.autoTranslationPrefetchInFlight = Math.min(this.plugin.autoTranslationPrefetchInFlight, this.plugin.autoTranslationInFlight);
       }
       pruneAutoTranslationRenderPendingKeys() {
@@ -10240,27 +10693,35 @@ var require_queue_core = __commonJS({
         const key = this.plugin.getAutoTranslationRecentRenderKey(cacheKey, text, requestOptions);
         if (!key) return;
         if (!this.plugin.autoTranslationRecentRenders?.set) this.plugin.autoTranslationRecentRenders = /* @__PURE__ */ new Map();
+        const now = Date.now();
+        this.plugin.autoTranslationRecentRenders.delete(key);
         this.plugin.autoTranslationRecentRenders.set(key, {
-          at: Date.now(),
-          expiresAt: Date.now() + AUTO_TRANSLATE_RECENT_RENDER_TTL_MS,
+          at: now,
+          expiresAt: now + AUTO_TRANSLATE_RECENT_RENDER_TTL_MS,
           validationQuality: meta.validationQuality || "",
           validationReason: meta.validationReason || ""
         });
-        this.plugin.pruneRecentAutoTranslationRenders();
+        this.plugin.pruneRecentAutoTranslationRenders(now);
       }
       getRecentAutoTranslationRender(cacheKey, text, requestOptions = null, now = Date.now()) {
-        this.plugin.pruneRecentAutoTranslationRenders(now);
         const key = this.plugin.getAutoTranslationRecentRenderKey(cacheKey, text, requestOptions);
-        if (!key) return null;
-        return this.plugin.autoTranslationRecentRenders?.get?.(key) || null;
+        if (!key || !this.plugin.autoTranslationRecentRenders?.has?.(key)) return null;
+        const entry = this.plugin.autoTranslationRecentRenders.get(key);
+        if (!entry || Number(entry.expiresAt || 0) <= now) {
+          this.plugin.autoTranslationRecentRenders.delete(key);
+          return null;
+        }
+        return entry;
       }
       pruneRecentAutoTranslationRenders(now = Date.now()) {
-        if (!this.plugin.autoTranslationRecentRenders?.size) return;
-        for (const [key, entry] of [...this.plugin.autoTranslationRecentRenders.entries()]) {
-          if (Number(entry?.expiresAt || 0) <= now) this.plugin.autoTranslationRecentRenders.delete(key);
+        const map = this.plugin.autoTranslationRecentRenders;
+        if (!map?.size) return;
+        for (const [key, entry] of map) {
+          if (Number(entry?.expiresAt || 0) <= now) map.delete(key);
+          else break;
         }
-        while (this.plugin.autoTranslationRecentRenders.size > AUTO_TRANSLATE_RECENT_RENDER_MAX) {
-          this.plugin.autoTranslationRecentRenders.delete(this.plugin.autoTranslationRecentRenders.keys().next().value);
+        while (map.size > AUTO_TRANSLATE_RECENT_RENDER_MAX) {
+          map.delete(map.keys().next().value);
         }
       }
       // Partial results (for example a long message with a failed chunk) must not enter the
@@ -10419,6 +10880,7 @@ var require_queue_core = __commonJS({
         return this.plugin.translationScheduler.makeRoomForItem(item, queueLimit);
       }
       sortAutoTranslationQueue() {
+        this.plugin.autoTranslationQueueSortDirty = false;
         this.plugin.translationScheduler.sortQueue(this.plugin.autoTranslationQueue);
       }
       withAutoTranslationPriority(target, options = {}) {
@@ -10966,6 +11428,8 @@ var require_diagnostics_recorder = __commonJS({
       PLUGIN_NAME
     } = require_constants();
     var { PLUGIN_VERSION } = require_version();
+    var KNOWN_DIAGNOSTIC_MESSAGE_STATES = new Set(Object.values(DIAGNOSTIC_MESSAGE_STATES));
+    var KNOWN_DIAGNOSTIC_REASON_CODES = new Set(Object.values(DIAGNOSTIC_REASON_CODES));
     var DiagnosticsRecorder = class {
       constructor(plugin) {
         this.plugin = plugin;
@@ -11020,13 +11484,11 @@ var require_diagnostics_recorder = __commonJS({
       }
       getDiagnosticMessageState(state) {
         const value = String(state || "").trim();
-        const known = new Set(Object.values(DIAGNOSTIC_MESSAGE_STATES));
-        return known.has(value) ? value : "";
+        return KNOWN_DIAGNOSTIC_MESSAGE_STATES.has(value) ? value : "";
       }
       getDiagnosticReasonCode(reasonCode) {
         const value = String(reasonCode || "").trim();
-        const known = new Set(Object.values(DIAGNOSTIC_REASON_CODES));
-        return known.has(value) ? value : value.slice(0, 80);
+        return KNOWN_DIAGNOSTIC_REASON_CODES.has(value) ? value : value.slice(0, 80);
       }
       enrichDiagnosticMeta(action = "", status = "info", meta = {}) {
         const source = meta && typeof meta === "object" ? meta : {};
@@ -11815,13 +12277,15 @@ var require_output_guard = __commonJS({
             });
           }
         }
-        try {
-          const parsed = JSON.parse(raw);
-          push(this.plugin.extractTranslationValue(parsed));
-          if (Array.isArray(parsed)) {
-            parsed.forEach((item) => push(this.plugin.extractTranslationValue(item)));
+        if (raw[0] === "{" || raw[0] === "[" || raw[0] === '"') {
+          try {
+            const parsed = JSON.parse(raw);
+            push(this.plugin.extractTranslationValue(parsed));
+            if (Array.isArray(parsed)) {
+              parsed.forEach((item) => push(this.plugin.extractTranslationValue(item)));
+            }
+          } catch {
           }
-        } catch {
         }
         return candidates;
       }
@@ -11922,12 +12386,12 @@ var require_output_guard = __commonJS({
         if (this.plugin.isSimplifiedChineseTarget(targetLanguage) && this.plugin.hasLikelyTraditionalHan(output) && !this.plugin.isAcceptableChineseVariantMix(output, targetLanguage)) return "script-mismatch";
         if (this.plugin.isAcceptableTargetShortTranslation(output, targetLanguage, source)) return "";
         if (this.plugin.hasSuspiciousChineseAutoTranslationOutput(output, targetLanguage)) return "suspicious-chinese";
-        if (this.plugin.isTargetLanguageDominantBySentence(output, targetLanguage, { allowPureTarget: true }) || this.plugin.isTargetLanguageWithPreservedSourceTerms(output, targetLanguage, source)) {
-          if (!this.plugin.hasSuspiciousResidualAutoTranslationForeignText(source, output, targetLanguage) && (options?.partialLongText || options?.mergedLongText || !this.plugin.hasMissingAutoTranslationLines(source, output, targetLanguage, options)) && (options?.partialLongText || !this.plugin.hasUndertranslatedAutoTranslationOutput(source, output, targetLanguage))) return "";
-        }
         if (this.plugin.hasSuspiciousResidualAutoTranslationForeignText(source, output, targetLanguage)) return "residual-source";
         if (!options?.partialLongText && !options?.mergedLongText && this.plugin.hasMissingAutoTranslationLines(source, output, targetLanguage, options)) return "missing-lines";
         if (!options?.partialLongText && this.plugin.hasUndertranslatedAutoTranslationOutput(source, output, targetLanguage)) return "undertranslated";
+        if (this.plugin.isTargetLanguageDominantBySentence(output, targetLanguage, { allowPureTarget: true }) || this.plugin.isTargetLanguageWithPreservedSourceTerms(output, targetLanguage, source)) {
+          return "";
+        }
         if (this.plugin.hasResidualAutoTranslationSourceText(output, targetLanguage, source)) return "residual-source";
         if (this.plugin.isLikelyTargetLanguage(output, targetLanguage)) return "";
         if (!this.plugin.hasLetters(output)) return this.plugin.hasLetters(source) ? "no-letters" : "";
@@ -11978,8 +12442,8 @@ var require_output_guard = __commonJS({
           /实时字幕层/,
           /翻译\s*Discord\s*聊天消息/i,
           /自动频道翻译模式/,
-          /严格.*频道.*翻译.*重试/,
-          /最终.*严格.*翻译/,
+          /严格.{0,40}频道.{0,40}翻译.{0,40}重试/,
+          /最终.{0,40}严格.{0,40}翻译/,
           /仅返回翻译后的消息/,
           /不要添加解释、注释、引用、摘要/
         ];
@@ -12235,6 +12699,7 @@ var require_translation_cache_store = __commonJS({
       TRANSLATION_CACHE_NEGATIVE_LOOKUP_MAX,
       TRANSLATION_CACHE_NEGATIVE_LOOKUP_TTL_MS,
       TRANSLATION_CACHE_TOUCH_DEBOUNCE_MS,
+      TRANSLATION_CACHE_TOUCH_IDLE_PERSIST_MS,
       TRANSLATION_CACHE_TOUCH_PERSIST_THRESHOLD,
       TRANSLATION_CACHE_TTL_OPTIONS,
       TRANSLATION_CACHE_WRITE_DEBOUNCE_MS
@@ -12309,9 +12774,13 @@ var require_translation_cache_store = __commonJS({
       3204031479,
       3329325298
     ]);
+    var sharedTextEncoder = null;
     function encodeUtf8Bytes(text) {
       const value = String(text ?? "");
-      if (typeof TextEncoder === "function") return new TextEncoder().encode(value);
+      if (typeof TextEncoder === "function") {
+        if (!sharedTextEncoder) sharedTextEncoder = new TextEncoder();
+        return sharedTextEncoder.encode(value);
+      }
       const bytes = [];
       for (let index = 0; index < value.length; index++) {
         let code = value.charCodeAt(index);
@@ -12630,41 +13099,89 @@ var require_translation_cache_store = __commonJS({
         return this.plugin.buildTranslationCacheKey(text, options, this.plugin.getTextFingerprint(text));
       }
       getTranslationCacheAliases(text, options = {}, aliasOptions = {}) {
-        const primaryKey = this.plugin.getTranslationCacheKey(text, options);
         const strongTextHash = this.plugin.getStrongTextFingerprint(text);
         const legacyTextHash = this.plugin.getTextFingerprint(text);
-        const legacyKey = this.plugin.getLegacyTranslationCacheKey(text, options);
-        const fullConfigKey = this.plugin.getFullConfigTranslationCacheKey(text, options, strongTextHash);
-        const fullConfigLegacyKey = this.plugin.getFullConfigTranslationCacheKey(text, options, legacyTextHash);
-        const aliases = [
-          legacyKey,
-          fullConfigKey,
-          fullConfigLegacyKey
+        const taskConfig = this.plugin.getEffectiveTaskConfig("translation", options.configOverrides);
+        const config = this.plugin.getCacheConfigSnapshot("translation", taskConfig, {
+          servedModel: true,
+          legacyModel: false
+        });
+        config.endpoint = this.getTranslationCacheEndpoint(taskConfig);
+        config.promptPolicyVersion = this.plugin.getPromptPolicyCacheVersion("translation", options, config);
+        const mode = options.mode || "manual";
+        const normalizedIdentity = this.plugin.normalizeTranslationMessageIdentity(options.messageIdentity);
+        const strongIdentity = normalizedIdentity || `text:${strongTextHash}`;
+        const legacyIdentity = normalizedIdentity || `text:${legacyTextHash}`;
+        const compactParts = this.plugin.getCompactTranslationCacheConfigParts(config);
+        const fullParts = [
+          config.provider,
+          config.endpoint,
+          config.model,
+          config.sourceLanguage,
+          config.targetLanguage,
+          config.region || "",
+          config.deeplPlan || "",
+          config.appIdHash || "",
+          config.temperature,
+          config.maxTokens,
+          config.enableThinking ? "thinking:on" : "thinking:off",
+          config.promptPolicyVersion,
+          config.prompt
         ];
-        if (aliasOptions.includePreMessageIdentity !== false) {
+        const compactBody = compactParts.join("\n---\n");
+        const fullBody = fullParts.join("\n---\n");
+        const joinWith = (body, hash, identity, omitIdentity = false) => omitIdentity ? `${mode}
+---
+${body}
+---
+${hash}` : `${mode}
+---
+${identity}
+---
+${body}
+---
+${hash}`;
+        const primaryKey = joinWith(compactBody, strongTextHash, strongIdentity);
+        const aliases = [
+          joinWith(compactBody, legacyTextHash, legacyIdentity),
+          joinWith(fullBody, strongTextHash, strongIdentity),
+          joinWith(fullBody, legacyTextHash, legacyIdentity)
+        ];
+        const includePreMessageIdentity = aliasOptions.includePreMessageIdentity !== false;
+        if (includePreMessageIdentity) {
           aliases.push(
-            this.plugin.getPreMessageIdentityTranslationCacheKey(text, options, strongTextHash),
-            this.plugin.getPreMessageIdentityTranslationCacheKey(text, options, legacyTextHash),
-            this.plugin.getPreMessageIdentityTranslationCacheKey(text, options, strongTextHash, { fullConfig: true }),
-            this.plugin.getPreMessageIdentityTranslationCacheKey(text, options, legacyTextHash, { fullConfig: true })
+            joinWith(compactBody, strongTextHash, strongIdentity, true),
+            joinWith(compactBody, legacyTextHash, legacyIdentity, true),
+            joinWith(fullBody, strongTextHash, strongIdentity, true),
+            joinWith(fullBody, legacyTextHash, legacyIdentity, true)
           );
         }
         if (aliasOptions.includePlaceholderModel && this.plugin.localProviderModelFirstDetected) {
           aliases.push(this.getPlaceholderModelTranslationCacheKey(text, options));
         }
-        for (const legacyEndpoint of this.getCompatibleLegacyTranslationCacheEndpoints(options)) {
-          const build = (hash, cacheOptions = {}) => this.buildTranslationCacheKey(text, options, hash, { ...cacheOptions, legacyEndpoint });
-          aliases.push(build(strongTextHash), build(legacyTextHash), build(strongTextHash, { fullConfig: true }), build(legacyTextHash, { fullConfig: true }));
-          if (aliasOptions.includePreMessageIdentity !== false) {
+        for (const legacyEndpoint of this.getCompatibleLegacyTranslationCacheEndpoints(options, taskConfig, config.endpoint)) {
+          const legacyCompactParts = compactParts.slice();
+          legacyCompactParts[1] = `endpoint:${this.plugin.getStrongTextFingerprint(legacyEndpoint)}`;
+          const legacyCompactBody = legacyCompactParts.join("\n---\n");
+          const legacyFullParts = fullParts.slice();
+          legacyFullParts[1] = legacyEndpoint;
+          const legacyFullBody = legacyFullParts.join("\n---\n");
+          aliases.push(
+            joinWith(legacyCompactBody, strongTextHash, strongIdentity),
+            joinWith(legacyCompactBody, legacyTextHash, legacyIdentity),
+            joinWith(legacyFullBody, strongTextHash, strongIdentity),
+            joinWith(legacyFullBody, legacyTextHash, legacyIdentity)
+          );
+          if (includePreMessageIdentity) {
             aliases.push(
-              build(strongTextHash, { omitMessageIdentity: true }),
-              build(legacyTextHash, { omitMessageIdentity: true }),
-              build(strongTextHash, { fullConfig: true, omitMessageIdentity: true }),
-              build(legacyTextHash, { fullConfig: true, omitMessageIdentity: true })
+              joinWith(legacyCompactBody, strongTextHash, strongIdentity, true),
+              joinWith(legacyCompactBody, legacyTextHash, legacyIdentity, true),
+              joinWith(legacyFullBody, strongTextHash, strongIdentity, true),
+              joinWith(legacyFullBody, legacyTextHash, legacyIdentity, true)
             );
           }
           if (aliasOptions.includePlaceholderModel && this.plugin.localProviderModelFirstDetected && this.getTranslationCacheServedModelState(options) === true) {
-            aliases.push(build(strongTextHash, { legacyModel: true }));
+            aliases.push(this.buildTranslationCacheKey(text, options, strongTextHash, { legacyModel: true, legacyEndpoint }));
           }
         }
         this.adoptLegacyTranslationCacheEntries(text, options, primaryKey);
@@ -12711,12 +13228,12 @@ var require_translation_cache_store = __commonJS({
         }
         return endpoint;
       }
-      getCompatibleLegacyTranslationCacheEndpoints(options) {
-        const config = this.plugin.getEffectiveTaskConfig("translation", options.configOverrides);
+      getCompatibleLegacyTranslationCacheEndpoints(options, precomputedTaskConfig = null, precomputedCacheEndpoint = null) {
+        const config = precomputedTaskConfig || this.plugin.getEffectiveTaskConfig("translation", options.configOverrides);
         const defaults = DEFAULT_SETTINGS.translation;
         const provider = this.plugin.providerLayer;
         const endpoint = provider.getProviderEndpointIdentity(config, defaults);
-        const cacheEndpoint = this.getTranslationCacheEndpoint(config);
+        const cacheEndpoint = precomputedCacheEndpoint || this.getTranslationCacheEndpoint(config);
         const legacyFallback = String(defaults.endpoint || "").trim();
         const oldEndpoint = this.plugin.getCacheConfigSnapshot("translation", config).endpoint;
         const candidates = /* @__PURE__ */ new Set([oldEndpoint, endpoint, PROVIDER_DEFAULTS[config.provider]?.endpoint]);
@@ -12900,31 +13417,37 @@ var require_translation_cache_store = __commonJS({
             this.deleteTranslationCacheEntry(hitKey);
             this.plugin.translationCacheMeta.delete(hitKey);
             this.plugin.scheduleTranslationCachePersist();
-            this.plugin.logDiagnostic("cache.lookup", "expired", {
-              ...this.plugin.getDiagnosticBaseMeta("cache", this.plugin.getTranslationCacheMode(hitKey), "cache-expired"),
-              cacheHash: this.plugin.getTextFingerprint(hitKey)
-            });
+            if (this.plugin.settings.ui?.diagnosticsEnabled) {
+              this.plugin.logDiagnostic("cache.lookup", "expired", {
+                ...this.plugin.getDiagnosticBaseMeta("cache", this.plugin.getTranslationCacheMode(hitKey), "cache-expired"),
+                cacheHash: this.plugin.getTextFingerprint(hitKey)
+              });
+            }
             continue;
           }
           this.plugin.translationCacheStats.hits++;
           this.plugin.touchTranslationCache(hitKey, { extendExpiry: true, persistDelayMs: TRANSLATION_CACHE_TOUCH_DEBOUNCE_MS });
           const value = this.plugin.translationCache.get(hitKey);
-          this.plugin.logDiagnostic("cache.lookup", "hit", {
-            ...this.plugin.getDiagnosticBaseMeta("cache", this.plugin.getTranslationCacheMode(hitKey), DIAGNOSTIC_REASON_CODES.CACHE_HIT),
-            cacheHash: this.plugin.getTextFingerprint(hitKey),
-            alias: Boolean(key && hitKey !== key),
-            size: this.plugin.translationCache.size
-          });
+          if (this.plugin.settings.ui?.diagnosticsEnabled) {
+            this.plugin.logDiagnostic("cache.lookup", "hit", {
+              ...this.plugin.getDiagnosticBaseMeta("cache", this.plugin.getTranslationCacheMode(hitKey), DIAGNOSTIC_REASON_CODES.CACHE_HIT),
+              cacheHash: this.plugin.getTextFingerprint(hitKey),
+              alias: Boolean(key && hitKey !== key),
+              size: this.plugin.translationCache.size
+            });
+          }
           if (key && hitKey !== key) this.plugin.promoteTranslationCacheAlias(hitKey, key);
           return value;
         }
         this.plugin.translationCacheStats.misses++;
-        this.plugin.logDiagnostic("cache.lookup", "miss", {
-          ...this.plugin.getDiagnosticBaseMeta("cache", this.plugin.getTranslationCacheMode(key), "cache-miss"),
-          cacheHash: this.plugin.getTextFingerprint(key),
-          aliases: aliases.length,
-          size: this.plugin.translationCache.size
-        });
+        if (this.plugin.settings.ui?.diagnosticsEnabled) {
+          this.plugin.logDiagnostic("cache.lookup", "miss", {
+            ...this.plugin.getDiagnosticBaseMeta("cache", this.plugin.getTranslationCacheMode(key), "cache-miss"),
+            cacheHash: this.plugin.getTextFingerprint(key),
+            aliases: aliases.length,
+            size: this.plugin.translationCache.size
+          });
+        }
         return null;
       }
       promoteTranslationCacheAlias(sourceKey, targetKey) {
@@ -12996,11 +13519,19 @@ var require_translation_cache_store = __commonJS({
           expiresAt: nextExpiresAt,
           volatile: Boolean(meta.volatile || this.plugin.isVolatileTranslationCacheKey(key))
         });
+        const expiryExtended = nextExpiresAt > currentExpiresAt;
         if (options.extendExpiry || options.persistDelayMs) {
-          this.plugin.translationCacheTouchDirtyCount = Math.max(0, Number(this.plugin.translationCacheTouchDirtyCount || 0)) + 1;
-          const thresholdReached = this.plugin.translationCacheTouchDirtyCount >= TRANSLATION_CACHE_TOUCH_PERSIST_THRESHOLD;
-          this.plugin.scheduleTranslationCachePersist(thresholdReached ? TRANSLATION_CACHE_WRITE_DEBOUNCE_MS : options.persistDelayMs || TRANSLATION_CACHE_TOUCH_DEBOUNCE_MS);
-          if (thresholdReached) this.plugin.translationCacheTouchDirtyCount = 0;
+          if (expiryExtended) {
+            this.plugin.translationCacheTouchDirtyCount = Math.max(0, Number(this.plugin.translationCacheTouchDirtyCount || 0)) + 1;
+            const thresholdReached = this.plugin.translationCacheTouchDirtyCount >= TRANSLATION_CACHE_TOUCH_PERSIST_THRESHOLD;
+            this.plugin.scheduleTranslationCachePersist(thresholdReached ? TRANSLATION_CACHE_WRITE_DEBOUNCE_MS : options.persistDelayMs || TRANSLATION_CACHE_TOUCH_DEBOUNCE_MS);
+            if (thresholdReached) this.plugin.translationCacheTouchDirtyCount = 0;
+          } else {
+            this.plugin.scheduleTranslationCachePersist(Math.max(
+              Number(options.persistDelayMs || 0),
+              TRANSLATION_CACHE_TOUCH_IDLE_PERSIST_MS
+            ));
+          }
         }
       }
       loadTranslationCache(options = {}) {
@@ -13120,7 +13651,7 @@ var require_translation_cache_store = __commonJS({
         const committed = previousCommit ? previousCommit.fingerprint === receipt.fingerprint : hasCurrent && this.getLegacyTranslationCacheReceipt(current).fingerprint === receipt.fingerprint;
         const payload = committed ? current : hasCurrent ? this.mergePersistedTranslationCachePayloads(current, legacy, receipt) : legacy;
         if (!committed) {
-          const expectedFingerprint = this.getLegacyTranslationCacheReceipt(payload).fingerprint;
+          const expectedFingerprint = payload === legacy ? receipt.fingerprint : this.getLegacyTranslationCacheReceipt(payload).fingerprint;
           try {
             if (storage.writeDataStore(storeName, CACHE_DATA_KEY, payload) !== true) throw new Error("DATA_SAVE_FAILED");
           } catch (error) {
@@ -13500,6 +14031,17 @@ var require_provider_layer = __commonJS({
       SETTINGS_WRITE_DEBOUNCE_MS
     } = require_constants();
     var GOOGLE_API_KEY_PATTERN = /AIza[0-9A-Za-z_-]{10,}/;
+    var GOOGLE_TRANSLATE_PROTECT_PATTERNS = [
+      /```[\s\S]*?```/g,
+      /`[^`\n]+`/g,
+      /https?:\/\/[^\s<>"']+/gi,
+      /<a?:[A-Za-z0-9_~.-]+:\d{15,}>/g,
+      /<[@#][!&]?\d{15,}>/g,
+      /<@&\d{15,}>/g,
+      /<t:\d{1,12}(?::[tTdDfFR])?>/g,
+      /:[A-Za-z0-9_~.-]{2,}:/g,
+      /\b[A-Za-z]:\\[^\s]+/g
+    ];
     var ProviderLayer = class {
       constructor(plugin) {
         this.plugin = plugin;
@@ -14697,7 +15239,13 @@ var require_provider_layer = __commonJS({
           taskConfig = { ...this.plugin.getEffectiveTaskConfig(kind, options.configOverrides) };
           const defaultConfig = DEFAULT_SETTINGS[kind] || {};
           if (this.plugin.shouldAutoDetectLocalProviderModel(taskConfig, defaultConfig)) {
-            await this.plugin.refreshLocalProviderDetectedModel(taskConfig, { ...options, defaultConfig });
+            await this.plugin.refreshLocalProviderDetectedModel(taskConfig, {
+              defaultConfig,
+              signal: options.signal,
+              isCurrent: options.isCurrent,
+              force: options.force,
+              omitApiKey: options.omitApiKey
+            });
             this.throwIfProviderRequestCancelled(signal, lifecycleToken);
           }
           if (kind === "translation" && !options.providerProfilePinned) {
@@ -15599,8 +16147,8 @@ var require_provider_layer = __commonJS({
       protectGoogleTranslateText(text) {
         const source = String(text || "");
         const spans = [];
-        const addMatches = (pattern) => {
-          const regex = new RegExp(pattern.source, pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`);
+        for (const regex of GOOGLE_TRANSLATE_PROTECT_PATTERNS) {
+          regex.lastIndex = 0;
           let match = null;
           while ((match = regex.exec(source)) !== null) {
             const value = String(match[0] || "");
@@ -15608,18 +16156,7 @@ var require_provider_layer = __commonJS({
             spans.push({ start: match.index, end: match.index + value.length, value });
             if (match.index === regex.lastIndex) regex.lastIndex++;
           }
-        };
-        [
-          /```[\s\S]*?```/g,
-          /`[^`\n]+`/g,
-          /https?:\/\/[^\s<>"']+/gi,
-          /<a?:[A-Za-z0-9_~.-]+:\d{15,}>/g,
-          /<[@#][!&]?\d{15,}>/g,
-          /<@&\d{15,}>/g,
-          /<t:\d{1,12}(?::[tTdDfFR])?>/g,
-          /:[A-Za-z0-9_~.-]{2,}:/g,
-          /\b[A-Za-z]:\\[^\s]+/g
-        ].forEach(addMatches);
+        }
         spans.sort((left, right) => left.start - right.start || right.end - left.end);
         const selected = [];
         let lastEnd = -1;
@@ -15821,6 +16358,7 @@ var require_provider_layer = __commonJS({
       }
       decodeHtmlEntities(text) {
         const value = String(text || "");
+        if (!value || !value.includes("&")) return value;
         if (typeof document !== "undefined") {
           const textarea = document.createElement?.("textarea");
           if (textarea) {
@@ -16173,6 +16711,7 @@ var require_settings_store = __commonJS({
       PLUGIN_NAME,
       POLISH_REPOLISH_SOURCE_LAST_RESULT,
       POLISH_REPOLISH_SOURCE_ORIGINAL,
+      QUICK_PANEL_TABS,
       SETTINGS_WRITE_DEBOUNCE_MS,
       TRANSLATION_CACHE_WRITE_DEBOUNCE_MS,
       TRANSLATION_LINE_STYLES,
@@ -16191,6 +16730,10 @@ var require_settings_store = __commonJS({
     function normalizeTranslationLineTextScale(value) {
       const scale = Number(value);
       return TRANSLATION_LINE_TEXT_SCALES.includes(scale) ? scale : DEFAULT_SETTINGS.ui.translationTextScale;
+    }
+    function normalizeQuickPanelTab(value) {
+      const tab = String(value || "").trim();
+      return QUICK_PANEL_TABS.includes(tab) ? tab : DEFAULT_SETTINGS.ui.quickPanelActiveTab;
     }
     var SettingsStore = class {
       constructor(plugin) {
@@ -16264,6 +16807,7 @@ var require_settings_store = __commonJS({
         this.plugin.saveSettings();
         this.plugin.syncSettingControls(`${kind}.prompt`, template.prompt);
         if (kind === "translation") this.plugin.invalidateAutoTranslationQueue();
+        this.plugin.quickPanel?.scheduleUpdate?.();
         this.plugin.showToast(this.plugin.t("promptApplied", { name: this.getTemplateDisplayName(template), code: template.serial }), "success");
       }
       savePromptTemplate(kind, name, prompt) {
@@ -16278,6 +16822,7 @@ var require_settings_store = __commonJS({
         templates.push(template);
         this.plugin.settings[kind].activePromptTemplate = template.id;
         this.plugin.saveSettings();
+        this.plugin.quickPanel?.scheduleUpdate?.();
         this.plugin.showToast(this.plugin.t("promptSaved", { name, code: template.serial }), "success");
       }
       updatePromptTemplate(kind, templateId, prompt) {
@@ -16287,6 +16832,7 @@ var require_settings_store = __commonJS({
         this.plugin.settings[kind].activePromptTemplate = template.id;
         this.plugin.saveSettings();
         if (kind === "translation") this.plugin.invalidateAutoTranslationQueue();
+        this.plugin.quickPanel?.scheduleUpdate?.();
         this.plugin.showToast(this.plugin.t("promptUpdated", { name: this.getTemplateDisplayName(template), code: template.serial }), "success");
       }
       // A built-in template's name in the interface language (the plugin decides; plain name without it).
@@ -16314,6 +16860,7 @@ var require_settings_store = __commonJS({
         }
         this.plugin.saveSettings();
         if (kind === "translation" && wasActive) this.plugin.invalidateAutoTranslationQueue();
+        this.plugin.quickPanel?.scheduleUpdate?.();
         this.plugin.showToast(this.plugin.t("promptDeleted"), "success");
       }
       isBuiltInPromptTemplateId(kind, templateId) {
@@ -16357,6 +16904,7 @@ var require_settings_store = __commonJS({
         missing.forEach((template) => templates.push(this.plugin.clone(template)));
         this.plugin.ensurePromptTemplateSerials(kind);
         if (options.save !== false) this.plugin.saveSettings();
+        this.plugin.quickPanel?.scheduleUpdate?.();
         if (options.silent !== true) {
           this.plugin.showToast(this.plugin.t("promptPresetsRestored", { count: missing.length }), "success");
         }
@@ -16542,6 +17090,11 @@ var require_settings_store = __commonJS({
         const settingsActiveTab = normalizeSettingsTabId(this.plugin.settings.ui.settingsActiveTab);
         if (settingsActiveTab !== this.plugin.settings.ui.settingsActiveTab) {
           this.plugin.settings.ui.settingsActiveTab = settingsActiveTab;
+          changed = true;
+        }
+        const quickPanelActiveTab = normalizeQuickPanelTab(this.plugin.settings.ui.quickPanelActiveTab);
+        if (quickPanelActiveTab !== this.plugin.settings.ui.quickPanelActiveTab) {
+          this.plugin.settings.ui.quickPanelActiveTab = quickPanelActiveTab;
           changed = true;
         }
         const rawUiSettingsVersion = storedSettings && typeof storedSettings === "object" ? Number(storedSettings.ui?.settingsVersion || 0) : Number(this.plugin.settings.ui.settingsVersion || 0);
@@ -16954,6 +17507,9 @@ var require_settings_store = __commonJS({
         if (path === "ui.settingsActiveTab") {
           value = normalizeSettingsTabId(value);
         }
+        if (path === "ui.quickPanelActiveTab") {
+          value = normalizeQuickPanelTab(value);
+        }
         if (path === "ui.messageButtonVisibility") {
           value = this.plugin.normalizeMessageButtonVisibility(value);
         }
@@ -17337,9 +17893,16 @@ var require_settings_store = __commonJS({
 var require_quick_panel = __commonJS({
   "src/quick-panel/quick-panel.js"(exports2, module2) {
     "use strict";
-    var { LANGUAGE_PRESETS, API_ENDPOINT_ERROR_MESSAGE_KEYS } = require_constants();
+    var {
+      LANGUAGE_PRESETS,
+      API_ENDPOINT_ERROR_MESSAGE_KEYS,
+      QUICK_PANEL_TABS,
+      POLISH_REPOLISH_SOURCE_ORIGINAL,
+      POLISH_REPOLISH_SOURCE_LAST_RESULT
+    } = require_constants();
     var { PLUGIN_VERSION } = require_version();
     var { getChannelRouteParts, getChannelRuleKey } = require_channel_rule();
+    var { SETTINGS_TAB_COMPOSE } = require_settings_schema();
     var POPOVER_ID = "dait-quick-popover";
     var POPOVER_WIDTH_PX = 360;
     var ANCHOR_GAP_PX = 8;
@@ -17352,6 +17915,13 @@ var require_quick_panel = __commonJS({
     var POINTER_OPENED_CLASS = "dait-qp-pointer-opened";
     var CHANNEL_RULES = ["inherit", "enabled", "disabled"];
     var TRANSLATION_POSITIONS = ["before", "after"];
+    var POLISH_AFTER_ACTIONS = ["replace", "confirmSend"];
+    var POLISH_REPOLISH_SOURCES = [POLISH_REPOLISH_SOURCE_ORIGINAL, POLISH_REPOLISH_SOURCE_LAST_RESULT];
+    var POLISH_CREATIVITY_PRESETS = [
+      { value: 0.3, key: "quickPanelPolishCreativitySteady" },
+      { value: 0.7, key: "quickPanelPolishCreativityBalanced" },
+      { value: 1.2, key: "quickPanelPolishCreativityCreative" }
+    ];
     var LAUNCHER_STATUS_STATES = ["ok", "busy", "waiting", "needs-you", "off"];
     var WAITING_FAILURE_TYPES = /* @__PURE__ */ new Set(["rate-limit", "server", "timeout", "network", "parse"]);
     var ATTENTION_FAILURE_TYPES = /* @__PURE__ */ new Set(["auth", "quota", "local-unavailable"]);
@@ -17372,6 +17942,15 @@ var require_quick_panel = __commonJS({
       "not-found": "quickStatusReasonNotFound"
     };
     var ICON_NAMES = { gear: "dait-qp-icon-gear", close: "dait-qp-icon-close" };
+    function normalizeQuickTab(value) {
+      const tab = String(value || "").trim();
+      return QUICK_PANEL_TABS.includes(tab) ? tab : "translation";
+    }
+    function clampTemperature(value, fallback = 0.4) {
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed)) return fallback;
+      return Math.round(Math.min(2, Math.max(0, parsed)) * 10) / 10;
+    }
     var QuickPanel = class {
       constructor(plugin) {
         this.plugin = plugin;
@@ -17384,17 +17963,46 @@ var require_quick_panel = __commonJS({
         this.updateTimer = null;
         this.routeTimer = null;
         this.countdownTimer = null;
-        this.testRunning = false;
+        this.testRuns = { translation: false, polish: false };
         this.statusPending = false;
         this.statusTimer = null;
         this.statusExpiryTimer = null;
         this.statusExpiryAt = 0;
         this.lastStatus = null;
+        this.lastPolishStatus = null;
         this.lastStatusSignature = "";
         this.statusRouteKey = "";
         this.launcherRef = null;
         this.lastAnchorRect = null;
         this.configError = null;
+        this.tryDrawerOpen = false;
+        this.tryRunning = false;
+        this.tryRunToken = null;
+        this.tryHistory = { text: "", results: [] };
+        this.tryContextSignature = "";
+      }
+      // --- Active tab ---
+      getActiveTab() {
+        return normalizeQuickTab(this.plugin.settings?.ui?.quickPanelActiveTab);
+      }
+      setActiveTab(tab, options = {}) {
+        const next = normalizeQuickTab(tab);
+        const current = this.getActiveTab();
+        if (current !== next) {
+          if (typeof this.plugin.setSetting === "function") {
+            this.plugin.setSetting("ui.quickPanelActiveTab", next);
+          } else if (this.plugin.settings?.ui) {
+            this.plugin.settings.ui.quickPanelActiveTab = next;
+          }
+        }
+        if (this.isOpen()) {
+          this.update();
+          if (options.focusTab) {
+            const button = this.controls?.modeTabs?.find((item) => item.dataset.daitTab === next);
+            if (button) this.focusElement(button);
+          }
+        }
+        return next;
       }
       // --- Popover lifecycle ---
       isOpen() {
@@ -17427,7 +18035,7 @@ var require_quick_panel = __commonJS({
           this.setLauncherExpanded(anchor, true);
           this.focusElement(this.getFocusableElements()[0] || root);
           this.startRouteWatch();
-          this.plugin.logQuickSettingsDiagnostic("popover.open", "ok", { source: String(options.source || "") });
+          this.plugin.logQuickSettingsDiagnostic("popover.open", "ok", { source: String(options.source || ""), tab: this.getActiveTab() });
           return root;
         } catch (error) {
           this.unbindListeners();
@@ -17453,6 +18061,10 @@ var require_quick_panel = __commonJS({
         this.root = null;
         this.controls = null;
         this.lastAnchorRect = null;
+        this.tryDrawerOpen = false;
+        this.tryRunning = false;
+        this.tryRunToken = null;
+        this.tryHistory = { text: "", results: [] };
         const launcher = this.launcher;
         this.launcher = null;
         this.setLauncherExpanded(launcher, false);
@@ -17473,18 +18085,21 @@ var require_quick_panel = __commonJS({
         this.statusExpiryTimer = null;
         this.statusExpiryAt = 0;
         this.lastStatus = null;
+        this.lastPolishStatus = null;
         this.lastStatusSignature = "";
         this.statusRouteKey = "";
         this.launcherRef = null;
         this.configError = null;
-        this.testRunning = false;
+        this.tryRunToken = null;
+        this.testRuns = { translation: false, polish: false };
       }
-      // The interface language changed while the panel is open: build it again where it is (same channel, focus on
-      // the same control) instead of closing it.
+      // The interface language changed while the panel is open: build it again where it is (same channel, same tab,
+      // focus on the same control) instead of closing it.
       rerender(reason = "rerender") {
         if (!this.isOpen()) return false;
         const previous = this.root;
         const previousFocusables = this.controls?.focusables || [];
+        const previousTryInput = String(this.controls?.tryInput?.value || "");
         const active = typeof document !== "undefined" ? document.activeElement : null;
         const focusInside = Boolean(active && (active === previous || previous.contains?.(active)));
         const focusIndex = focusInside ? previousFocusables.indexOf(active) : -1;
@@ -17502,6 +18117,7 @@ var require_quick_panel = __commonJS({
         }
         if (previous.classList?.contains?.(POINTER_OPENED_CLASS)) root.classList.add(POINTER_OPENED_CLASS);
         root.dataset.daitRerendered = "true";
+        if (this.controls?.tryInput && previousTryInput) this.controls.tryInput.value = previousTryInput;
         this.plugin.applyPanelTheme(root);
         if (root.style && previous.style) {
           root.style.left = previous.style.left;
@@ -17529,8 +18145,18 @@ var require_quick_panel = __commonJS({
       }
       openFullSettings() {
         const launcher = this.plugin.isNodeConnected(this.launcher) ? this.launcher : this.findLauncher();
+        const activeTab = this.getActiveTab();
+        if (activeTab === "polish" && this.plugin.settings?.ui) {
+          this.plugin.settings.ui.settingsActiveTab = SETTINGS_TAB_COMPOSE;
+          this.plugin.saveSettings?.({ debounce: true });
+        }
         this.close("open-full-settings", { restoreFocus: false });
-        return this.plugin.openQuickSettingsPanel("quick-panel", launcher);
+        const modal = this.plugin.openQuickSettingsPanel("quick-panel", launcher);
+        if (activeTab === "polish") {
+          const panel = modal?.querySelector?.(".dait-settings") || null;
+          if (panel) this.plugin.setSettingsActiveTab?.(SETTINGS_TAB_COMPOSE, panel);
+        }
+        return modal;
       }
       findLauncher() {
         if (typeof document === "undefined") return null;
@@ -17544,7 +18170,7 @@ var require_quick_panel = __commonJS({
         if (expanded) launcher.setAttribute("aria-controls", POPOVER_ID);
         else launcher.removeAttribute?.("aria-controls");
       }
-      // --- DOM ---
+      // --- DOM helpers ---
       createElement(tag, className = "", text) {
         const node = document.createElement(tag);
         if (className) node.className = className;
@@ -17570,12 +18196,19 @@ var require_quick_panel = __commonJS({
         button.appendChild(glyph);
         return button;
       }
-      createSwitchRow(key, label, description, onChange) {
+      createSwitchRow(key, label, description, onChange, options = {}) {
         const id = `${POPOVER_ID}-${key}`;
-        const row = this.createElement("div", "dait-qp-row");
+        const row = this.createElement("div", `dait-qp-row ${options.rowClass || ""}`.trim());
         const text = this.createElement("div", "dait-qp-row-text");
         const labelNode = this.createElement("label", "dait-qp-label", label);
         labelNode.htmlFor = id;
+        let badge = null;
+        if (options.withChip) {
+          labelNode.classList.add("dait-qp-label-inline");
+          badge = this.createElement("span", "dait-qp-chip dait-qp-inline-chip");
+          badge.hidden = true;
+          labelNode.appendChild(badge);
+        }
         text.appendChild(labelNode);
         const input = this.createElement("input", "dait-qp-switch");
         input.type = "checkbox";
@@ -17593,7 +18226,7 @@ var require_quick_panel = __commonJS({
         });
         row.appendChild(text);
         row.appendChild(input);
-        return { row, input };
+        return { row, input, badge };
       }
       // A radio group of equal-width buttons; arrow keys move and select, like native radios.
       createSegmented(key, options, labelId, onSelect, className = "") {
@@ -17630,48 +18263,121 @@ var require_quick_panel = __commonJS({
         });
         return { group, buttons };
       }
-      build() {
+      createStatusCard(kind, testTitle) {
         const t = (key, vars) => this.plugin.t(key, vars);
-        const controls = {};
-        const root = this.createElement("section", POPOVER_ID);
-        root.id = POPOVER_ID;
-        root.setAttribute("role", "dialog");
-        root.setAttribute("aria-modal", "false");
-        root.setAttribute("aria-labelledby", `${POPOVER_ID}-title`);
-        root.setAttribute("tabindex", "-1");
-        const header = this.createElement("div", "dait-qp-header");
-        const title = this.createElement("h2", "dait-qp-title", t("quickPanelTitle"));
-        title.id = `${POPOVER_ID}-title`;
-        header.appendChild(title);
-        header.appendChild(this.createElement("span", "dait-qp-chip", `v${PLUGIN_VERSION}`));
-        controls.headerOpenFull = this.createIconButton("gear", t("quickPanelOpenFull"), "dait-qp-header-open-full", () => this.openFullSettings());
-        controls.close = this.createIconButton("close", t("quickPanelClose"), "dait-qp-close", () => this.close("button", { restoreFocus: true }));
-        header.appendChild(controls.headerOpenFull);
-        header.appendChild(controls.close);
-        root.appendChild(header);
-        const body = this.createElement("div", "dait-qp-body");
-        const status = this.createElement("div", "dait-qp-status");
-        controls.statusDot = this.createElement("span", "dait-qp-dot");
-        controls.statusDot.setAttribute("aria-hidden", "true");
+        const card = this.createElement("div", "dait-qp-status");
+        card.dataset.daitKind = kind;
+        const dot = this.createElement("span", "dait-qp-dot");
+        dot.setAttribute("aria-hidden", "true");
         const statusText = this.createElement("div", "dait-qp-status-text");
-        controls.statusLine = this.createElement("p", "dait-qp-status-line");
-        controls.statusLine.setAttribute("role", "status");
-        controls.statusLine.setAttribute("aria-live", "polite");
-        controls.statusTest = this.createElement("p", "dait-qp-status-test");
-        controls.statusTest.hidden = true;
-        controls.statusDetail = this.createElement("p", "dait-qp-status-detail");
-        controls.statusNote = this.createElement("p", "dait-qp-status-note");
-        controls.statusNote.hidden = true;
-        statusText.appendChild(controls.statusLine);
-        statusText.appendChild(controls.statusTest);
-        statusText.appendChild(controls.statusDetail);
-        statusText.appendChild(controls.statusNote);
-        controls.test = this.createButton("dait-qp-button dait-qp-button-secondary dait-qp-test", t("apiTest"), (button) => this.runConnectionTest(button));
-        controls.test.title = t("translationTestConnectionTitle");
-        status.appendChild(controls.statusDot);
-        status.appendChild(statusText);
-        status.appendChild(controls.test);
-        body.appendChild(status);
+        const line = this.createElement("p", "dait-qp-status-line");
+        line.setAttribute("role", "status");
+        line.setAttribute("aria-live", "polite");
+        const test = this.createElement("p", "dait-qp-status-test");
+        test.hidden = true;
+        const detail = this.createElement("p", "dait-qp-status-detail");
+        const note = this.createElement("p", "dait-qp-status-note");
+        note.hidden = true;
+        statusText.appendChild(line);
+        statusText.appendChild(test);
+        statusText.appendChild(detail);
+        statusText.appendChild(note);
+        const testButton = this.createButton("dait-qp-button dait-qp-button-secondary dait-qp-test", t("apiTest"), (button) => this.runConnectionTest(button, kind));
+        testButton.title = testTitle;
+        testButton.dataset.daitKind = kind;
+        card.appendChild(dot);
+        card.appendChild(statusText);
+        card.appendChild(testButton);
+        return { card, dot, line, test, detail, note, testButton };
+      }
+      createSavedServiceRow(kind, labelText, options = {}) {
+        const id = `${POPOVER_ID}-${kind}-service`;
+        const row = this.createElement("div", "dait-qp-row dait-qp-row-stacked dait-qp-service-row");
+        const label = this.createElement("label", "dait-qp-label dait-qp-label-inline", labelText);
+        label.htmlFor = id;
+        let relationChip = null;
+        if (options.withRelationChip) {
+          relationChip = this.createElement("span", "dait-qp-chip dait-qp-service-chip");
+          label.appendChild(relationChip);
+        }
+        const select = this.createElement("select", "dait-qp-select dait-qp-select-full");
+        select.id = id;
+        select.dataset.daitQuickService = kind;
+        select.addEventListener("change", () => {
+          const configId = String(select.value || "");
+          if (configId) this.plugin.applySavedServiceConfig?.(kind, configId);
+          this.update();
+        });
+        row.appendChild(label);
+        row.appendChild(select);
+        return { row, select, relationChip };
+      }
+      buildModeTabs(controls) {
+        const t = (key, vars) => this.plugin.t(key, vars);
+        const bar = this.createElement("div", "dait-qp-mode-bar");
+        const list = this.createElement("div", "dait-qp-tabs");
+        list.setAttribute("role", "tablist");
+        list.setAttribute("aria-label", t("quickPanelTabsLabel"));
+        const entries = [
+          ["translation", t("quickPanelTabTranslation")],
+          ["polish", t("quickPanelTabPolish")]
+        ];
+        const tabMeta = {};
+        const tabs = entries.map(([tabId, labelText]) => {
+          const button = this.createButton("dait-qp-tab", void 0, () => this.setActiveTab(tabId));
+          button.id = `${POPOVER_ID}-tab-${tabId}`;
+          button.dataset.daitTab = tabId;
+          button.setAttribute("role", "tab");
+          button.setAttribute("aria-controls", `${POPOVER_ID}-panel-${tabId}`);
+          button.setAttribute("aria-selected", "false");
+          button.setAttribute("tabindex", "-1");
+          const head = this.createElement("span", "dait-qp-tab-head");
+          const dot = this.createElement("span", "dait-qp-tab-dot");
+          dot.setAttribute("aria-hidden", "true");
+          const text = this.createElement("span", "dait-qp-tab-label", labelText);
+          head.appendChild(dot);
+          head.appendChild(text);
+          const summary = this.createElement("span", "dait-qp-chip dait-qp-tab-summary");
+          button.appendChild(head);
+          button.appendChild(summary);
+          tabMeta[tabId] = { button, dot, summary };
+          list.appendChild(button);
+          return button;
+        });
+        list.addEventListener("keydown", (event) => {
+          const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[event?.key];
+          const edge = { Home: 0, End: tabs.length - 1 }[event?.key];
+          if (step === void 0 && edge === void 0) return;
+          event.preventDefault?.();
+          const current = tabs.findIndex((button) => button.getAttribute("aria-selected") === "true");
+          const next = edge !== void 0 ? tabs[edge] : tabs[(Math.max(0, current) + step + tabs.length) % tabs.length];
+          if (!next) return;
+          this.setActiveTab(next.dataset.daitTab, { focusTab: true });
+        });
+        bar.appendChild(list);
+        controls.modeTabs = tabs;
+        controls.modeTabMeta = tabMeta;
+        return bar;
+      }
+      buildTranslationPanel(controls) {
+        const t = (key, vars) => this.plugin.t(key, vars);
+        const panel = this.createElement("div", "dait-qp-tabpanel");
+        panel.id = `${POPOVER_ID}-panel-translation`;
+        panel.dataset.daitTabpanel = "translation";
+        panel.setAttribute("role", "tabpanel");
+        panel.setAttribute("aria-labelledby", `${POPOVER_ID}-tab-translation`);
+        const status = this.createStatusCard("translation", t("translationTestConnectionTitle"));
+        controls.statusDot = status.dot;
+        controls.statusLine = status.line;
+        controls.statusTest = status.test;
+        controls.statusDetail = status.detail;
+        controls.statusNote = status.note;
+        controls.test = status.testButton;
+        panel.appendChild(status.card);
+        const serviceRow = this.createSavedServiceRow("translation", t("quickPanelTranslationService"));
+        controls.translationServiceRow = serviceRow.row;
+        controls.translationService = serviceRow.select;
+        panel.appendChild(serviceRow.row);
         const auto = this.createSwitchRow(
           "auto",
           t("quickPanelAutoTranslate"),
@@ -17679,7 +18385,7 @@ var require_quick_panel = __commonJS({
           (checked) => this.plugin.setSetting("ui.autoTranslateMessages", checked)
         );
         controls.auto = auto.input;
-        body.appendChild(auto.row);
+        panel.appendChild(auto.row);
         const ruleRow = this.createElement("div", "dait-qp-row dait-qp-row-stacked dait-qp-channel-rule");
         const ruleLabel = this.createElement("div", "dait-qp-label dait-qp-channel-label", t("quickPanelChannel"));
         ruleLabel.id = `${POPOVER_ID}-rule-label`;
@@ -17705,7 +18411,7 @@ var require_quick_panel = __commonJS({
         ruleRow.appendChild(ruleLabel);
         ruleRow.appendChild(rule.group);
         ruleRow.appendChild(controls.ruleCaption);
-        body.appendChild(ruleRow);
+        panel.appendChild(ruleRow);
         const targetRow = this.createElement("div", "dait-qp-row");
         const targetText = this.createElement("div", "dait-qp-row-text");
         const targetLabel = this.createElement("label", "dait-qp-label", t("quickPanelTargetLanguage"));
@@ -17720,9 +18426,25 @@ var require_quick_panel = __commonJS({
         });
         targetRow.appendChild(targetText);
         targetRow.appendChild(controls.target);
-        body.appendChild(targetRow);
+        panel.appendChild(targetRow);
+        const transTplRow = this.createElement("div", "dait-qp-row dait-qp-template-row");
+        const transTplText = this.createElement("div", "dait-qp-row-text");
+        const transTplLabel = this.createElement("label", "dait-qp-label", t("quickPanelTranslationTemplate"));
+        transTplLabel.htmlFor = `${POPOVER_ID}-translation-template`;
+        transTplText.appendChild(transTplLabel);
+        controls.translationTemplate = this.createElement("select", "dait-qp-select dait-qp-control");
+        controls.translationTemplate.id = `${POPOVER_ID}-translation-template`;
+        controls.translationTemplate.addEventListener("change", () => {
+          const templateId = String(controls.translationTemplate.value || "");
+          if (templateId) this.plugin.applyPromptTemplate?.("translation", templateId);
+          this.update();
+        });
+        transTplRow.appendChild(transTplText);
+        transTplRow.appendChild(controls.translationTemplate);
+        controls.translationTemplateRow = transTplRow;
+        panel.appendChild(transTplRow);
         const display = this.createElement("h3", "dait-qp-section", t("quickPanelDisplay"));
-        body.appendChild(display);
+        panel.appendChild(display);
         const mask = this.createSwitchRow(
           "mask",
           t("quickPanelMask"),
@@ -17730,7 +18452,7 @@ var require_quick_panel = __commonJS({
           (checked) => this.plugin.setSetting("ui.maskTranslations", checked)
         );
         controls.mask = mask.input;
-        body.appendChild(mask.row);
+        panel.appendChild(mask.row);
         const hide = this.createSwitchRow(
           "hide",
           t("quickPanelHideOriginal"),
@@ -17738,7 +18460,7 @@ var require_quick_panel = __commonJS({
           (checked) => this.plugin.setSetting("ui.hideOriginalAfterTranslation", checked)
         );
         controls.hide = hide.input;
-        body.appendChild(hide.row);
+        panel.appendChild(hide.row);
         const positionRow = this.createElement("div", "dait-qp-row");
         const positionText = this.createElement("div", "dait-qp-row-text");
         const positionLabel = this.createElement("span", "dait-qp-label", t("quickPanelPosition"));
@@ -17751,7 +18473,222 @@ var require_quick_panel = __commonJS({
         controls.position = position;
         positionRow.appendChild(positionText);
         positionRow.appendChild(position.group);
-        body.appendChild(positionRow);
+        panel.appendChild(positionRow);
+        controls.translationPanel = panel;
+        return panel;
+      }
+      buildPolishPanel(controls) {
+        const t = (key, vars) => this.plugin.t(key, vars);
+        const panel = this.createElement("div", "dait-qp-tabpanel");
+        panel.id = `${POPOVER_ID}-panel-polish`;
+        panel.dataset.daitTabpanel = "polish";
+        panel.setAttribute("role", "tabpanel");
+        panel.setAttribute("aria-labelledby", `${POPOVER_ID}-tab-polish`);
+        panel.hidden = true;
+        const status = this.createStatusCard("polish", t("quickPanelPolishTestTitle"));
+        controls.polishStatusDot = status.dot;
+        controls.polishStatusLine = status.line;
+        controls.polishStatusTest = status.test;
+        controls.polishStatusDetail = status.detail;
+        controls.polishStatusNote = status.note;
+        controls.polishTest = status.testButton;
+        panel.appendChild(status.card);
+        const serviceRow = this.createSavedServiceRow("polish", t("quickPanelPolishService"), { withRelationChip: true });
+        controls.polishServiceRow = serviceRow.row;
+        controls.polishService = serviceRow.select;
+        controls.polishServiceRelation = serviceRow.relationChip;
+        panel.appendChild(serviceRow.row);
+        const enabledRow = this.createSwitchRow(
+          "polish-enabled",
+          t("quickPanelPolishEnabled"),
+          t("quickPanelPolishEnabledDesc"),
+          (checked) => this.plugin.setSetting("polish.enabled", checked),
+          { withChip: true }
+        );
+        controls.polishEnabled = enabledRow.input;
+        controls.polishHotkeyChip = enabledRow.badge;
+        panel.appendChild(enabledRow.row);
+        const outputRow = this.createElement("div", "dait-qp-row");
+        const outputText = this.createElement("div", "dait-qp-row-text");
+        const outputLabel = this.createElement("label", "dait-qp-label", t("quickPanelPolishOutputLanguage"));
+        outputLabel.htmlFor = `${POPOVER_ID}-polish-target`;
+        outputText.appendChild(outputLabel);
+        controls.polishTarget = this.createElement("select", "dait-qp-select dait-qp-control");
+        controls.polishTarget.id = `${POPOVER_ID}-polish-target`;
+        controls.polishTarget.addEventListener("change", () => {
+          const value = String(controls.polishTarget.value || "");
+          if (value) this.plugin.setSetting("polish.targetLanguage", value);
+          this.update();
+        });
+        outputRow.appendChild(outputText);
+        outputRow.appendChild(controls.polishTarget);
+        panel.appendChild(outputRow);
+        const tplRow = this.createElement("div", "dait-qp-row dait-qp-row-stacked");
+        const tplLabel = this.createElement("label", "dait-qp-label", t("quickPanelPolishTemplate"));
+        tplLabel.htmlFor = `${POPOVER_ID}-polish-template`;
+        controls.polishTemplate = this.createElement("select", "dait-qp-select dait-qp-select-full");
+        controls.polishTemplate.id = `${POPOVER_ID}-polish-template`;
+        controls.polishTemplate.addEventListener("change", () => {
+          const templateId = String(controls.polishTemplate.value || "");
+          if (templateId) this.plugin.applyPromptTemplate?.("polish", templateId);
+          this.update();
+        });
+        tplRow.appendChild(tplLabel);
+        tplRow.appendChild(controls.polishTemplate);
+        panel.appendChild(tplRow);
+        const tempRow = this.createElement("div", "dait-qp-row dait-qp-row-stacked dait-qp-temp-row");
+        const tempHeader = this.createElement("div", "dait-qp-label dait-qp-temp-head");
+        const tempLabel = this.createElement("label", "dait-qp-temp-title", t("quickPanelPolishCreativity"));
+        tempLabel.htmlFor = `${POPOVER_ID}-polish-temperature`;
+        controls.polishTempValue = this.createElement("span", "dait-qp-chip dait-qp-temp-value");
+        tempHeader.appendChild(tempLabel);
+        tempHeader.appendChild(controls.polishTempValue);
+        controls.polishTempRange = this.createElement("input", "dait-qp-range");
+        controls.polishTempRange.type = "range";
+        controls.polishTempRange.id = `${POPOVER_ID}-polish-temperature`;
+        controls.polishTempRange.min = "0";
+        controls.polishTempRange.max = "2";
+        controls.polishTempRange.step = "0.1";
+        controls.polishTempRange.addEventListener("input", () => {
+          const next = clampTemperature(controls.polishTempRange.value, 0.4);
+          this.syncPolishTemperatureUi(next, { updateRange: false });
+          this.plugin.setSetting("polish.temperature", next, { save: "debounce", live: true });
+        });
+        controls.polishTempRange.addEventListener("change", () => {
+          const next = clampTemperature(controls.polishTempRange.value, 0.4);
+          this.syncPolishTemperatureUi(next);
+          this.plugin.setSetting("polish.temperature", next);
+        });
+        const presetBar = this.createElement("div", "dait-qp-presets");
+        controls.polishTempPresets = POLISH_CREATIVITY_PRESETS.map((preset) => {
+          const button = this.createButton("dait-qp-preset", t(preset.key), () => {
+            if (button.disabled) return;
+            this.plugin.setSetting("polish.temperature", preset.value);
+            this.update();
+          });
+          button.dataset.daitValue = String(preset.value);
+          button.setAttribute("aria-pressed", "false");
+          presetBar.appendChild(button);
+          return button;
+        });
+        controls.polishTempDesc = this.createElement("p", "dait-qp-desc dait-qp-temp-desc");
+        tempRow.appendChild(tempHeader);
+        tempRow.appendChild(controls.polishTempRange);
+        tempRow.appendChild(presetBar);
+        tempRow.appendChild(controls.polishTempDesc);
+        panel.appendChild(tempRow);
+        const behaviorHeading = this.createElement("h3", "dait-qp-section", t("quickPanelPolishBehavior"));
+        panel.appendChild(behaviorHeading);
+        const afterRow = this.createElement("div", "dait-qp-row");
+        const afterText = this.createElement("div", "dait-qp-row-text");
+        const afterLabel = this.createElement("span", "dait-qp-label", t("quickPanelPolishAfterAction"));
+        afterLabel.id = `${POPOVER_ID}-polish-after-label`;
+        afterText.appendChild(afterLabel);
+        const afterAction = this.createSegmented("polish-after", [
+          ["replace", t("afterReplace")],
+          ["confirmSend", t("afterConfirmSend")]
+        ], afterLabel.id, (value) => this.plugin.setSetting("polish.afterAction", value), "dait-qp-control");
+        controls.polishAfterAction = afterAction;
+        afterRow.appendChild(afterText);
+        afterRow.appendChild(afterAction.group);
+        panel.appendChild(afterRow);
+        const repolishRow = this.createElement("div", "dait-qp-row");
+        const repolishText = this.createElement("div", "dait-qp-row-text");
+        const repolishLabel = this.createElement("span", "dait-qp-label", t("quickPanelPolishRepolishSource"));
+        repolishLabel.id = `${POPOVER_ID}-polish-repolish-label`;
+        repolishText.appendChild(repolishLabel);
+        const repolishSource = this.createSegmented("polish-repolish", [
+          [POLISH_REPOLISH_SOURCE_ORIGINAL, t("quickPanelPolishRepolishOriginal")],
+          [POLISH_REPOLISH_SOURCE_LAST_RESULT, t("quickPanelPolishRepolishLast")]
+        ], repolishLabel.id, (value) => this.plugin.setSetting("polish.repolishSource", value), "dait-qp-control");
+        controls.polishRepolishSource = repolishSource;
+        repolishRow.appendChild(repolishText);
+        repolishRow.appendChild(repolishSource.group);
+        panel.appendChild(repolishRow);
+        const bilingual = this.createSwitchRow(
+          "public-bilingual",
+          t("quickPanelPublicBilingual"),
+          t("quickPanelPublicBilingualDesc"),
+          (checked) => this.plugin.setSetting("ui.publicBilingualInputButton", checked)
+        );
+        controls.publicBilingual = bilingual.input;
+        panel.appendChild(bilingual.row);
+        const bilingualAfter = this.createSwitchRow(
+          "public-bilingual-after",
+          t("quickPanelPublicBilingualAfterPolish"),
+          t("quickPanelPublicBilingualAfterPolishDesc"),
+          (checked) => this.plugin.setSetting("ui.publicBilingualAfterPolish", checked),
+          { rowClass: "dait-qp-row-sub" }
+        );
+        controls.publicBilingualAfterRow = bilingualAfter.row;
+        controls.publicBilingualAfter = bilingualAfter.input;
+        panel.appendChild(bilingualAfter.row);
+        const drawer = this.createElement("div", "dait-qp-try-drawer");
+        controls.tryToggle = this.createButton("dait-qp-try-toggle", void 0, () => {
+          this.tryDrawerOpen = !this.tryDrawerOpen;
+          this.update();
+          if (this.tryDrawerOpen) this.focusElement(controls.tryInput);
+        });
+        controls.tryToggle.setAttribute("aria-expanded", "false");
+        controls.tryToggleLabel = this.createElement("span", "dait-qp-try-toggle-label", t("quickPanelTryPolishToggle"));
+        controls.tryToggleState = this.createElement("span", "dait-qp-try-toggle-arrow");
+        controls.tryToggleState.setAttribute("aria-hidden", "true");
+        controls.tryToggle.appendChild(controls.tryToggleLabel);
+        controls.tryToggle.appendChild(controls.tryToggleState);
+        controls.tryBody = this.createElement("div", "dait-qp-try-body");
+        controls.tryBody.hidden = true;
+        const tryBar = this.createElement("div", "dait-qp-try-bar");
+        controls.tryInput = this.createElement("input", "dait-qp-input");
+        controls.tryInput.type = "text";
+        controls.tryInput.id = `${POPOVER_ID}-try-polish-input`;
+        controls.tryInput.placeholder = t("quickPanelTryPolishPlaceholder");
+        controls.tryInput.setAttribute("aria-label", t("quickPanelTryPolishToggle"));
+        controls.tryInput.addEventListener("keydown", (event) => {
+          if (event?.key !== "Enter" || event.isComposing) return;
+          event.preventDefault?.();
+          this.runQuickTryPolish();
+        });
+        controls.tryRun = this.createButton("dait-qp-button dait-qp-button-secondary dait-qp-try-run", t("quickPanelTryPolishRun"), () => this.runQuickTryPolish());
+        tryBar.appendChild(controls.tryInput);
+        tryBar.appendChild(controls.tryRun);
+        controls.tryResult = this.createElement("div", "dait-qp-try-result");
+        controls.tryResult.hidden = true;
+        controls.tryOutput = this.createElement("div", "dait-qp-try-output");
+        controls.tryTime = this.createElement("div", "dait-qp-try-time");
+        controls.tryTime.hidden = true;
+        controls.tryResult.appendChild(controls.tryOutput);
+        controls.tryResult.appendChild(controls.tryTime);
+        controls.tryBody.appendChild(tryBar);
+        controls.tryBody.appendChild(controls.tryResult);
+        drawer.appendChild(controls.tryToggle);
+        drawer.appendChild(controls.tryBody);
+        panel.appendChild(drawer);
+        controls.polishPanel = panel;
+        return panel;
+      }
+      build() {
+        const t = (key, vars) => this.plugin.t(key, vars);
+        const controls = {};
+        const root = this.createElement("section", POPOVER_ID);
+        root.id = POPOVER_ID;
+        root.setAttribute("role", "dialog");
+        root.setAttribute("aria-modal", "false");
+        root.setAttribute("aria-labelledby", `${POPOVER_ID}-title`);
+        root.setAttribute("tabindex", "-1");
+        const header = this.createElement("div", "dait-qp-header");
+        const title = this.createElement("h2", "dait-qp-title", t("quickPanelTitle"));
+        title.id = `${POPOVER_ID}-title`;
+        header.appendChild(title);
+        header.appendChild(this.createElement("span", "dait-qp-chip", `v${PLUGIN_VERSION}`));
+        controls.headerOpenFull = this.createIconButton("gear", t("quickPanelOpenFull"), "dait-qp-header-open-full", () => this.openFullSettings());
+        controls.close = this.createIconButton("close", t("quickPanelClose"), "dait-qp-close", () => this.close("button", { restoreFocus: true }));
+        header.appendChild(controls.headerOpenFull);
+        header.appendChild(controls.close);
+        root.appendChild(header);
+        root.appendChild(this.buildModeTabs(controls));
+        const body = this.createElement("div", "dait-qp-body");
+        body.appendChild(this.buildTranslationPanel(controls));
+        body.appendChild(this.buildPolishPanel(controls));
         root.appendChild(body);
         const footer = this.createElement("div", "dait-qp-footer");
         controls.footerOpenFull = this.createButton("dait-qp-link dait-qp-footer-open-full", t("quickPanelOpenFull"), () => this.openFullSettings());
@@ -17761,13 +18698,30 @@ var require_quick_panel = __commonJS({
         controls.focusables = [
           controls.headerOpenFull,
           controls.close,
+          ...controls.modeTabs,
           controls.test,
+          controls.translationService,
           controls.auto,
-          ...rule.buttons,
+          ...controls.rule.buttons,
           controls.target,
+          controls.translationTemplate,
           controls.mask,
           controls.hide,
-          ...position.buttons,
+          ...controls.position.buttons,
+          controls.polishTest,
+          controls.polishService,
+          controls.polishEnabled,
+          controls.polishTarget,
+          controls.polishTemplate,
+          controls.polishTempRange,
+          ...controls.polishTempPresets,
+          ...controls.polishAfterAction.buttons,
+          ...controls.polishRepolishSource.buttons,
+          controls.publicBilingual,
+          controls.publicBilingualAfter,
+          controls.tryToggle,
+          controls.tryInput,
+          controls.tryRun,
           controls.footerOpenFull
         ];
         this.controls = controls;
@@ -17777,8 +18731,21 @@ var require_quick_panel = __commonJS({
       update() {
         const controls = this.controls;
         if (!this.root || !controls) return;
+        const t = (key, vars) => this.plugin.t(key, vars);
         const settings = this.plugin.settings || {};
         const ui = settings.ui || {};
+        const translation = settings.translation || {};
+        const polish = settings.polish || {};
+        const activeTab = this.getActiveTab();
+        this.root.dataset.daitTab = activeTab;
+        controls.modeTabs.forEach((button) => {
+          const selected = button.dataset.daitTab === activeTab;
+          button.setAttribute("aria-selected", selected ? "true" : "false");
+          button.setAttribute("tabindex", selected ? "0" : "-1");
+        });
+        controls.translationPanel.hidden = activeTab !== "translation";
+        controls.polishPanel.hidden = activeTab !== "polish";
+        this.setText(controls.footerOpenFull, t(activeTab === "polish" ? "quickPanelOpenFullPolish" : "quickPanelOpenFull"));
         controls.auto.checked = Boolean(ui.autoTranslateMessages);
         controls.mask.checked = Boolean(ui.maskTranslations);
         controls.hide.checked = Boolean(ui.hideOriginalAfterTranslation);
@@ -17788,9 +18755,130 @@ var require_quick_panel = __commonJS({
         this.setText(controls.channelName, this.getChannelLabel(this.routeKey));
         this.setSegmentedValue(controls.rule, mode, { disabled: !channelKey });
         this.setText(controls.ruleCaption, this.getChannelRuleCaption(mode, Boolean(channelKey)));
-        this.syncTargetOptions(String(settings.translation?.targetLanguage || ""));
+        this.syncSavedServiceOptions(controls.translationService, "translation");
+        this.syncLanguageOptions(controls.target, String(translation.targetLanguage || ""));
+        const translationSupportsTemplates = Boolean(this.plugin.getProviderCapabilities?.(translation.provider)?.ui?.promptManager);
+        controls.translationTemplateRow.hidden = !translationSupportsTemplates;
+        if (translationSupportsTemplates) {
+          this.syncPromptTemplateOptions(controls.translationTemplate, "translation");
+        }
+        const polishOn = polish.enabled !== false;
+        this.syncSavedServiceOptions(controls.polishService, "polish");
+        const shared = this.isPolishSharingTranslationService();
+        this.setText(controls.polishServiceRelation, t(shared ? "quickPanelServiceShared" : "quickPanelServiceIndependent"));
+        controls.polishServiceRelation.dataset.daitRelation = shared ? "shared" : "separate";
+        controls.polishEnabled.checked = polishOn;
+        const hotkeyText = ui.enablePolishHotkey !== false ? String(ui.polishHotkey || "").trim() : "";
+        controls.polishHotkeyChip.hidden = !hotkeyText;
+        if (hotkeyText) this.setText(controls.polishHotkeyChip, hotkeyText);
+        this.syncLanguageOptions(controls.polishTarget, String(polish.targetLanguage || ""));
+        controls.polishTarget.disabled = !polishOn;
+        this.syncPromptTemplateOptions(controls.polishTemplate, "polish");
+        controls.polishTemplate.disabled = !polishOn;
+        const temperature = clampTemperature(polish.temperature, 0.4);
+        const tempText = temperature.toFixed(1);
+        this.syncPolishTemperatureUi(temperature, { disabled: !polishOn });
+        const afterAction = POLISH_AFTER_ACTIONS.includes(polish.afterAction) ? polish.afterAction : "replace";
+        this.setSegmentedValue(controls.polishAfterAction, afterAction, { disabled: !polishOn });
+        const repolishSource = POLISH_REPOLISH_SOURCES.includes(polish.repolishSource) ? polish.repolishSource : POLISH_REPOLISH_SOURCE_ORIGINAL;
+        this.setSegmentedValue(controls.polishRepolishSource, repolishSource, { disabled: !polishOn });
+        const bilingualOn = Boolean(ui.publicBilingualInputButton);
+        controls.publicBilingual.checked = bilingualOn;
+        controls.publicBilingualAfterRow.hidden = !bilingualOn;
+        controls.publicBilingualAfter.checked = Boolean(ui.publicBilingualAfterPolish);
+        controls.publicBilingualAfter.disabled = !polishOn;
+        const trySignature = [
+          String(polish.provider || ""),
+          String(polish.model || ""),
+          String(polish.targetLanguage || ""),
+          String(polish.activePromptTemplate || ""),
+          tempText
+        ].join("\n");
+        if (this.tryContextSignature && this.tryContextSignature !== trySignature) {
+          this.tryHistory = { text: "", results: [] };
+        }
+        this.tryContextSignature = trySignature;
+        controls.tryToggle.setAttribute("aria-expanded", this.tryDrawerOpen ? "true" : "false");
+        this.setText(controls.tryToggleState, this.tryDrawerOpen ? "▴" : "▾");
+        controls.tryBody.hidden = !this.tryDrawerOpen;
+        controls.tryInput.disabled = !polishOn;
+        if (this.tryRunning) {
+          controls.tryRun.disabled = true;
+          this.setText(controls.tryRun, t("tryBusy"));
+        } else {
+          controls.tryRun.disabled = !polishOn;
+          this.setText(controls.tryRun, t(controls.tryResult.hidden ? "quickPanelTryPolishRun" : "quickPanelTryPolishAgain"));
+        }
+        this.updateModeTabSummaries();
         this.refreshStatus();
         this.position();
+      }
+      updateModeTabSummaries() {
+        const meta = this.controls?.modeTabMeta;
+        if (!meta) return;
+        const t = (key, vars) => this.plugin.t(key, vars);
+        const settings = this.plugin.settings || {};
+        const translation = settings.translation || {};
+        const polish = settings.polish || {};
+        const transLang = this.getLanguageDisplayName(String(translation.targetLanguage || ""));
+        const polishLang = this.getLanguageDisplayName(String(polish.targetLanguage || ""));
+        const autoActive = Boolean(this.plugin.isAutoTranslateEnabled?.());
+        if (translation.enabled === false) {
+          meta.translation.dot.dataset.daitActive = "off";
+          this.setText(meta.translation.summary, t("quickPanelTabTransOff"));
+        } else if (autoActive) {
+          meta.translation.dot.dataset.daitActive = "on";
+          this.setText(meta.translation.summary, t("quickPanelTabTransAutoOn", { language: transLang }));
+        } else {
+          meta.translation.dot.dataset.daitActive = "manual";
+          this.setText(meta.translation.summary, t("quickPanelTabTransManual", { language: transLang }));
+        }
+        if (polish.enabled !== false) {
+          meta.polish.dot.dataset.daitActive = "on";
+          this.setText(meta.polish.summary, t("quickPanelTabPolishOn", { language: polishLang }));
+        } else {
+          meta.polish.dot.dataset.daitActive = "off";
+          this.setText(meta.polish.summary, t("quickPanelTabPolishOff"));
+        }
+      }
+      getLanguageDisplayName(value) {
+        if (!value) return "";
+        const english = this.plugin.getLocale?.() === "en";
+        const found = LANGUAGE_PRESETS.find((language) => language.value === value);
+        if (!found) return value;
+        return english ? found.en : found.zh;
+      }
+      syncPolishTemperatureUi(temperature, options = {}) {
+        const controls = this.controls;
+        if (!controls?.polishTempRange) return;
+        const clamped = clampTemperature(temperature, 0.4);
+        const tempText = clamped.toFixed(1);
+        const disabled = options.disabled !== void 0 ? Boolean(options.disabled) : this.plugin.settings?.polish?.enabled === false;
+        if (options.updateRange !== false && controls.polishTempRange.value !== tempText) {
+          controls.polishTempRange.value = tempText;
+        }
+        controls.polishTempRange.disabled = disabled;
+        this.setText(controls.polishTempValue, tempText);
+        controls.polishTempPresets.forEach((button) => {
+          const active = Math.abs(Number(button.dataset.daitValue) - clamped) < 0.05;
+          button.setAttribute("aria-pressed", active ? "true" : "false");
+          button.disabled = disabled;
+        });
+        this.setText(controls.polishTempDesc, this.getCreativityDescription(clamped));
+      }
+      getCreativityDescription(temperature) {
+        if (temperature <= 0.35) return this.plugin.t("quickPanelPolishCreativityDescSteady");
+        if (temperature <= 0.75) return this.plugin.t("quickPanelPolishCreativityDescBalanced");
+        return this.plugin.t("quickPanelPolishCreativityDescCreative");
+      }
+      isPolishSharingTranslationService() {
+        const translation = this.plugin.settings?.translation;
+        const polish = this.plugin.settings?.polish;
+        if (!translation || !polish) return false;
+        const keyT = this.plugin.getServiceConfigIdentityKey?.(translation) || "";
+        const keyP = this.plugin.getServiceConfigIdentityKey?.(polish) || "";
+        if (!keyT || !keyP || keyT !== keyP) return false;
+        return String(translation.apiKey || "") === String(polish.apiKey || "");
       }
       scheduleUpdate() {
         if (!this.isOpen() || this.updatePending) return;
@@ -17813,13 +18901,9 @@ var require_quick_panel = __commonJS({
         });
         segmented.group.setAttribute("aria-disabled", disabled ? "true" : "false");
       }
-      syncTargetOptions(current) {
-        const select = this.controls?.target;
+      syncSelectOptions(select, options, current) {
         if (!select) return;
-        const english = this.plugin.getLocale() === "en";
-        const options = LANGUAGE_PRESETS.map((language) => [language.value, english ? language.en : language.zh]);
-        if (current && !options.some(([value]) => value === current)) options.unshift([current, current]);
-        const signature = options.map(([value]) => value).join("\n");
+        const signature = options.map(([value, text]) => `${value}	${text}`).join("\n");
         if (select.dataset.daitOptions !== signature) {
           select.textContent = "";
           options.forEach(([value, text]) => {
@@ -17833,6 +18917,85 @@ var require_quick_panel = __commonJS({
           option.selected = option.value === current;
         });
         if (select.value !== current) select.value = current;
+        const selectedOption = Array.from(select.options || select.children || []).find((option) => option.value === current);
+        const tooltip = String(selectedOption?.textContent || "");
+        if (select.title !== tooltip) select.title = tooltip;
+      }
+      syncLanguageOptions(select, current) {
+        if (!select) return;
+        const english = this.plugin.getLocale() === "en";
+        const options = LANGUAGE_PRESETS.map((language) => [language.value, english ? language.en : language.zh]);
+        if (current && !options.some(([value]) => value === current)) options.unshift([current, current]);
+        this.syncSelectOptions(select, options, current);
+      }
+      syncTargetOptions(current) {
+        return this.syncLanguageOptions(this.controls?.target, current);
+      }
+      syncSavedServiceOptions(select, kind) {
+        if (!select) return;
+        const t = (key, vars) => this.plugin.t(key, vars);
+        const configs = this.plugin.getSavedServiceConfigsForTask?.(kind) || [];
+        const matched = this.plugin.findMatchingSavedServiceConfig?.(kind) || null;
+        const matchedId = matched?.id || "";
+        if (!configs.length) {
+          this.syncSelectOptions(select, [["", t("quickPanelSavedServiceEmpty")]], "");
+          select.disabled = true;
+          return;
+        }
+        const options = configs.map((entry) => [entry.id, this.plugin.formatServiceConfigLabel?.(entry) || entry.id]);
+        if (!matchedId) {
+          const task = this.plugin.settings?.[kind] || {};
+          const providerLabel = this.plugin.getProviderDisplayName?.(task.provider) || String(task.provider || "");
+          const model = String(task.model || "").trim();
+          const currentLabel = [providerLabel, model].filter(Boolean).join(" · ");
+          options.unshift(["", t("quickPanelSavedServiceCurrent", { label: currentLabel })]);
+        }
+        this.syncSelectOptions(select, options, matchedId);
+        select.disabled = false;
+      }
+      syncPromptTemplateOptions(select, kind) {
+        if (!select) return;
+        const templates = this.plugin.getPromptTemplates?.(kind) || [];
+        const task = this.plugin.settings?.[kind] || {};
+        const activeId = String(task.activePromptTemplate || "");
+        const activeTemplate = templates.find((item) => item && item.id === activeId) || null;
+        const matchesActive = Boolean(activeTemplate && String(activeTemplate.prompt || "") === String(task.prompt || ""));
+        const options = templates.map((template) => {
+          const name = this.plugin.getPromptTemplateDisplayName?.(template) || template.name || "";
+          const code = String(template.serial || "").trim();
+          return [template.id, code ? `${code} · ${name}` : name];
+        });
+        if (!matchesActive) {
+          options.unshift(["", this.plugin.t("quickPanelTemplateCustom")]);
+        }
+        this.syncSelectOptions(select, options, matchesActive ? activeTemplate.id : "");
+      }
+      async runQuickTryPolish() {
+        const controls = this.controls;
+        if (this.tryRunning || !controls?.tryInput || !controls?.tryRun || controls.tryRun.disabled) return null;
+        const runToken = /* @__PURE__ */ Symbol("try-polish");
+        this.tryRunning = true;
+        this.tryRunToken = runToken;
+        try {
+          return await this.plugin.runTryTask?.("polish", controls.tryInput.value, {
+            button: controls.tryRun,
+            result: controls.tryResult,
+            output: controls.tryOutput,
+            time: controls.tryTime,
+            tryHistory: this.tryHistory
+          });
+        } finally {
+          if (this.tryRunToken === runToken) {
+            this.tryRunning = false;
+            this.tryRunToken = null;
+            if (this.isOpen() && this.controls === controls) {
+              const polishOn = this.plugin.settings?.polish?.enabled !== false;
+              controls.tryRun.disabled = !polishOn;
+              this.setText(controls.tryRun, this.plugin.t(controls.tryResult.hidden ? "quickPanelTryPolishRun" : "quickPanelTryPolishAgain"));
+              this.position();
+            }
+          }
+        }
       }
       getChannelLabel(routeKey) {
         if (!getChannelRuleKey(routeKey)) return this.plugin.t("quickPanelChannelNone");
@@ -17880,28 +19043,55 @@ var require_quick_panel = __commonJS({
         });
         return true;
       }
+      renderStatusCard(nodes, status, kind) {
+        if (!nodes || !status) return false;
+        if (nodes.dot.dataset.daitStatus !== status.state) nodes.dot.dataset.daitStatus = status.state;
+        let resized = this.setText(nodes.line, status.headline);
+        const testSummary = String(status.testSummary || "");
+        resized = this.setTestSummary(nodes.test, testSummary) || resized;
+        if (nodes.test.hidden !== !testSummary) {
+          nodes.test.hidden = !testSummary;
+          resized = true;
+        }
+        const detailText = kind === "translation" ? this.getStatusDetailText(status) : status.detail;
+        resized = this.setText(nodes.detail, detailText) || resized;
+        resized = this.setText(nodes.note, status.note) || resized;
+        if (nodes.note.title !== (status.note || "")) nodes.note.title = status.note || "";
+        if (nodes.note.hidden !== !status.note) {
+          nodes.note.hidden = !status.note;
+          resized = true;
+        }
+        const testRunning = this.isConnectionTestRunning(kind);
+        nodes.testButton.disabled = Boolean(status.testing || testRunning);
+        this.setText(nodes.testButton, this.plugin.t(testRunning ? "apiTestBusy" : "apiTest"));
+        return resized;
+      }
       renderStatus(status) {
         const controls = this.controls;
         if (!this.root || !controls || !status) return;
-        if (this.root.dataset.daitStatus !== status.state) this.root.dataset.daitStatus = status.state;
-        if (controls.statusDot.dataset.daitStatus !== status.state) controls.statusDot.dataset.daitStatus = status.state;
-        let resized = this.setText(controls.statusLine, status.headline);
-        const testSummary = String(status.testSummary || "");
-        resized = this.setTestSummary(controls.statusTest, testSummary) || resized;
-        if (controls.statusTest.hidden !== !testSummary) {
-          controls.statusTest.hidden = !testSummary;
-          resized = true;
+        const activeTab = this.getActiveTab();
+        let resized = this.renderStatusCard({
+          dot: controls.statusDot,
+          line: controls.statusLine,
+          test: controls.statusTest,
+          detail: controls.statusDetail,
+          note: controls.statusNote,
+          testButton: controls.test
+        }, status, "translation");
+        const polishStatus = this.getPolishStatusSafe();
+        if (polishStatus) {
+          this.lastPolishStatus = polishStatus;
+          resized = this.renderStatusCard({
+            dot: controls.polishStatusDot,
+            line: controls.polishStatusLine,
+            test: controls.polishStatusTest,
+            detail: controls.polishStatusDetail,
+            note: controls.polishStatusNote,
+            testButton: controls.polishTest
+          }, polishStatus, "polish") || resized;
         }
-        resized = this.setText(controls.statusDetail, this.getStatusDetailText(status)) || resized;
-        resized = this.setText(controls.statusNote, status.note) || resized;
-        if (controls.statusNote.title !== (status.note || "")) controls.statusNote.title = status.note || "";
-        if (controls.statusNote.hidden !== !status.note) {
-          controls.statusNote.hidden = !status.note;
-          resized = true;
-        }
-        const testRunning = this.isConnectionTestRunning();
-        controls.test.disabled = Boolean(status.testing || testRunning);
-        this.setText(controls.test, this.plugin.t(testRunning ? "apiTestBusy" : "apiTest"));
+        const activeStatus = activeTab === "polish" && polishStatus ? polishStatus : status;
+        if (this.root.dataset.daitStatus !== activeStatus.state) this.root.dataset.daitStatus = activeStatus.state;
         this.syncCountdown(status);
         if (resized) this.position();
       }
@@ -17932,31 +19122,35 @@ var require_quick_panel = __commonJS({
         }, 1e3);
         this.countdownTimer?.unref?.();
       }
-      isConnectionTestRunning() {
-        return Boolean(this.testRunning?.isCurrent?.());
+      isConnectionTestRunning(kind = "translation") {
+        const normalized = kind === "polish" ? "polish" : "translation";
+        return Boolean(this.testRuns?.[normalized]?.isCurrent?.());
       }
-      async runConnectionTest(button) {
-        if (this.isConnectionTestRunning() || button?.disabled) return false;
+      async runConnectionTest(button, kind = "translation") {
+        const taskKind = kind === "polish" ? "polish" : "translation";
+        if (this.isConnectionTestRunning(taskKind) || button?.disabled) return false;
         const plugin = this.plugin;
         const lifecycleToken = plugin.getLifecycleToken();
         if (!plugin.isLifecycleTokenCurrent(lifecycleToken)) return false;
         const run = { isCurrent: () => plugin.isLifecycleTokenCurrent(lifecycleToken) };
-        this.testRunning = run;
-        try {
-          plugin.rememberTranslationAttentionNotice(null, plugin.getTranslationAttentionProviderKey(null), "local-unavailable");
-        } catch {
+        this.testRuns[taskKind] = run;
+        if (taskKind === "translation") {
+          try {
+            plugin.rememberTranslationAttentionNotice(null, plugin.getTranslationAttentionProviderKey(null), "local-unavailable");
+          } catch {
+          }
         }
         const statusSink = document.createElement("span");
-        statusSink.dataset.daitKind = "translation";
+        statusSink.dataset.daitKind = taskKind;
         try {
-          return await plugin.testApiConnection("translation", button, statusSink, {
+          return await plugin.testApiConnection(taskKind, button, statusSink, {
             onStart: (isCurrent) => {
               run.isCurrent = isCurrent;
             }
           }) !== false;
         } finally {
-          if (this.testRunning === run) {
-            this.testRunning = false;
+          if (this.testRuns[taskKind] === run) {
+            this.testRuns[taskKind] = false;
             if (plugin.isLifecycleTokenCurrent(lifecycleToken)) {
               this.requestStatusUpdate();
               if (this.isOpen()) this.update();
@@ -18083,9 +19277,15 @@ var require_quick_panel = __commonJS({
         if (this.launcher && (node === this.launcher || this.launcher.contains?.(node))) return true;
         return Boolean(node.closest?.(LAUNCHER_SELECTOR));
       }
+      isElementHidden(element) {
+        for (let node = element; node && node !== this.root; node = node.parentElement) {
+          if (node.hidden) return true;
+        }
+        return false;
+      }
       getFocusableElements() {
         const list = this.controls?.focusables || [];
-        return list.filter((element) => element && !element.disabled && !element.hidden && element.getAttribute?.("tabindex") !== "-1" && this.plugin.isNodeConnected(element));
+        return list.filter((element) => element && !element.disabled && !this.isElementHidden(element) && element.getAttribute?.("tabindex") !== "-1" && this.plugin.isNodeConnected(element));
       }
       focusElement(element) {
         if (!element?.focus) return;
@@ -18139,7 +19339,9 @@ var require_quick_panel = __commonJS({
           this.close("launcher-hidden", { restoreFocus: false });
         }
         this.scheduleUpdate();
-        this.requestStatusUpdate();
+        if (!["polish.temperature", "polish.afterAction", "polish.repolishSource", "ui.maskTranslations", "ui.hideOriginalAfterTranslation", "ui.translationPosition", "ui.translationStyle", "ui.translationTextScale", "ui.panelTheme", "ui.quickPanelActiveTab", "ui.publicBilingualInputButton", "ui.publicBilingualAfterPolish"].includes(path)) {
+          this.requestStatusUpdate();
+        }
       }
       // Called by the scan when Discord navigates and, while the panel is open, by its route watch;
       // nothing is re-read unless the channel really changed.
@@ -18218,11 +19420,11 @@ var require_quick_panel = __commonJS({
       }
       // Model and response time of the last passed connection test (plugin.getLastApiTestResult, when the provider
       // layer offers it), while the saved status still says connected, i.e. nothing was changed since.
-      getLastTestSummary(api) {
+      getLastTestSummary(api, kind = "translation") {
         if (api?.state !== "success") return "";
         let result = null;
         try {
-          result = this.plugin.getLastApiTestResult?.("translation") || null;
+          result = this.plugin.getLastApiTestResult?.(kind) || null;
         } catch {
           result = null;
         }
@@ -18235,6 +19437,73 @@ var require_quick_panel = __commonJS({
           parts.push(this.plugin.t("quickStatusLatency", { ms: String(Math.round(latency)) }));
         }
         return parts.join(" · ");
+      }
+      // Status for the Input Polish tab's connection card (reads polish provider/API state only).
+      getPolishStatus() {
+        const plugin = this.plugin;
+        const t = (key, vars) => plugin.t(key, vars);
+        const polish = plugin.settings?.polish || {};
+        const ui = plugin.settings?.ui || {};
+        const provider = plugin.getProviderDisplayName(polish.provider);
+        const api = plugin.getApiStatus("polish");
+        let configured = false;
+        try {
+          configured = Boolean(plugin.hasUsableApiConfig("polish"));
+        } catch {
+          configured = false;
+        }
+        let settingsTest = false;
+        try {
+          settingsTest = Boolean(plugin.isApiTestRunning?.("polish"));
+        } catch {
+          settingsTest = false;
+        }
+        const testing = this.isConnectionTestRunning("polish") || settingsTest;
+        const apiState = api.state === "testing" && !testing ? "untested" : api.state;
+        let connection = plugin.getApiStatusText(apiState);
+        if (!configured) connection = t("quickStatusNotConfigured");
+        else if (testing) connection = plugin.getApiStatusText("testing");
+        let state = "ok";
+        let detail = t("quickStatusPolishActive");
+        let note = "";
+        if (polish.enabled === false) {
+          state = "off";
+          detail = t("quickStatusPolishOff");
+        } else if (!configured) {
+          state = "needs-you";
+          detail = t("quickStatusNeedsYou", { reason: t("quickStatusReasonConfig") });
+        } else if (api.state === "failed" && !testing) {
+          state = "needs-you";
+          detail = t("quickStatusNeedsYou", { reason: t("quickStatusReasonFailed") });
+          note = String(api.message || "").trim();
+        } else if (testing) {
+          state = "busy";
+          detail = t("quickStatusTesting");
+        } else {
+          const btnHint = t(ui.injectInputButton !== false ? "quickStatusPolishBtnOn" : "quickStatusPolishBtnOff");
+          const hotkeyHint = ui.enablePolishHotkey !== false && String(ui.polishHotkey || "").trim() ? String(ui.polishHotkey).trim() : t("quickStatusPolishHotkeyOff");
+          note = [btnHint, hotkeyHint].filter(Boolean).join(" · ");
+        }
+        const headline = [provider, connection].filter(Boolean).join(" · ");
+        const testSummary = state === "needs-you" ? "" : this.getLastTestSummary(api, "polish");
+        return {
+          state,
+          provider,
+          connection,
+          headline,
+          testSummary,
+          detail,
+          note,
+          testing,
+          configured
+        };
+      }
+      getPolishStatusSafe() {
+        try {
+          return this.getPolishStatus();
+        } catch {
+          return null;
+        }
       }
       // One of LAUNCHER_STATUS_STATES plus the texts shown on the launcher and in the panel. Reads state only
       // (no probes, no timers): translation API status, provider cooldowns, local health probes, the auto
@@ -18268,7 +19537,7 @@ var require_quick_panel = __commonJS({
         } catch {
           settingsTest = false;
         }
-        const testing = probing || this.isConnectionTestRunning() || settingsTest;
+        const testing = probing || this.isConnectionTestRunning("translation") || settingsTest;
         const apiState = api.state === "testing" && !testing ? "untested" : api.state;
         const queue = plugin.getAutoTranslationQueueSnapshot?.() || {};
         const inFlight = Math.max(0, Number(queue.inFlightItems || queue.inFlight || 0) || 0);
@@ -18326,7 +19595,7 @@ var require_quick_panel = __commonJS({
         }
         const headline = [provider, connection].filter(Boolean).join(" · ");
         const title = [provider, connection, activity].filter(Boolean).join(" · ");
-        const testSummary = state === "needs-you" ? "" : this.getLastTestSummary(api);
+        const testSummary = state === "needs-you" ? "" : this.getLastTestSummary(api, "translation");
         return {
           state,
           provider,
@@ -18441,7 +19710,7 @@ ${status.title}`;
         return true;
       }
     };
-    module2.exports = { QuickPanel, LAUNCHER_STATUS_STATES, QUICK_POPOVER_ID: POPOVER_ID };
+    module2.exports = { QuickPanel, LAUNCHER_STATUS_STATES, QUICK_POPOVER_ID: POPOVER_ID, QUICK_PANEL_TABS };
   }
 });
 
@@ -18558,15 +19827,18 @@ var require_selectors = __commonJS({
           if (!rootRect || !rootRect.width && !rootRect.height) continue;
           if (rootRect.left > Math.min(460, viewportWidth * 0.45)) continue;
           if (rootRect.top < viewportHeight - 240) continue;
-          const iconButtons = [...root.querySelectorAll?.("button, [role='button']") || []].filter((btn) => {
-            if (!btn || isOwnElement?.(btn)) return false;
+          const iconButtons = [];
+          for (const btn of root.querySelectorAll?.("button, [role='button']") || []) {
+            if (!btn || isOwnElement?.(btn)) continue;
             const r = btn.getBoundingClientRect?.();
-            if (!r || !r.width || !r.height) return false;
-            return r.width >= 20 && r.width <= 48 && r.height >= 20 && r.height <= 48 && r.left <= Math.min(440, viewportWidth * 0.45) && r.bottom >= viewportHeight - 140 && Boolean(btn.querySelector?.("svg"));
-          });
+            if (!r || !r.width || !r.height) continue;
+            if (r.width >= 20 && r.width <= 48 && r.height >= 20 && r.height <= 48 && r.left <= Math.min(440, viewportWidth * 0.45) && r.bottom >= viewportHeight - 140 && Boolean(btn.querySelector?.("svg"))) {
+              iconButtons.push({ btn, left: r.left || 0 });
+            }
+          }
           if (iconButtons.length >= 3) {
-            iconButtons.sort((a, b) => (a.getBoundingClientRect().left || 0) - (b.getBoundingClientRect().left || 0));
-            return iconButtons[iconButtons.length - 1];
+            iconButtons.sort((a, b) => a.left - b.left);
+            return iconButtons[iconButtons.length - 1].btn;
           }
         }
         return null;
@@ -18615,11 +19887,19 @@ var require_stores = __commonJS({
       getMessageStore() {
         const named = this.getStore("MessageStore");
         if (named && (typeof named.getMessage === "function" || typeof named.getMessages === "function")) return named;
+        const fallbackKey = "__MessageStoreByKeys";
+        const cached = this.stores.get(fallbackKey);
+        if (cached?.store) return cached.store;
+        const now = Date.now();
+        if (cached && now < cached.retryAt) return null;
+        let found = null;
         try {
-          return globalThis.BdApi?.Webpack?.getByKeys?.("getMessage", "getMessages") || null;
+          found = globalThis.BdApi?.Webpack?.getByKeys?.("getMessage", "getMessages") || null;
         } catch {
-          return null;
+          found = null;
         }
+        this.stores.set(fallbackKey, found ? { store: found } : { store: null, retryAt: now + NEGATIVE_CACHE_MS });
+        return found;
       }
       getChannelStore() {
         return this.getStore("ChannelStore");
@@ -19104,7 +20384,7 @@ var require_host_adapter = __commonJS({
 var require_host_health_card = __commonJS({
   "src/ui/host-health-card.js"(exports2, module2) {
     "use strict";
-    function buildHostHealthCard(plugin) {
+    function buildHostHealthCard(plugin, options = {}) {
       const card = document.createElement("div");
       card.className = "dait-host-health-card dait-settings-search-target";
       card.dataset.daitHostHealthCard = "true";
@@ -19199,7 +20479,11 @@ var require_host_health_card = __commonJS({
           plugin.showToast(plugin.t("promptCopyFailed", { error: plugin.formatError(error) }), "error");
         }
       });
-      render();
+      card.__daitEnsureHostHealthRendered = () => {
+        if (!lastReport) render();
+        return lastReport;
+      };
+      if (!options?.lazy) render();
       return card;
     }
     module2.exports = { buildHostHealthCard };
@@ -20288,6 +21572,53 @@ var require_i18n = __commonJS({
       quickStatusOffChannel: "本频道不自动翻译",
       quickStatusOffDisabled: "频道翻译已关闭",
       quickStatusManualHint: "手动翻译仍可用",
+      quickPanelTabsLabel: "快捷面板功能切换",
+      quickPanelTabTranslation: "频道翻译",
+      quickPanelTabPolish: "输入润色",
+      quickPanelTabTransAutoOn: "自动开 · {language}",
+      quickPanelTabTransManual: "手动 · {language}",
+      quickPanelTabTransOff: "已关闭",
+      quickPanelTabPolishOn: "开 · {language}",
+      quickPanelTabPolishOff: "已关闭",
+      quickPanelTranslationService: "翻译服务",
+      quickPanelPolishService: "润色服务",
+      quickPanelSavedServiceCurrent: "当前：{label}",
+      quickPanelSavedServiceEmpty: "暂无已保存服务（测试通过后自动保存）",
+      quickPanelServiceShared: "与翻译共用",
+      quickPanelServiceIndependent: "独立服务",
+      quickPanelTranslationTemplate: "翻译模板",
+      quickPanelTemplateCustom: "自定义提示词",
+      quickStatusPolishActive: "输入润色可用",
+      quickStatusPolishOff: "输入润色已关闭",
+      quickStatusPolishBtnOn: "输入框按钮已显示",
+      quickStatusPolishBtnOff: "输入框按钮已隐藏",
+      quickStatusPolishHotkeyOff: "快捷键已关",
+      quickPanelPolishTestTitle: "测试输入润色服务能不能连上",
+      quickPanelPolishEnabled: "启用输入润色",
+      quickPanelPolishEnabledDesc: "改写输入框草稿并回填",
+      quickPanelPolishOutputLanguage: "输出语言",
+      quickPanelPolishTemplate: "润色模板",
+      quickPanelPolishCreativity: "创造性",
+      quickPanelPolishCreativitySteady: "稳妥 0.3",
+      quickPanelPolishCreativityBalanced: "自然 0.7",
+      quickPanelPolishCreativityCreative: "发散 1.2",
+      quickPanelPolishCreativityDescSteady: "稳妥忠实，贴近原句结构",
+      quickPanelPolishCreativityDescBalanced: "自然均衡，适合日常聊天",
+      quickPanelPolishCreativityDescCreative: "高发散，再次润色会明显换说法",
+      quickPanelPolishBehavior: "润色行为",
+      quickPanelPolishAfterAction: "润色后",
+      quickPanelPolishRepolishSource: "再次润色",
+      quickPanelPolishRepolishOriginal: "最初原文",
+      quickPanelPolishRepolishLast: "上次结果",
+      quickPanelPublicBilingual: "公开双语按钮",
+      quickPanelPublicBilingualDesc: "在输入框旁显示“双语”按钮",
+      quickPanelPublicBilingualAfterPolish: "润色后自动生成双语",
+      quickPanelPublicBilingualAfterPolishDesc: "润色完顺带附带折叠原文",
+      quickPanelTryPolishToggle: "快速试润色",
+      quickPanelTryPolishPlaceholder: "输入一句试试当前模板和语言…",
+      quickPanelTryPolishRun: "试润色",
+      quickPanelTryPolishAgain: "再润一次",
+      quickPanelOpenFullPolish: "编辑模板与完整设置",
       inputActionMenu: "AI 操作",
       inputActionOpenSettings: "设置",
       restoreOriginalShort: "↶",
@@ -20441,6 +21772,53 @@ var require_i18n = __commonJS({
       quickStatusOffChannel: "Not auto-translating in this channel",
       quickStatusOffDisabled: "Channel translation is off",
       quickStatusManualHint: "Manual translation still works",
+      quickPanelTabsLabel: "Quick panel modes",
+      quickPanelTabTranslation: "Translate",
+      quickPanelTabPolish: "Polish",
+      quickPanelTabTransAutoOn: "Auto · {language}",
+      quickPanelTabTransManual: "Manual · {language}",
+      quickPanelTabTransOff: "Off",
+      quickPanelTabPolishOn: "On · {language}",
+      quickPanelTabPolishOff: "Off",
+      quickPanelTranslationService: "Translation service",
+      quickPanelPolishService: "Polish service",
+      quickPanelSavedServiceCurrent: "Current: {label}",
+      quickPanelSavedServiceEmpty: "No saved services yet (saved after Test)",
+      quickPanelServiceShared: "Shared",
+      quickPanelServiceIndependent: "Separate",
+      quickPanelTranslationTemplate: "Translation template",
+      quickPanelTemplateCustom: "Custom prompt",
+      quickStatusPolishActive: "Input polish ready",
+      quickStatusPolishOff: "Input polish is off",
+      quickStatusPolishBtnOn: "Input button shown",
+      quickStatusPolishBtnOff: "Input button hidden",
+      quickStatusPolishHotkeyOff: "Hotkey off",
+      quickPanelPolishTestTitle: "Test the input polish service connection",
+      quickPanelPolishEnabled: "Enable input polish",
+      quickPanelPolishEnabledDesc: "Rewrites your draft and returns it to the input box",
+      quickPanelPolishOutputLanguage: "Output language",
+      quickPanelPolishTemplate: "Polish template",
+      quickPanelPolishCreativity: "Creativity",
+      quickPanelPolishCreativitySteady: "Steady 0.3",
+      quickPanelPolishCreativityBalanced: "Natural 0.7",
+      quickPanelPolishCreativityCreative: "Creative 1.2",
+      quickPanelPolishCreativityDescSteady: "Closer to your original wording",
+      quickPanelPolishCreativityDescBalanced: "Balanced for everyday chat",
+      quickPanelPolishCreativityDescCreative: "More varied phrasing when re-polishing",
+      quickPanelPolishBehavior: "Behavior",
+      quickPanelPolishAfterAction: "After polish",
+      quickPanelPolishRepolishSource: "Re-polish",
+      quickPanelPolishRepolishOriginal: "Original",
+      quickPanelPolishRepolishLast: "Last result",
+      quickPanelPublicBilingual: "Public bilingual button",
+      quickPanelPublicBilingualDesc: "Show the Bilingual button near the input box",
+      quickPanelPublicBilingualAfterPolish: "Auto-bilingual after polish",
+      quickPanelPublicBilingualAfterPolishDesc: "Also add hidden original after polishing",
+      quickPanelTryPolishToggle: "Quick try polish",
+      quickPanelTryPolishPlaceholder: "Type a line to test template & language...",
+      quickPanelTryPolishRun: "Try",
+      quickPanelTryPolishAgain: "Try again",
+      quickPanelOpenFullPolish: "Templates & full settings",
       inputActionMenu: "AI actions",
       inputActionOpenSettings: "Settings",
       restoreOriginalShort: "↶",
@@ -20615,6 +21993,79 @@ var require_discord_ai_translator = __commonJS({
     var { buildHostHealthCard } = require_host_health_card();
     var { convertDiscordMarkupToDisplayText, DISCORD_MARKUP_DISPLAY_TEXT_MEMO_MAX } = require_discord_markup();
     var { removeStandardEmoji, getEmojiNeutralTextLength } = require_emoji_text();
+    var SAFE_DIAGNOSTIC_KEYS = /* @__PURE__ */ new Set([
+      "textcachehits",
+      "autotranslatemessages",
+      "cachehits",
+      "cachemisses",
+      "cachememory",
+      "valuelength",
+      "inputlength",
+      "messagestate",
+      "reasoncode",
+      "queuetype",
+      "targetkind",
+      "identitykind",
+      "identitytargetkind",
+      "identityhash",
+      "texthash",
+      "textlength",
+      "sourcehash",
+      "cachehash",
+      "prefetch",
+      "prefetchinflight",
+      "pendingtargets",
+      "inflight",
+      "inflightitems",
+      "queuelength",
+      "promptlength",
+      "maxtokens",
+      "bodyhash",
+      "finishreason",
+      "partialoutputlength",
+      "invalidreason",
+      "outputlength",
+      "sourcelength",
+      "domlength",
+      "domtextlength",
+      "fullcontentlength",
+      "selectedlength",
+      "sourcekind",
+      "sourcetextkind",
+      "sourceconfidence",
+      "failureclass",
+      "failurelayer",
+      "flowstage",
+      "validationquality",
+      "validationreason",
+      "renderable",
+      "cacheable",
+      "chunkindex",
+      "chunktotal",
+      "chunklength",
+      "attemptname",
+      "attemptindex",
+      "requestcount",
+      "longtextchunk",
+      "longtextsourcelength",
+      "timeoutms",
+      "retryafterms",
+      "requestid",
+      "status"
+    ]);
+    var SENSITIVE_DIAGNOSTIC_KEYS = /* @__PURE__ */ new Set([
+      "text",
+      "sourcetext",
+      "targettext",
+      "rawtext",
+      "inputtext",
+      "outputtext",
+      "translation",
+      "translated",
+      "translatedtext",
+      "rawtranslation",
+      "appid"
+    ]);
     var {
       PLUGIN_NAME,
       DATA_KEY,
@@ -21657,6 +23108,10 @@ var require_discord_ai_translator = __commonJS({
         this.inputButtonScanDueAt = 0;
         this.quickSettingsRetryTimer = null;
         this.quickSettingsOpenTimer = null;
+        if (this.overviewStatusRefreshTimer) {
+          clearTimeout(this.overviewStatusRefreshTimer);
+          this.overviewStatusRefreshTimer = null;
+        }
         this.quickSettingsPress = null;
         if (diagnosticLogsPersisted) this.quickSettingsDiagnosticLogs = [];
         if (translationCachePersisted) this.persistentTranslationCacheCount = 0;
@@ -21671,6 +23126,7 @@ var require_discord_ai_translator = __commonJS({
         this.diagnosticLogsPersistenceDeferredSince = 0;
         this.translationRequests.clear();
         this.autoTranslationQueue = [];
+        this.autoTranslationQueueSortDirty = false;
         this.autoTranslationQueuedKeys.clear();
         this.autoTranslationPendingTargets.clear();
         this.autoTranslationFailures.clear();
@@ -21893,6 +23349,9 @@ var require_discord_ai_translator = __commonJS({
         });
         if (options.resetScroll !== false && state.content) state.content.scrollTop = 0;
         if (target.id === SETTINGS_TAB_OVERVIEW) this.refreshOverviewStatusSection(target.tabpanel);
+        if (target.id === SETTINGS_TAB_DATA) {
+          target.tabpanel?.querySelector?.("[data-dait-host-health-card='true']")?.__daitEnsureHostHealthRendered?.();
+        }
         if (target.id === SETTINGS_TAB_TRANSLATE || target.id === SETTINGS_TAB_COMPOSE) {
           const tabKind = target.id === SETTINGS_TAB_COMPOSE ? "polish" : "translation";
           const renderedProvider = target.tabpanel?.querySelector?.(".dait-provider-settings-block")?.dataset?.daitProvider || "";
@@ -22421,20 +23880,22 @@ var require_discord_ai_translator = __commonJS({
         const viewportWidth = Number(window.innerWidth || documentWidth || 0);
         const desiredWidth = Math.min(SETTINGS_WINDOW_MAX_WIDTH, viewportWidth ? viewportWidth - 48 : SETTINGS_WINDOW_MAX_WIDTH);
         let current = panel.parentElement;
-        let marked = 0;
-        let root = null;
-        const markedNodes = [];
-        while (current && current !== document.body && marked < 5) {
+        const candidateNodes = [];
+        while (current && current !== document.body && candidateNodes.length < 5) {
           const rect = current.getBoundingClientRect?.();
           const width = Number(rect?.width || 0);
           if (viewportWidth && width >= viewportWidth - 1) break;
           if (!width || width <= desiredWidth + 80) {
-            if (current.dataset.daitSettingsModal !== "true") current.dataset.daitSettingsModal = "true";
-            root = current;
-            markedNodes.push(current);
-            marked++;
+            candidateNodes.push(current);
           }
           current = current.parentElement;
+        }
+        let root = null;
+        const markedNodes = [];
+        for (const node of candidateNodes) {
+          if (node.dataset.daitSettingsModal !== "true") node.dataset.daitSettingsModal = "true";
+          root = node;
+          markedNodes.push(node);
         }
         if (root) {
           if (root.dataset.daitSettingsModalRoot !== "true") root.dataset.daitSettingsModalRoot = "true";
@@ -22457,53 +23918,63 @@ var require_discord_ai_translator = __commonJS({
         this.bindSettingsTabOrientation(panel);
         const isInline = panel.dataset?.daitSettingsInline === "true";
         const host = scroller || this.getSettingsHostScroller(panel);
-        const frame = panel.closest?.(".dait-quick-settings-dialog") || panel.closest?.("[data-dait-settings-modal-root='true']") || host;
+        const modalRoot = panel.closest?.("[data-dait-settings-modal-root='true']");
+        const frame = panel.closest?.(".dait-quick-settings-dialog") || modalRoot || host;
         const viewportHeight = Number(
           (typeof window !== "undefined" ? window.visualViewport?.height || window.innerHeight : 0) || (typeof document !== "undefined" ? document.documentElement?.clientHeight : 0) || 0
         );
         const dynamicMaxW = this.computeSettingsPanelDynamicWidth(panel);
-        if (dynamicMaxW > 0) {
-          panel.style.setProperty("--dait-dynamic-max-w", `${dynamicMaxW}px`);
-          const modalRoot = panel.closest?.("[data-dait-settings-modal-root='true']");
-          if (modalRoot?.style?.setProperty) modalRoot.style.setProperty("--dait-dynamic-max-w", `${dynamicMaxW}px`);
-        } else {
-          panel.style.removeProperty?.("--dait-dynamic-max-w");
-        }
+        const applyDynamicWidth = () => {
+          if (dynamicMaxW > 0) {
+            panel.style.setProperty("--dait-dynamic-max-w", `${dynamicMaxW}px`);
+            if (modalRoot?.style?.setProperty) modalRoot.style.setProperty("--dait-dynamic-max-w", `${dynamicMaxW}px`);
+          } else {
+            panel.style.removeProperty?.("--dait-dynamic-max-w");
+          }
+        };
         if (isInline) {
           try {
             const panelRect = panel.getBoundingClientRect?.();
             const top = Number(panelRect?.top || 0);
             const available = viewportHeight > 0 && Number.isFinite(top) && top >= 0 && top < viewportHeight ? Math.max(260, Math.floor(viewportHeight - top - 24)) : 0;
+            applyDynamicWidth();
             panel.style.setProperty("--dait-host-chrome", "0px");
             if (available > 0) panel.style.setProperty("--dait-host-max", `${available}px`);
             else panel.style.removeProperty?.("--dait-host-max");
             this.bindSettingsPanelResize(panel);
             return true;
           } catch {
+            applyDynamicWidth();
             return false;
           }
         }
-        if (!host || !frame?.getBoundingClientRect) return false;
+        if (!host || !frame?.getBoundingClientRect) {
+          applyDynamicWidth();
+          return false;
+        }
         try {
           const hostStyle = getComputedStyle(host);
           const hostRect = host.getBoundingClientRect();
           const panelRect = panel.getBoundingClientRect();
+          const frameRect = frame.getBoundingClientRect();
+          const rawFrameMax = Number.parseFloat(getComputedStyle(frame).maxHeight);
           const above = Math.max(0, panelRect.top - hostRect.top - Number(host.clientTop || 0) + Number(host.scrollTop || 0));
           const below = Number.parseFloat(hostStyle.paddingBottom) || 0;
-          const chrome = frame.getBoundingClientRect().height - Number(host.clientHeight || 0) + above + below;
+          const chrome = frameRect.height - Number(host.clientHeight || 0) + above + below;
           const safeChrome = Number.isFinite(chrome) && chrome >= 0 ? Math.ceil(chrome) : 0;
-          if (Number.isFinite(chrome) && chrome >= 0) panel.style.setProperty("--dait-host-chrome", `${safeChrome}px`);
-          const rawFrameMax = Number.parseFloat(getComputedStyle(frame).maxHeight);
           let effectiveMax = Number.isFinite(rawFrameMax) && rawFrameMax > 0 ? Math.floor(rawFrameMax) : 0;
           if (viewportHeight > 0 && Number.isFinite(panelRect.top) && panelRect.top > 0 && panelRect.top < viewportHeight) {
             const viewportCap = Math.max(260, Math.floor(viewportHeight - panelRect.top - 16)) + safeChrome;
             effectiveMax = effectiveMax > 0 ? Math.min(effectiveMax, viewportCap) : viewportCap;
           }
+          applyDynamicWidth();
+          if (Number.isFinite(chrome) && chrome >= 0) panel.style.setProperty("--dait-host-chrome", `${safeChrome}px`);
           if (effectiveMax > 0) panel.style.setProperty("--dait-host-max", `${effectiveMax}px`);
           else panel.style.removeProperty?.("--dait-host-max");
           this.bindSettingsPanelResize(panel);
           return true;
         } catch {
+          applyDynamicWidth();
           return false;
         }
       }
@@ -22615,8 +24086,33 @@ var require_discord_ai_translator = __commonJS({
       }
       watchSettingsModalSizingCleanup(panel) {
         if (!panel?.isConnected || panel.__daitSettingsModalCleanupObserver || typeof MutationObserver !== "function" || typeof document === "undefined" || !document.body) return;
+        const observedAncestors = /* @__PURE__ */ new Set();
+        const observeChain = (obs) => {
+          let observed = false;
+          let current = panel.parentElement;
+          while (current) {
+            if (!observedAncestors.has(current)) {
+              try {
+                obs.observe(current, { childList: true, subtree: false });
+                observedAncestors.add(current);
+                observed = true;
+              } catch {
+              }
+            } else {
+              observed = true;
+            }
+            if (current === document.body) break;
+            current = current.parentElement;
+          }
+          return observed;
+        };
         const observer = new MutationObserver(() => {
-          if (panel.isConnected) return;
+          if (panel.isConnected) {
+            if (panel.parentElement && !observedAncestors.has(panel.parentElement)) {
+              observeChain(observer);
+            }
+            return;
+          }
           this.clearHotkeyRecordingWithin(panel);
           this.cleanupSettingsPanelListeners(panel);
           this.clearSettingsModalSizingSchedule(panel);
@@ -22624,7 +24120,7 @@ var require_discord_ai_translator = __commonJS({
           observer.disconnect?.();
           panel.__daitSettingsModalCleanupObserver = null;
         });
-        observer.observe(document.body, { childList: true, subtree: true });
+        if (!observeChain(observer)) observer.observe(document.body, { childList: true, subtree: true });
         panel.__daitSettingsModalCleanupObserver = observer;
       }
       // --- Tab pages (UI-SPEC information architecture) ---
@@ -23208,6 +24704,7 @@ var require_discord_ai_translator = __commonJS({
           const kind = String(bar?.dataset?.daitSavedConfigBar || "");
           if (kind === "translation" || kind === "polish") this.renderSavedServiceConfigBar(bar, kind);
         });
+        if (!root) this.quickPanel?.scheduleUpdate?.();
       }
       // The connection card: status and Test in its header, then only the fields the selected provider uses.
       // Rarely changed model parameters and an optional API key sit behind <details>.
@@ -23954,9 +25451,11 @@ var require_discord_ai_translator = __commonJS({
       }
       // Test mode is gone: "Try a sentence" / "Try polishing" in the connection cards replace it. ui.testModeEnabled
       // still loads from old settings and simply shows nothing.
-      createDiagnosticsSection() {
+      createDiagnosticsSection(state = null) {
         const section = this.createSettingsGroup(this.t("diagnosticsSettingsTitle"), "diagnostics");
-        section.appendChild(buildHostHealthCard(this));
+        section.appendChild(buildHostHealthCard(this, {
+          lazy: Boolean(state && state.activeTab !== SETTINGS_TAB_DATA)
+        }));
         section.appendChild(this.createCheckboxRow("ui.diagnosticsEnabled", this.t("diagnosticLogs"), { description: this.t("diagnosticLogsDesc") }));
         section.appendChild(this.createDiagnosticLogsRow());
         section.appendChild(this.createDiagnosticLogsClearRow());
@@ -25438,7 +26937,12 @@ var require_discord_ai_translator = __commonJS({
             this.syncSettingControls("translation.appId", task.appId, { includeActive: true });
             this.syncSettingControls("translation.secretKey", task.secretKey, { includeActive: true });
           }
+          this.syncTaskControlsInOpenPanels(kind);
           this.refreshApiTestViews(kind);
+          this.refreshSavedServiceConfigControls();
+          if (kind === "translation") this.quickPanel?.clearConfigError?.();
+          this.quickPanel?.scheduleUpdate?.();
+          this.quickPanel?.requestStatusUpdate?.();
           this.queueScan();
         }
         if (options.silent !== true) {
@@ -25610,25 +27114,22 @@ var require_discord_ai_translator = __commonJS({
           const path = String(control?.dataset?.daitPath || "");
           if (!path) return;
           if (path === "ui.currentChannelAutoTranslatePolicy") return;
-          if (control.tagName === "TEXTAREA") {
-            this.setSetting(path, control.value);
-            return;
-          }
-          if (control.tagName === "SELECT") {
-            this.setSetting(path, control.value);
-            return;
-          }
-          if (control.type === "checkbox") {
-            this.setSetting(path, Boolean(control.checked));
-            return;
-          }
-          if (control.type === "number") {
+          let nextValue;
+          if (control.tagName === "TEXTAREA" || control.tagName === "SELECT") {
+            nextValue = control.value;
+          } else if (control.type === "checkbox") {
+            nextValue = Boolean(control.checked);
+          } else if (control.type === "number") {
             const raw = String(control.value ?? "").trim();
             if (!raw) return;
-            this.setSetting(path, Number(raw));
+            nextValue = Number(raw);
+          } else if (control.type) {
+            nextValue = control.value;
+          } else {
             return;
           }
-          if (control.type) this.setSetting(path, control.value);
+          if (Object.is(this.getSetting(path), nextValue)) return;
+          this.setSetting(path, nextValue);
         });
       }
       bindSettingsTextarea(textarea) {
@@ -25759,68 +27260,8 @@ var require_discord_ai_translator = __commonJS({
       isSensitiveDiagnosticKey(key) {
         const value = String(key || "").trim();
         const normalized = value.toLowerCase();
-        const safeKeys = /* @__PURE__ */ new Set([
-          "textcachehits",
-          "autotranslatemessages",
-          "cachehits",
-          "cachemisses",
-          "cachememory",
-          "valuelength",
-          "inputlength",
-          "messagestate",
-          "reasoncode",
-          "queuetype",
-          "targetkind",
-          "identitykind",
-          "identitytargetkind",
-          "identityhash",
-          "texthash",
-          "textlength",
-          "sourcehash",
-          "cachehash",
-          "prefetch",
-          "prefetchinflight",
-          "pendingtargets",
-          "inflight",
-          "inflightitems",
-          "queuelength",
-          "promptlength",
-          "maxtokens",
-          "bodyhash",
-          "finishreason",
-          "partialoutputlength",
-          "invalidreason",
-          "outputlength",
-          "sourcelength",
-          "domlength",
-          "domtextlength",
-          "fullcontentlength",
-          "selectedlength",
-          "sourcekind",
-          "sourcetextkind",
-          "sourceconfidence",
-          "failureclass",
-          "failurelayer",
-          "flowstage",
-          "validationquality",
-          "validationreason",
-          "renderable",
-          "cacheable",
-          "chunkindex",
-          "chunktotal",
-          "chunklength",
-          "attemptname",
-          "attemptindex",
-          "requestcount",
-          "longtextchunk",
-          "longtextsourcelength",
-          "timeoutms",
-          "retryafterms",
-          "requestid",
-          "status"
-        ]);
-        if (safeKeys.has(normalized)) return false;
-        if (["text", "sourcetext", "targettext", "rawtext", "inputtext", "outputtext", "translation", "translated", "translatedtext", "rawtranslation", "appid"].includes(normalized)) return true;
+        if (SAFE_DIAGNOSTIC_KEYS.has(normalized)) return false;
+        if (SENSITIVE_DIAGNOSTIC_KEYS.has(normalized)) return true;
         return /api.?key|authorization|token|password|secret|body|prompt|message|endpoint|url|uri|guild.*id|channel.*id|author.*id|user.*id/i.test(value);
       }
       sanitizeDiagnosticValue(value) {
@@ -26289,7 +27730,7 @@ var require_discord_ai_translator = __commonJS({
         return Number(rect.width || 0) > 0 && Number(rect.height || 0) > 0;
       }
       isOwnPluginElement(element) {
-        return Boolean(element?.closest?.(".dait-settings, .dait-quick-settings-button, .dait-quick-settings-modal-root, .dait-quick-popover, .dait-message-button, .dait-polish-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-menu-button, .dait-input-action-menu, .dait-polish-result-panel, .dait-polish-restore-control, .dait-translation-line, .dait-translation-box"));
+        return Boolean(element?.closest?.(".dait-settings, .dait-quick-settings-button, .dait-quick-settings-modal-root, .dait-quick-popover, .dait-message-button, .dait-polish-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-group, .dait-input-action-menu-button, .dait-input-action-menu, .dait-polish-result-panel, .dait-polish-restore-control, .dait-translation-line, .dait-translation-box"));
       }
       startObserver() {
         if (!this.isStarted) return;
@@ -26524,7 +27965,7 @@ var require_discord_ai_translator = __commonJS({
       isOwnMutationNode(node) {
         const element = node?.nodeType === 3 ? node.parentElement : node;
         if (this.isOwnPluginElement(element)) return true;
-        return Boolean(element?.matches?.(".dait-settings, .dait-quick-settings-button, .dait-quick-settings-modal-root, .dait-quick-popover, .dait-message-button, .dait-polish-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-menu-button, .dait-input-action-menu, .dait-polish-result-panel, .dait-polish-restore-control, .dait-translation-line, .dait-translation-box"));
+        return Boolean(element?.matches?.(".dait-settings, .dait-quick-settings-button, .dait-quick-settings-modal-root, .dait-quick-popover, .dait-message-button, .dait-polish-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-group, .dait-input-action-menu-button, .dait-input-action-menu, .dait-polish-result-panel, .dait-polish-restore-control, .dait-translation-line, .dait-translation-box"));
       }
       isMediaOnlyMutation(mutation) {
         const target = mutation?.target?.nodeType === 3 ? mutation.target.parentElement : mutation?.target;
@@ -26582,6 +28023,7 @@ var require_discord_ai_translator = __commonJS({
       isDiscordMediaViewerElement(element) {
         if (!element || element.nodeType !== 1) return false;
         if (this.isOwnPluginElement(element) || this.isInsideDiscordSettingsSurface(element) || this.isInsideInputComposer(element)) return false;
+        if (this.observerRoot && (element === this.observerRoot || element.contains?.(this.observerRoot))) return false;
         if (this.isDiscordMessageElement(element) || element.closest?.(DISCORD_MESSAGE_NODE_SELECTOR) || element.querySelector?.(DISCORD_MESSAGE_NODE_SELECTOR)) return false;
         if (element.matches?.(DISCORD_MEDIA_VIEWER_SELECTOR)) return true;
         const hasMedia = this.elementHasMediaViewerContent(element);
@@ -26692,7 +28134,7 @@ var require_discord_ai_translator = __commonJS({
       }
       mediaMutationElementHasTextCandidate(element) {
         if (!element || element.nodeType !== 1) return false;
-        const text = String(element.innerText ?? element.textContent ?? "").replace(/\u200b/g, "").trim();
+        const text = String(element.textContent ?? "").replace(/\u200b/g, "").trim();
         if (!text) return false;
         return /[0-9A-Za-z\u00c0-\uffff]/.test(text);
       }
@@ -26821,8 +28263,9 @@ var require_discord_ai_translator = __commonJS({
         if (type === "scroll" && !this.isAutoTranslateEnabled()) return;
         if (type === "focus" && event?.target && (typeof window === "undefined" || event.target !== window)) return;
         if (this.isDiscordMediaViewerQuiet()) return;
-        if (this.isDiscordMediaViewerViewportEvent(event)) return;
-        if (type === "scroll" && !this.isAutoTranslationScrollEventRelevant(event)) return;
+        const scrollRelevant = type === "scroll" ? this.isAutoTranslationScrollEventRelevant(event) : null;
+        if (this.isDiscordMediaViewerViewportEvent(event, scrollRelevant)) return;
+        if (type === "scroll" && !scrollRelevant) return;
         if (type === "scroll" || type === "resize") {
           if (type === "resize") this.queueInputButtonScan({ delayMs: 120, trailing: true });
           if (!this.isAutoTranslateEnabled()) return;
@@ -26840,12 +28283,12 @@ var require_discord_ai_translator = __commonJS({
         }
         this.queueScan();
       }
-      isDiscordMediaViewerViewportEvent(event = null) {
+      isDiscordMediaViewerViewportEvent(event = null, scrollRelevant = null) {
         const type = String(event?.type || "");
         if (!["focus", "resize", "scroll", "visibilitychange"].includes(type)) return false;
         const target = event?.target?.nodeType === 3 ? event.target.parentElement : event?.target;
         if (target?.nodeType === 1 && (this.isInsideDiscordMediaViewer(target) || this.isMediaOnlyMutationElement(target))) return true;
-        if (type === "scroll" && target?.nodeType === 1 && this.isAutoTranslationScrollEventRelevant(event)) return false;
+        if (type === "scroll" && target?.nodeType === 1 && (scrollRelevant === null ? this.isAutoTranslationScrollEventRelevant(event) : scrollRelevant)) return false;
         if (type === "scroll" && !this.mediaViewerProbeOpen && Date.now() - Number(this.mediaViewerProbeAt || 0) >= DISCORD_MEDIA_VIEWER_PROBE_CACHE_MS) return false;
         return this.isDiscordMediaViewerOpen();
       }
@@ -27121,7 +28564,7 @@ var require_discord_ai_translator = __commonJS({
         finishStage("inputMs");
         if (this.shouldInjectMessageButtons()) {
           this.injectMessageButtons(context);
-          if (dirtyRoots.length) this.ensureMissingVisibleMessageButtons();
+          if (dirtyRoots.length) this.ensureMissingVisibleMessageButtons(context);
         }
         finishStage("buttonMs");
         const incremental = this.isAutoTranslateEnabled() && this.shouldUseIncrementalMessageScan(context);
@@ -27143,15 +28586,22 @@ var require_discord_ai_translator = __commonJS({
           ...scanStages
         });
       }
-      ensureMissingVisibleMessageButtons() {
+      ensureMissingVisibleMessageButtons(context = null) {
         if (!this.shouldInjectMessageButtons() || typeof document === "undefined" || typeof document.querySelectorAll !== "function") return 0;
-        let injected = 0;
+        const scanContext = context || this.createScanContext();
+        const checkedNodes = context?.messageNodes?.length ? new Set(context.messageNodes) : null;
         const nodes = [...document.querySelectorAll(DISCORD_MESSAGE_NODE_SELECTOR)];
+        const toInject = [];
         for (const messageNode of nodes) {
           if (!messageNode?.isConnected) continue;
+          if (checkedNodes?.has(messageNode)) continue;
           if (messageNode.querySelector?.(".dait-message-button")) continue;
-          if (!this.isMessageNodeVisibleForScan(messageNode)) continue;
-          if (this.injectMessageButton(messageNode)) injected++;
+          if (!this.isMessageNodeVisibleForScan(messageNode, scanContext)) continue;
+          toInject.push(messageNode);
+        }
+        let injected = 0;
+        for (const messageNode of toInject) {
+          if (this.injectMessageButton(messageNode, scanContext)) injected++;
         }
         return injected;
       }
@@ -27243,6 +28693,10 @@ var require_discord_ai_translator = __commonJS({
             remaining: Math.max(0, tasks.length - index)
           }, 16);
           if (!this.isStarted || generation !== this.incrementalMessageScanGeneration) return;
+          if (work?.scanState?.enqueueSortPending) {
+            work.scanState.enqueueSortPending = false;
+            this.sortAutoTranslationQueue();
+          }
           if (index < tasks.length) {
             this.scheduleIncrementalMessageScanCallback(runSlice);
             return;
@@ -28141,13 +29595,20 @@ var require_discord_ai_translator = __commonJS({
       }
       getDiscordThemeCandidates(anchor = null) {
         if (typeof document === "undefined") return [];
+        const seen = /* @__PURE__ */ new Set();
         const candidates = [];
+        const addPreFiltered = (node) => {
+          if (!node || seen.has(node)) return;
+          seen.add(node);
+          candidates.push(node);
+        };
         const addCandidate = (node) => {
-          if (!node || candidates.includes(node) || this.isPluginThemeCandidate(node)) return;
+          if (!node || seen.has(node) || this.isPluginThemeCandidate(node)) return;
+          seen.add(node);
           candidates.push(node);
         };
         const globalCandidates = this.getDiscordThemeGlobalCandidates();
-        globalCandidates.selectors.forEach(addCandidate);
+        globalCandidates.selectors.forEach(addPreFiltered);
         let current = anchor && typeof anchor === "object" ? anchor : null;
         let guard = 0;
         while (current && guard < 12) {
@@ -28157,7 +29618,7 @@ var require_discord_ai_translator = __commonJS({
         }
         addCandidate(document.body);
         addCandidate(document.documentElement);
-        for (const node of globalCandidates.themed) addCandidate(node);
+        for (const node of globalCandidates.themed) addPreFiltered(node);
         return candidates;
       }
       getDiscordThemeGlobalCandidates() {
@@ -28166,8 +29627,8 @@ var require_discord_ai_translator = __commonJS({
         if (cached && cached.epoch === this.discordThemeCacheEpoch && now - cached.at < DISCORD_THEME_CACHE_TTL_MS) {
           return cached;
         }
-        const selectors = ["#app-mount", "[class*='appMount']", "[class*='app-mount']", "[data-theme]", "[theme]"].map((selector) => document.querySelector?.(selector)).filter(Boolean);
-        const themed = [...document.querySelectorAll?.("[class*='theme-'], [data-theme], [theme]") || []];
+        const selectors = ["#app-mount", "[class*='appMount']", "[class*='app-mount']", "[data-theme]", "[theme]"].map((selector) => document.querySelector?.(selector)).filter((node) => node && !this.isPluginThemeCandidate(node));
+        const themed = [...document.querySelectorAll?.("[class*='theme-'], [data-theme], [theme]") || []].filter((node) => node && !this.isPluginThemeCandidate(node));
         const snapshot = { at: now, epoch: this.discordThemeCacheEpoch, selectors, themed };
         this.discordThemeGlobalCandidatesCache = snapshot;
         return snapshot;
@@ -28385,7 +29846,7 @@ var require_discord_ai_translator = __commonJS({
         const currentDialog = dialog || this.findQuickSettingsDialog(root);
         const panel = currentDialog?.querySelector?.(".dait-settings") || [...currentDialog?.children || []].find((child) => String(child.className || "").split(/\s+/).includes("dait-settings")) || null;
         const fallback = currentDialog?.querySelector?.(".dait-quick-settings-error") || [...currentDialog?.children || []].find((child) => String(child.className || "").split(/\s+/).includes("dait-quick-settings-error")) || null;
-        return {
+        const meta = {
           rootConnected: this.isNodeConnected(root),
           dialogConnected: this.isNodeConnected(currentDialog),
           panelConnected: this.isNodeConnected(panel),
@@ -28395,14 +29856,17 @@ var require_discord_ai_translator = __commonJS({
           hasFallback: Boolean(fallback),
           rootChildCount: this.getElementChildCount(root),
           dialogChildCount: this.getElementChildCount(currentDialog),
-          panelSectionCount: this.getQuickSettingsPanelSectionCount(panel),
-          rootRect: this.getElementRectSummary(root),
-          dialogRect: this.getElementRectSummary(currentDialog),
-          panelRect: this.getElementRectSummary(panel),
-          rootStyle: this.getElementStyleSummary(root),
-          dialogStyle: this.getElementStyleSummary(currentDialog),
-          panelStyle: this.getElementStyleSummary(panel)
+          panelSectionCount: this.getQuickSettingsPanelSectionCount(panel)
         };
+        if (this.settings?.ui?.diagnosticsEnabled) {
+          meta.rootRect = this.getElementRectSummary(root);
+          meta.dialogRect = this.getElementRectSummary(currentDialog);
+          meta.panelRect = this.getElementRectSummary(panel);
+          meta.rootStyle = this.getElementStyleSummary(root);
+          meta.dialogStyle = this.getElementStyleSummary(currentDialog);
+          meta.panelStyle = this.getElementStyleSummary(panel);
+        }
+        return meta;
       }
       scheduleQuickSettingsModalVerify(root, dialog = null) {
         this.cancelQuickSettingsModalVerify();
@@ -28753,7 +30217,8 @@ var require_discord_ai_translator = __commonJS({
         const groupDensity = density || button.parentElement?.dataset?.daitDensity || button.closest?.(".dait-input-action-group")?.dataset?.daitDensity || "roomy";
         const full = button.dataset?.daitFullLabel || button.textContent || "";
         const short = button.dataset?.daitShortLabel || full;
-        button.textContent = groupDensity !== "roomy" ? short : full;
+        const next = groupDensity !== "roomy" ? short : full;
+        if (button.textContent !== next) button.textContent = next;
       }
       toggleInputActionMenu(group, textbox = null, container = null, button = null) {
         if (this.inputActionMenu?.isConnected) {
@@ -28791,9 +30256,35 @@ var require_discord_ai_translator = __commonJS({
         document.body.appendChild(menu);
         this.inputActionMenu = menu;
         button?.setAttribute?.("aria-expanded", "true");
+        const anchorNode = button || group;
+        let repositionRaf = null;
         const reposition = () => {
+          repositionRaf = null;
+          if (!menu.isConnected) return;
+          this.positionInputActionMenu(menu, anchorNode);
+        };
+        const onResize = () => {
+          if (repositionRaf !== null) {
+            try {
+              window.cancelAnimationFrame?.(repositionRaf);
+            } catch {
+            }
+            repositionRaf = null;
+          }
+          if (!menu.isConnected) return;
           this.applyPanelTheme(menu);
-          this.positionInputActionMenu(menu, button || group);
+          reposition();
+        };
+        const onScroll = (event) => {
+          if (event?.target && event.target !== window && event.target !== document && anchorNode && !event.target.contains?.(anchorNode)) {
+            return;
+          }
+          if (repositionRaf !== null) return;
+          if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+            repositionRaf = window.requestAnimationFrame(reposition);
+          } else {
+            reposition();
+          }
         };
         const outsidePointerDown = (event) => {
           if (menu.contains?.(event.target) || button?.contains?.(event.target)) return;
@@ -28806,20 +30297,24 @@ var require_discord_ai_translator = __commonJS({
         };
         this.inputActionMenuCleanup = () => {
           button?.setAttribute?.("aria-expanded", "false");
+          if (repositionRaf !== null && typeof window !== "undefined") {
+            window.cancelAnimationFrame?.(repositionRaf);
+            repositionRaf = null;
+          }
           if (typeof window !== "undefined") {
-            window.removeEventListener?.("resize", reposition, true);
-            window.removeEventListener?.("scroll", reposition, true);
+            window.removeEventListener?.("resize", onResize, { capture: true });
+            window.removeEventListener?.("scroll", onScroll, { capture: true });
           }
           document.removeEventListener?.("pointerdown", outsidePointerDown, true);
           document.removeEventListener?.("keydown", escapeKeydown, true);
         };
         if (typeof window !== "undefined") {
-          window.addEventListener?.("resize", reposition, true);
-          window.addEventListener?.("scroll", reposition, true);
+          window.addEventListener?.("resize", onResize, { capture: true, passive: true });
+          window.addEventListener?.("scroll", onScroll, { capture: true, passive: true });
         }
         document.addEventListener?.("pointerdown", outsidePointerDown, true);
         document.addEventListener?.("keydown", escapeKeydown, true);
-        reposition();
+        onResize();
         return menu;
       }
       positionInputActionMenu(menu, anchor = null) {
@@ -33387,9 +34882,35 @@ var require_discord_ai_translator = __commonJS({
         });
         document.body.appendChild(panel);
         this.polishResultPanel = panel;
+        const anchorNode = textbox || options.sourceButton;
+        let repositionRaf = null;
         const reposition = () => {
-          this.applyPanelTheme(panel);
+          repositionRaf = null;
+          if (!panel.isConnected) return;
           this.positionPolishResultPanel(panel, textbox, options.sourceButton);
+        };
+        const onResize = () => {
+          if (repositionRaf !== null) {
+            try {
+              window.cancelAnimationFrame?.(repositionRaf);
+            } catch {
+            }
+            repositionRaf = null;
+          }
+          if (!panel.isConnected) return;
+          this.applyPanelTheme(panel);
+          reposition();
+        };
+        const onScroll = (event) => {
+          if (event?.target && event.target !== window && event.target !== document && anchorNode && !event.target.contains?.(anchorNode)) {
+            return;
+          }
+          if (repositionRaf !== null) return;
+          if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+            repositionRaf = window.requestAnimationFrame(reposition);
+          } else {
+            reposition();
+          }
         };
         const outsidePointerDown = (event) => {
           if (panel.contains?.(event.target)) return;
@@ -33401,19 +34922,24 @@ var require_discord_ai_translator = __commonJS({
           this.removePolishResultPanel();
         };
         this.polishResultPanelCleanup = () => {
-          if (typeof window === "undefined") return;
-          window.removeEventListener?.("resize", reposition, true);
-          window.removeEventListener?.("scroll", reposition, true);
+          if (repositionRaf !== null && typeof window !== "undefined") {
+            window.cancelAnimationFrame?.(repositionRaf);
+            repositionRaf = null;
+          }
+          if (typeof window !== "undefined") {
+            window.removeEventListener?.("resize", onResize, { capture: true });
+            window.removeEventListener?.("scroll", onScroll, { capture: true });
+          }
           document.removeEventListener?.("pointerdown", outsidePointerDown, true);
           document.removeEventListener?.("keydown", escapeKeydown, true);
         };
         if (typeof window !== "undefined") {
-          window.addEventListener?.("resize", reposition, true);
-          window.addEventListener?.("scroll", reposition, true);
+          window.addEventListener?.("resize", onResize, { capture: true, passive: true });
+          window.addEventListener?.("scroll", onScroll, { capture: true, passive: true });
         }
         document.addEventListener?.("pointerdown", outsidePointerDown, true);
         document.addEventListener?.("keydown", escapeKeydown, true);
-        reposition();
+        onResize();
       }
       focusPolishResultOutput(output) {
         if (!output) return;
@@ -33597,23 +35123,53 @@ var require_discord_ai_translator = __commonJS({
         });
         document.body.appendChild(button);
         this.polishRestoreControl = button;
+        const anchorNode = sourceButton || textbox;
+        let repositionRaf = null;
         const reposition = () => {
-          this.syncDiscordThemeClasses(button, textbox || sourceButton);
+          repositionRaf = null;
+          if (!button.isConnected) return;
           this.positionPolishRestoreControl(button, textbox, sourceButton);
+        };
+        const onResize = () => {
+          if (repositionRaf !== null) {
+            try {
+              window.cancelAnimationFrame?.(repositionRaf);
+            } catch {
+            }
+            repositionRaf = null;
+          }
+          if (!button.isConnected) return;
+          this.syncDiscordThemeClasses(button, textbox || sourceButton);
+          reposition();
+        };
+        const onScroll = (event) => {
+          if (event?.target && event.target !== window && event.target !== document && anchorNode && !event.target.contains?.(anchorNode)) {
+            return;
+          }
+          if (repositionRaf !== null) return;
+          if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+            repositionRaf = window.requestAnimationFrame(reposition);
+          } else {
+            reposition();
+          }
         };
         const timeout = typeof window !== "undefined" && typeof window.setTimeout === "function" ? window.setTimeout(() => this.removePolishRestoreControl(), 8e3) : null;
         this.polishRestoreControlCleanup = () => {
+          if (repositionRaf !== null && typeof window !== "undefined") {
+            window.cancelAnimationFrame?.(repositionRaf);
+            repositionRaf = null;
+          }
           if (typeof window !== "undefined") {
-            window.removeEventListener?.("resize", reposition, true);
-            window.removeEventListener?.("scroll", reposition, true);
+            window.removeEventListener?.("resize", onResize, { capture: true });
+            window.removeEventListener?.("scroll", onScroll, { capture: true });
             if (timeout) window.clearTimeout?.(timeout);
           }
         };
         if (typeof window !== "undefined") {
-          window.addEventListener?.("resize", reposition, true);
-          window.addEventListener?.("scroll", reposition, true);
+          window.addEventListener?.("resize", onResize, { capture: true, passive: true });
+          window.addEventListener?.("scroll", onScroll, { capture: true, passive: true });
         }
-        reposition();
+        onResize();
       }
       async restorePolishOriginal(textbox, session, sourceButton = null) {
         const lifecycleToken = this.getLifecycleToken();
@@ -35285,6 +36841,9 @@ var require_discord_ai_translator = __commonJS({
       }
       getTranslationScrollContainer(anchor) {
         if (typeof document === "undefined") return null;
+        if (this.cachedDrawScroller?.isConnected && anchor && this.cachedDrawScroller.contains?.(anchor) && this.isVerticalScrollContainer(this.cachedDrawScroller)) {
+          return this.cachedDrawScroller;
+        }
         let node = anchor?.parentElement;
         while (node && node.nodeType === 1) {
           if (this.isVerticalScrollContainer(node)) return node;

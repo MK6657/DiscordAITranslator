@@ -16,6 +16,7 @@ const {
     PLUGIN_NAME,
     POLISH_REPOLISH_SOURCE_LAST_RESULT,
     POLISH_REPOLISH_SOURCE_ORIGINAL,
+    QUICK_PANEL_TABS,
     SETTINGS_WRITE_DEBOUNCE_MS,
     TRANSLATION_CACHE_WRITE_DEBOUNCE_MS,
     TRANSLATION_LINE_STYLES,
@@ -42,6 +43,11 @@ function normalizeTranslationLineStyle(value) {
 function normalizeTranslationLineTextScale(value) {
     const scale = Number(value);
     return TRANSLATION_LINE_TEXT_SCALES.includes(scale) ? scale : DEFAULT_SETTINGS.ui.translationTextScale;
+}
+
+function normalizeQuickPanelTab(value) {
+    const tab = String(value || "").trim();
+    return QUICK_PANEL_TABS.includes(tab) ? tab : DEFAULT_SETTINGS.ui.quickPanelActiveTab;
 }
 
 class SettingsStore {
@@ -138,6 +144,7 @@ class SettingsStore {
         this.plugin.saveSettings();
         this.plugin.syncSettingControls(`${kind}.prompt`, template.prompt);
         if (kind === "translation") this.plugin.invalidateAutoTranslationQueue();
+        this.plugin.quickPanel?.scheduleUpdate?.();
         this.plugin.showToast(this.plugin.t("promptApplied", { name: this.getTemplateDisplayName(template), code: template.serial }), "success");
     }
 
@@ -154,6 +161,7 @@ class SettingsStore {
         templates.push(template);
         this.plugin.settings[kind].activePromptTemplate = template.id;
         this.plugin.saveSettings();
+        this.plugin.quickPanel?.scheduleUpdate?.();
         this.plugin.showToast(this.plugin.t("promptSaved", { name, code: template.serial }), "success");
     }
 
@@ -165,6 +173,7 @@ class SettingsStore {
         this.plugin.settings[kind].activePromptTemplate = template.id;
         this.plugin.saveSettings();
         if (kind === "translation") this.plugin.invalidateAutoTranslationQueue();
+        this.plugin.quickPanel?.scheduleUpdate?.();
         this.plugin.showToast(this.plugin.t("promptUpdated", { name: this.getTemplateDisplayName(template), code: template.serial }), "success");
     }
 
@@ -201,6 +210,7 @@ class SettingsStore {
         }
         this.plugin.saveSettings();
         if (kind === "translation" && wasActive) this.plugin.invalidateAutoTranslationQueue();
+        this.plugin.quickPanel?.scheduleUpdate?.();
         this.plugin.showToast(this.plugin.t("promptDeleted"), "success");
     }
 
@@ -251,6 +261,7 @@ class SettingsStore {
         missing.forEach(template => templates.push(this.plugin.clone(template)));
         this.plugin.ensurePromptTemplateSerials(kind);
         if (options.save !== false) this.plugin.saveSettings();
+        this.plugin.quickPanel?.scheduleUpdate?.();
         if (options.silent !== true) {
             this.plugin.showToast(this.plugin.t("promptPresetsRestored", { count: missing.length }), "success");
         }
@@ -453,6 +464,11 @@ class SettingsStore {
         const settingsActiveTab = normalizeSettingsTabId(this.plugin.settings.ui.settingsActiveTab);
         if (settingsActiveTab !== this.plugin.settings.ui.settingsActiveTab) {
             this.plugin.settings.ui.settingsActiveTab = settingsActiveTab;
+            changed = true;
+        }
+        const quickPanelActiveTab = normalizeQuickPanelTab(this.plugin.settings.ui.quickPanelActiveTab);
+        if (quickPanelActiveTab !== this.plugin.settings.ui.quickPanelActiveTab) {
+            this.plugin.settings.ui.quickPanelActiveTab = quickPanelActiveTab;
             changed = true;
         }
         const rawUiSettingsVersion = storedSettings && typeof storedSettings === "object"
@@ -897,6 +913,9 @@ class SettingsStore {
         }
         if (path === "ui.settingsActiveTab") {
             value = normalizeSettingsTabId(value);
+        }
+        if (path === "ui.quickPanelActiveTab") {
+            value = normalizeQuickPanelTab(value);
         }
         if (path === "ui.messageButtonVisibility") {
             value = this.plugin.normalizeMessageButtonVisibility(value);

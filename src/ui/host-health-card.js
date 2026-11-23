@@ -3,7 +3,7 @@
 // Renders the live "Discord Host Health Check" card inside the Settings Data & Diagnostics tab.
 // Gives users and maintainers one-click visibility into every Discord/BetterDiscord anchor.
 
-function buildHostHealthCard(plugin) {
+function buildHostHealthCard(plugin, options = {}) {
     const card = document.createElement("div");
     card.className = "dait-host-health-card dait-settings-search-target";
     card.dataset.daitHostHealthCard = "true";
@@ -126,7 +126,12 @@ function buildHostHealthCard(plugin) {
         }
     });
 
-    render();
+    card.__daitEnsureHostHealthRendered = () => {
+        if (!lastReport) render();
+        return lastReport;
+    };
+
+    if (!options?.lazy) render();
     return card;
 }
 

@@ -405,6 +405,7 @@ const TRANSLATION_LINE_STYLES = Object.freeze(["tint", "muted", "tag"]);
 const TRANSLATION_LINE_TEXT_SCALES = Object.freeze([100, 90]);
 // The palette of the plugin's own windows (Display settings): follow Discord's light/dark theme, or always light/dark.
 const PANEL_THEMES = Object.freeze(["auto", "light", "dark"]);
+const QUICK_PANEL_TABS = Object.freeze(["translation", "polish"]);
 // Target languages written right to left; their translation lines get dir="rtl".
 const RTL_LANGUAGE_CODES = Object.freeze(["ar", "fa", "he", "iw", "ur", "ps", "yi", "dv", "ug", "ckb", "sd"]);
 const POLISH_REPOLISH_SOURCE_ORIGINAL = "original";
@@ -414,6 +415,7 @@ const TRANSLATION_CACHE_TTL_OPTIONS = [3, 6, 12, 24, 48, 168];
 const TRANSLATION_CACHE_HIT_EXTEND_MS = 6 * 60 * 60 * 1000;
 const TRANSLATION_CACHE_WRITE_DEBOUNCE_MS = 5000;
 const TRANSLATION_CACHE_TOUCH_DEBOUNCE_MS = 30000;
+const TRANSLATION_CACHE_TOUCH_IDLE_PERSIST_MS = 5 * 60 * 1000;
 const TRANSLATION_CACHE_TOUCH_PERSIST_THRESHOLD = 80;
 const TRANSLATION_CACHE_DEFAULT_LIMIT = 4000;
 const TRANSLATION_CACHE_MIN_LIMIT = 100;
@@ -838,6 +840,8 @@ const DEFAULT_SETTINGS = {
         settingsVersion: 2,
         // One of the settings tabs in src/settings/settings-schema.js.
         settingsActiveTab: "overview",
+        // Last active mode tab in the user-panel quick popover ("translation" | "polish").
+        quickPanelActiveTab: "translation",
         language: "zh-CN",
         showQuickSettingsRailButton: false,
         showQuickSettingsPanelButton: true,
@@ -993,6 +997,7 @@ module.exports = {
     TRANSLATION_LINE_STYLES,
     TRANSLATION_LINE_TEXT_SCALES,
     PANEL_THEMES,
+    QUICK_PANEL_TABS,
     RTL_LANGUAGE_CODES,
     POLISH_REPOLISH_SOURCE_ORIGINAL,
     POLISH_REPOLISH_SOURCE_LAST_RESULT,
@@ -1001,6 +1006,7 @@ module.exports = {
     TRANSLATION_CACHE_HIT_EXTEND_MS,
     TRANSLATION_CACHE_WRITE_DEBOUNCE_MS,
     TRANSLATION_CACHE_TOUCH_DEBOUNCE_MS,
+    TRANSLATION_CACHE_TOUCH_IDLE_PERSIST_MS,
     TRANSLATION_CACHE_TOUCH_PERSIST_THRESHOLD,
     TRANSLATION_CACHE_DEFAULT_LIMIT,
     TRANSLATION_CACHE_MIN_LIMIT,

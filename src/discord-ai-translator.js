@@ -35,6 +35,80 @@ const { buildHostHealthCard } = require("./ui/host-health-card");
 const { convertDiscordMarkupToDisplayText, DISCORD_MARKUP_DISPLAY_TEXT_MEMO_MAX } = require("./intake/discord-markup");
 const { removeStandardEmoji, getEmojiNeutralTextLength } = require("./intake/emoji-text");
 
+const SAFE_DIAGNOSTIC_KEYS = new Set([
+    "textcachehits",
+    "autotranslatemessages",
+    "cachehits",
+    "cachemisses",
+    "cachememory",
+    "valuelength",
+    "inputlength",
+    "messagestate",
+    "reasoncode",
+    "queuetype",
+    "targetkind",
+    "identitykind",
+    "identitytargetkind",
+    "identityhash",
+    "texthash",
+    "textlength",
+    "sourcehash",
+    "cachehash",
+    "prefetch",
+    "prefetchinflight",
+    "pendingtargets",
+    "inflight",
+    "inflightitems",
+    "queuelength",
+    "promptlength",
+    "maxtokens",
+    "bodyhash",
+    "finishreason",
+    "partialoutputlength",
+    "invalidreason",
+    "outputlength",
+    "sourcelength",
+    "domlength",
+    "domtextlength",
+    "fullcontentlength",
+    "selectedlength",
+    "sourcekind",
+    "sourcetextkind",
+    "sourceconfidence",
+    "failureclass",
+    "failurelayer",
+    "flowstage",
+    "validationquality",
+    "validationreason",
+    "renderable",
+    "cacheable",
+    "chunkindex",
+    "chunktotal",
+    "chunklength",
+    "attemptname",
+    "attemptindex",
+    "requestcount",
+    "longtextchunk",
+    "longtextsourcelength",
+    "timeoutms",
+    "retryafterms",
+    "requestid",
+    "status"
+]);
+const SENSITIVE_DIAGNOSTIC_KEYS = new Set([
+    "text",
+    "sourcetext",
+    "targettext",
+    "rawtext",
+    "inputtext",
+    "outputtext",
+    "translation",
+    "translated",
+    "translatedtext",
+    "rawtranslation",
+    "appid"
+]);
+
 const {
     PLUGIN_NAME,
     DATA_KEY,
@@ -1169,6 +1243,10 @@ module.exports = class DiscordAITranslator {
         this.inputButtonScanDueAt = 0;
         this.quickSettingsRetryTimer = null;
         this.quickSettingsOpenTimer = null;
+        if (this.overviewStatusRefreshTimer) {
+            clearTimeout(this.overviewStatusRefreshTimer);
+            this.overviewStatusRefreshTimer = null;
+        }
         this.quickSettingsPress = null;
         if (diagnosticLogsPersisted) this.quickSettingsDiagnosticLogs = [];
         if (translationCachePersisted) this.persistentTranslationCacheCount = 0;
@@ -1183,6 +1261,7 @@ module.exports = class DiscordAITranslator {
         this.diagnosticLogsPersistenceDeferredSince = 0;
         this.translationRequests.clear();
         this.autoTranslationQueue = [];
+        this.autoTranslationQueueSortDirty = false;
         this.autoTranslationQueuedKeys.clear();
         this.autoTranslationPendingTargets.clear();
         this.autoTranslationFailures.clear();
@@ -1428,6 +1507,9 @@ module.exports = class DiscordAITranslator {
         if (options.resetScroll !== false && state.content) state.content.scrollTop = 0;
         // The overview's checklist and service cards may be out of date after work on another tab.
         if (target.id === SETTINGS_TAB_OVERVIEW) this.refreshOverviewStatusSection(target.tabpanel);
+        if (target.id === SETTINGS_TAB_DATA) {
+            target.tabpanel?.querySelector?.("[data-dait-host-health-card='true']")?.__daitEnsureHostHealthRendered?.();
+        }
         if (target.id === SETTINGS_TAB_TRANSLATE || target.id === SETTINGS_TAB_COMPOSE) {
             const tabKind = target.id === SETTINGS_TAB_COMPOSE ? "polish" : "translation";
             const renderedProvider = target.tabpanel?.querySelector?.(".dait-provider-settings-block")?.dataset?.daitProvider || "";
@@ -2019,23 +2101,27 @@ module.exports = class DiscordAITranslator {
         const documentWidth = typeof document !== "undefined" ? Number(document.documentElement?.clientWidth || 0) : 0;
         const viewportWidth = Number(window.innerWidth || documentWidth || 0);
         const desiredWidth = Math.min(SETTINGS_WINDOW_MAX_WIDTH, viewportWidth ? viewportWidth - 48 : SETTINGS_WINDOW_MAX_WIDTH);
+        // Read pass: measure ancestor widths before mutating any dataset attributes.
         let current = panel.parentElement;
-        let marked = 0;
-        let root = null;
-        const markedNodes = [];
-        while (current && current !== document.body && marked < 5) {
+        const candidateNodes = [];
+        while (current && current !== document.body && candidateNodes.length < 5) {
             const rect = current.getBoundingClientRect?.();
             const width = Number(rect?.width || 0);
             // A layer as wide as the window (BetterDiscord's .bd-modal-wrapper, Discord's modal layer) holds the modal;
             // sizing it would shrink the real frame inside it to its content. The modal frame is the last node below it.
             if (viewportWidth && width >= viewportWidth - 1) break;
             if (!width || width <= desiredWidth + 80) {
-                if (current.dataset.daitSettingsModal !== "true") current.dataset.daitSettingsModal = "true";
-                root = current;
-                markedNodes.push(current);
-                marked++;
+                candidateNodes.push(current);
             }
             current = current.parentElement;
+        }
+        // Write pass: apply modal markers after all geometry reads complete.
+        let root = null;
+        const markedNodes = [];
+        for (const node of candidateNodes) {
+            if (node.dataset.daitSettingsModal !== "true") node.dataset.daitSettingsModal = "true";
+            root = node;
+            markedNodes.push(node);
         }
         // BetterDiscord's modal frame keeps Discord's own colours; only the panel inside it carries the plugin palette.
         if (root) {
@@ -2060,21 +2146,24 @@ module.exports = class DiscordAITranslator {
         this.bindSettingsTabOrientation(panel);
         const isInline = panel.dataset?.daitSettingsInline === "true";
         const host = scroller || this.getSettingsHostScroller(panel);
-        const frame = panel.closest?.(".dait-quick-settings-dialog") || panel.closest?.("[data-dait-settings-modal-root='true']") || host;
+        const modalRoot = panel.closest?.("[data-dait-settings-modal-root='true']");
+        const frame = panel.closest?.(".dait-quick-settings-dialog") || modalRoot || host;
         const viewportHeight = Number(
             (typeof window !== "undefined" ? (window.visualViewport?.height || window.innerHeight) : 0)
             || (typeof document !== "undefined" ? document.documentElement?.clientHeight : 0)
             || 0
         );
+        // Read pass: compute dynamic width and host geometry before writing CSS variables to avoid forced reflows.
         const dynamicMaxW = this.computeSettingsPanelDynamicWidth(panel);
-        if (dynamicMaxW > 0) {
-            panel.style.setProperty("--dait-dynamic-max-w", `${dynamicMaxW}px`);
-            const modalRoot = panel.closest?.("[data-dait-settings-modal-root='true']");
-            if (modalRoot?.style?.setProperty) modalRoot.style.setProperty("--dait-dynamic-max-w", `${dynamicMaxW}px`);
-        }
-        else {
-            panel.style.removeProperty?.("--dait-dynamic-max-w");
-        }
+        const applyDynamicWidth = () => {
+            if (dynamicMaxW > 0) {
+                panel.style.setProperty("--dait-dynamic-max-w", `${dynamicMaxW}px`);
+                if (modalRoot?.style?.setProperty) modalRoot.style.setProperty("--dait-dynamic-max-w", `${dynamicMaxW}px`);
+            }
+            else {
+                panel.style.removeProperty?.("--dait-dynamic-max-w");
+            }
+        };
         if (isInline) {
             try {
                 const panelRect = panel.getBoundingClientRect?.();
@@ -2082,6 +2171,7 @@ module.exports = class DiscordAITranslator {
                 const available = viewportHeight > 0 && Number.isFinite(top) && top >= 0 && top < viewportHeight
                     ? Math.max(260, Math.floor(viewportHeight - top - 24))
                     : 0;
+                applyDynamicWidth();
                 panel.style.setProperty("--dait-host-chrome", "0px");
                 if (available > 0) panel.style.setProperty("--dait-host-max", `${available}px`);
                 else panel.style.removeProperty?.("--dait-host-max");
@@ -2089,31 +2179,38 @@ module.exports = class DiscordAITranslator {
                 return true;
             }
             catch {
+                applyDynamicWidth();
                 return false;
             }
         }
-        if (!host || !frame?.getBoundingClientRect) return false;
+        if (!host || !frame?.getBoundingClientRect) {
+            applyDynamicWidth();
+            return false;
+        }
         try {
             const hostStyle = getComputedStyle(host);
             const hostRect = host.getBoundingClientRect();
             const panelRect = panel.getBoundingClientRect();
+            const frameRect = frame.getBoundingClientRect();
+            const rawFrameMax = Number.parseFloat(getComputedStyle(frame).maxHeight);
             const above = Math.max(0, panelRect.top - hostRect.top - Number(host.clientTop || 0) + Number(host.scrollTop || 0));
             const below = Number.parseFloat(hostStyle.paddingBottom) || 0;
-            const chrome = frame.getBoundingClientRect().height - Number(host.clientHeight || 0) + above + below;
+            const chrome = frameRect.height - Number(host.clientHeight || 0) + above + below;
             const safeChrome = Number.isFinite(chrome) && chrome >= 0 ? Math.ceil(chrome) : 0;
-            if (Number.isFinite(chrome) && chrome >= 0) panel.style.setProperty("--dait-host-chrome", `${safeChrome}px`);
-            const rawFrameMax = Number.parseFloat(getComputedStyle(frame).maxHeight);
             let effectiveMax = Number.isFinite(rawFrameMax) && rawFrameMax > 0 ? Math.floor(rawFrameMax) : 0;
             if (viewportHeight > 0 && Number.isFinite(panelRect.top) && panelRect.top > 0 && panelRect.top < viewportHeight) {
                 const viewportCap = Math.max(260, Math.floor(viewportHeight - panelRect.top - 16)) + safeChrome;
                 effectiveMax = effectiveMax > 0 ? Math.min(effectiveMax, viewportCap) : viewportCap;
             }
+            applyDynamicWidth();
+            if (Number.isFinite(chrome) && chrome >= 0) panel.style.setProperty("--dait-host-chrome", `${safeChrome}px`);
             if (effectiveMax > 0) panel.style.setProperty("--dait-host-max", `${effectiveMax}px`);
             else panel.style.removeProperty?.("--dait-host-max");
             this.bindSettingsPanelResize(panel);
             return true;
         }
         catch {
+            applyDynamicWidth();
             return false;
         }
     }
@@ -2237,8 +2334,34 @@ module.exports = class DiscordAITranslator {
 
     watchSettingsModalSizingCleanup(panel) {
         if (!panel?.isConnected || panel.__daitSettingsModalCleanupObserver || typeof MutationObserver !== "function" || typeof document === "undefined" || !document.body) return;
+        const observedAncestors = new Set();
+        const observeChain = obs => {
+            let observed = false;
+            let current = panel.parentElement;
+            while (current) {
+                if (!observedAncestors.has(current)) {
+                    try {
+                        obs.observe(current, { childList: true, subtree: false });
+                        observedAncestors.add(current);
+                        observed = true;
+                    }
+                    catch {}
+                }
+                else {
+                    observed = true;
+                }
+                if (current === document.body) break;
+                current = current.parentElement;
+            }
+            return observed;
+        };
         const observer = new MutationObserver(() => {
-            if (panel.isConnected) return;
+            if (panel.isConnected) {
+                if (panel.parentElement && !observedAncestors.has(panel.parentElement)) {
+                    observeChain(observer);
+                }
+                return;
+            }
             this.clearHotkeyRecordingWithin(panel);
             this.cleanupSettingsPanelListeners(panel);
             this.clearSettingsModalSizingSchedule(panel);
@@ -2246,7 +2369,7 @@ module.exports = class DiscordAITranslator {
             observer.disconnect?.();
             panel.__daitSettingsModalCleanupObserver = null;
         });
-        observer.observe(document.body, { childList: true, subtree: true });
+        if (!observeChain(observer)) observer.observe(document.body, { childList: true, subtree: true });
         panel.__daitSettingsModalCleanupObserver = observer;
     }
 
@@ -2909,6 +3032,7 @@ module.exports = class DiscordAITranslator {
             const kind = String(bar?.dataset?.daitSavedConfigBar || "");
             if (kind === "translation" || kind === "polish") this.renderSavedServiceConfigBar(bar, kind);
         });
+        if (!root) this.quickPanel?.scheduleUpdate?.();
     }
 
     // The connection card: status and Test in its header, then only the fields the selected provider uses.
@@ -3741,9 +3865,11 @@ module.exports = class DiscordAITranslator {
 
     // Test mode is gone: "Try a sentence" / "Try polishing" in the connection cards replace it. ui.testModeEnabled
     // still loads from old settings and simply shows nothing.
-    createDiagnosticsSection() {
+    createDiagnosticsSection(state = null) {
         const section = this.createSettingsGroup(this.t("diagnosticsSettingsTitle"), "diagnostics");
-        section.appendChild(buildHostHealthCard(this));
+        section.appendChild(buildHostHealthCard(this, {
+            lazy: Boolean(state && state.activeTab !== SETTINGS_TAB_DATA)
+        }));
         section.appendChild(this.createCheckboxRow("ui.diagnosticsEnabled", this.t("diagnosticLogs"), { description: this.t("diagnosticLogsDesc") }));
         section.appendChild(this.createDiagnosticLogsRow());
         section.appendChild(this.createDiagnosticLogsClearRow());
@@ -5415,7 +5541,12 @@ module.exports = class DiscordAITranslator {
                 this.syncSettingControls("translation.appId", task.appId, { includeActive: true });
                 this.syncSettingControls("translation.secretKey", task.secretKey, { includeActive: true });
             }
+            this.syncTaskControlsInOpenPanels(kind);
             this.refreshApiTestViews(kind);
+            this.refreshSavedServiceConfigControls();
+            if (kind === "translation") this.quickPanel?.clearConfigError?.();
+            this.quickPanel?.scheduleUpdate?.();
+            this.quickPanel?.requestStatusUpdate?.();
             this.queueScan();
         }
         if (options.silent !== true) {
@@ -5609,25 +5740,26 @@ module.exports = class DiscordAITranslator {
             // The channel rule saves on change and is scoped to the channel it was built for; re-committing it on
             // close would copy that value onto whichever channel is current now.
             if (path === "ui.currentChannelAutoTranslatePolicy") return;
-            if (control.tagName === "TEXTAREA") {
-                this.setSetting(path, control.value);
-                return;
+            let nextValue;
+            if (control.tagName === "TEXTAREA" || control.tagName === "SELECT") {
+                nextValue = control.value;
             }
-            if (control.tagName === "SELECT") {
-                this.setSetting(path, control.value);
-                return;
+            else if (control.type === "checkbox") {
+                nextValue = Boolean(control.checked);
             }
-            if (control.type === "checkbox") {
-                this.setSetting(path, Boolean(control.checked));
-                return;
-            }
-            if (control.type === "number") {
+            else if (control.type === "number") {
                 const raw = String(control.value ?? "").trim();
                 if (!raw) return;
-                this.setSetting(path, Number(raw));
+                nextValue = Number(raw);
+            }
+            else if (control.type) {
+                nextValue = control.value;
+            }
+            else {
                 return;
             }
-            if (control.type) this.setSetting(path, control.value);
+            if (Object.is(this.getSetting(path), nextValue)) return;
+            this.setSetting(path, nextValue);
         });
     }
 
@@ -5778,68 +5910,8 @@ module.exports = class DiscordAITranslator {
     isSensitiveDiagnosticKey(key) {
         const value = String(key || "").trim();
         const normalized = value.toLowerCase();
-        const safeKeys = new Set([
-            "textcachehits",
-            "autotranslatemessages",
-            "cachehits",
-            "cachemisses",
-            "cachememory",
-            "valuelength",
-            "inputlength",
-            "messagestate",
-            "reasoncode",
-            "queuetype",
-            "targetkind",
-            "identitykind",
-            "identitytargetkind",
-            "identityhash",
-            "texthash",
-            "textlength",
-            "sourcehash",
-            "cachehash",
-            "prefetch",
-            "prefetchinflight",
-            "pendingtargets",
-            "inflight",
-            "inflightitems",
-            "queuelength",
-            "promptlength",
-            "maxtokens",
-            "bodyhash",
-            "finishreason",
-            "partialoutputlength",
-            "invalidreason",
-            "outputlength",
-            "sourcelength",
-            "domlength",
-            "domtextlength",
-            "fullcontentlength",
-            "selectedlength",
-            "sourcekind",
-            "sourcetextkind",
-            "sourceconfidence",
-            "failureclass",
-            "failurelayer",
-            "flowstage",
-            "validationquality",
-            "validationreason",
-            "renderable",
-            "cacheable",
-            "chunkindex",
-            "chunktotal",
-            "chunklength",
-            "attemptname",
-            "attemptindex",
-            "requestcount",
-            "longtextchunk",
-            "longtextsourcelength",
-            "timeoutms",
-            "retryafterms",
-            "requestid",
-            "status"
-        ]);
-        if (safeKeys.has(normalized)) return false;
-        if (["text", "sourcetext", "targettext", "rawtext", "inputtext", "outputtext", "translation", "translated", "translatedtext", "rawtranslation", "appid"].includes(normalized)) return true;
+        if (SAFE_DIAGNOSTIC_KEYS.has(normalized)) return false;
+        if (SENSITIVE_DIAGNOSTIC_KEYS.has(normalized)) return true;
         return /api.?key|authorization|token|password|secret|body|prompt|message|endpoint|url|uri|guild.*id|channel.*id|author.*id|user.*id/i.test(value);
     }
 
@@ -6364,7 +6436,7 @@ module.exports = class DiscordAITranslator {
     }
 
     isOwnPluginElement(element) {
-        return Boolean(element?.closest?.(".dait-settings, .dait-quick-settings-button, .dait-quick-settings-modal-root, .dait-quick-popover, .dait-message-button, .dait-polish-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-menu-button, .dait-input-action-menu, .dait-polish-result-panel, .dait-polish-restore-control, .dait-translation-line, .dait-translation-box"));
+        return Boolean(element?.closest?.(".dait-settings, .dait-quick-settings-button, .dait-quick-settings-modal-root, .dait-quick-popover, .dait-message-button, .dait-polish-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-group, .dait-input-action-menu-button, .dait-input-action-menu, .dait-polish-result-panel, .dait-polish-restore-control, .dait-translation-line, .dait-translation-box"));
     }
 
     startObserver() {
@@ -6631,7 +6703,7 @@ module.exports = class DiscordAITranslator {
     isOwnMutationNode(node) {
         const element = node?.nodeType === 3 ? node.parentElement : node;
         if (this.isOwnPluginElement(element)) return true;
-        return Boolean(element?.matches?.(".dait-settings, .dait-quick-settings-button, .dait-quick-settings-modal-root, .dait-quick-popover, .dait-message-button, .dait-polish-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-menu-button, .dait-input-action-menu, .dait-polish-result-panel, .dait-polish-restore-control, .dait-translation-line, .dait-translation-box"));
+        return Boolean(element?.matches?.(".dait-settings, .dait-quick-settings-button, .dait-quick-settings-modal-root, .dait-quick-popover, .dait-message-button, .dait-polish-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-group, .dait-input-action-menu-button, .dait-input-action-menu, .dait-polish-result-panel, .dait-polish-restore-control, .dait-translation-line, .dait-translation-box"));
     }
 
     isMediaOnlyMutation(mutation) {
@@ -6700,6 +6772,8 @@ module.exports = class DiscordAITranslator {
     isDiscordMediaViewerElement(element) {
         if (!element || element.nodeType !== 1) return false;
         if (this.isOwnPluginElement(element) || this.isInsideDiscordSettingsSurface(element) || this.isInsideInputComposer(element)) return false;
+        // Fast-skip top-level app/chat layers enclosing the chat observer root before running subtree queries.
+        if (this.observerRoot && (element === this.observerRoot || element.contains?.(this.observerRoot))) return false;
         if (this.isDiscordMessageElement(element) || element.closest?.(DISCORD_MESSAGE_NODE_SELECTOR) || element.querySelector?.(DISCORD_MESSAGE_NODE_SELECTOR)) return false;
         if (element.matches?.(DISCORD_MEDIA_VIEWER_SELECTOR)) return true;
         const hasMedia = this.elementHasMediaViewerContent(element);
@@ -6822,7 +6896,7 @@ module.exports = class DiscordAITranslator {
 
     mediaMutationElementHasTextCandidate(element) {
         if (!element || element.nodeType !== 1) return false;
-        const text = String(element.innerText ?? element.textContent ?? "").replace(/\u200b/g, "").trim();
+        const text = String(element.textContent ?? "").replace(/\u200b/g, "").trim();
         if (!text) return false;
         return /[0-9A-Za-z\u00c0-\uffff]/.test(text);
     }
@@ -6975,8 +7049,9 @@ module.exports = class DiscordAITranslator {
         // window regaining focus asks for a scan.
         if (type === "focus" && event?.target && (typeof window === "undefined" || event.target !== window)) return;
         if (this.isDiscordMediaViewerQuiet()) return;
-        if (this.isDiscordMediaViewerViewportEvent(event)) return;
-        if (type === "scroll" && !this.isAutoTranslationScrollEventRelevant(event)) return;
+        const scrollRelevant = type === "scroll" ? this.isAutoTranslationScrollEventRelevant(event) : null;
+        if (this.isDiscordMediaViewerViewportEvent(event, scrollRelevant)) return;
+        if (type === "scroll" && !scrollRelevant) return;
         if (type === "scroll" || type === "resize") {
             if (type === "resize") this.queueInputButtonScan({ delayMs: 120, trailing: true });
             if (!this.isAutoTranslateEnabled()) return;
@@ -6995,12 +7070,12 @@ module.exports = class DiscordAITranslator {
         this.queueScan();
     }
 
-    isDiscordMediaViewerViewportEvent(event = null) {
+    isDiscordMediaViewerViewportEvent(event = null, scrollRelevant = null) {
         const type = String(event?.type || "");
         if (!["focus", "resize", "scroll", "visibilitychange"].includes(type)) return false;
         const target = event?.target?.nodeType === 3 ? event.target.parentElement : event?.target;
         if (target?.nodeType === 1 && (this.isInsideDiscordMediaViewer(target) || this.isMediaOnlyMutationElement(target))) return true;
-        if (type === "scroll" && target?.nodeType === 1 && this.isAutoTranslationScrollEventRelevant(event)) return false;
+        if (type === "scroll" && target?.nodeType === 1 && (scrollRelevant === null ? this.isAutoTranslationScrollEventRelevant(event) : scrollRelevant)) return false;
         if (type === "scroll" && !this.mediaViewerProbeOpen && Date.now() - Number(this.mediaViewerProbeAt || 0) >= DISCORD_MEDIA_VIEWER_PROBE_CACHE_MS) return false;
         return this.isDiscordMediaViewerOpen();
     }
@@ -7305,7 +7380,7 @@ module.exports = class DiscordAITranslator {
         // or flashing). Only heavy auto-translation scanning runs incrementally in idle slices.
         if (this.shouldInjectMessageButtons()) {
             this.injectMessageButtons(context);
-            if (dirtyRoots.length) this.ensureMissingVisibleMessageButtons();
+            if (dirtyRoots.length) this.ensureMissingVisibleMessageButtons(context);
         }
         finishStage("buttonMs");
         const incremental = this.isAutoTranslateEnabled() && this.shouldUseIncrementalMessageScan(context);
@@ -7329,15 +7404,22 @@ module.exports = class DiscordAITranslator {
         });
     }
 
-    ensureMissingVisibleMessageButtons() {
+    ensureMissingVisibleMessageButtons(context = null) {
         if (!this.shouldInjectMessageButtons() || typeof document === "undefined" || typeof document.querySelectorAll !== "function") return 0;
-        let injected = 0;
+        const scanContext = context || this.createScanContext();
+        const checkedNodes = context?.messageNodes?.length ? new Set(context.messageNodes) : null;
         const nodes = [...document.querySelectorAll(DISCORD_MESSAGE_NODE_SELECTOR)];
+        const toInject = [];
         for (const messageNode of nodes) {
             if (!messageNode?.isConnected) continue;
+            if (checkedNodes?.has(messageNode)) continue;
             if (messageNode.querySelector?.(".dait-message-button")) continue;
-            if (!this.isMessageNodeVisibleForScan(messageNode)) continue;
-            if (this.injectMessageButton(messageNode)) injected++;
+            if (!this.isMessageNodeVisibleForScan(messageNode, scanContext)) continue;
+            toInject.push(messageNode);
+        }
+        let injected = 0;
+        for (const messageNode of toInject) {
+            if (this.injectMessageButton(messageNode, scanContext)) injected++;
         }
         return injected;
     }
@@ -7443,6 +7525,10 @@ module.exports = class DiscordAITranslator {
                 remaining: Math.max(0, tasks.length - index)
             }, 16);
             if (!this.isStarted || generation !== this.incrementalMessageScanGeneration) return;
+            if (work?.scanState?.enqueueSortPending) {
+                work.scanState.enqueueSortPending = false;
+                this.sortAutoTranslationQueue();
+            }
             if (index < tasks.length) {
                 this.scheduleIncrementalMessageScanCallback(runSlice);
                 return;
@@ -8500,13 +8586,20 @@ module.exports = class DiscordAITranslator {
 
     getDiscordThemeCandidates(anchor = null) {
         if (typeof document === "undefined") return [];
+        const seen = new Set();
         const candidates = [];
+        const addPreFiltered = node => {
+            if (!node || seen.has(node)) return;
+            seen.add(node);
+            candidates.push(node);
+        };
         const addCandidate = node => {
-            if (!node || candidates.includes(node) || this.isPluginThemeCandidate(node)) return;
+            if (!node || seen.has(node) || this.isPluginThemeCandidate(node)) return;
+            seen.add(node);
             candidates.push(node);
         };
         const globalCandidates = this.getDiscordThemeGlobalCandidates();
-        globalCandidates.selectors.forEach(addCandidate);
+        globalCandidates.selectors.forEach(addPreFiltered);
         let current = anchor && typeof anchor === "object" ? anchor : null;
         let guard = 0;
         while (current && guard < 12) {
@@ -8516,7 +8609,7 @@ module.exports = class DiscordAITranslator {
         }
         addCandidate(document.body);
         addCandidate(document.documentElement);
-        for (const node of globalCandidates.themed) addCandidate(node);
+        for (const node of globalCandidates.themed) addPreFiltered(node);
         return candidates;
     }
 
@@ -8531,8 +8624,9 @@ module.exports = class DiscordAITranslator {
         }
         const selectors = ["#app-mount", "[class*='appMount']", "[class*='app-mount']", "[data-theme]", "[theme]"]
             .map(selector => document.querySelector?.(selector))
-            .filter(Boolean);
-        const themed = [...(document.querySelectorAll?.("[class*='theme-'], [data-theme], [theme]") || [])];
+            .filter(node => node && !this.isPluginThemeCandidate(node));
+        const themed = [...(document.querySelectorAll?.("[class*='theme-'], [data-theme], [theme]") || [])]
+            .filter(node => node && !this.isPluginThemeCandidate(node));
         const snapshot = { at: now, epoch: this.discordThemeCacheEpoch, selectors, themed };
         this.discordThemeGlobalCandidatesCache = snapshot;
         return snapshot;
@@ -8781,7 +8875,7 @@ module.exports = class DiscordAITranslator {
         const currentDialog = dialog || this.findQuickSettingsDialog(root);
         const panel = currentDialog?.querySelector?.(".dait-settings") || [...(currentDialog?.children || [])].find(child => String(child.className || "").split(/\s+/).includes("dait-settings")) || null;
         const fallback = currentDialog?.querySelector?.(".dait-quick-settings-error") || [...(currentDialog?.children || [])].find(child => String(child.className || "").split(/\s+/).includes("dait-quick-settings-error")) || null;
-        return {
+        const meta = {
             rootConnected: this.isNodeConnected(root),
             dialogConnected: this.isNodeConnected(currentDialog),
             panelConnected: this.isNodeConnected(panel),
@@ -8791,14 +8885,17 @@ module.exports = class DiscordAITranslator {
             hasFallback: Boolean(fallback),
             rootChildCount: this.getElementChildCount(root),
             dialogChildCount: this.getElementChildCount(currentDialog),
-            panelSectionCount: this.getQuickSettingsPanelSectionCount(panel),
-            rootRect: this.getElementRectSummary(root),
-            dialogRect: this.getElementRectSummary(currentDialog),
-            panelRect: this.getElementRectSummary(panel),
-            rootStyle: this.getElementStyleSummary(root),
-            dialogStyle: this.getElementStyleSummary(currentDialog),
-            panelStyle: this.getElementStyleSummary(panel)
+            panelSectionCount: this.getQuickSettingsPanelSectionCount(panel)
         };
+        if (this.settings?.ui?.diagnosticsEnabled) {
+            meta.rootRect = this.getElementRectSummary(root);
+            meta.dialogRect = this.getElementRectSummary(currentDialog);
+            meta.panelRect = this.getElementRectSummary(panel);
+            meta.rootStyle = this.getElementStyleSummary(root);
+            meta.dialogStyle = this.getElementStyleSummary(currentDialog);
+            meta.panelStyle = this.getElementStyleSummary(panel);
+        }
+        return meta;
     }
 
     scheduleQuickSettingsModalVerify(root, dialog = null) {
@@ -9169,7 +9266,8 @@ module.exports = class DiscordAITranslator {
         const groupDensity = density || button.parentElement?.dataset?.daitDensity || button.closest?.(".dait-input-action-group")?.dataset?.daitDensity || "roomy";
         const full = button.dataset?.daitFullLabel || button.textContent || "";
         const short = button.dataset?.daitShortLabel || full;
-        button.textContent = groupDensity !== "roomy" ? short : full;
+        const next = groupDensity !== "roomy" ? short : full;
+        if (button.textContent !== next) button.textContent = next;
     }
 
     toggleInputActionMenu(group, textbox = null, container = null, button = null) {
@@ -9211,9 +9309,34 @@ module.exports = class DiscordAITranslator {
         document.body.appendChild(menu);
         this.inputActionMenu = menu;
         button?.setAttribute?.("aria-expanded", "true");
+        const anchorNode = button || group;
+        let repositionRaf = null;
         const reposition = () => {
+            repositionRaf = null;
+            if (!menu.isConnected) return;
+            this.positionInputActionMenu(menu, anchorNode);
+        };
+        const onResize = () => {
+            if (repositionRaf !== null) {
+                try { window.cancelAnimationFrame?.(repositionRaf); }
+                catch {}
+                repositionRaf = null;
+            }
+            if (!menu.isConnected) return;
             this.applyPanelTheme(menu);
-            this.positionInputActionMenu(menu, button || group);
+            reposition();
+        };
+        const onScroll = event => {
+            if (event?.target && event.target !== window && event.target !== document && anchorNode && !event.target.contains?.(anchorNode)) {
+                return;
+            }
+            if (repositionRaf !== null) return;
+            if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+                repositionRaf = window.requestAnimationFrame(reposition);
+            }
+            else {
+                reposition();
+            }
         };
         const outsidePointerDown = event => {
             if (menu.contains?.(event.target) || button?.contains?.(event.target)) return;
@@ -9226,20 +9349,24 @@ module.exports = class DiscordAITranslator {
         };
         this.inputActionMenuCleanup = () => {
             button?.setAttribute?.("aria-expanded", "false");
+            if (repositionRaf !== null && typeof window !== "undefined") {
+                window.cancelAnimationFrame?.(repositionRaf);
+                repositionRaf = null;
+            }
             if (typeof window !== "undefined") {
-                window.removeEventListener?.("resize", reposition, true);
-                window.removeEventListener?.("scroll", reposition, true);
+                window.removeEventListener?.("resize", onResize, { capture: true });
+                window.removeEventListener?.("scroll", onScroll, { capture: true });
             }
             document.removeEventListener?.("pointerdown", outsidePointerDown, true);
             document.removeEventListener?.("keydown", escapeKeydown, true);
         };
         if (typeof window !== "undefined") {
-            window.addEventListener?.("resize", reposition, true);
-            window.addEventListener?.("scroll", reposition, true);
+            window.addEventListener?.("resize", onResize, { capture: true, passive: true });
+            window.addEventListener?.("scroll", onScroll, { capture: true, passive: true });
         }
         document.addEventListener?.("pointerdown", outsidePointerDown, true);
         document.addEventListener?.("keydown", escapeKeydown, true);
-        reposition();
+        onResize();
         return menu;
     }
 
@@ -14148,9 +14275,34 @@ module.exports = class DiscordAITranslator {
 
         document.body.appendChild(panel);
         this.polishResultPanel = panel;
+        const anchorNode = textbox || options.sourceButton;
+        let repositionRaf = null;
         const reposition = () => {
-            this.applyPanelTheme(panel);
+            repositionRaf = null;
+            if (!panel.isConnected) return;
             this.positionPolishResultPanel(panel, textbox, options.sourceButton);
+        };
+        const onResize = () => {
+            if (repositionRaf !== null) {
+                try { window.cancelAnimationFrame?.(repositionRaf); }
+                catch {}
+                repositionRaf = null;
+            }
+            if (!panel.isConnected) return;
+            this.applyPanelTheme(panel);
+            reposition();
+        };
+        const onScroll = event => {
+            if (event?.target && event.target !== window && event.target !== document && anchorNode && !event.target.contains?.(anchorNode)) {
+                return;
+            }
+            if (repositionRaf !== null) return;
+            if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+                repositionRaf = window.requestAnimationFrame(reposition);
+            }
+            else {
+                reposition();
+            }
         };
         const outsidePointerDown = event => {
             if (panel.contains?.(event.target)) return;
@@ -14162,19 +14314,24 @@ module.exports = class DiscordAITranslator {
             this.removePolishResultPanel();
         };
         this.polishResultPanelCleanup = () => {
-            if (typeof window === "undefined") return;
-            window.removeEventListener?.("resize", reposition, true);
-            window.removeEventListener?.("scroll", reposition, true);
+            if (repositionRaf !== null && typeof window !== "undefined") {
+                window.cancelAnimationFrame?.(repositionRaf);
+                repositionRaf = null;
+            }
+            if (typeof window !== "undefined") {
+                window.removeEventListener?.("resize", onResize, { capture: true });
+                window.removeEventListener?.("scroll", onScroll, { capture: true });
+            }
             document.removeEventListener?.("pointerdown", outsidePointerDown, true);
             document.removeEventListener?.("keydown", escapeKeydown, true);
         };
         if (typeof window !== "undefined") {
-            window.addEventListener?.("resize", reposition, true);
-            window.addEventListener?.("scroll", reposition, true);
+            window.addEventListener?.("resize", onResize, { capture: true, passive: true });
+            window.addEventListener?.("scroll", onScroll, { capture: true, passive: true });
         }
         document.addEventListener?.("pointerdown", outsidePointerDown, true);
         document.addEventListener?.("keydown", escapeKeydown, true);
-        reposition();
+        onResize();
     }
 
     focusPolishResultOutput(output) {
@@ -14380,25 +14537,54 @@ module.exports = class DiscordAITranslator {
 
         document.body.appendChild(button);
         this.polishRestoreControl = button;
+        const anchorNode = sourceButton || textbox;
+        let repositionRaf = null;
         const reposition = () => {
-            this.syncDiscordThemeClasses(button, textbox || sourceButton);
+            repositionRaf = null;
+            if (!button.isConnected) return;
             this.positionPolishRestoreControl(button, textbox, sourceButton);
+        };
+        const onResize = () => {
+            if (repositionRaf !== null) {
+                try { window.cancelAnimationFrame?.(repositionRaf); }
+                catch {}
+                repositionRaf = null;
+            }
+            if (!button.isConnected) return;
+            this.syncDiscordThemeClasses(button, textbox || sourceButton);
+            reposition();
+        };
+        const onScroll = event => {
+            if (event?.target && event.target !== window && event.target !== document && anchorNode && !event.target.contains?.(anchorNode)) {
+                return;
+            }
+            if (repositionRaf !== null) return;
+            if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+                repositionRaf = window.requestAnimationFrame(reposition);
+            }
+            else {
+                reposition();
+            }
         };
         const timeout = typeof window !== "undefined" && typeof window.setTimeout === "function"
             ? window.setTimeout(() => this.removePolishRestoreControl(), 8000)
             : null;
         this.polishRestoreControlCleanup = () => {
+            if (repositionRaf !== null && typeof window !== "undefined") {
+                window.cancelAnimationFrame?.(repositionRaf);
+                repositionRaf = null;
+            }
             if (typeof window !== "undefined") {
-                window.removeEventListener?.("resize", reposition, true);
-                window.removeEventListener?.("scroll", reposition, true);
+                window.removeEventListener?.("resize", onResize, { capture: true });
+                window.removeEventListener?.("scroll", onScroll, { capture: true });
                 if (timeout) window.clearTimeout?.(timeout);
             }
         };
         if (typeof window !== "undefined") {
-            window.addEventListener?.("resize", reposition, true);
-            window.addEventListener?.("scroll", reposition, true);
+            window.addEventListener?.("resize", onResize, { capture: true, passive: true });
+            window.addEventListener?.("scroll", onScroll, { capture: true, passive: true });
         }
-        reposition();
+        onResize();
     }
 
     async restorePolishOriginal(textbox, session, sourceButton = null) {
@@ -16302,6 +16488,10 @@ module.exports = class DiscordAITranslator {
 
     getTranslationScrollContainer(anchor) {
         if (typeof document === "undefined") return null;
+        if (this.cachedDrawScroller?.isConnected && anchor && this.cachedDrawScroller.contains?.(anchor)
+            && this.isVerticalScrollContainer(this.cachedDrawScroller)) {
+            return this.cachedDrawScroller;
+        }
         let node = anchor?.parentElement;
         while (node && node.nodeType === 1) {
             if (this.isVerticalScrollContainer(node)) return node;

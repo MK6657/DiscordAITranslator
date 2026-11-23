@@ -55,6 +55,7 @@ class AutoTranslationRequestPipeline {
             this.plugin.cacheOnlyScanDueAt = 0;
             this.plugin.runCacheOnlyAutoTranslationScan(reason);
         }, delay);
+        this.plugin.unrefTimer?.(this.plugin.cacheOnlyScanTimer);
     }
 
     runCacheOnlyAutoTranslationScan(reason = "deferred") {
@@ -62,8 +63,19 @@ class AutoTranslationRequestPipeline {
             this.plugin.cancelAutoTranslationRuntimeWork("auto-disabled");
             return 0;
         }
-        if (this.plugin.isDiscordMediaViewerQuiet() || this.plugin.isDiscordMediaViewerOpen() || this.plugin.isQuickSettingsPanelOpen() || this.plugin.isDiscordSettingsSurfaceOpen()) {
-            this.plugin.scheduleCacheOnlyAutoTranslationScan(reason, Math.max(AUTO_TRANSLATE_VIEWPORT_STABLE_RESCAN_MS, this.plugin.getDiscordMediaViewerQuietRemainingMs()) + 80);
+        if (this.plugin.isQuickSettingsPanelOpen()) {
+            this.plugin.quickSettingsScanDeferred = true;
+            return 0;
+        }
+        if (this.plugin.isDiscordSettingsSurfaceOpen()) {
+            return 0;
+        }
+        const mediaQuietMs = this.plugin.getDiscordMediaViewerQuietRemainingMs();
+        if (mediaQuietMs > 0) {
+            this.plugin.scheduleCacheOnlyAutoTranslationScan(reason, Math.max(AUTO_TRANSLATE_VIEWPORT_STABLE_RESCAN_MS, mediaQuietMs) + 80);
+            return 0;
+        }
+        if (this.plugin.isDiscordMediaViewerOpen()) {
             return 0;
         }
         const stabilityDelay = Math.max(
@@ -116,7 +128,7 @@ class AutoTranslationRequestPipeline {
             this.plugin.scheduleAutoTranslationRetryScan(this.plugin.getAutoTranslationRenderPauseRemainingMs(now), { minDelayMs: AUTO_TRANSLATE_VIEWPORT_STABLE_RESCAN_MS });
         }
         const providerFailure = this.plugin.getAutoTranslationProviderFailure(requestOptions);
-        if (providerFailure && !this.plugin.isAutoTranslationFailureExpired(providerFailure, now)) {
+        if (providerFailure && !this.plugin.isAutoTranslationFailureExpired(providerFailure, now) && !providerFailure.terminal) {
             this.plugin.scheduleAutoTranslationRetryScan(this.plugin.getAutoTranslationFailureRemainingMs(providerFailure, now));
         }
         const providerCoolingDown = Boolean(providerFailure && !this.plugin.isAutoTranslationFailureExpired(providerFailure, now));
@@ -199,10 +211,19 @@ class AutoTranslationRequestPipeline {
 
     processAutoTranslationScanCandidates(work, candidates = []) {
         if (!work?.scanState || !work?.scanStats) return 0;
-        for (const candidate of candidates) {
-            work.scanStats.seen++;
-            const decision = this.plugin.evaluateAutoTranslationCandidate(candidate, work.scanState);
-            this.plugin.applyAutoTranslationDecision(candidate, decision, work.scanStats);
+        if (candidates.length) {
+            this.plugin.pruneAutoTranslationActiveState();
+            work.scanState.deferEnqueueSort = true;
+        }
+        try {
+            for (const candidate of candidates) {
+                work.scanStats.seen++;
+                const decision = this.plugin.evaluateAutoTranslationCandidate(candidate, work.scanState);
+                this.plugin.applyAutoTranslationDecision(candidate, decision, work.scanStats);
+            }
+        }
+        finally {
+            work.scanState.deferEnqueueSort = false;
         }
         return candidates.length;
     }
@@ -210,6 +231,10 @@ class AutoTranslationRequestPipeline {
     finishAutoTranslationScanWork(work) {
         if (!work?.scanState || !work?.scanStats) return;
         const { scanState, scanStats, context, requestOptions } = work;
+        if (scanState.enqueueSortPending) {
+            scanState.enqueueSortPending = false;
+            this.plugin.sortAutoTranslationQueue();
+        }
         const { apiWorkBlocked, blockReason, localProviderHealthBlocked } = scanState;
         if (scanStats.eligible || scanStats.cacheHits || scanStats.textCacheHits || scanStats.enqueued || scanStats.blocked || scanStats.failures) {
             this.plugin.logDiagnostic("auto.scan", apiWorkBlocked ? "blocked" : "ok", {
@@ -304,7 +329,6 @@ class AutoTranslationRequestPipeline {
         }
 
         const cacheKey = this.plugin.getTranslationCacheKey(text, targetRequestOptions);
-        const cacheAliases = this.plugin.getTranslationCacheAliases(text, targetRequestOptions);
         const lineCacheAliases = this.plugin.getTranslationLineCacheAliases(text, targetRequestOptions);
         const canRenderCacheHit = targetVisible && !scanState.renderPaused && !scanState.layoutUnstable;
         if (this.plugin.hasCurrentTranslationLine(target.content, cacheKey, this.plugin.getAutoTranslationTargetDomText(target), lineCacheAliases, targetRequestOptions, text)) {
@@ -331,6 +355,7 @@ class AutoTranslationRequestPipeline {
             };
         }
 
+        const cacheAliases = this.plugin.getTranslationCacheAliases(text, targetRequestOptions);
         // Discord rebuilds message elements while scrolling, dropping their translation line.
         // A cached translation is always drawn again; a recent render only blocks new requests below.
         if (this.plugin.hasTranslationCacheCandidate(cacheKey, cacheAliases)) {
@@ -651,9 +676,11 @@ class AutoTranslationRequestPipeline {
             }
             this.plugin.addAutoTranslationPendingTarget(decision.cacheKey, item);
             this.plugin.setAutoTranslationDiagnosticState(item, this.plugin.getAutoTranslationQueuedDiagnosticState(item), DIAGNOSTIC_REASON_CODES.ENQUEUED);
-            if (this.plugin.enqueueAutoTranslationItem(item)) {
+            const deferEnqueueSort = Boolean(decision.scanState?.deferEnqueueSort);
+            if (this.plugin.enqueueAutoTranslationItem(item, deferEnqueueSort ? { deferSort: true, skipPrune: true } : undefined)) {
                 decision.scanState.queued = Number(decision.scanState.queued || 0) + 1;
                 scanStats.enqueued = Number(scanStats.enqueued || 0) + 1;
+                if (deferEnqueueSort) decision.scanState.enqueueSortPending = true;
             }
             return;
         }
@@ -746,7 +773,7 @@ class AutoTranslationRequestPipeline {
     }
 
     async runAutoTranslationFallbackItems(pending, taskOptions = {}) {
-        const queue = this.plugin.takeAutoTranslationFallbackQueue(pending);
+        const queue = this.plugin.takeAutoTranslationFallbackQueue(pending, taskOptions);
         if (queue.length) this.plugin.logDiagnostic("auto.fallback", "start", { count: queue.length, pending: pending.size });
         for (const item of queue) {
             if (!item) continue;
@@ -755,9 +782,10 @@ class AutoTranslationRequestPipeline {
                 continue;
             }
             if (this.plugin.isAutoTranslationProviderCoolingDown(item.requestOptions)) {
-                this.plugin.requeueRemainingAutoTranslationFallbackItems(pending);
+                this.plugin.requeueRemainingAutoTranslationFallbackItems(pending, taskOptions);
                 return;
             }
+            taskOptions?.heartbeat?.(pending);
 
             let translated = "";
             try {
@@ -788,10 +816,11 @@ class AutoTranslationRequestPipeline {
                     DIAGNOSTIC_REASON_CODES.FAILURE,
                     { type: this.plugin.getAutoTranslationFailureType(error) }
                 );
+                taskOptions?.releaseBatchItem?.(item);
                 this.plugin.markAutoTranslationFailureSafely(item, error);
                 pending.delete(item);
                 if (this.plugin.isAutoTranslationProviderCoolingDown(item.requestOptions)) {
-                    this.plugin.requeueRemainingAutoTranslationFallbackItems(pending);
+                    this.plugin.requeueRemainingAutoTranslationFallbackItems(pending, taskOptions);
                     return;
                 }
                 continue;
@@ -811,18 +840,19 @@ class AutoTranslationRequestPipeline {
         }
     }
 
-    requeueRemainingAutoTranslationFallbackItems(pending) {
+    requeueRemainingAutoTranslationFallbackItems(pending, taskOptions = {}) {
         pending.forEach(item => {
             if (!this.plugin.isAutoTranslationWorkCurrent(item)) {
                 pending.delete(item);
                 return;
             }
+            taskOptions?.releaseBatchItem?.(item);
             this.plugin.requeueAutoTranslationItem(item, { allowActiveRequeue: true });
             pending.delete(item);
         });
     }
 
-    takeAutoTranslationFallbackQueue(pending) {
+    takeAutoTranslationFallbackQueue(pending, taskOptions = {}) {
         const queue = [];
         for (const item of [...pending]) {
             if (!this.plugin.isAutoTranslationWorkCurrent(item)) {
@@ -841,6 +871,7 @@ class AutoTranslationRequestPipeline {
                 DIAGNOSTIC_REASON_CODES.REQUEUED,
                 { reason: "fallback-limit" }
             );
+            taskOptions?.releaseBatchItem?.(item);
             this.plugin.requeueAutoTranslationItem(item, { delayMs: AUTO_TRANSLATE_FALLBACK_REQUEUE_DELAY_MS, allowActiveRequeue: true });
             pending.delete(item);
         }
@@ -2742,11 +2773,13 @@ class AutoTranslationRequestPipeline {
         if (!this.plugin.autoTranslationPrecheckSkips?.set) this.plugin.autoTranslationPrecheckSkips = new Map();
         const key = this.plugin.getAutoTranslationPrecheckSkipCacheKey(text, targetLanguage, requestOptions);
         if (!key) return;
+        const now = Date.now();
+        this.plugin.autoTranslationPrecheckSkips.delete(key);
         this.plugin.autoTranslationPrecheckSkips.set(key, {
             reason,
-            expiresAt: Date.now() + AUTO_TRANSLATE_PRECHECK_SKIP_TTL_MS
+            expiresAt: now + AUTO_TRANSLATE_PRECHECK_SKIP_TTL_MS
         });
-        this.plugin.pruneAutoTranslationPrecheckSkipCache();
+        this.plugin.pruneAutoTranslationPrecheckSkipCache(now);
     }
 
     getAutoTranslationPrecheckSkipCacheKey(text, targetLanguage, requestOptions = this.plugin.getAutoTranslationOptions()) {
@@ -2760,13 +2793,16 @@ class AutoTranslationRequestPipeline {
     }
 
     pruneAutoTranslationPrecheckSkipCache(now = Date.now()) {
-        if (!this.plugin.autoTranslationPrecheckSkips?.size) return;
-        for (const [key, entry] of this.plugin.autoTranslationPrecheckSkips) {
-            if (Number(entry?.expiresAt || 0) <= now) this.plugin.autoTranslationPrecheckSkips.delete(key);
+        const map = this.plugin.autoTranslationPrecheckSkips;
+        if (!map?.size) return;
+        // Fixed TTL + delete-before-set guarantees oldest-expiry entries are first.
+        for (const [key, entry] of map) {
+            if (Number(entry?.expiresAt || 0) <= now) map.delete(key);
+            else break;
         }
-        while (this.plugin.autoTranslationPrecheckSkips.size > AUTO_TRANSLATE_PRECHECK_SKIP_MAX) {
-            const oldestKey = this.plugin.autoTranslationPrecheckSkips.keys().next().value;
-            this.plugin.autoTranslationPrecheckSkips.delete(oldestKey);
+        while (map.size > AUTO_TRANSLATE_PRECHECK_SKIP_MAX) {
+            const oldestKey = map.keys().next().value;
+            map.delete(oldestKey);
         }
     }
 

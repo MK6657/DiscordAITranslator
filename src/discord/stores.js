@@ -33,12 +33,20 @@ class DiscordStores {
     getMessageStore() {
         const named = this.getStore("MessageStore");
         if (named && (typeof named.getMessage === "function" || typeof named.getMessages === "function")) return named;
+        const fallbackKey = "__MessageStoreByKeys";
+        const cached = this.stores.get(fallbackKey);
+        if (cached?.store) return cached.store;
+        const now = Date.now();
+        if (cached && now < cached.retryAt) return null;
+        let found = null;
         try {
-            return globalThis.BdApi?.Webpack?.getByKeys?.("getMessage", "getMessages") || null;
+            found = globalThis.BdApi?.Webpack?.getByKeys?.("getMessage", "getMessages") || null;
         }
         catch {
-            return null;
+            found = null;
         }
+        this.stores.set(fallbackKey, found ? { store: found } : { store: null, retryAt: now + NEGATIVE_CACHE_MS });
+        return found;
     }
 
     getChannelStore() {
