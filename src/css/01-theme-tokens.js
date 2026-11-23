@@ -40,6 +40,7 @@ module.exports = `
 .dait-quick-popover,
 .dait-polish-result-panel,
 .dait-input-action-menu,
+.dait-polish-preset-menu,
 .dait-dialog {
     /* One type scale for every window: body 15/1.55 for everything that is not a heading; small 13 only for the
        version chip, the search box's hint and status badges next to a title. Weights 400/500/600. */
@@ -89,7 +90,7 @@ module.exports = `
 
 /* Dark Courtyard palette (墨瓦青砖 — glazed jade, imperial gold, cinnabar on deep ink-slate). */
 [data-dait-panel-theme="dark"],
-:is(.dait-settings, .dait-quick-settings-modal-root, .dait-quick-popover, .dait-polish-result-panel, .dait-input-action-menu, .dait-dialog):not([data-dait-panel-theme]) {
+:is(.dait-settings, .dait-quick-settings-modal-root, .dait-quick-popover, .dait-polish-result-panel, .dait-input-action-menu, .dait-polish-preset-menu, .dait-dialog):not([data-dait-panel-theme]) {
     --dait-bg: #1f2426;
     --dait-rail: #181c1e;
     --dait-surface: #262c2f;
@@ -164,6 +165,7 @@ module.exports = `
 .dait-translation-box *,
 .dait-translation-line,
 .dait-polish-button,
+.dait-polish-preset-button,
 .dait-public-bilingual-button,
 .dait-quick-settings-button,
 .dait-quick-settings-modal-root *,
@@ -173,6 +175,8 @@ module.exports = `
 .dait-message-button,
 .dait-input-action-menu,
 .dait-input-action-menu *,
+.dait-polish-preset-menu,
+.dait-polish-preset-menu *,
 .dait-dialog,
 .dait-dialog * {
     box-sizing: border-box;
@@ -277,6 +281,7 @@ module.exports = `
 .dait-quick-settings-modal-root :focus-visible,
 .dait-polish-result-panel :focus-visible,
 .dait-input-action-menu :focus-visible,
+.dait-polish-preset-menu :focus-visible,
 .dait-dialog :focus-visible {
     outline: 2px solid var(--dait-focus);
     outline-offset: 2px;
@@ -290,7 +295,9 @@ module.exports = `
     .dait-polish-result-panel,
     .dait-polish-result-panel *,
     .dait-input-action-menu,
-    .dait-input-action-menu * {
+    .dait-input-action-menu *,
+    .dait-polish-preset-menu,
+    .dait-polish-preset-menu * {
         animation-duration: 0.01ms !important;
         animation-iteration-count: 1 !important;
         scroll-behavior: auto !important;

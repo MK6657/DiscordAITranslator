@@ -20,6 +20,7 @@ const PANEL_THEME_ROOT_SELECTOR = [
     ".dait-quick-popover",
     ".dait-polish-result-panel",
     ".dait-input-action-menu",
+    ".dait-polish-preset-menu",
     ".dait-dialog"
 ].join(", ");
 // Discord's theme classes and what each one means for the plugin's windows.
@@ -268,7 +269,8 @@ class PanelTheme {
             this.plugin.quickSettingsModalRoot,
             this.plugin.quickPanel?.root,
             this.plugin.polishResultPanel,
-            this.plugin.inputActionMenu
+            this.plugin.inputActionMenu,
+            this.plugin.polishPresetMenu
         ].forEach(node => { if (node) roots.add(node); });
         roots.forEach(node => {
             if (this.isDialog(node)) this.syncDialog(node);

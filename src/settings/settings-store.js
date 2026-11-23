@@ -144,6 +144,7 @@ class SettingsStore {
         this.plugin.saveSettings();
         this.plugin.syncSettingControls(`${kind}.prompt`, template.prompt);
         if (kind === "translation") this.plugin.invalidateAutoTranslationQueue();
+        if (kind === "polish") this.plugin.syncPolishPresetControls?.();
         this.plugin.quickPanel?.scheduleUpdate?.();
         this.plugin.showToast(this.plugin.t("promptApplied", { name: this.getTemplateDisplayName(template), code: template.serial }), "success");
     }
@@ -161,6 +162,7 @@ class SettingsStore {
         templates.push(template);
         this.plugin.settings[kind].activePromptTemplate = template.id;
         this.plugin.saveSettings();
+        if (kind === "polish") this.plugin.syncPolishPresetControls?.();
         this.plugin.quickPanel?.scheduleUpdate?.();
         this.plugin.showToast(this.plugin.t("promptSaved", { name, code: template.serial }), "success");
     }
@@ -173,6 +175,7 @@ class SettingsStore {
         this.plugin.settings[kind].activePromptTemplate = template.id;
         this.plugin.saveSettings();
         if (kind === "translation") this.plugin.invalidateAutoTranslationQueue();
+        if (kind === "polish") this.plugin.syncPolishPresetControls?.();
         this.plugin.quickPanel?.scheduleUpdate?.();
         this.plugin.showToast(this.plugin.t("promptUpdated", { name: this.getTemplateDisplayName(template), code: template.serial }), "success");
     }
@@ -210,6 +213,7 @@ class SettingsStore {
         }
         this.plugin.saveSettings();
         if (kind === "translation" && wasActive) this.plugin.invalidateAutoTranslationQueue();
+        if (kind === "polish") this.plugin.syncPolishPresetControls?.();
         this.plugin.quickPanel?.scheduleUpdate?.();
         this.plugin.showToast(this.plugin.t("promptDeleted"), "success");
     }
@@ -261,6 +265,7 @@ class SettingsStore {
         missing.forEach(template => templates.push(this.plugin.clone(template)));
         this.plugin.ensurePromptTemplateSerials(kind);
         if (options.save !== false) this.plugin.saveSettings();
+        if (kind === "polish") this.plugin.syncPolishPresetControls?.();
         this.plugin.quickPanel?.scheduleUpdate?.();
         if (options.silent !== true) {
             this.plugin.showToast(this.plugin.t("promptPresetsRestored", { count: missing.length }), "success");
@@ -1045,11 +1050,15 @@ class SettingsStore {
             document.querySelectorAll?.(".dait-message-button")?.forEach(node => node.remove());
         }
         if (typeof document !== "undefined" && path === "ui.injectInputButton" && value === false) {
-            document.querySelectorAll?.(".dait-polish-button")?.forEach(node => {
+            this.plugin.removePolishPresetMenu?.();
+            document.querySelectorAll?.(".dait-polish-button, .dait-polish-preset-button")?.forEach(node => {
                 const group = node.closest?.(".dait-input-action-group");
                 node.remove();
                 this.plugin.syncInputActionGroupState(group);
             });
+        }
+        if (path === "polish.prompt" || path === "polish.activePromptTemplate" || path === "ui.polishHotkey") {
+            this.plugin.syncPolishPresetControls?.();
         }
         if (typeof document !== "undefined" && path === "ui.publicBilingualInputButton" && value === false) {
             document.querySelectorAll?.(".dait-public-bilingual-button")?.forEach(node => {
@@ -1223,7 +1232,10 @@ class SettingsStore {
                 if (inputGroup) this.plugin.syncInputActionGroupState(group);
             });
             if (turnedOff("injectMessageButtons")) removeNodes(".dait-message-button", false);
-            if (turnedOff("injectInputButton")) removeNodes(".dait-polish-button", true);
+            if (turnedOff("injectInputButton")) {
+                this.plugin.removePolishPresetMenu?.();
+                removeNodes(".dait-polish-button, .dait-polish-preset-button", true);
+            }
             if (turnedOff("publicBilingualInputButton")) removeNodes(".dait-public-bilingual-button", true);
             if (turnedOff("showQuickSettingsRailButton")) removeNodes(".dait-quick-settings-rail", false);
             if (turnedOff("showQuickSettingsPanelButton")) removeNodes(".dait-quick-settings-panel", false);
@@ -1238,6 +1250,7 @@ class SettingsStore {
         if (changed("hideOriginalAfterTranslation")) this.plugin.syncAllTranslationSourceVisibility();
         if (TRANSLATION_LINE_DISPLAY_KEYS.some(changed)) this.plugin.syncAllTranslationDisplaySettings();
         if (changed("panelTheme")) this.plugin.refreshPanelThemes();
+        this.plugin.syncPolishPresetControls?.();
         this.plugin.queueScan();
     }
 

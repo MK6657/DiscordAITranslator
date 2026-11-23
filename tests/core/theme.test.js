@@ -809,8 +809,8 @@ test("the settings snapshot and the diagnostics export include the window theme"
 // --- The stylesheet ---
 
 // Rules that style the plugin's own windows (not the chat lines and the buttons that live inside Discord's UI).
-const WINDOW_PARTS = /\.dait-(settings|row-|segmented|small-button|order-|provider-|google-settings|diagnostic-|host-health|setup-|service-|status-mark|api-|model-|try-|prompt-|language-controls|hotkey-|cache-actions|history-backfill-actions|visually-hidden|quick-settings-(modal-root|backdrop|dialog|body|error|done)|quick-popover|qp-|polish-result-|input-action-menu(?!-button)|dialog)|\[data-dait-panel-theme/;
-const DISCORD_UI_PARTS = /\.dait-(quick-settings-button|quick-settings-panel|launcher-status|polish-button|public-bilingual-button|polish-restore|input-action-menu-button|message-button|translation-|input-action-group)/;
+const WINDOW_PARTS = /\.dait-(settings|row-|segmented|small-button|order-|provider-|google-settings|diagnostic-|host-health|setup-|service-|status-mark|api-|model-|try-|prompt-|language-controls|hotkey-|cache-actions|history-backfill-actions|visually-hidden|quick-settings-(modal-root|backdrop|dialog|body|error|done)|quick-popover|qp-|polish-result-|input-action-menu(?!-button)|polish-preset-(?!button|caret)|dialog)|\[data-dait-panel-theme/;
+const DISCORD_UI_PARTS = /\.dait-(quick-settings-button|quick-settings-panel|launcher-status|polish-button|polish-preset-(button|caret)|public-bilingual-button|polish-restore|input-action-menu-button|message-button|translation-|input-action-group)/;
 
 test("no plugin-window rule reads Discord's colour variables (--input-background, --background-*, --text-*...)", () => {
     const windowRules = cssRules().filter(rule => {
@@ -821,8 +821,8 @@ test("no plugin-window rule reads Discord's colour variables (--input-background
     const offending = windowRules.filter(rule => /var\(--(input-background|background-|text-|header-|interactive-|brand-|button-|status-|border-|focus-|elevation-|white-|scrollbar-)/.test(rule.body));
     assert.deepEqual(offending.map(rule => rule.selector), []);
     // And the old per-theme copies for these windows are gone.
-    assert.equal(/\.theme-light[ .]\.?dait-(settings|quick-settings-modal-root|quick-popover|polish-result-panel|input-action-menu)\b/.test(PLUGIN_CSS), false);
-    assert.equal(/dait-(settings|quick-popover|input-action-menu|polish-result-panel|quick-settings-modal-root)\[data-dait-discord-theme/.test(PLUGIN_CSS), false);
+    assert.equal(/\.theme-light[ .]\.?dait-(settings|quick-settings-modal-root|quick-popover|polish-result-panel|input-action-menu|polish-preset-menu)\b/.test(PLUGIN_CSS), false);
+    assert.equal(/dait-(settings|quick-popover|input-action-menu|polish-preset-menu|polish-result-panel|quick-settings-modal-root)\[data-dait-discord-theme/.test(PLUGIN_CSS), false);
 });
 
 test("the two palettes: every text colour on every surface reaches 4.5:1, body text 7:1", () => {
@@ -958,7 +958,7 @@ test("controls and single-line text use the body line height too", () => {
     const rule = selector => declarations(cssRules().find(item => item.selector === selector && !item.context)?.body || "");
     for (const selector of [".dait-small-button", ".dait-segmented-option", ".dait-settings-tab", ".dait-settings .dait-api-status",
         ".dait-status-mark", ".dait-diagnostic-summary-title", ".dait-qp-button", ".dait-qp-select", ".dait-qp-segment",
-        ".dait-polish-result-action", ".dait-input-action-menu-item", ".dait-quick-settings-done", ".dait-prompt-preview-label"]) {
+        ".dait-polish-result-action", ".dait-input-action-menu-item", ".dait-polish-preset-item", ".dait-polish-preset-manage", ".dait-quick-settings-done", ".dait-prompt-preview-label"]) {
         assert.equal(rule(selector).get("line-height"), "var(--dait-line)", selector);
     }
     const controls = cssRules().find(item => item.selector.startsWith(".dait-settings :where(input:not([type=\"checkbox\"]):not([type=\"radio\"]), select, textarea)") && !item.context);

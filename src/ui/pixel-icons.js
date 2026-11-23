@@ -21,6 +21,11 @@ const PIXEL_ICON_RECTS = Object.freeze({
         [2, 8, 2, 2], [4, 10, 2, 2], [6, 12, 2, 2],
         [8, 10, 2, 2], [10, 8, 2, 2], [12, 6, 2, 2], [13, 4, 2, 2]
     ],
+    // 16x16 stepped pixel downward chevron
+    chevronDown: [
+        [2, 5, 2, 2], [4, 7, 2, 2], [6, 9, 4, 2],
+        [10, 7, 2, 2], [12, 5, 2, 2]
+    ],
     // 16x16 pixel shield / host health
     shield: [
         [3, 2, 10, 2], [2, 4, 2, 5], [12, 4, 2, 5],

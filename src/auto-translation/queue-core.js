@@ -366,7 +366,7 @@ class AutoTranslationQueueCore {
         if (!element || element.nodeType !== 1) return true;
         if (this.plugin.isInsideDiscordSettingsSurface(element)) return false;
         if (this.plugin.isInsideDiscordMediaViewer(element) || this.plugin.isMediaOnlyMutationElement(element)) return false;
-        if (element.closest?.(".dait-settings, .dait-quick-settings-modal-root, .dait-quick-popover, .dait-polish-result-panel, .dait-polish-restore-control, .dait-translation-line, .dait-translation-box")) return false;
+        if (element.closest?.(".dait-settings, .dait-quick-settings-modal-root, .dait-quick-popover, .dait-polish-result-panel, .dait-polish-restore-control, .dait-input-action-menu, .dait-polish-preset-menu, .dait-translation-line, .dait-translation-box")) return false;
         if (element.closest?.("[class*='channelTextArea'], [role='textbox']")) return false;
         const now = Date.now();
         const cached = this.scrollRelevanceCache?.get?.(element);

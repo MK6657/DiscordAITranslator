@@ -1177,7 +1177,7 @@ test("composer buttons and the polish hotkey follow the feature switches", t => 
     const buttons = () => groups().flatMap(group => group.children.map(child => child.className.split(" ")[0]));
 
     plugin.injectInputButtons();
-    assert.deepEqual(buttons().filter(name => name !== "dait-input-action-menu-button"), ["dait-polish-button", "dait-public-bilingual-button"]);
+    assert.deepEqual(buttons().filter(name => name !== "dait-input-action-menu-button"), ["dait-polish-button", "dait-polish-preset-button", "dait-public-bilingual-button"]);
 
     plugin.setSetting("polish.enabled", false);
     assert.deepEqual(buttons().filter(name => name !== "dait-input-action-menu-button"), ["dait-public-bilingual-button"]);
@@ -1191,7 +1191,7 @@ test("composer buttons and the polish hotkey follow the feature switches", t => 
 
     plugin.setSetting("polish.enabled", true);
     plugin.setSetting("translation.enabled", true);
-    assert.deepEqual(buttons().filter(name => name !== "dait-input-action-menu-button"), ["dait-polish-button", "dait-public-bilingual-button"]);
+    assert.deepEqual(buttons().filter(name => name !== "dait-input-action-menu-button"), ["dait-polish-button", "dait-polish-preset-button", "dait-public-bilingual-button"]);
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -1346,4 +1346,103 @@ test("the hotkey help text asks for Ctrl, Alt or Win instead of recommending Shi
     assert.match(I18N.en.polishHotkeyDesc, /Ctrl, Alt,? or Win/);
     assert.doesNotMatch(I18N["zh-CN"].polishHotkeyDesc, /Ctrl、Alt 或 Shift/);
     assert.match(I18N["zh-CN"].polishHotkeyDesc, /Ctrl、Alt 或 Win/);
+});
+
+// ---------------------------------------------------------------------------------------------
+// Polish tone split button & quick preset picker popover
+// ---------------------------------------------------------------------------------------------
+
+test("composer polish split button opens tone picker, switches preset without stealing focus, and syncs button titles", t => {
+    const docListeners = new Map();
+    const browser = useComposerBrowser(t, {
+        document: {
+            addEventListener(type, handler) {
+                if (!docListeners.has(type)) docListeners.set(type, []);
+                docListeners.get(type).push(handler);
+            },
+            removeEventListener(type, handler) {
+                docListeners.set(type, (docListeners.get(type) || []).filter(item => item !== handler));
+            }
+        }
+    });
+    browser.document.body.isDocumentRoot = true;
+    const plugin = new Plugin();
+    plugin.isStarted = true;
+    plugin.saveSettings = () => {};
+    plugin.queueScan = () => {};
+    plugin.showToast = () => {};
+    const editor = createSlateEditor(["draft"]);
+    browser.document.activeElement = editor;
+    const container = editor.closest("form");
+    browser.document.querySelectorAll = selector => {
+        const matches = [...container.querySelectorAll(selector), ...browser.document.body.querySelectorAll(selector)];
+        return [...new Set(matches)];
+    };
+    plugin.getInputButtonContainer = () => container;
+    plugin.syncInputActionButtonThemes = () => {};
+    plugin.syncDiscordThemeClasses = () => "";
+
+    plugin.injectInputButtons();
+    const polishButton = container.querySelector(".dait-polish-button");
+    const presetButton = container.querySelector(".dait-polish-preset-button");
+    assert.ok(polishButton, "polish button mounted");
+    assert.ok(presetButton, "split preset toggle button mounted");
+    assert.equal(polishButton.getAttribute("data-dait-split"), "true");
+    assert.equal(presetButton.getAttribute("aria-expanded"), "false");
+    assert.match(polishButton.title, /001/);
+
+    // Clicking the split caret does not steal editor focus and mounts the picker on document.body.
+    let pointerDefaultPrevented = false;
+    presetButton.dispatchEvent({ type: "pointerdown", preventDefault() { pointerDefaultPrevented = true; }, stopPropagation() {} });
+    assert.equal(pointerDefaultPrevented, true);
+    presetButton.dispatchEvent({ type: "click", preventDefault() {}, stopPropagation() {} });
+
+    const menu = browser.document.body.querySelector(".dait-polish-preset-menu");
+    assert.ok(menu, "preset picker mounted on document.body");
+    assert.equal(plugin.polishPresetMenu, menu);
+    assert.equal(presetButton.getAttribute("aria-expanded"), "true");
+    assert.ok(menu.dataset.daitPanelTheme, "panel theme applied to picker");
+
+    const items = menu.querySelectorAll(".dait-polish-preset-item");
+    assert.equal(items.length, plugin.getPromptTemplates("polish").length);
+    assert.equal(items[0].getAttribute("aria-checked"), "true");
+    assert.equal(items[1].getAttribute("aria-checked"), "false");
+
+    // Picking a preset applies it, closes the picker, and updates both button tooltips.
+    let menuPointerPrevented = false;
+    menu.dispatchEvent({ type: "pointerdown", preventDefault() { menuPointerPrevented = true; }, stopPropagation() {} });
+    assert.equal(menuPointerPrevented, true, "interacting with menu preserves composer focus");
+    items[1].dispatchEvent({ type: "click", preventDefault() {}, stopPropagation() {} });
+
+    assert.equal(plugin.settings.polish.activePromptTemplate, items[1].dataset.daitTemplateId);
+    assert.equal(plugin.polishPresetMenu, null);
+    assert.equal(presetButton.getAttribute("aria-expanded"), "false");
+    assert.match(polishButton.title, /002/);
+    assert.match(presetButton.title, /002/);
+    assert.equal(browser.document.activeElement, editor, "editor keeps focus after switching tone");
+
+    // Custom prompt edit marks picker as custom until user selects a preset again.
+    plugin.setSetting("polish.prompt", "Custom prompt text for tone test");
+    polishButton.dispatchEvent({ type: "contextmenu", preventDefault() {}, stopPropagation() {} });
+    const customMenu = browser.document.body.querySelector(".dait-polish-preset-menu");
+    assert.ok(customMenu, "right-clicking polish button also opens tone picker");
+    assert.ok(customMenu.querySelector(".dait-polish-preset-custom-note"), "shows custom prompt notice");
+    assert.equal(customMenu.querySelectorAll(".dait-polish-preset-item").every(node => node.getAttribute("aria-checked") === "false"), true);
+
+    // Escape during IME composition does not close; normal Escape closes.
+    const keydownHandlers = () => (docListeners.get("keydown") || []).slice();
+    keydownHandlers().forEach(handler => handler({ key: "Escape", isComposing: true, preventDefault() {}, stopPropagation() {} }));
+    assert.equal(plugin.polishPresetMenu, customMenu, "IME Escape keeps menu open");
+    keydownHandlers().forEach(handler => handler({ key: "Escape", isComposing: false, preventDefault() {}, stopPropagation() {} }));
+    assert.equal(plugin.polishPresetMenu, null, "normal Escape closes menu");
+    assert.equal((docListeners.get("keydown") || []).length, 0, "closing cleans up document keydown listener");
+
+    // Disabling ui.injectInputButton removes both split parts and closes any open menu.
+    presetButton.dispatchEvent({ type: "click", preventDefault() {}, stopPropagation() {} });
+    assert.ok(plugin.polishPresetMenu);
+    plugin.setSetting("ui.injectInputButton", false);
+    assert.equal(plugin.polishPresetMenu, null);
+    assert.equal(container.querySelector(".dait-polish-button"), null);
+    assert.equal(container.querySelector(".dait-polish-preset-button"), null);
+    assert.equal((docListeners.get("pointerdown") || []).length, 0, "disabling cleans up document pointerdown listener");
 });

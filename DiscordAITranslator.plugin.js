@@ -323,6 +323,14 @@ var require_pixel_icons = __commonJS({
         [12, 6, 2, 2],
         [13, 4, 2, 2]
       ],
+      // 16x16 stepped pixel downward chevron
+      chevronDown: [
+        [2, 5, 2, 2],
+        [4, 7, 2, 2],
+        [6, 9, 4, 2],
+        [10, 7, 2, 2],
+        [12, 5, 2, 2]
+      ],
       // 16x16 pixel shield / host health
       shield: [
         [3, 2, 10, 2],
@@ -467,6 +475,7 @@ var require_theme_tokens = __commonJS({
 .dait-quick-popover,
 .dait-polish-result-panel,
 .dait-input-action-menu,
+.dait-polish-preset-menu,
 .dait-dialog {
     /* One type scale for every window: body 15/1.55 for everything that is not a heading; small 13 only for the
        version chip, the search box's hint and status badges next to a title. Weights 400/500/600. */
@@ -516,7 +525,7 @@ var require_theme_tokens = __commonJS({
 
 /* Dark Courtyard palette (墨瓦青砖 — glazed jade, imperial gold, cinnabar on deep ink-slate). */
 [data-dait-panel-theme="dark"],
-:is(.dait-settings, .dait-quick-settings-modal-root, .dait-quick-popover, .dait-polish-result-panel, .dait-input-action-menu, .dait-dialog):not([data-dait-panel-theme]) {
+:is(.dait-settings, .dait-quick-settings-modal-root, .dait-quick-popover, .dait-polish-result-panel, .dait-input-action-menu, .dait-polish-preset-menu, .dait-dialog):not([data-dait-panel-theme]) {
     --dait-bg: #1f2426;
     --dait-rail: #181c1e;
     --dait-surface: #262c2f;
@@ -591,6 +600,7 @@ var require_theme_tokens = __commonJS({
 .dait-translation-box *,
 .dait-translation-line,
 .dait-polish-button,
+.dait-polish-preset-button,
 .dait-public-bilingual-button,
 .dait-quick-settings-button,
 .dait-quick-settings-modal-root *,
@@ -600,6 +610,8 @@ var require_theme_tokens = __commonJS({
 .dait-message-button,
 .dait-input-action-menu,
 .dait-input-action-menu *,
+.dait-polish-preset-menu,
+.dait-polish-preset-menu *,
 .dait-dialog,
 .dait-dialog * {
     box-sizing: border-box;
@@ -704,6 +716,7 @@ var require_theme_tokens = __commonJS({
 .dait-quick-settings-modal-root :focus-visible,
 .dait-polish-result-panel :focus-visible,
 .dait-input-action-menu :focus-visible,
+.dait-polish-preset-menu :focus-visible,
 .dait-dialog :focus-visible {
     outline: 2px solid var(--dait-focus);
     outline-offset: 2px;
@@ -717,7 +730,9 @@ var require_theme_tokens = __commonJS({
     .dait-polish-result-panel,
     .dait-polish-result-panel *,
     .dait-input-action-menu,
-    .dait-input-action-menu * {
+    .dait-input-action-menu *,
+    .dait-polish-preset-menu,
+    .dait-polish-preset-menu * {
         animation-duration: 0.01ms !important;
         animation-iteration-count: 1 !important;
         scroll-behavior: auto !important;
@@ -2794,7 +2809,11 @@ var require_settings = __commonJS({
 var require_composer = __commonJS({
   "src/css/05-composer.js"(exports2, module2) {
     "use strict";
+    var { createPixelSvgDataUri } = require_pixel_icons();
+    var PIXEL_CHEVRON_DOWN_ICON = createPixelSvgDataUri("chevronDown", "#000000");
+    var PIXEL_CHECK_ICON = createPixelSvgDataUri("check", "#000000");
     module2.exports = `.dait-polish-button,
+.dait-polish-preset-button,
 .dait-public-bilingual-button,
 .dait-polish-restore-button,
 .dait-input-action-menu-button,
@@ -2832,6 +2851,8 @@ var require_composer = __commonJS({
 }
 
 .dait-polish-button:hover,
+.dait-polish-preset-button:hover,
+.dait-polish-preset-button[aria-expanded="true"],
 .dait-public-bilingual-button:hover,
 .dait-polish-restore-button:hover,
 .dait-input-action-menu-button:hover,
@@ -2843,6 +2864,7 @@ var require_composer = __commonJS({
 }
 
 .dait-polish-button:active:not(:disabled),
+.dait-polish-preset-button:active:not(:disabled),
 .dait-public-bilingual-button:active:not(:disabled),
 .dait-polish-restore-button:active:not(:disabled),
 .dait-input-action-menu-button:active:not(:disabled),
@@ -2852,6 +2874,7 @@ var require_composer = __commonJS({
 }
 
 .dait-polish-button:disabled,
+.dait-polish-preset-button:disabled,
 .dait-public-bilingual-button:disabled,
 .dait-polish-restore-button:disabled,
 .dait-input-action-menu-button:disabled,
@@ -2879,6 +2902,53 @@ var require_composer = __commonJS({
     z-index: auto;
 }
 
+.dait-polish-button[data-dait-split="true"] {
+    border-bottom-right-radius: 0;
+    border-top-right-radius: 0;
+}
+
+.dait-polish-preset-button {
+    align-items: center;
+    border-bottom-left-radius: 0;
+    border-top-left-radius: 0;
+    display: inline-flex;
+    flex: 0 0 auto;
+    justify-content: center;
+    margin: 0 0 0 -4px;
+    max-width: 20px;
+    min-height: 32px;
+    min-width: 20px;
+    overflow: hidden;
+    padding: 0;
+    position: static;
+    white-space: nowrap;
+    z-index: auto;
+}
+
+.dait-polish-button[data-dait-split="true"]:hover,
+.dait-polish-button[data-dait-split="true"]:focus-visible,
+.dait-polish-preset-button:hover,
+.dait-polish-preset-button:focus-visible,
+.dait-polish-preset-button[aria-expanded="true"] {
+    position: relative;
+    z-index: 1;
+}
+
+.dait-polish-preset-caret {
+    background: currentColor;
+    display: block;
+    flex: 0 0 auto;
+    height: 11px;
+    -webkit-mask: ${PIXEL_CHEVRON_DOWN_ICON} center / 11px 11px no-repeat;
+    mask: ${PIXEL_CHEVRON_DOWN_ICON} center / 11px 11px no-repeat;
+    transition: transform 120ms ease;
+    width: 11px;
+}
+
+.dait-polish-preset-button[aria-expanded="true"] .dait-polish-preset-caret {
+    transform: rotate(180deg);
+}
+
 .dait-input-action-group-dual .dait-polish-button,
 .dait-input-action-group-dual .dait-public-bilingual-button,
 .dait-input-action-group-dual .dait-polish-restore-button {
@@ -2902,12 +2972,16 @@ var require_composer = __commonJS({
 }
 
 .theme-light.dait-polish-button,
+.theme-light.dait-polish-preset-button,
 .theme-light.dait-public-bilingual-button,
 .theme-light .dait-polish-button,
+.theme-light .dait-polish-preset-button,
 .theme-light .dait-public-bilingual-button,
 .dait-polish-button[data-dait-discord-theme="light"],
+.dait-polish-preset-button[data-dait-discord-theme="light"],
 .dait-public-bilingual-button[data-dait-discord-theme="light"],
 [data-dait-discord-theme="light"] .dait-polish-button,
+[data-dait-discord-theme="light"] .dait-polish-preset-button,
 [data-dait-discord-theme="light"] .dait-public-bilingual-button {
     background: rgba(247, 243, 233, 0.88);
     border-color: rgba(113, 107, 93, 0.42);
@@ -2925,18 +2999,30 @@ var require_composer = __commonJS({
 
 .theme-light.dait-polish-button:hover,
 .theme-light.dait-polish-button:focus-visible,
+.theme-light.dait-polish-preset-button:hover,
+.theme-light.dait-polish-preset-button:focus-visible,
+.theme-light.dait-polish-preset-button[aria-expanded="true"],
 .theme-light.dait-public-bilingual-button:hover,
 .theme-light.dait-public-bilingual-button:focus-visible,
 .theme-light .dait-polish-button:hover,
 .theme-light .dait-polish-button:focus-visible,
+.theme-light .dait-polish-preset-button:hover,
+.theme-light .dait-polish-preset-button:focus-visible,
+.theme-light .dait-polish-preset-button[aria-expanded="true"],
 .theme-light .dait-public-bilingual-button:hover,
 .theme-light .dait-public-bilingual-button:focus-visible,
 .dait-polish-button[data-dait-discord-theme="light"]:hover,
 .dait-polish-button[data-dait-discord-theme="light"]:focus-visible,
+.dait-polish-preset-button[data-dait-discord-theme="light"]:hover,
+.dait-polish-preset-button[data-dait-discord-theme="light"]:focus-visible,
+.dait-polish-preset-button[data-dait-discord-theme="light"][aria-expanded="true"],
 .dait-public-bilingual-button[data-dait-discord-theme="light"]:hover,
 .dait-public-bilingual-button[data-dait-discord-theme="light"]:focus-visible,
 [data-dait-discord-theme="light"] .dait-polish-button:hover,
 [data-dait-discord-theme="light"] .dait-polish-button:focus-visible,
+[data-dait-discord-theme="light"] .dait-polish-preset-button:hover,
+[data-dait-discord-theme="light"] .dait-polish-preset-button:focus-visible,
+[data-dait-discord-theme="light"] .dait-polish-preset-button[aria-expanded="true"],
 [data-dait-discord-theme="light"] .dait-public-bilingual-button:hover,
 [data-dait-discord-theme="light"] .dait-public-bilingual-button:focus-visible {
     background: rgba(29, 110, 84, 0.18);
@@ -2946,28 +3032,40 @@ var require_composer = __commonJS({
 }
 
 .theme-dark.dait-polish-button,
+.theme-dark.dait-polish-preset-button,
 .theme-dark.dait-public-bilingual-button,
 .theme-darker.dait-polish-button,
+.theme-darker.dait-polish-preset-button,
 .theme-darker.dait-public-bilingual-button,
 .theme-midnight.dait-polish-button,
+.theme-midnight.dait-polish-preset-button,
 .theme-midnight.dait-public-bilingual-button,
 .theme-dark .dait-polish-button,
+.theme-dark .dait-polish-preset-button,
 .theme-dark .dait-public-bilingual-button,
 .theme-darker .dait-polish-button,
+.theme-darker .dait-polish-preset-button,
 .theme-darker .dait-public-bilingual-button,
 .theme-midnight .dait-polish-button,
+.theme-midnight .dait-polish-preset-button,
 .theme-midnight .dait-public-bilingual-button,
 .dait-polish-button[data-dait-discord-theme="dark"],
+.dait-polish-preset-button[data-dait-discord-theme="dark"],
 .dait-public-bilingual-button[data-dait-discord-theme="dark"],
 .dait-polish-button[data-dait-discord-theme="darker"],
+.dait-polish-preset-button[data-dait-discord-theme="darker"],
 .dait-public-bilingual-button[data-dait-discord-theme="darker"],
 .dait-polish-button[data-dait-discord-theme="midnight"],
+.dait-polish-preset-button[data-dait-discord-theme="midnight"],
 .dait-public-bilingual-button[data-dait-discord-theme="midnight"],
 [data-dait-discord-theme="dark"] .dait-polish-button,
+[data-dait-discord-theme="dark"] .dait-polish-preset-button,
 [data-dait-discord-theme="dark"] .dait-public-bilingual-button,
 [data-dait-discord-theme="darker"] .dait-polish-button,
+[data-dait-discord-theme="darker"] .dait-polish-preset-button,
 [data-dait-discord-theme="darker"] .dait-public-bilingual-button,
 [data-dait-discord-theme="midnight"] .dait-polish-button,
+[data-dait-discord-theme="midnight"] .dait-polish-preset-button,
 [data-dait-discord-theme="midnight"] .dait-public-bilingual-button {
     background: rgba(255, 255, 255, 0.075);
     border-color: rgba(255, 255, 255, 0.14);
@@ -2975,20 +3073,28 @@ var require_composer = __commonJS({
 }
 
 .theme-darker.dait-polish-button,
+.theme-darker.dait-polish-preset-button,
 .theme-darker.dait-public-bilingual-button,
 .theme-midnight.dait-polish-button,
+.theme-midnight.dait-polish-preset-button,
 .theme-midnight.dait-public-bilingual-button,
 .theme-darker .dait-polish-button,
+.theme-darker .dait-polish-preset-button,
 .theme-darker .dait-public-bilingual-button,
 .theme-midnight .dait-polish-button,
+.theme-midnight .dait-polish-preset-button,
 .theme-midnight .dait-public-bilingual-button,
 .dait-polish-button[data-dait-discord-theme="darker"],
+.dait-polish-preset-button[data-dait-discord-theme="darker"],
 .dait-public-bilingual-button[data-dait-discord-theme="darker"],
 .dait-polish-button[data-dait-discord-theme="midnight"],
+.dait-polish-preset-button[data-dait-discord-theme="midnight"],
 .dait-public-bilingual-button[data-dait-discord-theme="midnight"],
 [data-dait-discord-theme="darker"] .dait-polish-button,
+[data-dait-discord-theme="darker"] .dait-polish-preset-button,
 [data-dait-discord-theme="darker"] .dait-public-bilingual-button,
 [data-dait-discord-theme="midnight"] .dait-polish-button,
+[data-dait-discord-theme="midnight"] .dait-polish-preset-button,
 [data-dait-discord-theme="midnight"] .dait-public-bilingual-button {
     background: rgba(255, 255, 255, 0.065);
     border-color: rgba(255, 255, 255, 0.12);
@@ -2996,50 +3102,86 @@ var require_composer = __commonJS({
 
 .theme-dark.dait-polish-button:hover,
 .theme-dark.dait-polish-button:focus-visible,
+.theme-dark.dait-polish-preset-button:hover,
+.theme-dark.dait-polish-preset-button:focus-visible,
+.theme-dark.dait-polish-preset-button[aria-expanded="true"],
 .theme-dark.dait-public-bilingual-button:hover,
 .theme-dark.dait-public-bilingual-button:focus-visible,
 .theme-darker.dait-polish-button:hover,
 .theme-darker.dait-polish-button:focus-visible,
+.theme-darker.dait-polish-preset-button:hover,
+.theme-darker.dait-polish-preset-button:focus-visible,
+.theme-darker.dait-polish-preset-button[aria-expanded="true"],
 .theme-darker.dait-public-bilingual-button:hover,
 .theme-darker.dait-public-bilingual-button:focus-visible,
 .theme-midnight.dait-polish-button:hover,
 .theme-midnight.dait-polish-button:focus-visible,
+.theme-midnight.dait-polish-preset-button:hover,
+.theme-midnight.dait-polish-preset-button:focus-visible,
+.theme-midnight.dait-polish-preset-button[aria-expanded="true"],
 .theme-midnight.dait-public-bilingual-button:hover,
 .theme-midnight.dait-public-bilingual-button:focus-visible,
 .theme-dark .dait-polish-button:hover,
 .theme-dark .dait-polish-button:focus-visible,
+.theme-dark .dait-polish-preset-button:hover,
+.theme-dark .dait-polish-preset-button:focus-visible,
+.theme-dark .dait-polish-preset-button[aria-expanded="true"],
 .theme-dark .dait-public-bilingual-button:hover,
 .theme-dark .dait-public-bilingual-button:focus-visible,
 .theme-darker .dait-polish-button:hover,
 .theme-darker .dait-polish-button:focus-visible,
+.theme-darker .dait-polish-preset-button:hover,
+.theme-darker .dait-polish-preset-button:focus-visible,
+.theme-darker .dait-polish-preset-button[aria-expanded="true"],
 .theme-darker .dait-public-bilingual-button:hover,
 .theme-darker .dait-public-bilingual-button:focus-visible,
 .theme-midnight .dait-polish-button:hover,
 .theme-midnight .dait-polish-button:focus-visible,
+.theme-midnight .dait-polish-preset-button:hover,
+.theme-midnight .dait-polish-preset-button:focus-visible,
+.theme-midnight .dait-polish-preset-button[aria-expanded="true"],
 .theme-midnight .dait-public-bilingual-button:hover,
 .theme-midnight .dait-public-bilingual-button:focus-visible,
 .dait-polish-button[data-dait-discord-theme="dark"]:hover,
 .dait-polish-button[data-dait-discord-theme="dark"]:focus-visible,
+.dait-polish-preset-button[data-dait-discord-theme="dark"]:hover,
+.dait-polish-preset-button[data-dait-discord-theme="dark"]:focus-visible,
+.dait-polish-preset-button[data-dait-discord-theme="dark"][aria-expanded="true"],
 .dait-public-bilingual-button[data-dait-discord-theme="dark"]:hover,
 .dait-public-bilingual-button[data-dait-discord-theme="dark"]:focus-visible,
 .dait-polish-button[data-dait-discord-theme="darker"]:hover,
 .dait-polish-button[data-dait-discord-theme="darker"]:focus-visible,
+.dait-polish-preset-button[data-dait-discord-theme="darker"]:hover,
+.dait-polish-preset-button[data-dait-discord-theme="darker"]:focus-visible,
+.dait-polish-preset-button[data-dait-discord-theme="darker"][aria-expanded="true"],
 .dait-public-bilingual-button[data-dait-discord-theme="darker"]:hover,
 .dait-public-bilingual-button[data-dait-discord-theme="darker"]:focus-visible,
 .dait-polish-button[data-dait-discord-theme="midnight"]:hover,
 .dait-polish-button[data-dait-discord-theme="midnight"]:focus-visible,
+.dait-polish-preset-button[data-dait-discord-theme="midnight"]:hover,
+.dait-polish-preset-button[data-dait-discord-theme="midnight"]:focus-visible,
+.dait-polish-preset-button[data-dait-discord-theme="midnight"][aria-expanded="true"],
 .dait-public-bilingual-button[data-dait-discord-theme="midnight"]:hover,
 .dait-public-bilingual-button[data-dait-discord-theme="midnight"]:focus-visible,
 [data-dait-discord-theme="dark"] .dait-polish-button:hover,
 [data-dait-discord-theme="dark"] .dait-polish-button:focus-visible,
+[data-dait-discord-theme="dark"] .dait-polish-preset-button:hover,
+[data-dait-discord-theme="dark"] .dait-polish-preset-button:focus-visible,
+[data-dait-discord-theme="dark"] .dait-polish-preset-button[aria-expanded="true"],
 [data-dait-discord-theme="dark"] .dait-public-bilingual-button:hover,
 [data-dait-discord-theme="dark"] .dait-public-bilingual-button:focus-visible,
 [data-dait-discord-theme="darker"] .dait-polish-button:hover,
 [data-dait-discord-theme="darker"] .dait-polish-button:focus-visible,
+[data-dait-discord-theme="darker"] .dait-polish-preset-button:hover,
+[data-dait-discord-theme="darker"] .dait-polish-preset-button:focus-visible,
+[data-dait-discord-theme="darker"] .dait-polish-preset-button[aria-expanded="true"],
 [data-dait-discord-theme="darker"] .dait-public-bilingual-button:hover,
 [data-dait-discord-theme="darker"] .dait-public-bilingual-button:focus-visible,
 [data-dait-discord-theme="midnight"] .dait-polish-button:hover,
 [data-dait-discord-theme="midnight"] .dait-polish-button:focus-visible,
+[data-dait-discord-theme="midnight"] .dait-polish-preset-button:hover,
+[data-dait-discord-theme="midnight"] .dait-polish-preset-button:focus-visible,
+[data-dait-discord-theme="midnight"] .dait-polish-preset-button[aria-expanded="true"],
 [data-dait-discord-theme="midnight"] .dait-public-bilingual-button:hover,
 [data-dait-discord-theme="midnight"] .dait-public-bilingual-button:focus-visible {
     background: color-mix(in srgb, #227a5f 24%, rgba(255, 255, 255, 0.08));
@@ -3049,7 +3191,7 @@ var require_composer = __commonJS({
 }
 
 .dait-input-action-group[data-dait-density="compact"] {
-    max-width: 116px;
+    max-width: 138px;
 }
 
 .dait-input-action-group[data-dait-density="compact"] .dait-polish-button,
@@ -3061,11 +3203,20 @@ var require_composer = __commonJS({
     padding: 0 7px;
 }
 
+.dait-input-action-group[data-dait-density="compact"] .dait-polish-preset-button {
+    height: 30px;
+    max-width: 19px;
+    min-height: 30px;
+    min-width: 19px;
+    padding: 0;
+}
+
 .dait-input-action-group[data-dait-density="minimal"] {
     max-width: 34px;
 }
 
 .dait-input-action-group[data-dait-density="minimal"] .dait-polish-button,
+.dait-input-action-group[data-dait-density="minimal"] .dait-polish-preset-button,
 .dait-input-action-group[data-dait-density="minimal"] .dait-public-bilingual-button,
 .dait-input-action-group[data-dait-density="minimal"] .dait-polish-restore-button {
     display: none;
@@ -3114,6 +3265,191 @@ var require_composer = __commonJS({
 
 .dait-input-action-menu-item:hover,
 .dait-input-action-menu-item:focus-visible {
+    background: var(--dait-raised);
+    color: var(--dait-heading);
+}
+
+/* The composer's polish tone preset picker is a plugin window: panel palette tokens and body type scale only. */
+.dait-polish-preset-menu {
+    background: var(--dait-bg);
+    border: 2px solid var(--dait-input-border);
+    border-radius: var(--dait-radius-card);
+    box-shadow: inset 0 3px 0 var(--dait-brand), var(--dait-shadow);
+    color: var(--dait-text);
+    display: grid;
+    gap: 4px;
+    max-width: calc(100vw - 24px);
+    min-width: 240px;
+    padding: 10px 8px 8px;
+    position: fixed;
+    z-index: 10000;
+}
+
+.dait-polish-preset-header {
+    border-bottom: 1px solid var(--dait-divider);
+    display: grid;
+    gap: 2px;
+    padding: 0 6px 6px;
+}
+
+.dait-polish-preset-title {
+    color: var(--dait-heading);
+    font-size: var(--dait-font-body);
+    font-weight: 600;
+    line-height: var(--dait-line);
+    margin: 0;
+}
+
+.dait-polish-preset-custom-note {
+    color: var(--dait-warning);
+    font-size: var(--dait-font-body);
+    font-weight: 400;
+    line-height: var(--dait-line);
+    margin: 0;
+}
+
+.dait-polish-preset-list {
+    display: grid;
+    gap: 2px;
+    max-height: min(320px, 46vh);
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding: 2px 0;
+}
+
+@supports not selector(::-webkit-scrollbar) {
+    .dait-polish-preset-list {
+        scrollbar-color: var(--dait-scrollbar-thumb) var(--dait-scrollbar-track);
+        scrollbar-width: thin;
+    }
+}
+
+.dait-polish-preset-list::-webkit-scrollbar {
+    height: 8px;
+    width: 8px;
+}
+
+.dait-polish-preset-list::-webkit-scrollbar-track {
+    background: var(--dait-scrollbar-track);
+    border-radius: 0;
+}
+
+.dait-polish-preset-list::-webkit-scrollbar-thumb {
+    background: var(--dait-scrollbar-thumb);
+    border: 2px solid transparent;
+    border-radius: 2px;
+    background-clip: padding-box;
+}
+
+.dait-polish-preset-list::-webkit-scrollbar-thumb:hover {
+    background: var(--dait-scrollbar-thumb-hover);
+    background-clip: padding-box;
+}
+
+.dait-polish-preset-list::-webkit-scrollbar-corner {
+    background: transparent;
+}
+
+.dait-polish-preset-item {
+    align-items: center;
+    background: transparent;
+    border: 0;
+    border-radius: var(--dait-radius-control);
+    color: var(--dait-text);
+    cursor: pointer;
+    display: grid;
+    font-family: inherit;
+    font-size: var(--dait-font-body);
+    font-weight: 500;
+    gap: 8px;
+    grid-template-columns: auto minmax(0, 1fr) 16px;
+    line-height: var(--dait-line);
+    min-height: var(--dait-control-h);
+    padding: 4px 10px;
+    text-align: left;
+    width: 100%;
+}
+
+.dait-polish-preset-item:hover,
+.dait-polish-preset-item:focus-visible {
+    background: var(--dait-raised);
+    color: var(--dait-heading);
+}
+
+.dait-polish-preset-item[aria-checked="true"] {
+    background: var(--dait-surface);
+    box-shadow: inset 3px 0 0 var(--dait-brand), inset 0 0 0 1px var(--dait-brand);
+    color: var(--dait-heading);
+    font-weight: 600;
+}
+
+.dait-polish-preset-code {
+    color: var(--dait-placeholder);
+    flex: 0 0 auto;
+    font-variant-numeric: tabular-nums;
+}
+
+.dait-polish-preset-item[aria-checked="true"] .dait-polish-preset-code {
+    color: var(--dait-link);
+}
+
+.dait-polish-preset-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dait-polish-preset-check {
+    background: currentColor;
+    color: var(--dait-brand);
+    display: block;
+    height: 14px;
+    opacity: 0;
+    -webkit-mask: ${PIXEL_CHECK_ICON} center / 14px 14px no-repeat;
+    mask: ${PIXEL_CHECK_ICON} center / 14px 14px no-repeat;
+    width: 14px;
+}
+
+.dait-polish-preset-item[aria-checked="true"] .dait-polish-preset-check {
+    opacity: 1;
+}
+
+.dait-polish-preset-empty {
+    color: var(--dait-placeholder);
+    font-size: var(--dait-font-body);
+    font-weight: 400;
+    line-height: var(--dait-line);
+    margin: 0;
+    padding: 8px 10px;
+}
+
+.dait-polish-preset-footer {
+    border-top: 1px solid var(--dait-divider);
+    padding-top: 6px;
+}
+
+.dait-polish-preset-manage {
+    align-items: center;
+    background: transparent;
+    border: 0;
+    border-radius: var(--dait-radius-control);
+    color: var(--dait-link);
+    cursor: pointer;
+    display: flex;
+    font-family: inherit;
+    font-size: var(--dait-font-body);
+    font-weight: 500;
+    justify-content: flex-start;
+    line-height: var(--dait-line);
+    min-height: var(--dait-control-h);
+    padding: 0 10px;
+    text-align: left;
+    width: 100%;
+}
+
+.dait-polish-preset-manage:hover,
+.dait-polish-preset-manage:focus-visible {
     background: var(--dait-raised);
     color: var(--dait-heading);
 }
@@ -9336,7 +9672,7 @@ var require_queue_core = __commonJS({
         if (!element || element.nodeType !== 1) return true;
         if (this.plugin.isInsideDiscordSettingsSurface(element)) return false;
         if (this.plugin.isInsideDiscordMediaViewer(element) || this.plugin.isMediaOnlyMutationElement(element)) return false;
-        if (element.closest?.(".dait-settings, .dait-quick-settings-modal-root, .dait-quick-popover, .dait-polish-result-panel, .dait-polish-restore-control, .dait-translation-line, .dait-translation-box")) return false;
+        if (element.closest?.(".dait-settings, .dait-quick-settings-modal-root, .dait-quick-popover, .dait-polish-result-panel, .dait-polish-restore-control, .dait-input-action-menu, .dait-polish-preset-menu, .dait-translation-line, .dait-translation-box")) return false;
         if (element.closest?.("[class*='channelTextArea'], [role='textbox']")) return false;
         const now = Date.now();
         const cached = this.scrollRelevanceCache?.get?.(element);
@@ -16402,6 +16738,7 @@ var require_panel_theme = __commonJS({
       ".dait-quick-popover",
       ".dait-polish-result-panel",
       ".dait-input-action-menu",
+      ".dait-polish-preset-menu",
       ".dait-dialog"
     ].join(", ");
     var DISCORD_THEME_CLASS_PANEL_THEMES = Object.freeze({
@@ -16623,7 +16960,8 @@ var require_panel_theme = __commonJS({
           this.plugin.quickSettingsModalRoot,
           this.plugin.quickPanel?.root,
           this.plugin.polishResultPanel,
-          this.plugin.inputActionMenu
+          this.plugin.inputActionMenu,
+          this.plugin.polishPresetMenu
         ].forEach((node) => {
           if (node) roots.add(node);
         });
@@ -16807,6 +17145,7 @@ var require_settings_store = __commonJS({
         this.plugin.saveSettings();
         this.plugin.syncSettingControls(`${kind}.prompt`, template.prompt);
         if (kind === "translation") this.plugin.invalidateAutoTranslationQueue();
+        if (kind === "polish") this.plugin.syncPolishPresetControls?.();
         this.plugin.quickPanel?.scheduleUpdate?.();
         this.plugin.showToast(this.plugin.t("promptApplied", { name: this.getTemplateDisplayName(template), code: template.serial }), "success");
       }
@@ -16822,6 +17161,7 @@ var require_settings_store = __commonJS({
         templates.push(template);
         this.plugin.settings[kind].activePromptTemplate = template.id;
         this.plugin.saveSettings();
+        if (kind === "polish") this.plugin.syncPolishPresetControls?.();
         this.plugin.quickPanel?.scheduleUpdate?.();
         this.plugin.showToast(this.plugin.t("promptSaved", { name, code: template.serial }), "success");
       }
@@ -16832,6 +17172,7 @@ var require_settings_store = __commonJS({
         this.plugin.settings[kind].activePromptTemplate = template.id;
         this.plugin.saveSettings();
         if (kind === "translation") this.plugin.invalidateAutoTranslationQueue();
+        if (kind === "polish") this.plugin.syncPolishPresetControls?.();
         this.plugin.quickPanel?.scheduleUpdate?.();
         this.plugin.showToast(this.plugin.t("promptUpdated", { name: this.getTemplateDisplayName(template), code: template.serial }), "success");
       }
@@ -16860,6 +17201,7 @@ var require_settings_store = __commonJS({
         }
         this.plugin.saveSettings();
         if (kind === "translation" && wasActive) this.plugin.invalidateAutoTranslationQueue();
+        if (kind === "polish") this.plugin.syncPolishPresetControls?.();
         this.plugin.quickPanel?.scheduleUpdate?.();
         this.plugin.showToast(this.plugin.t("promptDeleted"), "success");
       }
@@ -16904,6 +17246,7 @@ var require_settings_store = __commonJS({
         missing.forEach((template) => templates.push(this.plugin.clone(template)));
         this.plugin.ensurePromptTemplateSerials(kind);
         if (options.save !== false) this.plugin.saveSettings();
+        if (kind === "polish") this.plugin.syncPolishPresetControls?.();
         this.plugin.quickPanel?.scheduleUpdate?.();
         if (options.silent !== true) {
           this.plugin.showToast(this.plugin.t("promptPresetsRestored", { count: missing.length }), "success");
@@ -17633,11 +17976,15 @@ var require_settings_store = __commonJS({
           document.querySelectorAll?.(".dait-message-button")?.forEach((node) => node.remove());
         }
         if (typeof document !== "undefined" && path === "ui.injectInputButton" && value === false) {
-          document.querySelectorAll?.(".dait-polish-button")?.forEach((node) => {
+          this.plugin.removePolishPresetMenu?.();
+          document.querySelectorAll?.(".dait-polish-button, .dait-polish-preset-button")?.forEach((node) => {
             const group = node.closest?.(".dait-input-action-group");
             node.remove();
             this.plugin.syncInputActionGroupState(group);
           });
+        }
+        if (path === "polish.prompt" || path === "polish.activePromptTemplate" || path === "ui.polishHotkey") {
+          this.plugin.syncPolishPresetControls?.();
         }
         if (typeof document !== "undefined" && path === "ui.publicBilingualInputButton" && value === false) {
           document.querySelectorAll?.(".dait-public-bilingual-button")?.forEach((node) => {
@@ -17795,7 +18142,10 @@ var require_settings_store = __commonJS({
             if (inputGroup) this.plugin.syncInputActionGroupState(group);
           });
           if (turnedOff("injectMessageButtons")) removeNodes(".dait-message-button", false);
-          if (turnedOff("injectInputButton")) removeNodes(".dait-polish-button", true);
+          if (turnedOff("injectInputButton")) {
+            this.plugin.removePolishPresetMenu?.();
+            removeNodes(".dait-polish-button, .dait-polish-preset-button", true);
+          }
           if (turnedOff("publicBilingualInputButton")) removeNodes(".dait-public-bilingual-button", true);
           if (turnedOff("showQuickSettingsRailButton")) removeNodes(".dait-quick-settings-rail", false);
           if (turnedOff("showQuickSettingsPanelButton")) removeNodes(".dait-quick-settings-panel", false);
@@ -17810,6 +18160,7 @@ var require_settings_store = __commonJS({
         if (changed("hideOriginalAfterTranslation")) this.plugin.syncAllTranslationSourceVisibility();
         if (TRANSLATION_LINE_DISPLAY_KEYS.some(changed)) this.plugin.syncAllTranslationDisplaySettings();
         if (changed("panelTheme")) this.plugin.refreshPanelThemes();
+        this.plugin.syncPolishPresetControls?.();
         this.plugin.queueScan();
       }
       syncAllSettingControls() {
@@ -20070,9 +20421,15 @@ var require_context_menu = __commonJS({
           const configKey = this.getComposerMenuConfigKey("polish");
           addItem(
             plugin.t("polishButton"),
-            plugin.t("polishTitleAttr", { shortcut: plugin.getHotkeyLabel() }),
+            plugin.getPolishButtonTitleAttr?.() || plugin.t("polishTitleAttr", { shortcut: plugin.getHotkeyLabel() }),
             () => plugin.polishCurrentDraft(group?.querySelector?.(".dait-polish-button") || button, { textbox, composerKey, fromMenu: true }),
             () => isDraftCurrent() && canPolish() && this.getComposerMenuConfigKey("polish") === configKey
+          );
+          addItem(
+            plugin.t("polishPresetMenuItemAction"),
+            plugin.getPolishPresetPickerTitleAttr?.() || plugin.t("polishPresetPicker"),
+            () => plugin.openPolishPresetMenu?.(anchor, { group, textbox }),
+            () => canPolish()
           );
         }
         const canBilingual = () => plugin.isPublicBilingualFeatureEnabled() && (plugin.settings.ui?.publicBilingualInputButton || group?.querySelector?.(".dait-public-bilingual-button"));
@@ -21623,6 +21980,14 @@ var require_i18n = __commonJS({
       inputActionOpenSettings: "设置",
       restoreOriginalShort: "↶",
       polishButtonShort: "润",
+      polishTitleAttrWithTone: "用 AI 润色当前草稿（当前语气：{tone}）。快捷键：{shortcut}。",
+      polishPresetPicker: "切换润色语气",
+      polishPresetPickerTitle: "切换润色语气（当前：{tone}）",
+      polishPresetMenuTitle: "润色语气",
+      polishPresetMenuCustomNote: "当前为自定义提示词，选择下方预设可切换",
+      polishPresetMenuEmpty: "暂无可用预设，可前往设置新增",
+      polishPresetMenuManage: "管理 / 自定义语气…",
+      polishPresetMenuItemAction: "切换润色语气…",
       publicBilingualButtonShort: "双",
       showQuickSettingsPanelButton: "显示用户栏快捷设置",
       showQuickSettingsPanelButtonDesc: "在左下角用户控制栏的 Discord 设置齿轮附近显示 AI 入口。"
@@ -21823,6 +22188,14 @@ var require_i18n = __commonJS({
       inputActionOpenSettings: "Settings",
       restoreOriginalShort: "↶",
       polishButtonShort: "P",
+      polishTitleAttrWithTone: "Polish current draft with AI (Tone: {tone}). Shortcut: {shortcut}.",
+      polishPresetPicker: "Switch polish tone",
+      polishPresetPickerTitle: "Switch polish tone (Current: {tone})",
+      polishPresetMenuTitle: "Polish tone",
+      polishPresetMenuCustomNote: "Using a custom prompt; pick a preset below to switch",
+      polishPresetMenuEmpty: "No presets yet. Add one in Settings.",
+      polishPresetMenuManage: "Manage / custom tones...",
+      polishPresetMenuItemAction: "Switch polish tone...",
       publicBilingualButtonShort: "Bi",
       showQuickSettingsPanelButton: "Show user panel quick settings",
       showQuickSettingsPanelButtonDesc: "Adds an AI entry near Discord's lower-left user controls and settings gear."
@@ -22953,6 +23326,9 @@ var require_discord_ai_translator = __commonJS({
         this.inputButtonScanDueAt = 0;
         this.inputActionMenu = null;
         this.inputActionMenuCleanup = null;
+        this.polishPresetMenu = null;
+        this.polishPresetMenuCleanup = null;
+        this.polishPresetMenuAnchor = null;
         this.textboxReplacementCleanupToken = 0;
         this.textboxReplacementCleanupRemove = null;
         this.textboxReplacementCleanupTimers = [];
@@ -23088,11 +23464,12 @@ var require_discord_ai_translator = __commonJS({
         this.removePolishResultPanel();
         this.removePolishRestoreControl();
         this.removeInputActionMenu();
+        this.removePolishPresetMenu();
         this.closeQuickSettingsPanel(null, "stop");
         this.quickPanel.destroy("stop");
         document.querySelectorAll?.(".dait-settings")?.forEach((panel) => this.destroySettingsModalSizing(panel));
         this.restoreAllTranslationSourceVisibility();
-        document.querySelectorAll(".dait-message-button, .dait-polish-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-menu-button, .dait-input-action-menu, .dait-quick-settings-button, .dait-translation-line, .dait-translation-box, .dait-input-action-group").forEach((node) => node.remove());
+        document.querySelectorAll(".dait-message-button, .dait-polish-button, .dait-polish-preset-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-menu-button, .dait-input-action-menu, .dait-polish-preset-menu, .dait-quick-settings-button, .dait-translation-line, .dait-translation-box, .dait-input-action-group").forEach((node) => node.remove());
         document.querySelectorAll(".dait-input-actions-host").forEach((node) => node.classList?.remove?.("dait-input-actions-host"));
         this.removeStyles();
         if (translationCachePersisted) {
@@ -27661,10 +28038,11 @@ var require_discord_ai_translator = __commonJS({
         this.removePolishResultPanel();
         this.removePolishRestoreControl();
         this.removeInputActionMenu();
+        this.removePolishPresetMenu();
         this.refreshSettingsWindowsLocale();
         this.quickPanel?.rerender?.("language");
         this.restoreAllTranslationSourceVisibility();
-        document.querySelectorAll(".dait-message-button, .dait-polish-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-menu-button, .dait-input-action-menu, .dait-quick-settings-button").forEach((node) => node.remove());
+        document.querySelectorAll(".dait-message-button, .dait-polish-button, .dait-polish-preset-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-menu-button, .dait-input-action-menu, .dait-polish-preset-menu, .dait-input-action-group, .dait-quick-settings-button").forEach((node) => node.remove());
         document.querySelectorAll(".dait-translation-line, .dait-translation-box").forEach((node) => node.remove());
         this.unpatchContextMenus();
         this.patchMessageContextMenu();
@@ -27730,7 +28108,7 @@ var require_discord_ai_translator = __commonJS({
         return Number(rect.width || 0) > 0 && Number(rect.height || 0) > 0;
       }
       isOwnPluginElement(element) {
-        return Boolean(element?.closest?.(".dait-settings, .dait-quick-settings-button, .dait-quick-settings-modal-root, .dait-quick-popover, .dait-message-button, .dait-polish-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-group, .dait-input-action-menu-button, .dait-input-action-menu, .dait-polish-result-panel, .dait-polish-restore-control, .dait-translation-line, .dait-translation-box"));
+        return Boolean(element?.closest?.(".dait-settings, .dait-quick-settings-button, .dait-quick-settings-modal-root, .dait-quick-popover, .dait-message-button, .dait-polish-button, .dait-polish-preset-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-group, .dait-input-action-menu-button, .dait-input-action-menu, .dait-polish-preset-menu, .dait-polish-result-panel, .dait-polish-restore-control, .dait-translation-line, .dait-translation-box"));
       }
       startObserver() {
         if (!this.isStarted) return;
@@ -27965,7 +28343,7 @@ var require_discord_ai_translator = __commonJS({
       isOwnMutationNode(node) {
         const element = node?.nodeType === 3 ? node.parentElement : node;
         if (this.isOwnPluginElement(element)) return true;
-        return Boolean(element?.matches?.(".dait-settings, .dait-quick-settings-button, .dait-quick-settings-modal-root, .dait-quick-popover, .dait-message-button, .dait-polish-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-group, .dait-input-action-menu-button, .dait-input-action-menu, .dait-polish-result-panel, .dait-polish-restore-control, .dait-translation-line, .dait-translation-box"));
+        return Boolean(element?.matches?.(".dait-settings, .dait-quick-settings-button, .dait-quick-settings-modal-root, .dait-quick-popover, .dait-message-button, .dait-polish-button, .dait-polish-preset-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-group, .dait-input-action-menu-button, .dait-input-action-menu, .dait-polish-preset-menu, .dait-polish-result-panel, .dait-polish-restore-control, .dait-translation-line, .dait-translation-box"));
       }
       isMediaOnlyMutation(mutation) {
         const target = mutation?.target?.nodeType === 3 ? mutation.target.parentElement : mutation?.target;
@@ -29572,7 +29950,7 @@ var require_discord_ai_translator = __commonJS({
       refreshDiscordThemeClasses(options = {}) {
         if (typeof document === "undefined") return;
         this.discordThemeCacheEpoch++;
-        const selector = ".dait-quick-settings-button, .dait-polish-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-menu-button, .dait-message-button, .dait-polish-restore-control";
+        const selector = ".dait-quick-settings-button, .dait-polish-button, .dait-polish-preset-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-menu-button, .dait-message-button, .dait-polish-restore-control";
         const queried = [...document.querySelectorAll?.(selector) || []];
         [...new Set(queried)].forEach((node) => this.syncDiscordThemeClasses(node));
         if (this.polishRestoreControl) this.syncDiscordThemeClasses(this.polishRestoreControl);
@@ -29643,10 +30021,12 @@ var require_discord_ai_translator = __commonJS({
         if (this.elementHasClassName(node, "dait-quick-settings-error")) return true;
         if (this.elementHasClassName(node, "dait-quick-settings-button")) return true;
         if (this.elementHasClassName(node, "dait-polish-button")) return true;
+        if (this.elementHasClassName(node, "dait-polish-preset-button")) return true;
         if (this.elementHasClassName(node, "dait-public-bilingual-button")) return true;
         if (this.elementHasClassName(node, "dait-polish-restore-button")) return true;
         if (this.elementHasClassName(node, "dait-input-action-menu-button")) return true;
         if (this.elementHasClassName(node, "dait-input-action-menu")) return true;
+        if (this.elementHasClassName(node, "dait-polish-preset-menu")) return true;
         if (this.elementHasClassName(node, "dait-message-button")) return true;
         if (this.elementHasClassName(node, "dait-polish-result-panel")) return true;
         if (this.elementHasClassName(node, "dait-polish-restore-control")) return true;
@@ -29987,15 +30367,35 @@ var require_discord_ai_translator = __commonJS({
         const group = this.getInputActionGroup(container);
         if (!group) return;
         this.removeDisabledInputActionButtons(group);
-        if (this.isPolishInputButtonEnabled(options) && !group.querySelector(".dait-polish-button")) {
-          const button = this.createInputActionButton(
-            "dait-polish-button",
-            this.t("polishButton"),
-            this.t("polishTitleAttr", { shortcut: this.getHotkeyLabel() }),
-            () => this.polishCurrentDraft(button, { textbox, composerKey }),
-            { shortText: this.t("polishButtonShort"), textbox, composerKey }
-          );
-          group.appendChild(button);
+        if (this.isPolishInputButtonEnabled(options)) {
+          let polishButton = group.querySelector(".dait-polish-button");
+          if (!polishButton) {
+            polishButton = this.createInputActionButton(
+              "dait-polish-button",
+              this.t("polishButton"),
+              this.getPolishButtonTitleAttr(),
+              () => this.polishCurrentDraft(polishButton, { textbox, composerKey }),
+              { shortText: this.t("polishButtonShort"), textbox, composerKey }
+            );
+            polishButton.setAttribute?.("data-dait-split", "true");
+            polishButton.addEventListener("contextmenu", (event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              const anchor = group.querySelector?.(".dait-polish-preset-button") || polishButton;
+              this.togglePolishPresetMenu(anchor, { group, textbox, composerKey });
+            });
+            group.appendChild(polishButton);
+          } else {
+            polishButton.setAttribute?.("data-dait-split", "true");
+          }
+          if (!group.querySelector(".dait-polish-preset-button")) {
+            const presetButton = this.createPolishPresetButton(group, textbox, composerKey);
+            if (typeof group.insertBefore === "function" && polishButton.nextSibling) {
+              group.insertBefore(presetButton, polishButton.nextSibling);
+            } else {
+              group.appendChild(presetButton);
+            }
+          }
         }
         if (!options.forcePolish && this.isPublicBilingualInputButtonEnabled() && !group.querySelector(".dait-public-bilingual-button")) {
           const button = this.createInputActionButton(
@@ -30016,7 +30416,7 @@ var require_discord_ai_translator = __commonJS({
       removeDisabledInputActionButtons(group) {
         if (!group?.querySelectorAll) return false;
         const selectors = [];
-        if (this.settings.polish?.enabled === false) selectors.push(".dait-polish-button");
+        if (this.settings.polish?.enabled === false) selectors.push(".dait-polish-button", ".dait-polish-preset-button");
         if (!this.isPublicBilingualFeatureEnabled()) selectors.push(".dait-public-bilingual-button");
         let removed = false;
         selectors.forEach((selector) => {
@@ -30025,10 +30425,12 @@ var require_discord_ai_translator = __commonJS({
             removed = true;
           });
         });
+        if (removed && this.settings.polish?.enabled === false) this.removePolishPresetMenu();
         return removed;
       }
       syncInputActionButtonsForSettings() {
         this.removeInputActionMenu();
+        this.removePolishPresetMenu();
         if (typeof document === "undefined") return;
         [...document.querySelectorAll?.(".dait-input-action-group") || []].forEach((group) => {
           if (this.removeDisabledInputActionButtons(group)) this.syncInputActionGroupState(group);
@@ -30085,7 +30487,7 @@ var require_discord_ai_translator = __commonJS({
       }
       syncInputActionButtonThemes(group, anchor = null) {
         if (!group?.querySelectorAll) return;
-        group.querySelectorAll(".dait-polish-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-menu-button").forEach((button) => {
+        group.querySelectorAll(".dait-polish-button, .dait-polish-preset-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-menu-button").forEach((button) => {
           this.syncDiscordThemeClasses(button, anchor);
         });
       }
@@ -30109,8 +30511,12 @@ var require_discord_ai_translator = __commonJS({
         const fallback = [...group.children || []].filter((child) => this.isInputActionDirectButton(child));
         const count = Math.max(queried.length || 0, fallback.length);
         group.classList.toggle("dait-input-action-group-dual", count > 1);
+        if (!group.querySelector?.(".dait-polish-button")) {
+          [...group.querySelectorAll?.(".dait-polish-preset-button") || []].forEach((node) => node.remove?.());
+        }
         if (!count) {
           this.removeInputActionMenu();
+          this.removePolishPresetMenu();
           group.remove?.();
           return;
         }
@@ -30229,6 +30635,7 @@ var require_discord_ai_translator = __commonJS({
       }
       openInputActionMenu(group, textbox = null, container = null, button = null) {
         if (typeof document === "undefined" || !document.body) return null;
+        this.removePolishPresetMenu();
         this.removeInputActionMenu();
         const menu = document.createElement("div");
         menu.className = "dait-input-action-menu";
@@ -30261,6 +30668,10 @@ var require_discord_ai_translator = __commonJS({
         const reposition = () => {
           repositionRaf = null;
           if (!menu.isConnected) return;
+          if (anchorNode && anchorNode.isConnected === false) {
+            this.removeInputActionMenu();
+            return;
+          }
           this.positionInputActionMenu(menu, anchorNode);
         };
         const onResize = () => {
@@ -30291,7 +30702,7 @@ var require_discord_ai_translator = __commonJS({
           this.removeInputActionMenu();
         };
         const escapeKeydown = (event) => {
-          if (event.key !== "Escape") return;
+          if (event.isComposing || event.key !== "Escape") return;
           event.preventDefault();
           this.removeInputActionMenu();
         };
@@ -30336,6 +30747,310 @@ var require_discord_ai_translator = __commonJS({
         this.inputActionMenu?.remove?.();
         this.inputActionMenu = null;
       }
+      getActivePolishPresetInfo() {
+        const templates = this.getPromptTemplates("polish") || [];
+        const task = this.settings?.polish || {};
+        const activeId = String(task.activePromptTemplate || "");
+        const activeTemplate = templates.find((item) => item && item.id === activeId) || null;
+        const matchesActive = Boolean(activeTemplate && String(activeTemplate.prompt || "") === String(task.prompt || ""));
+        const label = matchesActive ? this.getPromptTemplateLabel(activeTemplate) : this.t("quickPanelTemplateCustom");
+        return { templates, activeTemplate, matchesActive, label };
+      }
+      getPolishButtonTitleAttr() {
+        const info = this.getActivePolishPresetInfo();
+        const shortcut = this.getHotkeyLabel();
+        return info.label ? this.t("polishTitleAttrWithTone", { tone: info.label, shortcut }) : this.t("polishTitleAttr", { shortcut });
+      }
+      getPolishPresetPickerTitleAttr() {
+        const info = this.getActivePolishPresetInfo();
+        return info.label ? this.t("polishPresetPickerTitle", { tone: info.label }) : this.t("polishPresetPicker");
+      }
+      syncPolishPresetControls() {
+        if (typeof document === "undefined") return;
+        const polishTitle = this.getPolishButtonTitleAttr();
+        const pickerTitle = this.getPolishPresetPickerTitleAttr();
+        [...document.querySelectorAll?.(".dait-polish-button") || []].forEach((button) => {
+          button.title = polishTitle;
+          button.setAttribute?.("aria-label", polishTitle);
+        });
+        [...document.querySelectorAll?.(".dait-polish-preset-button") || []].forEach((button) => {
+          button.title = pickerTitle;
+          button.setAttribute?.("aria-label", pickerTitle);
+        });
+        if (this.polishPresetMenu?.isConnected) {
+          if (this.settings.polish?.enabled === false || this.polishPresetMenuAnchor && this.polishPresetMenuAnchor.isConnected === false) {
+            this.removePolishPresetMenu();
+            return;
+          }
+          this.renderPolishPresetMenuContent(this.polishPresetMenu, this.polishPresetMenuAnchor);
+          this.positionPolishPresetMenu(this.polishPresetMenu, this.polishPresetMenuAnchor);
+        }
+      }
+      createPolishPresetButton(group, textbox = null, composerKey = "") {
+        const button = document.createElement("button");
+        button.className = "dait-polish-preset-button";
+        button.type = "button";
+        if (composerKey) button.dataset.daitComposerKey = composerKey;
+        if (textbox) button.__daitTextbox = textbox;
+        const title = this.getPolishPresetPickerTitleAttr();
+        button.title = title;
+        button.setAttribute("aria-label", title);
+        button.setAttribute("aria-haspopup", "menu");
+        button.setAttribute("aria-expanded", "false");
+        const caret = document.createElement("span");
+        caret.className = "dait-polish-preset-caret";
+        caret.setAttribute("aria-hidden", "true");
+        button.appendChild(caret);
+        ["pointerdown", "mousedown"].forEach((type) => {
+          button.addEventListener(type, (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          });
+        });
+        button.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          this.togglePolishPresetMenu(button, { group, textbox, composerKey });
+        });
+        return button;
+      }
+      togglePolishPresetMenu(anchor = null, options = {}) {
+        if (this.polishPresetMenu?.isConnected && (!anchor || this.polishPresetMenuAnchor === anchor)) {
+          this.removePolishPresetMenu();
+          return null;
+        }
+        return this.openPolishPresetMenu(anchor, options);
+      }
+      renderPolishPresetMenuContent(menu, anchor = null, lifecycleToken = this.getLifecycleToken()) {
+        if (!menu) return;
+        menu.textContent = "";
+        const info = this.getActivePolishPresetInfo();
+        const header = document.createElement("div");
+        header.className = "dait-polish-preset-header";
+        const title = document.createElement("div");
+        title.className = "dait-polish-preset-title";
+        title.textContent = this.t("polishPresetMenuTitle");
+        header.appendChild(title);
+        if (!info.matchesActive) {
+          const customNote = document.createElement("div");
+          customNote.className = "dait-polish-preset-custom-note";
+          customNote.textContent = this.t("polishPresetMenuCustomNote");
+          header.appendChild(customNote);
+        }
+        menu.appendChild(header);
+        const list = document.createElement("div");
+        list.className = "dait-polish-preset-list";
+        list.setAttribute("role", "none");
+        let selectedItem = null;
+        if (info.templates.length) {
+          info.templates.forEach((template) => {
+            if (!template?.id) return;
+            const isSelected = Boolean(info.matchesActive && info.activeTemplate?.id === template.id);
+            const displayName = this.getPromptTemplateDisplayName(template);
+            const fullLabel = this.getPromptTemplateLabel(template);
+            const item = document.createElement("button");
+            item.className = "dait-polish-preset-item";
+            item.type = "button";
+            item.dataset.daitTemplateId = template.id;
+            item.title = fullLabel;
+            item.setAttribute("role", "menuitemradio");
+            item.setAttribute("aria-checked", isSelected ? "true" : "false");
+            item.setAttribute("aria-label", fullLabel);
+            const code = document.createElement("span");
+            code.className = "dait-polish-preset-code";
+            code.textContent = String(template.serial || "000");
+            const name = document.createElement("span");
+            name.className = "dait-polish-preset-name";
+            name.textContent = displayName;
+            const check = document.createElement("span");
+            check.className = "dait-polish-preset-check";
+            check.setAttribute("aria-hidden", "true");
+            item.appendChild(code);
+            item.appendChild(name);
+            item.appendChild(check);
+            item.addEventListener("click", (event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              if (!this.isLifecycleTokenCurrent(lifecycleToken) || this.polishPresetMenu !== menu || menu.isConnected === false) return;
+              if (this.settings.polish?.enabled === false) {
+                this.removePolishPresetMenu();
+                return;
+              }
+              this.removePolishPresetMenu();
+              this.applyPromptTemplate("polish", template.id);
+            });
+            list.appendChild(item);
+            if (isSelected) selectedItem = item;
+          });
+        } else {
+          const empty = document.createElement("p");
+          empty.className = "dait-polish-preset-empty";
+          empty.textContent = this.t("polishPresetMenuEmpty");
+          list.appendChild(empty);
+        }
+        menu.appendChild(list);
+        const footer = document.createElement("div");
+        footer.className = "dait-polish-preset-footer";
+        const manage = document.createElement("button");
+        manage.className = "dait-polish-preset-manage";
+        manage.type = "button";
+        manage.textContent = this.t("polishPresetMenuManage");
+        manage.setAttribute("role", "menuitem");
+        manage.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          if (!this.isLifecycleTokenCurrent(lifecycleToken) || this.polishPresetMenu !== menu || menu.isConnected === false) return;
+          this.removePolishPresetMenu();
+          if (this.settings?.ui) this.settings.ui.settingsActiveTab = SETTINGS_TAB_COMPOSE;
+          const modal = this.openQuickSettingsPanel("polish-preset-menu", anchor);
+          const panel = modal?.querySelector?.(".dait-settings") || null;
+          if (panel) this.setSettingsActiveTab?.(SETTINGS_TAB_COMPOSE, panel);
+        });
+        footer.appendChild(manage);
+        menu.appendChild(footer);
+        return selectedItem;
+      }
+      openPolishPresetMenu(anchor = null, options = {}) {
+        if (typeof document === "undefined" || !document.body) return null;
+        if (this.settings.polish?.enabled === false) return null;
+        this.removeInputActionMenu();
+        this.removePolishPresetMenu();
+        const lifecycleToken = this.getLifecycleToken();
+        const anchorNode = anchor || options.group?.querySelector?.(".dait-polish-preset-button") || options.group?.querySelector?.(".dait-polish-button") || options.group || null;
+        const menu = document.createElement("div");
+        menu.className = "dait-polish-preset-menu";
+        menu.setAttribute("role", "menu");
+        menu.setAttribute("aria-label", this.t("polishPresetMenuTitle"));
+        this.applyPanelTheme(menu);
+        const selectedItem = this.renderPolishPresetMenuContent(menu, anchorNode, lifecycleToken);
+        ["pointerdown", "mousedown"].forEach((type) => {
+          menu.addEventListener(type, (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          });
+        });
+        menu.addEventListener("click", (event) => event.stopPropagation());
+        document.body.appendChild(menu);
+        this.polishPresetMenu = menu;
+        this.polishPresetMenuAnchor = anchorNode;
+        anchorNode?.setAttribute?.("aria-expanded", "true");
+        let repositionRaf = null;
+        const reposition = () => {
+          repositionRaf = null;
+          if (!menu.isConnected) return;
+          if (anchorNode && anchorNode.isConnected === false) {
+            this.removePolishPresetMenu();
+            return;
+          }
+          this.positionPolishPresetMenu(menu, anchorNode);
+        };
+        const onResize = () => {
+          if (repositionRaf !== null) {
+            try {
+              window.cancelAnimationFrame?.(repositionRaf);
+            } catch {
+            }
+            repositionRaf = null;
+          }
+          if (!menu.isConnected) return;
+          this.applyPanelTheme(menu);
+          reposition();
+        };
+        const onScroll = (event) => {
+          if (event?.target && menu.contains?.(event.target)) return;
+          if (event?.target && event.target !== window && event.target !== document && anchorNode && !event.target.contains?.(anchorNode)) {
+            return;
+          }
+          if (repositionRaf !== null) return;
+          if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+            repositionRaf = window.requestAnimationFrame(reposition);
+          } else {
+            reposition();
+          }
+        };
+        const outsidePointerDown = (event) => {
+          if (menu.contains?.(event.target) || anchorNode?.contains?.(event.target)) return;
+          this.removePolishPresetMenu();
+        };
+        const onKeydown = (event) => {
+          if (event.isComposing) return;
+          if (event.key === "Escape") {
+            event.preventDefault();
+            event.stopPropagation();
+            this.removePolishPresetMenu();
+            return;
+          }
+          if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+          const active = document.activeElement;
+          if (active && !menu.contains?.(active) && active !== anchorNode) return;
+          const focusables = [...menu.querySelectorAll?.(".dait-polish-preset-item, .dait-polish-preset-manage") || []];
+          if (!focusables.length) return;
+          event.preventDefault();
+          event.stopPropagation();
+          const currentIndex = focusables.indexOf(active);
+          let nextIndex = 0;
+          if (event.key === "Home") nextIndex = 0;
+          else if (event.key === "End") nextIndex = focusables.length - 1;
+          else if (event.key === "ArrowDown") nextIndex = currentIndex < 0 ? 0 : (currentIndex + 1) % focusables.length;
+          else nextIndex = currentIndex < 0 ? focusables.length - 1 : (currentIndex - 1 + focusables.length) % focusables.length;
+          focusables[nextIndex]?.focus?.();
+        };
+        this.polishPresetMenuCleanup = () => {
+          anchorNode?.setAttribute?.("aria-expanded", "false");
+          if (repositionRaf !== null && typeof window !== "undefined") {
+            window.cancelAnimationFrame?.(repositionRaf);
+            repositionRaf = null;
+          }
+          if (typeof window !== "undefined") {
+            window.removeEventListener?.("resize", onResize, { capture: true });
+            window.removeEventListener?.("scroll", onScroll, { capture: true });
+          }
+          document.removeEventListener?.("pointerdown", outsidePointerDown, true);
+          document.removeEventListener?.("keydown", onKeydown, true);
+        };
+        if (typeof window !== "undefined") {
+          window.addEventListener?.("resize", onResize, { capture: true, passive: true });
+          window.addEventListener?.("scroll", onScroll, { capture: true, passive: true });
+        }
+        document.addEventListener?.("pointerdown", outsidePointerDown, true);
+        document.addEventListener?.("keydown", onKeydown, true);
+        onResize();
+        try {
+          selectedItem?.scrollIntoView?.({ block: "nearest" });
+        } catch {
+        }
+        return menu;
+      }
+      positionPolishPresetMenu(menu, anchor = null) {
+        if (!menu?.style || typeof window === "undefined") return;
+        const rect = anchor?.getBoundingClientRect?.() || null;
+        const viewportWidth = Number(window.innerWidth || document.documentElement?.clientWidth || 0) || 900;
+        const viewportHeight = Number(window.innerHeight || document.documentElement?.clientHeight || 0) || 700;
+        const width = Math.min(280, Math.max(240, viewportWidth - 24));
+        const left = rect ? Math.max(12, Math.min(rect.right - width, viewportWidth - width - 12)) : viewportWidth - width - 16;
+        const menuHeight = Number(menu.getBoundingClientRect?.()?.height || 0);
+        const spaceAbove = rect ? rect.top - 12 : viewportHeight;
+        const spaceBelow = rect ? viewportHeight - rect.bottom - 12 : 0;
+        menu.style.left = `${left}px`;
+        menu.style.right = "auto";
+        menu.style.width = `${width}px`;
+        if (rect && menuHeight > 0 && spaceAbove < menuHeight + 8 && spaceBelow > spaceAbove) {
+          const top = Math.min(Math.max(rect.bottom + 8, 12), Math.max(12, viewportHeight - menuHeight - 12));
+          menu.style.top = `${top}px`;
+          menu.style.bottom = "auto";
+        } else {
+          const bottom = rect ? Math.max(12, viewportHeight - rect.top + 8) : 76;
+          menu.style.top = "auto";
+          menu.style.bottom = `${Math.min(Math.max(bottom, 12), Math.max(12, viewportHeight - 80))}px`;
+        }
+      }
+      removePolishPresetMenu() {
+        this.polishPresetMenuCleanup?.();
+        this.polishPresetMenuCleanup = null;
+        this.polishPresetMenu?.remove?.();
+        this.polishPresetMenu = null;
+        this.polishPresetMenuAnchor = null;
+      }
       getPolishButtonContainer(textbox) {
         return this.getInputButtonContainer(textbox);
       }
@@ -30374,7 +31089,7 @@ var require_discord_ai_translator = __commonJS({
       }
       getInputButtonControls(root, textbox) {
         try {
-          return [...root.querySelectorAll?.("button, [role='button']") || []].filter((control) => control?.isConnected !== false).filter((control) => !control.contains?.(textbox)).filter((control) => !control.closest?.(".dait-polish-button, .dait-public-bilingual-button, .dait-input-action-group"));
+          return [...root.querySelectorAll?.("button, [role='button']") || []].filter((control) => control?.isConnected !== false).filter((control) => !control.contains?.(textbox)).filter((control) => !control.closest?.(".dait-polish-button, .dait-polish-preset-button, .dait-public-bilingual-button, .dait-input-action-group"));
         } catch {
           return [];
         }
@@ -37244,10 +37959,12 @@ var require_discord_ai_translator = __commonJS({
         const excludedSelectors = [
           ".dait-message-button",
           ".dait-polish-button",
+          ".dait-polish-preset-button",
           ".dait-public-bilingual-button",
           ".dait-polish-restore-button",
           ".dait-input-action-menu-button",
           ".dait-input-action-menu",
+          ".dait-polish-preset-menu",
           ".dait-quick-settings-button",
           ".dait-quick-settings-modal-root",
           ".dait-polish-result-panel",
@@ -37400,10 +38117,12 @@ var require_discord_ai_translator = __commonJS({
         const excludedSelectors = [
           ".dait-message-button",
           ".dait-polish-button",
+          ".dait-polish-preset-button",
           ".dait-public-bilingual-button",
           ".dait-polish-restore-button",
           ".dait-input-action-menu-button",
           ".dait-input-action-menu",
+          ".dait-polish-preset-menu",
           ".dait-quick-settings-button",
           ".dait-quick-settings-modal-root",
           ".dait-polish-result-panel",

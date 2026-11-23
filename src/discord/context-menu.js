@@ -119,9 +119,12 @@ class DiscordContextMenuAdapter {
             && (plugin.settings.ui?.injectInputButton || group?.querySelector?.(".dait-polish-button"));
         if (canPolish()) {
             const configKey = this.getComposerMenuConfigKey("polish");
-            addItem(plugin.t("polishButton"), plugin.t("polishTitleAttr", { shortcut: plugin.getHotkeyLabel() }),
+            addItem(plugin.t("polishButton"), plugin.getPolishButtonTitleAttr?.() || plugin.t("polishTitleAttr", { shortcut: plugin.getHotkeyLabel() }),
                 () => plugin.polishCurrentDraft(group?.querySelector?.(".dait-polish-button") || button, { textbox, composerKey, fromMenu: true }),
                 () => isDraftCurrent() && canPolish() && this.getComposerMenuConfigKey("polish") === configKey);
+            addItem(plugin.t("polishPresetMenuItemAction"), plugin.getPolishPresetPickerTitleAttr?.() || plugin.t("polishPresetPicker"),
+                () => plugin.openPolishPresetMenu?.(anchor, { group, textbox }),
+                () => canPolish());
         }
         const canBilingual = () => plugin.isPublicBilingualFeatureEnabled()
             && (plugin.settings.ui?.publicBilingualInputButton || group?.querySelector?.(".dait-public-bilingual-button"));

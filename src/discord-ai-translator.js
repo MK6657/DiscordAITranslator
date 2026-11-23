@@ -1087,6 +1087,9 @@ module.exports = class DiscordAITranslator {
         this.inputButtonScanDueAt = 0;
         this.inputActionMenu = null;
         this.inputActionMenuCleanup = null;
+        this.polishPresetMenu = null;
+        this.polishPresetMenuCleanup = null;
+        this.polishPresetMenuAnchor = null;
         this.textboxReplacementCleanupToken = 0;
         this.textboxReplacementCleanupRemove = null;
         this.textboxReplacementCleanupTimers = [];
@@ -1223,11 +1226,12 @@ module.exports = class DiscordAITranslator {
         this.removePolishResultPanel();
         this.removePolishRestoreControl();
         this.removeInputActionMenu();
+        this.removePolishPresetMenu();
         this.closeQuickSettingsPanel(null, "stop");
         this.quickPanel.destroy("stop");
         document.querySelectorAll?.(".dait-settings")?.forEach(panel => this.destroySettingsModalSizing(panel));
         this.restoreAllTranslationSourceVisibility();
-        document.querySelectorAll(".dait-message-button, .dait-polish-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-menu-button, .dait-input-action-menu, .dait-quick-settings-button, .dait-translation-line, .dait-translation-box, .dait-input-action-group").forEach(node => node.remove());
+        document.querySelectorAll(".dait-message-button, .dait-polish-button, .dait-polish-preset-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-menu-button, .dait-input-action-menu, .dait-polish-preset-menu, .dait-quick-settings-button, .dait-translation-line, .dait-translation-box, .dait-input-action-group").forEach(node => node.remove());
         document.querySelectorAll(".dait-input-actions-host").forEach(node => node.classList?.remove?.("dait-input-actions-host"));
         this.removeStyles();
         if (translationCachePersisted) {
@@ -6357,11 +6361,12 @@ module.exports = class DiscordAITranslator {
         this.removePolishResultPanel();
         this.removePolishRestoreControl();
         this.removeInputActionMenu();
+        this.removePolishPresetMenu();
         // The settings windows and the quick panel stay open and switch language in place.
         this.refreshSettingsWindowsLocale();
         this.quickPanel?.rerender?.("language");
         this.restoreAllTranslationSourceVisibility();
-        document.querySelectorAll(".dait-message-button, .dait-polish-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-menu-button, .dait-input-action-menu, .dait-quick-settings-button").forEach(node => node.remove());
+        document.querySelectorAll(".dait-message-button, .dait-polish-button, .dait-polish-preset-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-menu-button, .dait-input-action-menu, .dait-polish-preset-menu, .dait-input-action-group, .dait-quick-settings-button").forEach(node => node.remove());
         document.querySelectorAll(".dait-translation-line, .dait-translation-box").forEach(node => node.remove());
         this.unpatchContextMenus();
         this.patchMessageContextMenu();
@@ -6436,7 +6441,7 @@ module.exports = class DiscordAITranslator {
     }
 
     isOwnPluginElement(element) {
-        return Boolean(element?.closest?.(".dait-settings, .dait-quick-settings-button, .dait-quick-settings-modal-root, .dait-quick-popover, .dait-message-button, .dait-polish-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-group, .dait-input-action-menu-button, .dait-input-action-menu, .dait-polish-result-panel, .dait-polish-restore-control, .dait-translation-line, .dait-translation-box"));
+        return Boolean(element?.closest?.(".dait-settings, .dait-quick-settings-button, .dait-quick-settings-modal-root, .dait-quick-popover, .dait-message-button, .dait-polish-button, .dait-polish-preset-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-group, .dait-input-action-menu-button, .dait-input-action-menu, .dait-polish-preset-menu, .dait-polish-result-panel, .dait-polish-restore-control, .dait-translation-line, .dait-translation-box"));
     }
 
     startObserver() {
@@ -6703,7 +6708,7 @@ module.exports = class DiscordAITranslator {
     isOwnMutationNode(node) {
         const element = node?.nodeType === 3 ? node.parentElement : node;
         if (this.isOwnPluginElement(element)) return true;
-        return Boolean(element?.matches?.(".dait-settings, .dait-quick-settings-button, .dait-quick-settings-modal-root, .dait-quick-popover, .dait-message-button, .dait-polish-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-group, .dait-input-action-menu-button, .dait-input-action-menu, .dait-polish-result-panel, .dait-polish-restore-control, .dait-translation-line, .dait-translation-box"));
+        return Boolean(element?.matches?.(".dait-settings, .dait-quick-settings-button, .dait-quick-settings-modal-root, .dait-quick-popover, .dait-message-button, .dait-polish-button, .dait-polish-preset-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-group, .dait-input-action-menu-button, .dait-input-action-menu, .dait-polish-preset-menu, .dait-polish-result-panel, .dait-polish-restore-control, .dait-translation-line, .dait-translation-box"));
     }
 
     isMediaOnlyMutation(mutation) {
@@ -8560,7 +8565,7 @@ module.exports = class DiscordAITranslator {
     refreshDiscordThemeClasses(options = {}) {
         if (typeof document === "undefined") return;
         this.discordThemeCacheEpoch++;
-        const selector = ".dait-quick-settings-button, .dait-polish-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-menu-button, .dait-message-button, .dait-polish-restore-control";
+        const selector = ".dait-quick-settings-button, .dait-polish-button, .dait-polish-preset-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-menu-button, .dait-message-button, .dait-polish-restore-control";
         const queried = [...(document.querySelectorAll?.(selector) || [])];
         [...new Set(queried)].forEach(node => this.syncDiscordThemeClasses(node));
         if (this.polishRestoreControl) this.syncDiscordThemeClasses(this.polishRestoreControl);
@@ -8642,10 +8647,12 @@ module.exports = class DiscordAITranslator {
         if (this.elementHasClassName(node, "dait-quick-settings-error")) return true;
         if (this.elementHasClassName(node, "dait-quick-settings-button")) return true;
         if (this.elementHasClassName(node, "dait-polish-button")) return true;
+        if (this.elementHasClassName(node, "dait-polish-preset-button")) return true;
         if (this.elementHasClassName(node, "dait-public-bilingual-button")) return true;
         if (this.elementHasClassName(node, "dait-polish-restore-button")) return true;
         if (this.elementHasClassName(node, "dait-input-action-menu-button")) return true;
         if (this.elementHasClassName(node, "dait-input-action-menu")) return true;
+        if (this.elementHasClassName(node, "dait-polish-preset-menu")) return true;
         if (this.elementHasClassName(node, "dait-message-button")) return true;
         if (this.elementHasClassName(node, "dait-polish-result-panel")) return true;
         if (this.elementHasClassName(node, "dait-polish-restore-control")) return true;
@@ -9015,15 +9022,37 @@ module.exports = class DiscordAITranslator {
         if (!group) return;
         this.removeDisabledInputActionButtons(group);
 
-        if (this.isPolishInputButtonEnabled(options) && !group.querySelector(".dait-polish-button")) {
-            const button = this.createInputActionButton(
-                "dait-polish-button",
-                this.t("polishButton"),
-                this.t("polishTitleAttr", { shortcut: this.getHotkeyLabel() }),
-                () => this.polishCurrentDraft(button, { textbox, composerKey }),
-                { shortText: this.t("polishButtonShort"), textbox, composerKey }
-            );
-            group.appendChild(button);
+        if (this.isPolishInputButtonEnabled(options)) {
+            let polishButton = group.querySelector(".dait-polish-button");
+            if (!polishButton) {
+                polishButton = this.createInputActionButton(
+                    "dait-polish-button",
+                    this.t("polishButton"),
+                    this.getPolishButtonTitleAttr(),
+                    () => this.polishCurrentDraft(polishButton, { textbox, composerKey }),
+                    { shortText: this.t("polishButtonShort"), textbox, composerKey }
+                );
+                polishButton.setAttribute?.("data-dait-split", "true");
+                polishButton.addEventListener("contextmenu", event => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    const anchor = group.querySelector?.(".dait-polish-preset-button") || polishButton;
+                    this.togglePolishPresetMenu(anchor, { group, textbox, composerKey });
+                });
+                group.appendChild(polishButton);
+            }
+            else {
+                polishButton.setAttribute?.("data-dait-split", "true");
+            }
+            if (!group.querySelector(".dait-polish-preset-button")) {
+                const presetButton = this.createPolishPresetButton(group, textbox, composerKey);
+                if (typeof group.insertBefore === "function" && polishButton.nextSibling) {
+                    group.insertBefore(presetButton, polishButton.nextSibling);
+                }
+                else {
+                    group.appendChild(presetButton);
+                }
+            }
         }
 
         if (!options.forcePolish && this.isPublicBilingualInputButtonEnabled() && !group.querySelector(".dait-public-bilingual-button")) {
@@ -9046,7 +9075,7 @@ module.exports = class DiscordAITranslator {
     removeDisabledInputActionButtons(group) {
         if (!group?.querySelectorAll) return false;
         const selectors = [];
-        if (this.settings.polish?.enabled === false) selectors.push(".dait-polish-button");
+        if (this.settings.polish?.enabled === false) selectors.push(".dait-polish-button", ".dait-polish-preset-button");
         if (!this.isPublicBilingualFeatureEnabled()) selectors.push(".dait-public-bilingual-button");
         let removed = false;
         selectors.forEach(selector => {
@@ -9055,11 +9084,13 @@ module.exports = class DiscordAITranslator {
                 removed = true;
             });
         });
+        if (removed && this.settings.polish?.enabled === false) this.removePolishPresetMenu();
         return removed;
     }
 
     syncInputActionButtonsForSettings() {
         this.removeInputActionMenu();
+        this.removePolishPresetMenu();
         if (typeof document === "undefined") return;
         [...(document.querySelectorAll?.(".dait-input-action-group") || [])].forEach(group => {
             if (this.removeDisabledInputActionButtons(group)) this.syncInputActionGroupState(group);
@@ -9122,7 +9153,7 @@ module.exports = class DiscordAITranslator {
 
     syncInputActionButtonThemes(group, anchor = null) {
         if (!group?.querySelectorAll) return;
-        group.querySelectorAll(".dait-polish-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-menu-button").forEach(button => {
+        group.querySelectorAll(".dait-polish-button, .dait-polish-preset-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-menu-button").forEach(button => {
             this.syncDiscordThemeClasses(button, anchor);
         });
     }
@@ -9148,8 +9179,12 @@ module.exports = class DiscordAITranslator {
         const fallback = [...(group.children || [])].filter(child => this.isInputActionDirectButton(child));
         const count = Math.max(queried.length || 0, fallback.length);
         group.classList.toggle("dait-input-action-group-dual", count > 1);
+        if (!group.querySelector?.(".dait-polish-button")) {
+            [...(group.querySelectorAll?.(".dait-polish-preset-button") || [])].forEach(node => node.remove?.());
+        }
         if (!count) {
             this.removeInputActionMenu();
+            this.removePolishPresetMenu();
             group.remove?.();
             return;
         }
@@ -9280,6 +9315,7 @@ module.exports = class DiscordAITranslator {
 
     openInputActionMenu(group, textbox = null, container = null, button = null) {
         if (typeof document === "undefined" || !document.body) return null;
+        this.removePolishPresetMenu();
         this.removeInputActionMenu();
         const menu = document.createElement("div");
         menu.className = "dait-input-action-menu";
@@ -9314,6 +9350,10 @@ module.exports = class DiscordAITranslator {
         const reposition = () => {
             repositionRaf = null;
             if (!menu.isConnected) return;
+            if (anchorNode && anchorNode.isConnected === false) {
+                this.removeInputActionMenu();
+                return;
+            }
             this.positionInputActionMenu(menu, anchorNode);
         };
         const onResize = () => {
@@ -9343,7 +9383,7 @@ module.exports = class DiscordAITranslator {
             this.removeInputActionMenu();
         };
         const escapeKeydown = event => {
-            if (event.key !== "Escape") return;
+            if (event.isComposing || event.key !== "Escape") return;
             event.preventDefault();
             this.removeInputActionMenu();
         };
@@ -9389,6 +9429,335 @@ module.exports = class DiscordAITranslator {
         this.inputActionMenuCleanup = null;
         this.inputActionMenu?.remove?.();
         this.inputActionMenu = null;
+    }
+
+    getActivePolishPresetInfo() {
+        const templates = this.getPromptTemplates("polish") || [];
+        const task = this.settings?.polish || {};
+        const activeId = String(task.activePromptTemplate || "");
+        const activeTemplate = templates.find(item => item && item.id === activeId) || null;
+        const matchesActive = Boolean(activeTemplate && String(activeTemplate.prompt || "") === String(task.prompt || ""));
+        const label = matchesActive
+            ? this.getPromptTemplateLabel(activeTemplate)
+            : this.t("quickPanelTemplateCustom");
+        return { templates, activeTemplate, matchesActive, label };
+    }
+
+    getPolishButtonTitleAttr() {
+        const info = this.getActivePolishPresetInfo();
+        const shortcut = this.getHotkeyLabel();
+        return info.label
+            ? this.t("polishTitleAttrWithTone", { tone: info.label, shortcut })
+            : this.t("polishTitleAttr", { shortcut });
+    }
+
+    getPolishPresetPickerTitleAttr() {
+        const info = this.getActivePolishPresetInfo();
+        return info.label
+            ? this.t("polishPresetPickerTitle", { tone: info.label })
+            : this.t("polishPresetPicker");
+    }
+
+    syncPolishPresetControls() {
+        if (typeof document === "undefined") return;
+        const polishTitle = this.getPolishButtonTitleAttr();
+        const pickerTitle = this.getPolishPresetPickerTitleAttr();
+        [...(document.querySelectorAll?.(".dait-polish-button") || [])].forEach(button => {
+            button.title = polishTitle;
+            button.setAttribute?.("aria-label", polishTitle);
+        });
+        [...(document.querySelectorAll?.(".dait-polish-preset-button") || [])].forEach(button => {
+            button.title = pickerTitle;
+            button.setAttribute?.("aria-label", pickerTitle);
+        });
+        if (this.polishPresetMenu?.isConnected) {
+            if (this.settings.polish?.enabled === false || (this.polishPresetMenuAnchor && this.polishPresetMenuAnchor.isConnected === false)) {
+                this.removePolishPresetMenu();
+                return;
+            }
+            this.renderPolishPresetMenuContent(this.polishPresetMenu, this.polishPresetMenuAnchor);
+            this.positionPolishPresetMenu(this.polishPresetMenu, this.polishPresetMenuAnchor);
+        }
+    }
+
+    createPolishPresetButton(group, textbox = null, composerKey = "") {
+        const button = document.createElement("button");
+        button.className = "dait-polish-preset-button";
+        button.type = "button";
+        if (composerKey) button.dataset.daitComposerKey = composerKey;
+        if (textbox) button.__daitTextbox = textbox;
+        const title = this.getPolishPresetPickerTitleAttr();
+        button.title = title;
+        button.setAttribute("aria-label", title);
+        button.setAttribute("aria-haspopup", "menu");
+        button.setAttribute("aria-expanded", "false");
+        const caret = document.createElement("span");
+        caret.className = "dait-polish-preset-caret";
+        caret.setAttribute("aria-hidden", "true");
+        button.appendChild(caret);
+        ["pointerdown", "mousedown"].forEach(type => {
+            button.addEventListener(type, event => {
+                event.preventDefault();
+                event.stopPropagation();
+            });
+        });
+        button.addEventListener("click", event => {
+            event.preventDefault();
+            event.stopPropagation();
+            this.togglePolishPresetMenu(button, { group, textbox, composerKey });
+        });
+        return button;
+    }
+
+    togglePolishPresetMenu(anchor = null, options = {}) {
+        if (this.polishPresetMenu?.isConnected && (!anchor || this.polishPresetMenuAnchor === anchor)) {
+            this.removePolishPresetMenu();
+            return null;
+        }
+        return this.openPolishPresetMenu(anchor, options);
+    }
+
+    renderPolishPresetMenuContent(menu, anchor = null, lifecycleToken = this.getLifecycleToken()) {
+        if (!menu) return;
+        menu.textContent = "";
+        const info = this.getActivePolishPresetInfo();
+
+        const header = document.createElement("div");
+        header.className = "dait-polish-preset-header";
+        const title = document.createElement("div");
+        title.className = "dait-polish-preset-title";
+        title.textContent = this.t("polishPresetMenuTitle");
+        header.appendChild(title);
+        if (!info.matchesActive) {
+            const customNote = document.createElement("div");
+            customNote.className = "dait-polish-preset-custom-note";
+            customNote.textContent = this.t("polishPresetMenuCustomNote");
+            header.appendChild(customNote);
+        }
+        menu.appendChild(header);
+
+        const list = document.createElement("div");
+        list.className = "dait-polish-preset-list";
+        list.setAttribute("role", "none");
+        let selectedItem = null;
+        if (info.templates.length) {
+            info.templates.forEach(template => {
+                if (!template?.id) return;
+                const isSelected = Boolean(info.matchesActive && info.activeTemplate?.id === template.id);
+                const displayName = this.getPromptTemplateDisplayName(template);
+                const fullLabel = this.getPromptTemplateLabel(template);
+                const item = document.createElement("button");
+                item.className = "dait-polish-preset-item";
+                item.type = "button";
+                item.dataset.daitTemplateId = template.id;
+                item.title = fullLabel;
+                item.setAttribute("role", "menuitemradio");
+                item.setAttribute("aria-checked", isSelected ? "true" : "false");
+                item.setAttribute("aria-label", fullLabel);
+
+                const code = document.createElement("span");
+                code.className = "dait-polish-preset-code";
+                code.textContent = String(template.serial || "000");
+
+                const name = document.createElement("span");
+                name.className = "dait-polish-preset-name";
+                name.textContent = displayName;
+
+                const check = document.createElement("span");
+                check.className = "dait-polish-preset-check";
+                check.setAttribute("aria-hidden", "true");
+
+                item.appendChild(code);
+                item.appendChild(name);
+                item.appendChild(check);
+                item.addEventListener("click", event => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    if (!this.isLifecycleTokenCurrent(lifecycleToken) || this.polishPresetMenu !== menu || menu.isConnected === false) return;
+                    if (this.settings.polish?.enabled === false) {
+                        this.removePolishPresetMenu();
+                        return;
+                    }
+                    this.removePolishPresetMenu();
+                    this.applyPromptTemplate("polish", template.id);
+                });
+                list.appendChild(item);
+                if (isSelected) selectedItem = item;
+            });
+        }
+        else {
+            const empty = document.createElement("p");
+            empty.className = "dait-polish-preset-empty";
+            empty.textContent = this.t("polishPresetMenuEmpty");
+            list.appendChild(empty);
+        }
+        menu.appendChild(list);
+
+        const footer = document.createElement("div");
+        footer.className = "dait-polish-preset-footer";
+        const manage = document.createElement("button");
+        manage.className = "dait-polish-preset-manage";
+        manage.type = "button";
+        manage.textContent = this.t("polishPresetMenuManage");
+        manage.setAttribute("role", "menuitem");
+        manage.addEventListener("click", event => {
+            event.preventDefault();
+            event.stopPropagation();
+            if (!this.isLifecycleTokenCurrent(lifecycleToken) || this.polishPresetMenu !== menu || menu.isConnected === false) return;
+            this.removePolishPresetMenu();
+            if (this.settings?.ui) this.settings.ui.settingsActiveTab = SETTINGS_TAB_COMPOSE;
+            const modal = this.openQuickSettingsPanel("polish-preset-menu", anchor);
+            const panel = modal?.querySelector?.(".dait-settings") || null;
+            if (panel) this.setSettingsActiveTab?.(SETTINGS_TAB_COMPOSE, panel);
+        });
+        footer.appendChild(manage);
+        menu.appendChild(footer);
+        return selectedItem;
+    }
+
+    openPolishPresetMenu(anchor = null, options = {}) {
+        if (typeof document === "undefined" || !document.body) return null;
+        if (this.settings.polish?.enabled === false) return null;
+        this.removeInputActionMenu();
+        this.removePolishPresetMenu();
+        const lifecycleToken = this.getLifecycleToken();
+        const anchorNode = anchor || options.group?.querySelector?.(".dait-polish-preset-button") || options.group?.querySelector?.(".dait-polish-button") || options.group || null;
+        const menu = document.createElement("div");
+        menu.className = "dait-polish-preset-menu";
+        menu.setAttribute("role", "menu");
+        menu.setAttribute("aria-label", this.t("polishPresetMenuTitle"));
+        this.applyPanelTheme(menu);
+
+        const selectedItem = this.renderPolishPresetMenuContent(menu, anchorNode, lifecycleToken);
+        ["pointerdown", "mousedown"].forEach(type => {
+            menu.addEventListener(type, event => {
+                event.preventDefault();
+                event.stopPropagation();
+            });
+        });
+        menu.addEventListener("click", event => event.stopPropagation());
+        document.body.appendChild(menu);
+        this.polishPresetMenu = menu;
+        this.polishPresetMenuAnchor = anchorNode;
+        anchorNode?.setAttribute?.("aria-expanded", "true");
+
+        let repositionRaf = null;
+        const reposition = () => {
+            repositionRaf = null;
+            if (!menu.isConnected) return;
+            if (anchorNode && anchorNode.isConnected === false) {
+                this.removePolishPresetMenu();
+                return;
+            }
+            this.positionPolishPresetMenu(menu, anchorNode);
+        };
+        const onResize = () => {
+            if (repositionRaf !== null) {
+                try { window.cancelAnimationFrame?.(repositionRaf); }
+                catch {}
+                repositionRaf = null;
+            }
+            if (!menu.isConnected) return;
+            this.applyPanelTheme(menu);
+            reposition();
+        };
+        const onScroll = event => {
+            if (event?.target && menu.contains?.(event.target)) return;
+            if (event?.target && event.target !== window && event.target !== document && anchorNode && !event.target.contains?.(anchorNode)) {
+                return;
+            }
+            if (repositionRaf !== null) return;
+            if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+                repositionRaf = window.requestAnimationFrame(reposition);
+            }
+            else {
+                reposition();
+            }
+        };
+        const outsidePointerDown = event => {
+            if (menu.contains?.(event.target) || anchorNode?.contains?.(event.target)) return;
+            this.removePolishPresetMenu();
+        };
+        const onKeydown = event => {
+            if (event.isComposing) return;
+            if (event.key === "Escape") {
+                event.preventDefault();
+                event.stopPropagation();
+                this.removePolishPresetMenu();
+                return;
+            }
+            if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+            const active = document.activeElement;
+            if (active && !menu.contains?.(active) && active !== anchorNode) return;
+            const focusables = [...(menu.querySelectorAll?.(".dait-polish-preset-item, .dait-polish-preset-manage") || [])];
+            if (!focusables.length) return;
+            event.preventDefault();
+            event.stopPropagation();
+            const currentIndex = focusables.indexOf(active);
+            let nextIndex = 0;
+            if (event.key === "Home") nextIndex = 0;
+            else if (event.key === "End") nextIndex = focusables.length - 1;
+            else if (event.key === "ArrowDown") nextIndex = currentIndex < 0 ? 0 : (currentIndex + 1) % focusables.length;
+            else nextIndex = currentIndex < 0 ? focusables.length - 1 : (currentIndex - 1 + focusables.length) % focusables.length;
+            focusables[nextIndex]?.focus?.();
+        };
+
+        this.polishPresetMenuCleanup = () => {
+            anchorNode?.setAttribute?.("aria-expanded", "false");
+            if (repositionRaf !== null && typeof window !== "undefined") {
+                window.cancelAnimationFrame?.(repositionRaf);
+                repositionRaf = null;
+            }
+            if (typeof window !== "undefined") {
+                window.removeEventListener?.("resize", onResize, { capture: true });
+                window.removeEventListener?.("scroll", onScroll, { capture: true });
+            }
+            document.removeEventListener?.("pointerdown", outsidePointerDown, true);
+            document.removeEventListener?.("keydown", onKeydown, true);
+        };
+        if (typeof window !== "undefined") {
+            window.addEventListener?.("resize", onResize, { capture: true, passive: true });
+            window.addEventListener?.("scroll", onScroll, { capture: true, passive: true });
+        }
+        document.addEventListener?.("pointerdown", outsidePointerDown, true);
+        document.addEventListener?.("keydown", onKeydown, true);
+        onResize();
+        try { selectedItem?.scrollIntoView?.({ block: "nearest" }); }
+        catch {}
+        return menu;
+    }
+
+    positionPolishPresetMenu(menu, anchor = null) {
+        if (!menu?.style || typeof window === "undefined") return;
+        const rect = anchor?.getBoundingClientRect?.() || null;
+        const viewportWidth = Number(window.innerWidth || document.documentElement?.clientWidth || 0) || 900;
+        const viewportHeight = Number(window.innerHeight || document.documentElement?.clientHeight || 0) || 700;
+        const width = Math.min(280, Math.max(240, viewportWidth - 24));
+        const left = rect ? Math.max(12, Math.min(rect.right - width, viewportWidth - width - 12)) : viewportWidth - width - 16;
+        const menuHeight = Number(menu.getBoundingClientRect?.()?.height || 0);
+        const spaceAbove = rect ? rect.top - 12 : viewportHeight;
+        const spaceBelow = rect ? viewportHeight - rect.bottom - 12 : 0;
+        menu.style.left = `${left}px`;
+        menu.style.right = "auto";
+        menu.style.width = `${width}px`;
+        if (rect && menuHeight > 0 && spaceAbove < menuHeight + 8 && spaceBelow > spaceAbove) {
+            const top = Math.min(Math.max(rect.bottom + 8, 12), Math.max(12, viewportHeight - menuHeight - 12));
+            menu.style.top = `${top}px`;
+            menu.style.bottom = "auto";
+        }
+        else {
+            const bottom = rect ? Math.max(12, viewportHeight - rect.top + 8) : 76;
+            menu.style.top = "auto";
+            menu.style.bottom = `${Math.min(Math.max(bottom, 12), Math.max(12, viewportHeight - 80))}px`;
+        }
+    }
+
+    removePolishPresetMenu() {
+        this.polishPresetMenuCleanup?.();
+        this.polishPresetMenuCleanup = null;
+        this.polishPresetMenu?.remove?.();
+        this.polishPresetMenu = null;
+        this.polishPresetMenuAnchor = null;
     }
 
     getPolishButtonContainer(textbox) {
@@ -9441,7 +9810,7 @@ module.exports = class DiscordAITranslator {
             return [...(root.querySelectorAll?.("button, [role='button']") || [])]
                 .filter(control => control?.isConnected !== false)
                 .filter(control => !control.contains?.(textbox))
-                .filter(control => !control.closest?.(".dait-polish-button, .dait-public-bilingual-button, .dait-input-action-group"));
+                .filter(control => !control.closest?.(".dait-polish-button, .dait-polish-preset-button, .dait-public-bilingual-button, .dait-input-action-group"));
         }
         catch {
             return [];
@@ -16958,10 +17327,12 @@ module.exports = class DiscordAITranslator {
         const excludedSelectors = [
             ".dait-message-button",
             ".dait-polish-button",
+            ".dait-polish-preset-button",
             ".dait-public-bilingual-button",
             ".dait-polish-restore-button",
             ".dait-input-action-menu-button",
             ".dait-input-action-menu",
+            ".dait-polish-preset-menu",
             ".dait-quick-settings-button",
             ".dait-quick-settings-modal-root",
             ".dait-polish-result-panel",
@@ -17134,10 +17505,12 @@ module.exports = class DiscordAITranslator {
         const excludedSelectors = [
             ".dait-message-button",
             ".dait-polish-button",
+            ".dait-polish-preset-button",
             ".dait-public-bilingual-button",
             ".dait-polish-restore-button",
             ".dait-input-action-menu-button",
             ".dait-input-action-menu",
+            ".dait-polish-preset-menu",
             ".dait-quick-settings-button",
             ".dait-quick-settings-modal-root",
             ".dait-polish-result-panel",

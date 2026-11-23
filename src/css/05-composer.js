@@ -1,6 +1,11 @@
 "use strict";
 
+const { createPixelSvgDataUri } = require("../ui/pixel-icons");
+const PIXEL_CHEVRON_DOWN_ICON = createPixelSvgDataUri("chevronDown", "#000000");
+const PIXEL_CHECK_ICON = createPixelSvgDataUri("check", "#000000");
+
 module.exports = `.dait-polish-button,
+.dait-polish-preset-button,
 .dait-public-bilingual-button,
 .dait-polish-restore-button,
 .dait-input-action-menu-button,
@@ -38,6 +43,8 @@ module.exports = `.dait-polish-button,
 }
 
 .dait-polish-button:hover,
+.dait-polish-preset-button:hover,
+.dait-polish-preset-button[aria-expanded="true"],
 .dait-public-bilingual-button:hover,
 .dait-polish-restore-button:hover,
 .dait-input-action-menu-button:hover,
@@ -49,6 +56,7 @@ module.exports = `.dait-polish-button,
 }
 
 .dait-polish-button:active:not(:disabled),
+.dait-polish-preset-button:active:not(:disabled),
 .dait-public-bilingual-button:active:not(:disabled),
 .dait-polish-restore-button:active:not(:disabled),
 .dait-input-action-menu-button:active:not(:disabled),
@@ -58,6 +66,7 @@ module.exports = `.dait-polish-button,
 }
 
 .dait-polish-button:disabled,
+.dait-polish-preset-button:disabled,
 .dait-public-bilingual-button:disabled,
 .dait-polish-restore-button:disabled,
 .dait-input-action-menu-button:disabled,
@@ -85,6 +94,53 @@ module.exports = `.dait-polish-button,
     z-index: auto;
 }
 
+.dait-polish-button[data-dait-split="true"] {
+    border-bottom-right-radius: 0;
+    border-top-right-radius: 0;
+}
+
+.dait-polish-preset-button {
+    align-items: center;
+    border-bottom-left-radius: 0;
+    border-top-left-radius: 0;
+    display: inline-flex;
+    flex: 0 0 auto;
+    justify-content: center;
+    margin: 0 0 0 -4px;
+    max-width: 20px;
+    min-height: 32px;
+    min-width: 20px;
+    overflow: hidden;
+    padding: 0;
+    position: static;
+    white-space: nowrap;
+    z-index: auto;
+}
+
+.dait-polish-button[data-dait-split="true"]:hover,
+.dait-polish-button[data-dait-split="true"]:focus-visible,
+.dait-polish-preset-button:hover,
+.dait-polish-preset-button:focus-visible,
+.dait-polish-preset-button[aria-expanded="true"] {
+    position: relative;
+    z-index: 1;
+}
+
+.dait-polish-preset-caret {
+    background: currentColor;
+    display: block;
+    flex: 0 0 auto;
+    height: 11px;
+    -webkit-mask: ${PIXEL_CHEVRON_DOWN_ICON} center / 11px 11px no-repeat;
+    mask: ${PIXEL_CHEVRON_DOWN_ICON} center / 11px 11px no-repeat;
+    transition: transform 120ms ease;
+    width: 11px;
+}
+
+.dait-polish-preset-button[aria-expanded="true"] .dait-polish-preset-caret {
+    transform: rotate(180deg);
+}
+
 .dait-input-action-group-dual .dait-polish-button,
 .dait-input-action-group-dual .dait-public-bilingual-button,
 .dait-input-action-group-dual .dait-polish-restore-button {
@@ -108,12 +164,16 @@ module.exports = `.dait-polish-button,
 }
 
 .theme-light.dait-polish-button,
+.theme-light.dait-polish-preset-button,
 .theme-light.dait-public-bilingual-button,
 .theme-light .dait-polish-button,
+.theme-light .dait-polish-preset-button,
 .theme-light .dait-public-bilingual-button,
 .dait-polish-button[data-dait-discord-theme="light"],
+.dait-polish-preset-button[data-dait-discord-theme="light"],
 .dait-public-bilingual-button[data-dait-discord-theme="light"],
 [data-dait-discord-theme="light"] .dait-polish-button,
+[data-dait-discord-theme="light"] .dait-polish-preset-button,
 [data-dait-discord-theme="light"] .dait-public-bilingual-button {
     background: rgba(247, 243, 233, 0.88);
     border-color: rgba(113, 107, 93, 0.42);
@@ -131,18 +191,30 @@ module.exports = `.dait-polish-button,
 
 .theme-light.dait-polish-button:hover,
 .theme-light.dait-polish-button:focus-visible,
+.theme-light.dait-polish-preset-button:hover,
+.theme-light.dait-polish-preset-button:focus-visible,
+.theme-light.dait-polish-preset-button[aria-expanded="true"],
 .theme-light.dait-public-bilingual-button:hover,
 .theme-light.dait-public-bilingual-button:focus-visible,
 .theme-light .dait-polish-button:hover,
 .theme-light .dait-polish-button:focus-visible,
+.theme-light .dait-polish-preset-button:hover,
+.theme-light .dait-polish-preset-button:focus-visible,
+.theme-light .dait-polish-preset-button[aria-expanded="true"],
 .theme-light .dait-public-bilingual-button:hover,
 .theme-light .dait-public-bilingual-button:focus-visible,
 .dait-polish-button[data-dait-discord-theme="light"]:hover,
 .dait-polish-button[data-dait-discord-theme="light"]:focus-visible,
+.dait-polish-preset-button[data-dait-discord-theme="light"]:hover,
+.dait-polish-preset-button[data-dait-discord-theme="light"]:focus-visible,
+.dait-polish-preset-button[data-dait-discord-theme="light"][aria-expanded="true"],
 .dait-public-bilingual-button[data-dait-discord-theme="light"]:hover,
 .dait-public-bilingual-button[data-dait-discord-theme="light"]:focus-visible,
 [data-dait-discord-theme="light"] .dait-polish-button:hover,
 [data-dait-discord-theme="light"] .dait-polish-button:focus-visible,
+[data-dait-discord-theme="light"] .dait-polish-preset-button:hover,
+[data-dait-discord-theme="light"] .dait-polish-preset-button:focus-visible,
+[data-dait-discord-theme="light"] .dait-polish-preset-button[aria-expanded="true"],
 [data-dait-discord-theme="light"] .dait-public-bilingual-button:hover,
 [data-dait-discord-theme="light"] .dait-public-bilingual-button:focus-visible {
     background: rgba(29, 110, 84, 0.18);
@@ -152,28 +224,40 @@ module.exports = `.dait-polish-button,
 }
 
 .theme-dark.dait-polish-button,
+.theme-dark.dait-polish-preset-button,
 .theme-dark.dait-public-bilingual-button,
 .theme-darker.dait-polish-button,
+.theme-darker.dait-polish-preset-button,
 .theme-darker.dait-public-bilingual-button,
 .theme-midnight.dait-polish-button,
+.theme-midnight.dait-polish-preset-button,
 .theme-midnight.dait-public-bilingual-button,
 .theme-dark .dait-polish-button,
+.theme-dark .dait-polish-preset-button,
 .theme-dark .dait-public-bilingual-button,
 .theme-darker .dait-polish-button,
+.theme-darker .dait-polish-preset-button,
 .theme-darker .dait-public-bilingual-button,
 .theme-midnight .dait-polish-button,
+.theme-midnight .dait-polish-preset-button,
 .theme-midnight .dait-public-bilingual-button,
 .dait-polish-button[data-dait-discord-theme="dark"],
+.dait-polish-preset-button[data-dait-discord-theme="dark"],
 .dait-public-bilingual-button[data-dait-discord-theme="dark"],
 .dait-polish-button[data-dait-discord-theme="darker"],
+.dait-polish-preset-button[data-dait-discord-theme="darker"],
 .dait-public-bilingual-button[data-dait-discord-theme="darker"],
 .dait-polish-button[data-dait-discord-theme="midnight"],
+.dait-polish-preset-button[data-dait-discord-theme="midnight"],
 .dait-public-bilingual-button[data-dait-discord-theme="midnight"],
 [data-dait-discord-theme="dark"] .dait-polish-button,
+[data-dait-discord-theme="dark"] .dait-polish-preset-button,
 [data-dait-discord-theme="dark"] .dait-public-bilingual-button,
 [data-dait-discord-theme="darker"] .dait-polish-button,
+[data-dait-discord-theme="darker"] .dait-polish-preset-button,
 [data-dait-discord-theme="darker"] .dait-public-bilingual-button,
 [data-dait-discord-theme="midnight"] .dait-polish-button,
+[data-dait-discord-theme="midnight"] .dait-polish-preset-button,
 [data-dait-discord-theme="midnight"] .dait-public-bilingual-button {
     background: rgba(255, 255, 255, 0.075);
     border-color: rgba(255, 255, 255, 0.14);
@@ -181,20 +265,28 @@ module.exports = `.dait-polish-button,
 }
 
 .theme-darker.dait-polish-button,
+.theme-darker.dait-polish-preset-button,
 .theme-darker.dait-public-bilingual-button,
 .theme-midnight.dait-polish-button,
+.theme-midnight.dait-polish-preset-button,
 .theme-midnight.dait-public-bilingual-button,
 .theme-darker .dait-polish-button,
+.theme-darker .dait-polish-preset-button,
 .theme-darker .dait-public-bilingual-button,
 .theme-midnight .dait-polish-button,
+.theme-midnight .dait-polish-preset-button,
 .theme-midnight .dait-public-bilingual-button,
 .dait-polish-button[data-dait-discord-theme="darker"],
+.dait-polish-preset-button[data-dait-discord-theme="darker"],
 .dait-public-bilingual-button[data-dait-discord-theme="darker"],
 .dait-polish-button[data-dait-discord-theme="midnight"],
+.dait-polish-preset-button[data-dait-discord-theme="midnight"],
 .dait-public-bilingual-button[data-dait-discord-theme="midnight"],
 [data-dait-discord-theme="darker"] .dait-polish-button,
+[data-dait-discord-theme="darker"] .dait-polish-preset-button,
 [data-dait-discord-theme="darker"] .dait-public-bilingual-button,
 [data-dait-discord-theme="midnight"] .dait-polish-button,
+[data-dait-discord-theme="midnight"] .dait-polish-preset-button,
 [data-dait-discord-theme="midnight"] .dait-public-bilingual-button {
     background: rgba(255, 255, 255, 0.065);
     border-color: rgba(255, 255, 255, 0.12);
@@ -202,50 +294,86 @@ module.exports = `.dait-polish-button,
 
 .theme-dark.dait-polish-button:hover,
 .theme-dark.dait-polish-button:focus-visible,
+.theme-dark.dait-polish-preset-button:hover,
+.theme-dark.dait-polish-preset-button:focus-visible,
+.theme-dark.dait-polish-preset-button[aria-expanded="true"],
 .theme-dark.dait-public-bilingual-button:hover,
 .theme-dark.dait-public-bilingual-button:focus-visible,
 .theme-darker.dait-polish-button:hover,
 .theme-darker.dait-polish-button:focus-visible,
+.theme-darker.dait-polish-preset-button:hover,
+.theme-darker.dait-polish-preset-button:focus-visible,
+.theme-darker.dait-polish-preset-button[aria-expanded="true"],
 .theme-darker.dait-public-bilingual-button:hover,
 .theme-darker.dait-public-bilingual-button:focus-visible,
 .theme-midnight.dait-polish-button:hover,
 .theme-midnight.dait-polish-button:focus-visible,
+.theme-midnight.dait-polish-preset-button:hover,
+.theme-midnight.dait-polish-preset-button:focus-visible,
+.theme-midnight.dait-polish-preset-button[aria-expanded="true"],
 .theme-midnight.dait-public-bilingual-button:hover,
 .theme-midnight.dait-public-bilingual-button:focus-visible,
 .theme-dark .dait-polish-button:hover,
 .theme-dark .dait-polish-button:focus-visible,
+.theme-dark .dait-polish-preset-button:hover,
+.theme-dark .dait-polish-preset-button:focus-visible,
+.theme-dark .dait-polish-preset-button[aria-expanded="true"],
 .theme-dark .dait-public-bilingual-button:hover,
 .theme-dark .dait-public-bilingual-button:focus-visible,
 .theme-darker .dait-polish-button:hover,
 .theme-darker .dait-polish-button:focus-visible,
+.theme-darker .dait-polish-preset-button:hover,
+.theme-darker .dait-polish-preset-button:focus-visible,
+.theme-darker .dait-polish-preset-button[aria-expanded="true"],
 .theme-darker .dait-public-bilingual-button:hover,
 .theme-darker .dait-public-bilingual-button:focus-visible,
 .theme-midnight .dait-polish-button:hover,
 .theme-midnight .dait-polish-button:focus-visible,
+.theme-midnight .dait-polish-preset-button:hover,
+.theme-midnight .dait-polish-preset-button:focus-visible,
+.theme-midnight .dait-polish-preset-button[aria-expanded="true"],
 .theme-midnight .dait-public-bilingual-button:hover,
 .theme-midnight .dait-public-bilingual-button:focus-visible,
 .dait-polish-button[data-dait-discord-theme="dark"]:hover,
 .dait-polish-button[data-dait-discord-theme="dark"]:focus-visible,
+.dait-polish-preset-button[data-dait-discord-theme="dark"]:hover,
+.dait-polish-preset-button[data-dait-discord-theme="dark"]:focus-visible,
+.dait-polish-preset-button[data-dait-discord-theme="dark"][aria-expanded="true"],
 .dait-public-bilingual-button[data-dait-discord-theme="dark"]:hover,
 .dait-public-bilingual-button[data-dait-discord-theme="dark"]:focus-visible,
 .dait-polish-button[data-dait-discord-theme="darker"]:hover,
 .dait-polish-button[data-dait-discord-theme="darker"]:focus-visible,
+.dait-polish-preset-button[data-dait-discord-theme="darker"]:hover,
+.dait-polish-preset-button[data-dait-discord-theme="darker"]:focus-visible,
+.dait-polish-preset-button[data-dait-discord-theme="darker"][aria-expanded="true"],
 .dait-public-bilingual-button[data-dait-discord-theme="darker"]:hover,
 .dait-public-bilingual-button[data-dait-discord-theme="darker"]:focus-visible,
 .dait-polish-button[data-dait-discord-theme="midnight"]:hover,
 .dait-polish-button[data-dait-discord-theme="midnight"]:focus-visible,
+.dait-polish-preset-button[data-dait-discord-theme="midnight"]:hover,
+.dait-polish-preset-button[data-dait-discord-theme="midnight"]:focus-visible,
+.dait-polish-preset-button[data-dait-discord-theme="midnight"][aria-expanded="true"],
 .dait-public-bilingual-button[data-dait-discord-theme="midnight"]:hover,
 .dait-public-bilingual-button[data-dait-discord-theme="midnight"]:focus-visible,
 [data-dait-discord-theme="dark"] .dait-polish-button:hover,
 [data-dait-discord-theme="dark"] .dait-polish-button:focus-visible,
+[data-dait-discord-theme="dark"] .dait-polish-preset-button:hover,
+[data-dait-discord-theme="dark"] .dait-polish-preset-button:focus-visible,
+[data-dait-discord-theme="dark"] .dait-polish-preset-button[aria-expanded="true"],
 [data-dait-discord-theme="dark"] .dait-public-bilingual-button:hover,
 [data-dait-discord-theme="dark"] .dait-public-bilingual-button:focus-visible,
 [data-dait-discord-theme="darker"] .dait-polish-button:hover,
 [data-dait-discord-theme="darker"] .dait-polish-button:focus-visible,
+[data-dait-discord-theme="darker"] .dait-polish-preset-button:hover,
+[data-dait-discord-theme="darker"] .dait-polish-preset-button:focus-visible,
+[data-dait-discord-theme="darker"] .dait-polish-preset-button[aria-expanded="true"],
 [data-dait-discord-theme="darker"] .dait-public-bilingual-button:hover,
 [data-dait-discord-theme="darker"] .dait-public-bilingual-button:focus-visible,
 [data-dait-discord-theme="midnight"] .dait-polish-button:hover,
 [data-dait-discord-theme="midnight"] .dait-polish-button:focus-visible,
+[data-dait-discord-theme="midnight"] .dait-polish-preset-button:hover,
+[data-dait-discord-theme="midnight"] .dait-polish-preset-button:focus-visible,
+[data-dait-discord-theme="midnight"] .dait-polish-preset-button[aria-expanded="true"],
 [data-dait-discord-theme="midnight"] .dait-public-bilingual-button:hover,
 [data-dait-discord-theme="midnight"] .dait-public-bilingual-button:focus-visible {
     background: color-mix(in srgb, #227a5f 24%, rgba(255, 255, 255, 0.08));
@@ -255,7 +383,7 @@ module.exports = `.dait-polish-button,
 }
 
 .dait-input-action-group[data-dait-density="compact"] {
-    max-width: 116px;
+    max-width: 138px;
 }
 
 .dait-input-action-group[data-dait-density="compact"] .dait-polish-button,
@@ -267,11 +395,20 @@ module.exports = `.dait-polish-button,
     padding: 0 7px;
 }
 
+.dait-input-action-group[data-dait-density="compact"] .dait-polish-preset-button {
+    height: 30px;
+    max-width: 19px;
+    min-height: 30px;
+    min-width: 19px;
+    padding: 0;
+}
+
 .dait-input-action-group[data-dait-density="minimal"] {
     max-width: 34px;
 }
 
 .dait-input-action-group[data-dait-density="minimal"] .dait-polish-button,
+.dait-input-action-group[data-dait-density="minimal"] .dait-polish-preset-button,
 .dait-input-action-group[data-dait-density="minimal"] .dait-public-bilingual-button,
 .dait-input-action-group[data-dait-density="minimal"] .dait-polish-restore-button {
     display: none;
@@ -320,6 +457,191 @@ module.exports = `.dait-polish-button,
 
 .dait-input-action-menu-item:hover,
 .dait-input-action-menu-item:focus-visible {
+    background: var(--dait-raised);
+    color: var(--dait-heading);
+}
+
+/* The composer's polish tone preset picker is a plugin window: panel palette tokens and body type scale only. */
+.dait-polish-preset-menu {
+    background: var(--dait-bg);
+    border: 2px solid var(--dait-input-border);
+    border-radius: var(--dait-radius-card);
+    box-shadow: inset 0 3px 0 var(--dait-brand), var(--dait-shadow);
+    color: var(--dait-text);
+    display: grid;
+    gap: 4px;
+    max-width: calc(100vw - 24px);
+    min-width: 240px;
+    padding: 10px 8px 8px;
+    position: fixed;
+    z-index: 10000;
+}
+
+.dait-polish-preset-header {
+    border-bottom: 1px solid var(--dait-divider);
+    display: grid;
+    gap: 2px;
+    padding: 0 6px 6px;
+}
+
+.dait-polish-preset-title {
+    color: var(--dait-heading);
+    font-size: var(--dait-font-body);
+    font-weight: 600;
+    line-height: var(--dait-line);
+    margin: 0;
+}
+
+.dait-polish-preset-custom-note {
+    color: var(--dait-warning);
+    font-size: var(--dait-font-body);
+    font-weight: 400;
+    line-height: var(--dait-line);
+    margin: 0;
+}
+
+.dait-polish-preset-list {
+    display: grid;
+    gap: 2px;
+    max-height: min(320px, 46vh);
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding: 2px 0;
+}
+
+@supports not selector(::-webkit-scrollbar) {
+    .dait-polish-preset-list {
+        scrollbar-color: var(--dait-scrollbar-thumb) var(--dait-scrollbar-track);
+        scrollbar-width: thin;
+    }
+}
+
+.dait-polish-preset-list::-webkit-scrollbar {
+    height: 8px;
+    width: 8px;
+}
+
+.dait-polish-preset-list::-webkit-scrollbar-track {
+    background: var(--dait-scrollbar-track);
+    border-radius: 0;
+}
+
+.dait-polish-preset-list::-webkit-scrollbar-thumb {
+    background: var(--dait-scrollbar-thumb);
+    border: 2px solid transparent;
+    border-radius: 2px;
+    background-clip: padding-box;
+}
+
+.dait-polish-preset-list::-webkit-scrollbar-thumb:hover {
+    background: var(--dait-scrollbar-thumb-hover);
+    background-clip: padding-box;
+}
+
+.dait-polish-preset-list::-webkit-scrollbar-corner {
+    background: transparent;
+}
+
+.dait-polish-preset-item {
+    align-items: center;
+    background: transparent;
+    border: 0;
+    border-radius: var(--dait-radius-control);
+    color: var(--dait-text);
+    cursor: pointer;
+    display: grid;
+    font-family: inherit;
+    font-size: var(--dait-font-body);
+    font-weight: 500;
+    gap: 8px;
+    grid-template-columns: auto minmax(0, 1fr) 16px;
+    line-height: var(--dait-line);
+    min-height: var(--dait-control-h);
+    padding: 4px 10px;
+    text-align: left;
+    width: 100%;
+}
+
+.dait-polish-preset-item:hover,
+.dait-polish-preset-item:focus-visible {
+    background: var(--dait-raised);
+    color: var(--dait-heading);
+}
+
+.dait-polish-preset-item[aria-checked="true"] {
+    background: var(--dait-surface);
+    box-shadow: inset 3px 0 0 var(--dait-brand), inset 0 0 0 1px var(--dait-brand);
+    color: var(--dait-heading);
+    font-weight: 600;
+}
+
+.dait-polish-preset-code {
+    color: var(--dait-placeholder);
+    flex: 0 0 auto;
+    font-variant-numeric: tabular-nums;
+}
+
+.dait-polish-preset-item[aria-checked="true"] .dait-polish-preset-code {
+    color: var(--dait-link);
+}
+
+.dait-polish-preset-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dait-polish-preset-check {
+    background: currentColor;
+    color: var(--dait-brand);
+    display: block;
+    height: 14px;
+    opacity: 0;
+    -webkit-mask: ${PIXEL_CHECK_ICON} center / 14px 14px no-repeat;
+    mask: ${PIXEL_CHECK_ICON} center / 14px 14px no-repeat;
+    width: 14px;
+}
+
+.dait-polish-preset-item[aria-checked="true"] .dait-polish-preset-check {
+    opacity: 1;
+}
+
+.dait-polish-preset-empty {
+    color: var(--dait-placeholder);
+    font-size: var(--dait-font-body);
+    font-weight: 400;
+    line-height: var(--dait-line);
+    margin: 0;
+    padding: 8px 10px;
+}
+
+.dait-polish-preset-footer {
+    border-top: 1px solid var(--dait-divider);
+    padding-top: 6px;
+}
+
+.dait-polish-preset-manage {
+    align-items: center;
+    background: transparent;
+    border: 0;
+    border-radius: var(--dait-radius-control);
+    color: var(--dait-link);
+    cursor: pointer;
+    display: flex;
+    font-family: inherit;
+    font-size: var(--dait-font-body);
+    font-weight: 500;
+    justify-content: flex-start;
+    line-height: var(--dait-line);
+    min-height: var(--dait-control-h);
+    padding: 0 10px;
+    text-align: left;
+    width: 100%;
+}
+
+.dait-polish-preset-manage:hover,
+.dait-polish-preset-manage:focus-visible {
     background: var(--dait-raised);
     color: var(--dait-heading);
 }

@@ -2848,7 +2848,7 @@ else global.BdApi = savedBdApiForStyles;
 // cannot mix into them (the report: dark inputs and dark-grey text on a light window).
 const panelDarkBlock = injectedCss.match(/\[data-dait-panel-theme="dark"\],\n:is\([^)]*\):not\(\[data-dait-panel-theme\]\) \{([\s\S]*?)\n\}/)?.[1] || "";
 const panelLightBlock = injectedCss.match(/\n\[data-dait-panel-theme="light"\] \{([\s\S]*?)\n\}/)?.[1] || "";
-const panelSharedBlock = injectedCss.match(/\n\.dait-settings,\n\.dait-quick-settings-modal-root,\n\.dait-quick-popover,\n\.dait-polish-result-panel,\n\.dait-input-action-menu,\n\.dait-dialog \{([\s\S]*?)\n\}/)?.[1] || "";
+const panelSharedBlock = injectedCss.match(/\n\.dait-settings,\n\.dait-quick-settings-modal-root,\n\.dait-quick-popover,\n\.dait-polish-result-panel,\n\.dait-input-action-menu,\n\.dait-polish-preset-menu,\n\.dait-dialog \{([\s\S]*?)\n\}/)?.[1] || "";
 assert.match(panelDarkBlock, /--dait-bg: #1f2426;[\s\S]*?--dait-rail: #181c1e;[\s\S]*?--dait-surface: #262c2f;[\s\S]*?--dait-input-bg: #15191a;[\s\S]*?--dait-text: #eee8dc;[\s\S]*?--dait-heading: #faf4e6;[\s\S]*?--dait-placeholder: #9ca8a3;[\s\S]*?--dait-brand: #227a5f;/);
 // Control edges reach 3:1 against the window surfaces (WCAG 1.4.11).
 assert.match(panelDarkBlock, /--dait-input-border: #828c88;/);
@@ -2870,8 +2870,8 @@ assert.match(panelSharedBlock, /--dait-control-w: 240px;[\s\S]*?--dait-control-h
 ["--dait-text:", "--dait-heading:", "--dait-input-bg:", "--dait-bg:"].forEach(token => {
     assert.equal(injectedCss.split(token).length - 1, 2, token + " once per palette");
 });
-assert.equal(/\.theme-light\.dait-(settings|quick-settings-modal-root|polish-result-panel|input-action-menu)/.test(injectedCss), false);
-assert.equal(/\.dait-(settings|quick-settings-modal-root|quick-popover|polish-result-panel|input-action-menu)\[data-dait-discord-theme/.test(injectedCss), false);
+assert.equal(/\.theme-light\.dait-(settings|quick-settings-modal-root|polish-result-panel|input-action-menu|polish-preset-menu)/.test(injectedCss), false);
+assert.equal(/\.dait-(settings|quick-settings-modal-root|quick-popover|polish-result-panel|input-action-menu|polish-preset-menu)\[data-dait-discord-theme/.test(injectedCss), false);
 // Chat error lines use Discord's readable danger text colour instead of the fixed brand red.
 assert.match(injectedCss, /--dait-line-danger: var\(--text-danger, #fa777c\)/);
 assert.match(injectedCss, /\.dait-translation-line\.dait-translation-error \{[\s\S]*?color: var\(--dait-line-danger\);/);
@@ -2992,9 +2992,11 @@ assert.match(injectedCss, /\.dait-translation-line\.dait-translation-masked \.da
 assert.match(injectedCss, /\.dait-input-action-group \{[\s\S]*?max-width: min\(188px, 36vw\);/);
 assert.match(injectedCss, /\.dait-polish-button,\n\.dait-public-bilingual-button,\n\.dait-polish-restore-button,\n\.dait-input-action-menu-button \{[\s\S]*?flex: 0 0 auto;[\s\S]*?max-width: 74px;[\s\S]*?position: static;/);
 assert.match(injectedCss, /\.dait-input-action-group-dual \.dait-polish-button,[\s\S]*?\.dait-input-action-group-dual \.dait-polish-restore-button \{[\s\S]*?max-width: 44px;/);
-assert.match(injectedCss, /\.dait-input-action-group\[data-dait-density="compact"\] \{[\s\S]*?max-width: 116px;/);
+assert.match(injectedCss, /\.dait-input-action-group\[data-dait-density="compact"\] \{[\s\S]*?max-width: 138px;/);
 assert.match(injectedCss, /\.dait-input-action-group\[data-dait-density="minimal"\] \{[\s\S]*?max-width: 34px;/);
 assert.match(injectedCss, /\.dait-input-action-menu \{[\s\S]*?position: fixed;/);
+assert.match(injectedCss, /\.dait-polish-preset-button \{[\s\S]*?max-width: 20px;/);
+assert.match(injectedCss, /\.dait-polish-preset-menu \{[\s\S]*?position: fixed;/);
 assert.match(injectedCss, /\.dait-public-bilingual-button \{/);
 const scrollStabilityPlugin = new Plugin();
 const savedComputedStyleForScrollStability = global.getComputedStyle;
