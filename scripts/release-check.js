@@ -67,8 +67,14 @@ if (!/^Status:\s*Passed$/mi.test(provenance)) {
     throw new Error("The provenance review must contain a 'Status: Passed' release decision.");
 }
 
+function canonicalPath(target) {
+    const resolved = fs.realpathSync.native(path.resolve(target));
+    return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+}
+
 const gitRoot = spawnSync("git", ["rev-parse", "--show-toplevel"], { cwd: root, encoding: "utf8" });
-if (gitRoot.status !== 0 || path.resolve(gitRoot.stdout.trim()) !== root) {
+const gitTopLevel = String(gitRoot.stdout || "").trim();
+if (gitRoot.status !== 0 || !gitTopLevel || canonicalPath(gitTopLevel) !== canonicalPath(root)) {
     throw new Error("Release checks require a valid Git repository rooted at the project directory.");
 }
 // The Git index holds staged files as well as committed ones, including ignored files added with `git add -f`.
