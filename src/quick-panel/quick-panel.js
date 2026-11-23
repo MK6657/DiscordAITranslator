@@ -1189,11 +1189,17 @@ class QuickPanel {
             if (this.tryRunToken === runToken) {
                 this.tryRunning = false;
                 this.tryRunToken = null;
-                if (this.isOpen() && this.controls === controls) {
-                    const polishOn = this.plugin.settings?.polish?.enabled !== false;
-                    controls.tryRun.disabled = !polishOn;
-                    this.setText(controls.tryRun, this.plugin.t(controls.tryResult.hidden ? "quickPanelTryPolishRun" : "quickPanelTryPolishAgain"));
-                    this.position();
+                if (this.isOpen()) {
+                    if (this.controls === controls) {
+                        const polishOn = this.plugin.settings?.polish?.enabled !== false;
+                        controls.tryRun.disabled = !polishOn;
+                        const hasResult = !controls.tryResult.hidden && !controls.tryResult.classList?.contains?.("dait-try-result-error");
+                        this.setText(controls.tryRun, this.plugin.t(hasResult ? "quickPanelTryPolishAgain" : "quickPanelTryPolishRun"));
+                        this.position();
+                    }
+                    else {
+                        this.update();
+                    }
                 }
             }
         }
@@ -1450,6 +1456,7 @@ class QuickPanel {
 
     handleDocumentKeydown(event) {
         if (!this.isOpen() || !event) return;
+        if (event.isComposing || event.keyCode === 229) return;
         this.root.classList?.remove?.(POINTER_OPENED_CLASS);
         const active = typeof document !== "undefined" ? document.activeElement : null;
         const focusInside = Boolean(active && this.root.contains?.(active));

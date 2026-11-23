@@ -1408,10 +1408,14 @@ test("composer polish split button opens tone picker, switches preset without st
     assert.equal(items[0].getAttribute("aria-checked"), "true");
     assert.equal(items[1].getAttribute("aria-checked"), "false");
 
-    // Picking a preset applies it, closes the picker, and updates both button tooltips.
-    let menuPointerPrevented = false;
-    menu.dispatchEvent({ type: "pointerdown", preventDefault() { menuPointerPrevented = true; }, stopPropagation() {} });
-    assert.equal(menuPointerPrevented, true, "interacting with menu preserves composer focus");
+    // Picking a preset preserves composer focus on button press, while allowing native scrollbar drag on the list track.
+    let buttonPointerPrevented = false;
+    menu.dispatchEvent({ type: "pointerdown", target: items[1], preventDefault() { buttonPointerPrevented = true; }, stopPropagation() {} });
+    assert.equal(buttonPointerPrevented, true, "pressing a preset item preserves composer focus");
+    let listPointerPrevented = false;
+    const listEl = menu.querySelector(".dait-polish-preset-list");
+    menu.dispatchEvent({ type: "pointerdown", target: listEl, preventDefault() { listPointerPrevented = true; }, stopPropagation() {} });
+    assert.equal(listPointerPrevented, false, "pressing list scrollbar does not get blocked");
     items[1].dispatchEvent({ type: "click", preventDefault() {}, stopPropagation() {} });
 
     assert.equal(plugin.settings.polish.activePromptTemplate, items[1].dataset.daitTemplateId);
@@ -1429,12 +1433,33 @@ test("composer polish split button opens tone picker, switches preset without st
     assert.ok(customMenu.querySelector(".dait-polish-preset-custom-note"), "shows custom prompt notice");
     assert.equal(customMenu.querySelectorAll(".dait-polish-preset-item").every(node => node.getAttribute("aria-checked") === "false"), true);
 
-    // Escape during IME composition does not close; normal Escape closes.
+    // Escape during IME composition does not close; normal Escape closes and only restores focus when focus was inside menu.
     const keydownHandlers = () => (docListeners.get("keydown") || []).slice();
+    const pointerdownHandlers = () => (docListeners.get("pointerdown") || []).slice();
     keydownHandlers().forEach(handler => handler({ key: "Escape", isComposing: true, preventDefault() {}, stopPropagation() {} }));
     assert.equal(plugin.polishPresetMenu, customMenu, "IME Escape keeps menu open");
+
+    // Right-clicking the paired Polish button toggles closed instead of closing on pointerdown and reopening on contextmenu.
+    pointerdownHandlers().forEach(handler => handler({ button: 2, target: polishButton }));
+    assert.equal(plugin.polishPresetMenu, customMenu, "right-button pointerdown on Polish button lets contextmenu toggle");
+    polishButton.dispatchEvent({ type: "contextmenu", preventDefault() {}, stopPropagation() {} });
+    assert.equal(plugin.polishPresetMenu, null, "second right-click closes the menu cleanly");
+
+    // Reopen and verify Escape restores focus to anchor only when focus had moved into the menu.
+    presetButton.dispatchEvent({ type: "click", preventDefault() {}, stopPropagation() {} });
+    const keyboardMenu = browser.document.body.querySelector(".dait-polish-preset-menu");
+    assert.ok(keyboardMenu);
+    keyboardMenu.style = {};
+    browser.window.innerHeight = 400;
+    presetButton.getBoundingClientRect = () => ({ left: 700, top: 340, right: 720, bottom: 372, width: 20, height: 32 });
+    keyboardMenu.getBoundingClientRect = () => ({ left: 440, top: 0, right: 720, bottom: 360, width: 280, height: 360 });
+    plugin.positionPolishPresetMenu(keyboardMenu, presetButton);
+    assert.equal(keyboardMenu.style.maxHeight, "320px", "short viewports clamp menu maxHeight so header stays onscreen");
+    const firstMenuItem = keyboardMenu.querySelector(".dait-polish-preset-item");
+    firstMenuItem.focus();
     keydownHandlers().forEach(handler => handler({ key: "Escape", isComposing: false, preventDefault() {}, stopPropagation() {} }));
     assert.equal(plugin.polishPresetMenu, null, "normal Escape closes menu");
+    assert.equal(browser.document.activeElement, presetButton, "Escape restores focus to anchor when focus was inside menu");
     assert.equal((docListeners.get("keydown") || []).length, 0, "closing cleans up document keydown listener");
 
     // Disabling ui.injectInputButton removes both split parts and closes any open menu.
@@ -1445,4 +1470,93 @@ test("composer polish split button opens tone picker, switches preset without st
     assert.equal(container.querySelector(".dait-polish-button"), null);
     assert.equal(container.querySelector(".dait-polish-preset-button"), null);
     assert.equal((docListeners.get("pointerdown") || []).length, 0, "disabling cleans up document pointerdown listener");
+});
+
+test("composer buttons refresh live route composerKey across channel switches, handle multi-composer and hidden anchors safely", t => {
+    const winListeners = new Map();
+    const browser = useComposerBrowser(t, {
+        window: {
+            addEventListener(type, handler) {
+                if (!winListeners.has(type)) winListeners.set(type, []);
+                winListeners.get(type).push(handler);
+            },
+            removeEventListener(type, handler) {
+                winListeners.set(type, (winListeners.get(type) || []).filter(item => item !== handler));
+            }
+        }
+    });
+    browser.document.body.isDocumentRoot = true;
+    const plugin = new Plugin();
+    plugin.isStarted = true;
+    plugin.saveSettings = () => {};
+    plugin.queueScan = () => {};
+    plugin.showToast = () => {};
+    plugin.settings.ui.publicBilingualInputButton = true;
+
+    let currentChannelId = "200";
+    plugin.messageTracker.getRouteIds = () => ({ guildId: "100", channelId: currentChannelId });
+
+    const mainEditor = createSlateEditor(["main draft"]);
+    const mainForm = mainEditor.closest("form");
+    const mainToolbar = h("div", { class: "buttons_main" });
+    mainToolbar.getBoundingClientRect = () => ({ left: 600, top: 700, right: 790, bottom: 740, width: 190, height: 40 });
+    mainForm.getBoundingClientRect = () => ({ left: 0, top: 700, right: 900, bottom: 740, width: 900, height: 40 });
+    mainForm.appendChild(mainToolbar);
+
+    const threadEditor = createSlateEditor(["thread draft"]);
+    const threadForm = threadEditor.closest("form");
+    const threadToolbar = h("div", { class: "buttons_thread" });
+    threadForm.getBoundingClientRect = () => ({ left: 0, top: 700, right: 900, bottom: 740, width: 900, height: 40 });
+    threadForm.appendChild(threadToolbar);
+
+    browser.document.body.appendChild(mainForm);
+    browser.document.body.appendChild(threadForm);
+    browser.document.activeElement = mainEditor;
+    browser.document.querySelectorAll = selector => browser.document.body.querySelectorAll(selector);
+    browser.document.querySelector = selector => browser.document.body.querySelector(selector);
+    plugin.getInputButtonContainer = textbox => (textbox === threadEditor ? threadToolbar : mainToolbar);
+    plugin.syncInputActionButtonThemes = () => {};
+    plugin.syncDiscordThemeClasses = () => "";
+
+    // Multi-composer injection updates both main and thread composers.
+    plugin.injectInputButtons();
+    assert.ok(mainToolbar.querySelector(".dait-polish-button"), "main composer gets polish button");
+    assert.ok(threadToolbar.querySelector(".dait-polish-button"), "thread composer gets polish button too");
+    const initialComposerKey = mainToolbar.querySelector(".dait-polish-button").dataset.daitComposerKey;
+    assert.match(initialComposerKey, /^100:200:/);
+
+    // Reusing the same composer DOM on a new channel route resolves the live composerKey instead of failing stale.
+    const polishCalls = [];
+    plugin.polishCurrentDraft = (button, opts) => polishCalls.push({ button, opts });
+    currentChannelId = "999";
+    const mainPolishButton = mainToolbar.querySelector(".dait-polish-button");
+    mainPolishButton.dispatchEvent({ type: "click", preventDefault() {}, stopPropagation() {} });
+    assert.equal(polishCalls.length, 1);
+    assert.equal(polishCalls[0].opts.textbox, mainEditor);
+    assert.equal(polishCalls[0].opts.composerKey, plugin.getTextboxComposerKey(mainEditor));
+    assert.match(polishCalls[0].opts.composerKey, /^100:999:/);
+
+    // Disabling one button does not misread the 190px toolbar width and falsely collapse the remaining button to minimal.
+    plugin.setSetting("ui.publicBilingualInputButton", false);
+    const mainGroup = mainToolbar.querySelector(".dait-input-action-group");
+    assert.equal(mainGroup.dataset.daitDensity, "roomy", "measures enclosing form (900px) instead of 190px toolbar");
+
+    // Opening full settings from preset button does not leave aria-expanded="true" on the split caret.
+    const presetButton = mainToolbar.querySelector(".dait-polish-preset-button");
+    plugin.setQuickSettingsLauncherButton(presetButton, true);
+    assert.equal(presetButton.getAttribute("aria-expanded"), "false");
+    assert.equal(presetButton.classList.contains("dait-quick-settings-button-active"), false);
+
+    // Hiding the anchor (zero rect after resizing into minimal density) auto-closes the preset menu instead of jumping to (12, 12).
+    presetButton.getBoundingClientRect = () => ({ left: 700, top: 700, right: 720, bottom: 732, width: 20, height: 32 });
+    presetButton.dispatchEvent({ type: "click", preventDefault() {}, stopPropagation() {} });
+    assert.ok(plugin.polishPresetMenu);
+    presetButton.getBoundingClientRect = () => ({ left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 });
+    (winListeners.get("resize") || []).slice().forEach(handler => handler());
+    assert.equal(plugin.polishPresetMenu, null, "hidden anchor closes menu cleanly");
+
+    // stop() clears polishSession so detached textbox references cannot leak.
+    plugin.polishSession = { textbox: mainEditor, originalRawText: "main draft" };
+    plugin.stop();
+    assert.equal(plugin.polishSession, null);
 });

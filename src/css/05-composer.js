@@ -470,6 +470,8 @@ module.exports = `.dait-polish-button,
     color: var(--dait-text);
     display: grid;
     gap: 4px;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    max-height: calc(100vh - 24px);
     max-width: calc(100vw - 24px);
     min-width: 240px;
     padding: 10px 8px 8px;
@@ -504,6 +506,7 @@ module.exports = `.dait-polish-button,
     display: grid;
     gap: 2px;
     max-height: min(320px, 46vh);
+    min-height: 0;
     overflow-x: hidden;
     overflow-y: auto;
     padding: 2px 0;
@@ -581,6 +584,11 @@ module.exports = `.dait-polish-button,
     font-variant-numeric: tabular-nums;
 }
 
+.dait-polish-preset-item:hover .dait-polish-preset-code,
+.dait-polish-preset-item:focus-visible .dait-polish-preset-code {
+    color: var(--dait-text);
+}
+
 .dait-polish-preset-item[aria-checked="true"] .dait-polish-preset-code {
     color: var(--dait-link);
 }
@@ -594,7 +602,7 @@ module.exports = `.dait-polish-button,
 
 .dait-polish-preset-check {
     background: currentColor;
-    color: var(--dait-brand);
+    color: var(--dait-link);
     display: block;
     height: 14px;
     opacity: 0;

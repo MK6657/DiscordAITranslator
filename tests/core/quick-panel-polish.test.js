@@ -521,4 +521,30 @@ test("polish tab runs its own API test and quick try-polish drawer, and preserve
     assert.equal(byId(rebuilt, "dait-quick-popover-tab-polish").textContent.includes("Polish"), true);
     assert.equal(rebuilt.querySelector(".dait-qp-footer-open-full").textContent, "Templates & full settings");
     assert.equal(doc.activeElement, byId(rebuilt, "dait-quick-popover-polish-target"));
+
+    // IME Escape inside the quick panel does not close it.
+    let imePrevented = false;
+    plugin.quickPanel.handleDocumentKeydown({ key: "Escape", isComposing: true, preventDefault() { imePrevented = true; }, stopPropagation() {}, stopImmediatePropagation() {} });
+    assert.equal(imePrevented, false);
+    assert.equal(plugin.quickPanel.isOpen(), true);
+
+    // Rerendering for language change while a quick try-polish request is in flight does not leave the new Try button stuck disabled.
+    const tryToggle2 = rebuilt.querySelector(".dait-qp-try-toggle");
+    if (rebuilt.querySelector(".dait-qp-try-body").hidden) dispatch(doc, tryToggle2, "click");
+    const tryInput2 = byId(rebuilt, "dait-quick-popover-try-polish-input");
+    const tryRun2 = rebuilt.querySelector(".dait-qp-try-run");
+    let resolveInFlight;
+    plugin.runTryTask = () => new Promise(resolve => { resolveInFlight = resolve; });
+    tryInput2.value = "test line";
+    dispatch(doc, tryRun2, "click");
+    assert.equal(plugin.quickPanel.tryRunning, true);
+    plugin.setSetting("ui.language", "zh-CN");
+    const rebuiltDuringRun = doc.querySelector(".dait-quick-popover");
+    const tryRunDuring = rebuiltDuringRun.querySelector(".dait-qp-try-run");
+    assert.equal(tryRunDuring.disabled, true);
+    resolveInFlight("polished");
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.equal(plugin.quickPanel.tryRunning, false);
+    assert.equal(tryRunDuring.disabled, false, "new Try button recovers once the in-flight run finishes");
 });

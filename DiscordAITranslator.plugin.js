@@ -3278,6 +3278,8 @@ var require_composer = __commonJS({
     color: var(--dait-text);
     display: grid;
     gap: 4px;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    max-height: calc(100vh - 24px);
     max-width: calc(100vw - 24px);
     min-width: 240px;
     padding: 10px 8px 8px;
@@ -3312,6 +3314,7 @@ var require_composer = __commonJS({
     display: grid;
     gap: 2px;
     max-height: min(320px, 46vh);
+    min-height: 0;
     overflow-x: hidden;
     overflow-y: auto;
     padding: 2px 0;
@@ -3389,6 +3392,11 @@ var require_composer = __commonJS({
     font-variant-numeric: tabular-nums;
 }
 
+.dait-polish-preset-item:hover .dait-polish-preset-code,
+.dait-polish-preset-item:focus-visible .dait-polish-preset-code {
+    color: var(--dait-text);
+}
+
 .dait-polish-preset-item[aria-checked="true"] .dait-polish-preset-code {
     color: var(--dait-link);
 }
@@ -3402,7 +3410,7 @@ var require_composer = __commonJS({
 
 .dait-polish-preset-check {
     background: currentColor;
-    color: var(--dait-brand);
+    color: var(--dait-link);
     display: block;
     height: 14px;
     opacity: 0;
@@ -19339,11 +19347,16 @@ var require_quick_panel = __commonJS({
           if (this.tryRunToken === runToken) {
             this.tryRunning = false;
             this.tryRunToken = null;
-            if (this.isOpen() && this.controls === controls) {
-              const polishOn = this.plugin.settings?.polish?.enabled !== false;
-              controls.tryRun.disabled = !polishOn;
-              this.setText(controls.tryRun, this.plugin.t(controls.tryResult.hidden ? "quickPanelTryPolishRun" : "quickPanelTryPolishAgain"));
-              this.position();
+            if (this.isOpen()) {
+              if (this.controls === controls) {
+                const polishOn = this.plugin.settings?.polish?.enabled !== false;
+                controls.tryRun.disabled = !polishOn;
+                const hasResult = !controls.tryResult.hidden && !controls.tryResult.classList?.contains?.("dait-try-result-error");
+                this.setText(controls.tryRun, this.plugin.t(hasResult ? "quickPanelTryPolishAgain" : "quickPanelTryPolishRun"));
+                this.position();
+              } else {
+                this.update();
+              }
             }
           }
         }
@@ -19578,6 +19591,7 @@ var require_quick_panel = __commonJS({
       }
       handleDocumentKeydown(event) {
         if (!this.isOpen() || !event) return;
+        if (event.isComposing || event.keyCode === 229) return;
         this.root.classList?.remove?.(POINTER_OPENED_CLASS);
         const active = typeof document !== "undefined" ? document.activeElement : null;
         const focusInside = Boolean(active && this.root.contains?.(active));
@@ -23465,6 +23479,8 @@ var require_discord_ai_translator = __commonJS({
         this.removePolishRestoreControl();
         this.removeInputActionMenu();
         this.removePolishPresetMenu();
+        this.polishSession = null;
+        this.latestPolishRequestIds = /* @__PURE__ */ new WeakMap();
         this.closeQuickSettingsPanel(null, "stop");
         this.quickPanel.destroy("stop");
         document.querySelectorAll?.(".dait-settings")?.forEach((panel) => this.destroySettingsModalSizing(panel));
@@ -29777,12 +29793,12 @@ var require_discord_ai_translator = __commonJS({
       }
       setQuickSettingsLauncherButton(button, expanded) {
         const previous = this.quickSettingsLauncherButton;
-        if (previous && previous !== button) {
+        if (previous && previous !== button && this.elementHasClassName(previous, "dait-quick-settings-button")) {
           previous.classList?.remove?.("dait-quick-settings-button-active");
           previous.setAttribute?.("aria-expanded", "false");
         }
         this.quickSettingsLauncherButton = expanded && button?.focus ? button : null;
-        if (!button?.setAttribute) return;
+        if (!button?.setAttribute || !this.elementHasClassName(button, "dait-quick-settings-button")) return;
         button.classList?.toggle?.("dait-quick-settings-button-active", Boolean(expanded));
         button.setAttribute("aria-expanded", expanded ? "true" : "false");
       }
@@ -30358,14 +30374,77 @@ var require_discord_ai_translator = __commonJS({
       requestLauncherStatusUpdate(...args) {
         return this.quickPanel.requestStatusUpdate(...args);
       }
+      getComposerTextboxes() {
+        const textboxes = [];
+        const add = (node) => {
+          if (!node || node.isConnected === false || textboxes.includes(node)) return;
+          if (this.isOwnPluginElement(node)) return;
+          textboxes.push(node);
+        };
+        add(this.getActiveTextbox());
+        try {
+          add(this.getTextbox());
+        } catch {
+        }
+        if (typeof document !== "undefined" && document.querySelectorAll) {
+          try {
+            document.querySelectorAll("[role='textbox'][data-slate-editor='true'], [role='textbox'][contenteditable='true']").forEach(add);
+          } catch {
+          }
+        }
+        return textboxes;
+      }
+      bindInputActionButtonTarget(button, textbox = null, composerKey = "") {
+        if (!button) return;
+        if (textbox) button.__daitTextbox = textbox;
+        if (composerKey && button.dataset) button.dataset.daitComposerKey = composerKey;
+      }
+      resolveLiveComposerForButton(button = null, fallbackTextbox = null) {
+        const root = button?.closest?.("form, [class*='channelTextArea']") || null;
+        let textbox = null;
+        if (root?.querySelector) {
+          try {
+            const candidate = root.querySelector("[role='textbox'][data-slate-editor='true'], [role='textbox'][contenteditable='true']");
+            if (candidate && candidate.isConnected !== false && !this.isOwnPluginElement(candidate)) textbox = candidate;
+          } catch {
+          }
+        }
+        if (!textbox) {
+          for (const candidate of [button?.__daitTextbox, fallbackTextbox]) {
+            if (candidate && candidate.isConnected !== false) {
+              textbox = candidate;
+              break;
+            }
+          }
+        }
+        if (!textbox) {
+          const active = this.getActiveTextbox();
+          if (active && active.isConnected !== false) textbox = active;
+          else {
+            const fallback = this.getTextbox();
+            if (fallback && fallback.isConnected !== false) textbox = fallback;
+          }
+        }
+        const composerKey = textbox ? this.getTextboxComposerKey(textbox) : "";
+        this.bindInputActionButtonTarget(button, textbox, composerKey);
+        return { textbox, composerKey };
+      }
       injectInputButtons(options = {}) {
-        const textbox = this.getActiveTextbox() || this.getTextbox();
-        if (!textbox) return;
+        const textboxes = this.getComposerTextboxes();
+        if (!textboxes.length) return;
+        const visitedContainers = /* @__PURE__ */ new Set();
+        textboxes.forEach((textbox) => {
+          const container = this.getPolishButtonContainer(textbox);
+          if (!container || visitedContainers.has(container)) return;
+          visitedContainers.add(container);
+          this.injectInputButtonsForComposer(textbox, container, options);
+        });
+      }
+      injectInputButtonsForComposer(textbox, container, options = {}) {
         const composerKey = this.getTextboxComposerKey(textbox);
-        const container = this.getPolishButtonContainer(textbox);
-        if (!container) return;
         const group = this.getInputActionGroup(container);
         if (!group) return;
+        group.__daitTextbox = textbox;
         this.removeDisabledInputActionButtons(group);
         if (this.isPolishInputButtonEnabled(options)) {
           let polishButton = group.querySelector(".dait-polish-button");
@@ -30374,7 +30453,10 @@ var require_discord_ai_translator = __commonJS({
               "dait-polish-button",
               this.t("polishButton"),
               this.getPolishButtonTitleAttr(),
-              () => this.polishCurrentDraft(polishButton, { textbox, composerKey }),
+              () => {
+                const live = this.resolveLiveComposerForButton(polishButton, group.__daitTextbox);
+                this.polishCurrentDraft(polishButton, live);
+              },
               { shortText: this.t("polishButtonShort"), textbox, composerKey }
             );
             polishButton.setAttribute?.("data-dait-split", "true");
@@ -30382,30 +30464,48 @@ var require_discord_ai_translator = __commonJS({
               event.preventDefault();
               event.stopPropagation();
               const anchor = group.querySelector?.(".dait-polish-preset-button") || polishButton;
-              this.togglePolishPresetMenu(anchor, { group, textbox, composerKey });
+              const live = this.resolveLiveComposerForButton(anchor, group.__daitTextbox);
+              this.togglePolishPresetMenu(anchor, { group, ...live });
             });
-            group.appendChild(polishButton);
+            const beforeNode = group.querySelector?.(".dait-public-bilingual-button") || group.querySelector?.(".dait-input-action-menu-button") || null;
+            if (typeof group.insertBefore === "function" && beforeNode) group.insertBefore(polishButton, beforeNode);
+            else group.appendChild(polishButton);
           } else {
             polishButton.setAttribute?.("data-dait-split", "true");
+            this.bindInputActionButtonTarget(polishButton, textbox, composerKey);
           }
-          if (!group.querySelector(".dait-polish-preset-button")) {
-            const presetButton = this.createPolishPresetButton(group, textbox, composerKey);
-            if (typeof group.insertBefore === "function" && polishButton.nextSibling) {
-              group.insertBefore(presetButton, polishButton.nextSibling);
+          let presetButton = group.querySelector(".dait-polish-preset-button");
+          if (!presetButton) {
+            presetButton = this.createPolishPresetButton(group, textbox, composerKey);
+            const nextNode = polishButton.nextSibling || (Array.isArray(group.children) ? group.children[group.children.indexOf(polishButton) + 1] || null : null);
+            if (typeof group.insertBefore === "function" && nextNode) {
+              group.insertBefore(presetButton, nextNode);
             } else {
               group.appendChild(presetButton);
             }
+          } else {
+            this.bindInputActionButtonTarget(presetButton, textbox, composerKey);
           }
         }
-        if (!options.forcePolish && this.isPublicBilingualInputButtonEnabled() && !group.querySelector(".dait-public-bilingual-button")) {
-          const button = this.createInputActionButton(
-            "dait-public-bilingual-button",
-            this.t("publicBilingualButton"),
-            this.t("publicBilingualTitleAttr", { targetLanguage: this.getDisplayLanguage(this.getPublicBilingualTargetLanguage()) }),
-            () => this.publicBilingualCurrentDraft(button, { textbox, composerKey }),
-            { shortText: this.t("publicBilingualButtonShort"), textbox, composerKey }
-          );
-          group.appendChild(button);
+        if (!options.forcePolish && this.isPublicBilingualInputButtonEnabled()) {
+          let bilingualButton = group.querySelector(".dait-public-bilingual-button");
+          if (!bilingualButton) {
+            bilingualButton = this.createInputActionButton(
+              "dait-public-bilingual-button",
+              this.t("publicBilingualButton"),
+              this.t("publicBilingualTitleAttr", { targetLanguage: this.getDisplayLanguage(this.getPublicBilingualTargetLanguage()) }),
+              () => {
+                const live = this.resolveLiveComposerForButton(bilingualButton, group.__daitTextbox);
+                this.publicBilingualCurrentDraft(bilingualButton, live);
+              },
+              { shortText: this.t("publicBilingualButtonShort"), textbox, composerKey }
+            );
+            const menuButton = group.querySelector?.(".dait-input-action-menu-button") || null;
+            if (typeof group.insertBefore === "function" && menuButton) group.insertBefore(bilingualButton, menuButton);
+            else group.appendChild(bilingualButton);
+          } else {
+            this.bindInputActionButtonTarget(bilingualButton, textbox, composerKey);
+          }
         }
         this.syncInputRestoreButtonState(group, textbox, options);
         this.syncInputActionButtonThemes(group, textbox || container);
@@ -30552,6 +30652,8 @@ var require_discord_ai_translator = __commonJS({
       }
       ensureInputActionMenuButton(group, textbox = null, container = null) {
         if (!group?.appendChild || typeof document === "undefined") return null;
+        if (textbox) group.__daitTextbox = textbox;
+        if (container) group.__daitContainer = container;
         let button = group.querySelector?.(".dait-input-action-menu-button");
         if (!button) {
           button = document.createElement("button");
@@ -30571,10 +30673,12 @@ var require_discord_ai_translator = __commonJS({
           button.addEventListener("click", (event) => {
             event.preventDefault();
             event.stopPropagation();
-            this.toggleInputActionMenu(group, textbox, container, button);
+            const live = this.resolveLiveComposerForButton(button, group.__daitTextbox);
+            this.toggleInputActionMenu(group, live.textbox, group.__daitContainer || container, button);
           });
           group.appendChild(button);
         }
+        if (textbox) this.bindInputActionButtonTarget(button, textbox, this.getTextboxComposerKey(textbox));
         return button;
       }
       updateInputActionGroupDensity(group, textbox = null, container = null) {
@@ -30596,6 +30700,7 @@ var require_discord_ai_translator = __commonJS({
         const roots = [
           textbox?.closest?.("form, [class*='channelTextArea']"),
           container?.closest?.("form, [class*='channelTextArea']"),
+          group?.closest?.("form, [class*='channelTextArea']"),
           container?.parentElement,
           container,
           group?.parentElement
@@ -30665,10 +30770,16 @@ var require_discord_ai_translator = __commonJS({
         button?.setAttribute?.("aria-expanded", "true");
         const anchorNode = button || group;
         let repositionRaf = null;
+        const isAnchorHidden = () => {
+          if (!anchorNode) return false;
+          if (anchorNode.isConnected === false) return true;
+          const rect = anchorNode.getBoundingClientRect?.();
+          return Boolean(rect && Number(rect.width || 0) <= 0 && Number(rect.height || 0) <= 0);
+        };
         const reposition = () => {
           repositionRaf = null;
           if (!menu.isConnected) return;
-          if (anchorNode && anchorNode.isConnected === false) {
+          if (isAnchorHidden()) {
             this.removeInputActionMenu();
             return;
           }
@@ -30702,8 +30813,9 @@ var require_discord_ai_translator = __commonJS({
           this.removeInputActionMenu();
         };
         const escapeKeydown = (event) => {
-          if (event.isComposing || event.key !== "Escape") return;
-          event.preventDefault();
+          if (event.isComposing || event.keyCode === 229 || event.key !== "Escape") return;
+          event.preventDefault?.();
+          event.stopPropagation?.();
           this.removeInputActionMenu();
         };
         this.inputActionMenuCleanup = () => {
@@ -30782,8 +30894,16 @@ var require_discord_ai_translator = __commonJS({
             this.removePolishPresetMenu();
             return;
           }
+          const active = typeof document !== "undefined" ? document.activeElement : null;
+          const focusedInMenu = Boolean(active && this.polishPresetMenu.contains?.(active));
+          const focusedTemplateId = focusedInMenu ? active?.dataset?.daitTemplateId || "" : "";
+          const focusedManage = Boolean(focusedInMenu && active?.classList?.contains?.("dait-polish-preset-manage"));
           this.renderPolishPresetMenuContent(this.polishPresetMenu, this.polishPresetMenuAnchor);
           this.positionPolishPresetMenu(this.polishPresetMenu, this.polishPresetMenuAnchor);
+          if (focusedInMenu) {
+            const nextFocus = focusedManage ? this.polishPresetMenu.querySelector?.(".dait-polish-preset-manage") : (focusedTemplateId ? [...this.polishPresetMenu.querySelectorAll?.(".dait-polish-preset-item") || []].find((item) => item.dataset?.daitTemplateId === focusedTemplateId) : null) || this.polishPresetMenu.querySelector?.(".dait-polish-preset-item, .dait-polish-preset-manage");
+            nextFocus?.focus?.();
+          }
         }
       }
       createPolishPresetButton(group, textbox = null, composerKey = "") {
@@ -30810,7 +30930,8 @@ var require_discord_ai_translator = __commonJS({
         button.addEventListener("click", (event) => {
           event.preventDefault();
           event.stopPropagation();
-          this.togglePolishPresetMenu(button, { group, textbox, composerKey });
+          const live = this.resolveLiveComposerForButton(button, group?.__daitTextbox);
+          this.togglePolishPresetMenu(button, { group, ...live });
         });
         return button;
       }
@@ -30901,7 +31022,10 @@ var require_discord_ai_translator = __commonJS({
           event.stopPropagation();
           if (!this.isLifecycleTokenCurrent(lifecycleToken) || this.polishPresetMenu !== menu || menu.isConnected === false) return;
           this.removePolishPresetMenu();
-          if (this.settings?.ui) this.settings.ui.settingsActiveTab = SETTINGS_TAB_COMPOSE;
+          if (this.settings?.ui) {
+            this.settings.ui.settingsActiveTab = SETTINGS_TAB_COMPOSE;
+            this.saveSettings?.({ debounce: true });
+          }
           const modal = this.openQuickSettingsPanel("polish-preset-menu", anchor);
           const panel = modal?.querySelector?.(".dait-settings") || null;
           if (panel) this.setSettingsActiveTab?.(SETTINGS_TAB_COMPOSE, panel);
@@ -30925,20 +31049,30 @@ var require_discord_ai_translator = __commonJS({
         const selectedItem = this.renderPolishPresetMenuContent(menu, anchorNode, lifecycleToken);
         ["pointerdown", "mousedown"].forEach((type) => {
           menu.addEventListener(type, (event) => {
-            event.preventDefault();
+            if (event?.target?.closest?.("button")) event.preventDefault();
             event.stopPropagation();
           });
         });
         menu.addEventListener("click", (event) => event.stopPropagation());
+        menu.addEventListener("keydown", (event) => {
+          if (event.key !== "Escape") event.stopPropagation();
+        });
         document.body.appendChild(menu);
         this.polishPresetMenu = menu;
         this.polishPresetMenuAnchor = anchorNode;
         anchorNode?.setAttribute?.("aria-expanded", "true");
+        const companionPolishButton = options.group?.querySelector?.(".dait-polish-button") || anchorNode?.closest?.(".dait-input-action-group")?.querySelector?.(".dait-polish-button") || null;
+        const isAnchorHidden = () => {
+          if (!anchorNode) return false;
+          if (anchorNode.isConnected === false) return true;
+          const rect = anchorNode.getBoundingClientRect?.();
+          return Boolean(rect && Number(rect.width || 0) <= 0 && Number(rect.height || 0) <= 0);
+        };
         let repositionRaf = null;
         const reposition = () => {
           repositionRaf = null;
           if (!menu.isConnected) return;
-          if (anchorNode && anchorNode.isConnected === false) {
+          if (isAnchorHidden()) {
             this.removePolishPresetMenu();
             return;
           }
@@ -30970,19 +31104,23 @@ var require_discord_ai_translator = __commonJS({
         };
         const outsidePointerDown = (event) => {
           if (menu.contains?.(event.target) || anchorNode?.contains?.(event.target)) return;
+          if (event?.button === 2 && companionPolishButton?.contains?.(event.target)) return;
           this.removePolishPresetMenu();
         };
         const onKeydown = (event) => {
-          if (event.isComposing) return;
+          if (event.isComposing || event.keyCode === 229) return;
           if (event.key === "Escape") {
-            event.preventDefault();
-            event.stopPropagation();
+            event.preventDefault?.();
+            event.stopPropagation?.();
+            const shouldRestoreFocus = Boolean(document.activeElement && menu.contains?.(document.activeElement));
             this.removePolishPresetMenu();
+            if (shouldRestoreFocus && anchorNode?.isConnected !== false) anchorNode?.focus?.();
             return;
           }
           if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
           const active = document.activeElement;
-          if (active && !menu.contains?.(active) && active !== anchorNode) return;
+          const allowNavigation = !active || active === document.body || active === document.documentElement || menu.contains?.(active) || active === anchorNode;
+          if (!allowNavigation) return;
           const focusables = [...menu.querySelectorAll?.(".dait-polish-preset-item, .dait-polish-preset-manage") || []];
           if (!focusables.length) return;
           event.preventDefault();
@@ -31028,20 +31166,24 @@ var require_discord_ai_translator = __commonJS({
         const viewportHeight = Number(window.innerHeight || document.documentElement?.clientHeight || 0) || 700;
         const width = Math.min(280, Math.max(240, viewportWidth - 24));
         const left = rect ? Math.max(12, Math.min(rect.right - width, viewportWidth - width - 12)) : viewportWidth - width - 16;
+        menu.style.maxHeight = "";
         const menuHeight = Number(menu.getBoundingClientRect?.()?.height || 0);
-        const spaceAbove = rect ? rect.top - 12 : viewportHeight;
-        const spaceBelow = rect ? viewportHeight - rect.bottom - 12 : 0;
+        const spaceAbove = rect ? Math.max(0, rect.top - 12) : Math.max(0, viewportHeight - 24);
+        const spaceBelow = rect ? Math.max(0, viewportHeight - rect.bottom - 12) : 0;
+        const placeBelow = Boolean(rect && menuHeight > 0 && spaceAbove < menuHeight + 8 && spaceBelow > spaceAbove);
+        const availableSpace = placeBelow ? spaceBelow : spaceAbove;
         menu.style.left = `${left}px`;
         menu.style.right = "auto";
         menu.style.width = `${width}px`;
-        if (rect && menuHeight > 0 && spaceAbove < menuHeight + 8 && spaceBelow > spaceAbove) {
-          const top = Math.min(Math.max(rect.bottom + 8, 12), Math.max(12, viewportHeight - menuHeight - 12));
+        menu.style.maxHeight = `${Math.max(140, Math.min(viewportHeight - 24, Math.floor(availableSpace - 8)))}px`;
+        if (placeBelow) {
+          const top = Math.min(Math.max(rect.bottom + 8, 12), Math.max(12, viewportHeight - 152));
           menu.style.top = `${top}px`;
           menu.style.bottom = "auto";
         } else {
           const bottom = rect ? Math.max(12, viewportHeight - rect.top + 8) : 76;
           menu.style.top = "auto";
-          menu.style.bottom = `${Math.min(Math.max(bottom, 12), Math.max(12, viewportHeight - 80))}px`;
+          menu.style.bottom = `${Math.min(Math.max(bottom, 12), Math.max(12, viewportHeight - 152))}px`;
         }
       }
       removePolishPresetMenu() {
@@ -35632,8 +35774,9 @@ var require_discord_ai_translator = __commonJS({
           this.removePolishResultPanel();
         };
         const escapeKeydown = (event) => {
-          if (event.key !== "Escape") return;
-          event.preventDefault();
+          if (event.isComposing || event.keyCode === 229 || event.key !== "Escape") return;
+          event.preventDefault?.();
+          event.stopPropagation?.();
           this.removePolishResultPanel();
         };
         this.polishResultPanelCleanup = () => {
@@ -37939,7 +38082,7 @@ var require_discord_ai_translator = __commonJS({
         return String(shortcut || "").trim() || this.t("hotkeyNotSet");
       }
       getTextbox() {
-        return document.querySelector("[role='textbox'][data-slate-editor='true'], [role='textbox'][contenteditable='true']");
+        return typeof document !== "undefined" ? document.querySelector?.("[role='textbox'][data-slate-editor='true'], [role='textbox'][contenteditable='true']") || null : null;
       }
       getActiveTextbox() {
         const active = document.activeElement;
