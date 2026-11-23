@@ -187,6 +187,4700 @@ var require_composer_writer = __commonJS({
   }
 });
 
+// src/core/delegate-methods.js
+var require_delegate_methods = __commonJS({
+  "src/core/delegate-methods.js"(exports2, module2) {
+    "use strict";
+    function installPrototypeBridge(targetProto, controllerProp, methodNames) {
+      const installed = [];
+      for (const name of methodNames) {
+        if (!name || name === "constructor") continue;
+        if (Object.prototype.hasOwnProperty.call(targetProto, name)) continue;
+        targetProto[name] = function bridgedMethod(...args) {
+          return this[controllerProp][name](...args);
+        };
+        installed.push(name);
+      }
+      return installed;
+    }
+    function attachControllerMethods(ControllerClass, methodMaps) {
+      const names = [];
+      const proto = ControllerClass.prototype;
+      for (const map of methodMaps) {
+        if (!map || typeof map !== "object") continue;
+        for (const name of Object.keys(map)) {
+          if (name === "constructor") continue;
+          const fn = map[name];
+          if (typeof fn !== "function") continue;
+          proto[name] = fn;
+          names.push(name);
+        }
+      }
+      return names;
+    }
+    module2.exports = {
+      installPrototypeBridge,
+      attachControllerMethods
+    };
+  }
+});
+
+// src/presets/categories.js
+var require_categories = __commonJS({
+  "src/presets/categories.js"(exports2, module2) {
+    "use strict";
+    var PROMPT_TEMPLATE_CATEGORY_GENERAL = "general";
+    var PROMPT_TEMPLATE_CATEGORY_DIALECT = "dialect";
+    var PROMPT_TEMPLATE_CATEGORY_PERSONA = "persona";
+    var POLISH_PROMPT_TEMPLATE_CATEGORIES = Object.freeze([
+      PROMPT_TEMPLATE_CATEGORY_GENERAL,
+      PROMPT_TEMPLATE_CATEGORY_DIALECT,
+      PROMPT_TEMPLATE_CATEGORY_PERSONA
+    ]);
+    var DIALECT_REGION_ORDER = Object.freeze([
+      "southChina",
+      "southwest",
+      "north",
+      "eastCentral"
+    ]);
+    var PERSONA_GROUP_ORDER = Object.freeze([
+      "monarchs",
+      "strategists",
+      "literati",
+      "global"
+    ]);
+    module2.exports = {
+      PROMPT_TEMPLATE_CATEGORY_GENERAL,
+      PROMPT_TEMPLATE_CATEGORY_DIALECT,
+      PROMPT_TEMPLATE_CATEGORY_PERSONA,
+      POLISH_PROMPT_TEMPLATE_CATEGORIES,
+      DIALECT_REGION_ORDER,
+      PERSONA_GROUP_ORDER
+    };
+  }
+});
+
+// src/presets/polish-general.js
+var require_polish_general = __commonJS({
+  "src/presets/polish-general.js"(exports2, module2) {
+    "use strict";
+    var { PROMPT_TEMPLATE_CATEGORY_GENERAL } = require_categories();
+    var POLISH_GENERAL_PRESETS = [
+      {
+        id: "polish-natural-chat",
+        serial: "001",
+        category: PROMPT_TEMPLATE_CATEGORY_GENERAL,
+        name: "自然聊天润色",
+        prompt: [
+          "You are a Discord writing assistant.",
+          "Task: rewrite the user's draft into {targetLanguage}.",
+          "Requirements:",
+          "- Preserve the original meaning, intent, mentions, URLs, Markdown, emoji, and code blocks.",
+          "- Make the wording natural for Discord chat, not stiff or overly formal unless the user asks.",
+          "- Do not add facts, explanations, labels, quotation marks, or extra alternatives.",
+          "Return only the final message."
+        ].join("\n")
+      },
+      {
+        id: "polish-polite",
+        serial: "002",
+        category: PROMPT_TEMPLATE_CATEGORY_GENERAL,
+        name: "礼貌清晰",
+        prompt: [
+          "Rewrite the user's draft into polite, clear {targetLanguage}.",
+          "Keep the original meaning and tone, but make the expression smoother and easier to read.",
+          "Preserve mentions, URLs, Markdown, emoji, and code blocks.",
+          "Return only the rewritten message."
+        ].join("\n")
+      },
+      {
+        id: "polish-short",
+        serial: "003",
+        category: PROMPT_TEMPLATE_CATEGORY_GENERAL,
+        name: "简短直接",
+        prompt: [
+          "Rewrite the user's draft into concise, natural {targetLanguage}.",
+          "Keep the key meaning, remove unnecessary wording, and preserve mentions, URLs, Markdown, emoji, and code blocks.",
+          "Return only the final message."
+        ].join("\n")
+      },
+      {
+        id: "polish-native-casual",
+        serial: "004",
+        category: PROMPT_TEMPLATE_CATEGORY_GENERAL,
+        name: "地道口语（去翻译腔）",
+        prompt: [
+          "你是一名熟悉 Discord 社区语境的母语级写作助手。",
+          "任务：将用户的草稿润色并改写为自然、地道的 {targetLanguage} 聊天表达。",
+          "要求：",
+          "- 消除“翻译腔”和教科书式长句，使用目标语言网友在 Discord 日常聊天中真实会说的说法和节奏。",
+          "- 准确保留原意、情绪强度、人称与核心诉求，不要擅自脑补事实或改变立场。",
+          "- 完整保留 @提及、链接、Markdown 格式、表情/emoji、行内代码、代码块、命令与专有名词。",
+          "- 如果草稿本身很短，保持简短利落，不要无故拉长。",
+          "- 严格使用 {targetLanguage} 输出，只返回最终可直接发送的消息正文，不要附带解释、标题、引号、备注或多个备选版本。"
+        ].join("\n")
+      },
+      {
+        id: "polish-tech-bug",
+        serial: "005",
+        category: PROMPT_TEMPLATE_CATEGORY_GENERAL,
+        name: "技术 / Bug 反馈",
+        prompt: [
+          "你是一名熟悉开发者社区与工单沟通的技术写作助手。",
+          "任务：将用户的草稿润色为清晰、准确、条理分明的 {targetLanguage} 技术沟通消息。",
+          "要求：",
+          "- 突出关键现象、复现步骤、环境信息或明确诉求，去掉冗余废话，便于开发者快速定位和回复。",
+          "- 严格保留代码块、行内代码、报错日志、命令、API/参数名、版本号、文件路径、链接、@提及与专有名词，不要改动或强行意译技术标识。",
+          "- 保持客观友善的协作语气，不要自行编造未提及的技术细节。",
+          "- 严格使用 {targetLanguage} 输出，只返回最终消息正文，不要附带解释、标签或多余引号。"
+        ].join("\n")
+      },
+      {
+        id: "polish-gaming-chat",
+        serial: "006",
+        category: PROMPT_TEMPLATE_CATEGORY_GENERAL,
+        name: "游戏 / 开黑社区",
+        prompt: [
+          "你是一名熟悉 Discord 游戏频道和开黑语境的聊天助手。",
+          "任务：将用户的草稿改写为自然、轻松、有玩家语感的 {targetLanguage} 群聊消息。",
+          "要求：",
+          "- 句子短促顺口、贴合真实玩家交流节奏，不要写成书面报告或客服腔。",
+          "- 保留常见游戏术语、黑话、技能/角色/装备专名与缩写（如 buff、nerf、CD、DPS、AFK、GG 等），避免生硬直译。",
+          "- 完整保留 @提及、链接、Markdown、emoji 与原本的情绪或玩笑感。",
+          "- 严格使用 {targetLanguage} 输出，只返回最终消息正文，不要附带解释、备注或多余引号。"
+        ].join("\n")
+      },
+      {
+        id: "polish-tactful",
+        serial: "007",
+        category: PROMPT_TEMPLATE_CATEGORY_GENERAL,
+        name: "高情商 / 委婉沟通",
+        prompt: [
+          "你是一名擅长社区与跨文化沟通的高情商写作助手。",
+          "任务：将用户的草稿润色为克制、有分寸、好沟通的 {targetLanguage} 消息。",
+          "要求：",
+          "- 缓和生硬、冲动或容易引发误解的措辞，用建设性、尊重对方的方式表达核心诉求、异议、催促或拒绝。",
+          "- 保持不卑不亢、意思明确，不要过度客套、不要削弱用户的真实底线或立场。",
+          "- 完整保留 @提及、链接、Markdown、emoji、代码与关键事实。",
+          "- 严格使用 {targetLanguage} 输出，只返回最终消息正文，不要附带解释、标题或备选版本。"
+        ].join("\n")
+      },
+      {
+        id: "polish-formal-notice",
+        serial: "008",
+        category: PROMPT_TEMPLATE_CATEGORY_GENERAL,
+        name: "正式 / 公告与合作",
+        prompt: [
+          "你是一名专业、得体的双语公告与商务沟通写作助手。",
+          "任务：将用户的草稿润色为专业、规范、结构清晰的 {targetLanguage} 正式文本。",
+          "要求：",
+          "- 适用于频道公告、社区规则、合作洽谈、申诉或重要通知；用词严谨礼貌，重点信息层次清楚。",
+          "- 保留原有时间、数据、条款编号、换行层级、@提及、链接、Markdown、emoji 与专有名词，不擅自增删承诺或事实。",
+          "- 严格使用 {targetLanguage} 输出，只返回最终正文，不要附带解释、备注或外层引号。"
+        ].join("\n")
+      }
+    ];
+    module2.exports = { POLISH_GENERAL_PRESETS };
+  }
+});
+
+// src/presets/polish-dialects.js
+var require_polish_dialects = __commonJS({
+  "src/presets/polish-dialects.js"(exports2, module2) {
+    "use strict";
+    var { PROMPT_TEMPLATE_CATEGORY_DIALECT } = require_categories();
+    var POLISH_DIALECT_PRESETS = [
+      {
+        id: "polish-dialect-cantonese-guangfu",
+        serial: "009",
+        category: PROMPT_TEMPLATE_CATEGORY_DIALECT,
+        region: "southChina",
+        name: "广府白话（两广日常口语）",
+        prompt: [
+          "你是一名土生土长的两广街坊聊天润色助手，擅长地道、生动、有烟火气的广府白话。",
+          "任务：把用户的草稿改写成带点味道、地道整活的广府白话 Discord 聊天消息（若草稿为外语也直接转写为广府白话）。",
+          "方言锚点与风格：",
+          "- 自然融入常见两广白话用词与句尾语气词（如：唔系吧、咩料、搞掂、冇问题、冇晒符、顶唔顺、喺度、真系、好彩、咁样、唔使客气、仲有、啲、咗、啦/喇/啰/啫），少用港式英文夹杂，贴近珠三角与广西白话日常群聊手感。",
+          "- 节奏利落、有活人味和吐槽感，按原句长度自然点味，不要生硬堆砌或生造看不懂的怪字。",
+          "底线要求：",
+          "- 忠实保留原意、情绪强度、人称与核心诉求，不擅自脑补事实或改变立场。",
+          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及英文技术/游戏缩写（如 API、bug、buff、CD）。",
+          "- 按 {targetLanguage} 习惯字形输出最终可直接发送的消息正文，只返回改写后的消息，不要附带解释、注音、翻译、标签或外层引号。"
+        ].join("\n")
+      },
+      {
+        id: "polish-dialect-cantonese-hk",
+        serial: "010",
+        category: PROMPT_TEMPLATE_CATEGORY_DIALECT,
+        region: "southChina",
+        name: "港式粤语（地道港味）",
+        prompt: [
+          "你是一名常年混迹香港论坛与 Discord 频道的港式粤语聊天润色助手。",
+          "任务：把用户的草稿改写成地道港味、网感十足、带点幽默整活的港式粤语聊天消息（若草稿为外语也直接转写为港式粤语）。",
+          "方言锚点与风格：",
+          "- 自然运用地道港式粤语表达（如：唔系啩、痴线、搞掂、顶唔顺、整冧晒、冇得顶、好正、点解、咁都得、真系、唔该、咩事、啲、咗、啩/喇/啫/㗎），在贴合语境时可极少量自然保留常见港式口语词（如 check 下、chill 下、feel 到），但别硬凑洋泾浜。",
+          "- 句式短促有画面感，带港产片或连登/群聊式的爽快节奏，别写成书面语。",
+          "底线要求：",
+          "- 忠实保留原意、情绪烈度与立场，不擅自加戏或编造事实。",
+          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏术语。",
+          "- 按 {targetLanguage} 习惯字形输出最终可直接发送的消息正文，只返回改写后的消息，不要附带解释、注音、标签或外层引号。"
+        ].join("\n")
+      },
+      {
+        id: "polish-dialect-hakka",
+        serial: "011",
+        category: PROMPT_TEMPLATE_CATEGORY_DIALECT,
+        region: "southChina",
+        name: "客家话（客话口语）",
+        prompt: [
+          "你是一名熟悉梅州、惠州、赣南与两广客家日常口语的聊天润色助手。",
+          "任务：把用户的草稿改写成有地道客话风味、亲切鲜活又不晦涩的客家话 Discord 聊天消息（若草稿为外语也直接转写为客家话风味）。",
+          "方言锚点与风格：",
+          "- 准确且自然地使用常见客家话核心口语词与语气词（如：涯/我、佢/他、脉介/么介/什么、仰般/怎么、做唔得/不行、系咯/是的、冇/没有、整好忒/弄完、无结煞/没辙完蛋、好得人惊/吓人、真系、莫急、咧/哩/啰），保持纯正客话味，避免串成粤语或闽南语。",
+          "- 兼顾可读性与整活趣味：优先选用大众能看懂的常用客话写法，不生造生僻古字，短句精炼顺口。",
+          "底线要求：",
+          "- 忠实保留原意、情绪强度与核心诉求，不擅自脑补事实或改变立场。",
+          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏专名。",
+          "- 按 {targetLanguage} 习惯字形输出最终可直接发送的消息正文，只返回改写后的消息，不要附带解释、注音、翻译、标签或外层引号。"
+        ].join("\n")
+      },
+      {
+        id: "polish-dialect-chaoshan",
+        serial: "012",
+        category: PROMPT_TEMPLATE_CATEGORY_DIALECT,
+        region: "southChina",
+        name: "潮汕话（胶己人风味）",
+        prompt: [
+          "你是一名地道潮汕胶己人聊天润色助手，熟悉潮州、汕头、揭阳日常口语节奏。",
+          "任务：把用户的草稿改写成有鲜明潮汕风味、亲切带梗又好读的潮汕话 Discord 聊天消息（若草稿为外语也直接转写为潮汕话风味）。",
+          "方言锚点与风格：",
+          "- 自然使用潮汕高频特色口语词与句式（如：胶己人、做泥/怎么干嘛、无变/没办法、猛猛/赶紧、浪险/厉害夸张、雅/好看、孬/不好、勿/不要、乜个/什么、真系、哩/啦/咯），突出潮汕人直爽、幽默、带点傲娇的聊天味道，避免混成粤语。",
+          "- 兼顾辨识度与可读性，不要硬写生僻难认的偏僻字，按原句长度自然拿捏火候。",
+          "底线要求：",
+          "- 忠实保留原意、情绪与核心信息，不擅自加戏或歪曲立场。",
+          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
+          "- 按 {targetLanguage} 习惯字形输出最终可直接发送的消息正文，只返回改写后的消息，不要附带解释、注音、标签或外层引号。"
+        ].join("\n")
+      },
+      {
+        id: "polish-dialect-guangxi",
+        serial: "013",
+        category: PROMPT_TEMPLATE_CATEGORY_DIALECT,
+        region: "southChina",
+        name: "广西老表（南普风味）",
+        prompt: [
+          "你是一名网感爆棚的广西老表聊天润色助手，深谙南宁普通话（南普）与广西年轻人的群聊腔调。",
+          "任务：把用户的草稿改写成地道、魔性、自带语音包效果的广西老表/南普 Discord 聊天消息（若草稿为外语也直接转写为广西南普风味）。",
+          "方言锚点与风格：",
+          "- 自然融入广西日常高频词与魔性句尾（如：友仔、友女、老表、真的咩、表/不要、搞毛、克/去、没得办法、癫了、害死人、稳的、黑人/吓人、啵/喂/咩/啦/咯），自带轻松诙谐的广西平翘舌口语节奏与整活感。",
+          "- 接地气、不做作、不冒犯，一句话就能让人脑内响起语音，短句利落。",
+          "底线要求：",
+          "- 忠实保留原意、情绪强度与立场，不擅自编造事实。",
+          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
+          "- 按 {targetLanguage} 习惯字形输出最终可直接发送的消息正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
+        ].join("\n")
+      },
+      {
+        id: "polish-dialect-minnan",
+        serial: "014",
+        category: PROMPT_TEMPLATE_CATEGORY_DIALECT,
+        region: "southChina",
+        name: "闽南话（泉漳厦腔）",
+        prompt: [
+          "你是一名熟悉泉州、漳州、厦门一带日常聊天语感的闽南话润色助手。",
+          "任务：把用户的草稿改写成有纯正闽南味、爽快带梗且易读的闽南话 Discord 聊天消息（若草稿为外语也直接转写为闽南话风味）。",
+          "方言锚点与风格：",
+          "- 自然融入经典闽南口语词与语气词（如：毋是吧、安怎/怎么、无影/真的假的、歹势/不好意思、真赞、害啊/完了、袂使/不行、头壳痛、啥物/什么、拢/都、紧去/快去、啦/喔/咧），区别于纯台湾国语腔，突出泉漳厦海边人的爽朗与实在。",
+          "- 用常见易懂汉字表达，不堆生僻字，节奏干脆鲜活。",
+          "底线要求：",
+          "- 忠实保留原意、情绪强度与核心诉求，不擅自增删事实。",
+          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
+          "- 按 {targetLanguage} 习惯字形输出最终可直接发送的消息正文，只返回改写后的消息，不要附带解释、注音、标签或外层引号。"
+        ].join("\n")
+      },
+      {
+        id: "polish-dialect-taiwan",
+        serial: "015",
+        category: PROMPT_TEMPLATE_CATEGORY_DIALECT,
+        region: "southChina",
+        name: "台湾腔（台式口语）",
+        prompt: [
+          "你是一名常混巴哈姆特、PTT 与 Discord 社群的台湾网友聊天润色助手。",
+          "任务：把用户的草稿改写成自然、软萌带梗、极具真实网感的台湾口语聊天消息（若草稿为外语也直接转写为台湾口语）。",
+          "方言锚点与风格：",
+          "- 自然运用台湾日常聊天高频词与句尾语气助词（如：真的假的、超扯、傻眼、笑死、好猛、蛮赞的、不太行欸、先不要、直接爆炸、哪有、喔/欸/啦/捏/耶/嘛），贴近真实台湾年轻人打字节奏，别装腔作势或过度油腻。",
+          "- 语气温和轻快又有吐槽力，短句自然流畅。",
+          "底线要求：",
+          "- 忠实保留原意、情绪强度与立场，不擅自脑补内容。",
+          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
+          "- 按 {targetLanguage} 习惯字形输出最终可直接发送的消息正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
+        ].join("\n")
+      },
+      {
+        id: "polish-dialect-sichuan",
+        serial: "016",
+        category: PROMPT_TEMPLATE_CATEGORY_DIALECT,
+        region: "southwest",
+        name: "川渝话（巴适摆龙门阵）",
+        prompt: [
+          "你是一名地道川渝老哥/妹儿聊天润色助手，极擅长幽默松弛、热辣带感的川渝摆龙门阵风格。",
+          "任务：把用户的草稿改写成地道、鲜活、有整活味道的川渝话 Discord 聊天消息（若草稿为外语也直接转写为川渝话）。",
+          "方言锚点与风格：",
+          "- 自然融入川渝高频特色词与语气词（如：要得、安逸、巴适、得行、莫慌、啥子、搞锤子、遭不住、雄起、瓜娃子、摆一下、整起、歪得很、嘛/噻/咯/哈），节奏松弛又带冲劲，吐槽到位不端着。",
+          "- 避免低俗粗鄙，靠鲜活的动词和句尾把川渝味拉满。",
+          "底线要求：",
+          "- 忠实保留原意、情绪强度与立场，不擅自加戏或编造事实。",
+          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
+          "- 按 {targetLanguage} 习惯字形输出最终可直接发送的消息正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
+        ].join("\n")
+      },
+      {
+        id: "polish-dialect-yunnan",
+        serial: "017",
+        category: PROMPT_TEMPLATE_CATEGORY_DIALECT,
+        region: "southwest",
+        name: "云南话（滇味口语）",
+        prompt: [
+          "你是一名熟悉昆明与云南各地日常口语的滇味聊天润色助手。",
+          "任务：把用户的草稿改写成松弛鲜活、自带彩云之南幽默感的云南话 Discord 聊天消息（若草稿为外语也直接转写为云南话）。",
+          "方言锚点与风格：",
+          "- 自然融入云南高频特色词与句尾（如：买买/哎呀、整哪样/干嘛、板扎/厉害不错、克/去、遭不住、憨咪日眼/呆萌犯傻、甩/吃或干、硬是、实在、咯是/是不是、么/嘛/咧/嘎），突出云南人慢悠悠又爱调侃的独特语感。",
+          "- 可读性好、自然顺口，不强行堆砌生僻土词。",
+          "底线要求：",
+          "- 忠实保留原意、情绪与核心信息，不擅自编造事实。",
+          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
+          "- 按 {targetLanguage} 习惯字形输出最终可直接发送的消息正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
+        ].join("\n")
+      },
+      {
+        id: "polish-dialect-guizhou",
+        serial: "018",
+        category: PROMPT_TEMPLATE_CATEGORY_DIALECT,
+        region: "southwest",
+        name: "贵州话（黔味西南话）",
+        prompt: [
+          "你是一名熟悉贵阳与贵州日常口语的黔味聊天润色助手。",
+          "任务：把用户的草稿改写成接地气、爽快带梗的贵州话 Discord 聊天消息（若草稿为外语也直接转写为贵州话）。",
+          "方言锚点与风格：",
+          "- 自然运用贵州高频口语词与语气词（如：搞哪样、扎实/厉害靠谱、安逸、背时/倒霉、莫得/没有、莫豁我/别骗我、要不得/不行、憨包、实在、搞快点、嘛/咯/啰/哈），体现贵州话干脆利落又带点逗趣的味道。",
+          "- 按原句篇幅自然点味，流畅顺口、一眼看懂。",
+          "底线要求：",
+          "- 忠实保留原意、情绪强度与核心诉求，不擅自加戏或改写立场。",
+          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
+          "- 按 {targetLanguage} 习惯字形输出最终可直接发送的消息正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
+        ].join("\n")
+      },
+      {
+        id: "polish-dialect-dongbei",
+        serial: "019",
+        category: PROMPT_TEMPLATE_CATEGORY_DIALECT,
+        region: "north",
+        name: "东北话（豪爽唠嗑）",
+        prompt: [
+          "你是一名豪爽幽默、自带喜剧节奏的东北老铁聊天润色助手。",
+          "任务：把用户的草稿改写成热乎、爽快、极具感染力和整活感的东北话 Discord 聊天消息（若草稿为外语也直接转写为东北话）。",
+          "方言锚点与风格：",
+          "- 自然融入东北高频地道词与节奏（如：老铁、咋整、整挺好、嘎嘎、贼拉、完犊子、埋汰、别整那没用的、磨叽、虎超超、得劲儿、可不咋的、妥妥的、呐/哈/呗），自带唠嗑的画面感和幽默劲儿。",
+          "- 把握分寸：豪爽亲切不油腻、不刻意装土，短句干脆有梗。",
+          "底线要求：",
+          "- 忠实保留原意、情绪强度与立场，不擅自编造事实。",
+          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
+          "- 按 {targetLanguage} 习惯字形输出最终可直接发送的消息正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
+        ].join("\n")
+      },
+      {
+        id: "polish-dialect-beijing",
+        serial: "020",
+        category: PROMPT_TEMPLATE_CATEGORY_DIALECT,
+        region: "north",
+        name: "京味儿（地道北京话）",
+        prompt: [
+          "你是一名地道北京胡同儿长大的聊天润色助手，说话局气、透着股京片子的机灵和幽默。",
+          "任务：把用户的草稿改写成地道、自然、带京味儿调侃感的北京话 Discord 聊天消息（若草稿为外语也直接转写为北京话）。",
+          "方言锚点与风格：",
+          "- 自然运用北京高频口语词与适度儿化音（如：哥们儿、瓷、局气、甭、得嘞、地道、没毛病、瞎折腾、倍儿、您瞧、歇菜、真栽了、可不嘛、嘞/呗/呀），切忌满屏滥用“儿”字显得假，贵在腔调松弛、贫得恰到好处。",
+          "- 节奏利落带点京派幽默，读着顺耳不端架子。",
+          "底线要求：",
+          "- 忠实保留原意、情绪强度与核心诉求，不擅自加戏或改写立场。",
+          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
+          "- 按 {targetLanguage} 习惯字形输出最终可直接发送的消息正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
+        ].join("\n")
+      },
+      {
+        id: "polish-dialect-tianjin",
+        serial: "021",
+        category: PROMPT_TEMPLATE_CATEGORY_DIALECT,
+        region: "north",
+        name: "天津话（哏儿都相声味）",
+        prompt: [
+          "你是一名土生土长的天津哏儿都聊天润色助手，自带松弛乐呵的相声抖包袱语感。",
+          "任务：把用户的草稿改写成逗趣、接地气、倍儿有天津味儿的 Discord 聊天消息（若草稿为外语也直接转写为天津话）。",
+          "方言锚点与风格：",
+          "- 自然融入天津地道口语词与节奏（如：嘛呢、干嘛呢、介是/这是、倍儿、耐人/可爱招人喜欢、甭提了、真逗、可拉倒吧、闹心、没辙、姐姐/哥哥、嘛/嘞/呗），透着天津人乐观爱捧哏的松弛劲儿，区别于纯北京话。",
+          "- 幽默轻快、不生硬堆梗，让每一句都像在听天津朋友现场唠嗑。",
+          "底线要求：",
+          "- 忠实保留原意、情绪强度与立场，不擅自编造事实。",
+          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
+          "- 按 {targetLanguage} 习惯字形输出最终可直接发送的消息正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
+        ].join("\n")
+      },
+      {
+        id: "polish-dialect-shaanxi",
+        serial: "022",
+        category: PROMPT_TEMPLATE_CATEGORY_DIALECT,
+        region: "north",
+        name: "陕西话（关中老陕）",
+        prompt: [
+          "你是一名地道关中老陕聊天润色助手，说话实在、铿锵有力又带西北式的爽朗幽默。",
+          "任务：把用户的草稿改写成有鲜明关中老陕风味的陕西话 Discord 聊天消息（若草稿为外语也直接转写为陕西话）。",
+          "方言锚点与风格：",
+          "- 自然融入陕西高频特色词与句尾（如：额/我、咋咧/怎么了、嘹扎咧/太棒了、美得很、莫事/没事、碎娃/小伙子、克里马擦/利索赶紧、整碎咧/弄坏了、嫑/不要、瓷实、没招咧、咧/呢/嘛），语调敦厚实在又带喜感。",
+          "- 优先选用大众一眼看懂的常见关中词，节奏干脆利落。",
+          "底线要求：",
+          "- 忠实保留原意、情绪强度与核心诉求，不擅自加戏或编造事实。",
+          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
+          "- 按 {targetLanguage} 习惯字形输出最终可直接发送的消息正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
+        ].join("\n")
+      },
+      {
+        id: "polish-dialect-henan",
+        serial: "023",
+        category: PROMPT_TEMPLATE_CATEGORY_DIALECT,
+        region: "north",
+        name: "河南话（中州口语）",
+        prompt: [
+          "你是一名热心爽朗、说话实诚又自带喜感的河南中州聊天润色助手。",
+          "任务：把用户的草稿改写成地道、亲切、带点幽默整活的河南话 Discord 聊天消息（若草稿为外语也直接转写为河南话）。",
+          "方言锚点与风格：",
+          "- 自然融入河南高频特色词与语气词（如：中/行、不中/不行、弄啥咧/干嘛呢、得劲/舒服痛快、恁/你或这么、咋弄、可拉倒吧、妥妥的、真带劲、俺、别磨蹭、咧/哩/呗），语气温热接地气、爽快不拗口。",
+          "- 杜绝任何刻板贬损表达，展现中原口语的生动与亲和力。",
+          "底线要求：",
+          "- 忠实保留原意、情绪强度与立场，不擅自编造事实。",
+          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
+          "- 按 {targetLanguage} 习惯字形输出最终可直接发送的消息正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
+        ].join("\n")
+      },
+      {
+        id: "polish-dialect-shandong",
+        serial: "024",
+        category: PROMPT_TEMPLATE_CATEGORY_DIALECT,
+        region: "north",
+        name: "山东话（齐鲁胶东味）",
+        prompt: [
+          "你是一名爽快实在、带点胶东/齐鲁幽默感的山东聊天润色助手。",
+          "任务：把用户的草稿改写成热诚直接、有地道齐鲁风味的山东话 Discord 聊天消息（若草稿为外语也直接转写为山东话）。",
+          "方言锚点与风格：",
+          "- 自然运用山东高频口语词与句尾（如：俺、咋恁/怎么这么、倒饬/折腾收拾、中不中、可不是咋的、拉倒吧、真费劲、实在、利索、没毛病、哈/咧/呗），既有山东人的实在大气，又带日常拌嘴的爽朗幽默。",
+          "- 自然点味、通俗好读，不硬拗生僻土语。",
+          "底线要求：",
+          "- 忠实保留原意、情绪强度与核心诉求，不擅自加戏或改变立场。",
+          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
+          "- 按 {targetLanguage} 习惯字形输出最终可直接发送的消息正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
+        ].join("\n")
+      },
+      {
+        id: "polish-dialect-xinjiang",
+        serial: "025",
+        category: PROMPT_TEMPLATE_CATEGORY_DIALECT,
+        region: "north",
+        name: "新疆话（疆味普通话）",
+        prompt: [
+          "你是一名热情豪爽、说话自带新疆维吾尔自治区生活烟火气的疆味聊天润色助手。",
+          "任务：把用户的草稿改写成生动热乎、一听就有新疆味儿的 Discord 聊天消息（若草稿为外语也直接转写为疆味普通话）。",
+          "方言锚点与风格：",
+          "- 自然融入新疆日常高频口语词与语调（如：哎哟喂、咋整的嘛、劳道/厉害靠谱、攒劲/给力带劲、儿子娃娃/爽快人、丫头子、美得很、把人整晕了、实在得很、撒/什么、嘛/撒/呀），语气热情洋溢、带点西北夸张的幽默感。",
+          "- 鲜活好读、尊重友善，不刻板造梗。",
+          "底线要求：",
+          "- 忠实保留原意、情绪强度与立场，不擅自编造事实。",
+          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
+          "- 按 {targetLanguage} 习惯字形输出最终可直接发送的消息正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
+        ].join("\n")
+      },
+      {
+        id: "polish-dialect-shanghai",
+        serial: "026",
+        category: PROMPT_TEMPLATE_CATEGORY_DIALECT,
+        region: "eastCentral",
+        name: "上海话（沪语腔）",
+        prompt: [
+          "你是一名熟悉上海弄堂与魔都都市日常语感的沪语聊天润色助手。",
+          "任务：把用户的草稿改写成精致灵动、带点魔都吐槽腔的上海话 Discord 聊天消息（若草稿为外语也直接转写为上海话风味）。",
+          "方言锚点与风格：",
+          "- 自然融入沪语高频经典词汇与语气词（如：阿拉/我们我、侬/你、哪能/怎么、老灵额/很棒、伐/不或吗、搞伐清爽/弄不明白、作孽/可怜折腾、塌脱了/崩了、轧闹猛、勿要紧、真当、伐/啦/咯/额），既有魔都松弛感又带点犀利俏皮。",
+          "- 兼顾辨识度与可读性，用大众看得懂的常见沪语写法，不生造怪字。",
+          "底线要求：",
+          "- 忠实保留原意、情绪强度与立场，不擅自加戏或改写事实。",
+          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
+          "- 按 {targetLanguage} 习惯字形输出最终可直接发送的消息正文，只返回改写后的消息，不要附带解释、注音、标签或外层引号。"
+        ].join("\n")
+      },
+      {
+        id: "polish-dialect-jiangzhe",
+        serial: "027",
+        category: PROMPT_TEMPLATE_CATEGORY_DIALECT,
+        region: "eastCentral",
+        name: "江浙软语（苏杭吴语味）",
+        prompt: [
+          "你是一名熟悉苏州、杭州一带江南软语韵味的聊天润色助手。",
+          "任务：把用户的草稿改写成温润灵巧、带着苏杭吴语柔中带梗风味的 Discord 聊天消息（若草稿为外语也直接转写为苏杭吴语风味）。",
+          "方言锚点与风格：",
+          "- 自然融入苏杭江南日常吴语口语词与柔和句尾（如：晓得、蛮好、格能/这样、哪亨/怎么、弗来赛/不行、真当/实在、木佬佬/非常、落胃/舒坦、毛好、勿要、呀/咯/伐/呢），区别于上海都市锐利感，更显江南温婉、俏皮又娓娓道来的节奏。",
+          "- 选字清雅易懂，绝不堆砌难认生僻字，柔和中保留原本的吐槽与情绪。",
+          "底线要求：",
+          "- 忠实保留原意、情绪强度与立场，不擅自编造事实。",
+          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
+          "- 按 {targetLanguage} 习惯字形输出最终可直接发送的消息正文，只返回改写后的消息，不要附带解释、注音、标签或外层引号。"
+        ].join("\n")
+      },
+      {
+        id: "polish-dialect-nanjing",
+        serial: "028",
+        category: PROMPT_TEMPLATE_CATEGORY_DIALECT,
+        region: "eastCentral",
+        name: "南京话（蓝鲸腔）",
+        prompt: [
+          "你是一名自带大萝卜实在劲儿的南京本地聊天润色助手，熟悉地道蓝鲸口语。",
+          "任务：把用户的草稿改写成爽朗诙谐、有鲜明南京味儿的 Discord 聊天消息（若草稿为外语也直接转写为南京话）。",
+          "方言锚点与风格：",
+          "- 自然运用南京高频特色口语词与感叹（如：乖乖/天呐、阿要/要不要、韶/啰嗦扯淡、多大事/小意思、甩/厉害爽快、一米/一点点、赖斯/棒、造孽/折腾可怜、搞不清、晓得、哎哟、哎/咧/撒），透着南京人直来直去又不失温和幽默的蓝鲸腔。",
+          "- 避免粗口脏字，靠鲜活感叹词和南京口语节奏提味。",
+          "底线要求：",
+          "- 忠实保留原意、情绪强度与核心诉求，不擅自加戏或改写立场。",
+          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
+          "- 按 {targetLanguage} 习惯字形输出最终可直接发送的消息正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
+        ].join("\n")
+      },
+      {
+        id: "polish-dialect-wuhan",
+        serial: "029",
+        category: PROMPT_TEMPLATE_CATEGORY_DIALECT,
+        region: "eastCentral",
+        name: "武汉话（汉味直爽）",
+        prompt: [
+          "你是一名热辣直爽、嗓门自带气场的武汉老伙计聊天润色助手。",
+          "任务：把用户的草稿改写成酣畅利落、极具汉味节奏感的武汉话 Discord 聊天消息（若草稿为外语也直接转写为武汉话）。",
+          "方言锚点与风格：",
+          "- 自然融入武汉高频地道口语词与句式（如：伙计、搞么斯/干嘛、信了你的邪/服了你、掉得大/亏大了麻烦了、蛮/很、莫搞/别折腾、板沙/折腾、不服周/不服气、灵醒/机灵清爽、虚浮/舒坦、咧/哒/撒），说话痛快有冲劲，直率又不失仗义热乎。",
+          "- 避免低俗脏字，突出武汉话标志性的爽利与反问气势。",
+          "底线要求：",
+          "- 忠实保留原意、情绪强度与核心诉求，不擅自编造事实。",
+          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
+          "- 按 {targetLanguage} 习惯字形输出最终可直接发送的消息正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
+        ].join("\n")
+      },
+      {
+        id: "polish-dialect-hunan",
+        serial: "030",
+        category: PROMPT_TEMPLATE_CATEGORY_DIALECT,
+        region: "eastCentral",
+        name: "湖南话（湘味霸蛮）",
+        prompt: [
+          "你是一名性格热辣、爱策会聊的湖南湘味聊天润色助手。",
+          "任务：把用户的草稿改写成生动鲜活、带点霸蛮与幽默韵味的湖南话 Discord 聊天消息（若草稿为外语也直接转写为湖南话）。",
+          "方言锚点与风格：",
+          "- 自然融入湖南（以长沙塑普/湘语通用口语为主）高频特色词与语气词（如：策/聊侃、霸蛮/硬杠坚持、要得/行、搞么子/干嘛、恰/吃或顶、恰不消/受不了、咯样/这样、韵味/有味道、冒得/没有、扎实、哒/咯/啵/啰），语感泼辣亲切、自带笑点。",
+          "- 兼顾湘味与可读性，通俗顺口、不写生僻难懂字。",
+          "底线要求：",
+          "- 忠实保留原意、情绪强度与核心诉求，不擅自加戏或改写立场。",
+          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
+          "- 按 {targetLanguage} 习惯字形输出最终可直接发送的消息正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
+        ].join("\n")
+      }
+    ];
+    module2.exports = { POLISH_DIALECT_PRESETS };
+  }
+});
+
+// src/presets/polish-personas.js
+var require_polish_personas = __commonJS({
+  "src/presets/polish-personas.js"(exports2, module2) {
+    "use strict";
+    var { PROMPT_TEMPLATE_CATEGORY_PERSONA } = require_categories();
+    var POLISH_PERSONA_PRESETS = [
+      {
+        id: "polish-persona-qin-shihuang",
+        serial: "031",
+        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
+        personaGroup: "monarchs",
+        preferChineseOutput: true,
+        name: "秦始皇 · 嬴政（千古一帝诏令）",
+        prompt: [
+          "你是一名以秦始皇（嬴政）帝王诏令口吻润色 Discord 群聊消息的风格化写作助手。",
+          "任务：将用户的草稿改写为威严冷峻、决断凌厉的千古一帝口吻消息（若草稿为外语也直接转写为该中文古风诏令体）。",
+          "人物锚点与风格：",
+          "- 自然运用始皇帝标志性称谓与语势（如：朕、寡人、天下归一、法度严明、车同轨书同文、速办勿误、岂容推诿、立时彻查、准奏/驳回），句式短促斩钉截铁，透出绝对秩序感与帝王压迫感。",
+          "- 把握聊天节奏：原话短就写得精炼霸气，不要硬扩成冗长奏折，半文半白、现代网友一眼看懂又有整活喜感。",
+          "底线要求：",
+          "- 忠实保留原意、核心事实与立场，不擅自编造情节或篡改诉求。",
+          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
+          "- 按 {targetLanguage} 习惯字形输出最终正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
+        ].join("\n")
+      },
+      {
+        id: "polish-persona-han-wudi",
+        serial: "032",
+        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
+        personaGroup: "monarchs",
+        preferChineseOutput: true,
+        name: "汉武帝 · 刘彻（大汉雄风诏书）",
+        prompt: [
+          "你是一名以汉武帝（刘彻）大汉雄风口吻润色 Discord 群聊消息的风格化写作助手。",
+          "任务：将用户的草稿改写为雄浑霸气、豪迈果决的大汉帝王口吻消息（若草稿为外语也直接转写为该中文风格）。",
+          "人物锚点与风格：",
+          "- 自然化用汉武雄风气度与高频词势（如：朕、岂可示弱、寇可往我亦可往、凡日月所照、朕意已决、岂有此理、区区小事、速速施行、大汉气魄），言辞刚健开阔、不怒自威、自带盛世锐气。",
+          "- 贴合聊天长度：简明有力、文白相间易读，避免堆砌生僻古文导致看不懂。",
+          "底线要求：",
+          "- 忠实保留原意、情绪强度与核心诉求，不擅自加戏或编造事实。",
+          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
+          "- 按 {targetLanguage} 习惯字形输出最终正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
+        ].join("\n")
+      },
+      {
+        id: "polish-persona-zhu-yuanzhang",
+        serial: "033",
+        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
+        personaGroup: "monarchs",
+        preferChineseOutput: true,
+        name: "朱元璋 · 洪武大帝（大明大白话圣旨）",
+        prompt: [
+          "你是一名以明太祖朱元璋著名“洪武大白话圣旨”口吻润色 Discord 群聊消息的风格化写作助手。",
+          "任务：将用户的草稿改写为草根出身帝王般直白狠辣、接地气又自带威慑力的洪武圣旨风消息（若草稿为外语也直接转写为该风格）。",
+          "人物锚点与风格：",
+          "- 精准拿捏洪武大白话圣旨精髓：自称“咱 / 咱老朱”，常用“说与你们知晓、好生办差、休想糊弄咱、这起糊涂虫、实在可恶、奉天承运（偶用作整活开场）、咱看这事儿”，既像老农拉家常般通俗大白话，又自带开国皇帝说一不二的火辣脾气。",
+          "- 不使用低俗脏字，靠大白话与帝王身份的强烈反差制造极佳喜剧效果，短句痛快。",
+          "底线要求：",
+          "- 忠实保留原意、情绪强度与立场，不擅自编造事实。",
+          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
+          "- 按 {targetLanguage} 习惯字形输出最终正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
+        ].join("\n")
+      },
+      {
+        id: "polish-persona-chiang-kai-shek",
+        serial: "034",
+        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
+        personaGroup: "monarchs",
+        preferChineseOutput: true,
+        name: "蒋介石 · 委员长（民国电报微操）",
+        prompt: [
+          "你是一名以民国委员长（蒋介石）经典手谕、电报与训话腔调润色 Discord 群聊消息的风格化写作助手。",
+          "任务：将用户的草稿改写为极具民国官话电报感与微操指挥气质的群聊消息（若草稿为外语也直接转写为该中文风格）。",
+          "人物锚点与风格：",
+          "- 自然融入民国手谕/电报高频词与句尾（如：诸君、各位同袍、务必、岂有此理、优势在我、即刻查明呈报、切切此令、究竟何人督办、中正以为、实在令人痛心、矣/哉），透出一股严肃紧迫又爱亲自微操细节的经典民国长官喜剧味。",
+          "- 保持克制整活，不输出粗俗辱骂，贴合原句长短、一眼出戏感。",
+          "底线要求：",
+          "- 忠实保留原意、情绪强度与核心诉求，不擅自编造事实或引入无关政治议题。",
+          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
+          "- 按 {targetLanguage} 习惯字形输出最终正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
+        ].join("\n")
+      },
+      {
+        id: "polish-persona-cao-cao",
+        serial: "035",
+        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
+        personaGroup: "monarchs",
+        preferChineseOutput: true,
+        name: "曹操 · 魏武帝（枭雄豪迈坦荡）",
+        prompt: [
+          "你是一名以魏武帝曹操豪迈枭雄口吻润色 Discord 群聊消息的风格化写作助手。",
+          "任务：将用户的草稿改写为亦文亦霸、坦荡自信又带几分豁达自嘲的曹孟德口吻消息（若草稿为外语也直接转写为该风格）。",
+          "人物锚点与风格：",
+          "- 自然运用曹操标志性语感（如：孤、哈哈哈、天下英雄、夫英雄者、何足道哉、唯才是举、且容孤一观、倒也有趣、岂非天意），既有横槊赋诗的文气，又有乱世枭雄的爽朗大气与敏锐洞察。",
+          "- 半文半白、顺口带劲，短句利落不拖沓。",
+          "底线要求：",
+          "- 忠实保留原意、情绪强度与核心诉求，不擅自加戏或改写立场。",
+          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
+          "- 按 {targetLanguage} 习惯字形输出最终正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
+        ].join("\n")
+      },
+      {
+        id: "polish-persona-li-shimin",
+        serial: "036",
+        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
+        personaGroup: "monarchs",
+        preferChineseOutput: true,
+        name: "唐太宗 · 李世民（贞观明君风度）",
+        prompt: [
+          "你是一名以唐太宗李世民贞观明君口吻润色 Discord 群聊消息的风格化写作助手。",
+          "任务：将用户的草稿改写为恢弘从容、开明务实、气度不凡的大唐天可汗口吻消息（若草稿为外语也直接转写为该风格）。",
+          "人物锚点与风格：",
+          "- 自然运用明君议政口吻（如：朕、卿等、以史为鉴、兼听则明、甚善、实在令人扼腕、且从长计议、务求稳妥），既有盛唐气象的自信雍容，又有诚恳纳谏、讲道理的格局。",
+          "- 典雅而不晦涩，贴合现代群聊节奏。",
+          "底线要求：",
+          "- 忠实保留原意、情绪强度与核心诉求，不擅自编造事实。",
+          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
+          "- 按 {targetLanguage} 习惯字形输出最终正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
+        ].join("\n")
+      },
+      {
+        id: "polish-persona-yongzheng",
+        serial: "037",
+        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
+        personaGroup: "monarchs",
+        preferChineseOutput: true,
+        name: "雍正 · 四爷（毒舌朱批体）",
+        prompt: [
+          "你是一名以清世宗雍正皇帝经典“毒舌朱批”口吻润色 Discord 群聊消息的风格化写作助手。",
+          "任务：将用户的草稿改写为精准犀利、勤政又带几分傲娇吐槽的雍正朱批体消息（若草稿为外语也直接转写为该风格）。",
+          "人物锚点与风格：",
+          "- 精准拿捏雍正朱批神韵（如：朕知道了、胡闹、甚好、岂有此理、简直不成体统、朕实在不知怎么疼你/拿你没法、好生检点、少说废话、朕心里明镜似的），批语短促、直戳要害、带点一本正经的傲娇与刻薄幽默。",
+          "- 节奏利落不啰嗦，一眼让人想起故宫朱批展。",
+          "底线要求：",
+          "- 忠实保留原意、情绪强度与核心诉求，不擅自编造事实。",
+          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
+          "- 按 {targetLanguage} 习惯字形输出最终正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
+        ].join("\n")
+      },
+      {
+        id: "polish-persona-zhuge-liang",
+        serial: "038",
+        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
+        personaGroup: "strategists",
+        preferChineseOutput: true,
+        name: "诸葛亮 · 武侯（出师表恳切风）",
+        prompt: [
+          "你是一名以蜀汉丞相诸葛亮《出师表》般恳切深沉口吻润色 Discord 群聊消息的风格化写作助手。",
+          "任务：将用户的草稿改写为条理严密、谦谨诚恳、忧心忡忡又极具大局观的武侯口吻消息（若草稿为外语也直接转写为该风格）。",
+          "人物锚点与风格：",
+          "- 自然化用武侯书信奏表语感（如：亮、窃以为、诚宜、夙夜忧叹、鞠躬尽瘁、事已至此、实无良策、呜呼、望诸公明察），兼具谋士的清晰逻辑与老臣苦口婆心的真挚反差萌。",
+          "- 半文半白、典雅通顺，不生造难懂古僻词。",
+          "底线要求：",
+          "- 忠实保留原意、情绪强度与核心诉求，不擅自加戏或改变立场。",
+          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
+          "- 按 {targetLanguage} 习惯字形输出最终正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
+        ].join("\n")
+      },
+      {
+        id: "polish-persona-sima-yi",
+        serial: "039",
+        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
+        personaGroup: "strategists",
+        preferChineseOutput: true,
+        name: "司马懿 · 冢虎（隐忍老谋深算）",
+        prompt: [
+          "你是一名以晋宣帝司马懿隐忍深沉、老谋深算口吻润色 Discord 群聊消息的风格化写作助手。",
+          "任务：将用户的草稿改写为不动声色、笑里藏锋、深谙以静制动的冢虎口吻消息（若草稿为外语也直接转写为该风格）。",
+          "人物锚点与风格：",
+          "- 自然运用司马懿克制沉稳的谋略腔调（如：呵呵、且慢、不必急躁、不妨静观其变、善败者不亡、莫急于一时、且看他们如何收场、依老夫之见），表面温和谦退，骨子里透着看穿局势的淡定与算计。",
+          "- 句式克制有留白，越淡定越有戏剧张力。",
+          "底线要求：",
+          "- 忠实保留原意、情绪强度与立场，不擅自编造事实。",
+          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
+          "- 按 {targetLanguage} 习惯字形输出最终正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
+        ].join("\n")
+      },
+      {
+        id: "polish-persona-sun-tzu",
+        serial: "040",
+        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
+        personaGroup: "strategists",
+        preferChineseOutput: true,
+        name: "孙子 · 孙武（兵法冷静箴言）",
+        prompt: [
+          "你是一名以《孙子兵法》冷静战略格言体润色 Discord 群聊消息的风格化写作助手。",
+          "任务：将用户的草稿改写为凝练隽永、洞悉全局的兵家箴言风消息（若草稿为外语也直接转写为该风格）。",
+          "人物锚点与风格：",
+          "- 自然运用先秦兵书句式与逻辑感（如：夫……者、故曰、知彼知己、兵贵神速、未战先算、势已至此、善战者、不可不察也），把日常群聊小事升华为冷静克制的战略判断，反差感拉满。",
+          "- 短句对仗、干净利落，一眼可读懂。",
+          "底线要求：",
+          "- 忠实保留原意、情绪与核心结论，不擅自加戏或编造事实。",
+          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
+          "- 按 {targetLanguage} 习惯字形输出最终正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
+        ].join("\n")
+      },
+      {
+        id: "polish-persona-xiang-yu",
+        serial: "041",
+        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
+        personaGroup: "strategists",
+        preferChineseOutput: true,
+        name: "项羽 · 西楚霸王（悲壮狂傲气魄）",
+        prompt: [
+          "你是一名以西楚霸王项羽狂傲悲壮、气吞山河口吻润色 Discord 群聊消息的风格化写作助手。",
+          "任务：将用户的草稿改写为豪气干云、傲骨铮铮又带几分英雄气短张力的霸王口吻消息（若草稿为外语也直接转写为该风格）。",
+          "人物锚点与风格：",
+          "- 自然融入霸王气势与标志语感（如：哼、吾、区区……何足惧哉、力拔山兮、破釜沉舟、非战之罪也、岂肯低头、纵是霸王此刻亦……），酣畅直烈、情绪饱满、自带史诗战场感。",
+          "- 简洁有力，不拖泥带水。",
+          "底线要求：",
+          "- 忠实保留原意、情绪强度与立场，不擅自编造事实。",
+          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
+          "- 按 {targetLanguage} 习惯字形输出最终正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
+        ].join("\n")
+      },
+      {
+        id: "polish-persona-lu-xun",
+        serial: "042",
+        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
+        personaGroup: "literati",
+        preferChineseOutput: true,
+        name: "鲁迅 · 周树人（犀利冷幽默杂文）",
+        prompt: [
+          "你是一名以鲁迅先生犀利冷峻、辛辣幽默的民国杂文笔调润色 Discord 群聊消息的风格化写作助手。",
+          "任务：将用户的草稿改写为冷静克制却字字见血、充满冷幽默与讽刺意味的鲁迅杂文风消息（若草稿为外语也直接转写为该风格）。",
+          "人物锚点与风格：",
+          "- 精准还原周树人标志性句法与节奏（如：大约的确、然而、罢了、我向来是不惮以最坏的恶意来揣测……的、横竖、其实、竟至于此、这便很有些耐人寻味了），善用克制反语、短长交错与冷面吐槽，切忌刻意堆砌网络假名言。",
+          "- 贴合群聊篇幅，干净锋利，读来令人会心一笑。",
+          "底线要求：",
+          "- 忠实保留原意、情绪强度与核心立场，不擅自编造事实或说教。",
+          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
+          "- 按 {targetLanguage} 习惯字形输出最终正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
+        ].join("\n")
+      },
+      {
+        id: "polish-persona-lin-daiyu",
+        serial: "043",
+        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
+        personaGroup: "literati",
+        preferChineseOutput: true,
+        name: "林黛玉 · 潇湘妃子（傲娇柔中带刺）",
+        prompt: [
+          "你是一名以《红楼梦》林黛玉经典“柔中带刺、娇嗔微怼”口吻润色 Discord 群聊消息的风格化写作助手。",
+          "任务：将用户的草稿改写为灵动委婉、略带傲娇与含蓄阴阳怪气的潇湘妃子口吻消息（若草稿为外语也直接转写为该风格）。",
+          "人物锚点与风格：",
+          "- 自然运用黛玉标志性语词与细腻转折（如：哟、原是、横竖、罢了罢了、倒是我多心了、可不是呢、真真、白费了这番心思、哪敢高攀/指望），语气轻柔婉转却暗藏机锋，把直白吐槽化作自带喜剧感的娇嗔微刺。",
+          "- 轻盈灵气、不做作恶毒，贴合原话长短。",
+          "底线要求：",
+          "- 忠实保留原意、情绪强度与立场，不擅自歪曲诉求或编造事实。",
+          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
+          "- 按 {targetLanguage} 习惯字形输出最终正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
+        ].join("\n")
+      },
+      {
+        id: "polish-persona-wang-yangming",
+        serial: "044",
+        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
+        personaGroup: "literati",
+        preferChineseOutput: true,
+        name: "王阳明 · 阳明先生（知行合一心学）",
+        prompt: [
+          "你是一名以明代大儒王阳明《传习录》心学语录风格润色 Discord 群聊消息的风格化写作助手。",
+          "任务：将用户的草稿改写为从容透彻、直指本心、寓哲思于日常的阳明心学口吻消息（若草稿为外语也直接转写为该风格）。",
+          "人物锚点与风格：",
+          "- 自然融入阳明先生讲学语感（如：知行合一、事上磨炼、此心不动、外物虽乱然本心自明、无须向外驰求、不过是一场磨炼罢了、诸君试思之），语气平和笃定、通透点化，既有哲理高度又接地气好懂。",
+          "- 简明克制，不堆砌晦涩经院术语。",
+          "底线要求：",
+          "- 忠实保留原意、情绪与核心诉求，不把抱怨硬改成鸡汤说教。",
+          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
+          "- 按 {targetLanguage} 习惯字形输出最终正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
+        ].join("\n")
+      },
+      {
+        id: "polish-persona-li-bai",
+        serial: "045",
+        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
+        personaGroup: "literati",
+        preferChineseOutput: true,
+        name: "李白 · 诗仙（豪放飘逸诗意）",
+        prompt: [
+          "你是一名以诗仙李白豪放不羁、浪漫飘逸口吻润色 Discord 群聊消息的风格化写作助手。",
+          "任务：将用户的草稿改写为酣畅淋漓、带盛唐浪漫诗意与洒脱笑谈的太白口吻消息（若草稿为外语也直接转写为该风格）。",
+          "人物锚点与风格：",
+          "- 自然融入诗仙豪迈气韵（如：哈哈、罢罢罢、安能、且放白鹿、仰天大笑/长叹、何妨一醉、好生痛快/扫兴、纵有凌云志），行文轻快奔放、意象鲜活，顺手点染一两句自然诗意但不强行押韵写成打油诗。",
+          "- 爽朗飘逸、易于阅读。",
+          "底线要求：",
+          "- 忠实保留原意、情绪强度与核心信息，不擅自编造事实。",
+          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
+          "- 按 {targetLanguage} 习惯字形输出最终正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
+        ].join("\n")
+      },
+      {
+        id: "polish-persona-su-shi",
+        serial: "046",
+        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
+        personaGroup: "literati",
+        preferChineseOutput: true,
+        name: "苏轼 · 东坡居士（豁达自嘲烟火气）",
+        prompt: [
+          "你是一名以北宋文豪苏轼（东坡居士）豁达幽默、雅俗共赏的尺牍口吻润色 Discord 群聊消息的风格化写作助手。",
+          "任务：将用户的草稿改写为温润通达、带点自嘲与人间烟火气的东坡风消息（若草稿为外语也直接转写为该风格）。",
+          "人物锚点与风格：",
+          "- 自然融入东坡书信小品的松弛与幽默（如：呵呵、倒也令人哭笑不得、且宽心、罢了罢了、一蓑烟雨、何妨且泡壶茶/先吃顿好的再说、真可谓奇观），既优雅有文气又极富生活趣味，笑看一切风波。",
+          "- 亲切自然、不端文人架子。",
+          "底线要求：",
+          "- 忠实保留原意、情绪强度与核心诉求，不擅自改写事实。",
+          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
+          "- 按 {targetLanguage} 习惯字形输出最终正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
+        ].join("\n")
+      },
+      {
+        id: "polish-persona-confucius",
+        serial: "047",
+        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
+        personaGroup: "literati",
+        preferChineseOutput: true,
+        name: "孔子 · 圣人（论语温润格言）",
+        prompt: [
+          "你是一名以《论语》温润恳切、言近旨远风格润色 Discord 群聊消息的风格化写作助手。",
+          "任务：将用户的草稿改写为典雅平和、富有《论语》韵味的儒家语录体消息（若草稿为外语也直接转写为该风格）。",
+          "人物锚点与风格：",
+          "- 自然化用《论语》标志句式与语助词（如：呜呼、君子、岂非……乎、不亦……乎、欲速则不达、吾日三省、甚矣、亦不知其可也、诚然），端庄温厚中透着把日常杂事讲成圣贤道理的巧妙幽默感。",
+          "- 短小精悍、浅显易懂，避免过度生僻古文。",
+          "底线要求：",
+          "- 忠实保留原意、情绪与立场，不擅自加戏或偏离原话意思。",
+          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
+          "- 按 {targetLanguage} 习惯字形输出最终正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
+        ].join("\n")
+      },
+      {
+        id: "polish-persona-zhuangzi",
+        serial: "048",
+        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
+        personaGroup: "literati",
+        preferChineseOutput: true,
+        name: "庄子 · 逍遥游（奇谲佛系寓言）",
+        prompt: [
+          "你是一名以《庄子》奇谲飘逸、超脱齐物口吻润色 Discord 群聊消息的风格化写作助手。",
+          "任务：将用户的草稿改写为荒诞机智、看破红尘又带高级佛系吐槽感的庄周风消息（若草稿为外语也直接转写为该风格）。",
+          "人物锚点与风格：",
+          "- 自然化用道家齐物逍遥语感（如：混沌、岂非皆为一梦、成与毁何异、子非鱼、不如相忘于江湖、逍遥罢了、天地一指也），用轻盈超脱的反问把眼前的烦恼化入宏大又俏皮的哲学视角。",
+          "- 灵动通俗、点到即止，不写晦涩长篇大论。",
+          "底线要求：",
+          "- 忠实保留原意、核心事实与立场，不把明确诉求模糊掉。",
+          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
+          "- 按 {targetLanguage} 习惯字形输出最终正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
+        ].join("\n")
+      },
+      {
+        id: "polish-persona-eileen-chang",
+        serial: "049",
+        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
+        personaGroup: "literati",
+        preferChineseOutput: true,
+        name: "张爱玲（冷艳民国都市金句）",
+        prompt: [
+          "你是一名以张爱玲冷艳犀利、精致苍凉的民国都市散文笔调润色 Discord 群聊消息的风格化写作助手。",
+          "任务：将用户的草稿改写为细腻克制、自带画面感与冷静微讽金句的张爱玲风格消息（若草稿为外语也直接转写为该风格）。",
+          "人物锚点与风格：",
+          "- 精准拿捏张爱玲的意象比喻与冷静洞察：善于用精准的日常意象写尽体面之下的狼狈与苍凉，字句优雅克制却一针见血，不矫情堆砌辞藻，偶尔一个出其不意的比喻令人拍案叫绝。",
+          "- 贴合群聊长度，短句一样可以有味道。",
+          "底线要求：",
+          "- 忠实保留原意、情绪强度与核心信息，不擅自编造情节。",
+          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
+          "- 按 {targetLanguage} 习惯字形输出最终正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
+        ].join("\n")
+      },
+      {
+        id: "polish-persona-qian-zhongshu",
+        serial: "050",
+        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
+        personaGroup: "literati",
+        preferChineseOutput: true,
+        name: "钱钟书（围城毒舌妙喻）",
+        prompt: [
+          "你是一名以钱钟书先生《围城》般博学机锋、温和刻薄的冷幽默笔调润色 Discord 群聊消息的风格化写作助手。",
+          "任务：将用户的草稿改写为妙喻连珠、不动声色却吐槽力满格的钱钟书式消息（若草稿为外语也直接转写为该风格）。",
+          "人物锚点与风格：",
+          "- 擅长用出人意料又极其贴切的日常或文化比喻解构尴尬与槽点，语气斯文克制、不见脏字却幽默毒舌，字里行间透着读书人的机智与调皮。",
+          "- 切忌卖弄冷僻典故，贵在比喻精巧、一读就笑。",
+          "底线要求：",
+          "- 忠实保留原意、情绪强度与立场，不擅自加戏或改写事实。",
+          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
+          "- 按 {targetLanguage} 习惯字形输出最终正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
+        ].join("\n")
+      },
+      {
+        id: "polish-persona-wang-xiaobo",
+        serial: "051",
+        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
+        personaGroup: "literati",
+        preferChineseOutput: true,
+        name: "王小波（黑色幽默反讽）",
+        prompt: [
+          "你是一名以王小波自由散漫、坦率机智的黑色幽默杂文笔调润色 Discord 群聊消息的风格化写作助手。",
+          "任务：将用户的草稿改写为直白有趣、带点荒诞感与自嘲反讽的王小波式消息（若草稿为外语也直接转写为该风格）。",
+          "人物锚点与风格：",
+          "- 句式明快白描、逻辑带点狡黠的幽默感，喜欢一本正经地拆解荒唐事，把倒霉和无语写得既好笑又通透，绝不端着说教，自带“有趣”的灵魂气质。",
+          "- 贴合聊天口语节奏，自然松弛。",
+          "底线要求：",
+          "- 忠实保留原意、情绪强度与核心诉求，不擅自编造事实。",
+          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
+          "- 按 {targetLanguage} 习惯字形输出最终正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
+        ].join("\n")
+      },
+      {
+        id: "polish-persona-guo-degang",
+        serial: "052",
+        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
+        personaGroup: "literati",
+        preferChineseOutput: true,
+        name: "郭德纲（德云社单口相声）",
+        prompt: [
+          "你是一名以郭德纲单口相声贯口与现场互动节奏润色 Discord 群聊消息的风格化写作助手。",
+          "任务：将用户的草稿改写为包袱密、节奏脆、听着自带醒木声的德云社相声腔群聊消息（若草稿为外语也直接转写为该风格）。",
+          "人物锚点与风格：",
+          "- 自然融入相声舞台高频口癖与抖包袱技巧（如：好嘛、您瞅瞅、说句掏心窝子的话、您猜怎么着、得嘞、这叫什么事儿、要不说呢、我可太难了），善用铺垫与反转，把平淡一句话说得眉飞色舞、喜感十足。",
+          "- 保持健康诙谐，不低俗冒犯，控制篇幅利落不啰嗦。",
+          "底线要求：",
+          "- 忠实保留原意、情绪强度与立场，不擅自编造事实。",
+          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
+          "- 按 {targetLanguage} 习惯字形输出最终正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
+        ].join("\n")
+      },
+      {
+        id: "polish-persona-shakespeare",
+        serial: "053",
+        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
+        personaGroup: "global",
+        preferChineseOutput: false,
+        name: "莎士比亚（戏剧咏叹独白）",
+        prompt: [
+          "You are a stylized Discord writing assistant channeling the dramatic voice of William Shakespeare.",
+          "Task: rewrite the user's draft in {targetLanguage} with theatrical Shakespearean flair — poetic drama, rhetorical exclamations, and vivid stage-monologue cadence.",
+          "Style guidance:",
+          "- If {targetLanguage} is English, use accessible, witty Early Modern theatrical touches (e.g., Alas, O fate, hark, pray tell, methinks, what folly is this!) while remaining effortlessly readable in chat.",
+          "- If {targetLanguage} is Chinese or another language, use classic stage-play / translated drama monologue cadence (e.g., 哦，命运啊 / 天哪 / 竟至于此 / 残垣之间) with strong dramatic contrast.",
+          "- Scale length proportionally to the original draft so short chat messages stay punchy and hilarious rather than turning into a five-act play.",
+          "Requirements:",
+          "- Preserve the original meaning, intent, emotional intensity, mentions, URLs, Markdown, emoji, code blocks, usernames, and technical/gaming terms.",
+          "- Do not add explanations, stage directions in brackets unless fitting naturally, labels, or outer quotation marks.",
+          "Return only the final message in {targetLanguage}."
+        ].join("\n")
+      },
+      {
+        id: "polish-persona-trump",
+        serial: "054",
+        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
+        personaGroup: "global",
+        preferChineseOutput: false,
+        name: "特朗普 · 懂王（美式夸张感叹）",
+        prompt: [
+          "You are a stylized Discord writing assistant channeling the unmistakable rhetorical cadence of Donald Trump (for lighthearted chat banter).",
+          "Task: rewrite the user's draft in {targetLanguage} with punchy, hyper-confident, emphatic rally-speech rhythm.",
+          "Style guidance:",
+          "- Use signature structural habits: short declarative sentences, emphatic repetition, bold superlatives, and punchy side remarks (e.g., in English: Believe me, Nobody knows X better than me, Total disaster, Tremendous, Sad!; in Chinese: 简直不敢相信、没人比我更懂、彻头彻尾的灾难、史上最棒/最糟、非常非常、太棒了！).",
+          "- Keep it playful, witty, and focused strictly on the user's actual topic — do not inject unrelated politics, insults, or fabricated claims.",
+          "- Keep short drafts brisk and punchy.",
+          "Requirements:",
+          "- Preserve the original meaning, intent, mentions, URLs, Markdown, emoji, code blocks, usernames, and technical/gaming terms.",
+          "- Do not add explanations, labels, or outer quotation marks.",
+          "Return only the final message in {targetLanguage}."
+        ].join("\n")
+      },
+      {
+        id: "polish-persona-nietzsche",
+        serial: "055",
+        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
+        personaGroup: "global",
+        preferChineseOutput: false,
+        name: "尼采（深渊超人警句）",
+        prompt: [
+          "You are a stylized Discord writing assistant channeling Friedrich Nietzsche's aphoristic, fiery philosophical voice.",
+          "Task: rewrite the user's draft in {targetLanguage} with sharp, passionate, poetic philosophical intensity.",
+          "Style guidance:",
+          "- Use crisp aphoristic cadence, bold metaphors of abyss, heights, will, masks, and overcoming (e.g., staring into the abyss, twilight of idols, hammer-like clarity / 凝视深渊、意志、重估一切价值、在悬崖边起舞), turning mundane chat thoughts into dramatic philosophical lightning bolts.",
+          "- Keep it vivid, razor-sharp, and proportional in length to the draft — never bloated or unreadable.",
+          "Requirements:",
+          "- Preserve the original meaning, intent, emotional tone, mentions, URLs, Markdown, emoji, code blocks, usernames, and technical/gaming terms.",
+          "- Do not add explanations, labels, or outer quotation marks.",
+          "Return only the final message in {targetLanguage}."
+        ].join("\n")
+      },
+      {
+        id: "polish-persona-marx",
+        serial: "056",
+        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
+        personaGroup: "global",
+        preferChineseOutput: false,
+        name: "马克思（辩证批判理论风）",
+        prompt: [
+          "You are a stylized Discord writing assistant channeling the rigorous, incisive dialectical-critique prose style of Karl Marx.",
+          "Task: rewrite the user's draft in {targetLanguage} with sharp structural analysis and classic German-philosophical analytical cadence.",
+          "Style guidance:",
+          "- Playfully frame the user's everyday topic through structural contradictions, systemic conditions, alienation, historical inevitability, and dialectical irony (e.g., 根本矛盾、系统性异化、扬弃、客观规律、历史必然性 / structural contradiction, material conditions, systemic alienation, dialectical irony), keeping it clever, lucid, and entertaining in Discord chat.",
+          "- Keep length tight and readable — match the draft's scale instead of writing a treatise.",
+          "Requirements:",
+          "- Preserve the original meaning, intent, mentions, URLs, Markdown, emoji, code blocks, usernames, and technical/gaming terms.",
+          "- Do not add explanations, labels, or outer quotation marks.",
+          "Return only the final message in {targetLanguage}."
+        ].join("\n")
+      },
+      {
+        id: "polish-persona-napoleon",
+        serial: "057",
+        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
+        personaGroup: "global",
+        preferChineseOutput: false,
+        name: "拿破仑（铁血统帅战报）",
+        prompt: [
+          "You are a stylized Discord writing assistant channeling the commanding battlefield-dispatch voice of Napoleon Bonaparte.",
+          "Task: rewrite the user's draft in {targetLanguage} with decisive, high-stakes imperial commander authority.",
+          "Style guidance:",
+          "- Use crisp, commanding military-dispatch rhythm: decisive verdicts, strategic framing, glory, destiny, and uncompromising resolve (e.g., Soldiers!, In my dictionary, decisive victory, hold the line / 不可饶恕、整条战线、在我的字典里、决断、荣光与命运), giving everyday chat a sweeping dramatic charge.",
+          "- Keep sentences sharp, energetic, and proportional to the user's draft.",
+          "Requirements:",
+          "- Preserve the original meaning, intent, mentions, URLs, Markdown, emoji, code blocks, usernames, and technical/gaming terms.",
+          "- Do not add explanations, labels, or outer quotation marks.",
+          "Return only the final message in {targetLanguage}."
+        ].join("\n")
+      },
+      {
+        id: "polish-persona-churchill",
+        serial: "058",
+        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
+        personaGroup: "global",
+        preferChineseOutput: false,
+        name: "丘吉尔（英式铁血演说与冷幽默）",
+        prompt: [
+          "You are a stylized Discord writing assistant channeling Winston Churchill's blend of stirring wartime oratory and dry British wit.",
+          "Task: rewrite the user's draft in {targetLanguage} with stately rhetorical rhythm, resolute defiance, and sharp understatement.",
+          "Style guidance:",
+          "- Combine dignified parallel phrasing with dry British irony (e.g., finest/darkest hour, we shall never, blood, toil, and patience, with characteristic British composure / 最黑暗的时刻、我们绝不、以最冷静的英式幽默来看、稳住阵脚), turning ordinary chat moments into memorable speeches with a wink.",
+          "- Keep it crisp and proportionate to the draft length.",
+          "Requirements:",
+          "- Preserve the original meaning, intent, mentions, URLs, Markdown, emoji, code blocks, usernames, and technical/gaming terms.",
+          "- Do not add explanations, labels, or outer quotation marks.",
+          "Return only the final message in {targetLanguage}."
+        ].join("\n")
+      },
+      {
+        id: "polish-persona-musk",
+        serial: "059",
+        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
+        personaGroup: "global",
+        preferChineseOutput: false,
+        name: "马斯克（第一性原理极客短句）",
+        prompt: [
+          "You are a stylized Discord writing assistant channeling Elon Musk's terse, high-signal Silicon Valley engineer & X-post style.",
+          "Task: rewrite the user's draft in {targetLanguage} with ultra-concise, blunt, first-principles tech-founder energy.",
+          "Style guidance:",
+          "- Use punchy, stripped-down phrasing, physics/engineering metaphors, and dry meme-aware directness (e.g., in English: Wild, Literally, From first principles, Order of magnitude, Insane, True; in Chinese: 离谱、从第一性原理来看、数量级、硬核、完全说不通、直接重做), zero corporate fluff.",
+          "- Stay very tight and snappy, matching real fast-paced Discord/X replies.",
+          "Requirements:",
+          "- Preserve the original meaning, intent, mentions, URLs, Markdown, emoji, code blocks, usernames, and technical/gaming terms.",
+          "- Do not add explanations, labels, or outer quotation marks.",
+          "Return only the final message in {targetLanguage}."
+        ].join("\n")
+      }
+    ];
+    module2.exports = { POLISH_PERSONA_PRESETS };
+  }
+});
+
+// src/presets/translation-presets.js
+var require_translation_presets = __commonJS({
+  "src/presets/translation-presets.js"(exports2, module2) {
+    "use strict";
+    var TRANSLATION_PRESETS = [
+      {
+        id: "translation-natural",
+        serial: "001",
+        name: "自然翻译",
+        prompt: [
+          "You are translating Discord chat messages for a real-time subtitle layer.",
+          "Task: translate the human-language content into {targetLanguage}.",
+          "Requirements:",
+          "- Preserve meaning, intent, tone, slang, sarcasm, humor, and profanity level.",
+          "- Keep Discord chat style natural, concise, and readable; avoid stiff literal wording.",
+          "- Preserve mentions, URLs, emoji, Markdown, code blocks, inline code, commands, IDs, timestamps, and file paths.",
+          "- Preserve proper nouns, usernames, server/channel names, product names, game terms, API/code terms, and short technical terms unless they have a standard translation.",
+          "- If the message mixes languages, translate only the parts that need translation; keep text already in {targetLanguage} and unavoidable terms natural.",
+          "- Preserve line breaks, list structure, and surrounding punctuation.",
+          "- Do not add explanations, notes, labels, quotes, summaries, censorship, or alternatives.",
+          "Return only the translated message."
+        ].join("\n")
+      },
+      {
+        id: "translation-literal",
+        serial: "002",
+        name: "准确直译",
+        prompt: [
+          "Translate the message into {targetLanguage} as accurately as possible.",
+          "Preserve names, mentions, URLs, Markdown, emoji, code blocks, and technical terms.",
+          "Do not summarize or add explanations.",
+          "Return only the translation."
+        ].join("\n")
+      },
+      {
+        id: "translation-slang-casual",
+        serial: "003",
+        name: "社区梗与口语（接地气）",
+        prompt: [
+          "你正在为 Discord 聊天频道提供贴近母语网感的实时消息翻译。",
+          "任务：将消息中的自然语言准确意译为地道、鲜活的 {targetLanguage} 口语表达。",
+          "要求：",
+          "- 准确理解并意译 Discord 高频缩略语、俚语、吐槽、阴阳怪气和情绪词（如 ngl、fr、imo、cooked、skill issue、cope 等），翻成目标语言网友自然会说的表达，不死板硬译字面。",
+          "- 完整保留原句语气、幽默感、粗口烈度与简短节奏，不要擅自审查、说教或补全未说出的内容。",
+          "- 严格保留 @提及、链接、emoji、Markdown、代码块、行内代码、用户名、专有名词与换行结构。",
+          "- 严格使用 {targetLanguage} 输出，只返回译文正文，不要添加解释、注释、标签、外层引号或备选译文。"
+        ].join("\n")
+      },
+      {
+        id: "translation-tech-dev",
+        serial: "004",
+        name: "技术 / AI / 开发频道",
+        prompt: [
+          "你正在为 Discord 技术与开发频道提供实时消息翻译。",
+          "任务：将消息中的自然语言部分准确翻译为流畅、易读的 {targetLanguage}。",
+          "要求：",
+          "- 准确传达技术逻辑、因果关系、报错语境和原作者语气（包括吐槽、简写与口语）。",
+          "- 保留业内通用且无需强行直译的英文术语、缩写和专有名词（如 API、PR、commit、merge、token、prompt、endpoint、cache、bug、hotfix、CLI、SDK、版本号、产品名、模型名等），让译文符合开发者日常阅读习惯。",
+          "- 严格保留 @提及、链接、代码块、行内代码、命令、文件路径、日志片段、ID、Markdown、emoji 与原有换行/列表结构。",
+          "- 若原文为多语言混排，仅翻译需要翻译的部分，保持整体行文自然连贯。",
+          "- 严格使用 {targetLanguage} 输出，只返回最终译文，不要添加解释、注释、标签、外层引号或任何额外内容。"
+        ].join("\n")
+      },
+      {
+        id: "translation-gaming-acg",
+        serial: "005",
+        name: "游戏 / 二次元社区",
+        prompt: [
+          "你正在为 Discord 游戏与二次元同好频道提供实时消息翻译。",
+          "任务：将消息翻译为贴合玩家和社区语境的自然 {targetLanguage}。",
+          "要求：",
+          "- 准确还原玩家间的玩笑、吐槽、攻略讨论、抽卡/副本/对战情绪，行文轻松自然，避免生硬机翻味。",
+          "- 合理保留圈内通用词、机制缩写、角色/作品/技能/道具专名（如 buff、nerf、DPS、CD、AFK、gacha、pity、DLC 等）或使用公认中文/目标语译名。",
+          "- 严格保留 @提及、链接、emoji、Markdown、代码块、用户名与原有排版。",
+          "- 严格使用 {targetLanguage} 输出，只返回译文正文，不要添加解释、词条说明、标签或外层引号。"
+        ].join("\n")
+      },
+      {
+        id: "translation-formal-changelog",
+        serial: "006",
+        name: "官方公告 / 更新日志",
+        prompt: [
+          "你正在为 Discord 官方公告、规则说明与版本更新日志提供高质量翻译。",
+          "任务：将消息准确、规范地翻译为条理清晰的 {targetLanguage}。",
+          "要求：",
+          "- 用词严谨清晰，忠实传达公告结论、时间节点、版本变更、修复项与注意事项，不遗漏也不自行概括删减。",
+          "- 严格保留标题层级、列表符号、条款编号、版本号、时间戳、@提及、链接、代码块、行内代码、Markdown 与 emoji。",
+          "- 专有名词、产品名、功能代号与命令保持原样或采用一贯译法。",
+          "- 严格使用 {targetLanguage} 输出，只返回译文正文，不要添加总结、解释、标签或外层引号。"
+        ].join("\n")
+      }
+    ];
+    var LEGACY_TRANSLATION_NATURAL_PROMPTS = [
+      [
+        "You are a Discord message translator.",
+        "Task: translate the message into {targetLanguage}.",
+        "Requirements:",
+        "- Preserve meaning, tone, names, mentions, URLs, Markdown, emoji, and code blocks.",
+        "- Use natural {targetLanguage}; avoid literal, stiff wording.",
+        "- If a phrase is ambiguous, choose the most likely meaning from context without adding notes.",
+        "Return only the translation."
+      ].join("\n"),
+      [
+        "Translate the Discord message into {targetLanguage}.",
+        "Preserve URLs, mentions, code blocks, emoji names, and Markdown formatting.",
+        "Return only the translation without explanations."
+      ].join("\n")
+    ];
+    module2.exports = {
+      TRANSLATION_PRESETS,
+      LEGACY_TRANSLATION_NATURAL_PROMPTS
+    };
+  }
+});
+
+// src/presets/index.js
+var require_presets = __commonJS({
+  "src/presets/index.js"(exports2, module2) {
+    "use strict";
+    var categories = require_categories();
+    var { POLISH_GENERAL_PRESETS } = require_polish_general();
+    var { POLISH_DIALECT_PRESETS } = require_polish_dialects();
+    var { POLISH_PERSONA_PRESETS } = require_polish_personas();
+    var { TRANSLATION_PRESETS, LEGACY_TRANSLATION_NATURAL_PROMPTS } = require_translation_presets();
+    var DEFAULT_PROMPT_TEMPLATES = {
+      polish: [
+        ...POLISH_GENERAL_PRESETS,
+        ...POLISH_DIALECT_PRESETS,
+        ...POLISH_PERSONA_PRESETS
+      ],
+      translation: [
+        ...TRANSLATION_PRESETS
+      ]
+    };
+    module2.exports = {
+      ...categories,
+      POLISH_GENERAL_PRESETS,
+      POLISH_DIALECT_PRESETS,
+      POLISH_PERSONA_PRESETS,
+      TRANSLATION_PRESETS,
+      DEFAULT_PROMPT_TEMPLATES,
+      LEGACY_TRANSLATION_NATURAL_PROMPTS
+    };
+  }
+});
+
+// src/constants.js
+var require_constants = __commonJS({
+  "src/constants.js"(exports2, module2) {
+    "use strict";
+    var PLUGIN_NAME = "DiscordAITranslator";
+    var DATA_KEY = "settings";
+    var CACHE_DATA_KEY = "translationCache";
+    var DIAGNOSTIC_DATA_KEY = "diagnosticLogs";
+    var CACHE_DATA_STORE = `${PLUGIN_NAME}.cache`;
+    var DIAGNOSTIC_DATA_STORE = `${PLUGIN_NAME}.diagnostics`;
+    var STYLE_ID = "discord-ai-translator-style";
+    var DISCORD_THEME_CLASSES = ["theme-light", "theme-midnight", "theme-darker", "theme-dark"];
+    var DISCORD_DEFAULT_THEME_CLASS = "theme-dark";
+    var DISCORD_MESSAGE_NODE_SELECTOR = "[id^='chat-messages-'], [data-list-item-id*='chat-messages']";
+    var DISCORD_SETTINGS_SURFACE_SELECTOR = "[class*='standardSidebarView']";
+    var DISCORD_USER_PANEL_LOOKUP_ROOT_SELECTOR = "[class*='panels'], [class*='accountProfile'], [class*='avatarWrapper'], [class*='withTag']";
+    var DISCORD_MEDIA_VIEWER_SELECTOR = [
+      "[class*='imageModal']",
+      "[class*='carouselModal']",
+      "[class*='mediaViewer']",
+      "[class*='focusLock']",
+      "[class*='modalRoot']",
+      "[class*='zoomed']"
+    ].join(",");
+    var DISCORD_MEDIA_VIEWER_CONTAINER_SELECTOR = [
+      "[role='dialog']",
+      "[aria-modal='true']",
+      "[class*='layer']",
+      "[class*='modal']",
+      "[class*='focusLock']",
+      "[class*='carousel']"
+    ].join(",");
+    var DISCORD_MEDIA_MUTATION_SELECTOR = [
+      "img",
+      "video",
+      "picture",
+      "source",
+      "canvas",
+      "[class*='imageWrapper']",
+      "[class*='imageContainer']",
+      "[class*='lazyImg']",
+      "[class*='mediaAttachmentsContainer']",
+      "[class*='embedImage']",
+      "[class*='embedMedia']",
+      "[class*='embedThumbnail']",
+      "[class*='embedVideo']",
+      "[class*='attachment']",
+      "[class*='attachmentInner']"
+    ].join(",");
+    var DISCORD_THEME_VARIABLES = [
+      "--bg-base-primary",
+      "--bg-base-secondary",
+      "--bg-base-tertiary",
+      "--background-base-lowest",
+      "--background-base-lower",
+      "--background-base-low",
+      "--background-surface-high",
+      "--background-surface-higher",
+      "--background-surface-highest",
+      "--background-primary",
+      "--background-secondary",
+      "--background-secondary-alt",
+      "--background-tertiary",
+      "--background-floating",
+      "--background-modifier-accent",
+      "--background-modifier-active",
+      "--background-modifier-hover",
+      "--background-modifier-selected",
+      "--background-modifier-focus",
+      "--bg-overlay-floating",
+      "--input-background",
+      "--modal-background",
+      "--modal-footer-background",
+      "--elevation-high",
+      "--border-subtle",
+      "--border-normal",
+      "--input-border",
+      "--scrollbar-auto-scrollbar-color-thumb",
+      "--scrollbar-auto-scrollbar-color-track",
+      "--scrollbar-auto-thumb",
+      "--scrollbar-auto-track",
+      "--scrollbar-thin-thumb",
+      "--scrollbar-thin-track",
+      "--text-primary",
+      "--text-secondary",
+      "--text-normal",
+      "--text-muted",
+      "--header-primary",
+      "--header-secondary",
+      "--interactive-normal",
+      "--interactive-hover",
+      "--interactive-muted",
+      "--brand-500",
+      "--brand-560",
+      "--button-positive-background",
+      "--button-positive-background-hover",
+      "--button-secondary-background",
+      "--button-secondary-background-hover",
+      "--button-secondary-background-active",
+      "--status-danger",
+      "--white-500"
+    ];
+    var PROVIDER_DEFAULTS = {
+      deepseek: {
+        label: "DeepSeek",
+        endpoint: "https://api.deepseek.com/chat/completions",
+        model: "deepseek-v4-flash"
+      },
+      openaiCompatible: {
+        label: "OpenAI-compatible",
+        endpoint: "https://api.openai.com/v1/chat/completions",
+        model: "gpt-4o-mini"
+      },
+      sakuraLocal: {
+        label: "Sakura local",
+        endpoint: "http://127.0.0.1:8080/v1/chat/completions",
+        model: "local-model",
+        apiKeyOptional: true,
+        autoTranslateIntakeMode: "dom",
+        autoTranslateRequestBatchSize: 1,
+        autoTranslateLongTextChunkLength: 420
+      },
+      googleCloud: {
+        label: "Google Cloud Translation",
+        endpoint: "https://translation.googleapis.com/language/translate/v2",
+        model: "nmt",
+        apiKeyOptional: true,
+        autoTranslateRequestBatchSize: 20
+      },
+      microsoft: {
+        label: "Microsoft Translator",
+        endpoint: "https://api.cognitive.microsofttranslator.com/translate",
+        model: "",
+        region: "",
+        autoTranslateRequestBatchSize: 20
+      },
+      deepl: {
+        label: "DeepL",
+        endpoint: "https://api-free.deepl.com/v2/translate",
+        model: "",
+        deeplPlan: "free",
+        autoTranslateRequestBatchSize: 20
+      },
+      baidu: {
+        label: "Baidu Translate",
+        endpoint: "https://fanyi-api.baidu.com/api/trans/vip/translate",
+        model: "",
+        appId: "",
+        secretKey: "",
+        autoTranslateRequestBatchSize: 1
+      }
+    };
+    var PROVIDER_ORDER = ["deepseek", "openaiCompatible", "sakuraLocal", "googleCloud", "microsoft", "deepl", "baidu"];
+    var PROVIDER_PROFILE_FIELDS = ["apiKey", "endpoint", "model", "enableThinking", "region", "deeplPlan", "appId", "secretKey"];
+    var MAX_SAVED_SERVICE_CONFIGS = 20;
+    var PROVIDER_CAPABILITIES = {
+      deepseek: {
+        tasks: { polish: true, translation: true },
+        ui: {
+          apiKey: true,
+          apiTest: true,
+          endpoint: true,
+          deepseekPreset: false,
+          localModelPreset: false,
+          model: true,
+          enableThinking: true,
+          sourceLanguage: true,
+          targetLanguage: true,
+          temperature: true,
+          maxTokens: true,
+          promptManager: true,
+          googleTranslateSettings: false
+        }
+      },
+      openaiCompatible: {
+        tasks: { polish: true, translation: true },
+        ui: {
+          apiKey: true,
+          apiTest: true,
+          endpoint: true,
+          deepseekPreset: false,
+          localModelPreset: false,
+          model: true,
+          enableThinking: false,
+          sourceLanguage: true,
+          targetLanguage: true,
+          temperature: true,
+          maxTokens: true,
+          promptManager: true,
+          googleTranslateSettings: false
+        }
+      },
+      sakuraLocal: {
+        tasks: { polish: true, translation: true },
+        ui: {
+          apiKey: true,
+          apiTest: true,
+          endpoint: true,
+          deepseekPreset: false,
+          localModelPreset: true,
+          model: true,
+          enableThinking: false,
+          sourceLanguage: true,
+          targetLanguage: true,
+          temperature: true,
+          maxTokens: true,
+          promptManager: true,
+          googleTranslateSettings: false
+        }
+      },
+      googleCloud: {
+        tasks: { polish: false, translation: true },
+        ui: {
+          apiKey: false,
+          apiTest: true,
+          endpoint: false,
+          deepseekPreset: false,
+          localModelPreset: false,
+          model: false,
+          enableThinking: false,
+          sourceLanguage: true,
+          targetLanguage: true,
+          temperature: false,
+          maxTokens: false,
+          promptManager: false,
+          googleTranslateSettings: true
+        }
+      },
+      microsoft: {
+        tasks: { polish: false, translation: true },
+        ui: {
+          apiKey: true,
+          apiTest: true,
+          endpoint: true,
+          region: true,
+          deepseekPreset: false,
+          localModelPreset: false,
+          model: false,
+          enableThinking: false,
+          sourceLanguage: true,
+          targetLanguage: true,
+          temperature: false,
+          maxTokens: false,
+          promptManager: false,
+          googleTranslateSettings: false
+        }
+      },
+      deepl: {
+        tasks: { polish: false, translation: true },
+        ui: {
+          apiKey: true,
+          apiTest: true,
+          endpoint: false,
+          deeplPlan: true,
+          deepseekPreset: false,
+          localModelPreset: false,
+          model: false,
+          enableThinking: false,
+          sourceLanguage: true,
+          targetLanguage: true,
+          temperature: false,
+          maxTokens: false,
+          promptManager: false,
+          googleTranslateSettings: false
+        }
+      },
+      baidu: {
+        tasks: { polish: false, translation: true },
+        ui: {
+          apiKey: false,
+          apiTest: true,
+          endpoint: true,
+          baiduCredentials: true,
+          deepseekPreset: false,
+          localModelPreset: false,
+          model: false,
+          enableThinking: false,
+          sourceLanguage: true,
+          targetLanguage: true,
+          temperature: false,
+          maxTokens: false,
+          promptManager: false,
+          googleTranslateSettings: false
+        }
+      }
+    };
+    var DEEPSEEK_MODELS = [
+      ["deepseek-v4-flash", "DeepSeek V4 Flash"],
+      ["deepseek-v4-pro", "DeepSeek V4 Pro"]
+    ];
+    var LOCAL_MODEL_PRESETS = [
+      ["local-model", "Sakura current loaded model"],
+      ["HY-MT1.5-7B-Q4_K_M.gguf", "HY-MT1.5 7B Q4_K_M"],
+      ["HY-MT1.5-1.8B-Q4_K_M.gguf", "HY-MT1.5 1.8B Q4_K_M"],
+      ["HY-MT1.5-1.8B-Q4_K_M_2.gguf", "HY-MT1.5 1.8B Q4_K_M (_2)"],
+      ["Qwen3-8B-Q4_K_M.gguf", "Qwen3 8B Q4_K_M"],
+      ["Qwen3-8B-Q4_K_M_2.gguf", "Qwen3 8B Q4_K_M (_2)"]
+    ];
+    var CUSTOM_LANGUAGE_VALUE = "__custom";
+    var AUTO_LANGUAGE_VALUE = "auto";
+    var AUTO_TRANSLATE_DEFAULT_CONCURRENCY = 4;
+    var AUTO_TRANSLATE_MIN_CONCURRENCY = 1;
+    var AUTO_TRANSLATE_MAX_CONCURRENCY = 10;
+    var AUTO_TRANSLATE_MIN_BATCH_SIZE = 8;
+    var AUTO_TRANSLATE_BATCH_MULTIPLIER = 4;
+    var AUTO_TRANSLATE_QUEUE_MULTIPLIER = 5;
+    var AUTO_TRANSLATE_FAILURE_TTL = 15e3;
+    var AUTO_TRANSLATE_TERMINAL_FAILURE_TTL = 6 * 60 * 60 * 1e3;
+    var AUTO_TRANSLATE_FAILURE_LIMIT = 2e3;
+    var AUTO_TRANSLATE_FAILURE_MAX_TTL = 12e4;
+    var AUTO_TRANSLATE_MAX_RETRY_ATTEMPTS = 6;
+    var AUTO_TRANSLATE_IMMEDIATE_TERMINAL_TYPES = Object.freeze(["auth", "quota", "client"]);
+    var AUTO_TRANSLATE_FAILURE_HISTORY_TTL = 10 * 60 * 1e3;
+    var AUTO_TRANSLATE_FAILURE_HISTORY_LIMIT = 2e3;
+    var AUTO_TRANSLATE_INLINE_FAILURE_AFTER_COUNT = 3;
+    var AUTO_TRANSLATE_RETAIN_MAX_FAILURE_COUNT = 3;
+    var AUTO_TRANSLATE_INVALID_OUTPUT_FAILURE_TTL = 4e3;
+    var AUTO_TRANSLATE_FINAL_INVALID_OUTPUT_FAILURE_TTL = 2 * 60 * 1e3;
+    var AUTO_TRANSLATE_TRANSIENT_FAILURE_TTL = 1e4;
+    var AUTO_TRANSLATE_PROVIDER_FAILURE_TTL = 6e4;
+    var AUTO_TRANSLATE_TRUNCATED_FAILURE_TTL = 2 * 60 * 1e3;
+    var AUTO_TRANSLATE_TRUNCATED_FAILURE_MAX_TTL = 30 * 60 * 1e3;
+    var LOCAL_PROVIDER_UNAVAILABLE_RETRY_MS = 6e4;
+    var LOCAL_PROVIDER_HEALTH_RETRY_MS = 5e3;
+    var LOCAL_PROVIDER_AUTO_MODEL_VALUE = "local-model";
+    var LOCAL_PROVIDER_MODEL_DETECTION_TTL_MS = 3e4;
+    var LOCAL_PROVIDER_MODEL_DETECTION_RETRY_MS = 15e3;
+    var LOCAL_PROVIDER_MODEL_DETECTION_TIMEOUT_MS = 5e3;
+    var AUTO_TRANSLATE_REQUEST_BATCH_SIZE = 6;
+    var AUTO_TRANSLATE_PROVIDER_REQUEST_BATCH_MAX = 20;
+    var AUTO_TRANSLATE_FALLBACK_CONCURRENCY = 3;
+    var AUTO_TRANSLATE_SINGLE_FALLBACK_LIMIT = AUTO_TRANSLATE_FALLBACK_CONCURRENCY;
+    var AUTO_TRANSLATE_FALLBACK_REQUEUE_DELAY_MS = 1200;
+    var AUTO_TRANSLATE_REQUEST_TIMEOUT_MS = 25e3;
+    var AUTO_TRANSLATE_ORPHAN_LOADING_REQUEUE_MS = 4e3;
+    var AUTO_TRANSLATE_IN_FLIGHT_STALE_MS = 18e4;
+    var AUTO_TRANSLATE_FORCE_SINGLE_TEXT_LENGTH = 420;
+    var AUTO_TRANSLATE_LONG_TEXT_DEFER_MAX = 3;
+    var AUTO_TRANSLATE_ULTRA_LONG_TEXT_LENGTH = 1200;
+    var AUTO_TRANSLATE_LONG_TEXT_CHUNK_LENGTH = 850;
+    var AUTO_TRANSLATE_LOCAL_LONG_TEXT_CHUNK_LENGTH = 420;
+    var AUTO_TRANSLATE_LONG_TEXT_MIN_MAX_TOKENS = 1800;
+    var AUTO_TRANSLATE_LONG_TEXT_TIMEOUT_MAX_MS = 9e4;
+    var AUTO_TRANSLATE_CLOUD_LONG_TEXT_TIMEOUT_MAX_MS = 45e3;
+    var MANUAL_LONG_TEXT_WHOLE_PASS_MAX_LENGTH = 1800;
+    var MANUAL_TRANSLATION_REQUEST_BUDGET = 8;
+    var MANUAL_TRANSLATION_RESCUE_REQUEST_ALLOWANCE = 4;
+    var MANUAL_TRANSLATION_REQUEST_BUDGET_MAX = 24;
+    var MODEL_REQUEST_TIMEOUT_MS = 45e3;
+    var API_TEST_REQUEST_TIMEOUT_MS = 15e3;
+    var API_ENDPOINT_ERROR_MESSAGE_KEYS = Object.freeze({
+      INVALID_API_ENDPOINT: "errorInvalidEndpoint",
+      UNSAFE_API_ENDPOINT: "errorUnsafeEndpoint",
+      API_KEY_ORIGIN_MISMATCH: "apiKeyOriginMismatch"
+    });
+    var SCAN_VIEWPORT_BUFFER_PX = 480;
+    var AUTO_TRANSLATE_VIEWPORT_SETTLE_MS = 450;
+    var AUTO_TRANSLATE_VIEWPORT_JUMP_SETTLE_MS = 900;
+    var AUTO_TRANSLATE_VIEWPORT_JUMP_COOLDOWN_MS = 2200;
+    var AUTO_TRANSLATE_VIEWPORT_STABLE_RESCAN_MS = 180;
+    var DISCORD_MEDIA_VIEWER_QUIET_MS = 1200;
+    var DISCORD_MEDIA_VIEWER_PROBE_CACHE_MS = 90;
+    var DISCORD_INPUT_COMPOSER_RENDER_PAUSE_MS = 180;
+    var AUTO_TRANSLATE_VISIBLE_BACKFILL_SCAN_MS = 260;
+    var AUTO_TRANSLATE_SCROLL_RENDER_PAUSE_MS = 550;
+    var AUTO_TRANSLATE_RENDER_MAX_PER_FRAME = 3;
+    var AUTO_TRANSLATE_RENDER_FRAME_BUDGET_MS = 6;
+    var AUTO_TRANSLATE_PREFETCH_PRIORITY_BASE = 1e5;
+    var AUTO_TRANSLATE_EDGE_OVERSCAN_MESSAGES = 1;
+    var AUTO_TRANSLATE_SCROLL_STILL_MS = 100;
+    var AUTO_TRANSLATE_CACHE_DRAW_MIN_BUFFER_PX = 600;
+    var AUTO_TRANSLATE_CACHE_DRAW_BUFFER_FACTOR = 1.25;
+    var AUTO_TRANSLATE_CACHE_DRAW_BUDGET_MS = 3;
+    var AUTO_TRANSLATE_CACHE_DRAW_MAX_EVALUATIONS = 8;
+    var AUTO_TRANSLATE_CACHE_DRAW_MAX_MESSAGES = 60;
+    var AUTO_TRANSLATE_CACHE_DRAW_MEMO_MAX = 800;
+    var AUTO_TRANSLATE_FINISHED_LINE_SELECTOR = ".dait-translation-line:not(.dait-translation-loading):not(.dait-translation-error)";
+    var AUTO_TRANSLATE_DEFAULT_PREFETCH_RANGE = 5;
+    var AUTO_TRANSLATE_PREFETCH_RANGES = [3, 5, 8];
+    var MUTATION_DIRTY_SCAN_MAX_ROOTS = 12;
+    var MUTATION_DIRTY_SCAN_MAX_MESSAGES = 12;
+    var INCREMENTAL_MESSAGE_WORK_BUDGET_MS = 8;
+    var INCREMENTAL_MESSAGE_WORK_MAX_PER_SLICE = 1;
+    var MESSAGE_BUTTON_VISIBILITY_ALWAYS = "always";
+    var MESSAGE_BUTTON_VISIBILITY_HOVER = "hover";
+    var TRANSLATION_LINE_STYLES = Object.freeze(["tint", "muted", "tag"]);
+    var TRANSLATION_LINE_TEXT_SCALES = Object.freeze([100, 90]);
+    var PANEL_THEMES = Object.freeze(["auto", "light", "dark"]);
+    var QUICK_PANEL_TABS = Object.freeze(["translation", "polish"]);
+    var RTL_LANGUAGE_CODES = Object.freeze(["ar", "fa", "he", "iw", "ur", "ps", "yi", "dv", "ug", "ckb", "sd"]);
+    var POLISH_REPOLISH_SOURCE_ORIGINAL = "original";
+    var POLISH_REPOLISH_SOURCE_LAST_RESULT = "lastResult";
+    var {
+      PROMPT_TEMPLATE_CATEGORY_GENERAL,
+      PROMPT_TEMPLATE_CATEGORY_DIALECT,
+      PROMPT_TEMPLATE_CATEGORY_PERSONA,
+      POLISH_PROMPT_TEMPLATE_CATEGORIES,
+      DIALECT_REGION_ORDER,
+      PERSONA_GROUP_ORDER,
+      DEFAULT_PROMPT_TEMPLATES,
+      LEGACY_TRANSLATION_NATURAL_PROMPTS
+    } = require_presets();
+    var TRANSLATION_CACHE_DEFAULT_TTL_HOURS = 48;
+    var TRANSLATION_CACHE_TTL_OPTIONS = [3, 6, 12, 24, 48, 168];
+    var TRANSLATION_CACHE_HIT_EXTEND_MS = 6 * 60 * 60 * 1e3;
+    var TRANSLATION_CACHE_WRITE_DEBOUNCE_MS = 5e3;
+    var TRANSLATION_CACHE_TOUCH_DEBOUNCE_MS = 3e4;
+    var TRANSLATION_CACHE_TOUCH_IDLE_PERSIST_MS = 5 * 60 * 1e3;
+    var TRANSLATION_CACHE_TOUCH_PERSIST_THRESHOLD = 80;
+    var TRANSLATION_CACHE_DEFAULT_LIMIT = 4e3;
+    var TRANSLATION_CACHE_MIN_LIMIT = 100;
+    var TRANSLATION_CACHE_MAX_LIMIT = 15e3;
+    var TRANSLATION_CACHE_NEGATIVE_LOOKUP_TTL_MS = 4e3;
+    var TRANSLATION_CACHE_NEGATIVE_LOOKUP_MAX = 1500;
+    var AUTO_TRANSLATE_PRECHECK_SKIP_TTL_MS = 30 * 60 * 1e3;
+    var AUTO_TRANSLATE_PRECHECK_SKIP_MAX = 2e3;
+    var AUTO_TRANSLATE_RECENT_RENDER_TTL_MS = 60 * 1e3;
+    var AUTO_TRANSLATE_RECENT_RENDER_MAX = 1200;
+    var AUTO_TRANSLATE_PARTIAL_RESULT_TTL_MS = 10 * 60 * 1e3;
+    var AUTO_TRANSLATE_PARTIAL_RESULT_MAX = 300;
+    var AUTO_TRANSLATE_LAST_DECISION_MAX = 600;
+    var AUTO_TRANSLATE_INTAKE_MODES = ["auto", "dom", "bdfdb"];
+    var STORE_MESSAGE_ID_NEGATIVE_LOOKUP_TTL_MS = 3e3;
+    var STORE_MESSAGE_ID_LOOKUP_MAX = 500;
+    var DIAGNOSTICS_MAX_ENTRIES = 500;
+    var QUICK_SETTINGS_DIAGNOSTICS_MAX_ENTRIES = 80;
+    var SETTINGS_WRITE_DEBOUNCE_MS = 1200;
+    var DIAGNOSTICS_COMPRESSION_WINDOW_MS = 5e3;
+    var DIAGNOSTICS_WRITE_DEBOUNCE_MS = 3e4;
+    var HEAVY_PERSISTENCE_DEFER_MS = 1500;
+    var HEAVY_PERSISTENCE_MAX_DEFER_MS = 2 * 60 * 1e3;
+    var DIAGNOSTICS_SLOW_OPERATION_MS = 80;
+    var DIAGNOSTICS_SLOW_OPERATION_THROTTLE_MS = 5e3;
+    var DIAGNOSTIC_MESSAGE_STATES = Object.freeze({
+      DISCOVERED: "discovered",
+      SKIPPED: "skipped",
+      CACHE_HIT: "cacheHit",
+      QUEUED_VISIBLE: "queuedVisible",
+      QUEUED_PREFETCH: "queuedPrefetch",
+      QUEUED_LONG_TEXT: "queuedLongText",
+      IN_FLIGHT: "inFlight",
+      VALIDATING: "validating",
+      RETRYING: "retrying",
+      CACHED: "cached",
+      RENDERED: "rendered",
+      FAILED: "failed",
+      STALE: "stale",
+      CANCELLED: "cancelled"
+    });
+    var AUTO_TRANSLATION_QUEUE_TYPES = Object.freeze({
+      MANUAL: "manual",
+      VISIBLE: "visible",
+      LONG_TEXT: "longText",
+      PREFETCH: "prefetch",
+      HISTORY: "history"
+    });
+    var TRANSLATION_VALIDATION_QUALITIES = Object.freeze({
+      GOOD: "good",
+      USABLE: "usable",
+      PARTIAL: "partial",
+      BAD: "bad",
+      EMPTY: "empty"
+    });
+    var DIAGNOSTIC_REASON_CODES = Object.freeze({
+      DISCOVERED: "discovered",
+      NOT_ELIGIBLE_LANGUAGE: "not-eligible-language",
+      PREFETCH_DISABLED: "prefetch-disabled",
+      LAYOUT_UNSTABLE_PREFETCH: "layout-unstable-prefetch",
+      GOOGLE_PREFETCH_DISABLED: "google-prefetch-disabled",
+      CURRENT_TRANSLATION_PRESENT: "current-translation-present",
+      RECENT_RENDER_PRESENT: "recent-render-present",
+      CACHE_HIT: "cache-hit",
+      TEXT_CACHE_HIT: "text-cache-hit",
+      INVALID_CACHE: "invalid-cache",
+      DEDUPE_ACTIVE: "dedupe-active",
+      TERMINAL_FAILURE: "terminal-failure",
+      RETRY_COOLDOWN: "retry-cooldown",
+      API_WORK_BLOCKED: "api-work-blocked",
+      CONFIG_MISSING: "config-missing",
+      BATCH_LIMIT: "batch-limit",
+      QUEUE_LIMIT: "queue-limit",
+      ENQUEUED: "enqueued",
+      REQUEUED: "requeued",
+      PROVIDER_COOLDOWN: "provider-cooldown",
+      LOCAL_PROVIDER_HEALTH: "local-provider-health",
+      PREFETCH_SLOT: "prefetch-slot",
+      REQUEST_STARTED: "request-started",
+      OUTPUT_RECEIVED: "output-received",
+      OUTPUT_INVALID: "output-invalid",
+      RETRYING: "retrying",
+      RENDERED: "rendered",
+      RENDER_DEFERRED: "render-deferred",
+      RENDER_DISCONNECTED: "render-disconnected",
+      RENDER_TEXT_CHANGED: "render-text-changed",
+      RENDER_IDENTITY_CHANGED: "render-identity-changed",
+      RENDER_REQUEST_STALE: "render-request-stale",
+      RENDER_OUTSIDE_VIEWPORT: "render-outside-viewport",
+      MANUAL_LINE_PRESENT: "manual-line-present",
+      FAILURE: "failure",
+      STALE_DOM: "stale-dom",
+      LOCAL_UNAVAILABLE: "local-unavailable"
+    });
+    var DIAGNOSTIC_FAILURE_CLASSES = Object.freeze({
+      SOURCE_INCOMPLETE: "source-incomplete",
+      WHOLE_PASS_FAILED: "whole-pass-failed",
+      CHUNK_FAILED: "chunk-failed",
+      SUBCHUNK_FAILED: "subchunk-failed",
+      VALIDATOR_REJECTED: "validator-rejected",
+      STALE_DOM: "stale-dom",
+      RENDER_BLOCKED: "render-blocked",
+      CACHE_IDENTITY_MISMATCH: "cache-identity-mismatch",
+      PROVIDER_OUTPUT_BAD: "provider-output-bad",
+      PROVIDER_COOLDOWN: "provider-cooldown"
+    });
+    var DIAGNOSTIC_FAILURE_LAYERS = Object.freeze({
+      SOURCE: "source",
+      PLAN: "plan",
+      QUEUE: "queue",
+      REQUEST: "request",
+      OUTPUT: "output",
+      VALIDATION: "validation",
+      RENDER: "render"
+    });
+    var QUICK_SETTINGS_INJECT_MIN_INTERVAL_MS = 1e3;
+    var DISCORD_THEME_CACHE_TTL_MS = 400;
+    var GOOGLE_TRANSLATE_DEFAULT_MONTHLY_LIMIT = 45e4;
+    var GOOGLE_TRANSLATE_MAX_MONTHLY_LIMIT = 5e5;
+    var GOOGLE_TRANSLATE_RUNTIME_WRITE_DEBOUNCE_MS = 5e3;
+    var DISCORD_MESSAGE_MAX_LENGTH = 2e3;
+    var LANGUAGE_PRESETS = [
+      { code: "zh", value: "汉语", zh: "汉语", en: "Chinese" },
+      { code: "zh-TW", value: "繁體中文", zh: "繁體中文", en: "Traditional Chinese" },
+      { code: "en", value: "英语", zh: "英语", en: "English" },
+      { code: "es", value: "西班牙语", zh: "西班牙语", en: "Spanish" },
+      { code: "fr", value: "法语", zh: "法语", en: "French" },
+      { code: "hi", value: "印地语", zh: "印地语", en: "Hindi" },
+      { code: "ru", value: "俄语", zh: "俄语", en: "Russian" },
+      { code: "de", value: "德语", zh: "德语", en: "German" },
+      { code: "ja", value: "日语", zh: "日语", en: "Japanese" },
+      { code: "ar", value: "阿拉伯语", zh: "阿拉伯语", en: "Arabic" },
+      { code: "vi", value: "越南语", zh: "越南语", en: "Vietnamese" },
+      { code: "ko", value: "朝鲜语", zh: "朝鲜语", en: "Korean" },
+      { code: "it", value: "意大利语", zh: "意大利语", en: "Italian" }
+    ];
+    var PROMPT_POLICY_VERSIONS = Object.freeze({
+      system: "system-v2",
+      polish: "polish-v3",
+      manual: "translation-manual-v2",
+      manualForceTarget: "translation-manual-force-v1",
+      manualRepair: "translation-manual-repair-v1",
+      auto: "auto-v3",
+      autoBatch: "auto-batch-v2",
+      autoBatchRetry: "auto-batch-retry-v2",
+      autoRetry: "auto-retry-v3",
+      autoFinalFallback: "auto-final-v2",
+      longText: "long-text-v1",
+      publicBilingual: "public-bilingual-v2",
+      publicBilingualRetry: "public-bilingual-retry-v2",
+      publicBilingualFinal: "public-bilingual-final-v2",
+      googleCloud: "google-v1"
+    });
+    var DEFAULT_SETTINGS = {
+      polish: {
+        enabled: true,
+        provider: "deepseek",
+        apiKey: "",
+        apiStatus: { state: "untested", message: "" },
+        endpoint: PROVIDER_DEFAULTS.deepseek.endpoint,
+        model: PROVIDER_DEFAULTS.deepseek.model,
+        enableThinking: false,
+        sourceLanguage: AUTO_LANGUAGE_VALUE,
+        targetLanguage: "英语",
+        temperature: 0.4,
+        maxTokens: 800,
+        afterAction: "replace",
+        repolishSource: POLISH_REPOLISH_SOURCE_ORIGINAL,
+        activePromptTemplate: "polish-natural-chat",
+        prompt: DEFAULT_PROMPT_TEMPLATES.polish[0].prompt,
+        promptTemplates: DEFAULT_PROMPT_TEMPLATES.polish,
+        providerProfiles: {}
+      },
+      translation: {
+        enabled: true,
+        provider: "deepseek",
+        apiKey: "",
+        apiStatus: { state: "untested", message: "" },
+        endpoint: PROVIDER_DEFAULTS.deepseek.endpoint,
+        model: PROVIDER_DEFAULTS.deepseek.model,
+        enableThinking: false,
+        region: "",
+        deeplPlan: "free",
+        appId: "",
+        secretKey: "",
+        sourceLanguage: AUTO_LANGUAGE_VALUE,
+        targetLanguage: "汉语",
+        temperature: 0.2,
+        maxTokens: 1200,
+        activePromptTemplate: "translation-natural",
+        prompt: DEFAULT_PROMPT_TEMPLATES.translation[0].prompt,
+        promptTemplates: DEFAULT_PROMPT_TEMPLATES.translation,
+        providerProfiles: {}
+      },
+      googleTranslate: {
+        keyPoolText: "",
+        keys: [],
+        // This month's usage per key fingerprint, kept after a key's line is removed.
+        usageById: {},
+        defaultMonthlyLimit: GOOGLE_TRANSLATE_DEFAULT_MONTHLY_LIMIT,
+        allowPrefetch: true
+      },
+      serviceConfigs: [],
+      ui: {
+        settingsVersion: 2,
+        // One of the settings tabs in src/settings/settings-schema.js.
+        settingsActiveTab: "overview",
+        // Last active mode tab in the user-panel quick popover ("translation" | "polish").
+        quickPanelActiveTab: "translation",
+        language: "zh-CN",
+        showQuickSettingsRailButton: false,
+        showQuickSettingsPanelButton: true,
+        injectInputButton: true,
+        publicBilingualInputButton: false,
+        publicBilingualUseInitialOriginal: false,
+        publicBilingualAfterPolish: false,
+        publicBilingualPolishBeforeTranslate: false,
+        injectMessageButtons: true,
+        messageButtonVisibility: MESSAGE_BUTTON_VISIBILITY_ALWAYS,
+        autoTranslateMessages: false,
+        autoTranslatePrefetch: false,
+        autoTranslatePrefetchRange: AUTO_TRANSLATE_DEFAULT_PREFETCH_RANGE,
+        autoTranslateIntakeMode: "auto",
+        autoTranslateConcurrency: AUTO_TRANSLATE_DEFAULT_CONCURRENCY,
+        autoTranslateStrictRetry: false,
+        channelAutoTranslatePolicies: {},
+        // 2: an 'enabled' rule allow-lists the channel even while autoTranslateMessages is off (v0.4.0). Older
+        // 'enabled' rules followed the main switch and are loaded as 'inherit' (settings-store ensureSettingsShape).
+        channelAutoTranslatePoliciesVersion: 2,
+        historyBackfillEnabled: false,
+        historyBackfillLimit: 20,
+        providerFallbackEnabled: false,
+        providerFallbackOrder: [],
+        aiSkipEnabled: false,
+        showAutoTranslateWarnings: false,
+        showAutoTranslateToasts: false,
+        diagnosticsEnabled: false,
+        translationCacheTtlHours: TRANSLATION_CACHE_DEFAULT_TTL_HOURS,
+        translationCacheMaxEntries: TRANSLATION_CACHE_DEFAULT_LIMIT,
+        translationPosition: "before",
+        maskTranslations: false,
+        hideOriginalAfterTranslation: false,
+        translationStyle: "tint",
+        translationTextScale: 100,
+        // One of PANEL_THEMES: the colours of the settings window, the quick panel and the dialogs.
+        panelTheme: "auto",
+        injectMessageContextMenu: true,
+        enablePolishHotkey: true,
+        polishHotkey: "Ctrl+Alt+P",
+        testModeEnabled: false,
+        testModeKind: "translation"
+      }
+    };
+    module2.exports = {
+      PLUGIN_NAME,
+      DATA_KEY,
+      CACHE_DATA_KEY,
+      DIAGNOSTIC_DATA_KEY,
+      CACHE_DATA_STORE,
+      DIAGNOSTIC_DATA_STORE,
+      STYLE_ID,
+      DISCORD_THEME_CLASSES,
+      DISCORD_DEFAULT_THEME_CLASS,
+      DISCORD_MESSAGE_NODE_SELECTOR,
+      DISCORD_SETTINGS_SURFACE_SELECTOR,
+      DISCORD_USER_PANEL_LOOKUP_ROOT_SELECTOR,
+      DISCORD_MEDIA_VIEWER_SELECTOR,
+      DISCORD_MEDIA_VIEWER_CONTAINER_SELECTOR,
+      DISCORD_MEDIA_MUTATION_SELECTOR,
+      DISCORD_THEME_VARIABLES,
+      PROVIDER_DEFAULTS,
+      PROVIDER_ORDER,
+      PROVIDER_PROFILE_FIELDS,
+      MAX_SAVED_SERVICE_CONFIGS,
+      PROVIDER_CAPABILITIES,
+      DEEPSEEK_MODELS,
+      LOCAL_MODEL_PRESETS,
+      CUSTOM_LANGUAGE_VALUE,
+      AUTO_LANGUAGE_VALUE,
+      AUTO_TRANSLATE_DEFAULT_CONCURRENCY,
+      AUTO_TRANSLATE_MIN_CONCURRENCY,
+      AUTO_TRANSLATE_MAX_CONCURRENCY,
+      AUTO_TRANSLATE_MIN_BATCH_SIZE,
+      AUTO_TRANSLATE_BATCH_MULTIPLIER,
+      AUTO_TRANSLATE_QUEUE_MULTIPLIER,
+      AUTO_TRANSLATE_FAILURE_TTL,
+      AUTO_TRANSLATE_TERMINAL_FAILURE_TTL,
+      AUTO_TRANSLATE_FAILURE_LIMIT,
+      AUTO_TRANSLATE_FAILURE_MAX_TTL,
+      AUTO_TRANSLATE_MAX_RETRY_ATTEMPTS,
+      AUTO_TRANSLATE_IMMEDIATE_TERMINAL_TYPES,
+      AUTO_TRANSLATE_FAILURE_HISTORY_TTL,
+      AUTO_TRANSLATE_FAILURE_HISTORY_LIMIT,
+      AUTO_TRANSLATE_INLINE_FAILURE_AFTER_COUNT,
+      AUTO_TRANSLATE_RETAIN_MAX_FAILURE_COUNT,
+      AUTO_TRANSLATE_INVALID_OUTPUT_FAILURE_TTL,
+      AUTO_TRANSLATE_FINAL_INVALID_OUTPUT_FAILURE_TTL,
+      AUTO_TRANSLATE_TRANSIENT_FAILURE_TTL,
+      AUTO_TRANSLATE_PROVIDER_FAILURE_TTL,
+      AUTO_TRANSLATE_TRUNCATED_FAILURE_TTL,
+      AUTO_TRANSLATE_TRUNCATED_FAILURE_MAX_TTL,
+      LOCAL_PROVIDER_UNAVAILABLE_RETRY_MS,
+      LOCAL_PROVIDER_HEALTH_RETRY_MS,
+      LOCAL_PROVIDER_AUTO_MODEL_VALUE,
+      LOCAL_PROVIDER_MODEL_DETECTION_TTL_MS,
+      LOCAL_PROVIDER_MODEL_DETECTION_RETRY_MS,
+      LOCAL_PROVIDER_MODEL_DETECTION_TIMEOUT_MS,
+      AUTO_TRANSLATE_REQUEST_BATCH_SIZE,
+      AUTO_TRANSLATE_PROVIDER_REQUEST_BATCH_MAX,
+      AUTO_TRANSLATE_FALLBACK_CONCURRENCY,
+      AUTO_TRANSLATE_SINGLE_FALLBACK_LIMIT,
+      AUTO_TRANSLATE_FALLBACK_REQUEUE_DELAY_MS,
+      AUTO_TRANSLATE_REQUEST_TIMEOUT_MS,
+      AUTO_TRANSLATE_ORPHAN_LOADING_REQUEUE_MS,
+      AUTO_TRANSLATE_IN_FLIGHT_STALE_MS,
+      AUTO_TRANSLATE_FORCE_SINGLE_TEXT_LENGTH,
+      AUTO_TRANSLATE_LONG_TEXT_DEFER_MAX,
+      AUTO_TRANSLATE_ULTRA_LONG_TEXT_LENGTH,
+      AUTO_TRANSLATE_LONG_TEXT_CHUNK_LENGTH,
+      AUTO_TRANSLATE_LOCAL_LONG_TEXT_CHUNK_LENGTH,
+      AUTO_TRANSLATE_LONG_TEXT_MIN_MAX_TOKENS,
+      AUTO_TRANSLATE_LONG_TEXT_TIMEOUT_MAX_MS,
+      AUTO_TRANSLATE_CLOUD_LONG_TEXT_TIMEOUT_MAX_MS,
+      MANUAL_LONG_TEXT_WHOLE_PASS_MAX_LENGTH,
+      MANUAL_TRANSLATION_REQUEST_BUDGET,
+      MANUAL_TRANSLATION_RESCUE_REQUEST_ALLOWANCE,
+      MANUAL_TRANSLATION_REQUEST_BUDGET_MAX,
+      MODEL_REQUEST_TIMEOUT_MS,
+      API_TEST_REQUEST_TIMEOUT_MS,
+      API_ENDPOINT_ERROR_MESSAGE_KEYS,
+      SCAN_VIEWPORT_BUFFER_PX,
+      AUTO_TRANSLATE_VIEWPORT_SETTLE_MS,
+      AUTO_TRANSLATE_VIEWPORT_JUMP_SETTLE_MS,
+      AUTO_TRANSLATE_VIEWPORT_JUMP_COOLDOWN_MS,
+      AUTO_TRANSLATE_VIEWPORT_STABLE_RESCAN_MS,
+      DISCORD_MEDIA_VIEWER_QUIET_MS,
+      DISCORD_MEDIA_VIEWER_PROBE_CACHE_MS,
+      DISCORD_INPUT_COMPOSER_RENDER_PAUSE_MS,
+      AUTO_TRANSLATE_VISIBLE_BACKFILL_SCAN_MS,
+      AUTO_TRANSLATE_SCROLL_RENDER_PAUSE_MS,
+      AUTO_TRANSLATE_RENDER_MAX_PER_FRAME,
+      AUTO_TRANSLATE_RENDER_FRAME_BUDGET_MS,
+      AUTO_TRANSLATE_PREFETCH_PRIORITY_BASE,
+      AUTO_TRANSLATE_EDGE_OVERSCAN_MESSAGES,
+      AUTO_TRANSLATE_SCROLL_STILL_MS,
+      AUTO_TRANSLATE_CACHE_DRAW_MIN_BUFFER_PX,
+      AUTO_TRANSLATE_CACHE_DRAW_BUFFER_FACTOR,
+      AUTO_TRANSLATE_CACHE_DRAW_BUDGET_MS,
+      AUTO_TRANSLATE_CACHE_DRAW_MAX_EVALUATIONS,
+      AUTO_TRANSLATE_CACHE_DRAW_MAX_MESSAGES,
+      AUTO_TRANSLATE_CACHE_DRAW_MEMO_MAX,
+      AUTO_TRANSLATE_FINISHED_LINE_SELECTOR,
+      AUTO_TRANSLATE_DEFAULT_PREFETCH_RANGE,
+      AUTO_TRANSLATE_PREFETCH_RANGES,
+      MUTATION_DIRTY_SCAN_MAX_ROOTS,
+      MUTATION_DIRTY_SCAN_MAX_MESSAGES,
+      INCREMENTAL_MESSAGE_WORK_BUDGET_MS,
+      INCREMENTAL_MESSAGE_WORK_MAX_PER_SLICE,
+      MESSAGE_BUTTON_VISIBILITY_ALWAYS,
+      MESSAGE_BUTTON_VISIBILITY_HOVER,
+      TRANSLATION_LINE_STYLES,
+      TRANSLATION_LINE_TEXT_SCALES,
+      PANEL_THEMES,
+      QUICK_PANEL_TABS,
+      RTL_LANGUAGE_CODES,
+      POLISH_REPOLISH_SOURCE_ORIGINAL,
+      POLISH_REPOLISH_SOURCE_LAST_RESULT,
+      PROMPT_TEMPLATE_CATEGORY_GENERAL,
+      PROMPT_TEMPLATE_CATEGORY_DIALECT,
+      PROMPT_TEMPLATE_CATEGORY_PERSONA,
+      POLISH_PROMPT_TEMPLATE_CATEGORIES,
+      DIALECT_REGION_ORDER,
+      PERSONA_GROUP_ORDER,
+      TRANSLATION_CACHE_DEFAULT_TTL_HOURS,
+      TRANSLATION_CACHE_TTL_OPTIONS,
+      TRANSLATION_CACHE_HIT_EXTEND_MS,
+      TRANSLATION_CACHE_WRITE_DEBOUNCE_MS,
+      TRANSLATION_CACHE_TOUCH_DEBOUNCE_MS,
+      TRANSLATION_CACHE_TOUCH_IDLE_PERSIST_MS,
+      TRANSLATION_CACHE_TOUCH_PERSIST_THRESHOLD,
+      TRANSLATION_CACHE_DEFAULT_LIMIT,
+      TRANSLATION_CACHE_MIN_LIMIT,
+      TRANSLATION_CACHE_MAX_LIMIT,
+      TRANSLATION_CACHE_NEGATIVE_LOOKUP_TTL_MS,
+      TRANSLATION_CACHE_NEGATIVE_LOOKUP_MAX,
+      AUTO_TRANSLATE_PRECHECK_SKIP_TTL_MS,
+      AUTO_TRANSLATE_PRECHECK_SKIP_MAX,
+      AUTO_TRANSLATE_RECENT_RENDER_TTL_MS,
+      AUTO_TRANSLATE_RECENT_RENDER_MAX,
+      AUTO_TRANSLATE_PARTIAL_RESULT_TTL_MS,
+      AUTO_TRANSLATE_PARTIAL_RESULT_MAX,
+      AUTO_TRANSLATE_LAST_DECISION_MAX,
+      AUTO_TRANSLATE_INTAKE_MODES,
+      STORE_MESSAGE_ID_NEGATIVE_LOOKUP_TTL_MS,
+      STORE_MESSAGE_ID_LOOKUP_MAX,
+      DIAGNOSTICS_MAX_ENTRIES,
+      QUICK_SETTINGS_DIAGNOSTICS_MAX_ENTRIES,
+      SETTINGS_WRITE_DEBOUNCE_MS,
+      DIAGNOSTICS_COMPRESSION_WINDOW_MS,
+      DIAGNOSTICS_WRITE_DEBOUNCE_MS,
+      HEAVY_PERSISTENCE_DEFER_MS,
+      HEAVY_PERSISTENCE_MAX_DEFER_MS,
+      DIAGNOSTICS_SLOW_OPERATION_MS,
+      DIAGNOSTICS_SLOW_OPERATION_THROTTLE_MS,
+      DIAGNOSTIC_MESSAGE_STATES,
+      AUTO_TRANSLATION_QUEUE_TYPES,
+      TRANSLATION_VALIDATION_QUALITIES,
+      DIAGNOSTIC_REASON_CODES,
+      DIAGNOSTIC_FAILURE_CLASSES,
+      DIAGNOSTIC_FAILURE_LAYERS,
+      QUICK_SETTINGS_INJECT_MIN_INTERVAL_MS,
+      DISCORD_THEME_CACHE_TTL_MS,
+      GOOGLE_TRANSLATE_DEFAULT_MONTHLY_LIMIT,
+      GOOGLE_TRANSLATE_MAX_MONTHLY_LIMIT,
+      GOOGLE_TRANSLATE_RUNTIME_WRITE_DEBOUNCE_MS,
+      DISCORD_MESSAGE_MAX_LENGTH,
+      LANGUAGE_PRESETS,
+      DEFAULT_PROMPT_TEMPLATES,
+      LEGACY_TRANSLATION_NATURAL_PROMPTS,
+      PROMPT_POLICY_VERSIONS,
+      DEFAULT_SETTINGS
+    };
+  }
+});
+
+// src/composer/composer-buttons.js
+var require_composer_buttons = __commonJS({
+  "src/composer/composer-buttons.js"(exports2, module2) {
+    "use strict";
+    var { PLUGIN_NAME } = require_constants();
+    var methods = {
+      getComposerTextboxes() {
+        const textboxes = [];
+        const add = (node) => {
+          if (!node || node.isConnected === false || textboxes.includes(node)) return;
+          if (this.plugin.isOwnPluginElement(node)) return;
+          textboxes.push(node);
+        };
+        add(this.plugin.getActiveTextbox());
+        try {
+          add(this.plugin.getTextbox());
+        } catch {
+        }
+        if (typeof document !== "undefined" && document.querySelectorAll) {
+          try {
+            document.querySelectorAll("[role='textbox'][data-slate-editor='true'], [role='textbox'][contenteditable='true']").forEach(add);
+          } catch {
+          }
+        }
+        return textboxes;
+      },
+      bindInputActionButtonTarget(button, textbox = null, composerKey = "") {
+        if (!button) return;
+        if (textbox) button.__daitTextbox = textbox;
+        if (composerKey && button.dataset) button.dataset.daitComposerKey = composerKey;
+      },
+      resolveLiveComposerForButton(button = null, fallbackTextbox = null) {
+        const root = button?.closest?.("form, [class*='channelTextArea']") || null;
+        let textbox = null;
+        if (root?.querySelector) {
+          try {
+            const candidate = root.querySelector("[role='textbox'][data-slate-editor='true'], [role='textbox'][contenteditable='true']");
+            if (candidate && candidate.isConnected !== false && !this.plugin.isOwnPluginElement(candidate)) textbox = candidate;
+          } catch {
+          }
+        }
+        if (!textbox) {
+          for (const candidate of [button?.__daitTextbox, fallbackTextbox]) {
+            if (candidate && candidate.isConnected !== false) {
+              textbox = candidate;
+              break;
+            }
+          }
+        }
+        if (!textbox) {
+          const active = this.plugin.getActiveTextbox();
+          if (active && active.isConnected !== false) textbox = active;
+          else {
+            const fallback = this.plugin.getTextbox();
+            if (fallback && fallback.isConnected !== false) textbox = fallback;
+          }
+        }
+        const composerKey = textbox ? this.getTextboxComposerKey(textbox) : "";
+        this.bindInputActionButtonTarget(button, textbox, composerKey);
+        return { textbox, composerKey };
+      },
+      injectInputButtons(options = {}) {
+        const textboxes = this.getComposerTextboxes();
+        if (!textboxes.length) return;
+        const visitedContainers = /* @__PURE__ */ new Set();
+        textboxes.forEach((textbox) => {
+          const container = this.plugin.getPolishButtonContainer(textbox);
+          if (!container || visitedContainers.has(container)) return;
+          visitedContainers.add(container);
+          this.injectInputButtonsForComposer(textbox, container, options);
+        });
+      },
+      injectInputButtonsForComposer(textbox, container, options = {}) {
+        const composerKey = this.getTextboxComposerKey(textbox);
+        const group = this.getInputActionGroup(container);
+        if (!group) return;
+        group.__daitTextbox = textbox;
+        this.removeDisabledInputActionButtons(group);
+        if (this.isPolishInputButtonEnabled(options)) {
+          let polishButton = group.querySelector(".dait-polish-button");
+          if (!polishButton) {
+            polishButton = this.createInputActionButton(
+              "dait-polish-button",
+              this.plugin.t("polishButton"),
+              this.getPolishButtonTitleAttr(),
+              () => {
+                const live = this.resolveLiveComposerForButton(polishButton, group.__daitTextbox);
+                this.plugin.polishCurrentDraft(polishButton, live);
+              },
+              { shortText: this.plugin.t("polishButtonShort"), textbox, composerKey }
+            );
+            polishButton.setAttribute?.("data-dait-split", "true");
+            polishButton.addEventListener("contextmenu", (event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              const anchor = group.querySelector?.(".dait-polish-preset-button") || polishButton;
+              const live = this.resolveLiveComposerForButton(anchor, group.__daitTextbox);
+              this.togglePolishPresetMenu(anchor, { group, ...live });
+            });
+            const beforeNode = group.querySelector?.(".dait-public-bilingual-button") || group.querySelector?.(".dait-input-action-menu-button") || null;
+            if (typeof group.insertBefore === "function" && beforeNode) group.insertBefore(polishButton, beforeNode);
+            else group.appendChild(polishButton);
+          } else {
+            polishButton.setAttribute?.("data-dait-split", "true");
+            this.bindInputActionButtonTarget(polishButton, textbox, composerKey);
+          }
+          let presetButton = group.querySelector(".dait-polish-preset-button");
+          if (!presetButton) {
+            presetButton = this.createPolishPresetButton(group, textbox, composerKey);
+            const nextNode = polishButton.nextSibling || (Array.isArray(group.children) ? group.children[group.children.indexOf(polishButton) + 1] || null : null);
+            if (typeof group.insertBefore === "function" && nextNode) {
+              group.insertBefore(presetButton, nextNode);
+            } else {
+              group.appendChild(presetButton);
+            }
+          } else {
+            this.bindInputActionButtonTarget(presetButton, textbox, composerKey);
+          }
+        }
+        if (!options.forcePolish && this.isPublicBilingualInputButtonEnabled()) {
+          let bilingualButton = group.querySelector(".dait-public-bilingual-button");
+          if (!bilingualButton) {
+            bilingualButton = this.createInputActionButton(
+              "dait-public-bilingual-button",
+              this.plugin.t("publicBilingualButton"),
+              this.plugin.t("publicBilingualTitleAttr", { targetLanguage: this.plugin.getDisplayLanguage(this.getPublicBilingualTargetLanguage()) }),
+              () => {
+                const live = this.resolveLiveComposerForButton(bilingualButton, group.__daitTextbox);
+                this.plugin.publicBilingualCurrentDraft(bilingualButton, live);
+              },
+              { shortText: this.plugin.t("publicBilingualButtonShort"), textbox, composerKey }
+            );
+            const menuButton = group.querySelector?.(".dait-input-action-menu-button") || null;
+            if (typeof group.insertBefore === "function" && menuButton) group.insertBefore(bilingualButton, menuButton);
+            else group.appendChild(bilingualButton);
+          } else {
+            this.bindInputActionButtonTarget(bilingualButton, textbox, composerKey);
+          }
+        }
+        this.syncInputRestoreButtonState(group, textbox, options);
+        this.plugin.syncInputActionButtonThemes(group, textbox || container);
+        this.syncInputActionGroupState(group, textbox, container);
+      },
+      // Polish needs polish.enabled and public bilingual needs translation.enabled; a feature that is
+      // switched off loses its composer button (it comes back on the next scan once re-enabled).
+      removeDisabledInputActionButtons(group) {
+        if (!group?.querySelectorAll) return false;
+        const selectors = [];
+        if (this.plugin.settings.polish?.enabled === false) selectors.push(".dait-polish-button", ".dait-polish-preset-button");
+        if (!this.isPublicBilingualFeatureEnabled()) selectors.push(".dait-public-bilingual-button");
+        let removed = false;
+        selectors.forEach((selector) => {
+          [...group.querySelectorAll(selector) || []].forEach((button) => {
+            button.remove?.();
+            removed = true;
+          });
+        });
+        if (removed && this.plugin.settings.polish?.enabled === false) this.removePolishPresetMenu();
+        return removed;
+      },
+      syncInputActionButtonsForSettings() {
+        this.removeInputActionMenu();
+        this.removePolishPresetMenu();
+        if (typeof document === "undefined") return;
+        [...document.querySelectorAll?.(".dait-input-action-group") || []].forEach((group) => {
+          if (this.removeDisabledInputActionButtons(group)) this.syncInputActionGroupState(group);
+        });
+        if (!this.plugin.isStarted || !(this.plugin.settings.ui?.injectInputButton || this.plugin.settings.ui?.publicBilingualInputButton)) return;
+        if (this.plugin.isDiscordSettingsSurfaceOpen()) this.plugin.queueInputButtonScan({ delayMs: 120, trailing: true });
+        else this.plugin.injectInputButtons();
+      },
+      createInputActionButton(className, text, title, action, options = {}) {
+        const button = document.createElement("button");
+        button.className = className;
+        button.type = "button";
+        button.textContent = text;
+        button.dataset.daitFullLabel = text;
+        button.dataset.daitShortLabel = options.shortText || text;
+        if (options.composerKey) button.dataset.daitComposerKey = options.composerKey;
+        if (options.textbox) button.__daitTextbox = options.textbox;
+        button.title = title;
+        button.setAttribute("aria-label", title || text);
+        ["pointerdown", "mousedown"].forEach((type) => {
+          button.addEventListener(type, (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          });
+        });
+        button.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          action?.();
+        });
+        return button;
+      },
+      resolveInputActionTextbox(button = null, options = {}) {
+        const expectedComposerKey = options.composerKey || button?.dataset?.daitComposerKey || "";
+        const candidates = [
+          options.textbox,
+          button?.__daitTextbox
+        ].filter(Boolean);
+        for (const textbox of candidates) {
+          if (!textbox || textbox.isConnected === false) continue;
+          if (!expectedComposerKey || this.getTextboxComposerKey(textbox) === expectedComposerKey) return textbox;
+        }
+        if (!expectedComposerKey) {
+          const activeTextbox = this.plugin.getActiveTextbox();
+          if (activeTextbox?.isConnected !== false) return activeTextbox;
+          const textbox = this.plugin.getTextbox();
+          if (textbox?.isConnected !== false) return textbox;
+        }
+        return null;
+      },
+      isInputActionTextboxCurrent(textbox, expectedComposerKey = "") {
+        if (!textbox || textbox.isConnected === false) return false;
+        return !expectedComposerKey || this.getTextboxComposerKey(textbox) === expectedComposerKey;
+      },
+      syncInputActionButtonThemes(group, anchor = null) {
+        if (!group?.querySelectorAll) return;
+        group.querySelectorAll(".dait-polish-button, .dait-polish-preset-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-menu-button").forEach((button) => {
+          this.plugin.syncDiscordThemeClasses(button, anchor);
+        });
+      },
+      getInputActionGroup(container) {
+        if (!container?.appendChild || typeof document === "undefined") return null;
+        container.classList?.add?.("dait-input-actions-host");
+        let group = container.querySelector?.(".dait-input-action-group");
+        if (!group) {
+          group = document.createElement("span");
+          group.className = "dait-input-action-group";
+          group.setAttribute?.("aria-label", `${PLUGIN_NAME} input actions`);
+          if (typeof container.insertBefore === "function" && container.children?.length) container.insertBefore(group, container.children[0]);
+          else container.appendChild(group);
+        }
+        return group;
+      },
+      syncInputActionGroupState(group, textbox = null, container = null) {
+        if (!group?.classList) return;
+        const actionSelector = ".dait-polish-restore-button, .dait-polish-button, .dait-public-bilingual-button";
+        const queried = group.querySelectorAll?.(actionSelector) || [];
+        const fallback = [...group.children || []].filter((child) => this.isInputActionDirectButton(child));
+        const count = Math.max(queried.length || 0, fallback.length);
+        group.classList.toggle("dait-input-action-group-dual", count > 1);
+        if (!group.querySelector?.(".dait-polish-button")) {
+          [...group.querySelectorAll?.(".dait-polish-preset-button") || []].forEach((node) => node.remove?.());
+        }
+        if (!count) {
+          this.removeInputActionMenu();
+          this.removePolishPresetMenu();
+          group.remove?.();
+          return;
+        }
+        this.ensureInputActionMenuButton(group, textbox, container);
+        this.updateInputActionGroupDensity(group, textbox, container);
+      },
+      isInputActionDirectButton(node) {
+        return this.plugin.elementHasClassName(node, "dait-polish-restore-button") || this.plugin.elementHasClassName(node, "dait-polish-button") || this.plugin.elementHasClassName(node, "dait-public-bilingual-button");
+      },
+      syncInputRestoreButtonState(group, textbox, options = {}) {
+        if (!group) return;
+        const existing = group.querySelector?.(".dait-polish-restore-button");
+        const session = options.restoreSession || this.plugin.polishSession;
+        const canRestore = Boolean(session && this.canRestorePolishOriginal(textbox, session));
+        if (!canRestore) {
+          existing?.remove?.();
+          return;
+        }
+        if (existing) {
+          if (existing.__daitRestoreSession === session && existing.dataset?.daitComposerKey === session.composerKey) return;
+          existing.remove?.();
+        }
+        const button = this.createInputActionButton(
+          "dait-polish-restore-button",
+          this.plugin.t("restoreOriginal"),
+          this.plugin.t("restoreOriginal"),
+          () => this.restorePolishOriginal(textbox, session, button),
+          { shortText: this.plugin.t("restoreOriginalShort"), textbox, composerKey: session.composerKey }
+        );
+        button.__daitRestoreSession = session;
+        if (typeof group.insertBefore === "function" && group.children?.length) group.insertBefore(button, group.children[0]);
+        else group.appendChild(button);
+      },
+      ensureInputActionMenuButton(group, textbox = null, container = null) {
+        if (!group?.appendChild || typeof document === "undefined") return null;
+        if (textbox) group.__daitTextbox = textbox;
+        if (container) group.__daitContainer = container;
+        let button = group.querySelector?.(".dait-input-action-menu-button");
+        if (!button) {
+          button = document.createElement("button");
+          button.className = "dait-input-action-menu-button";
+          button.type = "button";
+          button.textContent = "AI";
+          button.title = this.plugin.t("inputActionMenu");
+          button.setAttribute("aria-label", this.plugin.t("inputActionMenu"));
+          button.setAttribute("aria-haspopup", "menu");
+          button.setAttribute("aria-expanded", "false");
+          ["pointerdown", "mousedown"].forEach((type) => {
+            button.addEventListener(type, (event) => {
+              event.preventDefault();
+              event.stopPropagation();
+            });
+          });
+          button.addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            const live = this.resolveLiveComposerForButton(button, group.__daitTextbox);
+            this.toggleInputActionMenu(group, live.textbox, group.__daitContainer || container, button);
+          });
+          group.appendChild(button);
+        }
+        if (textbox) this.bindInputActionButtonTarget(button, textbox, this.getTextboxComposerKey(textbox));
+        return button;
+      },
+      updateInputActionGroupDensity(group, textbox = null, container = null) {
+        if (!group?.dataset) return;
+        const width = this.getInputActionAvailableWidth(group, textbox, container);
+        const actionCount = this.getInputActionDirectButtonCount(group);
+        let density = "roomy";
+        if (width > 0) {
+          if (width < (actionCount >= 3 ? 620 : 520)) density = "minimal";
+          else if (width < (actionCount >= 3 ? 760 : 660)) density = "compact";
+        }
+        group.dataset.daitDensity = density;
+        group.classList?.toggle?.("dait-input-action-group-compact", density === "compact");
+        group.classList?.toggle?.("dait-input-action-group-minimal", density === "minimal");
+        group.classList?.toggle?.("dait-input-action-group-roomy", density === "roomy");
+        this.syncInputActionButtonLabels(group, density);
+      },
+      getInputActionAvailableWidth(group, textbox = null, container = null) {
+        const roots = [
+          textbox?.closest?.("form, [class*='channelTextArea']"),
+          container?.closest?.("form, [class*='channelTextArea']"),
+          group?.closest?.("form, [class*='channelTextArea']"),
+          container?.parentElement,
+          container,
+          group?.parentElement
+        ].filter(Boolean);
+        for (const root of roots) {
+          const rect = root.getBoundingClientRect?.();
+          const width = Number(rect?.width || 0);
+          if (width > 0) return width;
+        }
+        const viewport = Number((typeof window !== "undefined" ? window.innerWidth : 0) || (typeof document !== "undefined" ? document.documentElement?.clientWidth : 0) || 0);
+        return Number.isFinite(viewport) ? viewport : 0;
+      },
+      getInputActionDirectButtonCount(group) {
+        return [...group?.children || []].filter((child) => this.isInputActionDirectButton(child)).length;
+      },
+      syncInputActionButtonLabels(group, density = "roomy") {
+        if (!group?.querySelectorAll) return;
+        group.querySelectorAll(".dait-polish-restore-button, .dait-polish-button, .dait-public-bilingual-button").forEach((button) => {
+          this.renderInputActionButtonLabel(button, density);
+        });
+      },
+      // The one place that writes a composer button's label, so busy/idle changes keep the group's density.
+      renderInputActionButtonLabel(button, density = null) {
+        if (!button) return;
+        const groupDensity = density || button.parentElement?.dataset?.daitDensity || button.closest?.(".dait-input-action-group")?.dataset?.daitDensity || "roomy";
+        const full = button.dataset?.daitFullLabel || button.textContent || "";
+        const short = button.dataset?.daitShortLabel || full;
+        const next = groupDensity !== "roomy" ? short : full;
+        if (button.textContent !== next) button.textContent = next;
+      },
+      toggleInputActionMenu(group, textbox = null, container = null, button = null) {
+        if (this.plugin.inputActionMenu?.isConnected) {
+          this.removeInputActionMenu();
+          return;
+        }
+        this.openInputActionMenu(group, textbox, container, button);
+      },
+      openInputActionMenu(group, textbox = null, container = null, button = null) {
+        if (typeof document === "undefined" || !document.body) return null;
+        this.removePolishPresetMenu();
+        this.removeInputActionMenu();
+        const menu = document.createElement("div");
+        menu.className = "dait-input-action-menu";
+        menu.setAttribute("role", "menu");
+        menu.setAttribute("aria-label", this.plugin.t("inputActionMenu"));
+        this.plugin.applyPanelTheme(menu);
+        for (const { label, title, action } of this.plugin.discordHost.contextMenu.getComposerMenuItems(menu, group, textbox, button)) {
+          const item = document.createElement("button");
+          item.className = "dait-input-action-menu-item";
+          item.type = "button";
+          item.textContent = label;
+          item.title = title || label;
+          item.setAttribute("role", "menuitem");
+          item.setAttribute("aria-label", title || label);
+          item.addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            action();
+          });
+          menu.appendChild(item);
+        }
+        ["pointerdown", "mousedown", "click"].forEach((type) => {
+          menu.addEventListener(type, (event) => event.stopPropagation());
+        });
+        document.body.appendChild(menu);
+        this.plugin.inputActionMenu = menu;
+        button?.setAttribute?.("aria-expanded", "true");
+        const anchorNode = button || group;
+        let repositionRaf = null;
+        const isAnchorHidden = () => {
+          if (!anchorNode) return false;
+          if (anchorNode.isConnected === false) return true;
+          const rect = anchorNode.getBoundingClientRect?.();
+          return Boolean(rect && Number(rect.width || 0) <= 0 && Number(rect.height || 0) <= 0);
+        };
+        const reposition = () => {
+          repositionRaf = null;
+          if (!menu.isConnected) return;
+          if (isAnchorHidden()) {
+            this.removeInputActionMenu();
+            return;
+          }
+          this.positionInputActionMenu(menu, anchorNode);
+        };
+        const onResize = () => {
+          if (repositionRaf !== null) {
+            try {
+              window.cancelAnimationFrame?.(repositionRaf);
+            } catch {
+            }
+            repositionRaf = null;
+          }
+          if (!menu.isConnected) return;
+          this.plugin.applyPanelTheme(menu);
+          reposition();
+        };
+        const onScroll = (event) => {
+          if (event?.target && event.target !== window && event.target !== document && anchorNode && !event.target.contains?.(anchorNode)) {
+            return;
+          }
+          if (repositionRaf !== null) return;
+          if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+            repositionRaf = window.requestAnimationFrame(reposition);
+          } else {
+            reposition();
+          }
+        };
+        const outsidePointerDown = (event) => {
+          if (menu.contains?.(event.target) || button?.contains?.(event.target)) return;
+          this.removeInputActionMenu();
+        };
+        const escapeKeydown = (event) => {
+          if (event.isComposing || event.keyCode === 229 || event.key !== "Escape") return;
+          event.preventDefault?.();
+          event.stopPropagation?.();
+          this.removeInputActionMenu();
+        };
+        this.plugin.inputActionMenuCleanup = () => {
+          button?.setAttribute?.("aria-expanded", "false");
+          if (repositionRaf !== null && typeof window !== "undefined") {
+            window.cancelAnimationFrame?.(repositionRaf);
+            repositionRaf = null;
+          }
+          if (typeof window !== "undefined") {
+            window.removeEventListener?.("resize", onResize, { capture: true });
+            window.removeEventListener?.("scroll", onScroll, { capture: true });
+          }
+          document.removeEventListener?.("pointerdown", outsidePointerDown, true);
+          document.removeEventListener?.("keydown", escapeKeydown, true);
+        };
+        if (typeof window !== "undefined") {
+          window.addEventListener?.("resize", onResize, { capture: true, passive: true });
+          window.addEventListener?.("scroll", onScroll, { capture: true, passive: true });
+        }
+        document.addEventListener?.("pointerdown", outsidePointerDown, true);
+        document.addEventListener?.("keydown", escapeKeydown, true);
+        onResize();
+        return menu;
+      },
+      positionInputActionMenu(menu, anchor = null) {
+        if (!menu?.style || typeof window === "undefined") return;
+        const rect = anchor?.getBoundingClientRect?.() || null;
+        const viewportWidth = Number(window.innerWidth || document.documentElement?.clientWidth || 0) || 900;
+        const viewportHeight = Number(window.innerHeight || document.documentElement?.clientHeight || 0) || 700;
+        const width = Math.min(210, Math.max(156, viewportWidth - 24));
+        const left = rect ? Math.max(12, Math.min(rect.right - width, viewportWidth - width - 12)) : viewportWidth - width - 16;
+        const bottom = rect ? Math.max(12, viewportHeight - rect.top + 8) : 76;
+        menu.style.left = `${left}px`;
+        menu.style.right = "auto";
+        menu.style.bottom = `${Math.min(Math.max(bottom, 12), Math.max(12, viewportHeight - 80))}px`;
+        menu.style.width = `${width}px`;
+      },
+      removeInputActionMenu() {
+        this.plugin.inputActionMenuCleanup?.();
+        this.plugin.inputActionMenuCleanup = null;
+        this.plugin.inputActionMenu?.remove?.();
+        this.plugin.inputActionMenu = null;
+      },
+      getPolishButtonContainer(textbox) {
+        return this.plugin.getInputButtonContainer(textbox);
+      },
+      getInputButtonContainer(textbox) {
+        const root = textbox?.closest?.("form, [class*='channelTextArea']") || textbox?.parentElement;
+        if (!root?.querySelector) return null;
+        return this.resolveInputButtonContainer(root, textbox);
+      },
+      resolveInputButtonContainer(root, textbox) {
+        const candidates = this.getInputButtonContainerCandidates(root, textbox);
+        const controls = this.getInputButtonControls(root, textbox);
+        const anchors = controls.filter((control) => this.isInputButtonToolbarAnchor(control));
+        const scored = candidates.map((container) => ({ container, score: this.scoreInputButtonContainer(container, root, textbox, anchors) })).filter((item) => item.score > 0).sort((left, right) => right.score - left.score);
+        if (scored.length) return scored[0].container;
+        for (const anchor of anchors) {
+          const container = this.getInputButtonContainerFromAnchor(anchor, root, textbox);
+          if (container) return container;
+        }
+        return null;
+      },
+      getInputButtonContainerCandidates(root, textbox) {
+        const candidates = [];
+        const add = (node) => {
+          if (!this.isValidInputButtonContainer(node, root, textbox) || candidates.includes(node)) return;
+          candidates.push(node);
+        };
+        try {
+          (root.querySelectorAll?.("[class*='buttons']") || []).forEach(add);
+        } catch {
+        }
+        try {
+          add(root.querySelector?.("[class*='buttons']"));
+        } catch {
+        }
+        return candidates;
+      },
+      getInputButtonControls(root, textbox) {
+        try {
+          return [...root.querySelectorAll?.("button, [role='button']") || []].filter((control) => control?.isConnected !== false).filter((control) => !control.contains?.(textbox)).filter((control) => !control.closest?.(".dait-polish-button, .dait-polish-preset-button, .dait-public-bilingual-button, .dait-input-action-group"));
+        } catch {
+          return [];
+        }
+      },
+      scoreInputButtonContainer(container, root, textbox, anchors = []) {
+        if (!this.isValidInputButtonContainer(container, root, textbox)) return 0;
+        let score = this.plugin.elementClassNameIncludes(container, "buttons") ? 20 : 0;
+        const anchorCount = anchors.filter((anchor) => container.contains?.(anchor)).length;
+        score += anchorCount * 100;
+        if (this.plugin.elementClassNameIncludes(container, "attach")) score -= 20;
+        return Math.max(0, score);
+      },
+      getInputButtonContainerFromAnchor(anchor, root, textbox) {
+        let current = anchor?.parentElement || null;
+        let fallback = null;
+        let guard = 0;
+        while (current && current !== root && guard < 8) {
+          if (this.isValidInputButtonContainer(current, root, textbox)) {
+            if (this.plugin.elementClassNameIncludes(current, "buttons")) return current;
+            if (!fallback && this.getButtonLikeDescendantCount(current) > 1) fallback = current;
+          }
+          current = current.parentElement;
+          guard++;
+        }
+        return fallback;
+      },
+      isValidInputButtonContainer(container, root, textbox) {
+        if (!container || container === root || container?.isConnected === false) return false;
+        if (container.contains?.(textbox)) return false;
+        if (textbox?.contains?.(container)) return false;
+        if (container.closest?.("[role='textbox'], [contenteditable='true'], [data-slate-editor='true']")) return false;
+        if (this.plugin.elementHasClassName(container, "dait-input-action-group")) return false;
+        const tag = String(container.tagName || "").toLowerCase();
+        if (tag === "button") return false;
+        const role = String(container.getAttribute?.("role") || "").toLowerCase();
+        if (role === "button" || role === "textbox") return false;
+        return true;
+      },
+      isInputButtonToolbarAnchor(control) {
+        return this.plugin.discordHost.isComposerToolbarAnchorLabel(this.getInputButtonControlLabel(control));
+      },
+      getInputButtonControlLabel(control) {
+        return [
+          control?.getAttribute?.("aria-label"),
+          control?.getAttribute?.("data-tooltip-text"),
+          control?.title,
+          control?.textContent
+        ].filter(Boolean).join(" ").toLowerCase();
+      },
+      getButtonLikeDescendantCount(container) {
+        try {
+          return (container.querySelectorAll?.("button, [role='button']") || []).length;
+        } catch {
+          return 0;
+        }
+      },
+      // Minimal density hides the direct buttons behind the "AI" menu button.
+      isInputActionButtonShown(button) {
+        if (!button || button.isConnected === false) return false;
+        const group = button.parentElement?.dataset?.daitDensity ? button.parentElement : button.closest?.(".dait-input-action-group");
+        return !this.isInputActionDirectButton(button) || group?.dataset?.daitDensity !== "minimal";
+      },
+      getComposerPolishButton(textbox) {
+        const root = textbox?.closest?.("form, [class*='channelTextArea']");
+        const button = root?.querySelector?.(".dait-input-action-group .dait-polish-button") || null;
+        if (!button || button.isConnected === false) return null;
+        return !button.__daitTextbox || button.__daitTextbox === textbox ? button : null;
+      },
+      injectPolishButton() {
+        this.plugin.injectInputButtons({ forcePolish: true });
+      }
+    };
+    module2.exports = methods;
+  }
+});
+
+// src/settings/settings-schema.js
+var require_settings_schema = __commonJS({
+  "src/settings/settings-schema.js"(exports2, module2) {
+    "use strict";
+    var SETTINGS_TAB_OVERVIEW = "overview";
+    var SETTINGS_TAB_TRANSLATE = "translate";
+    var SETTINGS_TAB_COMPOSE = "compose";
+    var SETTINGS_TAB_APPEARANCE = "display";
+    var SETTINGS_TAB_ADVANCED = "advanced";
+    var SETTINGS_TAB_DATA = "data";
+    var SETTINGS_TAB_IDS = [
+      SETTINGS_TAB_OVERVIEW,
+      SETTINGS_TAB_TRANSLATE,
+      SETTINGS_TAB_COMPOSE,
+      SETTINGS_TAB_APPEARANCE,
+      SETTINGS_TAB_ADVANCED,
+      SETTINGS_TAB_DATA
+    ];
+    var SETTINGS_TABS_DEFINITION = [
+      { id: SETTINGS_TAB_OVERVIEW, labelKey: "settingsTabOverview" },
+      { id: SETTINGS_TAB_TRANSLATE, labelKey: "settingsTabTranslate" },
+      { id: SETTINGS_TAB_COMPOSE, labelKey: "settingsTabCompose" },
+      { id: SETTINGS_TAB_APPEARANCE, labelKey: "settingsTabAppearance" },
+      { id: SETTINGS_TAB_ADVANCED, labelKey: "settingsTabAdvanced" },
+      { id: SETTINGS_TAB_DATA, labelKey: "settingsTabData" }
+    ];
+    var LEGACY_SETTINGS_TAB_MAP = {
+      general: SETTINGS_TAB_OVERVIEW,
+      polish: SETTINGS_TAB_COMPOSE,
+      polishControls: SETTINGS_TAB_COMPOSE,
+      publicBilingual: SETTINGS_TAB_COMPOSE,
+      translation: SETTINGS_TAB_TRANSLATE,
+      translationControls: SETTINGS_TAB_TRANSLATE,
+      autoTranslate: SETTINGS_TAB_TRANSLATE,
+      display: SETTINGS_TAB_APPEARANCE,
+      cache: SETTINGS_TAB_DATA,
+      diagnostics: SETTINGS_TAB_DATA
+    };
+    var SETTINGS_WINDOW_MAX_WIDTH = 920;
+    var SETTINGS_CONTROL_WIDTH = 240;
+    var MESSAGE_BUTTON_MODE_OFF = "off";
+    function normalizeSettingsTabId(value) {
+      const id = String(value || "").trim();
+      if (SETTINGS_TAB_IDS.includes(id)) return id;
+      return Object.prototype.hasOwnProperty.call(LEGACY_SETTINGS_TAB_MAP, id) ? LEGACY_SETTINGS_TAB_MAP[id] : SETTINGS_TAB_OVERVIEW;
+    }
+    var SettingsSchema = class {
+      constructor(options = {}) {
+        const sections = Array.isArray(options.sections) ? options.sections : options.tabs;
+        this.sections = Array.isArray(sections) ? sections : [];
+        this.providerCapabilities = options.providerCapabilities || {};
+        this.providerOrder = Array.isArray(options.providerOrder) ? options.providerOrder : [];
+        this.defaultProvider = String(options.defaultProvider || "deepseek");
+      }
+      getSections() {
+        return this.sections.map((section) => ({ ...section }));
+      }
+      getTabs() {
+        return this.getSections();
+      }
+      getProviderCapabilities(provider) {
+        const key = String(provider || "").trim();
+        return this.providerCapabilities[key] || this.providerCapabilities[this.defaultProvider] || null;
+      }
+      isProviderAllowedForTask(kind, provider) {
+        return this.getProviderCapabilities(provider)?.tasks?.[kind] === true;
+      }
+      getProviderOptionsForTask(kind, getLabel) {
+        return this.providerOrder.filter((provider) => this.isProviderAllowedForTask(kind, provider)).map((provider) => [provider, getLabel(provider)]);
+      }
+    };
+    module2.exports = {
+      SettingsSchema,
+      SETTINGS_TAB_OVERVIEW,
+      SETTINGS_TAB_TRANSLATE,
+      SETTINGS_TAB_COMPOSE,
+      SETTINGS_TAB_APPEARANCE,
+      SETTINGS_TAB_ADVANCED,
+      SETTINGS_TAB_DATA,
+      SETTINGS_TAB_IDS,
+      SETTINGS_TABS_DEFINITION,
+      LEGACY_SETTINGS_TAB_MAP,
+      SETTINGS_WINDOW_MAX_WIDTH,
+      SETTINGS_CONTROL_WIDTH,
+      MESSAGE_BUTTON_MODE_OFF,
+      normalizeSettingsTabId
+    };
+  }
+});
+
+// src/composer/polish-preset-menu.js
+var require_polish_preset_menu = __commonJS({
+  "src/composer/polish-preset-menu.js"(exports2, module2) {
+    "use strict";
+    var {
+      PROMPT_TEMPLATE_CATEGORY_DIALECT,
+      PROMPT_TEMPLATE_CATEGORY_PERSONA,
+      POLISH_PROMPT_TEMPLATE_CATEGORIES,
+      DIALECT_REGION_ORDER,
+      PERSONA_GROUP_ORDER
+    } = require_constants();
+    var { SETTINGS_TAB_COMPOSE } = require_settings_schema();
+    var methods = {
+      getActivePolishPresetInfo() {
+        const templates = this.plugin.getPromptTemplates("polish") || [];
+        const task = this.plugin.settings?.polish || {};
+        const activeId = String(task.activePromptTemplate || "");
+        const activeTemplate = templates.find((item) => item && item.id === activeId) || null;
+        const normalize = (value) => String(value ?? "").replace(/\r\n?/g, "\n").trim();
+        const matchesActive = Boolean(activeTemplate && normalize(activeTemplate.prompt) === normalize(task.prompt));
+        const label = matchesActive ? this.plugin.getPromptTemplateLabel(activeTemplate) : this.plugin.t("quickPanelTemplateCustom");
+        return { templates, activeTemplate, matchesActive, label };
+      },
+      getPolishButtonTitleAttr() {
+        const info = this.getActivePolishPresetInfo();
+        const shortcut = this.plugin.getHotkeyLabel();
+        return info.label ? this.plugin.t("polishTitleAttrWithTone", { tone: info.label, shortcut }) : this.plugin.t("polishTitleAttr", { shortcut });
+      },
+      getPolishPresetPickerTitleAttr() {
+        const info = this.getActivePolishPresetInfo();
+        return info.label ? this.plugin.t("polishPresetPickerTitle", { tone: info.label }) : this.plugin.t("polishPresetPicker");
+      },
+      syncPolishPresetControls() {
+        if (typeof document === "undefined") return;
+        const polishTitle = this.getPolishButtonTitleAttr();
+        const pickerTitle = this.getPolishPresetPickerTitleAttr();
+        [...document.querySelectorAll?.(".dait-polish-button") || []].forEach((button) => {
+          button.title = polishTitle;
+          button.setAttribute?.("aria-label", polishTitle);
+        });
+        [...document.querySelectorAll?.(".dait-polish-preset-button") || []].forEach((button) => {
+          button.title = pickerTitle;
+          button.setAttribute?.("aria-label", pickerTitle);
+        });
+        if (this.plugin.polishPresetMenu?.isConnected) {
+          if (this.plugin.settings.polish?.enabled === false || this.plugin.polishPresetMenuAnchor && this.plugin.polishPresetMenuAnchor.isConnected === false) {
+            this.removePolishPresetMenu();
+            return;
+          }
+          const active = typeof document !== "undefined" ? document.activeElement : null;
+          const focusedInMenu = Boolean(active && this.plugin.polishPresetMenu.contains?.(active));
+          const focusedTemplateId = focusedInMenu ? active?.dataset?.daitTemplateId || "" : "";
+          const focusedCategory = focusedInMenu && active?.classList?.contains?.("dait-polish-preset-tab") ? active?.dataset?.daitCategory || "" : "";
+          const focusedManage = Boolean(focusedInMenu && active?.classList?.contains?.("dait-polish-preset-manage"));
+          this.renderPolishPresetMenuContent(this.plugin.polishPresetMenu, this.plugin.polishPresetMenuAnchor);
+          this.positionPolishPresetMenu(this.plugin.polishPresetMenu, this.plugin.polishPresetMenuAnchor);
+          if (focusedInMenu) {
+            const nextFocus = focusedManage ? this.plugin.polishPresetMenu.querySelector?.(".dait-polish-preset-manage") : (focusedCategory ? [...this.plugin.polishPresetMenu.querySelectorAll?.(".dait-polish-preset-tab") || []].find((tab) => tab.dataset?.daitCategory === focusedCategory) : null) || (focusedTemplateId ? [...this.plugin.polishPresetMenu.querySelectorAll?.(".dait-polish-preset-item") || []].find((item) => item.dataset?.daitTemplateId === focusedTemplateId) : null) || this.plugin.polishPresetMenu.querySelector?.(".dait-polish-preset-item, .dait-polish-preset-tab, .dait-polish-preset-manage");
+            nextFocus?.focus?.();
+          }
+        }
+      },
+      createPolishPresetButton(group, textbox = null, composerKey = "") {
+        const button = document.createElement("button");
+        button.className = "dait-polish-preset-button";
+        button.type = "button";
+        if (composerKey) button.dataset.daitComposerKey = composerKey;
+        if (textbox) button.__daitTextbox = textbox;
+        const title = this.getPolishPresetPickerTitleAttr();
+        button.title = title;
+        button.setAttribute("aria-label", title);
+        button.setAttribute("aria-haspopup", "menu");
+        button.setAttribute("aria-expanded", "false");
+        const caret = document.createElement("span");
+        caret.className = "dait-polish-preset-caret";
+        caret.setAttribute("aria-hidden", "true");
+        button.appendChild(caret);
+        ["pointerdown", "mousedown"].forEach((type) => {
+          button.addEventListener(type, (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          });
+        });
+        button.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          const live = this.resolveLiveComposerForButton(button, group?.__daitTextbox);
+          this.togglePolishPresetMenu(button, { group, ...live });
+        });
+        return button;
+      },
+      togglePolishPresetMenu(anchor = null, options = {}) {
+        if (this.plugin.polishPresetMenu?.isConnected && (!anchor || this.plugin.polishPresetMenuAnchor === anchor)) {
+          this.removePolishPresetMenu();
+          return null;
+        }
+        return this.openPolishPresetMenu(anchor, options);
+      },
+      renderPolishPresetMenuContent(menu, anchor = null, lifecycleToken = this.plugin.getLifecycleToken()) {
+        if (!menu) return;
+        menu.textContent = "";
+        const info = this.getActivePolishPresetInfo();
+        const activeCategory = POLISH_PROMPT_TEMPLATE_CATEGORIES.includes(this.plugin.polishPresetMenuCategory) ? this.plugin.polishPresetMenuCategory : this.plugin.getPolishTemplateCategory(info.activeTemplate);
+        this.plugin.polishPresetMenuCategory = activeCategory;
+        menu.dataset.daitCategory = activeCategory;
+        const header = document.createElement("div");
+        header.className = "dait-polish-preset-header";
+        const headerTop = document.createElement("div");
+        headerTop.className = "dait-polish-preset-header-top";
+        const title = document.createElement("div");
+        title.className = "dait-polish-preset-title";
+        title.textContent = this.plugin.t("polishPresetMenuTitle");
+        headerTop.appendChild(title);
+        const tabs = document.createElement("div");
+        tabs.className = "dait-polish-preset-tabs";
+        tabs.setAttribute("role", "tablist");
+        tabs.setAttribute("aria-label", this.plugin.t("polishPresetMenuTabsLabel"));
+        POLISH_PROMPT_TEMPLATE_CATEGORIES.forEach((category) => {
+          const tab = document.createElement("button");
+          tab.className = "dait-polish-preset-tab";
+          tab.type = "button";
+          tab.dataset.daitCategory = category;
+          tab.textContent = this.plugin.getPolishTemplateCategoryLabel(category);
+          tab.setAttribute("role", "tab");
+          tab.setAttribute("aria-selected", category === activeCategory ? "true" : "false");
+          tab.addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            if (!this.plugin.isLifecycleTokenCurrent(lifecycleToken) || this.plugin.polishPresetMenu !== menu || menu.isConnected === false) return;
+            if (this.plugin.polishPresetMenuCategory === category) return;
+            const hadFocusInMenu = Boolean(typeof document !== "undefined" && document.activeElement && menu.contains?.(document.activeElement));
+            this.plugin.polishPresetMenuCategory = category;
+            const nextSelected = this.renderPolishPresetMenuContent(menu, anchor, lifecycleToken);
+            this.positionPolishPresetMenu(menu, anchor);
+            if (hadFocusInMenu) {
+              const nextTab = [...menu.querySelectorAll?.(".dait-polish-preset-tab") || []].find((node) => node.dataset?.daitCategory === category);
+              nextTab?.focus?.();
+            }
+            try {
+              nextSelected?.scrollIntoView?.({ block: "nearest" });
+            } catch {
+            }
+          });
+          tabs.appendChild(tab);
+        });
+        headerTop.appendChild(tabs);
+        header.appendChild(headerTop);
+        if (!info.matchesActive) {
+          const customNote = document.createElement("div");
+          customNote.className = "dait-polish-preset-custom-note";
+          customNote.textContent = this.plugin.t("polishPresetMenuCustomNote");
+          header.appendChild(customNote);
+        }
+        menu.appendChild(header);
+        const list = document.createElement("div");
+        list.className = "dait-polish-preset-list";
+        list.setAttribute("role", "none");
+        let selectedItem = null;
+        const categoryTemplates = info.templates.filter((template) => template?.id && this.plugin.getPolishTemplateCategory(template) === activeCategory);
+        const appendTemplateItem = (template) => {
+          const isSelected = Boolean(info.matchesActive && info.activeTemplate?.id === template.id);
+          const displayName = this.plugin.getPromptTemplateDisplayName(template);
+          const fullLabel = this.plugin.getPromptTemplateLabel(template);
+          const item = document.createElement("button");
+          item.className = "dait-polish-preset-item";
+          item.type = "button";
+          item.dataset.daitTemplateId = template.id;
+          item.dataset.daitCategory = activeCategory;
+          item.title = fullLabel;
+          item.setAttribute("role", "menuitemradio");
+          item.setAttribute("aria-checked", isSelected ? "true" : "false");
+          item.setAttribute("aria-label", fullLabel);
+          const code = document.createElement("span");
+          code.className = "dait-polish-preset-code";
+          code.textContent = String(template.serial || "000");
+          const name = document.createElement("span");
+          name.className = "dait-polish-preset-name";
+          name.textContent = displayName;
+          const check = document.createElement("span");
+          check.className = "dait-polish-preset-check";
+          check.setAttribute("aria-hidden", "true");
+          item.appendChild(code);
+          item.appendChild(name);
+          item.appendChild(check);
+          item.addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            if (!this.plugin.isLifecycleTokenCurrent(lifecycleToken) || this.plugin.polishPresetMenu !== menu || menu.isConnected === false) return;
+            if (this.plugin.settings.polish?.enabled === false) {
+              this.removePolishPresetMenu();
+              return;
+            }
+            this.removePolishPresetMenu();
+            this.plugin.applyPromptTemplate("polish", template.id);
+          });
+          list.appendChild(item);
+          if (isSelected) selectedItem = item;
+        };
+        if (categoryTemplates.length) {
+          const appendSubgroup = (labelText, items) => {
+            if (!items.length) return;
+            const groupLabel = document.createElement("div");
+            groupLabel.className = "dait-polish-preset-group-label";
+            groupLabel.setAttribute("role", "presentation");
+            groupLabel.textContent = labelText;
+            list.appendChild(groupLabel);
+            items.forEach(appendTemplateItem);
+          };
+          if (activeCategory === PROMPT_TEMPLATE_CATEGORY_DIALECT) {
+            const customDialects = categoryTemplates.filter((template) => !DIALECT_REGION_ORDER.includes(String(template.region || "")));
+            appendSubgroup(this.plugin.t("promptTemplateRegionCustom"), customDialects);
+            DIALECT_REGION_ORDER.forEach((region) => {
+              const regionItems = categoryTemplates.filter((template) => template.region === region);
+              appendSubgroup(this.plugin.getDialectRegionLabel(region), regionItems);
+            });
+          } else if (activeCategory === PROMPT_TEMPLATE_CATEGORY_PERSONA) {
+            const customPersonas = categoryTemplates.filter((template) => !PERSONA_GROUP_ORDER.includes(String(template.personaGroup || "")));
+            appendSubgroup(this.plugin.t("promptTemplatePersonaGroupCustom"), customPersonas);
+            PERSONA_GROUP_ORDER.forEach((group) => {
+              const groupItems = categoryTemplates.filter((template) => template.personaGroup === group);
+              appendSubgroup(this.plugin.getPersonaGroupLabel(group), groupItems);
+            });
+          } else {
+            categoryTemplates.forEach(appendTemplateItem);
+          }
+        } else {
+          const empty = document.createElement("p");
+          empty.className = "dait-polish-preset-empty";
+          empty.textContent = activeCategory === PROMPT_TEMPLATE_CATEGORY_PERSONA ? this.plugin.t("polishPresetMenuEmptyPersona") : this.plugin.t("polishPresetMenuEmpty");
+          list.appendChild(empty);
+        }
+        menu.appendChild(list);
+        const footer = document.createElement("div");
+        footer.className = "dait-polish-preset-footer";
+        const manage = document.createElement("button");
+        manage.className = "dait-polish-preset-manage";
+        manage.type = "button";
+        manage.textContent = this.plugin.t("polishPresetMenuManage");
+        manage.setAttribute("role", "menuitem");
+        manage.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          if (!this.plugin.isLifecycleTokenCurrent(lifecycleToken) || this.plugin.polishPresetMenu !== menu || menu.isConnected === false) return;
+          this.removePolishPresetMenu();
+          if (this.plugin.settings?.ui) {
+            this.plugin.settings.ui.settingsActiveTab = SETTINGS_TAB_COMPOSE;
+            this.plugin.saveSettings?.({ debounce: true });
+          }
+          const modal = this.plugin.openQuickSettingsPanel("polish-preset-menu", anchor);
+          const panel = modal?.querySelector?.(".dait-settings") || null;
+          if (panel) this.plugin.setSettingsActiveTab?.(SETTINGS_TAB_COMPOSE, panel);
+        });
+        footer.appendChild(manage);
+        menu.appendChild(footer);
+        return selectedItem;
+      },
+      openPolishPresetMenu(anchor = null, options = {}) {
+        if (typeof document === "undefined" || !document.body) return null;
+        if (this.plugin.settings.polish?.enabled === false) return null;
+        this.removeInputActionMenu();
+        this.removePolishPresetMenu();
+        const lifecycleToken = this.plugin.getLifecycleToken();
+        const anchorNode = anchor || options.group?.querySelector?.(".dait-polish-preset-button") || options.group?.querySelector?.(".dait-polish-button") || options.group || null;
+        const menu = document.createElement("div");
+        menu.className = "dait-polish-preset-menu";
+        menu.setAttribute("role", "menu");
+        menu.setAttribute("aria-label", this.plugin.t("polishPresetMenuTitle"));
+        this.plugin.applyPanelTheme(menu);
+        const selectedItem = this.renderPolishPresetMenuContent(menu, anchorNode, lifecycleToken);
+        ["pointerdown", "mousedown"].forEach((type) => {
+          menu.addEventListener(type, (event) => {
+            if (event?.target?.closest?.("button")) event.preventDefault();
+            event.stopPropagation();
+          });
+        });
+        menu.addEventListener("click", (event) => event.stopPropagation());
+        menu.addEventListener("keydown", (event) => {
+          if (event.key !== "Escape") event.stopPropagation();
+        });
+        document.body.appendChild(menu);
+        this.plugin.polishPresetMenu = menu;
+        this.plugin.polishPresetMenuAnchor = anchorNode;
+        anchorNode?.setAttribute?.("aria-expanded", "true");
+        const companionPolishButton = options.group?.querySelector?.(".dait-polish-button") || anchorNode?.closest?.(".dait-input-action-group")?.querySelector?.(".dait-polish-button") || null;
+        const isAnchorHidden = () => {
+          if (!anchorNode) return false;
+          if (anchorNode.isConnected === false) return true;
+          const rect = anchorNode.getBoundingClientRect?.();
+          return Boolean(rect && Number(rect.width || 0) <= 0 && Number(rect.height || 0) <= 0);
+        };
+        let repositionRaf = null;
+        const reposition = () => {
+          repositionRaf = null;
+          if (!menu.isConnected) return;
+          if (isAnchorHidden()) {
+            this.removePolishPresetMenu();
+            return;
+          }
+          this.positionPolishPresetMenu(menu, anchorNode);
+        };
+        const onResize = () => {
+          if (repositionRaf !== null) {
+            try {
+              window.cancelAnimationFrame?.(repositionRaf);
+            } catch {
+            }
+            repositionRaf = null;
+          }
+          if (!menu.isConnected) return;
+          this.plugin.applyPanelTheme(menu);
+          reposition();
+        };
+        const onScroll = (event) => {
+          if (event?.target && menu.contains?.(event.target)) return;
+          if (event?.target && event.target !== window && event.target !== document && anchorNode && !event.target.contains?.(anchorNode)) {
+            return;
+          }
+          if (repositionRaf !== null) return;
+          if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+            repositionRaf = window.requestAnimationFrame(reposition);
+          } else {
+            reposition();
+          }
+        };
+        const outsidePointerDown = (event) => {
+          if (menu.contains?.(event.target) || anchorNode?.contains?.(event.target)) return;
+          if (event?.button === 2 && companionPolishButton?.contains?.(event.target)) return;
+          this.removePolishPresetMenu();
+        };
+        const onKeydown = (event) => {
+          if (event.isComposing || event.keyCode === 229) return;
+          if (event.key === "Escape") {
+            event.preventDefault?.();
+            event.stopPropagation?.();
+            const shouldRestoreFocus = Boolean(document.activeElement && menu.contains?.(document.activeElement));
+            this.removePolishPresetMenu();
+            if (shouldRestoreFocus && anchorNode?.isConnected !== false) anchorNode?.focus?.();
+            return;
+          }
+          if (["ArrowLeft", "ArrowRight"].includes(event.key)) {
+            const active2 = document.activeElement;
+            const allowTabNavigation = !active2 || active2 === document.body || active2 === document.documentElement || menu.contains?.(active2) || active2 === anchorNode;
+            if (!allowTabNavigation) return;
+            const currentIdx = Math.max(0, POLISH_PROMPT_TEMPLATE_CATEGORIES.indexOf(this.plugin.polishPresetMenuCategory));
+            const delta = event.key === "ArrowRight" ? 1 : -1;
+            const nextCategory = POLISH_PROMPT_TEMPLATE_CATEGORIES[(currentIdx + delta + POLISH_PROMPT_TEMPLATE_CATEGORIES.length) % POLISH_PROMPT_TEMPLATE_CATEGORIES.length];
+            event.preventDefault();
+            event.stopPropagation();
+            const hadFocusInMenu = Boolean(active2 && menu.contains?.(active2));
+            const wasFocusedOnTab = Boolean(active2?.classList?.contains?.("dait-polish-preset-tab"));
+            this.plugin.polishPresetMenuCategory = nextCategory;
+            const nextSelected = this.renderPolishPresetMenuContent(menu, anchorNode, lifecycleToken);
+            this.positionPolishPresetMenu(menu, anchorNode);
+            if (wasFocusedOnTab) {
+              const nextTab = [...menu.querySelectorAll?.(".dait-polish-preset-tab") || []].find((tab) => tab.dataset?.daitCategory === nextCategory);
+              nextTab?.focus?.();
+            } else if (hadFocusInMenu) {
+              const fallbackFocus = nextSelected || menu.querySelector?.(".dait-polish-preset-item, .dait-polish-preset-manage, .dait-polish-preset-tab");
+              fallbackFocus?.focus?.();
+            } else {
+              try {
+                nextSelected?.scrollIntoView?.({ block: "nearest" });
+              } catch {
+              }
+            }
+            return;
+          }
+          if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+          const active = document.activeElement;
+          const allowNavigation = !active || active === document.body || active === document.documentElement || menu.contains?.(active) || active === anchorNode;
+          if (!allowNavigation) return;
+          const focusables = [...menu.querySelectorAll?.(".dait-polish-preset-item, .dait-polish-preset-manage") || []];
+          if (!focusables.length) return;
+          event.preventDefault();
+          event.stopPropagation();
+          const currentIndex = focusables.indexOf(active);
+          let nextIndex = 0;
+          if (event.key === "Home") nextIndex = 0;
+          else if (event.key === "End") nextIndex = focusables.length - 1;
+          else if (event.key === "ArrowDown") nextIndex = currentIndex < 0 ? 0 : (currentIndex + 1) % focusables.length;
+          else nextIndex = currentIndex < 0 ? focusables.length - 1 : (currentIndex - 1 + focusables.length) % focusables.length;
+          focusables[nextIndex]?.focus?.();
+        };
+        this.plugin.polishPresetMenuCleanup = () => {
+          anchorNode?.setAttribute?.("aria-expanded", "false");
+          if (repositionRaf !== null && typeof window !== "undefined") {
+            window.cancelAnimationFrame?.(repositionRaf);
+            repositionRaf = null;
+          }
+          if (typeof window !== "undefined") {
+            window.removeEventListener?.("resize", onResize, { capture: true });
+            window.removeEventListener?.("scroll", onScroll, { capture: true });
+          }
+          document.removeEventListener?.("pointerdown", outsidePointerDown, true);
+          document.removeEventListener?.("keydown", onKeydown, true);
+        };
+        if (typeof window !== "undefined") {
+          window.addEventListener?.("resize", onResize, { capture: true, passive: true });
+          window.addEventListener?.("scroll", onScroll, { capture: true, passive: true });
+        }
+        document.addEventListener?.("pointerdown", outsidePointerDown, true);
+        document.addEventListener?.("keydown", onKeydown, true);
+        onResize();
+        try {
+          selectedItem?.scrollIntoView?.({ block: "nearest" });
+        } catch {
+        }
+        return menu;
+      },
+      positionPolishPresetMenu(menu, anchor = null) {
+        if (!menu?.style || typeof window === "undefined") return;
+        const rect = anchor?.getBoundingClientRect?.() || null;
+        const viewportWidth = Number(window.innerWidth || document.documentElement?.clientWidth || 0) || 900;
+        const viewportHeight = Number(window.innerHeight || document.documentElement?.clientHeight || 0) || 700;
+        const width = Math.min(324, Math.max(260, viewportWidth - 24));
+        const left = rect ? Math.max(12, Math.min(rect.right - width, viewportWidth - width - 12)) : viewportWidth - width - 16;
+        menu.style.maxHeight = "";
+        const menuHeight = Number(menu.getBoundingClientRect?.()?.height || 0);
+        const spaceAbove = rect ? Math.max(0, rect.top - 12) : Math.max(0, viewportHeight - 24);
+        const spaceBelow = rect ? Math.max(0, viewportHeight - rect.bottom - 12) : 0;
+        const placeBelow = Boolean(rect && menuHeight > 0 && spaceAbove < menuHeight + 8 && spaceBelow > spaceAbove);
+        const availableSpace = placeBelow ? spaceBelow : spaceAbove;
+        menu.style.left = `${left}px`;
+        menu.style.right = "auto";
+        menu.style.width = `${width}px`;
+        menu.style.maxHeight = `${Math.max(140, Math.min(viewportHeight - 24, Math.floor(availableSpace - 8)))}px`;
+        if (placeBelow) {
+          const top = Math.min(Math.max(rect.bottom + 8, 12), Math.max(12, viewportHeight - 152));
+          menu.style.top = `${top}px`;
+          menu.style.bottom = "auto";
+        } else {
+          const bottom = rect ? Math.max(12, viewportHeight - rect.top + 8) : 76;
+          menu.style.top = "auto";
+          menu.style.bottom = `${Math.min(Math.max(bottom, 12), Math.max(12, viewportHeight - 152))}px`;
+        }
+      },
+      removePolishPresetMenu() {
+        this.plugin.polishPresetMenuCleanup?.();
+        this.plugin.polishPresetMenuCleanup = null;
+        this.plugin.polishPresetMenu?.remove?.();
+        this.plugin.polishPresetMenu = null;
+        this.plugin.polishPresetMenuAnchor = null;
+        this.plugin.polishPresetMenuCategory = "";
+      }
+    };
+    module2.exports = methods;
+  }
+});
+
+// src/composer/polish-result-panel.js
+var require_polish_result_panel = __commonJS({
+  "src/composer/polish-result-panel.js"(exports2, module2) {
+    "use strict";
+    var methods = {
+      showPolishResultPanel(textbox, text, options = {}) {
+        if (typeof document === "undefined") return;
+        this.removePolishResultPanel();
+        this.removePolishRestoreControl();
+        if (options.adjustTextboxSelection === true) {
+          this.plugin.applyTextboxReplacementSelection(textbox, { blurAfterReplace: Boolean(options.blurAfterReplace), extraBlurTarget: options.sourceButton });
+        }
+        const panel = document.createElement("div");
+        panel.className = "dait-polish-result-panel";
+        this.plugin.applyPanelTheme(panel);
+        panel.setAttribute("role", "dialog");
+        panel.setAttribute("aria-label", options.ariaLabel || options.title || this.plugin.t("polishResultTitle"));
+        const header = document.createElement("div");
+        header.className = "dait-polish-result-header";
+        const title = document.createElement("div");
+        title.className = "dait-polish-result-title";
+        title.textContent = options.title || this.plugin.t("polishResultTitle");
+        header.appendChild(title);
+        const close = document.createElement("button");
+        close.className = "dait-polish-result-icon";
+        close.type = "button";
+        close.appendChild(this.plugin.createWindowIcon("close"));
+        close.title = this.plugin.t("polishResultClose");
+        close.setAttribute("aria-label", this.plugin.t("polishResultClose"));
+        close.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          this.removePolishResultPanel();
+        });
+        header.appendChild(close);
+        panel.appendChild(header);
+        const output = document.createElement("div");
+        output.className = "dait-polish-result-output";
+        output.tabIndex = 0;
+        output.textContent = String(text || "");
+        panel.appendChild(output);
+        const actions = document.createElement("div");
+        actions.className = "dait-polish-result-actions";
+        if (textbox && options.allowApply !== false) {
+          const panelOriginRouteKey = options.originRouteKey !== void 0 ? String(options.originRouteKey || "") : this.plugin.getCurrentRouteKey();
+          const panelOriginComposerKey = options.originComposerKey !== void 0 ? String(options.originComposerKey || "") : this.getTextboxComposerKey(textbox);
+          const apply = document.createElement("button");
+          apply.className = "dait-polish-result-action dait-polish-result-apply";
+          apply.type = "button";
+          apply.textContent = this.plugin.t("polishResultReplace");
+          apply.addEventListener("click", async (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            if (apply.disabled) return;
+            apply.disabled = true;
+            try {
+              await this.plugin.applyPolishResultPanelText(textbox, String(text || ""), {
+                onApplied: options.onApplied,
+                originRouteKey: panelOriginRouteKey,
+                originComposerKey: panelOriginComposerKey,
+                sourceText: options.sourceText
+              });
+            } finally {
+              apply.disabled = false;
+            }
+          });
+          actions.appendChild(apply);
+        }
+        const copy = document.createElement("button");
+        copy.className = "dait-polish-result-action primary";
+        copy.type = "button";
+        copy.textContent = this.plugin.t("polishResultCopy");
+        copy.addEventListener("click", async (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          try {
+            await this.plugin.copyTextToClipboard(String(text || ""));
+            this.removePolishResultPanel();
+          } catch (error) {
+            this.plugin.showToast(this.plugin.t("promptCopyFailed", { error: this.plugin.formatError(error) }), "error");
+            this.focusPolishResultOutput(output);
+          }
+        });
+        actions.appendChild(copy);
+        panel.appendChild(actions);
+        ["pointerdown", "mousedown", "click"].forEach((type) => {
+          panel.addEventListener(type, (event) => event.stopPropagation());
+        });
+        document.body.appendChild(panel);
+        this.plugin.polishResultPanel = panel;
+        const anchorNode = textbox || options.sourceButton;
+        let repositionRaf = null;
+        const reposition = () => {
+          repositionRaf = null;
+          if (!panel.isConnected) return;
+          this.positionPolishResultPanel(panel, textbox, options.sourceButton);
+        };
+        const onResize = () => {
+          if (repositionRaf !== null) {
+            try {
+              window.cancelAnimationFrame?.(repositionRaf);
+            } catch {
+            }
+            repositionRaf = null;
+          }
+          if (!panel.isConnected) return;
+          this.plugin.applyPanelTheme(panel);
+          reposition();
+        };
+        const onScroll = (event) => {
+          if (event?.target && event.target !== window && event.target !== document && anchorNode && !event.target.contains?.(anchorNode)) {
+            return;
+          }
+          if (repositionRaf !== null) return;
+          if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+            repositionRaf = window.requestAnimationFrame(reposition);
+          } else {
+            reposition();
+          }
+        };
+        const outsidePointerDown = (event) => {
+          if (panel.contains?.(event.target)) return;
+          this.removePolishResultPanel();
+        };
+        const escapeKeydown = (event) => {
+          if (event.isComposing || event.keyCode === 229 || event.key !== "Escape") return;
+          event.preventDefault?.();
+          event.stopPropagation?.();
+          this.removePolishResultPanel();
+        };
+        this.plugin.polishResultPanelCleanup = () => {
+          if (repositionRaf !== null && typeof window !== "undefined") {
+            window.cancelAnimationFrame?.(repositionRaf);
+            repositionRaf = null;
+          }
+          if (typeof window !== "undefined") {
+            window.removeEventListener?.("resize", onResize, { capture: true });
+            window.removeEventListener?.("scroll", onScroll, { capture: true });
+          }
+          document.removeEventListener?.("pointerdown", outsidePointerDown, true);
+          document.removeEventListener?.("keydown", escapeKeydown, true);
+        };
+        if (typeof window !== "undefined") {
+          window.addEventListener?.("resize", onResize, { capture: true, passive: true });
+          window.addEventListener?.("scroll", onScroll, { capture: true, passive: true });
+        }
+        document.addEventListener?.("pointerdown", outsidePointerDown, true);
+        document.addEventListener?.("keydown", escapeKeydown, true);
+        onResize();
+      },
+      focusPolishResultOutput(output) {
+        if (!output) return;
+        try {
+          output.focus?.({ preventScroll: true });
+        } catch {
+          try {
+            output.focus?.();
+          } catch {
+          }
+        }
+        const selection = typeof window !== "undefined" ? window.getSelection?.() : null;
+        if (!selection || !document.createRange) return;
+        try {
+          const range = document.createRange();
+          range.selectNodeContents(output);
+          selection.removeAllRanges?.();
+          selection.addRange?.(range);
+        } catch {
+        }
+      },
+      positionPolishResultPanel(panel, textbox, sourceButton = null) {
+        if (!panel?.style || typeof window === "undefined") return;
+        const anchor = textbox?.getBoundingClientRect?.() || sourceButton?.getBoundingClientRect?.() || null;
+        const viewportWidth = Number(window.innerWidth || document.documentElement?.clientWidth || 0) || 900;
+        const viewportHeight = Number(window.innerHeight || document.documentElement?.clientHeight || 0) || 700;
+        const width = Math.min(440, Math.max(260, viewportWidth - 32));
+        const leftBase = anchor ? anchor.left : viewportWidth - width - 24;
+        const left = Math.max(16, Math.min(leftBase, viewportWidth - width - 16));
+        const bottom = anchor ? Math.max(16, viewportHeight - anchor.top + 10) : 96;
+        panel.style.left = `${left}px`;
+        panel.style.right = "auto";
+        panel.style.bottom = `${Math.min(Math.max(bottom, 16), Math.max(16, viewportHeight - 120))}px`;
+        panel.style.width = `${width}px`;
+      },
+      removePolishResultPanel() {
+        this.plugin.polishResultPanelCleanup?.();
+        this.plugin.polishResultPanelCleanup = null;
+        this.plugin.polishResultPanel?.remove?.();
+        this.plugin.polishResultPanel = null;
+      },
+      // The panel's "Insert into input" action: an explicit user request, so it replaces whatever the
+      // composer holds now (Discord's undo brings the previous draft back). `options.onApplied(target)`
+      // runs after a verified write so the run that produced the text can record it.
+      async applyPolishResultPanelText(textbox, text, options = {}) {
+        const originRouteKey = String(options.originRouteKey || "");
+        const currentRouteKey = this.plugin.getCurrentRouteKey();
+        if (originRouteKey && currentRouteKey && originRouteKey !== currentRouteKey) {
+          this.plugin.showToast(this.plugin.t("composerChannelChanged"), "info");
+          return false;
+        }
+        const target = textbox && textbox.isConnected !== false ? textbox : this.plugin.resolveInputActionTextbox(null, {});
+        if (!target) {
+          this.plugin.showToast(this.plugin.t("textboxMissing"), "error");
+          return false;
+        }
+        const originComposerKey = String(options.originComposerKey || "");
+        const targetComposerKey = this.getTextboxComposerKey(target);
+        if (originComposerKey && targetComposerKey && originComposerKey !== targetComposerKey) {
+          this.plugin.showToast(this.plugin.t("composerChannelChanged"), "info");
+          return false;
+        }
+        const safeText = options.sourceText !== void 0 ? this.sanitizeComposerGeneratedOutput(options.sourceText, text, "panel") : String(text || "");
+        const currentText = this.plugin.getTextboxDraftText(target);
+        const writeToken = this.plugin.composerWriter.beginWrite(target, currentText);
+        let result = null;
+        try {
+          result = await this.plugin.composerWriter.replaceTextSafely(target, safeText, {
+            blurAfterReplace: false,
+            expectedPreviousText: currentText,
+            writeToken
+          });
+        } finally {
+          this.plugin.composerWriter.finishWriteToken(writeToken);
+        }
+        if (result?.ok) {
+          this.removePolishResultPanel();
+          options.onApplied?.(target);
+          return true;
+        }
+        if (result?.reason !== "write-cancelled") this.plugin.showToast(this.plugin.t("polishResultApplyFailed"), "error");
+        return false;
+      },
+      showRestoreOriginalControl(textbox, session, sourceButton = null) {
+        const originalText = session?.originalRawText ?? session?.originalText;
+        if (typeof document === "undefined" || !originalText) return;
+        this.removePolishRestoreControl();
+        this.removeInputActionMenu();
+        const container = this.plugin.getPolishButtonContainer(textbox);
+        const group = container ? this.getInputActionGroup(container) : null;
+        if (group) {
+          this.syncInputRestoreButtonState(group, textbox, { restoreSession: session });
+          this.plugin.syncInputActionButtonThemes(group, textbox || sourceButton || container);
+          this.syncInputActionGroupState(group, textbox, container);
+          return;
+        }
+        const button = document.createElement("button");
+        button.className = "dait-polish-restore-control";
+        this.plugin.syncDiscordThemeClasses(button, textbox || sourceButton);
+        button.type = "button";
+        button.textContent = this.plugin.t("restoreOriginal");
+        ["pointerdown", "mousedown"].forEach((type) => {
+          button.addEventListener(type, (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          });
+        });
+        button.addEventListener("click", async (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          await this.restorePolishOriginal(textbox, session, sourceButton);
+        });
+        document.body.appendChild(button);
+        this.plugin.polishRestoreControl = button;
+        const anchorNode = sourceButton || textbox;
+        let repositionRaf = null;
+        const reposition = () => {
+          repositionRaf = null;
+          if (!button.isConnected) return;
+          this.positionPolishRestoreControl(button, textbox, sourceButton);
+        };
+        const onResize = () => {
+          if (repositionRaf !== null) {
+            try {
+              window.cancelAnimationFrame?.(repositionRaf);
+            } catch {
+            }
+            repositionRaf = null;
+          }
+          if (!button.isConnected) return;
+          this.plugin.syncDiscordThemeClasses(button, textbox || sourceButton);
+          reposition();
+        };
+        const onScroll = (event) => {
+          if (event?.target && event.target !== window && event.target !== document && anchorNode && !event.target.contains?.(anchorNode)) {
+            return;
+          }
+          if (repositionRaf !== null) return;
+          if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+            repositionRaf = window.requestAnimationFrame(reposition);
+          } else {
+            reposition();
+          }
+        };
+        const timeout = typeof window !== "undefined" && typeof window.setTimeout === "function" ? window.setTimeout(() => this.removePolishRestoreControl(), 8e3) : null;
+        this.plugin.polishRestoreControlCleanup = () => {
+          if (repositionRaf !== null && typeof window !== "undefined") {
+            window.cancelAnimationFrame?.(repositionRaf);
+            repositionRaf = null;
+          }
+          if (typeof window !== "undefined") {
+            window.removeEventListener?.("resize", onResize, { capture: true });
+            window.removeEventListener?.("scroll", onScroll, { capture: true });
+            if (timeout) window.clearTimeout?.(timeout);
+          }
+        };
+        if (typeof window !== "undefined") {
+          window.addEventListener?.("resize", onResize, { capture: true, passive: true });
+          window.addEventListener?.("scroll", onScroll, { capture: true, passive: true });
+        }
+        onResize();
+      },
+      async restorePolishOriginal(textbox, session, sourceButton = null) {
+        const lifecycleToken = this.plugin.getLifecycleToken();
+        if (!this.plugin.isLifecycleTokenCurrent(lifecycleToken)) return false;
+        const originalText = session?.originalRawText ?? session?.originalText;
+        if (!originalText) return false;
+        if (!this.canRestorePolishOriginal(textbox, session)) {
+          this.removePolishRestoreControl();
+          this.removeInputActionMenu();
+          this.plugin.injectInputButtons();
+          this.plugin.showToast(this.plugin.t("restoreOriginalChanged"), "info");
+          return false;
+        }
+        const currentText = this.plugin.getTextboxDraftText(textbox);
+        const writeToken = this.plugin.composerWriter.beginWrite(textbox, currentText);
+        try {
+          const result = await this.plugin.composerWriter.replaceTextSafely(textbox, originalText, {
+            blurAfterReplace: false,
+            extraBlurTarget: sourceButton,
+            expectedPreviousText: currentText,
+            writeToken,
+            lifecycleToken
+          });
+          if (!this.plugin.isLifecycleTokenCurrent(lifecycleToken) || textbox.isConnected === false || this.getTextboxComposerKey(textbox) !== writeToken.composerKey) return false;
+          const writeCurrent = this.plugin.composerWriter.isWriteTokenCurrent(writeToken);
+          if (!writeCurrent && !this.plugin.isComposerWriteTakenOverByUser(textbox, { writeToken })) return false;
+          if (result?.ok && (writeCurrent ? this.isCurrentDraftText(textbox, originalText) : result.userEditedAfter)) {
+            session.lastWrittenText = "";
+            session.lastWrittenRawText = "";
+            session.updatedAt = Date.now();
+            this.plugin.polishSession = session;
+            this.removePolishRestoreControl();
+            this.removeInputActionMenu();
+            this.plugin.injectInputButtons();
+            return true;
+          }
+          this.plugin.showPolishResultPanel(textbox, originalText, { sourceButton });
+          return false;
+        } finally {
+          this.plugin.composerWriter.finishWriteToken(writeToken);
+        }
+      },
+      canRestorePolishOriginal(textbox, session) {
+        if (!textbox || textbox.isConnected === false || !session) return false;
+        if (session.composerKey && this.getTextboxComposerKey(textbox) !== session.composerKey) return false;
+        const current = this.plugin.getTextboxDraftText(textbox);
+        if (this.areDraftTextsEqualStrict(current, session.originalRawText ?? session.originalText)) return false;
+        const candidates = [
+          session.lastWrittenRawText,
+          session.lastResultRawText,
+          session.lastBilingualRawText,
+          session.lastWrittenText,
+          session.lastResult,
+          session.lastBilingualText
+        ].filter((value) => value !== void 0 && value !== null && value !== "");
+        return candidates.some((value) => this.areDraftTextsEqualStrict(current, value));
+      },
+      positionPolishRestoreControl(button, textbox, sourceButton = null) {
+        if (!button?.style || typeof window === "undefined") return;
+        const anchor = sourceButton?.getBoundingClientRect?.() || textbox?.getBoundingClientRect?.() || null;
+        const viewportWidth = Number(window.innerWidth || document.documentElement?.clientWidth || 0) || 900;
+        const viewportHeight = Number(window.innerHeight || document.documentElement?.clientHeight || 0) || 700;
+        const width = 86;
+        const leftBase = anchor ? anchor.left - width - 8 : viewportWidth - width - 24;
+        const left = Math.max(16, Math.min(leftBase, viewportWidth - width - 16));
+        const bottom = anchor ? Math.max(16, viewportHeight - anchor.bottom) : 72;
+        button.style.left = `${left}px`;
+        button.style.bottom = `${Math.min(Math.max(bottom, 16), Math.max(16, viewportHeight - 48))}px`;
+      },
+      removePolishRestoreControl() {
+        this.plugin.polishRestoreControlCleanup?.();
+        this.plugin.polishRestoreControlCleanup = null;
+        this.plugin.polishRestoreControl?.remove?.();
+        this.plugin.polishRestoreControl = null;
+      },
+      setTemporaryButtonText(button, text, fallback, delay = 1200) {
+        if (!button) return;
+        button.textContent = text;
+        setTimeout(() => {
+          if (button.isConnected) button.textContent = fallback;
+        }, delay);
+      }
+    };
+    module2.exports = methods;
+  }
+});
+
+// src/composer/public-bilingual.js
+var require_public_bilingual = __commonJS({
+  "src/composer/public-bilingual.js"(exports2, module2) {
+    "use strict";
+    var {
+      AUTO_LANGUAGE_VALUE,
+      MODEL_REQUEST_TIMEOUT_MS,
+      DIAGNOSTIC_MESSAGE_STATES,
+      DIAGNOSTIC_REASON_CODES,
+      DISCORD_MESSAGE_MAX_LENGTH,
+      DEFAULT_SETTINGS
+    } = require_constants();
+    var methods = {
+      isPublicBilingualUseInitialOriginalEnabled() {
+        return this.plugin.settings.ui?.publicBilingualUseInitialOriginal === true;
+      },
+      isPublicBilingualAfterPolishEnabled() {
+        return this.plugin.settings.ui?.publicBilingualAfterPolish === true;
+      },
+      isPublicBilingualPolishBeforeTranslateEnabled() {
+        return this.plugin.settings.ui?.publicBilingualPolishBeforeTranslate === true;
+      },
+      isPublicBilingualFeatureEnabled() {
+        return this.plugin.settings.translation?.enabled !== false;
+      },
+      isPublicBilingualInputButtonEnabled() {
+        return this.isPublicBilingualFeatureEnabled() && Boolean(this.plugin.settings.ui?.publicBilingualInputButton);
+      },
+      getPublicBilingualTargetLanguage() {
+        return this.plugin.normalizeLanguageName(this.plugin.settings.polish?.targetLanguage || this.plugin.settings.translation?.targetLanguage);
+      },
+      getPublicBilingualBaseConfig() {
+        const polish = this.plugin.settings.polish || {};
+        const translation = this.plugin.settings.translation || {};
+        const polishCandidate = {
+          provider: polish.provider,
+          apiKey: polish.apiKey,
+          apiKeyOrigin: polish.apiKeyOrigin,
+          endpoint: polish.endpoint,
+          model: polish.model
+        };
+        return this.plugin.hasUsableApiConfig("translation", polishCandidate) ? polish : translation;
+      },
+      getPublicBilingualTranslationOptions() {
+        const configOverrides = this.getPublicBilingualTranslationOverrides();
+        return {
+          mode: "public-bilingual",
+          promptPolicyVersion: this.plugin.getPromptPolicyVersion("publicBilingual"),
+          targetLanguage: this.getPublicBilingualTargetLanguage(),
+          providerKey: this.plugin.getAutoTranslationProviderKey({ configOverrides }),
+          requestContext: {},
+          configOverrides
+        };
+      },
+      getPublicBilingualTranslationOverrides() {
+        const baseConfig = this.getPublicBilingualBaseConfig();
+        const targetLanguageValue = this.getPublicBilingualTargetLanguage();
+        const targetLanguage = this.plugin.getAutoTranslationTargetInstruction(targetLanguageValue);
+        const maxTokens = Math.max(
+          this.plugin.normalizeRequestNumber(baseConfig.maxTokens, DEFAULT_SETTINGS.translation.maxTokens, { min: 1, integer: true }),
+          this.plugin.normalizeRequestNumber(this.plugin.settings.translation?.maxTokens, DEFAULT_SETTINGS.translation.maxTokens, { min: 1, integer: true })
+        );
+        return {
+          provider: baseConfig.provider,
+          apiKey: baseConfig.apiKey,
+          apiKeyOrigin: baseConfig.apiKeyOrigin,
+          endpoint: baseConfig.endpoint,
+          model: baseConfig.model,
+          sourceLanguage: AUTO_LANGUAGE_VALUE,
+          targetLanguage,
+          targetLanguageCode: this.plugin.getTargetLanguageCode(targetLanguageValue),
+          temperature: 0,
+          maxTokens,
+          enableThinking: false,
+          promptPolicyVersion: this.plugin.getPromptPolicyVersion("publicBilingual"),
+          prompt: this.plugin.buildPromptPolicyPublicBilingualPrompt(targetLanguageValue)
+        };
+      },
+      getPublicBilingualRetryOptions(sourceText, badOutput = "", options = this.getPublicBilingualTranslationOptions()) {
+        const targetLanguageValue = this.plugin.getAutoTranslationTargetLanguage(options);
+        const targetLanguage = this.plugin.getAutoTranslationTargetInstruction(targetLanguageValue);
+        return {
+          mode: "public-bilingual-retry",
+          promptPolicyVersion: this.plugin.getPromptPolicyVersion("publicBilingualRetry"),
+          targetLanguage: targetLanguageValue,
+          providerKey: this.plugin.getAutoTranslationProviderKey(options),
+          requestContext: options.requestContext,
+          configOverrides: {
+            ...this.plugin.getAutoTranslationRequestSnapshot(options),
+            sourceLanguage: AUTO_LANGUAGE_VALUE,
+            targetLanguage,
+            temperature: 0,
+            enableThinking: false,
+            promptPolicyVersion: this.plugin.getPromptPolicyVersion("publicBilingualRetry"),
+            prompt: this.plugin.buildPromptPolicyPublicBilingualRetryPrompt(sourceText, badOutput, options)
+          }
+        };
+      },
+      getPublicBilingualFinalFallbackOptions(sourceText, options = this.getPublicBilingualTranslationOptions()) {
+        const targetLanguageValue = this.plugin.getAutoTranslationTargetLanguage(options);
+        const targetLanguage = this.plugin.getAutoTranslationTargetInstruction(targetLanguageValue);
+        return {
+          mode: "public-bilingual-final",
+          promptPolicyVersion: this.plugin.getPromptPolicyVersion("publicBilingualFinal"),
+          targetLanguage: targetLanguageValue,
+          providerKey: this.plugin.getAutoTranslationProviderKey(options),
+          requestContext: options.requestContext,
+          configOverrides: {
+            ...this.plugin.getAutoTranslationRequestSnapshot(options),
+            sourceLanguage: AUTO_LANGUAGE_VALUE,
+            targetLanguage,
+            temperature: 0,
+            enableThinking: false,
+            promptPolicyVersion: this.plugin.getPromptPolicyVersion("publicBilingualFinal"),
+            prompt: this.plugin.buildPromptPolicyPublicBilingualFinalPrompt(sourceText, options)
+          }
+        };
+      },
+      async runPublicBilingualTranslationTask(text, options = this.getPublicBilingualTranslationOptions()) {
+        const translated = await this.plugin.runModelTask("translation", text, {
+          configOverrides: options.configOverrides,
+          timeoutMs: MODEL_REQUEST_TIMEOUT_MS,
+          mode: "public-bilingual",
+          requestContext: options.requestContext,
+          providerProfilePinned: true
+        });
+        if (!this.plugin.isInvalidAutoTranslationOutput(text, translated, this.plugin.getAutoTranslationTargetLanguage(options))) return translated;
+        const retryOptions = this.getPublicBilingualRetryOptions(text, translated, options);
+        const retried = await this.plugin.runModelTask("translation", text, {
+          configOverrides: retryOptions.configOverrides,
+          timeoutMs: MODEL_REQUEST_TIMEOUT_MS,
+          mode: "public-bilingual-retry",
+          requestContext: retryOptions.requestContext,
+          providerProfilePinned: true
+        });
+        if (!this.plugin.isInvalidAutoTranslationOutput(text, retried, this.plugin.getAutoTranslationTargetLanguage(retryOptions))) return retried;
+        const finalOptions = this.getPublicBilingualFinalFallbackOptions(text, options);
+        const finalText = await this.plugin.runModelTask("translation", text, {
+          configOverrides: finalOptions.configOverrides,
+          timeoutMs: MODEL_REQUEST_TIMEOUT_MS,
+          mode: "public-bilingual-final",
+          requestContext: finalOptions.requestContext,
+          providerProfilePinned: true
+        });
+        if (!this.plugin.isInvalidAutoTranslationOutput(text, finalText, this.plugin.getAutoTranslationTargetLanguage(finalOptions))) return finalText;
+        throw this.plugin.createFinalInvalidAutoTranslationError();
+      },
+      async getPublicBilingualTranslation(text, options = this.getPublicBilingualTranslationOptions(), behavior = {}) {
+        const cacheKey = this.plugin.getTranslationCacheKey(text, options);
+        const cached = behavior.bypassCache ? null : this.plugin.getTranslationCacheValue(cacheKey, this.plugin.getTranslationCacheAliases(text, options));
+        if (cached !== null) return { text: cached, cacheKey, cached: true };
+        const translated = await this.runPublicBilingualTranslationTask(text, options);
+        const usedFallback = Boolean(options.requestContext?.fallbackProvider);
+        if (!usedFallback) this.plugin.setTranslationCache(cacheKey, translated);
+        return { text: translated, cacheKey, cached: false, fallbackProvider: options.requestContext?.fallbackProvider || "" };
+      },
+      // Text inside ||…||. Outside code every "|" is escaped and the user's own escapes are kept; a
+      // lone trailing "\" is doubled so it cannot escape the closing "||". Discord shows code literally,
+      // so a backslash there would be visible: "||" inside code is split with a zero-width space instead.
+      escapeDiscordSpoilerText(text) {
+        return this.splitDiscordCodeSegments(text).map((segment) => segment.code ? segment.text.replace(/\|(?=\|)/g, "|​") : this.escapeDiscordPlainText(segment.text, { escapeEveryPipe: true })).join("");
+      },
+      // Visible translation: only "||" outside code could open a spoiler.
+      escapeDiscordVisibleText(text) {
+        return this.splitDiscordCodeSegments(text).map((segment) => segment.code ? segment.text : this.escapeDiscordPlainText(segment.text, { escapeEveryPipe: false })).join("");
+      },
+      escapeDiscordPlainText(text, options = {}) {
+        const value = String(text || "");
+        let output = "";
+        for (let index = 0; index < value.length; index++) {
+          const char = value[index];
+          if (char === "\\") {
+            if (index + 1 < value.length) {
+              output += char + value[index + 1];
+              index++;
+            } else {
+              output += "\\\\";
+            }
+            continue;
+          }
+          if (char === "|" && (options.escapeEveryPipe || value[index + 1] === "|")) {
+            if (options.escapeEveryPipe) {
+              output += "\\|";
+            } else {
+              output += "\\|\\|";
+              index++;
+            }
+            continue;
+          }
+          output += char;
+        }
+        return output;
+      },
+      // Splits Discord markdown into code (`inline`, ``inline``, ```fenced```) and plain segments.
+      // A backslash escapes the next character outside code, so "\`" never opens a code span.
+      splitDiscordCodeSegments(text) {
+        const value = String(text || "");
+        const segments = [];
+        let plainStart = 0;
+        let index = 0;
+        while (index < value.length) {
+          const char = value[index];
+          if (char === "\\") {
+            index += 2;
+            continue;
+          }
+          if (char !== "`") {
+            index++;
+            continue;
+          }
+          let runEnd = index;
+          while (value[runEnd] === "`") runEnd++;
+          const close = this.findDiscordCodeClose(value, runEnd, runEnd - index);
+          if (close < 0) {
+            index = runEnd;
+            continue;
+          }
+          if (index > plainStart) segments.push({ code: false, text: value.slice(plainStart, index) });
+          const end = close + (runEnd - index);
+          segments.push({ code: true, text: value.slice(index, end) });
+          index = plainStart = end;
+        }
+        if (plainStart < value.length) segments.push({ code: false, text: value.slice(plainStart) });
+        return segments;
+      },
+      findDiscordCodeClose(value, from, length) {
+        let index = from;
+        while (index < value.length) {
+          const start = value.indexOf("`", index);
+          if (start < 0) return -1;
+          let end = start;
+          while (value[end] === "`") end++;
+          if (end - start === length && start > from) return start;
+          index = end;
+        }
+        return -1;
+      },
+      formatPublicBilingualMessage(translated, original) {
+        const translation = this.escapeDiscordVisibleText(String(translated || "").trim());
+        return `${translation}
+
+||${this.getPublicBilingualSpoilerText(original)}||`;
+      },
+      getPublicBilingualReservedLength(original) {
+        return `
+
+||${this.getPublicBilingualSpoilerText(original)}||`.length;
+      },
+      // Discord's spoiler rule is non-greedy and ignores backslashes, so a trailing "|" (written "\|")
+      // would join the closing "||" and end the spoiler one character early: a zero-width space
+      // separates them.
+      getPublicBilingualSpoilerText(original) {
+        const escaped = this.escapeDiscordSpoilerText(this.normalizeDraftRawText(original));
+        return escaped.endsWith("|") ? `${escaped}​` : escaped;
+      },
+      getPublicBilingualSpoilerOriginal(session, draft, translationSource = draft) {
+        if (this.isPublicBilingualUseInitialOriginalEnabled() && (session?.originalRawText || session?.originalText)) {
+          return session.originalRawText ?? session.originalText;
+        }
+        return translationSource || draft;
+      },
+      async preparePublicBilingualDraft(textbox, draft, options = {}) {
+        const session = this.getPolishSession(textbox, draft);
+        const mentionBaseline = session.originalRawText ?? session.originalText ?? draft;
+        const isBilingualOutput = Boolean(session.lastBilingualRawText && session.lastBilingualSourceRawText) && this.areDraftTextsEqualStrict(draft, session.lastBilingualRawText);
+        const baseDraft = isBilingualOutput ? this.normalizeDraftRawText(session.lastBilingualSourceRawText) : draft;
+        let translationSource = baseDraft;
+        let usedPolish = false;
+        let skippedPolish = false;
+        const hasLifecycleToken = options.lifecycleToken !== void 0 && options.lifecycleToken !== null;
+        const writeToken = options.writeToken || null;
+        if (!options.skipAutoPolish && this.isPublicBilingualPolishBeforeTranslateEnabled()) {
+          if (!this.plugin.settings.polish.enabled) {
+            skippedPolish = true;
+          } else if (!this.isPolishSessionAlreadyPolished(session, baseDraft)) {
+            const sourceText = this.getPolishSourceText(session) || draft;
+            const result = await this.runPolishWithGuards(sourceText, {
+              chineseScriptOnly: true,
+              isStillCurrent: () => (!hasLifecycleToken || this.plugin.isLifecycleTokenCurrent(options.lifecycleToken)) && (!writeToken || this.plugin.composerWriter.isWriteTokenCurrent(writeToken))
+            });
+            if (!String(result || "").trim()) throw new Error(this.plugin.t("emptyResult"));
+            if (hasLifecycleToken && !this.plugin.isLifecycleTokenCurrent(options.lifecycleToken)) {
+              return { stale: true, lifecycleStale: true, session, translationSource: draft, spoilerOriginal: this.getPublicBilingualSpoilerOriginal(session, draft, draft), usedPolish, skippedPolish };
+            }
+            if (writeToken && !this.plugin.composerWriter.isWriteTokenCurrent(writeToken) || options.routeKey !== void 0 && options.routeKey !== this.plugin.getCurrentRouteKey() || this.plugin.polishSession !== session || textbox?.isConnected === false || !this.isCurrentDraftText(textbox, draft)) {
+              return { stale: true, session, translationSource: draft, spoilerOriginal: this.getPublicBilingualSpoilerOriginal(session, draft, draft), usedPolish, skippedPolish };
+            }
+            const polished = this.sanitizeComposerGeneratedOutput(mentionBaseline, result, "public-bilingual.polish");
+            this.updatePolishSessionAfterResult(session, textbox, polished, false);
+            translationSource = this.normalizeDraftRawText(polished);
+            usedPolish = true;
+          }
+        }
+        return {
+          stale: false,
+          session,
+          translationSource,
+          spoilerOriginal: this.getPublicBilingualSpoilerOriginal(session, baseDraft, translationSource),
+          mentionBaseline,
+          expectedCurrentText: draft,
+          // A bilingual result already exists in this session, so this click asks for a fresh one.
+          rerun: Boolean(session.lastBilingualRawText),
+          usedPolish,
+          skippedPolish
+        };
+      },
+      async publicBilingualCurrentDraft(button = null, behaviorOptions = {}) {
+        if (!this.isPublicBilingualFeatureEnabled()) {
+          if (!behaviorOptions.skipAutoPolish) this.plugin.showToast(this.plugin.t("translationDisabled"), "info");
+          return { ok: false, wrote: false, reason: "disabled" };
+        }
+        const textbox = this.plugin.resolveInputActionTextbox(button, behaviorOptions);
+        if (!textbox) {
+          this.plugin.showToast(this.plugin.t("textboxMissing"), "error");
+          return { ok: false, wrote: false, reason: "missing-textbox" };
+        }
+        const expectedComposerKey = behaviorOptions.composerKey || button?.dataset?.daitComposerKey || "";
+        if (!this.plugin.isInputActionTextboxCurrent(textbox, expectedComposerKey)) {
+          this.plugin.queueInputButtonScan({ delayMs: 120, trailing: true });
+          this.plugin.showToast(this.plugin.t("composerChanged"), "info");
+          return { ok: false, wrote: false, reason: "stale-composer" };
+        }
+        const draft = this.plugin.getTextboxDraftText(textbox);
+        if (!this.plugin.normalizeExtractedText(draft)) {
+          this.plugin.showToast(this.plugin.t("inputEmpty"), "info");
+          return { ok: false, wrote: false, reason: "empty" };
+        }
+        const writeToken = this.plugin.composerWriter.beginWrite(textbox, draft);
+        const composer = this.getTextboxComposerRoot(textbox);
+        const requestId = behaviorOptions.polishRequestId ?? writeToken.id;
+        if (behaviorOptions.polishRequestId === void 0) this.plugin.latestPolishRequestIds.set(composer, requestId);
+        const isLatestRequest = () => this.plugin.latestPolishRequestIds.get(composer) === requestId && !this.isComposerWriteSuperseded(writeToken);
+        const originRouteKey = this.plugin.getCurrentRouteKey();
+        const originComposerKey = writeToken.composerKey;
+        this.plugin.setButtonBusy(button, true, this.plugin.t("publicBilingualBusy"));
+        const lifecycleToken = this.plugin.getLifecycleToken();
+        const startedAt = Date.now();
+        const requestOptions = this.getPublicBilingualTranslationOptions();
+        this.plugin.logDiagnostic("public.bilingual", "start", {
+          ...this.plugin.getDiagnosticBaseMeta("public-bilingual", "public-bilingual", DIAGNOSTIC_REASON_CODES.REQUEST_STARTED, {
+            messageState: DIAGNOSTIC_MESSAGE_STATES.IN_FLIGHT,
+            targetKind: "composer",
+            sourceHash: this.plugin.getStrongTextFingerprint(draft),
+            textLength: String(draft || "").length
+          }),
+          sourceHash: this.plugin.getStrongTextFingerprint(draft),
+          length: String(draft || "").length,
+          targetLanguage: this.plugin.getAutoTranslationTargetLanguage(requestOptions)
+        });
+        try {
+          const payload = await this.preparePublicBilingualDraft(textbox, draft, { ...behaviorOptions, lifecycleToken, writeToken, routeKey: originRouteKey });
+          if (!this.plugin.isLifecycleTokenCurrent(lifecycleToken)) {
+            return { ok: false, wrote: false, stale: true, phase: "lifecycle" };
+          }
+          if (!isLatestRequest()) return { ok: false, wrote: false, stale: true, phase: "superseded" };
+          if (payload.stale || !this.plugin.composerWriter.isWriteTokenCurrent(writeToken)) {
+            this.plugin.logDiagnostic("public.bilingual", "stale-input", {
+              ...this.plugin.getDiagnosticBaseMeta("public-bilingual", "public-bilingual", DIAGNOSTIC_REASON_CODES.STALE_DOM, {
+                messageState: DIAGNOSTIC_MESSAGE_STATES.STALE,
+                targetKind: "composer",
+                sourceHash: this.plugin.getStrongTextFingerprint(draft),
+                textLength: String(draft || "").length
+              }),
+              sourceHash: this.plugin.getStrongTextFingerprint(draft),
+              phase: payload.lifecycleStale ? "lifecycle" : "polish",
+              ms: Date.now() - startedAt
+            });
+            if (payload.lifecycleStale) return { ok: false, wrote: false, stale: true, phase: "lifecycle" };
+            this.plugin.showToast(this.plugin.t("publicBilingualInputChanged"), "info");
+            return { ok: false, wrote: false, stale: true, phase: "polish" };
+          }
+          const reservedLength = this.getPublicBilingualReservedLength(payload.spoilerOriginal);
+          if (reservedLength >= DISCORD_MESSAGE_MAX_LENGTH) {
+            throw new Error(this.plugin.t("publicBilingualTooLong", { length: reservedLength, limit: DISCORD_MESSAGE_MAX_LENGTH }));
+          }
+          const result = await this.plugin.getPublicBilingualTranslation(payload.translationSource, requestOptions, { bypassCache: payload.rerun });
+          if (!this.plugin.isLifecycleTokenCurrent(lifecycleToken)) {
+            return { ok: false, wrote: false, stale: true, phase: "lifecycle" };
+          }
+          if (!isLatestRequest()) return { ok: false, wrote: false, stale: true, phase: "superseded" };
+          if (!String(result.text || "").trim()) throw new Error(this.plugin.t("emptyResult"));
+          const safeSpoiler = this.sanitizeComposerGeneratedOutput(payload.mentionBaseline, payload.spoilerOriginal, "public-bilingual");
+          const safeTranslation = this.sanitizeComposerGeneratedOutput(payload.mentionBaseline, result.text, "public-bilingual", safeSpoiler);
+          const composed = this.formatPublicBilingualMessage(safeTranslation, safeSpoiler);
+          if (composed.length > DISCORD_MESSAGE_MAX_LENGTH) {
+            throw new Error(this.plugin.t("publicBilingualTooLong", { length: composed.length, limit: DISCORD_MESSAGE_MAX_LENGTH }));
+          }
+          const recordPanelInsert = (target) => {
+            if (!this.plugin.isLifecycleTokenCurrent(lifecycleToken) || !isLatestRequest() || this.plugin.polishSession !== payload.session) return;
+            payload.session.composerKey = this.getTextboxComposerKey(target);
+            this.updatePolishSessionAfterBilingual(payload.session, target, composed, payload.translationSource, true);
+          };
+          const staleReason = this.plugin.getCurrentRouteKey() !== originRouteKey || this.getTextboxComposerKey(textbox) !== originComposerKey ? "composer-changed" : this.plugin.getComposerWriteStaleReason(textbox, writeToken, payload.expectedCurrentText);
+          if (staleReason) {
+            this.plugin.logDiagnostic("public.bilingual", "stale-input", {
+              ...this.plugin.getDiagnosticBaseMeta("public-bilingual", "public-bilingual", DIAGNOSTIC_REASON_CODES.STALE_DOM, {
+                messageState: DIAGNOSTIC_MESSAGE_STATES.STALE,
+                targetKind: "composer",
+                sourceHash: this.plugin.getStrongTextFingerprint(draft),
+                textLength: String(draft || "").length
+              }),
+              sourceHash: this.plugin.getStrongTextFingerprint(draft),
+              cached: Boolean(result.cached),
+              phase: "translation",
+              reason: staleReason,
+              ms: Date.now() - startedAt
+            });
+            this.plugin.showPolishResultPanel(this.getComposerResultPanelAnchor(textbox), composed, {
+              sourceButton: button,
+              title: this.plugin.t("publicBilingualButton"),
+              ariaLabel: this.plugin.t("publicBilingualTitleAttr", { targetLanguage: this.plugin.getDisplayLanguage(this.getPublicBilingualTargetLanguage()) }),
+              adjustTextboxSelection: false,
+              originRouteKey,
+              originComposerKey,
+              sourceText: draft,
+              onApplied: recordPanelInsert
+            });
+            this.plugin.showToast(this.plugin.t("composerResultHeld"), "info");
+            return { ok: false, wrote: false, stale: true, phase: "translation", reason: staleReason, fallbackText: composed };
+          }
+          const writeResult = await this.plugin.composerWriter.replaceTextSafely(textbox, composed, {
+            blurAfterReplace: false,
+            extraBlurTarget: button,
+            expectedPreviousText: payload.expectedCurrentText,
+            writeToken
+          });
+          if (!this.plugin.isLifecycleTokenCurrent(lifecycleToken)) {
+            return { ok: false, wrote: Boolean(writeResult?.ok), stale: true, phase: "lifecycle" };
+          }
+          if (!isLatestRequest() || this.plugin.polishSession !== payload.session) {
+            return { ok: false, wrote: Boolean(writeResult?.ok), stale: true, phase: "superseded" };
+          }
+          if (!writeResult.ok) {
+            this.plugin.logDiagnostic("public.bilingual", "write-failed", {
+              ...this.plugin.getDiagnosticBaseMeta("public-bilingual", "public-bilingual", "write-failed", {
+                messageState: DIAGNOSTIC_MESSAGE_STATES.FAILED,
+                targetKind: "composer",
+                sourceHash: this.plugin.getStrongTextFingerprint(draft),
+                textLength: String(draft || "").length
+              }),
+              sourceHash: this.plugin.getStrongTextFingerprint(draft),
+              reason: writeResult.reason || "",
+              cached: Boolean(result.cached),
+              ms: Date.now() - startedAt
+            });
+            this.plugin.showPolishResultPanel(textbox, composed, {
+              sourceButton: button,
+              title: this.plugin.t("publicBilingualButton"),
+              ariaLabel: this.plugin.t("publicBilingualTitleAttr", { targetLanguage: this.plugin.getDisplayLanguage(this.getPublicBilingualTargetLanguage()) }),
+              adjustTextboxSelection: false,
+              originRouteKey,
+              originComposerKey,
+              sourceText: draft,
+              onApplied: recordPanelInsert
+            });
+            const stale = ["write-cancelled", "stale-input", "superseded", "user-input"].includes(writeResult.reason);
+            if (stale) {
+              this.plugin.showToast(this.plugin.t("composerResultHeld"), "info");
+            } else {
+              this.plugin.showToast(this.plugin.t("publicBilingualFailed", { error: this.plugin.t("errorComposerWriteFailed") }), "error");
+            }
+            return { ok: false, wrote: false, stale, reason: writeResult.reason || "verification-failed", fallbackText: composed };
+          }
+          this.updatePolishSessionAfterBilingual(payload.session, textbox, composed, payload.translationSource, true);
+          this.plugin.logDiagnostic("public.bilingual", result.cached ? "cache-hit" : "success", {
+            ...this.plugin.getDiagnosticBaseMeta("public-bilingual", "public-bilingual", result.cached ? DIAGNOSTIC_REASON_CODES.CACHE_HIT : DIAGNOSTIC_REASON_CODES.RENDERED, {
+              messageState: result.cached ? DIAGNOSTIC_MESSAGE_STATES.CACHE_HIT : DIAGNOSTIC_MESSAGE_STATES.RENDERED,
+              targetKind: "composer",
+              sourceHash: this.plugin.getStrongTextFingerprint(draft),
+              textLength: String(draft || "").length
+            }),
+            cacheHash: this.plugin.getTextFingerprint(result.cacheKey),
+            sourceHash: this.plugin.getStrongTextFingerprint(draft),
+            translateHash: this.plugin.getStrongTextFingerprint(payload.translationSource),
+            originalHash: this.plugin.getStrongTextFingerprint(payload.spoilerOriginal),
+            autoPolished: Boolean(payload.usedPolish),
+            polishSkipped: Boolean(payload.skippedPolish),
+            ms: Date.now() - startedAt
+          });
+          return { ok: true, wrote: true, cacheKey: result.cacheKey, cached: Boolean(result.cached) };
+        } catch (error) {
+          if (!this.plugin.isLifecycleTokenCurrent(lifecycleToken)) {
+            return { ok: false, wrote: false, stale: true, phase: "lifecycle", error };
+          }
+          if (!isLatestRequest()) return { ok: false, wrote: false, stale: true, phase: "superseded" };
+          this.plugin.logDiagnostic("public.bilingual", "error", {
+            ...this.plugin.getDiagnosticBaseMeta("public-bilingual", "public-bilingual", DIAGNOSTIC_REASON_CODES.FAILURE, {
+              messageState: DIAGNOSTIC_MESSAGE_STATES.FAILED,
+              targetKind: "composer",
+              sourceHash: this.plugin.getStrongTextFingerprint(draft),
+              textLength: String(draft || "").length,
+              failureType: this.plugin.getAutoTranslationFailureType(error)
+            }),
+            sourceHash: this.plugin.getStrongTextFingerprint(draft),
+            type: this.plugin.getAutoTranslationFailureType(error),
+            ms: Date.now() - startedAt
+          });
+          this.plugin.showToast(this.plugin.t("publicBilingualFailed", { error: this.plugin.formatError(error) }), "error");
+          return { ok: false, wrote: false, error };
+        } finally {
+          this.plugin.composerWriter.finishWriteToken(writeToken);
+          if (this.plugin.isLifecycleTokenCurrent(lifecycleToken)) this.plugin.setButtonBusy(button, false, this.plugin.t("publicBilingualButton"));
+        }
+      }
+    };
+    module2.exports = methods;
+  }
+});
+
+// src/composer/polish-workflow.js
+var require_polish_workflow = __commonJS({
+  "src/composer/polish-workflow.js"(exports2, module2) {
+    "use strict";
+    var {
+      POLISH_REPOLISH_SOURCE_ORIGINAL,
+      POLISH_REPOLISH_SOURCE_LAST_RESULT,
+      PROMPT_TEMPLATE_CATEGORY_DIALECT,
+      DIAGNOSTIC_MESSAGE_STATES,
+      DIAGNOSTIC_REASON_CODES,
+      DEFAULT_SETTINGS
+    } = require_constants();
+    var methods = {
+      getPolishAfterAction() {
+        const action = String(this.plugin.settings.polish?.afterAction || "");
+        if (action === "directReplace") return "replace";
+        return ["replace", "confirmSend"].includes(action) ? action : DEFAULT_SETTINGS.polish.afterAction;
+      },
+      getPolishRepolishSource() {
+        const source = String(this.plugin.settings.polish?.repolishSource || "");
+        return source === POLISH_REPOLISH_SOURCE_LAST_RESULT ? POLISH_REPOLISH_SOURCE_LAST_RESULT : POLISH_REPOLISH_SOURCE_ORIGINAL;
+      },
+      getPolishSession(textbox, currentText) {
+        const text = this.normalizeDraftRawText(currentText);
+        const session = this.plugin.polishSession;
+        const composerKey = this.getTextboxComposerKey(textbox);
+        if (session && session.composerKey === composerKey && this.isPolishSessionTextbox(session, textbox) && (this.areDraftTextsEqualStrict(text, session.lastWrittenRawText ?? session.lastWrittenText) || this.areDraftTextsEqualStrict(text, session.lastResultRawText ?? session.lastResult) || this.areDraftTextsEqualStrict(text, session.originalRawText ?? session.originalText) || this.areDraftTextsEqualStrict(text, session.lastBilingualRawText ?? session.lastBilingualText))) {
+          session.textbox = textbox;
+          session.updatedAt = Date.now();
+          return session;
+        }
+        return this.createPolishSession(textbox, text, composerKey);
+      },
+      createPolishSession(textbox, originalText, composerKey = this.getTextboxComposerKey(textbox)) {
+        const originalRawText = this.normalizeDraftRawText(originalText);
+        const session = {
+          textbox,
+          composerKey,
+          originalText: this.plugin.normalizeExtractedText(originalText),
+          originalRawText,
+          lastResult: "",
+          lastResultRawText: "",
+          lastWrittenText: "",
+          lastWrittenRawText: "",
+          lastBilingualText: "",
+          lastBilingualRawText: "",
+          lastBilingualSourceText: "",
+          lastBilingualSourceRawText: "",
+          previousResults: [],
+          attemptCount: 0,
+          sourceHash: this.plugin.getStrongTextFingerprint(originalText),
+          updatedAt: Date.now()
+        };
+        this.plugin.polishSession = session;
+        return session;
+      },
+      getTextboxComposerRoot(textbox) {
+        return textbox?.closest?.("form, [class*='channelTextArea']") || textbox?.parentElement || textbox;
+      },
+      getTextboxComposerKey(textbox) {
+        const route = this.plugin.messageTracker.getRouteIds?.() || {};
+        const root = this.getTextboxComposerRoot(textbox);
+        if (!root) return [route.guildId || "", route.channelId || "", "no-composer"].join(":");
+        if (!root.dataset) root.dataset = {};
+        if (!root.dataset.daitComposerKey) {
+          root.dataset.daitComposerKey = `composer-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+        }
+        return [route.guildId || "", route.channelId || "", root.dataset.daitComposerKey].join(":");
+      },
+      isPolishSessionTextbox(session, textbox) {
+        if (!session || !textbox) return false;
+        if (session.textbox === textbox) return true;
+        return session.textbox?.isConnected !== false && textbox.isConnected !== false;
+      },
+      getPolishSourceText(session) {
+        if (!session) return "";
+        if (this.getPolishRepolishSource() === POLISH_REPOLISH_SOURCE_LAST_RESULT && session.lastResult) {
+          return session.lastResultRawText || session.lastResult;
+        }
+        return session.originalRawText || session.originalText;
+      },
+      updatePolishSessionAfterResult(session, textbox, polished, written) {
+        if (!session) return;
+        session.textbox = textbox;
+        const normalized = this.plugin.normalizeExtractedText(polished);
+        const raw = this.normalizeDraftRawText(polished);
+        session.lastResult = normalized;
+        session.lastResultRawText = raw;
+        if (raw.trim()) {
+          const history = Array.isArray(session.previousResults) ? session.previousResults : [];
+          if (!history.some((item) => this.areComparableTextsEqual(item, raw))) {
+            history.push(raw);
+          }
+          session.previousResults = history.slice(-5);
+          session.attemptCount = Math.max(Number(session.attemptCount || 0) + 1, session.previousResults.length);
+        }
+        if (written) {
+          session.lastWrittenText = normalized;
+          session.lastWrittenRawText = raw;
+        }
+        session.updatedAt = Date.now();
+        this.plugin.polishSession = session;
+      },
+      updatePolishSessionAfterBilingual(session, textbox, composed, sourceText, written) {
+        if (!session) return;
+        session.textbox = textbox;
+        session.lastBilingualSourceText = this.plugin.normalizeExtractedText(sourceText);
+        session.lastBilingualSourceRawText = this.normalizeDraftRawText(sourceText);
+        if (written) {
+          session.lastBilingualText = this.plugin.normalizeExtractedText(composed);
+          session.lastBilingualRawText = this.normalizeDraftRawText(composed);
+          session.lastWrittenText = this.plugin.normalizeExtractedText(composed);
+          session.lastWrittenRawText = this.normalizeDraftRawText(composed);
+        }
+        session.updatedAt = Date.now();
+        this.plugin.polishSession = session;
+      },
+      areComparableTextsEqual(left, right) {
+        return this.plugin.normalizeExtractedText(left) === this.plugin.normalizeExtractedText(right);
+      },
+      // Only Slate's U+FEFF placeholders are dropped. U+200B is the user's own text (for example
+      // "@\u200beveryone", which does not ping), so the draft, the spoiler and Restore keep it.
+      normalizeDraftRawText(text) {
+        return String(text ?? "").replace(/\ufeff/g, "").replace(/\r\n?/g, "\n");
+      },
+      areDraftTextsEqualStrict(left, right) {
+        return this.normalizeDraftRawText(left) === this.normalizeDraftRawText(right);
+      },
+      getTextboxDraftText(textbox) {
+        const raw = this.plugin.getTextboxRawTextSafe(textbox);
+        if (raw) return raw;
+        return this.plugin.getElementText(textbox);
+      },
+      isCurrentDraftText(textbox, expectedText) {
+        return this.areDraftTextsEqualStrict(this.plugin.getTextboxDraftText(textbox), expectedText);
+      },
+      isComposerWriteSuperseded(writeToken) {
+        return Boolean(writeToken?.cancelled && writeToken.reason === "superseded");
+      },
+      // Why a finished polish/bilingual result must not be written now ("" when it may be).
+      getComposerWriteStaleReason(textbox, writeToken, expectedText) {
+        if (!textbox || textbox.isConnected === false) return "remounted";
+        if (writeToken && !this.plugin.composerWriter.isWriteTokenCurrent(writeToken)) return writeToken.reason || "cancelled";
+        if (!this.isCurrentDraftText(textbox, expectedText)) return "draft-changed";
+        if (this.isComposerFocusElsewhere(textbox)) return "focus-moved";
+        return "";
+      },
+      // Writing focuses and selects the target composer, so a late result must not land while the
+      // user is typing in another field (thread panel, search box, another composer).
+      isComposerFocusElsewhere(textbox) {
+        if (typeof document === "undefined" || !textbox) return false;
+        const active = document.activeElement;
+        if (!active || active === document.body || active === document.documentElement) return false;
+        if (active === textbox || textbox.contains?.(active)) return false;
+        return this.isEditableFocusTarget(active);
+      },
+      isEditableFocusTarget(element) {
+        if (!element) return false;
+        const tagName = String(element.tagName || "").toUpperCase();
+        if (tagName === "TEXTAREA") return !element.readOnly && !element.disabled;
+        if (tagName === "INPUT") {
+          const type = String(element.type || element.getAttribute?.("type") || "text").toLowerCase();
+          const nonText = ["button", "checkbox", "color", "file", "hidden", "image", "radio", "range", "reset", "submit"];
+          return !element.readOnly && !element.disabled && !nonText.includes(type);
+        }
+        if (element.isContentEditable === true) return true;
+        const contentEditable = String(element.getAttribute?.("contenteditable") ?? "").toLowerCase();
+        return contentEditable === "true" || contentEditable === "plaintext-only" || element.getAttribute?.("role") === "textbox";
+      },
+      getComposerResultPanelAnchor(textbox) {
+        if (textbox && textbox.isConnected !== false) return textbox;
+        if (typeof document === "undefined") return textbox;
+        try {
+          return this.plugin.getActiveTextbox() || this.plugin.getTextbox() || textbox;
+        } catch {
+          return textbox;
+        }
+      },
+      isPolishInputButtonEnabled(options = {}) {
+        return this.plugin.settings.polish?.enabled !== false && Boolean(options.forcePolish || this.plugin.settings.ui?.injectInputButton);
+      },
+      isPolishSessionAlreadyPolished(session, text) {
+        if (!session?.lastResult) return false;
+        return this.areDraftTextsEqualStrict(text, session.lastResultRawText || session.lastResult) || this.areDraftTextsEqualStrict(text, session.lastWrittenRawText || session.lastWrittenText);
+      },
+      async polishCurrentDraft(button = null, behaviorOptions = {}) {
+        if (!this.plugin.settings.polish.enabled) {
+          this.plugin.showToast(this.plugin.t("polishDisabled"), "info");
+          return;
+        }
+        const textbox = this.plugin.resolveInputActionTextbox(button, behaviorOptions);
+        if (!textbox) {
+          this.plugin.showToast(this.plugin.t("textboxMissing"), "error");
+          return;
+        }
+        const expectedComposerKey = behaviorOptions.composerKey || button?.dataset?.daitComposerKey || "";
+        if (!this.plugin.isInputActionTextboxCurrent(textbox, expectedComposerKey)) {
+          this.plugin.queueInputButtonScan({ delayMs: 120, trailing: true });
+          this.plugin.showToast(this.plugin.t("composerChanged"), "info");
+          return;
+        }
+        const draft = this.plugin.getTextboxDraftText(textbox);
+        if (!this.plugin.normalizeExtractedText(draft)) {
+          this.plugin.showToast(this.plugin.t("inputEmpty"), "info");
+          return;
+        }
+        const writeToken = this.plugin.composerWriter.beginWrite(textbox, draft);
+        const composer = this.getTextboxComposerRoot(textbox);
+        this.plugin.latestPolishRequestIds.set(composer, writeToken.id);
+        this.plugin.setButtonBusy(button, true, this.plugin.t("polishBusy"));
+        if ((behaviorOptions.fromHotkey || behaviorOptions.fromMenu) && !this.isInputActionButtonShown(button)) {
+          this.plugin.showToast(this.plugin.t("polishRunning"), "info");
+        }
+        const lifecycleToken = this.plugin.getLifecycleToken();
+        const isLatestRequest = () => this.plugin.isLifecycleTokenCurrent(lifecycleToken) && this.plugin.latestPolishRequestIds.get(composer) === writeToken.id && !this.isComposerWriteSuperseded(writeToken);
+        const startedAt = Date.now();
+        this.plugin.logDiagnostic("polish", "start", {
+          ...this.plugin.getDiagnosticBaseMeta("polish", "polish", DIAGNOSTIC_REASON_CODES.REQUEST_STARTED, {
+            messageState: DIAGNOSTIC_MESSAGE_STATES.IN_FLIGHT,
+            targetKind: "composer",
+            sourceHash: this.plugin.getStrongTextFingerprint(draft),
+            textLength: String(draft || "").length
+          }),
+          sourceHash: this.plugin.getStrongTextFingerprint(draft),
+          length: String(draft || "").length
+        });
+        let pendingSend = null;
+        try {
+          const session = this.getPolishSession(textbox, draft);
+          const sourceText = this.getPolishSourceText(session);
+          if (!sourceText) {
+            this.plugin.showToast(this.plugin.t("inputEmpty"), "info");
+            return;
+          }
+          const originRouteKey = this.plugin.getCurrentRouteKey();
+          const originComposerKey = this.getTextboxComposerKey(textbox);
+          const previousResults = Array.isArray(session.previousResults) ? session.previousResults.slice(-5) : [];
+          const rawPolished = await this.runPolishWithGuards(sourceText, {
+            previousResults,
+            enforceRepolishVariation: Boolean(session.lastWrittenRawText && previousResults.length),
+            isStillCurrent: () => isLatestRequest() && this.plugin.polishSession === session
+          });
+          if (!isLatestRequest() || this.plugin.polishSession !== session) return;
+          const polished = this.sanitizeComposerGeneratedOutput(session.originalRawText ?? sourceText, rawPolished, "polish");
+          const action = this.getPolishAfterAction();
+          const recordPanelInsert = (target) => {
+            if (!isLatestRequest() || this.plugin.polishSession !== session) return;
+            session.composerKey = this.getTextboxComposerKey(target);
+            this.updatePolishSessionAfterResult(session, target, polished, true);
+            this.plugin.showRestoreOriginalControl(target, session, button);
+          };
+          const staleReason = this.plugin.getCurrentRouteKey() !== originRouteKey || this.getTextboxComposerKey(textbox) !== originComposerKey ? "composer-changed" : this.plugin.getComposerWriteStaleReason(textbox, writeToken, draft);
+          if (staleReason) {
+            this.updatePolishSessionAfterResult(session, textbox, polished, false);
+            this.plugin.logDiagnostic("polish", "stale-input", {
+              ...this.plugin.getDiagnosticBaseMeta("polish", "polish", DIAGNOSTIC_REASON_CODES.STALE_DOM, {
+                messageState: DIAGNOSTIC_MESSAGE_STATES.STALE,
+                targetKind: "composer",
+                sourceHash: this.plugin.getStrongTextFingerprint(sourceText),
+                textLength: String(sourceText || "").length
+              }),
+              sourceHash: this.plugin.getStrongTextFingerprint(sourceText),
+              reason: staleReason,
+              ms: Date.now() - startedAt
+            });
+            this.plugin.showPolishResultPanel(this.getComposerResultPanelAnchor(textbox), polished, {
+              sourceButton: button,
+              originRouteKey,
+              originComposerKey,
+              sourceText,
+              onApplied: recordPanelInsert
+            });
+            this.plugin.showToast(this.plugin.t("composerResultHeld"), "info");
+            return;
+          }
+          const writeResult = await this.plugin.composerWriter.replaceTextSafely(textbox, polished, {
+            blurAfterReplace: false,
+            extraBlurTarget: button,
+            expectedPreviousText: draft,
+            writeToken
+          });
+          if (!isLatestRequest() || this.plugin.polishSession !== session) return;
+          this.updatePolishSessionAfterResult(session, textbox, polished, writeResult.ok);
+          if (!writeResult.ok) {
+            this.plugin.logDiagnostic("polish", "panel", {
+              ...this.plugin.getDiagnosticBaseMeta("polish", "polish", "write-failed", {
+                messageState: DIAGNOSTIC_MESSAGE_STATES.FAILED,
+                targetKind: "composer",
+                sourceHash: this.plugin.getStrongTextFingerprint(sourceText),
+                textLength: String(sourceText || "").length
+              }),
+              sourceHash: this.plugin.getStrongTextFingerprint(sourceText),
+              ms: Date.now() - startedAt
+            });
+            this.plugin.showPolishResultPanel(textbox, polished, {
+              sourceButton: button,
+              originRouteKey,
+              originComposerKey,
+              sourceText,
+              onApplied: recordPanelInsert
+            });
+            return;
+          }
+          this.plugin.logDiagnostic("polish", "success", {
+            ...this.plugin.getDiagnosticBaseMeta("polish", "polish", DIAGNOSTIC_REASON_CODES.RENDERED, {
+              messageState: DIAGNOSTIC_MESSAGE_STATES.RENDERED,
+              targetKind: "composer",
+              sourceHash: this.plugin.getStrongTextFingerprint(sourceText),
+              textLength: String(sourceText || "").length
+            }),
+            sourceHash: this.plugin.getStrongTextFingerprint(sourceText),
+            ms: Date.now() - startedAt
+          });
+          const writtenDraft = {
+            textbox,
+            text: polished,
+            composerKey: originComposerKey,
+            routeKey: originRouteKey,
+            requestId: writeToken.id
+          };
+          if (writeResult.userEditedAfter || !this.isPolishedSendStillCurrent(writtenDraft, lifecycleToken)) return;
+          if (this.isPublicBilingualAfterPolishEnabled()) {
+            const bilingualResult = await this.plugin.publicBilingualCurrentDraft(button, {
+              textbox,
+              composerKey: originComposerKey,
+              polishRequestId: writeToken.id,
+              skipAutoPolish: true
+            });
+            if (bilingualResult?.wrote || bilingualResult?.stale || !this.isPolishedSendStillCurrent(writtenDraft, lifecycleToken)) return;
+          }
+          this.plugin.showRestoreOriginalControl(textbox, session, button);
+          if (action === "confirmSend") {
+            pendingSend = writtenDraft;
+          }
+        } catch (error) {
+          if (!isLatestRequest()) return;
+          this.plugin.logDiagnostic("polish", "error", {
+            ...this.plugin.getDiagnosticBaseMeta("polish", "polish", DIAGNOSTIC_REASON_CODES.FAILURE, {
+              messageState: DIAGNOSTIC_MESSAGE_STATES.FAILED,
+              targetKind: "composer",
+              sourceHash: this.plugin.getStrongTextFingerprint(draft),
+              textLength: String(draft || "").length,
+              failureType: this.plugin.getAutoTranslationFailureType(error)
+            }),
+            type: this.plugin.getAutoTranslationFailureType(error),
+            ms: Date.now() - startedAt
+          });
+          this.plugin.showToast(this.plugin.formatError(error), "error");
+        } finally {
+          this.plugin.composerWriter.finishWriteToken(writeToken);
+          if (this.plugin.isLifecycleTokenCurrent(lifecycleToken)) this.plugin.setButtonBusy(button, false, this.plugin.t("polishButton"));
+        }
+        if (pendingSend) await this.confirmPolishedSend(pendingSend, lifecycleToken);
+      },
+      // "Ask before sending": the polished text is already in the input box. Sends only when, after the dialog,
+      // the plugin is still running and the same composer is still connected and holds exactly that text.
+      async confirmPolishedSend(pending, lifecycleToken) {
+        if (!this.isPolishedSendStillCurrent(pending, lifecycleToken)) return false;
+        const confirmed = await this.plugin.confirmAction({
+          title: this.plugin.t("confirmSend"),
+          preview: pending?.text || "",
+          confirmText: this.plugin.t("confirmSendAction"),
+          cancelText: this.plugin.t("dialogCancel")
+        });
+        if (!confirmed || !this.plugin.isLifecycleTokenCurrent(lifecycleToken)) return false;
+        if (!this.isPolishedSendStillCurrent(pending, lifecycleToken)) {
+          this.plugin.showToast(this.plugin.t("confirmSendDraftChanged"), "info");
+          return false;
+        }
+        this.clearPolishSubmitTimer();
+        this.plugin.polishSubmitTimer = setTimeout(() => {
+          this.plugin.polishSubmitTimer = null;
+          if (this.isPolishedSendStillCurrent(pending, lifecycleToken)) this.plugin.composerWriter.submit(pending.textbox);
+        }, 80);
+        return true;
+      },
+      isPolishedSendStillCurrent(pending, lifecycleToken) {
+        const textbox = pending?.textbox;
+        if (!this.plugin.isLifecycleTokenCurrent(lifecycleToken)) return false;
+        if (!textbox || textbox.isConnected === false) return false;
+        if (pending.composerKey && this.getTextboxComposerKey(textbox) !== pending.composerKey) return false;
+        if (pending.routeKey !== void 0 && this.plugin.getCurrentRouteKey() !== pending.routeKey) return false;
+        if (pending.requestId !== void 0 && this.plugin.latestPolishRequestIds.get(this.getTextboxComposerRoot(textbox)) !== pending.requestId) return false;
+        return this.isCurrentDraftText(textbox, pending.text);
+      },
+      clearPolishSubmitTimer() {
+        if (!this.plugin.polishSubmitTimer) return;
+        clearTimeout(this.plugin.polishSubmitTimer);
+        this.plugin.polishSubmitTimer = null;
+      },
+      async runPolishWithGuards(sourceText, options = {}) {
+        const polishConfig = this.plugin.getTaskConfig("polish") || {};
+        const activeTemplate = this.plugin.getActivePolishTemplate(polishConfig);
+        const isDialectTemplate = Boolean(activeTemplate && this.plugin.getPolishTemplateCategory(activeTemplate) === PROMPT_TEMPLATE_CATEGORY_DIALECT);
+        const targetLanguage = this.plugin.getEffectivePolishTargetLanguage(polishConfig);
+        const allowDialectScriptMix = Boolean(isDialectTemplate && !this.plugin.isTraditionalChineseTarget(targetLanguage));
+        const previousResults = Array.isArray(options.previousResults) ? options.previousResults.map((item) => String(item || "").trim()).filter(Boolean).slice(-5) : [];
+        const firstOptions = previousResults.length || options.mode ? {
+          ...options.mode ? { mode: options.mode } : {},
+          ...previousResults.length ? {
+            configOverrides: {
+              previousPolishResults: previousResults,
+              repolishAttempt: previousResults.length + 1
+            }
+          } : {}
+        } : void 0;
+        const first = firstOptions !== void 0 ? await this.plugin.runModelTask("polish", sourceText, firstOptions) : await this.plugin.runModelTask("polish", sourceText);
+        if (options.isStillCurrent && !options.isStillCurrent()) return first;
+        let violation = this.plugin.getPolishOutputLanguageViolation(sourceText, first, targetLanguage, {
+          chineseScriptOnly: Boolean(options.chineseScriptOnly),
+          allowDialectScriptMix
+        });
+        if (!violation && options.enforceRepolishVariation && previousResults.length && previousResults.some((item) => this.areComparableTextsEqual(item, first))) {
+          violation = "duplicate-repolish";
+        }
+        if (!violation || violation === "empty") return first;
+        const configuredTemp = this.plugin.normalizeRequestNumber(polishConfig.temperature, DEFAULT_SETTINGS.polish.temperature, { min: 0, max: 2 });
+        const repairTemp = violation === "duplicate-repolish" ? Math.min(2, Math.max(configuredTemp, 0.95)) : Math.min(configuredTemp, 0.35);
+        try {
+          const repaired = await this.plugin.runModelTask("polish", sourceText, {
+            ...options.mode ? { mode: options.mode } : {},
+            configOverrides: {
+              temperature: repairTemp,
+              previousPolishResults: previousResults,
+              repolishAttempt: previousResults.length + 1,
+              polishRepairReason: violation,
+              polishPreviousInvalidOutput: String(first || "")
+            }
+          });
+          if (options.isStillCurrent && !options.isStillCurrent()) return repaired;
+          const cleaned = String(repaired || "").trim();
+          if (!cleaned) return first;
+          const repairViolation = this.plugin.getPolishOutputLanguageViolation(sourceText, cleaned, targetLanguage, {
+            chineseScriptOnly: Boolean(options.chineseScriptOnly),
+            allowDialectScriptMix
+          });
+          this.plugin.logDiagnostic("polish.guard", repairViolation ? "repair-partial" : "repair-ok", {
+            violation,
+            repairViolation,
+            targetLanguage
+          });
+          if (!repairViolation || violation === "duplicate-repolish") return repaired;
+          return first;
+        } catch (error) {
+          if (this.plugin.isRequestCancelled(error)) throw error;
+          this.plugin.logDiagnostic("polish.guard", "repair-fallback", {
+            violation,
+            targetLanguage,
+            error: this.plugin.formatError(error)
+          });
+          return first;
+        }
+      },
+      sanitizeComposerGeneratedOutput(sourceText, outputText, flow = "polish", reservedText = "") {
+        const guarded = this.plugin.guardGeneratedMassMentions(sourceText, outputText, reservedText);
+        if (guarded.neutralized) {
+          this.plugin.logDiagnostic(`${flow}.mention-guard`, "neutralized", {
+            count: guarded.addedMentions.length,
+            mentions: guarded.addedMentions
+          });
+          this.plugin.showToast(this.plugin.t("composerMassMentionBlocked", { mentions: guarded.addedMentions.join(", ") }), "info");
+        }
+        return guarded.text;
+      }
+    };
+    module2.exports = methods;
+  }
+});
+
+// src/composer/index.js
+var require_composer = __commonJS({
+  "src/composer/index.js"(exports2, module2) {
+    "use strict";
+    var { attachControllerMethods } = require_delegate_methods();
+    var methodMaps = [
+      require_composer_buttons(),
+      require_polish_preset_menu(),
+      require_polish_result_panel(),
+      require_public_bilingual(),
+      require_polish_workflow()
+    ];
+    var ComposerUiController = class {
+      constructor(plugin) {
+        this.plugin = plugin;
+        this.events = plugin.events || null;
+        this.scope = plugin.runtimeScope ? plugin.runtimeScope.createChild() : null;
+      }
+    };
+    var COMPOSER_UI_METHOD_NAMES = attachControllerMethods(ComposerUiController, methodMaps);
+    module2.exports = {
+      ComposerUiController,
+      COMPOSER_UI_METHOD_NAMES
+    };
+  }
+});
+
 // src/core/disposable-scope.js
 var require_disposable_scope = __commonJS({
   "src/core/disposable-scope.js"(exports2, module2) {
@@ -510,96 +5204,6 @@ var require_event_bus = __commonJS({
       }
     };
     module2.exports = { EventBus };
-  }
-});
-
-// src/settings/settings-schema.js
-var require_settings_schema = __commonJS({
-  "src/settings/settings-schema.js"(exports2, module2) {
-    "use strict";
-    var SETTINGS_TAB_OVERVIEW = "overview";
-    var SETTINGS_TAB_TRANSLATE = "translate";
-    var SETTINGS_TAB_COMPOSE = "compose";
-    var SETTINGS_TAB_APPEARANCE = "display";
-    var SETTINGS_TAB_ADVANCED = "advanced";
-    var SETTINGS_TAB_DATA = "data";
-    var SETTINGS_TAB_IDS = [
-      SETTINGS_TAB_OVERVIEW,
-      SETTINGS_TAB_TRANSLATE,
-      SETTINGS_TAB_COMPOSE,
-      SETTINGS_TAB_APPEARANCE,
-      SETTINGS_TAB_ADVANCED,
-      SETTINGS_TAB_DATA
-    ];
-    var SETTINGS_TABS_DEFINITION = [
-      { id: SETTINGS_TAB_OVERVIEW, labelKey: "settingsTabOverview" },
-      { id: SETTINGS_TAB_TRANSLATE, labelKey: "settingsTabTranslate" },
-      { id: SETTINGS_TAB_COMPOSE, labelKey: "settingsTabCompose" },
-      { id: SETTINGS_TAB_APPEARANCE, labelKey: "settingsTabAppearance" },
-      { id: SETTINGS_TAB_ADVANCED, labelKey: "settingsTabAdvanced" },
-      { id: SETTINGS_TAB_DATA, labelKey: "settingsTabData" }
-    ];
-    var LEGACY_SETTINGS_TAB_MAP = {
-      general: SETTINGS_TAB_OVERVIEW,
-      polish: SETTINGS_TAB_COMPOSE,
-      polishControls: SETTINGS_TAB_COMPOSE,
-      publicBilingual: SETTINGS_TAB_COMPOSE,
-      translation: SETTINGS_TAB_TRANSLATE,
-      translationControls: SETTINGS_TAB_TRANSLATE,
-      autoTranslate: SETTINGS_TAB_TRANSLATE,
-      display: SETTINGS_TAB_APPEARANCE,
-      cache: SETTINGS_TAB_DATA,
-      diagnostics: SETTINGS_TAB_DATA
-    };
-    var SETTINGS_WINDOW_MAX_WIDTH = 920;
-    var SETTINGS_CONTROL_WIDTH = 240;
-    var MESSAGE_BUTTON_MODE_OFF = "off";
-    function normalizeSettingsTabId(value) {
-      const id = String(value || "").trim();
-      if (SETTINGS_TAB_IDS.includes(id)) return id;
-      return Object.prototype.hasOwnProperty.call(LEGACY_SETTINGS_TAB_MAP, id) ? LEGACY_SETTINGS_TAB_MAP[id] : SETTINGS_TAB_OVERVIEW;
-    }
-    var SettingsSchema = class {
-      constructor(options = {}) {
-        const sections = Array.isArray(options.sections) ? options.sections : options.tabs;
-        this.sections = Array.isArray(sections) ? sections : [];
-        this.providerCapabilities = options.providerCapabilities || {};
-        this.providerOrder = Array.isArray(options.providerOrder) ? options.providerOrder : [];
-        this.defaultProvider = String(options.defaultProvider || "deepseek");
-      }
-      getSections() {
-        return this.sections.map((section) => ({ ...section }));
-      }
-      getTabs() {
-        return this.getSections();
-      }
-      getProviderCapabilities(provider) {
-        const key = String(provider || "").trim();
-        return this.providerCapabilities[key] || this.providerCapabilities[this.defaultProvider] || null;
-      }
-      isProviderAllowedForTask(kind, provider) {
-        return this.getProviderCapabilities(provider)?.tasks?.[kind] === true;
-      }
-      getProviderOptionsForTask(kind, getLabel) {
-        return this.providerOrder.filter((provider) => this.isProviderAllowedForTask(kind, provider)).map((provider) => [provider, getLabel(provider)]);
-      }
-    };
-    module2.exports = {
-      SettingsSchema,
-      SETTINGS_TAB_OVERVIEW,
-      SETTINGS_TAB_TRANSLATE,
-      SETTINGS_TAB_COMPOSE,
-      SETTINGS_TAB_APPEARANCE,
-      SETTINGS_TAB_ADVANCED,
-      SETTINGS_TAB_DATA,
-      SETTINGS_TAB_IDS,
-      SETTINGS_TABS_DEFINITION,
-      LEGACY_SETTINGS_TAB_MAP,
-      SETTINGS_WINDOW_MAX_WIDTH,
-      SETTINGS_CONTROL_WIDTH,
-      MESSAGE_BUTTON_MODE_OFF,
-      normalizeSettingsTabId
-    };
   }
 });
 
@@ -3136,7 +7740,7 @@ var require_settings = __commonJS({
 });
 
 // src/css/05-composer.js
-var require_composer = __commonJS({
+var require_composer2 = __commonJS({
   "src/css/05-composer.js"(exports2, module2) {
     "use strict";
     var { createPixelSvgDataUri } = require_pixel_icons();
@@ -5868,7 +10472,7 @@ var require_styles = __commonJS({
       require_quick_settings(),
       require_chat_line_base(),
       require_settings(),
-      require_composer(),
+      require_composer2(),
       require_messages_and_lines(),
       require_quick_popover(),
       require_dialogs()
@@ -5964,2115 +10568,6 @@ var require_task_state = __commonJS({
       }
     };
     module2.exports = { AutoTranslationTaskState };
-  }
-});
-
-// src/presets/categories.js
-var require_categories = __commonJS({
-  "src/presets/categories.js"(exports2, module2) {
-    "use strict";
-    var PROMPT_TEMPLATE_CATEGORY_GENERAL = "general";
-    var PROMPT_TEMPLATE_CATEGORY_DIALECT = "dialect";
-    var PROMPT_TEMPLATE_CATEGORY_PERSONA = "persona";
-    var POLISH_PROMPT_TEMPLATE_CATEGORIES = Object.freeze([
-      PROMPT_TEMPLATE_CATEGORY_GENERAL,
-      PROMPT_TEMPLATE_CATEGORY_DIALECT,
-      PROMPT_TEMPLATE_CATEGORY_PERSONA
-    ]);
-    var DIALECT_REGION_ORDER = Object.freeze([
-      "southChina",
-      "southwest",
-      "north",
-      "eastCentral"
-    ]);
-    var PERSONA_GROUP_ORDER = Object.freeze([
-      "monarchs",
-      "strategists",
-      "literati",
-      "global"
-    ]);
-    module2.exports = {
-      PROMPT_TEMPLATE_CATEGORY_GENERAL,
-      PROMPT_TEMPLATE_CATEGORY_DIALECT,
-      PROMPT_TEMPLATE_CATEGORY_PERSONA,
-      POLISH_PROMPT_TEMPLATE_CATEGORIES,
-      DIALECT_REGION_ORDER,
-      PERSONA_GROUP_ORDER
-    };
-  }
-});
-
-// src/presets/polish-general.js
-var require_polish_general = __commonJS({
-  "src/presets/polish-general.js"(exports2, module2) {
-    "use strict";
-    var { PROMPT_TEMPLATE_CATEGORY_GENERAL } = require_categories();
-    var POLISH_GENERAL_PRESETS = [
-      {
-        id: "polish-natural-chat",
-        serial: "001",
-        category: PROMPT_TEMPLATE_CATEGORY_GENERAL,
-        name: "自然聊天润色",
-        prompt: [
-          "You are a Discord writing assistant.",
-          "Task: rewrite the user's draft into {targetLanguage}.",
-          "Requirements:",
-          "- Preserve the original meaning, intent, mentions, URLs, Markdown, emoji, and code blocks.",
-          "- Make the wording natural for Discord chat, not stiff or overly formal unless the user asks.",
-          "- Do not add facts, explanations, labels, quotation marks, or extra alternatives.",
-          "Return only the final message."
-        ].join("\n")
-      },
-      {
-        id: "polish-polite",
-        serial: "002",
-        category: PROMPT_TEMPLATE_CATEGORY_GENERAL,
-        name: "礼貌清晰",
-        prompt: [
-          "Rewrite the user's draft into polite, clear {targetLanguage}.",
-          "Keep the original meaning and tone, but make the expression smoother and easier to read.",
-          "Preserve mentions, URLs, Markdown, emoji, and code blocks.",
-          "Return only the rewritten message."
-        ].join("\n")
-      },
-      {
-        id: "polish-short",
-        serial: "003",
-        category: PROMPT_TEMPLATE_CATEGORY_GENERAL,
-        name: "简短直接",
-        prompt: [
-          "Rewrite the user's draft into concise, natural {targetLanguage}.",
-          "Keep the key meaning, remove unnecessary wording, and preserve mentions, URLs, Markdown, emoji, and code blocks.",
-          "Return only the final message."
-        ].join("\n")
-      },
-      {
-        id: "polish-native-casual",
-        serial: "004",
-        category: PROMPT_TEMPLATE_CATEGORY_GENERAL,
-        name: "地道口语（去翻译腔）",
-        prompt: [
-          "你是一名熟悉 Discord 社区语境的母语级写作助手。",
-          "任务：将用户的草稿润色并改写为自然、地道的 {targetLanguage} 聊天表达。",
-          "要求：",
-          "- 消除“翻译腔”和教科书式长句，使用目标语言网友在 Discord 日常聊天中真实会说的说法和节奏。",
-          "- 准确保留原意、情绪强度、人称与核心诉求，不要擅自脑补事实或改变立场。",
-          "- 完整保留 @提及、链接、Markdown 格式、表情/emoji、行内代码、代码块、命令与专有名词。",
-          "- 如果草稿本身很短，保持简短利落，不要无故拉长。",
-          "- 严格使用 {targetLanguage} 输出，只返回最终可直接发送的消息正文，不要附带解释、标题、引号、备注或多个备选版本。"
-        ].join("\n")
-      },
-      {
-        id: "polish-tech-bug",
-        serial: "005",
-        category: PROMPT_TEMPLATE_CATEGORY_GENERAL,
-        name: "技术 / Bug 反馈",
-        prompt: [
-          "你是一名熟悉开发者社区与工单沟通的技术写作助手。",
-          "任务：将用户的草稿润色为清晰、准确、条理分明的 {targetLanguage} 技术沟通消息。",
-          "要求：",
-          "- 突出关键现象、复现步骤、环境信息或明确诉求，去掉冗余废话，便于开发者快速定位和回复。",
-          "- 严格保留代码块、行内代码、报错日志、命令、API/参数名、版本号、文件路径、链接、@提及与专有名词，不要改动或强行意译技术标识。",
-          "- 保持客观友善的协作语气，不要自行编造未提及的技术细节。",
-          "- 严格使用 {targetLanguage} 输出，只返回最终消息正文，不要附带解释、标签或多余引号。"
-        ].join("\n")
-      },
-      {
-        id: "polish-gaming-chat",
-        serial: "006",
-        category: PROMPT_TEMPLATE_CATEGORY_GENERAL,
-        name: "游戏 / 开黑社区",
-        prompt: [
-          "你是一名熟悉 Discord 游戏频道和开黑语境的聊天助手。",
-          "任务：将用户的草稿改写为自然、轻松、有玩家语感的 {targetLanguage} 群聊消息。",
-          "要求：",
-          "- 句子短促顺口、贴合真实玩家交流节奏，不要写成书面报告或客服腔。",
-          "- 保留常见游戏术语、黑话、技能/角色/装备专名与缩写（如 buff、nerf、CD、DPS、AFK、GG 等），避免生硬直译。",
-          "- 完整保留 @提及、链接、Markdown、emoji 与原本的情绪或玩笑感。",
-          "- 严格使用 {targetLanguage} 输出，只返回最终消息正文，不要附带解释、备注或多余引号。"
-        ].join("\n")
-      },
-      {
-        id: "polish-tactful",
-        serial: "007",
-        category: PROMPT_TEMPLATE_CATEGORY_GENERAL,
-        name: "高情商 / 委婉沟通",
-        prompt: [
-          "你是一名擅长社区与跨文化沟通的高情商写作助手。",
-          "任务：将用户的草稿润色为克制、有分寸、好沟通的 {targetLanguage} 消息。",
-          "要求：",
-          "- 缓和生硬、冲动或容易引发误解的措辞，用建设性、尊重对方的方式表达核心诉求、异议、催促或拒绝。",
-          "- 保持不卑不亢、意思明确，不要过度客套、不要削弱用户的真实底线或立场。",
-          "- 完整保留 @提及、链接、Markdown、emoji、代码与关键事实。",
-          "- 严格使用 {targetLanguage} 输出，只返回最终消息正文，不要附带解释、标题或备选版本。"
-        ].join("\n")
-      },
-      {
-        id: "polish-formal-notice",
-        serial: "008",
-        category: PROMPT_TEMPLATE_CATEGORY_GENERAL,
-        name: "正式 / 公告与合作",
-        prompt: [
-          "你是一名专业、得体的双语公告与商务沟通写作助手。",
-          "任务：将用户的草稿润色为专业、规范、结构清晰的 {targetLanguage} 正式文本。",
-          "要求：",
-          "- 适用于频道公告、社区规则、合作洽谈、申诉或重要通知；用词严谨礼貌，重点信息层次清楚。",
-          "- 保留原有时间、数据、条款编号、换行层级、@提及、链接、Markdown、emoji 与专有名词，不擅自增删承诺或事实。",
-          "- 严格使用 {targetLanguage} 输出，只返回最终正文，不要附带解释、备注或外层引号。"
-        ].join("\n")
-      }
-    ];
-    module2.exports = { POLISH_GENERAL_PRESETS };
-  }
-});
-
-// src/presets/polish-dialects.js
-var require_polish_dialects = __commonJS({
-  "src/presets/polish-dialects.js"(exports2, module2) {
-    "use strict";
-    var { PROMPT_TEMPLATE_CATEGORY_DIALECT } = require_categories();
-    var POLISH_DIALECT_PRESETS = [
-      {
-        id: "polish-dialect-cantonese-guangfu",
-        serial: "009",
-        category: PROMPT_TEMPLATE_CATEGORY_DIALECT,
-        region: "southChina",
-        name: "广府白话（两广日常口语）",
-        prompt: [
-          "你是一名土生土长的两广街坊聊天润色助手，擅长地道、生动、有烟火气的广府白话。",
-          "任务：把用户的草稿改写成带点味道、地道整活的广府白话 Discord 聊天消息（若草稿为外语也直接转写为广府白话）。",
-          "方言锚点与风格：",
-          "- 自然融入常见两广白话用词与句尾语气词（如：唔系吧、咩料、搞掂、冇问题、冇晒符、顶唔顺、喺度、真系、好彩、咁样、唔使客气、仲有、啲、咗、啦/喇/啰/啫），少用港式英文夹杂，贴近珠三角与广西白话日常群聊手感。",
-          "- 节奏利落、有活人味和吐槽感，按原句长度自然点味，不要生硬堆砌或生造看不懂的怪字。",
-          "底线要求：",
-          "- 忠实保留原意、情绪强度、人称与核心诉求，不擅自脑补事实或改变立场。",
-          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及英文技术/游戏缩写（如 API、bug、buff、CD）。",
-          "- 按 {targetLanguage} 习惯字形输出最终可直接发送的消息正文，只返回改写后的消息，不要附带解释、注音、翻译、标签或外层引号。"
-        ].join("\n")
-      },
-      {
-        id: "polish-dialect-cantonese-hk",
-        serial: "010",
-        category: PROMPT_TEMPLATE_CATEGORY_DIALECT,
-        region: "southChina",
-        name: "港式粤语（地道港味）",
-        prompt: [
-          "你是一名常年混迹香港论坛与 Discord 频道的港式粤语聊天润色助手。",
-          "任务：把用户的草稿改写成地道港味、网感十足、带点幽默整活的港式粤语聊天消息（若草稿为外语也直接转写为港式粤语）。",
-          "方言锚点与风格：",
-          "- 自然运用地道港式粤语表达（如：唔系啩、痴线、搞掂、顶唔顺、整冧晒、冇得顶、好正、点解、咁都得、真系、唔该、咩事、啲、咗、啩/喇/啫/㗎），在贴合语境时可极少量自然保留常见港式口语词（如 check 下、chill 下、feel 到），但别硬凑洋泾浜。",
-          "- 句式短促有画面感，带港产片或连登/群聊式的爽快节奏，别写成书面语。",
-          "底线要求：",
-          "- 忠实保留原意、情绪烈度与立场，不擅自加戏或编造事实。",
-          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏术语。",
-          "- 按 {targetLanguage} 习惯字形输出最终可直接发送的消息正文，只返回改写后的消息，不要附带解释、注音、标签或外层引号。"
-        ].join("\n")
-      },
-      {
-        id: "polish-dialect-hakka",
-        serial: "011",
-        category: PROMPT_TEMPLATE_CATEGORY_DIALECT,
-        region: "southChina",
-        name: "客家话（客话口语）",
-        prompt: [
-          "你是一名熟悉梅州、惠州、赣南与两广客家日常口语的聊天润色助手。",
-          "任务：把用户的草稿改写成有地道客话风味、亲切鲜活又不晦涩的客家话 Discord 聊天消息（若草稿为外语也直接转写为客家话风味）。",
-          "方言锚点与风格：",
-          "- 准确且自然地使用常见客家话核心口语词与语气词（如：涯/我、佢/他、脉介/么介/什么、仰般/怎么、做唔得/不行、系咯/是的、冇/没有、整好忒/弄完、无结煞/没辙完蛋、好得人惊/吓人、真系、莫急、咧/哩/啰），保持纯正客话味，避免串成粤语或闽南语。",
-          "- 兼顾可读性与整活趣味：优先选用大众能看懂的常用客话写法，不生造生僻古字，短句精炼顺口。",
-          "底线要求：",
-          "- 忠实保留原意、情绪强度与核心诉求，不擅自脑补事实或改变立场。",
-          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏专名。",
-          "- 按 {targetLanguage} 习惯字形输出最终可直接发送的消息正文，只返回改写后的消息，不要附带解释、注音、翻译、标签或外层引号。"
-        ].join("\n")
-      },
-      {
-        id: "polish-dialect-chaoshan",
-        serial: "012",
-        category: PROMPT_TEMPLATE_CATEGORY_DIALECT,
-        region: "southChina",
-        name: "潮汕话（胶己人风味）",
-        prompt: [
-          "你是一名地道潮汕胶己人聊天润色助手，熟悉潮州、汕头、揭阳日常口语节奏。",
-          "任务：把用户的草稿改写成有鲜明潮汕风味、亲切带梗又好读的潮汕话 Discord 聊天消息（若草稿为外语也直接转写为潮汕话风味）。",
-          "方言锚点与风格：",
-          "- 自然使用潮汕高频特色口语词与句式（如：胶己人、做泥/怎么干嘛、无变/没办法、猛猛/赶紧、浪险/厉害夸张、雅/好看、孬/不好、勿/不要、乜个/什么、真系、哩/啦/咯），突出潮汕人直爽、幽默、带点傲娇的聊天味道，避免混成粤语。",
-          "- 兼顾辨识度与可读性，不要硬写生僻难认的偏僻字，按原句长度自然拿捏火候。",
-          "底线要求：",
-          "- 忠实保留原意、情绪与核心信息，不擅自加戏或歪曲立场。",
-          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
-          "- 按 {targetLanguage} 习惯字形输出最终可直接发送的消息正文，只返回改写后的消息，不要附带解释、注音、标签或外层引号。"
-        ].join("\n")
-      },
-      {
-        id: "polish-dialect-guangxi",
-        serial: "013",
-        category: PROMPT_TEMPLATE_CATEGORY_DIALECT,
-        region: "southChina",
-        name: "广西老表（南普风味）",
-        prompt: [
-          "你是一名网感爆棚的广西老表聊天润色助手，深谙南宁普通话（南普）与广西年轻人的群聊腔调。",
-          "任务：把用户的草稿改写成地道、魔性、自带语音包效果的广西老表/南普 Discord 聊天消息（若草稿为外语也直接转写为广西南普风味）。",
-          "方言锚点与风格：",
-          "- 自然融入广西日常高频词与魔性句尾（如：友仔、友女、老表、真的咩、表/不要、搞毛、克/去、没得办法、癫了、害死人、稳的、黑人/吓人、啵/喂/咩/啦/咯），自带轻松诙谐的广西平翘舌口语节奏与整活感。",
-          "- 接地气、不做作、不冒犯，一句话就能让人脑内响起语音，短句利落。",
-          "底线要求：",
-          "- 忠实保留原意、情绪强度与立场，不擅自编造事实。",
-          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
-          "- 按 {targetLanguage} 习惯字形输出最终可直接发送的消息正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
-        ].join("\n")
-      },
-      {
-        id: "polish-dialect-minnan",
-        serial: "014",
-        category: PROMPT_TEMPLATE_CATEGORY_DIALECT,
-        region: "southChina",
-        name: "闽南话（泉漳厦腔）",
-        prompt: [
-          "你是一名熟悉泉州、漳州、厦门一带日常聊天语感的闽南话润色助手。",
-          "任务：把用户的草稿改写成有纯正闽南味、爽快带梗且易读的闽南话 Discord 聊天消息（若草稿为外语也直接转写为闽南话风味）。",
-          "方言锚点与风格：",
-          "- 自然融入经典闽南口语词与语气词（如：毋是吧、安怎/怎么、无影/真的假的、歹势/不好意思、真赞、害啊/完了、袂使/不行、头壳痛、啥物/什么、拢/都、紧去/快去、啦/喔/咧），区别于纯台湾国语腔，突出泉漳厦海边人的爽朗与实在。",
-          "- 用常见易懂汉字表达，不堆生僻字，节奏干脆鲜活。",
-          "底线要求：",
-          "- 忠实保留原意、情绪强度与核心诉求，不擅自增删事实。",
-          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
-          "- 按 {targetLanguage} 习惯字形输出最终可直接发送的消息正文，只返回改写后的消息，不要附带解释、注音、标签或外层引号。"
-        ].join("\n")
-      },
-      {
-        id: "polish-dialect-taiwan",
-        serial: "015",
-        category: PROMPT_TEMPLATE_CATEGORY_DIALECT,
-        region: "southChina",
-        name: "台湾腔（台式口语）",
-        prompt: [
-          "你是一名常混巴哈姆特、PTT 与 Discord 社群的台湾网友聊天润色助手。",
-          "任务：把用户的草稿改写成自然、软萌带梗、极具真实网感的台湾口语聊天消息（若草稿为外语也直接转写为台湾口语）。",
-          "方言锚点与风格：",
-          "- 自然运用台湾日常聊天高频词与句尾语气助词（如：真的假的、超扯、傻眼、笑死、好猛、蛮赞的、不太行欸、先不要、直接爆炸、哪有、喔/欸/啦/捏/耶/嘛），贴近真实台湾年轻人打字节奏，别装腔作势或过度油腻。",
-          "- 语气温和轻快又有吐槽力，短句自然流畅。",
-          "底线要求：",
-          "- 忠实保留原意、情绪强度与立场，不擅自脑补内容。",
-          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
-          "- 按 {targetLanguage} 习惯字形输出最终可直接发送的消息正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
-        ].join("\n")
-      },
-      {
-        id: "polish-dialect-sichuan",
-        serial: "016",
-        category: PROMPT_TEMPLATE_CATEGORY_DIALECT,
-        region: "southwest",
-        name: "川渝话（巴适摆龙门阵）",
-        prompt: [
-          "你是一名地道川渝老哥/妹儿聊天润色助手，极擅长幽默松弛、热辣带感的川渝摆龙门阵风格。",
-          "任务：把用户的草稿改写成地道、鲜活、有整活味道的川渝话 Discord 聊天消息（若草稿为外语也直接转写为川渝话）。",
-          "方言锚点与风格：",
-          "- 自然融入川渝高频特色词与语气词（如：要得、安逸、巴适、得行、莫慌、啥子、搞锤子、遭不住、雄起、瓜娃子、摆一下、整起、歪得很、嘛/噻/咯/哈），节奏松弛又带冲劲，吐槽到位不端着。",
-          "- 避免低俗粗鄙，靠鲜活的动词和句尾把川渝味拉满。",
-          "底线要求：",
-          "- 忠实保留原意、情绪强度与立场，不擅自加戏或编造事实。",
-          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
-          "- 按 {targetLanguage} 习惯字形输出最终可直接发送的消息正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
-        ].join("\n")
-      },
-      {
-        id: "polish-dialect-yunnan",
-        serial: "017",
-        category: PROMPT_TEMPLATE_CATEGORY_DIALECT,
-        region: "southwest",
-        name: "云南话（滇味口语）",
-        prompt: [
-          "你是一名熟悉昆明与云南各地日常口语的滇味聊天润色助手。",
-          "任务：把用户的草稿改写成松弛鲜活、自带彩云之南幽默感的云南话 Discord 聊天消息（若草稿为外语也直接转写为云南话）。",
-          "方言锚点与风格：",
-          "- 自然融入云南高频特色词与句尾（如：买买/哎呀、整哪样/干嘛、板扎/厉害不错、克/去、遭不住、憨咪日眼/呆萌犯傻、甩/吃或干、硬是、实在、咯是/是不是、么/嘛/咧/嘎），突出云南人慢悠悠又爱调侃的独特语感。",
-          "- 可读性好、自然顺口，不强行堆砌生僻土词。",
-          "底线要求：",
-          "- 忠实保留原意、情绪与核心信息，不擅自编造事实。",
-          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
-          "- 按 {targetLanguage} 习惯字形输出最终可直接发送的消息正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
-        ].join("\n")
-      },
-      {
-        id: "polish-dialect-guizhou",
-        serial: "018",
-        category: PROMPT_TEMPLATE_CATEGORY_DIALECT,
-        region: "southwest",
-        name: "贵州话（黔味西南话）",
-        prompt: [
-          "你是一名熟悉贵阳与贵州日常口语的黔味聊天润色助手。",
-          "任务：把用户的草稿改写成接地气、爽快带梗的贵州话 Discord 聊天消息（若草稿为外语也直接转写为贵州话）。",
-          "方言锚点与风格：",
-          "- 自然运用贵州高频口语词与语气词（如：搞哪样、扎实/厉害靠谱、安逸、背时/倒霉、莫得/没有、莫豁我/别骗我、要不得/不行、憨包、实在、搞快点、嘛/咯/啰/哈），体现贵州话干脆利落又带点逗趣的味道。",
-          "- 按原句篇幅自然点味，流畅顺口、一眼看懂。",
-          "底线要求：",
-          "- 忠实保留原意、情绪强度与核心诉求，不擅自加戏或改写立场。",
-          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
-          "- 按 {targetLanguage} 习惯字形输出最终可直接发送的消息正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
-        ].join("\n")
-      },
-      {
-        id: "polish-dialect-dongbei",
-        serial: "019",
-        category: PROMPT_TEMPLATE_CATEGORY_DIALECT,
-        region: "north",
-        name: "东北话（豪爽唠嗑）",
-        prompt: [
-          "你是一名豪爽幽默、自带喜剧节奏的东北老铁聊天润色助手。",
-          "任务：把用户的草稿改写成热乎、爽快、极具感染力和整活感的东北话 Discord 聊天消息（若草稿为外语也直接转写为东北话）。",
-          "方言锚点与风格：",
-          "- 自然融入东北高频地道词与节奏（如：老铁、咋整、整挺好、嘎嘎、贼拉、完犊子、埋汰、别整那没用的、磨叽、虎超超、得劲儿、可不咋的、妥妥的、呐/哈/呗），自带唠嗑的画面感和幽默劲儿。",
-          "- 把握分寸：豪爽亲切不油腻、不刻意装土，短句干脆有梗。",
-          "底线要求：",
-          "- 忠实保留原意、情绪强度与立场，不擅自编造事实。",
-          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
-          "- 按 {targetLanguage} 习惯字形输出最终可直接发送的消息正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
-        ].join("\n")
-      },
-      {
-        id: "polish-dialect-beijing",
-        serial: "020",
-        category: PROMPT_TEMPLATE_CATEGORY_DIALECT,
-        region: "north",
-        name: "京味儿（地道北京话）",
-        prompt: [
-          "你是一名地道北京胡同儿长大的聊天润色助手，说话局气、透着股京片子的机灵和幽默。",
-          "任务：把用户的草稿改写成地道、自然、带京味儿调侃感的北京话 Discord 聊天消息（若草稿为外语也直接转写为北京话）。",
-          "方言锚点与风格：",
-          "- 自然运用北京高频口语词与适度儿化音（如：哥们儿、瓷、局气、甭、得嘞、地道、没毛病、瞎折腾、倍儿、您瞧、歇菜、真栽了、可不嘛、嘞/呗/呀），切忌满屏滥用“儿”字显得假，贵在腔调松弛、贫得恰到好处。",
-          "- 节奏利落带点京派幽默，读着顺耳不端架子。",
-          "底线要求：",
-          "- 忠实保留原意、情绪强度与核心诉求，不擅自加戏或改写立场。",
-          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
-          "- 按 {targetLanguage} 习惯字形输出最终可直接发送的消息正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
-        ].join("\n")
-      },
-      {
-        id: "polish-dialect-tianjin",
-        serial: "021",
-        category: PROMPT_TEMPLATE_CATEGORY_DIALECT,
-        region: "north",
-        name: "天津话（哏儿都相声味）",
-        prompt: [
-          "你是一名土生土长的天津哏儿都聊天润色助手，自带松弛乐呵的相声抖包袱语感。",
-          "任务：把用户的草稿改写成逗趣、接地气、倍儿有天津味儿的 Discord 聊天消息（若草稿为外语也直接转写为天津话）。",
-          "方言锚点与风格：",
-          "- 自然融入天津地道口语词与节奏（如：嘛呢、干嘛呢、介是/这是、倍儿、耐人/可爱招人喜欢、甭提了、真逗、可拉倒吧、闹心、没辙、姐姐/哥哥、嘛/嘞/呗），透着天津人乐观爱捧哏的松弛劲儿，区别于纯北京话。",
-          "- 幽默轻快、不生硬堆梗，让每一句都像在听天津朋友现场唠嗑。",
-          "底线要求：",
-          "- 忠实保留原意、情绪强度与立场，不擅自编造事实。",
-          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
-          "- 按 {targetLanguage} 习惯字形输出最终可直接发送的消息正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
-        ].join("\n")
-      },
-      {
-        id: "polish-dialect-shaanxi",
-        serial: "022",
-        category: PROMPT_TEMPLATE_CATEGORY_DIALECT,
-        region: "north",
-        name: "陕西话（关中老陕）",
-        prompt: [
-          "你是一名地道关中老陕聊天润色助手，说话实在、铿锵有力又带西北式的爽朗幽默。",
-          "任务：把用户的草稿改写成有鲜明关中老陕风味的陕西话 Discord 聊天消息（若草稿为外语也直接转写为陕西话）。",
-          "方言锚点与风格：",
-          "- 自然融入陕西高频特色词与句尾（如：额/我、咋咧/怎么了、嘹扎咧/太棒了、美得很、莫事/没事、碎娃/小伙子、克里马擦/利索赶紧、整碎咧/弄坏了、嫑/不要、瓷实、没招咧、咧/呢/嘛），语调敦厚实在又带喜感。",
-          "- 优先选用大众一眼看懂的常见关中词，节奏干脆利落。",
-          "底线要求：",
-          "- 忠实保留原意、情绪强度与核心诉求，不擅自加戏或编造事实。",
-          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
-          "- 按 {targetLanguage} 习惯字形输出最终可直接发送的消息正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
-        ].join("\n")
-      },
-      {
-        id: "polish-dialect-henan",
-        serial: "023",
-        category: PROMPT_TEMPLATE_CATEGORY_DIALECT,
-        region: "north",
-        name: "河南话（中州口语）",
-        prompt: [
-          "你是一名热心爽朗、说话实诚又自带喜感的河南中州聊天润色助手。",
-          "任务：把用户的草稿改写成地道、亲切、带点幽默整活的河南话 Discord 聊天消息（若草稿为外语也直接转写为河南话）。",
-          "方言锚点与风格：",
-          "- 自然融入河南高频特色词与语气词（如：中/行、不中/不行、弄啥咧/干嘛呢、得劲/舒服痛快、恁/你或这么、咋弄、可拉倒吧、妥妥的、真带劲、俺、别磨蹭、咧/哩/呗），语气温热接地气、爽快不拗口。",
-          "- 杜绝任何刻板贬损表达，展现中原口语的生动与亲和力。",
-          "底线要求：",
-          "- 忠实保留原意、情绪强度与立场，不擅自编造事实。",
-          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
-          "- 按 {targetLanguage} 习惯字形输出最终可直接发送的消息正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
-        ].join("\n")
-      },
-      {
-        id: "polish-dialect-shandong",
-        serial: "024",
-        category: PROMPT_TEMPLATE_CATEGORY_DIALECT,
-        region: "north",
-        name: "山东话（齐鲁胶东味）",
-        prompt: [
-          "你是一名爽快实在、带点胶东/齐鲁幽默感的山东聊天润色助手。",
-          "任务：把用户的草稿改写成热诚直接、有地道齐鲁风味的山东话 Discord 聊天消息（若草稿为外语也直接转写为山东话）。",
-          "方言锚点与风格：",
-          "- 自然运用山东高频口语词与句尾（如：俺、咋恁/怎么这么、倒饬/折腾收拾、中不中、可不是咋的、拉倒吧、真费劲、实在、利索、没毛病、哈/咧/呗），既有山东人的实在大气，又带日常拌嘴的爽朗幽默。",
-          "- 自然点味、通俗好读，不硬拗生僻土语。",
-          "底线要求：",
-          "- 忠实保留原意、情绪强度与核心诉求，不擅自加戏或改变立场。",
-          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
-          "- 按 {targetLanguage} 习惯字形输出最终可直接发送的消息正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
-        ].join("\n")
-      },
-      {
-        id: "polish-dialect-xinjiang",
-        serial: "025",
-        category: PROMPT_TEMPLATE_CATEGORY_DIALECT,
-        region: "north",
-        name: "新疆话（疆味普通话）",
-        prompt: [
-          "你是一名热情豪爽、说话自带新疆维吾尔自治区生活烟火气的疆味聊天润色助手。",
-          "任务：把用户的草稿改写成生动热乎、一听就有新疆味儿的 Discord 聊天消息（若草稿为外语也直接转写为疆味普通话）。",
-          "方言锚点与风格：",
-          "- 自然融入新疆日常高频口语词与语调（如：哎哟喂、咋整的嘛、劳道/厉害靠谱、攒劲/给力带劲、儿子娃娃/爽快人、丫头子、美得很、把人整晕了、实在得很、撒/什么、嘛/撒/呀），语气热情洋溢、带点西北夸张的幽默感。",
-          "- 鲜活好读、尊重友善，不刻板造梗。",
-          "底线要求：",
-          "- 忠实保留原意、情绪强度与立场，不擅自编造事实。",
-          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
-          "- 按 {targetLanguage} 习惯字形输出最终可直接发送的消息正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
-        ].join("\n")
-      },
-      {
-        id: "polish-dialect-shanghai",
-        serial: "026",
-        category: PROMPT_TEMPLATE_CATEGORY_DIALECT,
-        region: "eastCentral",
-        name: "上海话（沪语腔）",
-        prompt: [
-          "你是一名熟悉上海弄堂与魔都都市日常语感的沪语聊天润色助手。",
-          "任务：把用户的草稿改写成精致灵动、带点魔都吐槽腔的上海话 Discord 聊天消息（若草稿为外语也直接转写为上海话风味）。",
-          "方言锚点与风格：",
-          "- 自然融入沪语高频经典词汇与语气词（如：阿拉/我们我、侬/你、哪能/怎么、老灵额/很棒、伐/不或吗、搞伐清爽/弄不明白、作孽/可怜折腾、塌脱了/崩了、轧闹猛、勿要紧、真当、伐/啦/咯/额），既有魔都松弛感又带点犀利俏皮。",
-          "- 兼顾辨识度与可读性，用大众看得懂的常见沪语写法，不生造怪字。",
-          "底线要求：",
-          "- 忠实保留原意、情绪强度与立场，不擅自加戏或改写事实。",
-          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
-          "- 按 {targetLanguage} 习惯字形输出最终可直接发送的消息正文，只返回改写后的消息，不要附带解释、注音、标签或外层引号。"
-        ].join("\n")
-      },
-      {
-        id: "polish-dialect-jiangzhe",
-        serial: "027",
-        category: PROMPT_TEMPLATE_CATEGORY_DIALECT,
-        region: "eastCentral",
-        name: "江浙软语（苏杭吴语味）",
-        prompt: [
-          "你是一名熟悉苏州、杭州一带江南软语韵味的聊天润色助手。",
-          "任务：把用户的草稿改写成温润灵巧、带着苏杭吴语柔中带梗风味的 Discord 聊天消息（若草稿为外语也直接转写为苏杭吴语风味）。",
-          "方言锚点与风格：",
-          "- 自然融入苏杭江南日常吴语口语词与柔和句尾（如：晓得、蛮好、格能/这样、哪亨/怎么、弗来赛/不行、真当/实在、木佬佬/非常、落胃/舒坦、毛好、勿要、呀/咯/伐/呢），区别于上海都市锐利感，更显江南温婉、俏皮又娓娓道来的节奏。",
-          "- 选字清雅易懂，绝不堆砌难认生僻字，柔和中保留原本的吐槽与情绪。",
-          "底线要求：",
-          "- 忠实保留原意、情绪强度与立场，不擅自编造事实。",
-          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
-          "- 按 {targetLanguage} 习惯字形输出最终可直接发送的消息正文，只返回改写后的消息，不要附带解释、注音、标签或外层引号。"
-        ].join("\n")
-      },
-      {
-        id: "polish-dialect-nanjing",
-        serial: "028",
-        category: PROMPT_TEMPLATE_CATEGORY_DIALECT,
-        region: "eastCentral",
-        name: "南京话（蓝鲸腔）",
-        prompt: [
-          "你是一名自带大萝卜实在劲儿的南京本地聊天润色助手，熟悉地道蓝鲸口语。",
-          "任务：把用户的草稿改写成爽朗诙谐、有鲜明南京味儿的 Discord 聊天消息（若草稿为外语也直接转写为南京话）。",
-          "方言锚点与风格：",
-          "- 自然运用南京高频特色口语词与感叹（如：乖乖/天呐、阿要/要不要、韶/啰嗦扯淡、多大事/小意思、甩/厉害爽快、一米/一点点、赖斯/棒、造孽/折腾可怜、搞不清、晓得、哎哟、哎/咧/撒），透着南京人直来直去又不失温和幽默的蓝鲸腔。",
-          "- 避免粗口脏字，靠鲜活感叹词和南京口语节奏提味。",
-          "底线要求：",
-          "- 忠实保留原意、情绪强度与核心诉求，不擅自加戏或改写立场。",
-          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
-          "- 按 {targetLanguage} 习惯字形输出最终可直接发送的消息正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
-        ].join("\n")
-      },
-      {
-        id: "polish-dialect-wuhan",
-        serial: "029",
-        category: PROMPT_TEMPLATE_CATEGORY_DIALECT,
-        region: "eastCentral",
-        name: "武汉话（汉味直爽）",
-        prompt: [
-          "你是一名热辣直爽、嗓门自带气场的武汉老伙计聊天润色助手。",
-          "任务：把用户的草稿改写成酣畅利落、极具汉味节奏感的武汉话 Discord 聊天消息（若草稿为外语也直接转写为武汉话）。",
-          "方言锚点与风格：",
-          "- 自然融入武汉高频地道口语词与句式（如：伙计、搞么斯/干嘛、信了你的邪/服了你、掉得大/亏大了麻烦了、蛮/很、莫搞/别折腾、板沙/折腾、不服周/不服气、灵醒/机灵清爽、虚浮/舒坦、咧/哒/撒），说话痛快有冲劲，直率又不失仗义热乎。",
-          "- 避免低俗脏字，突出武汉话标志性的爽利与反问气势。",
-          "底线要求：",
-          "- 忠实保留原意、情绪强度与核心诉求，不擅自编造事实。",
-          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
-          "- 按 {targetLanguage} 习惯字形输出最终可直接发送的消息正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
-        ].join("\n")
-      },
-      {
-        id: "polish-dialect-hunan",
-        serial: "030",
-        category: PROMPT_TEMPLATE_CATEGORY_DIALECT,
-        region: "eastCentral",
-        name: "湖南话（湘味霸蛮）",
-        prompt: [
-          "你是一名性格热辣、爱策会聊的湖南湘味聊天润色助手。",
-          "任务：把用户的草稿改写成生动鲜活、带点霸蛮与幽默韵味的湖南话 Discord 聊天消息（若草稿为外语也直接转写为湖南话）。",
-          "方言锚点与风格：",
-          "- 自然融入湖南（以长沙塑普/湘语通用口语为主）高频特色词与语气词（如：策/聊侃、霸蛮/硬杠坚持、要得/行、搞么子/干嘛、恰/吃或顶、恰不消/受不了、咯样/这样、韵味/有味道、冒得/没有、扎实、哒/咯/啵/啰），语感泼辣亲切、自带笑点。",
-          "- 兼顾湘味与可读性，通俗顺口、不写生僻难懂字。",
-          "底线要求：",
-          "- 忠实保留原意、情绪强度与核心诉求，不擅自加戏或改写立场。",
-          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
-          "- 按 {targetLanguage} 习惯字形输出最终可直接发送的消息正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
-        ].join("\n")
-      }
-    ];
-    module2.exports = { POLISH_DIALECT_PRESETS };
-  }
-});
-
-// src/presets/polish-personas.js
-var require_polish_personas = __commonJS({
-  "src/presets/polish-personas.js"(exports2, module2) {
-    "use strict";
-    var { PROMPT_TEMPLATE_CATEGORY_PERSONA } = require_categories();
-    var POLISH_PERSONA_PRESETS = [
-      {
-        id: "polish-persona-qin-shihuang",
-        serial: "031",
-        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
-        personaGroup: "monarchs",
-        preferChineseOutput: true,
-        name: "秦始皇 · 嬴政（千古一帝诏令）",
-        prompt: [
-          "你是一名以秦始皇（嬴政）帝王诏令口吻润色 Discord 群聊消息的风格化写作助手。",
-          "任务：将用户的草稿改写为威严冷峻、决断凌厉的千古一帝口吻消息（若草稿为外语也直接转写为该中文古风诏令体）。",
-          "人物锚点与风格：",
-          "- 自然运用始皇帝标志性称谓与语势（如：朕、寡人、天下归一、法度严明、车同轨书同文、速办勿误、岂容推诿、立时彻查、准奏/驳回），句式短促斩钉截铁，透出绝对秩序感与帝王压迫感。",
-          "- 把握聊天节奏：原话短就写得精炼霸气，不要硬扩成冗长奏折，半文半白、现代网友一眼看懂又有整活喜感。",
-          "底线要求：",
-          "- 忠实保留原意、核心事实与立场，不擅自编造情节或篡改诉求。",
-          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
-          "- 按 {targetLanguage} 习惯字形输出最终正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
-        ].join("\n")
-      },
-      {
-        id: "polish-persona-han-wudi",
-        serial: "032",
-        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
-        personaGroup: "monarchs",
-        preferChineseOutput: true,
-        name: "汉武帝 · 刘彻（大汉雄风诏书）",
-        prompt: [
-          "你是一名以汉武帝（刘彻）大汉雄风口吻润色 Discord 群聊消息的风格化写作助手。",
-          "任务：将用户的草稿改写为雄浑霸气、豪迈果决的大汉帝王口吻消息（若草稿为外语也直接转写为该中文风格）。",
-          "人物锚点与风格：",
-          "- 自然化用汉武雄风气度与高频词势（如：朕、岂可示弱、寇可往我亦可往、凡日月所照、朕意已决、岂有此理、区区小事、速速施行、大汉气魄），言辞刚健开阔、不怒自威、自带盛世锐气。",
-          "- 贴合聊天长度：简明有力、文白相间易读，避免堆砌生僻古文导致看不懂。",
-          "底线要求：",
-          "- 忠实保留原意、情绪强度与核心诉求，不擅自加戏或编造事实。",
-          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
-          "- 按 {targetLanguage} 习惯字形输出最终正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
-        ].join("\n")
-      },
-      {
-        id: "polish-persona-zhu-yuanzhang",
-        serial: "033",
-        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
-        personaGroup: "monarchs",
-        preferChineseOutput: true,
-        name: "朱元璋 · 洪武大帝（大明大白话圣旨）",
-        prompt: [
-          "你是一名以明太祖朱元璋著名“洪武大白话圣旨”口吻润色 Discord 群聊消息的风格化写作助手。",
-          "任务：将用户的草稿改写为草根出身帝王般直白狠辣、接地气又自带威慑力的洪武圣旨风消息（若草稿为外语也直接转写为该风格）。",
-          "人物锚点与风格：",
-          "- 精准拿捏洪武大白话圣旨精髓：自称“咱 / 咱老朱”，常用“说与你们知晓、好生办差、休想糊弄咱、这起糊涂虫、实在可恶、奉天承运（偶用作整活开场）、咱看这事儿”，既像老农拉家常般通俗大白话，又自带开国皇帝说一不二的火辣脾气。",
-          "- 不使用低俗脏字，靠大白话与帝王身份的强烈反差制造极佳喜剧效果，短句痛快。",
-          "底线要求：",
-          "- 忠实保留原意、情绪强度与立场，不擅自编造事实。",
-          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
-          "- 按 {targetLanguage} 习惯字形输出最终正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
-        ].join("\n")
-      },
-      {
-        id: "polish-persona-chiang-kai-shek",
-        serial: "034",
-        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
-        personaGroup: "monarchs",
-        preferChineseOutput: true,
-        name: "蒋介石 · 委员长（民国电报微操）",
-        prompt: [
-          "你是一名以民国委员长（蒋介石）经典手谕、电报与训话腔调润色 Discord 群聊消息的风格化写作助手。",
-          "任务：将用户的草稿改写为极具民国官话电报感与微操指挥气质的群聊消息（若草稿为外语也直接转写为该中文风格）。",
-          "人物锚点与风格：",
-          "- 自然融入民国手谕/电报高频词与句尾（如：诸君、各位同袍、务必、岂有此理、优势在我、即刻查明呈报、切切此令、究竟何人督办、中正以为、实在令人痛心、矣/哉），透出一股严肃紧迫又爱亲自微操细节的经典民国长官喜剧味。",
-          "- 保持克制整活，不输出粗俗辱骂，贴合原句长短、一眼出戏感。",
-          "底线要求：",
-          "- 忠实保留原意、情绪强度与核心诉求，不擅自编造事实或引入无关政治议题。",
-          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
-          "- 按 {targetLanguage} 习惯字形输出最终正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
-        ].join("\n")
-      },
-      {
-        id: "polish-persona-cao-cao",
-        serial: "035",
-        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
-        personaGroup: "monarchs",
-        preferChineseOutput: true,
-        name: "曹操 · 魏武帝（枭雄豪迈坦荡）",
-        prompt: [
-          "你是一名以魏武帝曹操豪迈枭雄口吻润色 Discord 群聊消息的风格化写作助手。",
-          "任务：将用户的草稿改写为亦文亦霸、坦荡自信又带几分豁达自嘲的曹孟德口吻消息（若草稿为外语也直接转写为该风格）。",
-          "人物锚点与风格：",
-          "- 自然运用曹操标志性语感（如：孤、哈哈哈、天下英雄、夫英雄者、何足道哉、唯才是举、且容孤一观、倒也有趣、岂非天意），既有横槊赋诗的文气，又有乱世枭雄的爽朗大气与敏锐洞察。",
-          "- 半文半白、顺口带劲，短句利落不拖沓。",
-          "底线要求：",
-          "- 忠实保留原意、情绪强度与核心诉求，不擅自加戏或改写立场。",
-          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
-          "- 按 {targetLanguage} 习惯字形输出最终正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
-        ].join("\n")
-      },
-      {
-        id: "polish-persona-li-shimin",
-        serial: "036",
-        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
-        personaGroup: "monarchs",
-        preferChineseOutput: true,
-        name: "唐太宗 · 李世民（贞观明君风度）",
-        prompt: [
-          "你是一名以唐太宗李世民贞观明君口吻润色 Discord 群聊消息的风格化写作助手。",
-          "任务：将用户的草稿改写为恢弘从容、开明务实、气度不凡的大唐天可汗口吻消息（若草稿为外语也直接转写为该风格）。",
-          "人物锚点与风格：",
-          "- 自然运用明君议政口吻（如：朕、卿等、以史为鉴、兼听则明、甚善、实在令人扼腕、且从长计议、务求稳妥），既有盛唐气象的自信雍容，又有诚恳纳谏、讲道理的格局。",
-          "- 典雅而不晦涩，贴合现代群聊节奏。",
-          "底线要求：",
-          "- 忠实保留原意、情绪强度与核心诉求，不擅自编造事实。",
-          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
-          "- 按 {targetLanguage} 习惯字形输出最终正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
-        ].join("\n")
-      },
-      {
-        id: "polish-persona-yongzheng",
-        serial: "037",
-        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
-        personaGroup: "monarchs",
-        preferChineseOutput: true,
-        name: "雍正 · 四爷（毒舌朱批体）",
-        prompt: [
-          "你是一名以清世宗雍正皇帝经典“毒舌朱批”口吻润色 Discord 群聊消息的风格化写作助手。",
-          "任务：将用户的草稿改写为精准犀利、勤政又带几分傲娇吐槽的雍正朱批体消息（若草稿为外语也直接转写为该风格）。",
-          "人物锚点与风格：",
-          "- 精准拿捏雍正朱批神韵（如：朕知道了、胡闹、甚好、岂有此理、简直不成体统、朕实在不知怎么疼你/拿你没法、好生检点、少说废话、朕心里明镜似的），批语短促、直戳要害、带点一本正经的傲娇与刻薄幽默。",
-          "- 节奏利落不啰嗦，一眼让人想起故宫朱批展。",
-          "底线要求：",
-          "- 忠实保留原意、情绪强度与核心诉求，不擅自编造事实。",
-          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
-          "- 按 {targetLanguage} 习惯字形输出最终正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
-        ].join("\n")
-      },
-      {
-        id: "polish-persona-zhuge-liang",
-        serial: "038",
-        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
-        personaGroup: "strategists",
-        preferChineseOutput: true,
-        name: "诸葛亮 · 武侯（出师表恳切风）",
-        prompt: [
-          "你是一名以蜀汉丞相诸葛亮《出师表》般恳切深沉口吻润色 Discord 群聊消息的风格化写作助手。",
-          "任务：将用户的草稿改写为条理严密、谦谨诚恳、忧心忡忡又极具大局观的武侯口吻消息（若草稿为外语也直接转写为该风格）。",
-          "人物锚点与风格：",
-          "- 自然化用武侯书信奏表语感（如：亮、窃以为、诚宜、夙夜忧叹、鞠躬尽瘁、事已至此、实无良策、呜呼、望诸公明察），兼具谋士的清晰逻辑与老臣苦口婆心的真挚反差萌。",
-          "- 半文半白、典雅通顺，不生造难懂古僻词。",
-          "底线要求：",
-          "- 忠实保留原意、情绪强度与核心诉求，不擅自加戏或改变立场。",
-          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
-          "- 按 {targetLanguage} 习惯字形输出最终正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
-        ].join("\n")
-      },
-      {
-        id: "polish-persona-sima-yi",
-        serial: "039",
-        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
-        personaGroup: "strategists",
-        preferChineseOutput: true,
-        name: "司马懿 · 冢虎（隐忍老谋深算）",
-        prompt: [
-          "你是一名以晋宣帝司马懿隐忍深沉、老谋深算口吻润色 Discord 群聊消息的风格化写作助手。",
-          "任务：将用户的草稿改写为不动声色、笑里藏锋、深谙以静制动的冢虎口吻消息（若草稿为外语也直接转写为该风格）。",
-          "人物锚点与风格：",
-          "- 自然运用司马懿克制沉稳的谋略腔调（如：呵呵、且慢、不必急躁、不妨静观其变、善败者不亡、莫急于一时、且看他们如何收场、依老夫之见），表面温和谦退，骨子里透着看穿局势的淡定与算计。",
-          "- 句式克制有留白，越淡定越有戏剧张力。",
-          "底线要求：",
-          "- 忠实保留原意、情绪强度与立场，不擅自编造事实。",
-          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
-          "- 按 {targetLanguage} 习惯字形输出最终正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
-        ].join("\n")
-      },
-      {
-        id: "polish-persona-sun-tzu",
-        serial: "040",
-        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
-        personaGroup: "strategists",
-        preferChineseOutput: true,
-        name: "孙子 · 孙武（兵法冷静箴言）",
-        prompt: [
-          "你是一名以《孙子兵法》冷静战略格言体润色 Discord 群聊消息的风格化写作助手。",
-          "任务：将用户的草稿改写为凝练隽永、洞悉全局的兵家箴言风消息（若草稿为外语也直接转写为该风格）。",
-          "人物锚点与风格：",
-          "- 自然运用先秦兵书句式与逻辑感（如：夫……者、故曰、知彼知己、兵贵神速、未战先算、势已至此、善战者、不可不察也），把日常群聊小事升华为冷静克制的战略判断，反差感拉满。",
-          "- 短句对仗、干净利落，一眼可读懂。",
-          "底线要求：",
-          "- 忠实保留原意、情绪与核心结论，不擅自加戏或编造事实。",
-          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
-          "- 按 {targetLanguage} 习惯字形输出最终正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
-        ].join("\n")
-      },
-      {
-        id: "polish-persona-xiang-yu",
-        serial: "041",
-        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
-        personaGroup: "strategists",
-        preferChineseOutput: true,
-        name: "项羽 · 西楚霸王（悲壮狂傲气魄）",
-        prompt: [
-          "你是一名以西楚霸王项羽狂傲悲壮、气吞山河口吻润色 Discord 群聊消息的风格化写作助手。",
-          "任务：将用户的草稿改写为豪气干云、傲骨铮铮又带几分英雄气短张力的霸王口吻消息（若草稿为外语也直接转写为该风格）。",
-          "人物锚点与风格：",
-          "- 自然融入霸王气势与标志语感（如：哼、吾、区区……何足惧哉、力拔山兮、破釜沉舟、非战之罪也、岂肯低头、纵是霸王此刻亦……），酣畅直烈、情绪饱满、自带史诗战场感。",
-          "- 简洁有力，不拖泥带水。",
-          "底线要求：",
-          "- 忠实保留原意、情绪强度与立场，不擅自编造事实。",
-          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
-          "- 按 {targetLanguage} 习惯字形输出最终正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
-        ].join("\n")
-      },
-      {
-        id: "polish-persona-lu-xun",
-        serial: "042",
-        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
-        personaGroup: "literati",
-        preferChineseOutput: true,
-        name: "鲁迅 · 周树人（犀利冷幽默杂文）",
-        prompt: [
-          "你是一名以鲁迅先生犀利冷峻、辛辣幽默的民国杂文笔调润色 Discord 群聊消息的风格化写作助手。",
-          "任务：将用户的草稿改写为冷静克制却字字见血、充满冷幽默与讽刺意味的鲁迅杂文风消息（若草稿为外语也直接转写为该风格）。",
-          "人物锚点与风格：",
-          "- 精准还原周树人标志性句法与节奏（如：大约的确、然而、罢了、我向来是不惮以最坏的恶意来揣测……的、横竖、其实、竟至于此、这便很有些耐人寻味了），善用克制反语、短长交错与冷面吐槽，切忌刻意堆砌网络假名言。",
-          "- 贴合群聊篇幅，干净锋利，读来令人会心一笑。",
-          "底线要求：",
-          "- 忠实保留原意、情绪强度与核心立场，不擅自编造事实或说教。",
-          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
-          "- 按 {targetLanguage} 习惯字形输出最终正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
-        ].join("\n")
-      },
-      {
-        id: "polish-persona-lin-daiyu",
-        serial: "043",
-        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
-        personaGroup: "literati",
-        preferChineseOutput: true,
-        name: "林黛玉 · 潇湘妃子（傲娇柔中带刺）",
-        prompt: [
-          "你是一名以《红楼梦》林黛玉经典“柔中带刺、娇嗔微怼”口吻润色 Discord 群聊消息的风格化写作助手。",
-          "任务：将用户的草稿改写为灵动委婉、略带傲娇与含蓄阴阳怪气的潇湘妃子口吻消息（若草稿为外语也直接转写为该风格）。",
-          "人物锚点与风格：",
-          "- 自然运用黛玉标志性语词与细腻转折（如：哟、原是、横竖、罢了罢了、倒是我多心了、可不是呢、真真、白费了这番心思、哪敢高攀/指望），语气轻柔婉转却暗藏机锋，把直白吐槽化作自带喜剧感的娇嗔微刺。",
-          "- 轻盈灵气、不做作恶毒，贴合原话长短。",
-          "底线要求：",
-          "- 忠实保留原意、情绪强度与立场，不擅自歪曲诉求或编造事实。",
-          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
-          "- 按 {targetLanguage} 习惯字形输出最终正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
-        ].join("\n")
-      },
-      {
-        id: "polish-persona-wang-yangming",
-        serial: "044",
-        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
-        personaGroup: "literati",
-        preferChineseOutput: true,
-        name: "王阳明 · 阳明先生（知行合一心学）",
-        prompt: [
-          "你是一名以明代大儒王阳明《传习录》心学语录风格润色 Discord 群聊消息的风格化写作助手。",
-          "任务：将用户的草稿改写为从容透彻、直指本心、寓哲思于日常的阳明心学口吻消息（若草稿为外语也直接转写为该风格）。",
-          "人物锚点与风格：",
-          "- 自然融入阳明先生讲学语感（如：知行合一、事上磨炼、此心不动、外物虽乱然本心自明、无须向外驰求、不过是一场磨炼罢了、诸君试思之），语气平和笃定、通透点化，既有哲理高度又接地气好懂。",
-          "- 简明克制，不堆砌晦涩经院术语。",
-          "底线要求：",
-          "- 忠实保留原意、情绪与核心诉求，不把抱怨硬改成鸡汤说教。",
-          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
-          "- 按 {targetLanguage} 习惯字形输出最终正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
-        ].join("\n")
-      },
-      {
-        id: "polish-persona-li-bai",
-        serial: "045",
-        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
-        personaGroup: "literati",
-        preferChineseOutput: true,
-        name: "李白 · 诗仙（豪放飘逸诗意）",
-        prompt: [
-          "你是一名以诗仙李白豪放不羁、浪漫飘逸口吻润色 Discord 群聊消息的风格化写作助手。",
-          "任务：将用户的草稿改写为酣畅淋漓、带盛唐浪漫诗意与洒脱笑谈的太白口吻消息（若草稿为外语也直接转写为该风格）。",
-          "人物锚点与风格：",
-          "- 自然融入诗仙豪迈气韵（如：哈哈、罢罢罢、安能、且放白鹿、仰天大笑/长叹、何妨一醉、好生痛快/扫兴、纵有凌云志），行文轻快奔放、意象鲜活，顺手点染一两句自然诗意但不强行押韵写成打油诗。",
-          "- 爽朗飘逸、易于阅读。",
-          "底线要求：",
-          "- 忠实保留原意、情绪强度与核心信息，不擅自编造事实。",
-          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
-          "- 按 {targetLanguage} 习惯字形输出最终正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
-        ].join("\n")
-      },
-      {
-        id: "polish-persona-su-shi",
-        serial: "046",
-        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
-        personaGroup: "literati",
-        preferChineseOutput: true,
-        name: "苏轼 · 东坡居士（豁达自嘲烟火气）",
-        prompt: [
-          "你是一名以北宋文豪苏轼（东坡居士）豁达幽默、雅俗共赏的尺牍口吻润色 Discord 群聊消息的风格化写作助手。",
-          "任务：将用户的草稿改写为温润通达、带点自嘲与人间烟火气的东坡风消息（若草稿为外语也直接转写为该风格）。",
-          "人物锚点与风格：",
-          "- 自然融入东坡书信小品的松弛与幽默（如：呵呵、倒也令人哭笑不得、且宽心、罢了罢了、一蓑烟雨、何妨且泡壶茶/先吃顿好的再说、真可谓奇观），既优雅有文气又极富生活趣味，笑看一切风波。",
-          "- 亲切自然、不端文人架子。",
-          "底线要求：",
-          "- 忠实保留原意、情绪强度与核心诉求，不擅自改写事实。",
-          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
-          "- 按 {targetLanguage} 习惯字形输出最终正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
-        ].join("\n")
-      },
-      {
-        id: "polish-persona-confucius",
-        serial: "047",
-        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
-        personaGroup: "literati",
-        preferChineseOutput: true,
-        name: "孔子 · 圣人（论语温润格言）",
-        prompt: [
-          "你是一名以《论语》温润恳切、言近旨远风格润色 Discord 群聊消息的风格化写作助手。",
-          "任务：将用户的草稿改写为典雅平和、富有《论语》韵味的儒家语录体消息（若草稿为外语也直接转写为该风格）。",
-          "人物锚点与风格：",
-          "- 自然化用《论语》标志句式与语助词（如：呜呼、君子、岂非……乎、不亦……乎、欲速则不达、吾日三省、甚矣、亦不知其可也、诚然），端庄温厚中透着把日常杂事讲成圣贤道理的巧妙幽默感。",
-          "- 短小精悍、浅显易懂，避免过度生僻古文。",
-          "底线要求：",
-          "- 忠实保留原意、情绪与立场，不擅自加戏或偏离原话意思。",
-          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
-          "- 按 {targetLanguage} 习惯字形输出最终正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
-        ].join("\n")
-      },
-      {
-        id: "polish-persona-zhuangzi",
-        serial: "048",
-        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
-        personaGroup: "literati",
-        preferChineseOutput: true,
-        name: "庄子 · 逍遥游（奇谲佛系寓言）",
-        prompt: [
-          "你是一名以《庄子》奇谲飘逸、超脱齐物口吻润色 Discord 群聊消息的风格化写作助手。",
-          "任务：将用户的草稿改写为荒诞机智、看破红尘又带高级佛系吐槽感的庄周风消息（若草稿为外语也直接转写为该风格）。",
-          "人物锚点与风格：",
-          "- 自然化用道家齐物逍遥语感（如：混沌、岂非皆为一梦、成与毁何异、子非鱼、不如相忘于江湖、逍遥罢了、天地一指也），用轻盈超脱的反问把眼前的烦恼化入宏大又俏皮的哲学视角。",
-          "- 灵动通俗、点到即止，不写晦涩长篇大论。",
-          "底线要求：",
-          "- 忠实保留原意、核心事实与立场，不把明确诉求模糊掉。",
-          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
-          "- 按 {targetLanguage} 习惯字形输出最终正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
-        ].join("\n")
-      },
-      {
-        id: "polish-persona-eileen-chang",
-        serial: "049",
-        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
-        personaGroup: "literati",
-        preferChineseOutput: true,
-        name: "张爱玲（冷艳民国都市金句）",
-        prompt: [
-          "你是一名以张爱玲冷艳犀利、精致苍凉的民国都市散文笔调润色 Discord 群聊消息的风格化写作助手。",
-          "任务：将用户的草稿改写为细腻克制、自带画面感与冷静微讽金句的张爱玲风格消息（若草稿为外语也直接转写为该风格）。",
-          "人物锚点与风格：",
-          "- 精准拿捏张爱玲的意象比喻与冷静洞察：善于用精准的日常意象写尽体面之下的狼狈与苍凉，字句优雅克制却一针见血，不矫情堆砌辞藻，偶尔一个出其不意的比喻令人拍案叫绝。",
-          "- 贴合群聊长度，短句一样可以有味道。",
-          "底线要求：",
-          "- 忠实保留原意、情绪强度与核心信息，不擅自编造情节。",
-          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
-          "- 按 {targetLanguage} 习惯字形输出最终正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
-        ].join("\n")
-      },
-      {
-        id: "polish-persona-qian-zhongshu",
-        serial: "050",
-        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
-        personaGroup: "literati",
-        preferChineseOutput: true,
-        name: "钱钟书（围城毒舌妙喻）",
-        prompt: [
-          "你是一名以钱钟书先生《围城》般博学机锋、温和刻薄的冷幽默笔调润色 Discord 群聊消息的风格化写作助手。",
-          "任务：将用户的草稿改写为妙喻连珠、不动声色却吐槽力满格的钱钟书式消息（若草稿为外语也直接转写为该风格）。",
-          "人物锚点与风格：",
-          "- 擅长用出人意料又极其贴切的日常或文化比喻解构尴尬与槽点，语气斯文克制、不见脏字却幽默毒舌，字里行间透着读书人的机智与调皮。",
-          "- 切忌卖弄冷僻典故，贵在比喻精巧、一读就笑。",
-          "底线要求：",
-          "- 忠实保留原意、情绪强度与立场，不擅自加戏或改写事实。",
-          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
-          "- 按 {targetLanguage} 习惯字形输出最终正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
-        ].join("\n")
-      },
-      {
-        id: "polish-persona-wang-xiaobo",
-        serial: "051",
-        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
-        personaGroup: "literati",
-        preferChineseOutput: true,
-        name: "王小波（黑色幽默反讽）",
-        prompt: [
-          "你是一名以王小波自由散漫、坦率机智的黑色幽默杂文笔调润色 Discord 群聊消息的风格化写作助手。",
-          "任务：将用户的草稿改写为直白有趣、带点荒诞感与自嘲反讽的王小波式消息（若草稿为外语也直接转写为该风格）。",
-          "人物锚点与风格：",
-          "- 句式明快白描、逻辑带点狡黠的幽默感，喜欢一本正经地拆解荒唐事，把倒霉和无语写得既好笑又通透，绝不端着说教，自带“有趣”的灵魂气质。",
-          "- 贴合聊天口语节奏，自然松弛。",
-          "底线要求：",
-          "- 忠实保留原意、情绪强度与核心诉求，不擅自编造事实。",
-          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
-          "- 按 {targetLanguage} 习惯字形输出最终正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
-        ].join("\n")
-      },
-      {
-        id: "polish-persona-guo-degang",
-        serial: "052",
-        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
-        personaGroup: "literati",
-        preferChineseOutput: true,
-        name: "郭德纲（德云社单口相声）",
-        prompt: [
-          "你是一名以郭德纲单口相声贯口与现场互动节奏润色 Discord 群聊消息的风格化写作助手。",
-          "任务：将用户的草稿改写为包袱密、节奏脆、听着自带醒木声的德云社相声腔群聊消息（若草稿为外语也直接转写为该风格）。",
-          "人物锚点与风格：",
-          "- 自然融入相声舞台高频口癖与抖包袱技巧（如：好嘛、您瞅瞅、说句掏心窝子的话、您猜怎么着、得嘞、这叫什么事儿、要不说呢、我可太难了），善用铺垫与反转，把平淡一句话说得眉飞色舞、喜感十足。",
-          "- 保持健康诙谐，不低俗冒犯，控制篇幅利落不啰嗦。",
-          "底线要求：",
-          "- 忠实保留原意、情绪强度与立场，不擅自编造事实。",
-          "- 严格保留 @提及、链接、Markdown、emoji、代码块、行内代码、命令、用户名及技术/游戏缩写。",
-          "- 按 {targetLanguage} 习惯字形输出最终正文，只返回改写后的消息，不要附带解释、标签或外层引号。"
-        ].join("\n")
-      },
-      {
-        id: "polish-persona-shakespeare",
-        serial: "053",
-        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
-        personaGroup: "global",
-        preferChineseOutput: false,
-        name: "莎士比亚（戏剧咏叹独白）",
-        prompt: [
-          "You are a stylized Discord writing assistant channeling the dramatic voice of William Shakespeare.",
-          "Task: rewrite the user's draft in {targetLanguage} with theatrical Shakespearean flair — poetic drama, rhetorical exclamations, and vivid stage-monologue cadence.",
-          "Style guidance:",
-          "- If {targetLanguage} is English, use accessible, witty Early Modern theatrical touches (e.g., Alas, O fate, hark, pray tell, methinks, what folly is this!) while remaining effortlessly readable in chat.",
-          "- If {targetLanguage} is Chinese or another language, use classic stage-play / translated drama monologue cadence (e.g., 哦，命运啊 / 天哪 / 竟至于此 / 残垣之间) with strong dramatic contrast.",
-          "- Scale length proportionally to the original draft so short chat messages stay punchy and hilarious rather than turning into a five-act play.",
-          "Requirements:",
-          "- Preserve the original meaning, intent, emotional intensity, mentions, URLs, Markdown, emoji, code blocks, usernames, and technical/gaming terms.",
-          "- Do not add explanations, stage directions in brackets unless fitting naturally, labels, or outer quotation marks.",
-          "Return only the final message in {targetLanguage}."
-        ].join("\n")
-      },
-      {
-        id: "polish-persona-trump",
-        serial: "054",
-        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
-        personaGroup: "global",
-        preferChineseOutput: false,
-        name: "特朗普 · 懂王（美式夸张感叹）",
-        prompt: [
-          "You are a stylized Discord writing assistant channeling the unmistakable rhetorical cadence of Donald Trump (for lighthearted chat banter).",
-          "Task: rewrite the user's draft in {targetLanguage} with punchy, hyper-confident, emphatic rally-speech rhythm.",
-          "Style guidance:",
-          "- Use signature structural habits: short declarative sentences, emphatic repetition, bold superlatives, and punchy side remarks (e.g., in English: Believe me, Nobody knows X better than me, Total disaster, Tremendous, Sad!; in Chinese: 简直不敢相信、没人比我更懂、彻头彻尾的灾难、史上最棒/最糟、非常非常、太棒了！).",
-          "- Keep it playful, witty, and focused strictly on the user's actual topic — do not inject unrelated politics, insults, or fabricated claims.",
-          "- Keep short drafts brisk and punchy.",
-          "Requirements:",
-          "- Preserve the original meaning, intent, mentions, URLs, Markdown, emoji, code blocks, usernames, and technical/gaming terms.",
-          "- Do not add explanations, labels, or outer quotation marks.",
-          "Return only the final message in {targetLanguage}."
-        ].join("\n")
-      },
-      {
-        id: "polish-persona-nietzsche",
-        serial: "055",
-        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
-        personaGroup: "global",
-        preferChineseOutput: false,
-        name: "尼采（深渊超人警句）",
-        prompt: [
-          "You are a stylized Discord writing assistant channeling Friedrich Nietzsche's aphoristic, fiery philosophical voice.",
-          "Task: rewrite the user's draft in {targetLanguage} with sharp, passionate, poetic philosophical intensity.",
-          "Style guidance:",
-          "- Use crisp aphoristic cadence, bold metaphors of abyss, heights, will, masks, and overcoming (e.g., staring into the abyss, twilight of idols, hammer-like clarity / 凝视深渊、意志、重估一切价值、在悬崖边起舞), turning mundane chat thoughts into dramatic philosophical lightning bolts.",
-          "- Keep it vivid, razor-sharp, and proportional in length to the draft — never bloated or unreadable.",
-          "Requirements:",
-          "- Preserve the original meaning, intent, emotional tone, mentions, URLs, Markdown, emoji, code blocks, usernames, and technical/gaming terms.",
-          "- Do not add explanations, labels, or outer quotation marks.",
-          "Return only the final message in {targetLanguage}."
-        ].join("\n")
-      },
-      {
-        id: "polish-persona-marx",
-        serial: "056",
-        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
-        personaGroup: "global",
-        preferChineseOutput: false,
-        name: "马克思（辩证批判理论风）",
-        prompt: [
-          "You are a stylized Discord writing assistant channeling the rigorous, incisive dialectical-critique prose style of Karl Marx.",
-          "Task: rewrite the user's draft in {targetLanguage} with sharp structural analysis and classic German-philosophical analytical cadence.",
-          "Style guidance:",
-          "- Playfully frame the user's everyday topic through structural contradictions, systemic conditions, alienation, historical inevitability, and dialectical irony (e.g., 根本矛盾、系统性异化、扬弃、客观规律、历史必然性 / structural contradiction, material conditions, systemic alienation, dialectical irony), keeping it clever, lucid, and entertaining in Discord chat.",
-          "- Keep length tight and readable — match the draft's scale instead of writing a treatise.",
-          "Requirements:",
-          "- Preserve the original meaning, intent, mentions, URLs, Markdown, emoji, code blocks, usernames, and technical/gaming terms.",
-          "- Do not add explanations, labels, or outer quotation marks.",
-          "Return only the final message in {targetLanguage}."
-        ].join("\n")
-      },
-      {
-        id: "polish-persona-napoleon",
-        serial: "057",
-        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
-        personaGroup: "global",
-        preferChineseOutput: false,
-        name: "拿破仑（铁血统帅战报）",
-        prompt: [
-          "You are a stylized Discord writing assistant channeling the commanding battlefield-dispatch voice of Napoleon Bonaparte.",
-          "Task: rewrite the user's draft in {targetLanguage} with decisive, high-stakes imperial commander authority.",
-          "Style guidance:",
-          "- Use crisp, commanding military-dispatch rhythm: decisive verdicts, strategic framing, glory, destiny, and uncompromising resolve (e.g., Soldiers!, In my dictionary, decisive victory, hold the line / 不可饶恕、整条战线、在我的字典里、决断、荣光与命运), giving everyday chat a sweeping dramatic charge.",
-          "- Keep sentences sharp, energetic, and proportional to the user's draft.",
-          "Requirements:",
-          "- Preserve the original meaning, intent, mentions, URLs, Markdown, emoji, code blocks, usernames, and technical/gaming terms.",
-          "- Do not add explanations, labels, or outer quotation marks.",
-          "Return only the final message in {targetLanguage}."
-        ].join("\n")
-      },
-      {
-        id: "polish-persona-churchill",
-        serial: "058",
-        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
-        personaGroup: "global",
-        preferChineseOutput: false,
-        name: "丘吉尔（英式铁血演说与冷幽默）",
-        prompt: [
-          "You are a stylized Discord writing assistant channeling Winston Churchill's blend of stirring wartime oratory and dry British wit.",
-          "Task: rewrite the user's draft in {targetLanguage} with stately rhetorical rhythm, resolute defiance, and sharp understatement.",
-          "Style guidance:",
-          "- Combine dignified parallel phrasing with dry British irony (e.g., finest/darkest hour, we shall never, blood, toil, and patience, with characteristic British composure / 最黑暗的时刻、我们绝不、以最冷静的英式幽默来看、稳住阵脚), turning ordinary chat moments into memorable speeches with a wink.",
-          "- Keep it crisp and proportionate to the draft length.",
-          "Requirements:",
-          "- Preserve the original meaning, intent, mentions, URLs, Markdown, emoji, code blocks, usernames, and technical/gaming terms.",
-          "- Do not add explanations, labels, or outer quotation marks.",
-          "Return only the final message in {targetLanguage}."
-        ].join("\n")
-      },
-      {
-        id: "polish-persona-musk",
-        serial: "059",
-        category: PROMPT_TEMPLATE_CATEGORY_PERSONA,
-        personaGroup: "global",
-        preferChineseOutput: false,
-        name: "马斯克（第一性原理极客短句）",
-        prompt: [
-          "You are a stylized Discord writing assistant channeling Elon Musk's terse, high-signal Silicon Valley engineer & X-post style.",
-          "Task: rewrite the user's draft in {targetLanguage} with ultra-concise, blunt, first-principles tech-founder energy.",
-          "Style guidance:",
-          "- Use punchy, stripped-down phrasing, physics/engineering metaphors, and dry meme-aware directness (e.g., in English: Wild, Literally, From first principles, Order of magnitude, Insane, True; in Chinese: 离谱、从第一性原理来看、数量级、硬核、完全说不通、直接重做), zero corporate fluff.",
-          "- Stay very tight and snappy, matching real fast-paced Discord/X replies.",
-          "Requirements:",
-          "- Preserve the original meaning, intent, mentions, URLs, Markdown, emoji, code blocks, usernames, and technical/gaming terms.",
-          "- Do not add explanations, labels, or outer quotation marks.",
-          "Return only the final message in {targetLanguage}."
-        ].join("\n")
-      }
-    ];
-    module2.exports = { POLISH_PERSONA_PRESETS };
-  }
-});
-
-// src/presets/translation-presets.js
-var require_translation_presets = __commonJS({
-  "src/presets/translation-presets.js"(exports2, module2) {
-    "use strict";
-    var TRANSLATION_PRESETS = [
-      {
-        id: "translation-natural",
-        serial: "001",
-        name: "自然翻译",
-        prompt: [
-          "You are translating Discord chat messages for a real-time subtitle layer.",
-          "Task: translate the human-language content into {targetLanguage}.",
-          "Requirements:",
-          "- Preserve meaning, intent, tone, slang, sarcasm, humor, and profanity level.",
-          "- Keep Discord chat style natural, concise, and readable; avoid stiff literal wording.",
-          "- Preserve mentions, URLs, emoji, Markdown, code blocks, inline code, commands, IDs, timestamps, and file paths.",
-          "- Preserve proper nouns, usernames, server/channel names, product names, game terms, API/code terms, and short technical terms unless they have a standard translation.",
-          "- If the message mixes languages, translate only the parts that need translation; keep text already in {targetLanguage} and unavoidable terms natural.",
-          "- Preserve line breaks, list structure, and surrounding punctuation.",
-          "- Do not add explanations, notes, labels, quotes, summaries, censorship, or alternatives.",
-          "Return only the translated message."
-        ].join("\n")
-      },
-      {
-        id: "translation-literal",
-        serial: "002",
-        name: "准确直译",
-        prompt: [
-          "Translate the message into {targetLanguage} as accurately as possible.",
-          "Preserve names, mentions, URLs, Markdown, emoji, code blocks, and technical terms.",
-          "Do not summarize or add explanations.",
-          "Return only the translation."
-        ].join("\n")
-      },
-      {
-        id: "translation-slang-casual",
-        serial: "003",
-        name: "社区梗与口语（接地气）",
-        prompt: [
-          "你正在为 Discord 聊天频道提供贴近母语网感的实时消息翻译。",
-          "任务：将消息中的自然语言准确意译为地道、鲜活的 {targetLanguage} 口语表达。",
-          "要求：",
-          "- 准确理解并意译 Discord 高频缩略语、俚语、吐槽、阴阳怪气和情绪词（如 ngl、fr、imo、cooked、skill issue、cope 等），翻成目标语言网友自然会说的表达，不死板硬译字面。",
-          "- 完整保留原句语气、幽默感、粗口烈度与简短节奏，不要擅自审查、说教或补全未说出的内容。",
-          "- 严格保留 @提及、链接、emoji、Markdown、代码块、行内代码、用户名、专有名词与换行结构。",
-          "- 严格使用 {targetLanguage} 输出，只返回译文正文，不要添加解释、注释、标签、外层引号或备选译文。"
-        ].join("\n")
-      },
-      {
-        id: "translation-tech-dev",
-        serial: "004",
-        name: "技术 / AI / 开发频道",
-        prompt: [
-          "你正在为 Discord 技术与开发频道提供实时消息翻译。",
-          "任务：将消息中的自然语言部分准确翻译为流畅、易读的 {targetLanguage}。",
-          "要求：",
-          "- 准确传达技术逻辑、因果关系、报错语境和原作者语气（包括吐槽、简写与口语）。",
-          "- 保留业内通用且无需强行直译的英文术语、缩写和专有名词（如 API、PR、commit、merge、token、prompt、endpoint、cache、bug、hotfix、CLI、SDK、版本号、产品名、模型名等），让译文符合开发者日常阅读习惯。",
-          "- 严格保留 @提及、链接、代码块、行内代码、命令、文件路径、日志片段、ID、Markdown、emoji 与原有换行/列表结构。",
-          "- 若原文为多语言混排，仅翻译需要翻译的部分，保持整体行文自然连贯。",
-          "- 严格使用 {targetLanguage} 输出，只返回最终译文，不要添加解释、注释、标签、外层引号或任何额外内容。"
-        ].join("\n")
-      },
-      {
-        id: "translation-gaming-acg",
-        serial: "005",
-        name: "游戏 / 二次元社区",
-        prompt: [
-          "你正在为 Discord 游戏与二次元同好频道提供实时消息翻译。",
-          "任务：将消息翻译为贴合玩家和社区语境的自然 {targetLanguage}。",
-          "要求：",
-          "- 准确还原玩家间的玩笑、吐槽、攻略讨论、抽卡/副本/对战情绪，行文轻松自然，避免生硬机翻味。",
-          "- 合理保留圈内通用词、机制缩写、角色/作品/技能/道具专名（如 buff、nerf、DPS、CD、AFK、gacha、pity、DLC 等）或使用公认中文/目标语译名。",
-          "- 严格保留 @提及、链接、emoji、Markdown、代码块、用户名与原有排版。",
-          "- 严格使用 {targetLanguage} 输出，只返回译文正文，不要添加解释、词条说明、标签或外层引号。"
-        ].join("\n")
-      },
-      {
-        id: "translation-formal-changelog",
-        serial: "006",
-        name: "官方公告 / 更新日志",
-        prompt: [
-          "你正在为 Discord 官方公告、规则说明与版本更新日志提供高质量翻译。",
-          "任务：将消息准确、规范地翻译为条理清晰的 {targetLanguage}。",
-          "要求：",
-          "- 用词严谨清晰，忠实传达公告结论、时间节点、版本变更、修复项与注意事项，不遗漏也不自行概括删减。",
-          "- 严格保留标题层级、列表符号、条款编号、版本号、时间戳、@提及、链接、代码块、行内代码、Markdown 与 emoji。",
-          "- 专有名词、产品名、功能代号与命令保持原样或采用一贯译法。",
-          "- 严格使用 {targetLanguage} 输出，只返回译文正文，不要添加总结、解释、标签或外层引号。"
-        ].join("\n")
-      }
-    ];
-    var LEGACY_TRANSLATION_NATURAL_PROMPTS = [
-      [
-        "You are a Discord message translator.",
-        "Task: translate the message into {targetLanguage}.",
-        "Requirements:",
-        "- Preserve meaning, tone, names, mentions, URLs, Markdown, emoji, and code blocks.",
-        "- Use natural {targetLanguage}; avoid literal, stiff wording.",
-        "- If a phrase is ambiguous, choose the most likely meaning from context without adding notes.",
-        "Return only the translation."
-      ].join("\n"),
-      [
-        "Translate the Discord message into {targetLanguage}.",
-        "Preserve URLs, mentions, code blocks, emoji names, and Markdown formatting.",
-        "Return only the translation without explanations."
-      ].join("\n")
-    ];
-    module2.exports = {
-      TRANSLATION_PRESETS,
-      LEGACY_TRANSLATION_NATURAL_PROMPTS
-    };
-  }
-});
-
-// src/presets/index.js
-var require_presets = __commonJS({
-  "src/presets/index.js"(exports2, module2) {
-    "use strict";
-    var categories = require_categories();
-    var { POLISH_GENERAL_PRESETS } = require_polish_general();
-    var { POLISH_DIALECT_PRESETS } = require_polish_dialects();
-    var { POLISH_PERSONA_PRESETS } = require_polish_personas();
-    var { TRANSLATION_PRESETS, LEGACY_TRANSLATION_NATURAL_PROMPTS } = require_translation_presets();
-    var DEFAULT_PROMPT_TEMPLATES = {
-      polish: [
-        ...POLISH_GENERAL_PRESETS,
-        ...POLISH_DIALECT_PRESETS,
-        ...POLISH_PERSONA_PRESETS
-      ],
-      translation: [
-        ...TRANSLATION_PRESETS
-      ]
-    };
-    module2.exports = {
-      ...categories,
-      POLISH_GENERAL_PRESETS,
-      POLISH_DIALECT_PRESETS,
-      POLISH_PERSONA_PRESETS,
-      TRANSLATION_PRESETS,
-      DEFAULT_PROMPT_TEMPLATES,
-      LEGACY_TRANSLATION_NATURAL_PROMPTS
-    };
-  }
-});
-
-// src/constants.js
-var require_constants = __commonJS({
-  "src/constants.js"(exports2, module2) {
-    "use strict";
-    var PLUGIN_NAME = "DiscordAITranslator";
-    var DATA_KEY = "settings";
-    var CACHE_DATA_KEY = "translationCache";
-    var DIAGNOSTIC_DATA_KEY = "diagnosticLogs";
-    var CACHE_DATA_STORE = `${PLUGIN_NAME}.cache`;
-    var DIAGNOSTIC_DATA_STORE = `${PLUGIN_NAME}.diagnostics`;
-    var STYLE_ID = "discord-ai-translator-style";
-    var DISCORD_THEME_CLASSES = ["theme-light", "theme-midnight", "theme-darker", "theme-dark"];
-    var DISCORD_DEFAULT_THEME_CLASS = "theme-dark";
-    var DISCORD_MESSAGE_NODE_SELECTOR = "[id^='chat-messages-'], [data-list-item-id*='chat-messages']";
-    var DISCORD_SETTINGS_SURFACE_SELECTOR = "[class*='standardSidebarView']";
-    var DISCORD_USER_PANEL_LOOKUP_ROOT_SELECTOR = "[class*='panels'], [class*='accountProfile'], [class*='avatarWrapper'], [class*='withTag']";
-    var DISCORD_MEDIA_VIEWER_SELECTOR = [
-      "[class*='imageModal']",
-      "[class*='carouselModal']",
-      "[class*='mediaViewer']",
-      "[class*='focusLock']",
-      "[class*='modalRoot']",
-      "[class*='zoomed']"
-    ].join(",");
-    var DISCORD_MEDIA_VIEWER_CONTAINER_SELECTOR = [
-      "[role='dialog']",
-      "[aria-modal='true']",
-      "[class*='layer']",
-      "[class*='modal']",
-      "[class*='focusLock']",
-      "[class*='carousel']"
-    ].join(",");
-    var DISCORD_MEDIA_MUTATION_SELECTOR = [
-      "img",
-      "video",
-      "picture",
-      "source",
-      "canvas",
-      "[class*='imageWrapper']",
-      "[class*='imageContainer']",
-      "[class*='lazyImg']",
-      "[class*='mediaAttachmentsContainer']",
-      "[class*='embedImage']",
-      "[class*='embedMedia']",
-      "[class*='embedThumbnail']",
-      "[class*='embedVideo']",
-      "[class*='attachment']",
-      "[class*='attachmentInner']"
-    ].join(",");
-    var DISCORD_THEME_VARIABLES = [
-      "--bg-base-primary",
-      "--bg-base-secondary",
-      "--bg-base-tertiary",
-      "--background-base-lowest",
-      "--background-base-lower",
-      "--background-base-low",
-      "--background-surface-high",
-      "--background-surface-higher",
-      "--background-surface-highest",
-      "--background-primary",
-      "--background-secondary",
-      "--background-secondary-alt",
-      "--background-tertiary",
-      "--background-floating",
-      "--background-modifier-accent",
-      "--background-modifier-active",
-      "--background-modifier-hover",
-      "--background-modifier-selected",
-      "--background-modifier-focus",
-      "--bg-overlay-floating",
-      "--input-background",
-      "--modal-background",
-      "--modal-footer-background",
-      "--elevation-high",
-      "--border-subtle",
-      "--border-normal",
-      "--input-border",
-      "--scrollbar-auto-scrollbar-color-thumb",
-      "--scrollbar-auto-scrollbar-color-track",
-      "--scrollbar-auto-thumb",
-      "--scrollbar-auto-track",
-      "--scrollbar-thin-thumb",
-      "--scrollbar-thin-track",
-      "--text-primary",
-      "--text-secondary",
-      "--text-normal",
-      "--text-muted",
-      "--header-primary",
-      "--header-secondary",
-      "--interactive-normal",
-      "--interactive-hover",
-      "--interactive-muted",
-      "--brand-500",
-      "--brand-560",
-      "--button-positive-background",
-      "--button-positive-background-hover",
-      "--button-secondary-background",
-      "--button-secondary-background-hover",
-      "--button-secondary-background-active",
-      "--status-danger",
-      "--white-500"
-    ];
-    var PROVIDER_DEFAULTS = {
-      deepseek: {
-        label: "DeepSeek",
-        endpoint: "https://api.deepseek.com/chat/completions",
-        model: "deepseek-v4-flash"
-      },
-      openaiCompatible: {
-        label: "OpenAI-compatible",
-        endpoint: "https://api.openai.com/v1/chat/completions",
-        model: "gpt-4o-mini"
-      },
-      sakuraLocal: {
-        label: "Sakura local",
-        endpoint: "http://127.0.0.1:8080/v1/chat/completions",
-        model: "local-model",
-        apiKeyOptional: true,
-        autoTranslateIntakeMode: "dom",
-        autoTranslateRequestBatchSize: 1,
-        autoTranslateLongTextChunkLength: 420
-      },
-      googleCloud: {
-        label: "Google Cloud Translation",
-        endpoint: "https://translation.googleapis.com/language/translate/v2",
-        model: "nmt",
-        apiKeyOptional: true,
-        autoTranslateRequestBatchSize: 20
-      },
-      microsoft: {
-        label: "Microsoft Translator",
-        endpoint: "https://api.cognitive.microsofttranslator.com/translate",
-        model: "",
-        region: "",
-        autoTranslateRequestBatchSize: 20
-      },
-      deepl: {
-        label: "DeepL",
-        endpoint: "https://api-free.deepl.com/v2/translate",
-        model: "",
-        deeplPlan: "free",
-        autoTranslateRequestBatchSize: 20
-      },
-      baidu: {
-        label: "Baidu Translate",
-        endpoint: "https://fanyi-api.baidu.com/api/trans/vip/translate",
-        model: "",
-        appId: "",
-        secretKey: "",
-        autoTranslateRequestBatchSize: 1
-      }
-    };
-    var PROVIDER_ORDER = ["deepseek", "openaiCompatible", "sakuraLocal", "googleCloud", "microsoft", "deepl", "baidu"];
-    var PROVIDER_PROFILE_FIELDS = ["apiKey", "endpoint", "model", "enableThinking", "region", "deeplPlan", "appId", "secretKey"];
-    var MAX_SAVED_SERVICE_CONFIGS = 20;
-    var PROVIDER_CAPABILITIES = {
-      deepseek: {
-        tasks: { polish: true, translation: true },
-        ui: {
-          apiKey: true,
-          apiTest: true,
-          endpoint: true,
-          deepseekPreset: false,
-          localModelPreset: false,
-          model: true,
-          enableThinking: true,
-          sourceLanguage: true,
-          targetLanguage: true,
-          temperature: true,
-          maxTokens: true,
-          promptManager: true,
-          googleTranslateSettings: false
-        }
-      },
-      openaiCompatible: {
-        tasks: { polish: true, translation: true },
-        ui: {
-          apiKey: true,
-          apiTest: true,
-          endpoint: true,
-          deepseekPreset: false,
-          localModelPreset: false,
-          model: true,
-          enableThinking: false,
-          sourceLanguage: true,
-          targetLanguage: true,
-          temperature: true,
-          maxTokens: true,
-          promptManager: true,
-          googleTranslateSettings: false
-        }
-      },
-      sakuraLocal: {
-        tasks: { polish: true, translation: true },
-        ui: {
-          apiKey: true,
-          apiTest: true,
-          endpoint: true,
-          deepseekPreset: false,
-          localModelPreset: true,
-          model: true,
-          enableThinking: false,
-          sourceLanguage: true,
-          targetLanguage: true,
-          temperature: true,
-          maxTokens: true,
-          promptManager: true,
-          googleTranslateSettings: false
-        }
-      },
-      googleCloud: {
-        tasks: { polish: false, translation: true },
-        ui: {
-          apiKey: false,
-          apiTest: true,
-          endpoint: false,
-          deepseekPreset: false,
-          localModelPreset: false,
-          model: false,
-          enableThinking: false,
-          sourceLanguage: true,
-          targetLanguage: true,
-          temperature: false,
-          maxTokens: false,
-          promptManager: false,
-          googleTranslateSettings: true
-        }
-      },
-      microsoft: {
-        tasks: { polish: false, translation: true },
-        ui: {
-          apiKey: true,
-          apiTest: true,
-          endpoint: true,
-          region: true,
-          deepseekPreset: false,
-          localModelPreset: false,
-          model: false,
-          enableThinking: false,
-          sourceLanguage: true,
-          targetLanguage: true,
-          temperature: false,
-          maxTokens: false,
-          promptManager: false,
-          googleTranslateSettings: false
-        }
-      },
-      deepl: {
-        tasks: { polish: false, translation: true },
-        ui: {
-          apiKey: true,
-          apiTest: true,
-          endpoint: false,
-          deeplPlan: true,
-          deepseekPreset: false,
-          localModelPreset: false,
-          model: false,
-          enableThinking: false,
-          sourceLanguage: true,
-          targetLanguage: true,
-          temperature: false,
-          maxTokens: false,
-          promptManager: false,
-          googleTranslateSettings: false
-        }
-      },
-      baidu: {
-        tasks: { polish: false, translation: true },
-        ui: {
-          apiKey: false,
-          apiTest: true,
-          endpoint: true,
-          baiduCredentials: true,
-          deepseekPreset: false,
-          localModelPreset: false,
-          model: false,
-          enableThinking: false,
-          sourceLanguage: true,
-          targetLanguage: true,
-          temperature: false,
-          maxTokens: false,
-          promptManager: false,
-          googleTranslateSettings: false
-        }
-      }
-    };
-    var DEEPSEEK_MODELS = [
-      ["deepseek-v4-flash", "DeepSeek V4 Flash"],
-      ["deepseek-v4-pro", "DeepSeek V4 Pro"]
-    ];
-    var LOCAL_MODEL_PRESETS = [
-      ["local-model", "Sakura current loaded model"],
-      ["HY-MT1.5-7B-Q4_K_M.gguf", "HY-MT1.5 7B Q4_K_M"],
-      ["HY-MT1.5-1.8B-Q4_K_M.gguf", "HY-MT1.5 1.8B Q4_K_M"],
-      ["HY-MT1.5-1.8B-Q4_K_M_2.gguf", "HY-MT1.5 1.8B Q4_K_M (_2)"],
-      ["Qwen3-8B-Q4_K_M.gguf", "Qwen3 8B Q4_K_M"],
-      ["Qwen3-8B-Q4_K_M_2.gguf", "Qwen3 8B Q4_K_M (_2)"]
-    ];
-    var CUSTOM_LANGUAGE_VALUE = "__custom";
-    var AUTO_LANGUAGE_VALUE = "auto";
-    var AUTO_TRANSLATE_DEFAULT_CONCURRENCY = 4;
-    var AUTO_TRANSLATE_MIN_CONCURRENCY = 1;
-    var AUTO_TRANSLATE_MAX_CONCURRENCY = 10;
-    var AUTO_TRANSLATE_MIN_BATCH_SIZE = 8;
-    var AUTO_TRANSLATE_BATCH_MULTIPLIER = 4;
-    var AUTO_TRANSLATE_QUEUE_MULTIPLIER = 5;
-    var AUTO_TRANSLATE_FAILURE_TTL = 15e3;
-    var AUTO_TRANSLATE_TERMINAL_FAILURE_TTL = 6 * 60 * 60 * 1e3;
-    var AUTO_TRANSLATE_FAILURE_LIMIT = 2e3;
-    var AUTO_TRANSLATE_FAILURE_MAX_TTL = 12e4;
-    var AUTO_TRANSLATE_MAX_RETRY_ATTEMPTS = 6;
-    var AUTO_TRANSLATE_IMMEDIATE_TERMINAL_TYPES = Object.freeze(["auth", "quota", "client"]);
-    var AUTO_TRANSLATE_FAILURE_HISTORY_TTL = 10 * 60 * 1e3;
-    var AUTO_TRANSLATE_FAILURE_HISTORY_LIMIT = 2e3;
-    var AUTO_TRANSLATE_INLINE_FAILURE_AFTER_COUNT = 3;
-    var AUTO_TRANSLATE_RETAIN_MAX_FAILURE_COUNT = 3;
-    var AUTO_TRANSLATE_INVALID_OUTPUT_FAILURE_TTL = 4e3;
-    var AUTO_TRANSLATE_FINAL_INVALID_OUTPUT_FAILURE_TTL = 2 * 60 * 1e3;
-    var AUTO_TRANSLATE_TRANSIENT_FAILURE_TTL = 1e4;
-    var AUTO_TRANSLATE_PROVIDER_FAILURE_TTL = 6e4;
-    var AUTO_TRANSLATE_TRUNCATED_FAILURE_TTL = 2 * 60 * 1e3;
-    var AUTO_TRANSLATE_TRUNCATED_FAILURE_MAX_TTL = 30 * 60 * 1e3;
-    var LOCAL_PROVIDER_UNAVAILABLE_RETRY_MS = 6e4;
-    var LOCAL_PROVIDER_HEALTH_RETRY_MS = 5e3;
-    var LOCAL_PROVIDER_AUTO_MODEL_VALUE = "local-model";
-    var LOCAL_PROVIDER_MODEL_DETECTION_TTL_MS = 3e4;
-    var LOCAL_PROVIDER_MODEL_DETECTION_RETRY_MS = 15e3;
-    var LOCAL_PROVIDER_MODEL_DETECTION_TIMEOUT_MS = 5e3;
-    var AUTO_TRANSLATE_REQUEST_BATCH_SIZE = 6;
-    var AUTO_TRANSLATE_PROVIDER_REQUEST_BATCH_MAX = 20;
-    var AUTO_TRANSLATE_FALLBACK_CONCURRENCY = 3;
-    var AUTO_TRANSLATE_SINGLE_FALLBACK_LIMIT = AUTO_TRANSLATE_FALLBACK_CONCURRENCY;
-    var AUTO_TRANSLATE_FALLBACK_REQUEUE_DELAY_MS = 1200;
-    var AUTO_TRANSLATE_REQUEST_TIMEOUT_MS = 25e3;
-    var AUTO_TRANSLATE_ORPHAN_LOADING_REQUEUE_MS = 4e3;
-    var AUTO_TRANSLATE_IN_FLIGHT_STALE_MS = 18e4;
-    var AUTO_TRANSLATE_FORCE_SINGLE_TEXT_LENGTH = 420;
-    var AUTO_TRANSLATE_LONG_TEXT_DEFER_MAX = 3;
-    var AUTO_TRANSLATE_ULTRA_LONG_TEXT_LENGTH = 1200;
-    var AUTO_TRANSLATE_LONG_TEXT_CHUNK_LENGTH = 850;
-    var AUTO_TRANSLATE_LOCAL_LONG_TEXT_CHUNK_LENGTH = 420;
-    var AUTO_TRANSLATE_LONG_TEXT_MIN_MAX_TOKENS = 1800;
-    var AUTO_TRANSLATE_LONG_TEXT_TIMEOUT_MAX_MS = 9e4;
-    var AUTO_TRANSLATE_CLOUD_LONG_TEXT_TIMEOUT_MAX_MS = 45e3;
-    var MANUAL_LONG_TEXT_WHOLE_PASS_MAX_LENGTH = 1800;
-    var MANUAL_TRANSLATION_REQUEST_BUDGET = 8;
-    var MANUAL_TRANSLATION_RESCUE_REQUEST_ALLOWANCE = 4;
-    var MANUAL_TRANSLATION_REQUEST_BUDGET_MAX = 24;
-    var MODEL_REQUEST_TIMEOUT_MS = 45e3;
-    var API_TEST_REQUEST_TIMEOUT_MS = 15e3;
-    var API_ENDPOINT_ERROR_MESSAGE_KEYS = Object.freeze({
-      INVALID_API_ENDPOINT: "errorInvalidEndpoint",
-      UNSAFE_API_ENDPOINT: "errorUnsafeEndpoint",
-      API_KEY_ORIGIN_MISMATCH: "apiKeyOriginMismatch"
-    });
-    var SCAN_VIEWPORT_BUFFER_PX = 480;
-    var AUTO_TRANSLATE_VIEWPORT_SETTLE_MS = 450;
-    var AUTO_TRANSLATE_VIEWPORT_JUMP_SETTLE_MS = 900;
-    var AUTO_TRANSLATE_VIEWPORT_JUMP_COOLDOWN_MS = 2200;
-    var AUTO_TRANSLATE_VIEWPORT_STABLE_RESCAN_MS = 180;
-    var DISCORD_MEDIA_VIEWER_QUIET_MS = 1200;
-    var DISCORD_MEDIA_VIEWER_PROBE_CACHE_MS = 90;
-    var DISCORD_INPUT_COMPOSER_RENDER_PAUSE_MS = 180;
-    var AUTO_TRANSLATE_VISIBLE_BACKFILL_SCAN_MS = 260;
-    var AUTO_TRANSLATE_SCROLL_RENDER_PAUSE_MS = 550;
-    var AUTO_TRANSLATE_RENDER_MAX_PER_FRAME = 3;
-    var AUTO_TRANSLATE_RENDER_FRAME_BUDGET_MS = 6;
-    var AUTO_TRANSLATE_PREFETCH_PRIORITY_BASE = 1e5;
-    var AUTO_TRANSLATE_EDGE_OVERSCAN_MESSAGES = 1;
-    var AUTO_TRANSLATE_SCROLL_STILL_MS = 100;
-    var AUTO_TRANSLATE_CACHE_DRAW_MIN_BUFFER_PX = 600;
-    var AUTO_TRANSLATE_CACHE_DRAW_BUFFER_FACTOR = 1.25;
-    var AUTO_TRANSLATE_CACHE_DRAW_BUDGET_MS = 3;
-    var AUTO_TRANSLATE_CACHE_DRAW_MAX_EVALUATIONS = 8;
-    var AUTO_TRANSLATE_CACHE_DRAW_MAX_MESSAGES = 60;
-    var AUTO_TRANSLATE_CACHE_DRAW_MEMO_MAX = 800;
-    var AUTO_TRANSLATE_FINISHED_LINE_SELECTOR = ".dait-translation-line:not(.dait-translation-loading):not(.dait-translation-error)";
-    var AUTO_TRANSLATE_DEFAULT_PREFETCH_RANGE = 5;
-    var AUTO_TRANSLATE_PREFETCH_RANGES = [3, 5, 8];
-    var MUTATION_DIRTY_SCAN_MAX_ROOTS = 12;
-    var MUTATION_DIRTY_SCAN_MAX_MESSAGES = 12;
-    var INCREMENTAL_MESSAGE_WORK_BUDGET_MS = 8;
-    var INCREMENTAL_MESSAGE_WORK_MAX_PER_SLICE = 1;
-    var MESSAGE_BUTTON_VISIBILITY_ALWAYS = "always";
-    var MESSAGE_BUTTON_VISIBILITY_HOVER = "hover";
-    var TRANSLATION_LINE_STYLES = Object.freeze(["tint", "muted", "tag"]);
-    var TRANSLATION_LINE_TEXT_SCALES = Object.freeze([100, 90]);
-    var PANEL_THEMES = Object.freeze(["auto", "light", "dark"]);
-    var QUICK_PANEL_TABS = Object.freeze(["translation", "polish"]);
-    var RTL_LANGUAGE_CODES = Object.freeze(["ar", "fa", "he", "iw", "ur", "ps", "yi", "dv", "ug", "ckb", "sd"]);
-    var POLISH_REPOLISH_SOURCE_ORIGINAL = "original";
-    var POLISH_REPOLISH_SOURCE_LAST_RESULT = "lastResult";
-    var {
-      PROMPT_TEMPLATE_CATEGORY_GENERAL,
-      PROMPT_TEMPLATE_CATEGORY_DIALECT,
-      PROMPT_TEMPLATE_CATEGORY_PERSONA,
-      POLISH_PROMPT_TEMPLATE_CATEGORIES,
-      DIALECT_REGION_ORDER,
-      PERSONA_GROUP_ORDER,
-      DEFAULT_PROMPT_TEMPLATES,
-      LEGACY_TRANSLATION_NATURAL_PROMPTS
-    } = require_presets();
-    var TRANSLATION_CACHE_DEFAULT_TTL_HOURS = 48;
-    var TRANSLATION_CACHE_TTL_OPTIONS = [3, 6, 12, 24, 48, 168];
-    var TRANSLATION_CACHE_HIT_EXTEND_MS = 6 * 60 * 60 * 1e3;
-    var TRANSLATION_CACHE_WRITE_DEBOUNCE_MS = 5e3;
-    var TRANSLATION_CACHE_TOUCH_DEBOUNCE_MS = 3e4;
-    var TRANSLATION_CACHE_TOUCH_IDLE_PERSIST_MS = 5 * 60 * 1e3;
-    var TRANSLATION_CACHE_TOUCH_PERSIST_THRESHOLD = 80;
-    var TRANSLATION_CACHE_DEFAULT_LIMIT = 4e3;
-    var TRANSLATION_CACHE_MIN_LIMIT = 100;
-    var TRANSLATION_CACHE_MAX_LIMIT = 15e3;
-    var TRANSLATION_CACHE_NEGATIVE_LOOKUP_TTL_MS = 4e3;
-    var TRANSLATION_CACHE_NEGATIVE_LOOKUP_MAX = 1500;
-    var AUTO_TRANSLATE_PRECHECK_SKIP_TTL_MS = 30 * 60 * 1e3;
-    var AUTO_TRANSLATE_PRECHECK_SKIP_MAX = 2e3;
-    var AUTO_TRANSLATE_RECENT_RENDER_TTL_MS = 60 * 1e3;
-    var AUTO_TRANSLATE_RECENT_RENDER_MAX = 1200;
-    var AUTO_TRANSLATE_PARTIAL_RESULT_TTL_MS = 10 * 60 * 1e3;
-    var AUTO_TRANSLATE_PARTIAL_RESULT_MAX = 300;
-    var AUTO_TRANSLATE_LAST_DECISION_MAX = 600;
-    var AUTO_TRANSLATE_INTAKE_MODES = ["auto", "dom", "bdfdb"];
-    var STORE_MESSAGE_ID_NEGATIVE_LOOKUP_TTL_MS = 3e3;
-    var STORE_MESSAGE_ID_LOOKUP_MAX = 500;
-    var DIAGNOSTICS_MAX_ENTRIES = 500;
-    var QUICK_SETTINGS_DIAGNOSTICS_MAX_ENTRIES = 80;
-    var SETTINGS_WRITE_DEBOUNCE_MS = 1200;
-    var DIAGNOSTICS_COMPRESSION_WINDOW_MS = 5e3;
-    var DIAGNOSTICS_WRITE_DEBOUNCE_MS = 3e4;
-    var HEAVY_PERSISTENCE_DEFER_MS = 1500;
-    var HEAVY_PERSISTENCE_MAX_DEFER_MS = 2 * 60 * 1e3;
-    var DIAGNOSTICS_SLOW_OPERATION_MS = 80;
-    var DIAGNOSTICS_SLOW_OPERATION_THROTTLE_MS = 5e3;
-    var DIAGNOSTIC_MESSAGE_STATES = Object.freeze({
-      DISCOVERED: "discovered",
-      SKIPPED: "skipped",
-      CACHE_HIT: "cacheHit",
-      QUEUED_VISIBLE: "queuedVisible",
-      QUEUED_PREFETCH: "queuedPrefetch",
-      QUEUED_LONG_TEXT: "queuedLongText",
-      IN_FLIGHT: "inFlight",
-      VALIDATING: "validating",
-      RETRYING: "retrying",
-      CACHED: "cached",
-      RENDERED: "rendered",
-      FAILED: "failed",
-      STALE: "stale",
-      CANCELLED: "cancelled"
-    });
-    var AUTO_TRANSLATION_QUEUE_TYPES = Object.freeze({
-      MANUAL: "manual",
-      VISIBLE: "visible",
-      LONG_TEXT: "longText",
-      PREFETCH: "prefetch",
-      HISTORY: "history"
-    });
-    var TRANSLATION_VALIDATION_QUALITIES = Object.freeze({
-      GOOD: "good",
-      USABLE: "usable",
-      PARTIAL: "partial",
-      BAD: "bad",
-      EMPTY: "empty"
-    });
-    var DIAGNOSTIC_REASON_CODES = Object.freeze({
-      DISCOVERED: "discovered",
-      NOT_ELIGIBLE_LANGUAGE: "not-eligible-language",
-      PREFETCH_DISABLED: "prefetch-disabled",
-      LAYOUT_UNSTABLE_PREFETCH: "layout-unstable-prefetch",
-      GOOGLE_PREFETCH_DISABLED: "google-prefetch-disabled",
-      CURRENT_TRANSLATION_PRESENT: "current-translation-present",
-      RECENT_RENDER_PRESENT: "recent-render-present",
-      CACHE_HIT: "cache-hit",
-      TEXT_CACHE_HIT: "text-cache-hit",
-      INVALID_CACHE: "invalid-cache",
-      DEDUPE_ACTIVE: "dedupe-active",
-      TERMINAL_FAILURE: "terminal-failure",
-      RETRY_COOLDOWN: "retry-cooldown",
-      API_WORK_BLOCKED: "api-work-blocked",
-      CONFIG_MISSING: "config-missing",
-      BATCH_LIMIT: "batch-limit",
-      QUEUE_LIMIT: "queue-limit",
-      ENQUEUED: "enqueued",
-      REQUEUED: "requeued",
-      PROVIDER_COOLDOWN: "provider-cooldown",
-      LOCAL_PROVIDER_HEALTH: "local-provider-health",
-      PREFETCH_SLOT: "prefetch-slot",
-      REQUEST_STARTED: "request-started",
-      OUTPUT_RECEIVED: "output-received",
-      OUTPUT_INVALID: "output-invalid",
-      RETRYING: "retrying",
-      RENDERED: "rendered",
-      RENDER_DEFERRED: "render-deferred",
-      RENDER_DISCONNECTED: "render-disconnected",
-      RENDER_TEXT_CHANGED: "render-text-changed",
-      RENDER_IDENTITY_CHANGED: "render-identity-changed",
-      RENDER_REQUEST_STALE: "render-request-stale",
-      RENDER_OUTSIDE_VIEWPORT: "render-outside-viewport",
-      MANUAL_LINE_PRESENT: "manual-line-present",
-      FAILURE: "failure",
-      STALE_DOM: "stale-dom",
-      LOCAL_UNAVAILABLE: "local-unavailable"
-    });
-    var DIAGNOSTIC_FAILURE_CLASSES = Object.freeze({
-      SOURCE_INCOMPLETE: "source-incomplete",
-      WHOLE_PASS_FAILED: "whole-pass-failed",
-      CHUNK_FAILED: "chunk-failed",
-      SUBCHUNK_FAILED: "subchunk-failed",
-      VALIDATOR_REJECTED: "validator-rejected",
-      STALE_DOM: "stale-dom",
-      RENDER_BLOCKED: "render-blocked",
-      CACHE_IDENTITY_MISMATCH: "cache-identity-mismatch",
-      PROVIDER_OUTPUT_BAD: "provider-output-bad",
-      PROVIDER_COOLDOWN: "provider-cooldown"
-    });
-    var DIAGNOSTIC_FAILURE_LAYERS = Object.freeze({
-      SOURCE: "source",
-      PLAN: "plan",
-      QUEUE: "queue",
-      REQUEST: "request",
-      OUTPUT: "output",
-      VALIDATION: "validation",
-      RENDER: "render"
-    });
-    var QUICK_SETTINGS_INJECT_MIN_INTERVAL_MS = 1e3;
-    var DISCORD_THEME_CACHE_TTL_MS = 400;
-    var GOOGLE_TRANSLATE_DEFAULT_MONTHLY_LIMIT = 45e4;
-    var GOOGLE_TRANSLATE_MAX_MONTHLY_LIMIT = 5e5;
-    var GOOGLE_TRANSLATE_RUNTIME_WRITE_DEBOUNCE_MS = 5e3;
-    var DISCORD_MESSAGE_MAX_LENGTH = 2e3;
-    var LANGUAGE_PRESETS = [
-      { code: "zh", value: "汉语", zh: "汉语", en: "Chinese" },
-      { code: "zh-TW", value: "繁體中文", zh: "繁體中文", en: "Traditional Chinese" },
-      { code: "en", value: "英语", zh: "英语", en: "English" },
-      { code: "es", value: "西班牙语", zh: "西班牙语", en: "Spanish" },
-      { code: "fr", value: "法语", zh: "法语", en: "French" },
-      { code: "hi", value: "印地语", zh: "印地语", en: "Hindi" },
-      { code: "ru", value: "俄语", zh: "俄语", en: "Russian" },
-      { code: "de", value: "德语", zh: "德语", en: "German" },
-      { code: "ja", value: "日语", zh: "日语", en: "Japanese" },
-      { code: "ar", value: "阿拉伯语", zh: "阿拉伯语", en: "Arabic" },
-      { code: "vi", value: "越南语", zh: "越南语", en: "Vietnamese" },
-      { code: "ko", value: "朝鲜语", zh: "朝鲜语", en: "Korean" },
-      { code: "it", value: "意大利语", zh: "意大利语", en: "Italian" }
-    ];
-    var PROMPT_POLICY_VERSIONS = Object.freeze({
-      system: "system-v2",
-      polish: "polish-v3",
-      manual: "translation-manual-v2",
-      manualForceTarget: "translation-manual-force-v1",
-      manualRepair: "translation-manual-repair-v1",
-      auto: "auto-v3",
-      autoBatch: "auto-batch-v2",
-      autoBatchRetry: "auto-batch-retry-v2",
-      autoRetry: "auto-retry-v3",
-      autoFinalFallback: "auto-final-v2",
-      longText: "long-text-v1",
-      publicBilingual: "public-bilingual-v2",
-      publicBilingualRetry: "public-bilingual-retry-v2",
-      publicBilingualFinal: "public-bilingual-final-v2",
-      googleCloud: "google-v1"
-    });
-    var DEFAULT_SETTINGS = {
-      polish: {
-        enabled: true,
-        provider: "deepseek",
-        apiKey: "",
-        apiStatus: { state: "untested", message: "" },
-        endpoint: PROVIDER_DEFAULTS.deepseek.endpoint,
-        model: PROVIDER_DEFAULTS.deepseek.model,
-        enableThinking: false,
-        sourceLanguage: AUTO_LANGUAGE_VALUE,
-        targetLanguage: "英语",
-        temperature: 0.4,
-        maxTokens: 800,
-        afterAction: "replace",
-        repolishSource: POLISH_REPOLISH_SOURCE_ORIGINAL,
-        activePromptTemplate: "polish-natural-chat",
-        prompt: DEFAULT_PROMPT_TEMPLATES.polish[0].prompt,
-        promptTemplates: DEFAULT_PROMPT_TEMPLATES.polish,
-        providerProfiles: {}
-      },
-      translation: {
-        enabled: true,
-        provider: "deepseek",
-        apiKey: "",
-        apiStatus: { state: "untested", message: "" },
-        endpoint: PROVIDER_DEFAULTS.deepseek.endpoint,
-        model: PROVIDER_DEFAULTS.deepseek.model,
-        enableThinking: false,
-        region: "",
-        deeplPlan: "free",
-        appId: "",
-        secretKey: "",
-        sourceLanguage: AUTO_LANGUAGE_VALUE,
-        targetLanguage: "汉语",
-        temperature: 0.2,
-        maxTokens: 1200,
-        activePromptTemplate: "translation-natural",
-        prompt: DEFAULT_PROMPT_TEMPLATES.translation[0].prompt,
-        promptTemplates: DEFAULT_PROMPT_TEMPLATES.translation,
-        providerProfiles: {}
-      },
-      googleTranslate: {
-        keyPoolText: "",
-        keys: [],
-        // This month's usage per key fingerprint, kept after a key's line is removed.
-        usageById: {},
-        defaultMonthlyLimit: GOOGLE_TRANSLATE_DEFAULT_MONTHLY_LIMIT,
-        allowPrefetch: true
-      },
-      serviceConfigs: [],
-      ui: {
-        settingsVersion: 2,
-        // One of the settings tabs in src/settings/settings-schema.js.
-        settingsActiveTab: "overview",
-        // Last active mode tab in the user-panel quick popover ("translation" | "polish").
-        quickPanelActiveTab: "translation",
-        language: "zh-CN",
-        showQuickSettingsRailButton: false,
-        showQuickSettingsPanelButton: true,
-        injectInputButton: true,
-        publicBilingualInputButton: false,
-        publicBilingualUseInitialOriginal: false,
-        publicBilingualAfterPolish: false,
-        publicBilingualPolishBeforeTranslate: false,
-        injectMessageButtons: true,
-        messageButtonVisibility: MESSAGE_BUTTON_VISIBILITY_ALWAYS,
-        autoTranslateMessages: false,
-        autoTranslatePrefetch: false,
-        autoTranslatePrefetchRange: AUTO_TRANSLATE_DEFAULT_PREFETCH_RANGE,
-        autoTranslateIntakeMode: "auto",
-        autoTranslateConcurrency: AUTO_TRANSLATE_DEFAULT_CONCURRENCY,
-        autoTranslateStrictRetry: false,
-        channelAutoTranslatePolicies: {},
-        // 2: an 'enabled' rule allow-lists the channel even while autoTranslateMessages is off (v0.4.0). Older
-        // 'enabled' rules followed the main switch and are loaded as 'inherit' (settings-store ensureSettingsShape).
-        channelAutoTranslatePoliciesVersion: 2,
-        historyBackfillEnabled: false,
-        historyBackfillLimit: 20,
-        providerFallbackEnabled: false,
-        providerFallbackOrder: [],
-        aiSkipEnabled: false,
-        showAutoTranslateWarnings: false,
-        showAutoTranslateToasts: false,
-        diagnosticsEnabled: false,
-        translationCacheTtlHours: TRANSLATION_CACHE_DEFAULT_TTL_HOURS,
-        translationCacheMaxEntries: TRANSLATION_CACHE_DEFAULT_LIMIT,
-        translationPosition: "before",
-        maskTranslations: false,
-        hideOriginalAfterTranslation: false,
-        translationStyle: "tint",
-        translationTextScale: 100,
-        // One of PANEL_THEMES: the colours of the settings window, the quick panel and the dialogs.
-        panelTheme: "auto",
-        injectMessageContextMenu: true,
-        enablePolishHotkey: true,
-        polishHotkey: "Ctrl+Alt+P",
-        testModeEnabled: false,
-        testModeKind: "translation"
-      }
-    };
-    module2.exports = {
-      PLUGIN_NAME,
-      DATA_KEY,
-      CACHE_DATA_KEY,
-      DIAGNOSTIC_DATA_KEY,
-      CACHE_DATA_STORE,
-      DIAGNOSTIC_DATA_STORE,
-      STYLE_ID,
-      DISCORD_THEME_CLASSES,
-      DISCORD_DEFAULT_THEME_CLASS,
-      DISCORD_MESSAGE_NODE_SELECTOR,
-      DISCORD_SETTINGS_SURFACE_SELECTOR,
-      DISCORD_USER_PANEL_LOOKUP_ROOT_SELECTOR,
-      DISCORD_MEDIA_VIEWER_SELECTOR,
-      DISCORD_MEDIA_VIEWER_CONTAINER_SELECTOR,
-      DISCORD_MEDIA_MUTATION_SELECTOR,
-      DISCORD_THEME_VARIABLES,
-      PROVIDER_DEFAULTS,
-      PROVIDER_ORDER,
-      PROVIDER_PROFILE_FIELDS,
-      MAX_SAVED_SERVICE_CONFIGS,
-      PROVIDER_CAPABILITIES,
-      DEEPSEEK_MODELS,
-      LOCAL_MODEL_PRESETS,
-      CUSTOM_LANGUAGE_VALUE,
-      AUTO_LANGUAGE_VALUE,
-      AUTO_TRANSLATE_DEFAULT_CONCURRENCY,
-      AUTO_TRANSLATE_MIN_CONCURRENCY,
-      AUTO_TRANSLATE_MAX_CONCURRENCY,
-      AUTO_TRANSLATE_MIN_BATCH_SIZE,
-      AUTO_TRANSLATE_BATCH_MULTIPLIER,
-      AUTO_TRANSLATE_QUEUE_MULTIPLIER,
-      AUTO_TRANSLATE_FAILURE_TTL,
-      AUTO_TRANSLATE_TERMINAL_FAILURE_TTL,
-      AUTO_TRANSLATE_FAILURE_LIMIT,
-      AUTO_TRANSLATE_FAILURE_MAX_TTL,
-      AUTO_TRANSLATE_MAX_RETRY_ATTEMPTS,
-      AUTO_TRANSLATE_IMMEDIATE_TERMINAL_TYPES,
-      AUTO_TRANSLATE_FAILURE_HISTORY_TTL,
-      AUTO_TRANSLATE_FAILURE_HISTORY_LIMIT,
-      AUTO_TRANSLATE_INLINE_FAILURE_AFTER_COUNT,
-      AUTO_TRANSLATE_RETAIN_MAX_FAILURE_COUNT,
-      AUTO_TRANSLATE_INVALID_OUTPUT_FAILURE_TTL,
-      AUTO_TRANSLATE_FINAL_INVALID_OUTPUT_FAILURE_TTL,
-      AUTO_TRANSLATE_TRANSIENT_FAILURE_TTL,
-      AUTO_TRANSLATE_PROVIDER_FAILURE_TTL,
-      AUTO_TRANSLATE_TRUNCATED_FAILURE_TTL,
-      AUTO_TRANSLATE_TRUNCATED_FAILURE_MAX_TTL,
-      LOCAL_PROVIDER_UNAVAILABLE_RETRY_MS,
-      LOCAL_PROVIDER_HEALTH_RETRY_MS,
-      LOCAL_PROVIDER_AUTO_MODEL_VALUE,
-      LOCAL_PROVIDER_MODEL_DETECTION_TTL_MS,
-      LOCAL_PROVIDER_MODEL_DETECTION_RETRY_MS,
-      LOCAL_PROVIDER_MODEL_DETECTION_TIMEOUT_MS,
-      AUTO_TRANSLATE_REQUEST_BATCH_SIZE,
-      AUTO_TRANSLATE_PROVIDER_REQUEST_BATCH_MAX,
-      AUTO_TRANSLATE_FALLBACK_CONCURRENCY,
-      AUTO_TRANSLATE_SINGLE_FALLBACK_LIMIT,
-      AUTO_TRANSLATE_FALLBACK_REQUEUE_DELAY_MS,
-      AUTO_TRANSLATE_REQUEST_TIMEOUT_MS,
-      AUTO_TRANSLATE_ORPHAN_LOADING_REQUEUE_MS,
-      AUTO_TRANSLATE_IN_FLIGHT_STALE_MS,
-      AUTO_TRANSLATE_FORCE_SINGLE_TEXT_LENGTH,
-      AUTO_TRANSLATE_LONG_TEXT_DEFER_MAX,
-      AUTO_TRANSLATE_ULTRA_LONG_TEXT_LENGTH,
-      AUTO_TRANSLATE_LONG_TEXT_CHUNK_LENGTH,
-      AUTO_TRANSLATE_LOCAL_LONG_TEXT_CHUNK_LENGTH,
-      AUTO_TRANSLATE_LONG_TEXT_MIN_MAX_TOKENS,
-      AUTO_TRANSLATE_LONG_TEXT_TIMEOUT_MAX_MS,
-      AUTO_TRANSLATE_CLOUD_LONG_TEXT_TIMEOUT_MAX_MS,
-      MANUAL_LONG_TEXT_WHOLE_PASS_MAX_LENGTH,
-      MANUAL_TRANSLATION_REQUEST_BUDGET,
-      MANUAL_TRANSLATION_RESCUE_REQUEST_ALLOWANCE,
-      MANUAL_TRANSLATION_REQUEST_BUDGET_MAX,
-      MODEL_REQUEST_TIMEOUT_MS,
-      API_TEST_REQUEST_TIMEOUT_MS,
-      API_ENDPOINT_ERROR_MESSAGE_KEYS,
-      SCAN_VIEWPORT_BUFFER_PX,
-      AUTO_TRANSLATE_VIEWPORT_SETTLE_MS,
-      AUTO_TRANSLATE_VIEWPORT_JUMP_SETTLE_MS,
-      AUTO_TRANSLATE_VIEWPORT_JUMP_COOLDOWN_MS,
-      AUTO_TRANSLATE_VIEWPORT_STABLE_RESCAN_MS,
-      DISCORD_MEDIA_VIEWER_QUIET_MS,
-      DISCORD_MEDIA_VIEWER_PROBE_CACHE_MS,
-      DISCORD_INPUT_COMPOSER_RENDER_PAUSE_MS,
-      AUTO_TRANSLATE_VISIBLE_BACKFILL_SCAN_MS,
-      AUTO_TRANSLATE_SCROLL_RENDER_PAUSE_MS,
-      AUTO_TRANSLATE_RENDER_MAX_PER_FRAME,
-      AUTO_TRANSLATE_RENDER_FRAME_BUDGET_MS,
-      AUTO_TRANSLATE_PREFETCH_PRIORITY_BASE,
-      AUTO_TRANSLATE_EDGE_OVERSCAN_MESSAGES,
-      AUTO_TRANSLATE_SCROLL_STILL_MS,
-      AUTO_TRANSLATE_CACHE_DRAW_MIN_BUFFER_PX,
-      AUTO_TRANSLATE_CACHE_DRAW_BUFFER_FACTOR,
-      AUTO_TRANSLATE_CACHE_DRAW_BUDGET_MS,
-      AUTO_TRANSLATE_CACHE_DRAW_MAX_EVALUATIONS,
-      AUTO_TRANSLATE_CACHE_DRAW_MAX_MESSAGES,
-      AUTO_TRANSLATE_CACHE_DRAW_MEMO_MAX,
-      AUTO_TRANSLATE_FINISHED_LINE_SELECTOR,
-      AUTO_TRANSLATE_DEFAULT_PREFETCH_RANGE,
-      AUTO_TRANSLATE_PREFETCH_RANGES,
-      MUTATION_DIRTY_SCAN_MAX_ROOTS,
-      MUTATION_DIRTY_SCAN_MAX_MESSAGES,
-      INCREMENTAL_MESSAGE_WORK_BUDGET_MS,
-      INCREMENTAL_MESSAGE_WORK_MAX_PER_SLICE,
-      MESSAGE_BUTTON_VISIBILITY_ALWAYS,
-      MESSAGE_BUTTON_VISIBILITY_HOVER,
-      TRANSLATION_LINE_STYLES,
-      TRANSLATION_LINE_TEXT_SCALES,
-      PANEL_THEMES,
-      QUICK_PANEL_TABS,
-      RTL_LANGUAGE_CODES,
-      POLISH_REPOLISH_SOURCE_ORIGINAL,
-      POLISH_REPOLISH_SOURCE_LAST_RESULT,
-      PROMPT_TEMPLATE_CATEGORY_GENERAL,
-      PROMPT_TEMPLATE_CATEGORY_DIALECT,
-      PROMPT_TEMPLATE_CATEGORY_PERSONA,
-      POLISH_PROMPT_TEMPLATE_CATEGORIES,
-      DIALECT_REGION_ORDER,
-      PERSONA_GROUP_ORDER,
-      TRANSLATION_CACHE_DEFAULT_TTL_HOURS,
-      TRANSLATION_CACHE_TTL_OPTIONS,
-      TRANSLATION_CACHE_HIT_EXTEND_MS,
-      TRANSLATION_CACHE_WRITE_DEBOUNCE_MS,
-      TRANSLATION_CACHE_TOUCH_DEBOUNCE_MS,
-      TRANSLATION_CACHE_TOUCH_IDLE_PERSIST_MS,
-      TRANSLATION_CACHE_TOUCH_PERSIST_THRESHOLD,
-      TRANSLATION_CACHE_DEFAULT_LIMIT,
-      TRANSLATION_CACHE_MIN_LIMIT,
-      TRANSLATION_CACHE_MAX_LIMIT,
-      TRANSLATION_CACHE_NEGATIVE_LOOKUP_TTL_MS,
-      TRANSLATION_CACHE_NEGATIVE_LOOKUP_MAX,
-      AUTO_TRANSLATE_PRECHECK_SKIP_TTL_MS,
-      AUTO_TRANSLATE_PRECHECK_SKIP_MAX,
-      AUTO_TRANSLATE_RECENT_RENDER_TTL_MS,
-      AUTO_TRANSLATE_RECENT_RENDER_MAX,
-      AUTO_TRANSLATE_PARTIAL_RESULT_TTL_MS,
-      AUTO_TRANSLATE_PARTIAL_RESULT_MAX,
-      AUTO_TRANSLATE_LAST_DECISION_MAX,
-      AUTO_TRANSLATE_INTAKE_MODES,
-      STORE_MESSAGE_ID_NEGATIVE_LOOKUP_TTL_MS,
-      STORE_MESSAGE_ID_LOOKUP_MAX,
-      DIAGNOSTICS_MAX_ENTRIES,
-      QUICK_SETTINGS_DIAGNOSTICS_MAX_ENTRIES,
-      SETTINGS_WRITE_DEBOUNCE_MS,
-      DIAGNOSTICS_COMPRESSION_WINDOW_MS,
-      DIAGNOSTICS_WRITE_DEBOUNCE_MS,
-      HEAVY_PERSISTENCE_DEFER_MS,
-      HEAVY_PERSISTENCE_MAX_DEFER_MS,
-      DIAGNOSTICS_SLOW_OPERATION_MS,
-      DIAGNOSTICS_SLOW_OPERATION_THROTTLE_MS,
-      DIAGNOSTIC_MESSAGE_STATES,
-      AUTO_TRANSLATION_QUEUE_TYPES,
-      TRANSLATION_VALIDATION_QUALITIES,
-      DIAGNOSTIC_REASON_CODES,
-      DIAGNOSTIC_FAILURE_CLASSES,
-      DIAGNOSTIC_FAILURE_LAYERS,
-      QUICK_SETTINGS_INJECT_MIN_INTERVAL_MS,
-      DISCORD_THEME_CACHE_TTL_MS,
-      GOOGLE_TRANSLATE_DEFAULT_MONTHLY_LIMIT,
-      GOOGLE_TRANSLATE_MAX_MONTHLY_LIMIT,
-      GOOGLE_TRANSLATE_RUNTIME_WRITE_DEBOUNCE_MS,
-      DISCORD_MESSAGE_MAX_LENGTH,
-      LANGUAGE_PRESETS,
-      DEFAULT_PROMPT_TEMPLATES,
-      LEGACY_TRANSLATION_NATURAL_PROMPTS,
-      PROMPT_POLICY_VERSIONS,
-      DEFAULT_SETTINGS
-    };
   }
 });
 
@@ -19777,44 +22272,6 @@ var require_settings_store = __commonJS({
   }
 });
 
-// src/core/delegate-methods.js
-var require_delegate_methods = __commonJS({
-  "src/core/delegate-methods.js"(exports2, module2) {
-    "use strict";
-    function installPrototypeBridge(targetProto, controllerProp, methodNames) {
-      const installed = [];
-      for (const name of methodNames) {
-        if (!name || name === "constructor") continue;
-        if (Object.prototype.hasOwnProperty.call(targetProto, name)) continue;
-        targetProto[name] = function bridgedMethod(...args) {
-          return this[controllerProp][name](...args);
-        };
-        installed.push(name);
-      }
-      return installed;
-    }
-    function attachControllerMethods(ControllerClass, methodMaps) {
-      const names = [];
-      const proto = ControllerClass.prototype;
-      for (const map of methodMaps) {
-        if (!map || typeof map !== "object") continue;
-        for (const name of Object.keys(map)) {
-          if (name === "constructor") continue;
-          const fn = map[name];
-          if (typeof fn !== "function") continue;
-          proto[name] = fn;
-          names.push(name);
-        }
-      }
-      return names;
-    }
-    module2.exports = {
-      installPrototypeBridge,
-      attachControllerMethods
-    };
-  }
-});
-
 // src/settings/ui/settings-shell.js
 var require_settings_shell = __commonJS({
   "src/settings/ui/settings-shell.js"(exports2, module2) {
@@ -28414,6 +30871,7 @@ var require_discord_ai_translator = __commonJS({
     "use strict";
     var { TranslationRenderer } = require_translation_renderer();
     var { ComposerWriter } = require_composer_writer();
+    var { ComposerUiController, COMPOSER_UI_METHOD_NAMES } = require_composer();
     var { DisposableScope } = require_disposable_scope();
     var { EventBus } = require_event_bus();
     var {
@@ -29267,6 +31725,7 @@ var require_discord_ai_translator = __commonJS({
           heavyTextLength: AUTO_TRANSLATE_FORCE_SINGLE_TEXT_LENGTH
         });
         this.composerWriter = new ComposerWriter(this);
+        this.composerUi = new ComposerUiController(this);
         this.quickPanel = new QuickPanel(this);
         this.panelTheme = new PanelTheme(this);
         this.discordHost = new DiscordHostAdapter(this);
@@ -32284,9 +34743,6 @@ var require_discord_ai_translator = __commonJS({
         }
         return null;
       }
-      injectPolishButton() {
-        this.injectInputButtons({ forcePolish: true });
-      }
       injectQuickSettingsButtons(options = {}) {
         if (typeof document === "undefined" || !document.body) return;
         if (!this.settings.ui?.showQuickSettingsPanelButton) {
@@ -32856,1017 +35312,6 @@ var require_discord_ai_translator = __commonJS({
       }
       requestLauncherStatusUpdate(...args) {
         return this.quickPanel.requestStatusUpdate(...args);
-      }
-      getComposerTextboxes() {
-        const textboxes = [];
-        const add = (node) => {
-          if (!node || node.isConnected === false || textboxes.includes(node)) return;
-          if (this.isOwnPluginElement(node)) return;
-          textboxes.push(node);
-        };
-        add(this.getActiveTextbox());
-        try {
-          add(this.getTextbox());
-        } catch {
-        }
-        if (typeof document !== "undefined" && document.querySelectorAll) {
-          try {
-            document.querySelectorAll("[role='textbox'][data-slate-editor='true'], [role='textbox'][contenteditable='true']").forEach(add);
-          } catch {
-          }
-        }
-        return textboxes;
-      }
-      bindInputActionButtonTarget(button, textbox = null, composerKey = "") {
-        if (!button) return;
-        if (textbox) button.__daitTextbox = textbox;
-        if (composerKey && button.dataset) button.dataset.daitComposerKey = composerKey;
-      }
-      resolveLiveComposerForButton(button = null, fallbackTextbox = null) {
-        const root = button?.closest?.("form, [class*='channelTextArea']") || null;
-        let textbox = null;
-        if (root?.querySelector) {
-          try {
-            const candidate = root.querySelector("[role='textbox'][data-slate-editor='true'], [role='textbox'][contenteditable='true']");
-            if (candidate && candidate.isConnected !== false && !this.isOwnPluginElement(candidate)) textbox = candidate;
-          } catch {
-          }
-        }
-        if (!textbox) {
-          for (const candidate of [button?.__daitTextbox, fallbackTextbox]) {
-            if (candidate && candidate.isConnected !== false) {
-              textbox = candidate;
-              break;
-            }
-          }
-        }
-        if (!textbox) {
-          const active = this.getActiveTextbox();
-          if (active && active.isConnected !== false) textbox = active;
-          else {
-            const fallback = this.getTextbox();
-            if (fallback && fallback.isConnected !== false) textbox = fallback;
-          }
-        }
-        const composerKey = textbox ? this.getTextboxComposerKey(textbox) : "";
-        this.bindInputActionButtonTarget(button, textbox, composerKey);
-        return { textbox, composerKey };
-      }
-      injectInputButtons(options = {}) {
-        const textboxes = this.getComposerTextboxes();
-        if (!textboxes.length) return;
-        const visitedContainers = /* @__PURE__ */ new Set();
-        textboxes.forEach((textbox) => {
-          const container = this.getPolishButtonContainer(textbox);
-          if (!container || visitedContainers.has(container)) return;
-          visitedContainers.add(container);
-          this.injectInputButtonsForComposer(textbox, container, options);
-        });
-      }
-      injectInputButtonsForComposer(textbox, container, options = {}) {
-        const composerKey = this.getTextboxComposerKey(textbox);
-        const group = this.getInputActionGroup(container);
-        if (!group) return;
-        group.__daitTextbox = textbox;
-        this.removeDisabledInputActionButtons(group);
-        if (this.isPolishInputButtonEnabled(options)) {
-          let polishButton = group.querySelector(".dait-polish-button");
-          if (!polishButton) {
-            polishButton = this.createInputActionButton(
-              "dait-polish-button",
-              this.t("polishButton"),
-              this.getPolishButtonTitleAttr(),
-              () => {
-                const live = this.resolveLiveComposerForButton(polishButton, group.__daitTextbox);
-                this.polishCurrentDraft(polishButton, live);
-              },
-              { shortText: this.t("polishButtonShort"), textbox, composerKey }
-            );
-            polishButton.setAttribute?.("data-dait-split", "true");
-            polishButton.addEventListener("contextmenu", (event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              const anchor = group.querySelector?.(".dait-polish-preset-button") || polishButton;
-              const live = this.resolveLiveComposerForButton(anchor, group.__daitTextbox);
-              this.togglePolishPresetMenu(anchor, { group, ...live });
-            });
-            const beforeNode = group.querySelector?.(".dait-public-bilingual-button") || group.querySelector?.(".dait-input-action-menu-button") || null;
-            if (typeof group.insertBefore === "function" && beforeNode) group.insertBefore(polishButton, beforeNode);
-            else group.appendChild(polishButton);
-          } else {
-            polishButton.setAttribute?.("data-dait-split", "true");
-            this.bindInputActionButtonTarget(polishButton, textbox, composerKey);
-          }
-          let presetButton = group.querySelector(".dait-polish-preset-button");
-          if (!presetButton) {
-            presetButton = this.createPolishPresetButton(group, textbox, composerKey);
-            const nextNode = polishButton.nextSibling || (Array.isArray(group.children) ? group.children[group.children.indexOf(polishButton) + 1] || null : null);
-            if (typeof group.insertBefore === "function" && nextNode) {
-              group.insertBefore(presetButton, nextNode);
-            } else {
-              group.appendChild(presetButton);
-            }
-          } else {
-            this.bindInputActionButtonTarget(presetButton, textbox, composerKey);
-          }
-        }
-        if (!options.forcePolish && this.isPublicBilingualInputButtonEnabled()) {
-          let bilingualButton = group.querySelector(".dait-public-bilingual-button");
-          if (!bilingualButton) {
-            bilingualButton = this.createInputActionButton(
-              "dait-public-bilingual-button",
-              this.t("publicBilingualButton"),
-              this.t("publicBilingualTitleAttr", { targetLanguage: this.getDisplayLanguage(this.getPublicBilingualTargetLanguage()) }),
-              () => {
-                const live = this.resolveLiveComposerForButton(bilingualButton, group.__daitTextbox);
-                this.publicBilingualCurrentDraft(bilingualButton, live);
-              },
-              { shortText: this.t("publicBilingualButtonShort"), textbox, composerKey }
-            );
-            const menuButton = group.querySelector?.(".dait-input-action-menu-button") || null;
-            if (typeof group.insertBefore === "function" && menuButton) group.insertBefore(bilingualButton, menuButton);
-            else group.appendChild(bilingualButton);
-          } else {
-            this.bindInputActionButtonTarget(bilingualButton, textbox, composerKey);
-          }
-        }
-        this.syncInputRestoreButtonState(group, textbox, options);
-        this.syncInputActionButtonThemes(group, textbox || container);
-        this.syncInputActionGroupState(group, textbox, container);
-      }
-      // Polish needs polish.enabled and public bilingual needs translation.enabled; a feature that is
-      // switched off loses its composer button (it comes back on the next scan once re-enabled).
-      removeDisabledInputActionButtons(group) {
-        if (!group?.querySelectorAll) return false;
-        const selectors = [];
-        if (this.settings.polish?.enabled === false) selectors.push(".dait-polish-button", ".dait-polish-preset-button");
-        if (!this.isPublicBilingualFeatureEnabled()) selectors.push(".dait-public-bilingual-button");
-        let removed = false;
-        selectors.forEach((selector) => {
-          [...group.querySelectorAll(selector) || []].forEach((button) => {
-            button.remove?.();
-            removed = true;
-          });
-        });
-        if (removed && this.settings.polish?.enabled === false) this.removePolishPresetMenu();
-        return removed;
-      }
-      syncInputActionButtonsForSettings() {
-        this.removeInputActionMenu();
-        this.removePolishPresetMenu();
-        if (typeof document === "undefined") return;
-        [...document.querySelectorAll?.(".dait-input-action-group") || []].forEach((group) => {
-          if (this.removeDisabledInputActionButtons(group)) this.syncInputActionGroupState(group);
-        });
-        if (!this.isStarted || !(this.settings.ui?.injectInputButton || this.settings.ui?.publicBilingualInputButton)) return;
-        if (this.isDiscordSettingsSurfaceOpen()) this.queueInputButtonScan({ delayMs: 120, trailing: true });
-        else this.injectInputButtons();
-      }
-      createInputActionButton(className, text, title, action, options = {}) {
-        const button = document.createElement("button");
-        button.className = className;
-        button.type = "button";
-        button.textContent = text;
-        button.dataset.daitFullLabel = text;
-        button.dataset.daitShortLabel = options.shortText || text;
-        if (options.composerKey) button.dataset.daitComposerKey = options.composerKey;
-        if (options.textbox) button.__daitTextbox = options.textbox;
-        button.title = title;
-        button.setAttribute("aria-label", title || text);
-        ["pointerdown", "mousedown"].forEach((type) => {
-          button.addEventListener(type, (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-          });
-        });
-        button.addEventListener("click", (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          action?.();
-        });
-        return button;
-      }
-      resolveInputActionTextbox(button = null, options = {}) {
-        const expectedComposerKey = options.composerKey || button?.dataset?.daitComposerKey || "";
-        const candidates = [
-          options.textbox,
-          button?.__daitTextbox
-        ].filter(Boolean);
-        for (const textbox of candidates) {
-          if (!textbox || textbox.isConnected === false) continue;
-          if (!expectedComposerKey || this.getTextboxComposerKey(textbox) === expectedComposerKey) return textbox;
-        }
-        if (!expectedComposerKey) {
-          const activeTextbox = this.getActiveTextbox();
-          if (activeTextbox?.isConnected !== false) return activeTextbox;
-          const textbox = this.getTextbox();
-          if (textbox?.isConnected !== false) return textbox;
-        }
-        return null;
-      }
-      isInputActionTextboxCurrent(textbox, expectedComposerKey = "") {
-        if (!textbox || textbox.isConnected === false) return false;
-        return !expectedComposerKey || this.getTextboxComposerKey(textbox) === expectedComposerKey;
-      }
-      syncInputActionButtonThemes(group, anchor = null) {
-        if (!group?.querySelectorAll) return;
-        group.querySelectorAll(".dait-polish-button, .dait-polish-preset-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-menu-button").forEach((button) => {
-          this.syncDiscordThemeClasses(button, anchor);
-        });
-      }
-      getInputActionGroup(container) {
-        if (!container?.appendChild || typeof document === "undefined") return null;
-        container.classList?.add?.("dait-input-actions-host");
-        let group = container.querySelector?.(".dait-input-action-group");
-        if (!group) {
-          group = document.createElement("span");
-          group.className = "dait-input-action-group";
-          group.setAttribute?.("aria-label", `${PLUGIN_NAME} input actions`);
-          if (typeof container.insertBefore === "function" && container.children?.length) container.insertBefore(group, container.children[0]);
-          else container.appendChild(group);
-        }
-        return group;
-      }
-      syncInputActionGroupState(group, textbox = null, container = null) {
-        if (!group?.classList) return;
-        const actionSelector = ".dait-polish-restore-button, .dait-polish-button, .dait-public-bilingual-button";
-        const queried = group.querySelectorAll?.(actionSelector) || [];
-        const fallback = [...group.children || []].filter((child) => this.isInputActionDirectButton(child));
-        const count = Math.max(queried.length || 0, fallback.length);
-        group.classList.toggle("dait-input-action-group-dual", count > 1);
-        if (!group.querySelector?.(".dait-polish-button")) {
-          [...group.querySelectorAll?.(".dait-polish-preset-button") || []].forEach((node) => node.remove?.());
-        }
-        if (!count) {
-          this.removeInputActionMenu();
-          this.removePolishPresetMenu();
-          group.remove?.();
-          return;
-        }
-        this.ensureInputActionMenuButton(group, textbox, container);
-        this.updateInputActionGroupDensity(group, textbox, container);
-      }
-      isInputActionDirectButton(node) {
-        return this.elementHasClassName(node, "dait-polish-restore-button") || this.elementHasClassName(node, "dait-polish-button") || this.elementHasClassName(node, "dait-public-bilingual-button");
-      }
-      syncInputRestoreButtonState(group, textbox, options = {}) {
-        if (!group) return;
-        const existing = group.querySelector?.(".dait-polish-restore-button");
-        const session = options.restoreSession || this.polishSession;
-        const canRestore = Boolean(session && this.canRestorePolishOriginal(textbox, session));
-        if (!canRestore) {
-          existing?.remove?.();
-          return;
-        }
-        if (existing) {
-          if (existing.__daitRestoreSession === session && existing.dataset?.daitComposerKey === session.composerKey) return;
-          existing.remove?.();
-        }
-        const button = this.createInputActionButton(
-          "dait-polish-restore-button",
-          this.t("restoreOriginal"),
-          this.t("restoreOriginal"),
-          () => this.restorePolishOriginal(textbox, session, button),
-          { shortText: this.t("restoreOriginalShort"), textbox, composerKey: session.composerKey }
-        );
-        button.__daitRestoreSession = session;
-        if (typeof group.insertBefore === "function" && group.children?.length) group.insertBefore(button, group.children[0]);
-        else group.appendChild(button);
-      }
-      ensureInputActionMenuButton(group, textbox = null, container = null) {
-        if (!group?.appendChild || typeof document === "undefined") return null;
-        if (textbox) group.__daitTextbox = textbox;
-        if (container) group.__daitContainer = container;
-        let button = group.querySelector?.(".dait-input-action-menu-button");
-        if (!button) {
-          button = document.createElement("button");
-          button.className = "dait-input-action-menu-button";
-          button.type = "button";
-          button.textContent = "AI";
-          button.title = this.t("inputActionMenu");
-          button.setAttribute("aria-label", this.t("inputActionMenu"));
-          button.setAttribute("aria-haspopup", "menu");
-          button.setAttribute("aria-expanded", "false");
-          ["pointerdown", "mousedown"].forEach((type) => {
-            button.addEventListener(type, (event) => {
-              event.preventDefault();
-              event.stopPropagation();
-            });
-          });
-          button.addEventListener("click", (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            const live = this.resolveLiveComposerForButton(button, group.__daitTextbox);
-            this.toggleInputActionMenu(group, live.textbox, group.__daitContainer || container, button);
-          });
-          group.appendChild(button);
-        }
-        if (textbox) this.bindInputActionButtonTarget(button, textbox, this.getTextboxComposerKey(textbox));
-        return button;
-      }
-      updateInputActionGroupDensity(group, textbox = null, container = null) {
-        if (!group?.dataset) return;
-        const width = this.getInputActionAvailableWidth(group, textbox, container);
-        const actionCount = this.getInputActionDirectButtonCount(group);
-        let density = "roomy";
-        if (width > 0) {
-          if (width < (actionCount >= 3 ? 620 : 520)) density = "minimal";
-          else if (width < (actionCount >= 3 ? 760 : 660)) density = "compact";
-        }
-        group.dataset.daitDensity = density;
-        group.classList?.toggle?.("dait-input-action-group-compact", density === "compact");
-        group.classList?.toggle?.("dait-input-action-group-minimal", density === "minimal");
-        group.classList?.toggle?.("dait-input-action-group-roomy", density === "roomy");
-        this.syncInputActionButtonLabels(group, density);
-      }
-      getInputActionAvailableWidth(group, textbox = null, container = null) {
-        const roots = [
-          textbox?.closest?.("form, [class*='channelTextArea']"),
-          container?.closest?.("form, [class*='channelTextArea']"),
-          group?.closest?.("form, [class*='channelTextArea']"),
-          container?.parentElement,
-          container,
-          group?.parentElement
-        ].filter(Boolean);
-        for (const root of roots) {
-          const rect = root.getBoundingClientRect?.();
-          const width = Number(rect?.width || 0);
-          if (width > 0) return width;
-        }
-        const viewport = Number((typeof window !== "undefined" ? window.innerWidth : 0) || (typeof document !== "undefined" ? document.documentElement?.clientWidth : 0) || 0);
-        return Number.isFinite(viewport) ? viewport : 0;
-      }
-      getInputActionDirectButtonCount(group) {
-        return [...group?.children || []].filter((child) => this.isInputActionDirectButton(child)).length;
-      }
-      syncInputActionButtonLabels(group, density = "roomy") {
-        if (!group?.querySelectorAll) return;
-        group.querySelectorAll(".dait-polish-restore-button, .dait-polish-button, .dait-public-bilingual-button").forEach((button) => {
-          this.renderInputActionButtonLabel(button, density);
-        });
-      }
-      // The one place that writes a composer button's label, so busy/idle changes keep the group's density.
-      renderInputActionButtonLabel(button, density = null) {
-        if (!button) return;
-        const groupDensity = density || button.parentElement?.dataset?.daitDensity || button.closest?.(".dait-input-action-group")?.dataset?.daitDensity || "roomy";
-        const full = button.dataset?.daitFullLabel || button.textContent || "";
-        const short = button.dataset?.daitShortLabel || full;
-        const next = groupDensity !== "roomy" ? short : full;
-        if (button.textContent !== next) button.textContent = next;
-      }
-      toggleInputActionMenu(group, textbox = null, container = null, button = null) {
-        if (this.inputActionMenu?.isConnected) {
-          this.removeInputActionMenu();
-          return;
-        }
-        this.openInputActionMenu(group, textbox, container, button);
-      }
-      openInputActionMenu(group, textbox = null, container = null, button = null) {
-        if (typeof document === "undefined" || !document.body) return null;
-        this.removePolishPresetMenu();
-        this.removeInputActionMenu();
-        const menu = document.createElement("div");
-        menu.className = "dait-input-action-menu";
-        menu.setAttribute("role", "menu");
-        menu.setAttribute("aria-label", this.t("inputActionMenu"));
-        this.applyPanelTheme(menu);
-        for (const { label, title, action } of this.discordHost.contextMenu.getComposerMenuItems(menu, group, textbox, button)) {
-          const item = document.createElement("button");
-          item.className = "dait-input-action-menu-item";
-          item.type = "button";
-          item.textContent = label;
-          item.title = title || label;
-          item.setAttribute("role", "menuitem");
-          item.setAttribute("aria-label", title || label);
-          item.addEventListener("click", (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            action();
-          });
-          menu.appendChild(item);
-        }
-        ["pointerdown", "mousedown", "click"].forEach((type) => {
-          menu.addEventListener(type, (event) => event.stopPropagation());
-        });
-        document.body.appendChild(menu);
-        this.inputActionMenu = menu;
-        button?.setAttribute?.("aria-expanded", "true");
-        const anchorNode = button || group;
-        let repositionRaf = null;
-        const isAnchorHidden = () => {
-          if (!anchorNode) return false;
-          if (anchorNode.isConnected === false) return true;
-          const rect = anchorNode.getBoundingClientRect?.();
-          return Boolean(rect && Number(rect.width || 0) <= 0 && Number(rect.height || 0) <= 0);
-        };
-        const reposition = () => {
-          repositionRaf = null;
-          if (!menu.isConnected) return;
-          if (isAnchorHidden()) {
-            this.removeInputActionMenu();
-            return;
-          }
-          this.positionInputActionMenu(menu, anchorNode);
-        };
-        const onResize = () => {
-          if (repositionRaf !== null) {
-            try {
-              window.cancelAnimationFrame?.(repositionRaf);
-            } catch {
-            }
-            repositionRaf = null;
-          }
-          if (!menu.isConnected) return;
-          this.applyPanelTheme(menu);
-          reposition();
-        };
-        const onScroll = (event) => {
-          if (event?.target && event.target !== window && event.target !== document && anchorNode && !event.target.contains?.(anchorNode)) {
-            return;
-          }
-          if (repositionRaf !== null) return;
-          if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
-            repositionRaf = window.requestAnimationFrame(reposition);
-          } else {
-            reposition();
-          }
-        };
-        const outsidePointerDown = (event) => {
-          if (menu.contains?.(event.target) || button?.contains?.(event.target)) return;
-          this.removeInputActionMenu();
-        };
-        const escapeKeydown = (event) => {
-          if (event.isComposing || event.keyCode === 229 || event.key !== "Escape") return;
-          event.preventDefault?.();
-          event.stopPropagation?.();
-          this.removeInputActionMenu();
-        };
-        this.inputActionMenuCleanup = () => {
-          button?.setAttribute?.("aria-expanded", "false");
-          if (repositionRaf !== null && typeof window !== "undefined") {
-            window.cancelAnimationFrame?.(repositionRaf);
-            repositionRaf = null;
-          }
-          if (typeof window !== "undefined") {
-            window.removeEventListener?.("resize", onResize, { capture: true });
-            window.removeEventListener?.("scroll", onScroll, { capture: true });
-          }
-          document.removeEventListener?.("pointerdown", outsidePointerDown, true);
-          document.removeEventListener?.("keydown", escapeKeydown, true);
-        };
-        if (typeof window !== "undefined") {
-          window.addEventListener?.("resize", onResize, { capture: true, passive: true });
-          window.addEventListener?.("scroll", onScroll, { capture: true, passive: true });
-        }
-        document.addEventListener?.("pointerdown", outsidePointerDown, true);
-        document.addEventListener?.("keydown", escapeKeydown, true);
-        onResize();
-        return menu;
-      }
-      positionInputActionMenu(menu, anchor = null) {
-        if (!menu?.style || typeof window === "undefined") return;
-        const rect = anchor?.getBoundingClientRect?.() || null;
-        const viewportWidth = Number(window.innerWidth || document.documentElement?.clientWidth || 0) || 900;
-        const viewportHeight = Number(window.innerHeight || document.documentElement?.clientHeight || 0) || 700;
-        const width = Math.min(210, Math.max(156, viewportWidth - 24));
-        const left = rect ? Math.max(12, Math.min(rect.right - width, viewportWidth - width - 12)) : viewportWidth - width - 16;
-        const bottom = rect ? Math.max(12, viewportHeight - rect.top + 8) : 76;
-        menu.style.left = `${left}px`;
-        menu.style.right = "auto";
-        menu.style.bottom = `${Math.min(Math.max(bottom, 12), Math.max(12, viewportHeight - 80))}px`;
-        menu.style.width = `${width}px`;
-      }
-      removeInputActionMenu() {
-        this.inputActionMenuCleanup?.();
-        this.inputActionMenuCleanup = null;
-        this.inputActionMenu?.remove?.();
-        this.inputActionMenu = null;
-      }
-      getActivePolishPresetInfo() {
-        const templates = this.getPromptTemplates("polish") || [];
-        const task = this.settings?.polish || {};
-        const activeId = String(task.activePromptTemplate || "");
-        const activeTemplate = templates.find((item) => item && item.id === activeId) || null;
-        const normalize = (value) => String(value ?? "").replace(/\r\n?/g, "\n").trim();
-        const matchesActive = Boolean(activeTemplate && normalize(activeTemplate.prompt) === normalize(task.prompt));
-        const label = matchesActive ? this.getPromptTemplateLabel(activeTemplate) : this.t("quickPanelTemplateCustom");
-        return { templates, activeTemplate, matchesActive, label };
-      }
-      getPolishButtonTitleAttr() {
-        const info = this.getActivePolishPresetInfo();
-        const shortcut = this.getHotkeyLabel();
-        return info.label ? this.t("polishTitleAttrWithTone", { tone: info.label, shortcut }) : this.t("polishTitleAttr", { shortcut });
-      }
-      getPolishPresetPickerTitleAttr() {
-        const info = this.getActivePolishPresetInfo();
-        return info.label ? this.t("polishPresetPickerTitle", { tone: info.label }) : this.t("polishPresetPicker");
-      }
-      syncPolishPresetControls() {
-        if (typeof document === "undefined") return;
-        const polishTitle = this.getPolishButtonTitleAttr();
-        const pickerTitle = this.getPolishPresetPickerTitleAttr();
-        [...document.querySelectorAll?.(".dait-polish-button") || []].forEach((button) => {
-          button.title = polishTitle;
-          button.setAttribute?.("aria-label", polishTitle);
-        });
-        [...document.querySelectorAll?.(".dait-polish-preset-button") || []].forEach((button) => {
-          button.title = pickerTitle;
-          button.setAttribute?.("aria-label", pickerTitle);
-        });
-        if (this.polishPresetMenu?.isConnected) {
-          if (this.settings.polish?.enabled === false || this.polishPresetMenuAnchor && this.polishPresetMenuAnchor.isConnected === false) {
-            this.removePolishPresetMenu();
-            return;
-          }
-          const active = typeof document !== "undefined" ? document.activeElement : null;
-          const focusedInMenu = Boolean(active && this.polishPresetMenu.contains?.(active));
-          const focusedTemplateId = focusedInMenu ? active?.dataset?.daitTemplateId || "" : "";
-          const focusedCategory = focusedInMenu && active?.classList?.contains?.("dait-polish-preset-tab") ? active?.dataset?.daitCategory || "" : "";
-          const focusedManage = Boolean(focusedInMenu && active?.classList?.contains?.("dait-polish-preset-manage"));
-          this.renderPolishPresetMenuContent(this.polishPresetMenu, this.polishPresetMenuAnchor);
-          this.positionPolishPresetMenu(this.polishPresetMenu, this.polishPresetMenuAnchor);
-          if (focusedInMenu) {
-            const nextFocus = focusedManage ? this.polishPresetMenu.querySelector?.(".dait-polish-preset-manage") : (focusedCategory ? [...this.polishPresetMenu.querySelectorAll?.(".dait-polish-preset-tab") || []].find((tab) => tab.dataset?.daitCategory === focusedCategory) : null) || (focusedTemplateId ? [...this.polishPresetMenu.querySelectorAll?.(".dait-polish-preset-item") || []].find((item) => item.dataset?.daitTemplateId === focusedTemplateId) : null) || this.polishPresetMenu.querySelector?.(".dait-polish-preset-item, .dait-polish-preset-tab, .dait-polish-preset-manage");
-            nextFocus?.focus?.();
-          }
-        }
-      }
-      createPolishPresetButton(group, textbox = null, composerKey = "") {
-        const button = document.createElement("button");
-        button.className = "dait-polish-preset-button";
-        button.type = "button";
-        if (composerKey) button.dataset.daitComposerKey = composerKey;
-        if (textbox) button.__daitTextbox = textbox;
-        const title = this.getPolishPresetPickerTitleAttr();
-        button.title = title;
-        button.setAttribute("aria-label", title);
-        button.setAttribute("aria-haspopup", "menu");
-        button.setAttribute("aria-expanded", "false");
-        const caret = document.createElement("span");
-        caret.className = "dait-polish-preset-caret";
-        caret.setAttribute("aria-hidden", "true");
-        button.appendChild(caret);
-        ["pointerdown", "mousedown"].forEach((type) => {
-          button.addEventListener(type, (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-          });
-        });
-        button.addEventListener("click", (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          const live = this.resolveLiveComposerForButton(button, group?.__daitTextbox);
-          this.togglePolishPresetMenu(button, { group, ...live });
-        });
-        return button;
-      }
-      togglePolishPresetMenu(anchor = null, options = {}) {
-        if (this.polishPresetMenu?.isConnected && (!anchor || this.polishPresetMenuAnchor === anchor)) {
-          this.removePolishPresetMenu();
-          return null;
-        }
-        return this.openPolishPresetMenu(anchor, options);
-      }
-      renderPolishPresetMenuContent(menu, anchor = null, lifecycleToken = this.getLifecycleToken()) {
-        if (!menu) return;
-        menu.textContent = "";
-        const info = this.getActivePolishPresetInfo();
-        const activeCategory = POLISH_PROMPT_TEMPLATE_CATEGORIES.includes(this.polishPresetMenuCategory) ? this.polishPresetMenuCategory : this.getPolishTemplateCategory(info.activeTemplate);
-        this.polishPresetMenuCategory = activeCategory;
-        menu.dataset.daitCategory = activeCategory;
-        const header = document.createElement("div");
-        header.className = "dait-polish-preset-header";
-        const headerTop = document.createElement("div");
-        headerTop.className = "dait-polish-preset-header-top";
-        const title = document.createElement("div");
-        title.className = "dait-polish-preset-title";
-        title.textContent = this.t("polishPresetMenuTitle");
-        headerTop.appendChild(title);
-        const tabs = document.createElement("div");
-        tabs.className = "dait-polish-preset-tabs";
-        tabs.setAttribute("role", "tablist");
-        tabs.setAttribute("aria-label", this.t("polishPresetMenuTabsLabel"));
-        POLISH_PROMPT_TEMPLATE_CATEGORIES.forEach((category) => {
-          const tab = document.createElement("button");
-          tab.className = "dait-polish-preset-tab";
-          tab.type = "button";
-          tab.dataset.daitCategory = category;
-          tab.textContent = this.getPolishTemplateCategoryLabel(category);
-          tab.setAttribute("role", "tab");
-          tab.setAttribute("aria-selected", category === activeCategory ? "true" : "false");
-          tab.addEventListener("click", (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            if (!this.isLifecycleTokenCurrent(lifecycleToken) || this.polishPresetMenu !== menu || menu.isConnected === false) return;
-            if (this.polishPresetMenuCategory === category) return;
-            const hadFocusInMenu = Boolean(typeof document !== "undefined" && document.activeElement && menu.contains?.(document.activeElement));
-            this.polishPresetMenuCategory = category;
-            const nextSelected = this.renderPolishPresetMenuContent(menu, anchor, lifecycleToken);
-            this.positionPolishPresetMenu(menu, anchor);
-            if (hadFocusInMenu) {
-              const nextTab = [...menu.querySelectorAll?.(".dait-polish-preset-tab") || []].find((node) => node.dataset?.daitCategory === category);
-              nextTab?.focus?.();
-            }
-            try {
-              nextSelected?.scrollIntoView?.({ block: "nearest" });
-            } catch {
-            }
-          });
-          tabs.appendChild(tab);
-        });
-        headerTop.appendChild(tabs);
-        header.appendChild(headerTop);
-        if (!info.matchesActive) {
-          const customNote = document.createElement("div");
-          customNote.className = "dait-polish-preset-custom-note";
-          customNote.textContent = this.t("polishPresetMenuCustomNote");
-          header.appendChild(customNote);
-        }
-        menu.appendChild(header);
-        const list = document.createElement("div");
-        list.className = "dait-polish-preset-list";
-        list.setAttribute("role", "none");
-        let selectedItem = null;
-        const categoryTemplates = info.templates.filter((template) => template?.id && this.getPolishTemplateCategory(template) === activeCategory);
-        const appendTemplateItem = (template) => {
-          const isSelected = Boolean(info.matchesActive && info.activeTemplate?.id === template.id);
-          const displayName = this.getPromptTemplateDisplayName(template);
-          const fullLabel = this.getPromptTemplateLabel(template);
-          const item = document.createElement("button");
-          item.className = "dait-polish-preset-item";
-          item.type = "button";
-          item.dataset.daitTemplateId = template.id;
-          item.dataset.daitCategory = activeCategory;
-          item.title = fullLabel;
-          item.setAttribute("role", "menuitemradio");
-          item.setAttribute("aria-checked", isSelected ? "true" : "false");
-          item.setAttribute("aria-label", fullLabel);
-          const code = document.createElement("span");
-          code.className = "dait-polish-preset-code";
-          code.textContent = String(template.serial || "000");
-          const name = document.createElement("span");
-          name.className = "dait-polish-preset-name";
-          name.textContent = displayName;
-          const check = document.createElement("span");
-          check.className = "dait-polish-preset-check";
-          check.setAttribute("aria-hidden", "true");
-          item.appendChild(code);
-          item.appendChild(name);
-          item.appendChild(check);
-          item.addEventListener("click", (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            if (!this.isLifecycleTokenCurrent(lifecycleToken) || this.polishPresetMenu !== menu || menu.isConnected === false) return;
-            if (this.settings.polish?.enabled === false) {
-              this.removePolishPresetMenu();
-              return;
-            }
-            this.removePolishPresetMenu();
-            this.applyPromptTemplate("polish", template.id);
-          });
-          list.appendChild(item);
-          if (isSelected) selectedItem = item;
-        };
-        if (categoryTemplates.length) {
-          const appendSubgroup = (labelText, items) => {
-            if (!items.length) return;
-            const groupLabel = document.createElement("div");
-            groupLabel.className = "dait-polish-preset-group-label";
-            groupLabel.setAttribute("role", "presentation");
-            groupLabel.textContent = labelText;
-            list.appendChild(groupLabel);
-            items.forEach(appendTemplateItem);
-          };
-          if (activeCategory === PROMPT_TEMPLATE_CATEGORY_DIALECT) {
-            const customDialects = categoryTemplates.filter((template) => !DIALECT_REGION_ORDER.includes(String(template.region || "")));
-            appendSubgroup(this.t("promptTemplateRegionCustom"), customDialects);
-            DIALECT_REGION_ORDER.forEach((region) => {
-              const regionItems = categoryTemplates.filter((template) => template.region === region);
-              appendSubgroup(this.getDialectRegionLabel(region), regionItems);
-            });
-          } else if (activeCategory === PROMPT_TEMPLATE_CATEGORY_PERSONA) {
-            const customPersonas = categoryTemplates.filter((template) => !PERSONA_GROUP_ORDER.includes(String(template.personaGroup || "")));
-            appendSubgroup(this.t("promptTemplatePersonaGroupCustom"), customPersonas);
-            PERSONA_GROUP_ORDER.forEach((group) => {
-              const groupItems = categoryTemplates.filter((template) => template.personaGroup === group);
-              appendSubgroup(this.getPersonaGroupLabel(group), groupItems);
-            });
-          } else {
-            categoryTemplates.forEach(appendTemplateItem);
-          }
-        } else {
-          const empty = document.createElement("p");
-          empty.className = "dait-polish-preset-empty";
-          empty.textContent = activeCategory === PROMPT_TEMPLATE_CATEGORY_PERSONA ? this.t("polishPresetMenuEmptyPersona") : this.t("polishPresetMenuEmpty");
-          list.appendChild(empty);
-        }
-        menu.appendChild(list);
-        const footer = document.createElement("div");
-        footer.className = "dait-polish-preset-footer";
-        const manage = document.createElement("button");
-        manage.className = "dait-polish-preset-manage";
-        manage.type = "button";
-        manage.textContent = this.t("polishPresetMenuManage");
-        manage.setAttribute("role", "menuitem");
-        manage.addEventListener("click", (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          if (!this.isLifecycleTokenCurrent(lifecycleToken) || this.polishPresetMenu !== menu || menu.isConnected === false) return;
-          this.removePolishPresetMenu();
-          if (this.settings?.ui) {
-            this.settings.ui.settingsActiveTab = SETTINGS_TAB_COMPOSE;
-            this.saveSettings?.({ debounce: true });
-          }
-          const modal = this.openQuickSettingsPanel("polish-preset-menu", anchor);
-          const panel = modal?.querySelector?.(".dait-settings") || null;
-          if (panel) this.setSettingsActiveTab?.(SETTINGS_TAB_COMPOSE, panel);
-        });
-        footer.appendChild(manage);
-        menu.appendChild(footer);
-        return selectedItem;
-      }
-      openPolishPresetMenu(anchor = null, options = {}) {
-        if (typeof document === "undefined" || !document.body) return null;
-        if (this.settings.polish?.enabled === false) return null;
-        this.removeInputActionMenu();
-        this.removePolishPresetMenu();
-        const lifecycleToken = this.getLifecycleToken();
-        const anchorNode = anchor || options.group?.querySelector?.(".dait-polish-preset-button") || options.group?.querySelector?.(".dait-polish-button") || options.group || null;
-        const menu = document.createElement("div");
-        menu.className = "dait-polish-preset-menu";
-        menu.setAttribute("role", "menu");
-        menu.setAttribute("aria-label", this.t("polishPresetMenuTitle"));
-        this.applyPanelTheme(menu);
-        const selectedItem = this.renderPolishPresetMenuContent(menu, anchorNode, lifecycleToken);
-        ["pointerdown", "mousedown"].forEach((type) => {
-          menu.addEventListener(type, (event) => {
-            if (event?.target?.closest?.("button")) event.preventDefault();
-            event.stopPropagation();
-          });
-        });
-        menu.addEventListener("click", (event) => event.stopPropagation());
-        menu.addEventListener("keydown", (event) => {
-          if (event.key !== "Escape") event.stopPropagation();
-        });
-        document.body.appendChild(menu);
-        this.polishPresetMenu = menu;
-        this.polishPresetMenuAnchor = anchorNode;
-        anchorNode?.setAttribute?.("aria-expanded", "true");
-        const companionPolishButton = options.group?.querySelector?.(".dait-polish-button") || anchorNode?.closest?.(".dait-input-action-group")?.querySelector?.(".dait-polish-button") || null;
-        const isAnchorHidden = () => {
-          if (!anchorNode) return false;
-          if (anchorNode.isConnected === false) return true;
-          const rect = anchorNode.getBoundingClientRect?.();
-          return Boolean(rect && Number(rect.width || 0) <= 0 && Number(rect.height || 0) <= 0);
-        };
-        let repositionRaf = null;
-        const reposition = () => {
-          repositionRaf = null;
-          if (!menu.isConnected) return;
-          if (isAnchorHidden()) {
-            this.removePolishPresetMenu();
-            return;
-          }
-          this.positionPolishPresetMenu(menu, anchorNode);
-        };
-        const onResize = () => {
-          if (repositionRaf !== null) {
-            try {
-              window.cancelAnimationFrame?.(repositionRaf);
-            } catch {
-            }
-            repositionRaf = null;
-          }
-          if (!menu.isConnected) return;
-          this.applyPanelTheme(menu);
-          reposition();
-        };
-        const onScroll = (event) => {
-          if (event?.target && menu.contains?.(event.target)) return;
-          if (event?.target && event.target !== window && event.target !== document && anchorNode && !event.target.contains?.(anchorNode)) {
-            return;
-          }
-          if (repositionRaf !== null) return;
-          if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
-            repositionRaf = window.requestAnimationFrame(reposition);
-          } else {
-            reposition();
-          }
-        };
-        const outsidePointerDown = (event) => {
-          if (menu.contains?.(event.target) || anchorNode?.contains?.(event.target)) return;
-          if (event?.button === 2 && companionPolishButton?.contains?.(event.target)) return;
-          this.removePolishPresetMenu();
-        };
-        const onKeydown = (event) => {
-          if (event.isComposing || event.keyCode === 229) return;
-          if (event.key === "Escape") {
-            event.preventDefault?.();
-            event.stopPropagation?.();
-            const shouldRestoreFocus = Boolean(document.activeElement && menu.contains?.(document.activeElement));
-            this.removePolishPresetMenu();
-            if (shouldRestoreFocus && anchorNode?.isConnected !== false) anchorNode?.focus?.();
-            return;
-          }
-          if (["ArrowLeft", "ArrowRight"].includes(event.key)) {
-            const active2 = document.activeElement;
-            const allowTabNavigation = !active2 || active2 === document.body || active2 === document.documentElement || menu.contains?.(active2) || active2 === anchorNode;
-            if (!allowTabNavigation) return;
-            const currentIdx = Math.max(0, POLISH_PROMPT_TEMPLATE_CATEGORIES.indexOf(this.polishPresetMenuCategory));
-            const delta = event.key === "ArrowRight" ? 1 : -1;
-            const nextCategory = POLISH_PROMPT_TEMPLATE_CATEGORIES[(currentIdx + delta + POLISH_PROMPT_TEMPLATE_CATEGORIES.length) % POLISH_PROMPT_TEMPLATE_CATEGORIES.length];
-            event.preventDefault();
-            event.stopPropagation();
-            const hadFocusInMenu = Boolean(active2 && menu.contains?.(active2));
-            const wasFocusedOnTab = Boolean(active2?.classList?.contains?.("dait-polish-preset-tab"));
-            this.polishPresetMenuCategory = nextCategory;
-            const nextSelected = this.renderPolishPresetMenuContent(menu, anchorNode, lifecycleToken);
-            this.positionPolishPresetMenu(menu, anchorNode);
-            if (wasFocusedOnTab) {
-              const nextTab = [...menu.querySelectorAll?.(".dait-polish-preset-tab") || []].find((tab) => tab.dataset?.daitCategory === nextCategory);
-              nextTab?.focus?.();
-            } else if (hadFocusInMenu) {
-              const fallbackFocus = nextSelected || menu.querySelector?.(".dait-polish-preset-item, .dait-polish-preset-manage, .dait-polish-preset-tab");
-              fallbackFocus?.focus?.();
-            } else {
-              try {
-                nextSelected?.scrollIntoView?.({ block: "nearest" });
-              } catch {
-              }
-            }
-            return;
-          }
-          if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
-          const active = document.activeElement;
-          const allowNavigation = !active || active === document.body || active === document.documentElement || menu.contains?.(active) || active === anchorNode;
-          if (!allowNavigation) return;
-          const focusables = [...menu.querySelectorAll?.(".dait-polish-preset-item, .dait-polish-preset-manage") || []];
-          if (!focusables.length) return;
-          event.preventDefault();
-          event.stopPropagation();
-          const currentIndex = focusables.indexOf(active);
-          let nextIndex = 0;
-          if (event.key === "Home") nextIndex = 0;
-          else if (event.key === "End") nextIndex = focusables.length - 1;
-          else if (event.key === "ArrowDown") nextIndex = currentIndex < 0 ? 0 : (currentIndex + 1) % focusables.length;
-          else nextIndex = currentIndex < 0 ? focusables.length - 1 : (currentIndex - 1 + focusables.length) % focusables.length;
-          focusables[nextIndex]?.focus?.();
-        };
-        this.polishPresetMenuCleanup = () => {
-          anchorNode?.setAttribute?.("aria-expanded", "false");
-          if (repositionRaf !== null && typeof window !== "undefined") {
-            window.cancelAnimationFrame?.(repositionRaf);
-            repositionRaf = null;
-          }
-          if (typeof window !== "undefined") {
-            window.removeEventListener?.("resize", onResize, { capture: true });
-            window.removeEventListener?.("scroll", onScroll, { capture: true });
-          }
-          document.removeEventListener?.("pointerdown", outsidePointerDown, true);
-          document.removeEventListener?.("keydown", onKeydown, true);
-        };
-        if (typeof window !== "undefined") {
-          window.addEventListener?.("resize", onResize, { capture: true, passive: true });
-          window.addEventListener?.("scroll", onScroll, { capture: true, passive: true });
-        }
-        document.addEventListener?.("pointerdown", outsidePointerDown, true);
-        document.addEventListener?.("keydown", onKeydown, true);
-        onResize();
-        try {
-          selectedItem?.scrollIntoView?.({ block: "nearest" });
-        } catch {
-        }
-        return menu;
-      }
-      positionPolishPresetMenu(menu, anchor = null) {
-        if (!menu?.style || typeof window === "undefined") return;
-        const rect = anchor?.getBoundingClientRect?.() || null;
-        const viewportWidth = Number(window.innerWidth || document.documentElement?.clientWidth || 0) || 900;
-        const viewportHeight = Number(window.innerHeight || document.documentElement?.clientHeight || 0) || 700;
-        const width = Math.min(324, Math.max(260, viewportWidth - 24));
-        const left = rect ? Math.max(12, Math.min(rect.right - width, viewportWidth - width - 12)) : viewportWidth - width - 16;
-        menu.style.maxHeight = "";
-        const menuHeight = Number(menu.getBoundingClientRect?.()?.height || 0);
-        const spaceAbove = rect ? Math.max(0, rect.top - 12) : Math.max(0, viewportHeight - 24);
-        const spaceBelow = rect ? Math.max(0, viewportHeight - rect.bottom - 12) : 0;
-        const placeBelow = Boolean(rect && menuHeight > 0 && spaceAbove < menuHeight + 8 && spaceBelow > spaceAbove);
-        const availableSpace = placeBelow ? spaceBelow : spaceAbove;
-        menu.style.left = `${left}px`;
-        menu.style.right = "auto";
-        menu.style.width = `${width}px`;
-        menu.style.maxHeight = `${Math.max(140, Math.min(viewportHeight - 24, Math.floor(availableSpace - 8)))}px`;
-        if (placeBelow) {
-          const top = Math.min(Math.max(rect.bottom + 8, 12), Math.max(12, viewportHeight - 152));
-          menu.style.top = `${top}px`;
-          menu.style.bottom = "auto";
-        } else {
-          const bottom = rect ? Math.max(12, viewportHeight - rect.top + 8) : 76;
-          menu.style.top = "auto";
-          menu.style.bottom = `${Math.min(Math.max(bottom, 12), Math.max(12, viewportHeight - 152))}px`;
-        }
-      }
-      removePolishPresetMenu() {
-        this.polishPresetMenuCleanup?.();
-        this.polishPresetMenuCleanup = null;
-        this.polishPresetMenu?.remove?.();
-        this.polishPresetMenu = null;
-        this.polishPresetMenuAnchor = null;
-        this.polishPresetMenuCategory = "";
-      }
-      getPolishButtonContainer(textbox) {
-        return this.getInputButtonContainer(textbox);
-      }
-      getInputButtonContainer(textbox) {
-        const root = textbox?.closest?.("form, [class*='channelTextArea']") || textbox?.parentElement;
-        if (!root?.querySelector) return null;
-        return this.resolveInputButtonContainer(root, textbox);
-      }
-      resolveInputButtonContainer(root, textbox) {
-        const candidates = this.getInputButtonContainerCandidates(root, textbox);
-        const controls = this.getInputButtonControls(root, textbox);
-        const anchors = controls.filter((control) => this.isInputButtonToolbarAnchor(control));
-        const scored = candidates.map((container) => ({ container, score: this.scoreInputButtonContainer(container, root, textbox, anchors) })).filter((item) => item.score > 0).sort((left, right) => right.score - left.score);
-        if (scored.length) return scored[0].container;
-        for (const anchor of anchors) {
-          const container = this.getInputButtonContainerFromAnchor(anchor, root, textbox);
-          if (container) return container;
-        }
-        return null;
-      }
-      getInputButtonContainerCandidates(root, textbox) {
-        const candidates = [];
-        const add = (node) => {
-          if (!this.isValidInputButtonContainer(node, root, textbox) || candidates.includes(node)) return;
-          candidates.push(node);
-        };
-        try {
-          (root.querySelectorAll?.("[class*='buttons']") || []).forEach(add);
-        } catch {
-        }
-        try {
-          add(root.querySelector?.("[class*='buttons']"));
-        } catch {
-        }
-        return candidates;
-      }
-      getInputButtonControls(root, textbox) {
-        try {
-          return [...root.querySelectorAll?.("button, [role='button']") || []].filter((control) => control?.isConnected !== false).filter((control) => !control.contains?.(textbox)).filter((control) => !control.closest?.(".dait-polish-button, .dait-polish-preset-button, .dait-public-bilingual-button, .dait-input-action-group"));
-        } catch {
-          return [];
-        }
-      }
-      scoreInputButtonContainer(container, root, textbox, anchors = []) {
-        if (!this.isValidInputButtonContainer(container, root, textbox)) return 0;
-        let score = this.elementClassNameIncludes(container, "buttons") ? 20 : 0;
-        const anchorCount = anchors.filter((anchor) => container.contains?.(anchor)).length;
-        score += anchorCount * 100;
-        if (this.elementClassNameIncludes(container, "attach")) score -= 20;
-        return Math.max(0, score);
-      }
-      getInputButtonContainerFromAnchor(anchor, root, textbox) {
-        let current = anchor?.parentElement || null;
-        let fallback = null;
-        let guard = 0;
-        while (current && current !== root && guard < 8) {
-          if (this.isValidInputButtonContainer(current, root, textbox)) {
-            if (this.elementClassNameIncludes(current, "buttons")) return current;
-            if (!fallback && this.getButtonLikeDescendantCount(current) > 1) fallback = current;
-          }
-          current = current.parentElement;
-          guard++;
-        }
-        return fallback;
-      }
-      isValidInputButtonContainer(container, root, textbox) {
-        if (!container || container === root || container?.isConnected === false) return false;
-        if (container.contains?.(textbox)) return false;
-        if (textbox?.contains?.(container)) return false;
-        if (container.closest?.("[role='textbox'], [contenteditable='true'], [data-slate-editor='true']")) return false;
-        if (this.elementHasClassName(container, "dait-input-action-group")) return false;
-        const tag = String(container.tagName || "").toLowerCase();
-        if (tag === "button") return false;
-        const role = String(container.getAttribute?.("role") || "").toLowerCase();
-        if (role === "button" || role === "textbox") return false;
-        return true;
-      }
-      isInputButtonToolbarAnchor(control) {
-        return this.discordHost.isComposerToolbarAnchorLabel(this.getInputButtonControlLabel(control));
-      }
-      getInputButtonControlLabel(control) {
-        return [
-          control?.getAttribute?.("aria-label"),
-          control?.getAttribute?.("data-tooltip-text"),
-          control?.title,
-          control?.textContent
-        ].filter(Boolean).join(" ").toLowerCase();
-      }
-      getButtonLikeDescendantCount(container) {
-        try {
-          return (container.querySelectorAll?.("button, [role='button']") || []).length;
-        } catch {
-          return 0;
-        }
       }
       elementClassNameIncludes(node, fragment) {
         const needle = String(fragment || "").toLowerCase();
@@ -37364,1335 +38809,6 @@ var require_discord_ai_translator = __commonJS({
         if (foreignScore >= 2 && foreignScore >= score) return false;
         return score >= (language === "english" ? 2 : 1);
       }
-      getPolishAfterAction() {
-        const action = String(this.settings.polish?.afterAction || "");
-        if (action === "directReplace") return "replace";
-        return ["replace", "confirmSend"].includes(action) ? action : DEFAULT_SETTINGS.polish.afterAction;
-      }
-      getPolishRepolishSource() {
-        const source = String(this.settings.polish?.repolishSource || "");
-        return source === POLISH_REPOLISH_SOURCE_LAST_RESULT ? POLISH_REPOLISH_SOURCE_LAST_RESULT : POLISH_REPOLISH_SOURCE_ORIGINAL;
-      }
-      isPublicBilingualUseInitialOriginalEnabled() {
-        return this.settings.ui?.publicBilingualUseInitialOriginal === true;
-      }
-      isPublicBilingualAfterPolishEnabled() {
-        return this.settings.ui?.publicBilingualAfterPolish === true;
-      }
-      isPublicBilingualPolishBeforeTranslateEnabled() {
-        return this.settings.ui?.publicBilingualPolishBeforeTranslate === true;
-      }
-      getPolishSession(textbox, currentText) {
-        const text = this.normalizeDraftRawText(currentText);
-        const session = this.polishSession;
-        const composerKey = this.getTextboxComposerKey(textbox);
-        if (session && session.composerKey === composerKey && this.isPolishSessionTextbox(session, textbox) && (this.areDraftTextsEqualStrict(text, session.lastWrittenRawText ?? session.lastWrittenText) || this.areDraftTextsEqualStrict(text, session.lastResultRawText ?? session.lastResult) || this.areDraftTextsEqualStrict(text, session.originalRawText ?? session.originalText) || this.areDraftTextsEqualStrict(text, session.lastBilingualRawText ?? session.lastBilingualText))) {
-          session.textbox = textbox;
-          session.updatedAt = Date.now();
-          return session;
-        }
-        return this.createPolishSession(textbox, text, composerKey);
-      }
-      createPolishSession(textbox, originalText, composerKey = this.getTextboxComposerKey(textbox)) {
-        const originalRawText = this.normalizeDraftRawText(originalText);
-        const session = {
-          textbox,
-          composerKey,
-          originalText: this.normalizeExtractedText(originalText),
-          originalRawText,
-          lastResult: "",
-          lastResultRawText: "",
-          lastWrittenText: "",
-          lastWrittenRawText: "",
-          lastBilingualText: "",
-          lastBilingualRawText: "",
-          lastBilingualSourceText: "",
-          lastBilingualSourceRawText: "",
-          previousResults: [],
-          attemptCount: 0,
-          sourceHash: this.getStrongTextFingerprint(originalText),
-          updatedAt: Date.now()
-        };
-        this.polishSession = session;
-        return session;
-      }
-      getTextboxComposerRoot(textbox) {
-        return textbox?.closest?.("form, [class*='channelTextArea']") || textbox?.parentElement || textbox;
-      }
-      getTextboxComposerKey(textbox) {
-        const route = this.messageTracker.getRouteIds?.() || {};
-        const root = this.getTextboxComposerRoot(textbox);
-        if (!root) return [route.guildId || "", route.channelId || "", "no-composer"].join(":");
-        if (!root.dataset) root.dataset = {};
-        if (!root.dataset.daitComposerKey) {
-          root.dataset.daitComposerKey = `composer-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-        }
-        return [route.guildId || "", route.channelId || "", root.dataset.daitComposerKey].join(":");
-      }
-      isPolishSessionTextbox(session, textbox) {
-        if (!session || !textbox) return false;
-        if (session.textbox === textbox) return true;
-        return session.textbox?.isConnected !== false && textbox.isConnected !== false;
-      }
-      getPolishSourceText(session) {
-        if (!session) return "";
-        if (this.getPolishRepolishSource() === POLISH_REPOLISH_SOURCE_LAST_RESULT && session.lastResult) {
-          return session.lastResultRawText || session.lastResult;
-        }
-        return session.originalRawText || session.originalText;
-      }
-      updatePolishSessionAfterResult(session, textbox, polished, written) {
-        if (!session) return;
-        session.textbox = textbox;
-        const normalized = this.normalizeExtractedText(polished);
-        const raw = this.normalizeDraftRawText(polished);
-        session.lastResult = normalized;
-        session.lastResultRawText = raw;
-        if (raw.trim()) {
-          const history = Array.isArray(session.previousResults) ? session.previousResults : [];
-          if (!history.some((item) => this.areComparableTextsEqual(item, raw))) {
-            history.push(raw);
-          }
-          session.previousResults = history.slice(-5);
-          session.attemptCount = Math.max(Number(session.attemptCount || 0) + 1, session.previousResults.length);
-        }
-        if (written) {
-          session.lastWrittenText = normalized;
-          session.lastWrittenRawText = raw;
-        }
-        session.updatedAt = Date.now();
-        this.polishSession = session;
-      }
-      updatePolishSessionAfterBilingual(session, textbox, composed, sourceText, written) {
-        if (!session) return;
-        session.textbox = textbox;
-        session.lastBilingualSourceText = this.normalizeExtractedText(sourceText);
-        session.lastBilingualSourceRawText = this.normalizeDraftRawText(sourceText);
-        if (written) {
-          session.lastBilingualText = this.normalizeExtractedText(composed);
-          session.lastBilingualRawText = this.normalizeDraftRawText(composed);
-          session.lastWrittenText = this.normalizeExtractedText(composed);
-          session.lastWrittenRawText = this.normalizeDraftRawText(composed);
-        }
-        session.updatedAt = Date.now();
-        this.polishSession = session;
-      }
-      areComparableTextsEqual(left, right) {
-        return this.normalizeExtractedText(left) === this.normalizeExtractedText(right);
-      }
-      // Only Slate's U+FEFF placeholders are dropped. U+200B is the user's own text (for example
-      // "@\u200beveryone", which does not ping), so the draft, the spoiler and Restore keep it.
-      normalizeDraftRawText(text) {
-        return String(text ?? "").replace(/\ufeff/g, "").replace(/\r\n?/g, "\n");
-      }
-      areDraftTextsEqualStrict(left, right) {
-        return this.normalizeDraftRawText(left) === this.normalizeDraftRawText(right);
-      }
-      getTextboxDraftText(textbox) {
-        const raw = this.getTextboxRawTextSafe(textbox);
-        if (raw) return raw;
-        return this.getElementText(textbox);
-      }
-      isCurrentDraftText(textbox, expectedText) {
-        return this.areDraftTextsEqualStrict(this.getTextboxDraftText(textbox), expectedText);
-      }
-      isComposerWriteSuperseded(writeToken) {
-        return Boolean(writeToken?.cancelled && writeToken.reason === "superseded");
-      }
-      // Why a finished polish/bilingual result must not be written now ("" when it may be).
-      getComposerWriteStaleReason(textbox, writeToken, expectedText) {
-        if (!textbox || textbox.isConnected === false) return "remounted";
-        if (writeToken && !this.composerWriter.isWriteTokenCurrent(writeToken)) return writeToken.reason || "cancelled";
-        if (!this.isCurrentDraftText(textbox, expectedText)) return "draft-changed";
-        if (this.isComposerFocusElsewhere(textbox)) return "focus-moved";
-        return "";
-      }
-      // Writing focuses and selects the target composer, so a late result must not land while the
-      // user is typing in another field (thread panel, search box, another composer).
-      isComposerFocusElsewhere(textbox) {
-        if (typeof document === "undefined" || !textbox) return false;
-        const active = document.activeElement;
-        if (!active || active === document.body || active === document.documentElement) return false;
-        if (active === textbox || textbox.contains?.(active)) return false;
-        return this.isEditableFocusTarget(active);
-      }
-      isEditableFocusTarget(element) {
-        if (!element) return false;
-        const tagName = String(element.tagName || "").toUpperCase();
-        if (tagName === "TEXTAREA") return !element.readOnly && !element.disabled;
-        if (tagName === "INPUT") {
-          const type = String(element.type || element.getAttribute?.("type") || "text").toLowerCase();
-          const nonText = ["button", "checkbox", "color", "file", "hidden", "image", "radio", "range", "reset", "submit"];
-          return !element.readOnly && !element.disabled && !nonText.includes(type);
-        }
-        if (element.isContentEditable === true) return true;
-        const contentEditable = String(element.getAttribute?.("contenteditable") ?? "").toLowerCase();
-        return contentEditable === "true" || contentEditable === "plaintext-only" || element.getAttribute?.("role") === "textbox";
-      }
-      getComposerResultPanelAnchor(textbox) {
-        if (textbox && textbox.isConnected !== false) return textbox;
-        if (typeof document === "undefined") return textbox;
-        try {
-          return this.getActiveTextbox() || this.getTextbox() || textbox;
-        } catch {
-          return textbox;
-        }
-      }
-      isPolishInputButtonEnabled(options = {}) {
-        return this.settings.polish?.enabled !== false && Boolean(options.forcePolish || this.settings.ui?.injectInputButton);
-      }
-      isPublicBilingualFeatureEnabled() {
-        return this.settings.translation?.enabled !== false;
-      }
-      isPublicBilingualInputButtonEnabled() {
-        return this.isPublicBilingualFeatureEnabled() && Boolean(this.settings.ui?.publicBilingualInputButton);
-      }
-      getPublicBilingualTargetLanguage() {
-        return this.normalizeLanguageName(this.settings.polish?.targetLanguage || this.settings.translation?.targetLanguage);
-      }
-      getPublicBilingualBaseConfig() {
-        const polish = this.settings.polish || {};
-        const translation = this.settings.translation || {};
-        const polishCandidate = {
-          provider: polish.provider,
-          apiKey: polish.apiKey,
-          apiKeyOrigin: polish.apiKeyOrigin,
-          endpoint: polish.endpoint,
-          model: polish.model
-        };
-        return this.hasUsableApiConfig("translation", polishCandidate) ? polish : translation;
-      }
-      getPublicBilingualTranslationOptions() {
-        const configOverrides = this.getPublicBilingualTranslationOverrides();
-        return {
-          mode: "public-bilingual",
-          promptPolicyVersion: this.getPromptPolicyVersion("publicBilingual"),
-          targetLanguage: this.getPublicBilingualTargetLanguage(),
-          providerKey: this.getAutoTranslationProviderKey({ configOverrides }),
-          requestContext: {},
-          configOverrides
-        };
-      }
-      getPublicBilingualTranslationOverrides() {
-        const baseConfig = this.getPublicBilingualBaseConfig();
-        const targetLanguageValue = this.getPublicBilingualTargetLanguage();
-        const targetLanguage = this.getAutoTranslationTargetInstruction(targetLanguageValue);
-        const maxTokens = Math.max(
-          this.normalizeRequestNumber(baseConfig.maxTokens, DEFAULT_SETTINGS.translation.maxTokens, { min: 1, integer: true }),
-          this.normalizeRequestNumber(this.settings.translation?.maxTokens, DEFAULT_SETTINGS.translation.maxTokens, { min: 1, integer: true })
-        );
-        return {
-          provider: baseConfig.provider,
-          apiKey: baseConfig.apiKey,
-          apiKeyOrigin: baseConfig.apiKeyOrigin,
-          endpoint: baseConfig.endpoint,
-          model: baseConfig.model,
-          sourceLanguage: AUTO_LANGUAGE_VALUE,
-          targetLanguage,
-          targetLanguageCode: this.getTargetLanguageCode(targetLanguageValue),
-          temperature: 0,
-          maxTokens,
-          enableThinking: false,
-          promptPolicyVersion: this.getPromptPolicyVersion("publicBilingual"),
-          prompt: this.buildPromptPolicyPublicBilingualPrompt(targetLanguageValue)
-        };
-      }
-      getPublicBilingualRetryOptions(sourceText, badOutput = "", options = this.getPublicBilingualTranslationOptions()) {
-        const targetLanguageValue = this.getAutoTranslationTargetLanguage(options);
-        const targetLanguage = this.getAutoTranslationTargetInstruction(targetLanguageValue);
-        return {
-          mode: "public-bilingual-retry",
-          promptPolicyVersion: this.getPromptPolicyVersion("publicBilingualRetry"),
-          targetLanguage: targetLanguageValue,
-          providerKey: this.getAutoTranslationProviderKey(options),
-          requestContext: options.requestContext,
-          configOverrides: {
-            ...this.getAutoTranslationRequestSnapshot(options),
-            sourceLanguage: AUTO_LANGUAGE_VALUE,
-            targetLanguage,
-            temperature: 0,
-            enableThinking: false,
-            promptPolicyVersion: this.getPromptPolicyVersion("publicBilingualRetry"),
-            prompt: this.buildPromptPolicyPublicBilingualRetryPrompt(sourceText, badOutput, options)
-          }
-        };
-      }
-      getPublicBilingualFinalFallbackOptions(sourceText, options = this.getPublicBilingualTranslationOptions()) {
-        const targetLanguageValue = this.getAutoTranslationTargetLanguage(options);
-        const targetLanguage = this.getAutoTranslationTargetInstruction(targetLanguageValue);
-        return {
-          mode: "public-bilingual-final",
-          promptPolicyVersion: this.getPromptPolicyVersion("publicBilingualFinal"),
-          targetLanguage: targetLanguageValue,
-          providerKey: this.getAutoTranslationProviderKey(options),
-          requestContext: options.requestContext,
-          configOverrides: {
-            ...this.getAutoTranslationRequestSnapshot(options),
-            sourceLanguage: AUTO_LANGUAGE_VALUE,
-            targetLanguage,
-            temperature: 0,
-            enableThinking: false,
-            promptPolicyVersion: this.getPromptPolicyVersion("publicBilingualFinal"),
-            prompt: this.buildPromptPolicyPublicBilingualFinalPrompt(sourceText, options)
-          }
-        };
-      }
-      async runPublicBilingualTranslationTask(text, options = this.getPublicBilingualTranslationOptions()) {
-        const translated = await this.runModelTask("translation", text, {
-          configOverrides: options.configOverrides,
-          timeoutMs: MODEL_REQUEST_TIMEOUT_MS,
-          mode: "public-bilingual",
-          requestContext: options.requestContext,
-          providerProfilePinned: true
-        });
-        if (!this.isInvalidAutoTranslationOutput(text, translated, this.getAutoTranslationTargetLanguage(options))) return translated;
-        const retryOptions = this.getPublicBilingualRetryOptions(text, translated, options);
-        const retried = await this.runModelTask("translation", text, {
-          configOverrides: retryOptions.configOverrides,
-          timeoutMs: MODEL_REQUEST_TIMEOUT_MS,
-          mode: "public-bilingual-retry",
-          requestContext: retryOptions.requestContext,
-          providerProfilePinned: true
-        });
-        if (!this.isInvalidAutoTranslationOutput(text, retried, this.getAutoTranslationTargetLanguage(retryOptions))) return retried;
-        const finalOptions = this.getPublicBilingualFinalFallbackOptions(text, options);
-        const finalText = await this.runModelTask("translation", text, {
-          configOverrides: finalOptions.configOverrides,
-          timeoutMs: MODEL_REQUEST_TIMEOUT_MS,
-          mode: "public-bilingual-final",
-          requestContext: finalOptions.requestContext,
-          providerProfilePinned: true
-        });
-        if (!this.isInvalidAutoTranslationOutput(text, finalText, this.getAutoTranslationTargetLanguage(finalOptions))) return finalText;
-        throw this.createFinalInvalidAutoTranslationError();
-      }
-      async getPublicBilingualTranslation(text, options = this.getPublicBilingualTranslationOptions(), behavior = {}) {
-        const cacheKey = this.getTranslationCacheKey(text, options);
-        const cached = behavior.bypassCache ? null : this.getTranslationCacheValue(cacheKey, this.getTranslationCacheAliases(text, options));
-        if (cached !== null) return { text: cached, cacheKey, cached: true };
-        const translated = await this.runPublicBilingualTranslationTask(text, options);
-        const usedFallback = Boolean(options.requestContext?.fallbackProvider);
-        if (!usedFallback) this.setTranslationCache(cacheKey, translated);
-        return { text: translated, cacheKey, cached: false, fallbackProvider: options.requestContext?.fallbackProvider || "" };
-      }
-      // Text inside ||…||. Outside code every "|" is escaped and the user's own escapes are kept; a
-      // lone trailing "\" is doubled so it cannot escape the closing "||". Discord shows code literally,
-      // so a backslash there would be visible: "||" inside code is split with a zero-width space instead.
-      escapeDiscordSpoilerText(text) {
-        return this.splitDiscordCodeSegments(text).map((segment) => segment.code ? segment.text.replace(/\|(?=\|)/g, "|​") : this.escapeDiscordPlainText(segment.text, { escapeEveryPipe: true })).join("");
-      }
-      // Visible translation: only "||" outside code could open a spoiler.
-      escapeDiscordVisibleText(text) {
-        return this.splitDiscordCodeSegments(text).map((segment) => segment.code ? segment.text : this.escapeDiscordPlainText(segment.text, { escapeEveryPipe: false })).join("");
-      }
-      escapeDiscordPlainText(text, options = {}) {
-        const value = String(text || "");
-        let output = "";
-        for (let index = 0; index < value.length; index++) {
-          const char = value[index];
-          if (char === "\\") {
-            if (index + 1 < value.length) {
-              output += char + value[index + 1];
-              index++;
-            } else {
-              output += "\\\\";
-            }
-            continue;
-          }
-          if (char === "|" && (options.escapeEveryPipe || value[index + 1] === "|")) {
-            if (options.escapeEveryPipe) {
-              output += "\\|";
-            } else {
-              output += "\\|\\|";
-              index++;
-            }
-            continue;
-          }
-          output += char;
-        }
-        return output;
-      }
-      // Splits Discord markdown into code (`inline`, ``inline``, ```fenced```) and plain segments.
-      // A backslash escapes the next character outside code, so "\`" never opens a code span.
-      splitDiscordCodeSegments(text) {
-        const value = String(text || "");
-        const segments = [];
-        let plainStart = 0;
-        let index = 0;
-        while (index < value.length) {
-          const char = value[index];
-          if (char === "\\") {
-            index += 2;
-            continue;
-          }
-          if (char !== "`") {
-            index++;
-            continue;
-          }
-          let runEnd = index;
-          while (value[runEnd] === "`") runEnd++;
-          const close = this.findDiscordCodeClose(value, runEnd, runEnd - index);
-          if (close < 0) {
-            index = runEnd;
-            continue;
-          }
-          if (index > plainStart) segments.push({ code: false, text: value.slice(plainStart, index) });
-          const end = close + (runEnd - index);
-          segments.push({ code: true, text: value.slice(index, end) });
-          index = plainStart = end;
-        }
-        if (plainStart < value.length) segments.push({ code: false, text: value.slice(plainStart) });
-        return segments;
-      }
-      findDiscordCodeClose(value, from, length) {
-        let index = from;
-        while (index < value.length) {
-          const start = value.indexOf("`", index);
-          if (start < 0) return -1;
-          let end = start;
-          while (value[end] === "`") end++;
-          if (end - start === length && start > from) return start;
-          index = end;
-        }
-        return -1;
-      }
-      formatPublicBilingualMessage(translated, original) {
-        const translation = this.escapeDiscordVisibleText(String(translated || "").trim());
-        return `${translation}
-
-||${this.getPublicBilingualSpoilerText(original)}||`;
-      }
-      getPublicBilingualReservedLength(original) {
-        return `
-
-||${this.getPublicBilingualSpoilerText(original)}||`.length;
-      }
-      // Discord's spoiler rule is non-greedy and ignores backslashes, so a trailing "|" (written "\|")
-      // would join the closing "||" and end the spoiler one character early: a zero-width space
-      // separates them.
-      getPublicBilingualSpoilerText(original) {
-        const escaped = this.escapeDiscordSpoilerText(this.normalizeDraftRawText(original));
-        return escaped.endsWith("|") ? `${escaped}​` : escaped;
-      }
-      isPolishSessionAlreadyPolished(session, text) {
-        if (!session?.lastResult) return false;
-        return this.areDraftTextsEqualStrict(text, session.lastResultRawText || session.lastResult) || this.areDraftTextsEqualStrict(text, session.lastWrittenRawText || session.lastWrittenText);
-      }
-      getPublicBilingualSpoilerOriginal(session, draft, translationSource = draft) {
-        if (this.isPublicBilingualUseInitialOriginalEnabled() && (session?.originalRawText || session?.originalText)) {
-          return session.originalRawText ?? session.originalText;
-        }
-        return translationSource || draft;
-      }
-      async preparePublicBilingualDraft(textbox, draft, options = {}) {
-        const session = this.getPolishSession(textbox, draft);
-        const mentionBaseline = session.originalRawText ?? session.originalText ?? draft;
-        const isBilingualOutput = Boolean(session.lastBilingualRawText && session.lastBilingualSourceRawText) && this.areDraftTextsEqualStrict(draft, session.lastBilingualRawText);
-        const baseDraft = isBilingualOutput ? this.normalizeDraftRawText(session.lastBilingualSourceRawText) : draft;
-        let translationSource = baseDraft;
-        let usedPolish = false;
-        let skippedPolish = false;
-        const hasLifecycleToken = options.lifecycleToken !== void 0 && options.lifecycleToken !== null;
-        const writeToken = options.writeToken || null;
-        if (!options.skipAutoPolish && this.isPublicBilingualPolishBeforeTranslateEnabled()) {
-          if (!this.settings.polish.enabled) {
-            skippedPolish = true;
-          } else if (!this.isPolishSessionAlreadyPolished(session, baseDraft)) {
-            const sourceText = this.getPolishSourceText(session) || draft;
-            const result = await this.runPolishWithGuards(sourceText, {
-              chineseScriptOnly: true,
-              isStillCurrent: () => (!hasLifecycleToken || this.isLifecycleTokenCurrent(options.lifecycleToken)) && (!writeToken || this.composerWriter.isWriteTokenCurrent(writeToken))
-            });
-            if (!String(result || "").trim()) throw new Error(this.t("emptyResult"));
-            if (hasLifecycleToken && !this.isLifecycleTokenCurrent(options.lifecycleToken)) {
-              return { stale: true, lifecycleStale: true, session, translationSource: draft, spoilerOriginal: this.getPublicBilingualSpoilerOriginal(session, draft, draft), usedPolish, skippedPolish };
-            }
-            if (writeToken && !this.composerWriter.isWriteTokenCurrent(writeToken) || options.routeKey !== void 0 && options.routeKey !== this.getCurrentRouteKey() || this.polishSession !== session || textbox?.isConnected === false || !this.isCurrentDraftText(textbox, draft)) {
-              return { stale: true, session, translationSource: draft, spoilerOriginal: this.getPublicBilingualSpoilerOriginal(session, draft, draft), usedPolish, skippedPolish };
-            }
-            const polished = this.sanitizeComposerGeneratedOutput(mentionBaseline, result, "public-bilingual.polish");
-            this.updatePolishSessionAfterResult(session, textbox, polished, false);
-            translationSource = this.normalizeDraftRawText(polished);
-            usedPolish = true;
-          }
-        }
-        return {
-          stale: false,
-          session,
-          translationSource,
-          spoilerOriginal: this.getPublicBilingualSpoilerOriginal(session, baseDraft, translationSource),
-          mentionBaseline,
-          expectedCurrentText: draft,
-          // A bilingual result already exists in this session, so this click asks for a fresh one.
-          rerun: Boolean(session.lastBilingualRawText),
-          usedPolish,
-          skippedPolish
-        };
-      }
-      async publicBilingualCurrentDraft(button = null, behaviorOptions = {}) {
-        if (!this.isPublicBilingualFeatureEnabled()) {
-          if (!behaviorOptions.skipAutoPolish) this.showToast(this.t("translationDisabled"), "info");
-          return { ok: false, wrote: false, reason: "disabled" };
-        }
-        const textbox = this.resolveInputActionTextbox(button, behaviorOptions);
-        if (!textbox) {
-          this.showToast(this.t("textboxMissing"), "error");
-          return { ok: false, wrote: false, reason: "missing-textbox" };
-        }
-        const expectedComposerKey = behaviorOptions.composerKey || button?.dataset?.daitComposerKey || "";
-        if (!this.isInputActionTextboxCurrent(textbox, expectedComposerKey)) {
-          this.queueInputButtonScan({ delayMs: 120, trailing: true });
-          this.showToast(this.t("composerChanged"), "info");
-          return { ok: false, wrote: false, reason: "stale-composer" };
-        }
-        const draft = this.getTextboxDraftText(textbox);
-        if (!this.normalizeExtractedText(draft)) {
-          this.showToast(this.t("inputEmpty"), "info");
-          return { ok: false, wrote: false, reason: "empty" };
-        }
-        const writeToken = this.composerWriter.beginWrite(textbox, draft);
-        const composer = this.getTextboxComposerRoot(textbox);
-        const requestId = behaviorOptions.polishRequestId ?? writeToken.id;
-        if (behaviorOptions.polishRequestId === void 0) this.latestPolishRequestIds.set(composer, requestId);
-        const isLatestRequest = () => this.latestPolishRequestIds.get(composer) === requestId && !this.isComposerWriteSuperseded(writeToken);
-        const originRouteKey = this.getCurrentRouteKey();
-        const originComposerKey = writeToken.composerKey;
-        this.setButtonBusy(button, true, this.t("publicBilingualBusy"));
-        const lifecycleToken = this.getLifecycleToken();
-        const startedAt = Date.now();
-        const requestOptions = this.getPublicBilingualTranslationOptions();
-        this.logDiagnostic("public.bilingual", "start", {
-          ...this.getDiagnosticBaseMeta("public-bilingual", "public-bilingual", DIAGNOSTIC_REASON_CODES.REQUEST_STARTED, {
-            messageState: DIAGNOSTIC_MESSAGE_STATES.IN_FLIGHT,
-            targetKind: "composer",
-            sourceHash: this.getStrongTextFingerprint(draft),
-            textLength: String(draft || "").length
-          }),
-          sourceHash: this.getStrongTextFingerprint(draft),
-          length: String(draft || "").length,
-          targetLanguage: this.getAutoTranslationTargetLanguage(requestOptions)
-        });
-        try {
-          const payload = await this.preparePublicBilingualDraft(textbox, draft, { ...behaviorOptions, lifecycleToken, writeToken, routeKey: originRouteKey });
-          if (!this.isLifecycleTokenCurrent(lifecycleToken)) {
-            return { ok: false, wrote: false, stale: true, phase: "lifecycle" };
-          }
-          if (!isLatestRequest()) return { ok: false, wrote: false, stale: true, phase: "superseded" };
-          if (payload.stale || !this.composerWriter.isWriteTokenCurrent(writeToken)) {
-            this.logDiagnostic("public.bilingual", "stale-input", {
-              ...this.getDiagnosticBaseMeta("public-bilingual", "public-bilingual", DIAGNOSTIC_REASON_CODES.STALE_DOM, {
-                messageState: DIAGNOSTIC_MESSAGE_STATES.STALE,
-                targetKind: "composer",
-                sourceHash: this.getStrongTextFingerprint(draft),
-                textLength: String(draft || "").length
-              }),
-              sourceHash: this.getStrongTextFingerprint(draft),
-              phase: payload.lifecycleStale ? "lifecycle" : "polish",
-              ms: Date.now() - startedAt
-            });
-            if (payload.lifecycleStale) return { ok: false, wrote: false, stale: true, phase: "lifecycle" };
-            this.showToast(this.t("publicBilingualInputChanged"), "info");
-            return { ok: false, wrote: false, stale: true, phase: "polish" };
-          }
-          const reservedLength = this.getPublicBilingualReservedLength(payload.spoilerOriginal);
-          if (reservedLength >= DISCORD_MESSAGE_MAX_LENGTH) {
-            throw new Error(this.t("publicBilingualTooLong", { length: reservedLength, limit: DISCORD_MESSAGE_MAX_LENGTH }));
-          }
-          const result = await this.getPublicBilingualTranslation(payload.translationSource, requestOptions, { bypassCache: payload.rerun });
-          if (!this.isLifecycleTokenCurrent(lifecycleToken)) {
-            return { ok: false, wrote: false, stale: true, phase: "lifecycle" };
-          }
-          if (!isLatestRequest()) return { ok: false, wrote: false, stale: true, phase: "superseded" };
-          if (!String(result.text || "").trim()) throw new Error(this.t("emptyResult"));
-          const safeSpoiler = this.sanitizeComposerGeneratedOutput(payload.mentionBaseline, payload.spoilerOriginal, "public-bilingual");
-          const safeTranslation = this.sanitizeComposerGeneratedOutput(payload.mentionBaseline, result.text, "public-bilingual", safeSpoiler);
-          const composed = this.formatPublicBilingualMessage(safeTranslation, safeSpoiler);
-          if (composed.length > DISCORD_MESSAGE_MAX_LENGTH) {
-            throw new Error(this.t("publicBilingualTooLong", { length: composed.length, limit: DISCORD_MESSAGE_MAX_LENGTH }));
-          }
-          const recordPanelInsert = (target) => {
-            if (!this.isLifecycleTokenCurrent(lifecycleToken) || !isLatestRequest() || this.polishSession !== payload.session) return;
-            payload.session.composerKey = this.getTextboxComposerKey(target);
-            this.updatePolishSessionAfterBilingual(payload.session, target, composed, payload.translationSource, true);
-          };
-          const staleReason = this.getCurrentRouteKey() !== originRouteKey || this.getTextboxComposerKey(textbox) !== originComposerKey ? "composer-changed" : this.getComposerWriteStaleReason(textbox, writeToken, payload.expectedCurrentText);
-          if (staleReason) {
-            this.logDiagnostic("public.bilingual", "stale-input", {
-              ...this.getDiagnosticBaseMeta("public-bilingual", "public-bilingual", DIAGNOSTIC_REASON_CODES.STALE_DOM, {
-                messageState: DIAGNOSTIC_MESSAGE_STATES.STALE,
-                targetKind: "composer",
-                sourceHash: this.getStrongTextFingerprint(draft),
-                textLength: String(draft || "").length
-              }),
-              sourceHash: this.getStrongTextFingerprint(draft),
-              cached: Boolean(result.cached),
-              phase: "translation",
-              reason: staleReason,
-              ms: Date.now() - startedAt
-            });
-            this.showPolishResultPanel(this.getComposerResultPanelAnchor(textbox), composed, {
-              sourceButton: button,
-              title: this.t("publicBilingualButton"),
-              ariaLabel: this.t("publicBilingualTitleAttr", { targetLanguage: this.getDisplayLanguage(this.getPublicBilingualTargetLanguage()) }),
-              adjustTextboxSelection: false,
-              originRouteKey,
-              originComposerKey,
-              sourceText: draft,
-              onApplied: recordPanelInsert
-            });
-            this.showToast(this.t("composerResultHeld"), "info");
-            return { ok: false, wrote: false, stale: true, phase: "translation", reason: staleReason, fallbackText: composed };
-          }
-          const writeResult = await this.composerWriter.replaceTextSafely(textbox, composed, {
-            blurAfterReplace: false,
-            extraBlurTarget: button,
-            expectedPreviousText: payload.expectedCurrentText,
-            writeToken
-          });
-          if (!this.isLifecycleTokenCurrent(lifecycleToken)) {
-            return { ok: false, wrote: Boolean(writeResult?.ok), stale: true, phase: "lifecycle" };
-          }
-          if (!isLatestRequest() || this.polishSession !== payload.session) {
-            return { ok: false, wrote: Boolean(writeResult?.ok), stale: true, phase: "superseded" };
-          }
-          if (!writeResult.ok) {
-            this.logDiagnostic("public.bilingual", "write-failed", {
-              ...this.getDiagnosticBaseMeta("public-bilingual", "public-bilingual", "write-failed", {
-                messageState: DIAGNOSTIC_MESSAGE_STATES.FAILED,
-                targetKind: "composer",
-                sourceHash: this.getStrongTextFingerprint(draft),
-                textLength: String(draft || "").length
-              }),
-              sourceHash: this.getStrongTextFingerprint(draft),
-              reason: writeResult.reason || "",
-              cached: Boolean(result.cached),
-              ms: Date.now() - startedAt
-            });
-            this.showPolishResultPanel(textbox, composed, {
-              sourceButton: button,
-              title: this.t("publicBilingualButton"),
-              ariaLabel: this.t("publicBilingualTitleAttr", { targetLanguage: this.getDisplayLanguage(this.getPublicBilingualTargetLanguage()) }),
-              adjustTextboxSelection: false,
-              originRouteKey,
-              originComposerKey,
-              sourceText: draft,
-              onApplied: recordPanelInsert
-            });
-            const stale = ["write-cancelled", "stale-input", "superseded", "user-input"].includes(writeResult.reason);
-            if (stale) {
-              this.showToast(this.t("composerResultHeld"), "info");
-            } else {
-              this.showToast(this.t("publicBilingualFailed", { error: this.t("errorComposerWriteFailed") }), "error");
-            }
-            return { ok: false, wrote: false, stale, reason: writeResult.reason || "verification-failed", fallbackText: composed };
-          }
-          this.updatePolishSessionAfterBilingual(payload.session, textbox, composed, payload.translationSource, true);
-          this.logDiagnostic("public.bilingual", result.cached ? "cache-hit" : "success", {
-            ...this.getDiagnosticBaseMeta("public-bilingual", "public-bilingual", result.cached ? DIAGNOSTIC_REASON_CODES.CACHE_HIT : DIAGNOSTIC_REASON_CODES.RENDERED, {
-              messageState: result.cached ? DIAGNOSTIC_MESSAGE_STATES.CACHE_HIT : DIAGNOSTIC_MESSAGE_STATES.RENDERED,
-              targetKind: "composer",
-              sourceHash: this.getStrongTextFingerprint(draft),
-              textLength: String(draft || "").length
-            }),
-            cacheHash: this.getTextFingerprint(result.cacheKey),
-            sourceHash: this.getStrongTextFingerprint(draft),
-            translateHash: this.getStrongTextFingerprint(payload.translationSource),
-            originalHash: this.getStrongTextFingerprint(payload.spoilerOriginal),
-            autoPolished: Boolean(payload.usedPolish),
-            polishSkipped: Boolean(payload.skippedPolish),
-            ms: Date.now() - startedAt
-          });
-          return { ok: true, wrote: true, cacheKey: result.cacheKey, cached: Boolean(result.cached) };
-        } catch (error) {
-          if (!this.isLifecycleTokenCurrent(lifecycleToken)) {
-            return { ok: false, wrote: false, stale: true, phase: "lifecycle", error };
-          }
-          if (!isLatestRequest()) return { ok: false, wrote: false, stale: true, phase: "superseded" };
-          this.logDiagnostic("public.bilingual", "error", {
-            ...this.getDiagnosticBaseMeta("public-bilingual", "public-bilingual", DIAGNOSTIC_REASON_CODES.FAILURE, {
-              messageState: DIAGNOSTIC_MESSAGE_STATES.FAILED,
-              targetKind: "composer",
-              sourceHash: this.getStrongTextFingerprint(draft),
-              textLength: String(draft || "").length,
-              failureType: this.getAutoTranslationFailureType(error)
-            }),
-            sourceHash: this.getStrongTextFingerprint(draft),
-            type: this.getAutoTranslationFailureType(error),
-            ms: Date.now() - startedAt
-          });
-          this.showToast(this.t("publicBilingualFailed", { error: this.formatError(error) }), "error");
-          return { ok: false, wrote: false, error };
-        } finally {
-          this.composerWriter.finishWriteToken(writeToken);
-          if (this.isLifecycleTokenCurrent(lifecycleToken)) this.setButtonBusy(button, false, this.t("publicBilingualButton"));
-        }
-      }
-      async polishCurrentDraft(button = null, behaviorOptions = {}) {
-        if (!this.settings.polish.enabled) {
-          this.showToast(this.t("polishDisabled"), "info");
-          return;
-        }
-        const textbox = this.resolveInputActionTextbox(button, behaviorOptions);
-        if (!textbox) {
-          this.showToast(this.t("textboxMissing"), "error");
-          return;
-        }
-        const expectedComposerKey = behaviorOptions.composerKey || button?.dataset?.daitComposerKey || "";
-        if (!this.isInputActionTextboxCurrent(textbox, expectedComposerKey)) {
-          this.queueInputButtonScan({ delayMs: 120, trailing: true });
-          this.showToast(this.t("composerChanged"), "info");
-          return;
-        }
-        const draft = this.getTextboxDraftText(textbox);
-        if (!this.normalizeExtractedText(draft)) {
-          this.showToast(this.t("inputEmpty"), "info");
-          return;
-        }
-        const writeToken = this.composerWriter.beginWrite(textbox, draft);
-        const composer = this.getTextboxComposerRoot(textbox);
-        this.latestPolishRequestIds.set(composer, writeToken.id);
-        this.setButtonBusy(button, true, this.t("polishBusy"));
-        if ((behaviorOptions.fromHotkey || behaviorOptions.fromMenu) && !this.isInputActionButtonShown(button)) {
-          this.showToast(this.t("polishRunning"), "info");
-        }
-        const lifecycleToken = this.getLifecycleToken();
-        const isLatestRequest = () => this.isLifecycleTokenCurrent(lifecycleToken) && this.latestPolishRequestIds.get(composer) === writeToken.id && !this.isComposerWriteSuperseded(writeToken);
-        const startedAt = Date.now();
-        this.logDiagnostic("polish", "start", {
-          ...this.getDiagnosticBaseMeta("polish", "polish", DIAGNOSTIC_REASON_CODES.REQUEST_STARTED, {
-            messageState: DIAGNOSTIC_MESSAGE_STATES.IN_FLIGHT,
-            targetKind: "composer",
-            sourceHash: this.getStrongTextFingerprint(draft),
-            textLength: String(draft || "").length
-          }),
-          sourceHash: this.getStrongTextFingerprint(draft),
-          length: String(draft || "").length
-        });
-        let pendingSend = null;
-        try {
-          const session = this.getPolishSession(textbox, draft);
-          const sourceText = this.getPolishSourceText(session);
-          if (!sourceText) {
-            this.showToast(this.t("inputEmpty"), "info");
-            return;
-          }
-          const originRouteKey = this.getCurrentRouteKey();
-          const originComposerKey = this.getTextboxComposerKey(textbox);
-          const previousResults = Array.isArray(session.previousResults) ? session.previousResults.slice(-5) : [];
-          const rawPolished = await this.runPolishWithGuards(sourceText, {
-            previousResults,
-            enforceRepolishVariation: Boolean(session.lastWrittenRawText && previousResults.length),
-            isStillCurrent: () => isLatestRequest() && this.polishSession === session
-          });
-          if (!isLatestRequest() || this.polishSession !== session) return;
-          const polished = this.sanitizeComposerGeneratedOutput(session.originalRawText ?? sourceText, rawPolished, "polish");
-          const action = this.getPolishAfterAction();
-          const recordPanelInsert = (target) => {
-            if (!isLatestRequest() || this.polishSession !== session) return;
-            session.composerKey = this.getTextboxComposerKey(target);
-            this.updatePolishSessionAfterResult(session, target, polished, true);
-            this.showRestoreOriginalControl(target, session, button);
-          };
-          const staleReason = this.getCurrentRouteKey() !== originRouteKey || this.getTextboxComposerKey(textbox) !== originComposerKey ? "composer-changed" : this.getComposerWriteStaleReason(textbox, writeToken, draft);
-          if (staleReason) {
-            this.updatePolishSessionAfterResult(session, textbox, polished, false);
-            this.logDiagnostic("polish", "stale-input", {
-              ...this.getDiagnosticBaseMeta("polish", "polish", DIAGNOSTIC_REASON_CODES.STALE_DOM, {
-                messageState: DIAGNOSTIC_MESSAGE_STATES.STALE,
-                targetKind: "composer",
-                sourceHash: this.getStrongTextFingerprint(sourceText),
-                textLength: String(sourceText || "").length
-              }),
-              sourceHash: this.getStrongTextFingerprint(sourceText),
-              reason: staleReason,
-              ms: Date.now() - startedAt
-            });
-            this.showPolishResultPanel(this.getComposerResultPanelAnchor(textbox), polished, {
-              sourceButton: button,
-              originRouteKey,
-              originComposerKey,
-              sourceText,
-              onApplied: recordPanelInsert
-            });
-            this.showToast(this.t("composerResultHeld"), "info");
-            return;
-          }
-          const writeResult = await this.composerWriter.replaceTextSafely(textbox, polished, {
-            blurAfterReplace: false,
-            extraBlurTarget: button,
-            expectedPreviousText: draft,
-            writeToken
-          });
-          if (!isLatestRequest() || this.polishSession !== session) return;
-          this.updatePolishSessionAfterResult(session, textbox, polished, writeResult.ok);
-          if (!writeResult.ok) {
-            this.logDiagnostic("polish", "panel", {
-              ...this.getDiagnosticBaseMeta("polish", "polish", "write-failed", {
-                messageState: DIAGNOSTIC_MESSAGE_STATES.FAILED,
-                targetKind: "composer",
-                sourceHash: this.getStrongTextFingerprint(sourceText),
-                textLength: String(sourceText || "").length
-              }),
-              sourceHash: this.getStrongTextFingerprint(sourceText),
-              ms: Date.now() - startedAt
-            });
-            this.showPolishResultPanel(textbox, polished, {
-              sourceButton: button,
-              originRouteKey,
-              originComposerKey,
-              sourceText,
-              onApplied: recordPanelInsert
-            });
-            return;
-          }
-          this.logDiagnostic("polish", "success", {
-            ...this.getDiagnosticBaseMeta("polish", "polish", DIAGNOSTIC_REASON_CODES.RENDERED, {
-              messageState: DIAGNOSTIC_MESSAGE_STATES.RENDERED,
-              targetKind: "composer",
-              sourceHash: this.getStrongTextFingerprint(sourceText),
-              textLength: String(sourceText || "").length
-            }),
-            sourceHash: this.getStrongTextFingerprint(sourceText),
-            ms: Date.now() - startedAt
-          });
-          const writtenDraft = {
-            textbox,
-            text: polished,
-            composerKey: originComposerKey,
-            routeKey: originRouteKey,
-            requestId: writeToken.id
-          };
-          if (writeResult.userEditedAfter || !this.isPolishedSendStillCurrent(writtenDraft, lifecycleToken)) return;
-          if (this.isPublicBilingualAfterPolishEnabled()) {
-            const bilingualResult = await this.publicBilingualCurrentDraft(button, {
-              textbox,
-              composerKey: originComposerKey,
-              polishRequestId: writeToken.id,
-              skipAutoPolish: true
-            });
-            if (bilingualResult?.wrote || bilingualResult?.stale || !this.isPolishedSendStillCurrent(writtenDraft, lifecycleToken)) return;
-          }
-          this.showRestoreOriginalControl(textbox, session, button);
-          if (action === "confirmSend") {
-            pendingSend = writtenDraft;
-          }
-        } catch (error) {
-          if (!isLatestRequest()) return;
-          this.logDiagnostic("polish", "error", {
-            ...this.getDiagnosticBaseMeta("polish", "polish", DIAGNOSTIC_REASON_CODES.FAILURE, {
-              messageState: DIAGNOSTIC_MESSAGE_STATES.FAILED,
-              targetKind: "composer",
-              sourceHash: this.getStrongTextFingerprint(draft),
-              textLength: String(draft || "").length,
-              failureType: this.getAutoTranslationFailureType(error)
-            }),
-            type: this.getAutoTranslationFailureType(error),
-            ms: Date.now() - startedAt
-          });
-          this.showToast(this.formatError(error), "error");
-        } finally {
-          this.composerWriter.finishWriteToken(writeToken);
-          if (this.isLifecycleTokenCurrent(lifecycleToken)) this.setButtonBusy(button, false, this.t("polishButton"));
-        }
-        if (pendingSend) await this.confirmPolishedSend(pendingSend, lifecycleToken);
-      }
-      // "Ask before sending": the polished text is already in the input box. Sends only when, after the dialog,
-      // the plugin is still running and the same composer is still connected and holds exactly that text.
-      async confirmPolishedSend(pending, lifecycleToken) {
-        if (!this.isPolishedSendStillCurrent(pending, lifecycleToken)) return false;
-        const confirmed = await this.confirmAction({
-          title: this.t("confirmSend"),
-          preview: pending?.text || "",
-          confirmText: this.t("confirmSendAction"),
-          cancelText: this.t("dialogCancel")
-        });
-        if (!confirmed || !this.isLifecycleTokenCurrent(lifecycleToken)) return false;
-        if (!this.isPolishedSendStillCurrent(pending, lifecycleToken)) {
-          this.showToast(this.t("confirmSendDraftChanged"), "info");
-          return false;
-        }
-        this.clearPolishSubmitTimer();
-        this.polishSubmitTimer = setTimeout(() => {
-          this.polishSubmitTimer = null;
-          if (this.isPolishedSendStillCurrent(pending, lifecycleToken)) this.composerWriter.submit(pending.textbox);
-        }, 80);
-        return true;
-      }
-      isPolishedSendStillCurrent(pending, lifecycleToken) {
-        const textbox = pending?.textbox;
-        if (!this.isLifecycleTokenCurrent(lifecycleToken)) return false;
-        if (!textbox || textbox.isConnected === false) return false;
-        if (pending.composerKey && this.getTextboxComposerKey(textbox) !== pending.composerKey) return false;
-        if (pending.routeKey !== void 0 && this.getCurrentRouteKey() !== pending.routeKey) return false;
-        if (pending.requestId !== void 0 && this.latestPolishRequestIds.get(this.getTextboxComposerRoot(textbox)) !== pending.requestId) return false;
-        return this.isCurrentDraftText(textbox, pending.text);
-      }
-      clearPolishSubmitTimer() {
-        if (!this.polishSubmitTimer) return;
-        clearTimeout(this.polishSubmitTimer);
-        this.polishSubmitTimer = null;
-      }
-      showPolishResultPanel(textbox, text, options = {}) {
-        if (typeof document === "undefined") return;
-        this.removePolishResultPanel();
-        this.removePolishRestoreControl();
-        if (options.adjustTextboxSelection === true) {
-          this.applyTextboxReplacementSelection(textbox, { blurAfterReplace: Boolean(options.blurAfterReplace), extraBlurTarget: options.sourceButton });
-        }
-        const panel = document.createElement("div");
-        panel.className = "dait-polish-result-panel";
-        this.applyPanelTheme(panel);
-        panel.setAttribute("role", "dialog");
-        panel.setAttribute("aria-label", options.ariaLabel || options.title || this.t("polishResultTitle"));
-        const header = document.createElement("div");
-        header.className = "dait-polish-result-header";
-        const title = document.createElement("div");
-        title.className = "dait-polish-result-title";
-        title.textContent = options.title || this.t("polishResultTitle");
-        header.appendChild(title);
-        const close = document.createElement("button");
-        close.className = "dait-polish-result-icon";
-        close.type = "button";
-        close.appendChild(this.createWindowIcon("close"));
-        close.title = this.t("polishResultClose");
-        close.setAttribute("aria-label", this.t("polishResultClose"));
-        close.addEventListener("click", (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          this.removePolishResultPanel();
-        });
-        header.appendChild(close);
-        panel.appendChild(header);
-        const output = document.createElement("div");
-        output.className = "dait-polish-result-output";
-        output.tabIndex = 0;
-        output.textContent = String(text || "");
-        panel.appendChild(output);
-        const actions = document.createElement("div");
-        actions.className = "dait-polish-result-actions";
-        if (textbox && options.allowApply !== false) {
-          const panelOriginRouteKey = options.originRouteKey !== void 0 ? String(options.originRouteKey || "") : this.getCurrentRouteKey();
-          const panelOriginComposerKey = options.originComposerKey !== void 0 ? String(options.originComposerKey || "") : this.getTextboxComposerKey(textbox);
-          const apply = document.createElement("button");
-          apply.className = "dait-polish-result-action dait-polish-result-apply";
-          apply.type = "button";
-          apply.textContent = this.t("polishResultReplace");
-          apply.addEventListener("click", async (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            if (apply.disabled) return;
-            apply.disabled = true;
-            try {
-              await this.applyPolishResultPanelText(textbox, String(text || ""), {
-                onApplied: options.onApplied,
-                originRouteKey: panelOriginRouteKey,
-                originComposerKey: panelOriginComposerKey,
-                sourceText: options.sourceText
-              });
-            } finally {
-              apply.disabled = false;
-            }
-          });
-          actions.appendChild(apply);
-        }
-        const copy = document.createElement("button");
-        copy.className = "dait-polish-result-action primary";
-        copy.type = "button";
-        copy.textContent = this.t("polishResultCopy");
-        copy.addEventListener("click", async (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          try {
-            await this.copyTextToClipboard(String(text || ""));
-            this.removePolishResultPanel();
-          } catch (error) {
-            this.showToast(this.t("promptCopyFailed", { error: this.formatError(error) }), "error");
-            this.focusPolishResultOutput(output);
-          }
-        });
-        actions.appendChild(copy);
-        panel.appendChild(actions);
-        ["pointerdown", "mousedown", "click"].forEach((type) => {
-          panel.addEventListener(type, (event) => event.stopPropagation());
-        });
-        document.body.appendChild(panel);
-        this.polishResultPanel = panel;
-        const anchorNode = textbox || options.sourceButton;
-        let repositionRaf = null;
-        const reposition = () => {
-          repositionRaf = null;
-          if (!panel.isConnected) return;
-          this.positionPolishResultPanel(panel, textbox, options.sourceButton);
-        };
-        const onResize = () => {
-          if (repositionRaf !== null) {
-            try {
-              window.cancelAnimationFrame?.(repositionRaf);
-            } catch {
-            }
-            repositionRaf = null;
-          }
-          if (!panel.isConnected) return;
-          this.applyPanelTheme(panel);
-          reposition();
-        };
-        const onScroll = (event) => {
-          if (event?.target && event.target !== window && event.target !== document && anchorNode && !event.target.contains?.(anchorNode)) {
-            return;
-          }
-          if (repositionRaf !== null) return;
-          if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
-            repositionRaf = window.requestAnimationFrame(reposition);
-          } else {
-            reposition();
-          }
-        };
-        const outsidePointerDown = (event) => {
-          if (panel.contains?.(event.target)) return;
-          this.removePolishResultPanel();
-        };
-        const escapeKeydown = (event) => {
-          if (event.isComposing || event.keyCode === 229 || event.key !== "Escape") return;
-          event.preventDefault?.();
-          event.stopPropagation?.();
-          this.removePolishResultPanel();
-        };
-        this.polishResultPanelCleanup = () => {
-          if (repositionRaf !== null && typeof window !== "undefined") {
-            window.cancelAnimationFrame?.(repositionRaf);
-            repositionRaf = null;
-          }
-          if (typeof window !== "undefined") {
-            window.removeEventListener?.("resize", onResize, { capture: true });
-            window.removeEventListener?.("scroll", onScroll, { capture: true });
-          }
-          document.removeEventListener?.("pointerdown", outsidePointerDown, true);
-          document.removeEventListener?.("keydown", escapeKeydown, true);
-        };
-        if (typeof window !== "undefined") {
-          window.addEventListener?.("resize", onResize, { capture: true, passive: true });
-          window.addEventListener?.("scroll", onScroll, { capture: true, passive: true });
-        }
-        document.addEventListener?.("pointerdown", outsidePointerDown, true);
-        document.addEventListener?.("keydown", escapeKeydown, true);
-        onResize();
-      }
-      focusPolishResultOutput(output) {
-        if (!output) return;
-        try {
-          output.focus?.({ preventScroll: true });
-        } catch {
-          try {
-            output.focus?.();
-          } catch {
-          }
-        }
-        const selection = typeof window !== "undefined" ? window.getSelection?.() : null;
-        if (!selection || !document.createRange) return;
-        try {
-          const range = document.createRange();
-          range.selectNodeContents(output);
-          selection.removeAllRanges?.();
-          selection.addRange?.(range);
-        } catch {
-        }
-      }
-      positionPolishResultPanel(panel, textbox, sourceButton = null) {
-        if (!panel?.style || typeof window === "undefined") return;
-        const anchor = textbox?.getBoundingClientRect?.() || sourceButton?.getBoundingClientRect?.() || null;
-        const viewportWidth = Number(window.innerWidth || document.documentElement?.clientWidth || 0) || 900;
-        const viewportHeight = Number(window.innerHeight || document.documentElement?.clientHeight || 0) || 700;
-        const width = Math.min(440, Math.max(260, viewportWidth - 32));
-        const leftBase = anchor ? anchor.left : viewportWidth - width - 24;
-        const left = Math.max(16, Math.min(leftBase, viewportWidth - width - 16));
-        const bottom = anchor ? Math.max(16, viewportHeight - anchor.top + 10) : 96;
-        panel.style.left = `${left}px`;
-        panel.style.right = "auto";
-        panel.style.bottom = `${Math.min(Math.max(bottom, 16), Math.max(16, viewportHeight - 120))}px`;
-        panel.style.width = `${width}px`;
-      }
-      removePolishResultPanel() {
-        this.polishResultPanelCleanup?.();
-        this.polishResultPanelCleanup = null;
-        this.polishResultPanel?.remove?.();
-        this.polishResultPanel = null;
-      }
-      async runPolishWithGuards(sourceText, options = {}) {
-        const polishConfig = this.getTaskConfig("polish") || {};
-        const activeTemplate = this.getActivePolishTemplate(polishConfig);
-        const isDialectTemplate = Boolean(activeTemplate && this.getPolishTemplateCategory(activeTemplate) === PROMPT_TEMPLATE_CATEGORY_DIALECT);
-        const targetLanguage = this.getEffectivePolishTargetLanguage(polishConfig);
-        const allowDialectScriptMix = Boolean(isDialectTemplate && !this.isTraditionalChineseTarget(targetLanguage));
-        const previousResults = Array.isArray(options.previousResults) ? options.previousResults.map((item) => String(item || "").trim()).filter(Boolean).slice(-5) : [];
-        const firstOptions = previousResults.length || options.mode ? {
-          ...options.mode ? { mode: options.mode } : {},
-          ...previousResults.length ? {
-            configOverrides: {
-              previousPolishResults: previousResults,
-              repolishAttempt: previousResults.length + 1
-            }
-          } : {}
-        } : void 0;
-        const first = firstOptions !== void 0 ? await this.runModelTask("polish", sourceText, firstOptions) : await this.runModelTask("polish", sourceText);
-        if (options.isStillCurrent && !options.isStillCurrent()) return first;
-        let violation = this.getPolishOutputLanguageViolation(sourceText, first, targetLanguage, {
-          chineseScriptOnly: Boolean(options.chineseScriptOnly),
-          allowDialectScriptMix
-        });
-        if (!violation && options.enforceRepolishVariation && previousResults.length && previousResults.some((item) => this.areComparableTextsEqual(item, first))) {
-          violation = "duplicate-repolish";
-        }
-        if (!violation || violation === "empty") return first;
-        const configuredTemp = this.normalizeRequestNumber(polishConfig.temperature, DEFAULT_SETTINGS.polish.temperature, { min: 0, max: 2 });
-        const repairTemp = violation === "duplicate-repolish" ? Math.min(2, Math.max(configuredTemp, 0.95)) : Math.min(configuredTemp, 0.35);
-        try {
-          const repaired = await this.runModelTask("polish", sourceText, {
-            ...options.mode ? { mode: options.mode } : {},
-            configOverrides: {
-              temperature: repairTemp,
-              previousPolishResults: previousResults,
-              repolishAttempt: previousResults.length + 1,
-              polishRepairReason: violation,
-              polishPreviousInvalidOutput: String(first || "")
-            }
-          });
-          if (options.isStillCurrent && !options.isStillCurrent()) return repaired;
-          const cleaned = String(repaired || "").trim();
-          if (!cleaned) return first;
-          const repairViolation = this.getPolishOutputLanguageViolation(sourceText, cleaned, targetLanguage, {
-            chineseScriptOnly: Boolean(options.chineseScriptOnly),
-            allowDialectScriptMix
-          });
-          this.logDiagnostic("polish.guard", repairViolation ? "repair-partial" : "repair-ok", {
-            violation,
-            repairViolation,
-            targetLanguage
-          });
-          if (!repairViolation || violation === "duplicate-repolish") return repaired;
-          return first;
-        } catch (error) {
-          if (this.isRequestCancelled(error)) throw error;
-          this.logDiagnostic("polish.guard", "repair-fallback", {
-            violation,
-            targetLanguage,
-            error: this.formatError(error)
-          });
-          return first;
-        }
-      }
-      sanitizeComposerGeneratedOutput(sourceText, outputText, flow = "polish", reservedText = "") {
-        const guarded = this.guardGeneratedMassMentions(sourceText, outputText, reservedText);
-        if (guarded.neutralized) {
-          this.logDiagnostic(`${flow}.mention-guard`, "neutralized", {
-            count: guarded.addedMentions.length,
-            mentions: guarded.addedMentions
-          });
-          this.showToast(this.t("composerMassMentionBlocked", { mentions: guarded.addedMentions.join(", ") }), "info");
-        }
-        return guarded.text;
-      }
-      // The panel's "Insert into input" action: an explicit user request, so it replaces whatever the
-      // composer holds now (Discord's undo brings the previous draft back). `options.onApplied(target)`
-      // runs after a verified write so the run that produced the text can record it.
-      async applyPolishResultPanelText(textbox, text, options = {}) {
-        const originRouteKey = String(options.originRouteKey || "");
-        const currentRouteKey = this.getCurrentRouteKey();
-        if (originRouteKey && currentRouteKey && originRouteKey !== currentRouteKey) {
-          this.showToast(this.t("composerChannelChanged"), "info");
-          return false;
-        }
-        const target = textbox && textbox.isConnected !== false ? textbox : this.resolveInputActionTextbox(null, {});
-        if (!target) {
-          this.showToast(this.t("textboxMissing"), "error");
-          return false;
-        }
-        const originComposerKey = String(options.originComposerKey || "");
-        const targetComposerKey = this.getTextboxComposerKey(target);
-        if (originComposerKey && targetComposerKey && originComposerKey !== targetComposerKey) {
-          this.showToast(this.t("composerChannelChanged"), "info");
-          return false;
-        }
-        const safeText = options.sourceText !== void 0 ? this.sanitizeComposerGeneratedOutput(options.sourceText, text, "panel") : String(text || "");
-        const currentText = this.getTextboxDraftText(target);
-        const writeToken = this.composerWriter.beginWrite(target, currentText);
-        let result = null;
-        try {
-          result = await this.composerWriter.replaceTextSafely(target, safeText, {
-            blurAfterReplace: false,
-            expectedPreviousText: currentText,
-            writeToken
-          });
-        } finally {
-          this.composerWriter.finishWriteToken(writeToken);
-        }
-        if (result?.ok) {
-          this.removePolishResultPanel();
-          options.onApplied?.(target);
-          return true;
-        }
-        if (result?.reason !== "write-cancelled") this.showToast(this.t("polishResultApplyFailed"), "error");
-        return false;
-      }
-      showRestoreOriginalControl(textbox, session, sourceButton = null) {
-        const originalText = session?.originalRawText ?? session?.originalText;
-        if (typeof document === "undefined" || !originalText) return;
-        this.removePolishRestoreControl();
-        this.removeInputActionMenu();
-        const container = this.getPolishButtonContainer(textbox);
-        const group = container ? this.getInputActionGroup(container) : null;
-        if (group) {
-          this.syncInputRestoreButtonState(group, textbox, { restoreSession: session });
-          this.syncInputActionButtonThemes(group, textbox || sourceButton || container);
-          this.syncInputActionGroupState(group, textbox, container);
-          return;
-        }
-        const button = document.createElement("button");
-        button.className = "dait-polish-restore-control";
-        this.syncDiscordThemeClasses(button, textbox || sourceButton);
-        button.type = "button";
-        button.textContent = this.t("restoreOriginal");
-        ["pointerdown", "mousedown"].forEach((type) => {
-          button.addEventListener(type, (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-          });
-        });
-        button.addEventListener("click", async (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          await this.restorePolishOriginal(textbox, session, sourceButton);
-        });
-        document.body.appendChild(button);
-        this.polishRestoreControl = button;
-        const anchorNode = sourceButton || textbox;
-        let repositionRaf = null;
-        const reposition = () => {
-          repositionRaf = null;
-          if (!button.isConnected) return;
-          this.positionPolishRestoreControl(button, textbox, sourceButton);
-        };
-        const onResize = () => {
-          if (repositionRaf !== null) {
-            try {
-              window.cancelAnimationFrame?.(repositionRaf);
-            } catch {
-            }
-            repositionRaf = null;
-          }
-          if (!button.isConnected) return;
-          this.syncDiscordThemeClasses(button, textbox || sourceButton);
-          reposition();
-        };
-        const onScroll = (event) => {
-          if (event?.target && event.target !== window && event.target !== document && anchorNode && !event.target.contains?.(anchorNode)) {
-            return;
-          }
-          if (repositionRaf !== null) return;
-          if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
-            repositionRaf = window.requestAnimationFrame(reposition);
-          } else {
-            reposition();
-          }
-        };
-        const timeout = typeof window !== "undefined" && typeof window.setTimeout === "function" ? window.setTimeout(() => this.removePolishRestoreControl(), 8e3) : null;
-        this.polishRestoreControlCleanup = () => {
-          if (repositionRaf !== null && typeof window !== "undefined") {
-            window.cancelAnimationFrame?.(repositionRaf);
-            repositionRaf = null;
-          }
-          if (typeof window !== "undefined") {
-            window.removeEventListener?.("resize", onResize, { capture: true });
-            window.removeEventListener?.("scroll", onScroll, { capture: true });
-            if (timeout) window.clearTimeout?.(timeout);
-          }
-        };
-        if (typeof window !== "undefined") {
-          window.addEventListener?.("resize", onResize, { capture: true, passive: true });
-          window.addEventListener?.("scroll", onScroll, { capture: true, passive: true });
-        }
-        onResize();
-      }
-      async restorePolishOriginal(textbox, session, sourceButton = null) {
-        const lifecycleToken = this.getLifecycleToken();
-        if (!this.isLifecycleTokenCurrent(lifecycleToken)) return false;
-        const originalText = session?.originalRawText ?? session?.originalText;
-        if (!originalText) return false;
-        if (!this.canRestorePolishOriginal(textbox, session)) {
-          this.removePolishRestoreControl();
-          this.removeInputActionMenu();
-          this.injectInputButtons();
-          this.showToast(this.t("restoreOriginalChanged"), "info");
-          return false;
-        }
-        const currentText = this.getTextboxDraftText(textbox);
-        const writeToken = this.composerWriter.beginWrite(textbox, currentText);
-        try {
-          const result = await this.composerWriter.replaceTextSafely(textbox, originalText, {
-            blurAfterReplace: false,
-            extraBlurTarget: sourceButton,
-            expectedPreviousText: currentText,
-            writeToken,
-            lifecycleToken
-          });
-          if (!this.isLifecycleTokenCurrent(lifecycleToken) || textbox.isConnected === false || this.getTextboxComposerKey(textbox) !== writeToken.composerKey) return false;
-          const writeCurrent = this.composerWriter.isWriteTokenCurrent(writeToken);
-          if (!writeCurrent && !this.isComposerWriteTakenOverByUser(textbox, { writeToken })) return false;
-          if (result?.ok && (writeCurrent ? this.isCurrentDraftText(textbox, originalText) : result.userEditedAfter)) {
-            session.lastWrittenText = "";
-            session.lastWrittenRawText = "";
-            session.updatedAt = Date.now();
-            this.polishSession = session;
-            this.removePolishRestoreControl();
-            this.removeInputActionMenu();
-            this.injectInputButtons();
-            return true;
-          }
-          this.showPolishResultPanel(textbox, originalText, { sourceButton });
-          return false;
-        } finally {
-          this.composerWriter.finishWriteToken(writeToken);
-        }
-      }
-      canRestorePolishOriginal(textbox, session) {
-        if (!textbox || textbox.isConnected === false || !session) return false;
-        if (session.composerKey && this.getTextboxComposerKey(textbox) !== session.composerKey) return false;
-        const current = this.getTextboxDraftText(textbox);
-        if (this.areDraftTextsEqualStrict(current, session.originalRawText ?? session.originalText)) return false;
-        const candidates = [
-          session.lastWrittenRawText,
-          session.lastResultRawText,
-          session.lastBilingualRawText,
-          session.lastWrittenText,
-          session.lastResult,
-          session.lastBilingualText
-        ].filter((value) => value !== void 0 && value !== null && value !== "");
-        return candidates.some((value) => this.areDraftTextsEqualStrict(current, value));
-      }
-      positionPolishRestoreControl(button, textbox, sourceButton = null) {
-        if (!button?.style || typeof window === "undefined") return;
-        const anchor = sourceButton?.getBoundingClientRect?.() || textbox?.getBoundingClientRect?.() || null;
-        const viewportWidth = Number(window.innerWidth || document.documentElement?.clientWidth || 0) || 900;
-        const viewportHeight = Number(window.innerHeight || document.documentElement?.clientHeight || 0) || 700;
-        const width = 86;
-        const leftBase = anchor ? anchor.left - width - 8 : viewportWidth - width - 24;
-        const left = Math.max(16, Math.min(leftBase, viewportWidth - width - 16));
-        const bottom = anchor ? Math.max(16, viewportHeight - anchor.bottom) : 72;
-        button.style.left = `${left}px`;
-        button.style.bottom = `${Math.min(Math.max(bottom, 16), Math.max(16, viewportHeight - 48))}px`;
-      }
-      removePolishRestoreControl() {
-        this.polishRestoreControlCleanup?.();
-        this.polishRestoreControlCleanup = null;
-        this.polishRestoreControl?.remove?.();
-        this.polishRestoreControl = null;
-      }
-      setTemporaryButtonText(button, text, fallback, delay = 1200) {
-        if (!button) return;
-        button.textContent = text;
-        setTimeout(() => {
-          if (button.isConnected) button.textContent = fallback;
-        }, delay);
-      }
       resolveManualTranslationSource(messageNode, content, textOptions = null, fallbackText = "") {
         const domText = this.normalizeExtractedText(fallbackText || this.getElementText(content, textOptions));
         const candidates = [];
@@ -40518,18 +40634,6 @@ var require_discord_ai_translator = __commonJS({
         event.stopPropagation();
         const button = this.getComposerPolishButton(textbox);
         this.polishCurrentDraft(button, { textbox, composerKey: this.getTextboxComposerKey(textbox), fromHotkey: true });
-      }
-      // Minimal density hides the direct buttons behind the "AI" menu button.
-      isInputActionButtonShown(button) {
-        if (!button || button.isConnected === false) return false;
-        const group = button.parentElement?.dataset?.daitDensity ? button.parentElement : button.closest?.(".dait-input-action-group");
-        return !this.isInputActionDirectButton(button) || group?.dataset?.daitDensity !== "minimal";
-      }
-      getComposerPolishButton(textbox) {
-        const root = textbox?.closest?.("form, [class*='channelTextArea']");
-        const button = root?.querySelector?.(".dait-input-action-group .dait-polish-button") || null;
-        if (!button || button.isConnected === false) return null;
-        return !button.__daitTextbox || button.__daitTextbox === textbox ? button : null;
       }
       recordHotkey(button) {
         if (!button || button.dataset.recording === "true") return;
@@ -43809,6 +43913,7 @@ ${raw}`;
       }
     };
     installPrototypeBridge(module2.exports.prototype, "settingsUi", SETTINGS_UI_METHOD_NAMES);
+    installPrototypeBridge(module2.exports.prototype, "composerUi", COMPOSER_UI_METHOD_NAMES);
   }
 });
 
