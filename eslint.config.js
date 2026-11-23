@@ -127,6 +127,13 @@ module.exports = [
         }
     },
     {
+        // Prevent unused imports or dead local variables anywhere in src/
+        files: ["src/**/*.js"],
+        rules: {
+            "no-unused-vars": ["error", { vars: "all", args: "none", caughtErrors: "none", ignoreRestSiblings: true }]
+        }
+    },
+    {
         // Stricter rules for newly created V0.5 modular code
         files: [
             "src/core/**/*.js",

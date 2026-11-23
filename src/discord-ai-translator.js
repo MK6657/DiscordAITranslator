@@ -348,6 +348,9 @@ module.exports = class DiscordAITranslator {
         if (this.diagnosticLogsDirtyTimer) clearTimeout(this.diagnosticLogsDirtyTimer);
         this.apiRequestsClosed = true;
         this.abortActiveApiRequests();
+        this.providerLayer.apiTestRuns?.forEach?.(run => run?.controller?.abort?.());
+        this.providerLayer.runningApiTests?.clear?.();
+        this.modelDetectionRuns?.forEach?.(run => run?.controller?.abort?.());
         this.composerWriter.cancelAll("stop");
         this.clearHotkeyRecording();
         this.clearPolishSubmitTimer();

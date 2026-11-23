@@ -20233,21 +20233,8 @@ var require_provider_layer = __commonJS({
     var {
       API_TEST_REQUEST_TIMEOUT_MS,
       AUTO_LANGUAGE_VALUE,
-      AUTO_TRANSLATE_FAILURE_MAX_TTL,
-      AUTO_TRANSLATE_INVALID_OUTPUT_FAILURE_TTL,
-      AUTO_TRANSLATE_PROVIDER_FAILURE_TTL,
-      AUTO_TRANSLATE_VIEWPORT_STABLE_RESCAN_MS,
       DEFAULT_SETTINGS,
       DIAGNOSTIC_REASON_CODES,
-      GOOGLE_TRANSLATE_DEFAULT_MONTHLY_LIMIT,
-      GOOGLE_TRANSLATE_MAX_MONTHLY_LIMIT,
-      GOOGLE_TRANSLATE_RUNTIME_WRITE_DEBOUNCE_MS,
-      LANGUAGE_PRESETS,
-      LOCAL_PROVIDER_AUTO_MODEL_VALUE,
-      LOCAL_PROVIDER_HEALTH_RETRY_MS,
-      LOCAL_PROVIDER_MODEL_DETECTION_RETRY_MS,
-      LOCAL_PROVIDER_MODEL_DETECTION_TIMEOUT_MS,
-      LOCAL_PROVIDER_MODEL_DETECTION_TTL_MS,
       LOCAL_PROVIDER_UNAVAILABLE_RETRY_MS,
       MODEL_REQUEST_TIMEOUT_MS,
       PROVIDER_DEFAULTS,
@@ -21239,6 +21226,13 @@ var require_provider_layer = __commonJS({
             sourceLanguage: AUTO_LANGUAGE_VALUE,
             targetLanguageCode: this.getTargetLanguageCode(config.targetLanguage)
           };
+          const adapter = this.registry.get(config?.provider);
+          if (adapter?.buildRequest) {
+            return adapter.buildRequest("translation", "hello", testConfig, DEFAULT_SETTINGS[kind] || {}, {
+              ignoreGoogleTranslateCooldown: true,
+              connectionTest: true
+            }, this.plugin);
+          }
           if (this.isGoogleTranslateProvider(config)) return this.buildGoogleTranslateRequest("hello", testConfig, { ignoreCooldown: true });
           if (this.isMicrosoftTranslateProvider(config)) return this.buildMicrosoftTranslateRequest("hello", testConfig);
           if (this.isDeepLTranslateProvider(config)) return this.buildDeepLTranslateRequest("hello", testConfig);
@@ -22054,7 +22048,6 @@ var require_settings_store = __commonJS({
           changed = true;
         }
         const rawUiSettingsVersion = storedSettings && typeof storedSettings === "object" ? Number(storedSettings.ui?.settingsVersion || 0) : Number(this.plugin.settings.ui.settingsVersion || 0);
-        const uiSettingsVersion = Number(this.plugin.settings.ui.settingsVersion || 0);
         if (rawUiSettingsVersion < 2) {
           this.plugin.settings.ui.showAutoTranslateToasts = false;
           this.plugin.settings.ui.settingsVersion = DEFAULT_SETTINGS.ui.settingsVersion;
@@ -42959,6 +42952,9 @@ var require_discord_ai_translator = __commonJS({
         if (this.diagnosticLogsDirtyTimer) clearTimeout(this.diagnosticLogsDirtyTimer);
         this.apiRequestsClosed = true;
         this.abortActiveApiRequests();
+        this.providerLayer.apiTestRuns?.forEach?.((run) => run?.controller?.abort?.());
+        this.providerLayer.runningApiTests?.clear?.();
+        this.modelDetectionRuns?.forEach?.((run) => run?.controller?.abort?.());
         this.composerWriter.cancelAll("stop");
         this.clearHotkeyRecording();
         this.clearPolishSubmitTimer();

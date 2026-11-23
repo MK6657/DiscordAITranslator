@@ -517,7 +517,6 @@ class SettingsStore {
         const rawUiSettingsVersion = storedSettings && typeof storedSettings === "object"
             ? Number(storedSettings.ui?.settingsVersion || 0)
             : Number(this.plugin.settings.ui.settingsVersion || 0);
-        const uiSettingsVersion = Number(this.plugin.settings.ui.settingsVersion || 0);
         if (rawUiSettingsVersion < 2) {
             this.plugin.settings.ui.showAutoTranslateToasts = false;
             this.plugin.settings.ui.settingsVersion = DEFAULT_SETTINGS.ui.settingsVersion;

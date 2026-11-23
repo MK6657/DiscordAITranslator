@@ -67,6 +67,16 @@ test("M4 ProviderRegistry supports registering a custom 8th provider adapter wit
     assert.equal(built.endpoint, "https://translate.example.invalid/v1/run");
     assert.equal(built.request.responseParser, "mockCustomParser");
 
+    // Verify buildConnectionTestRequest also dispatches through ProviderRegistry for custom direct adapters
+    const builtTest = plugin.buildConnectionTestRequest("translation", {
+        provider: "mockCustom",
+        endpoint: "",
+        apiKey: "secret-custom",
+        targetLanguage: "汉语"
+    });
+    assert.equal(builtTest.endpoint, "https://translate.example.invalid/v1/run");
+    assert.equal(builtTest.request.body.text, "hello");
+
     // Verify fetchModelResponse dispatches to the custom adapter parser
     plugin.fetchApiResponseText = async () => JSON.stringify({ translated: "你好世界" });
     const parsed = await plugin.fetchModelResponse(built.endpoint, built.request, 5000);

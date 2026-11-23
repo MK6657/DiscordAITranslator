@@ -143,3 +143,33 @@ test("createPluginContext and EventBus connect ProviderLayer, QueueCore, and Qui
     if (plugin.settingsDirtyTimer) clearTimeout(plugin.settingsDirtyTimer);
     plugin.quickPanel?.destroy?.("test");
 });
+
+test("stop() aborts in-flight apiTestRuns and modelDetectionRuns, clears runningApiTests, and preserves EventBus subscriptions", () => {
+    const { installChatGlobals } = require("../fixtures/chat-harness");
+    const { restore } = installChatGlobals({});
+    try {
+        const plugin = new Plugin();
+        const apiController = new AbortController();
+        const detectController = new AbortController();
+        plugin.providerLayer.apiTestRuns = new Map([["translation", { sequence: 1, controller: apiController }]]);
+        plugin.providerLayer.runningApiTests.set("translation", 1);
+        plugin.modelDetectionRuns = new Map([["translation", { sequence: 1, controller: detectController }]]);
+
+        let statusEvents = 0;
+        plugin.events.on("api:status", () => { statusEvents++; });
+
+        plugin.stop();
+        assert.equal(apiController.signal.aborted, true);
+        assert.equal(detectController.signal.aborted, true);
+        assert.equal(plugin.isApiTestRunning("translation"), false);
+
+        // Domain event bus subscriptions remain active after a stop() cycle.
+        plugin.setApiRuntimeStatus("translation", "success", "OK");
+        assert.equal(statusEvents, 1);
+        if (plugin.settingsDirtyTimer) clearTimeout(plugin.settingsDirtyTimer);
+        plugin.quickPanel?.destroy?.("test");
+    }
+    finally {
+        restore();
+    }
+});
