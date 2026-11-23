@@ -17647,31 +17647,20 @@ ${hash}`;
           promptPolicyVersion: String(config.promptPolicyVersion || "").trim(),
           prompt: String(config.prompt || "").trim()
         };
-        if (provider === "googleCloud") {
-          snapshot.endpoint = PROVIDER_DEFAULTS.googleCloud.endpoint;
-          snapshot.model = PROVIDER_DEFAULTS.googleCloud.model;
-          snapshot.temperature = 0;
-          snapshot.maxTokens = 0;
-          snapshot.enableThinking = false;
-          snapshot.promptPolicyVersion = this.plugin.getPromptPolicyVersion("googleCloud");
-          snapshot.prompt = "";
-        } else if (this.plugin.isDirectTranslateProvider(provider)) {
-          snapshot.model = PROVIDER_DEFAULTS[provider]?.model || "";
+        const adapter = this.plugin.providerLayer?.registry?.get?.(provider) || null;
+        if (this.plugin.isDirectTranslateProvider(provider)) {
+          snapshot.model = adapter?.defaultProfile?.model || PROVIDER_DEFAULTS[provider]?.model || "";
           snapshot.temperature = 0;
           snapshot.maxTokens = 0;
           snapshot.enableThinking = false;
           snapshot.promptPolicyVersion = `${provider}-v1`;
           snapshot.prompt = "";
-          if (provider === "deepl") {
-            snapshot.endpoint = this.plugin.normalizeDeepLPlan(config.deeplPlan) === "pro" ? PROVIDER_DEFAULTS.deepl.endpoint.replace("api-free.deepl.com", "api.deepl.com") : PROVIDER_DEFAULTS.deepl.endpoint;
-          }
         }
-        if (options.servedModel) {
-          if (provider === "deepl" && this.plugin.getDeepLLanguageCode(config.targetLanguageCode || config.targetLanguage) === "ZH-HANT") {
-            snapshot.model = "zh-hant";
-          } else if (!options.legacyModel && this.plugin.shouldAutoDetectLocalProviderModel(config, defaults)) {
-            snapshot.model = this.plugin.getCachedLocalProviderDetectedModel(config, { defaultConfig: defaults }) || snapshot.model;
-          }
+        if (typeof adapter?.applyCacheScope === "function") {
+          adapter.applyCacheScope(config, snapshot, this.plugin, options);
+        }
+        if (options.servedModel && !options.legacyModel && this.plugin.shouldAutoDetectLocalProviderModel(config, defaults)) {
+          snapshot.model = this.plugin.getCachedLocalProviderDetectedModel(config, { defaultConfig: defaults }) || snapshot.model;
         }
         return snapshot;
       }
@@ -18317,146 +18306,432 @@ ${hash}`;
   }
 });
 
-// src/providers/provider-layer.js
-var require_provider_layer = __commonJS({
-  "src/providers/provider-layer.js"(exports2, module2) {
+// src/providers/registry.js
+var require_registry = __commonJS({
+  "src/providers/registry.js"(exports2, module2) {
+    "use strict";
+    function createOpenAIChatAdapter(spec) {
+      return {
+        kind: "chat",
+        tasks: { polish: true, translation: true },
+        credentialFields: ["apiKey"],
+        isLocal: false,
+        allowCloudFallback: true,
+        supportsModelDetection: false,
+        apiKeyOptional: false,
+        responseParser: "chatCompletion",
+        getEffectiveEndpoint(config, defaultConfig, plugin) {
+          return plugin.getEffectiveChatCompletionEndpoint(config, defaultConfig);
+        },
+        buildRequest(kind, input, config, defaultConfig, _options, plugin) {
+          return plugin.buildChatCompletionRequest(kind, input, config, defaultConfig);
+        },
+        parseResponse(raw, _request, _options, plugin) {
+          return plugin.parseModelResponse(raw);
+        },
+        ...spec
+      };
+    }
+    var ProviderRegistry = class {
+      constructor() {
+        this.adapters = /* @__PURE__ */ new Map();
+        this.byParser = /* @__PURE__ */ new Map();
+      }
+      /**
+       * Registers or replaces a provider adapter.
+       * @param {ProviderAdapter} adapter
+       * @returns {ProviderRegistry}
+       */
+      register(adapter) {
+        if (!adapter || typeof adapter.id !== "string" || !adapter.id.trim()) {
+          throw new Error("ProviderAdapter must define a non-empty string id.");
+        }
+        const id = adapter.id.trim();
+        this.adapters.set(id, adapter);
+        if (adapter.responseParser) {
+          this.byParser.set(adapter.responseParser, adapter);
+        }
+        return this;
+      }
+      /**
+       * Removes a registered adapter by id (useful in tests or dynamic extensions).
+       * @param {string} id
+       * @returns {boolean}
+       */
+      unregister(id) {
+        const key = String(id || "").trim();
+        const existing = this.adapters.get(key);
+        if (!existing) return false;
+        this.adapters.delete(key);
+        if (existing.responseParser && this.byParser.get(existing.responseParser) === existing) {
+          this.byParser.delete(existing.responseParser);
+        }
+        return true;
+      }
+      /**
+       * Resolves an adapter from a provider id string or task config object.
+       * @param {string | { provider?: string } | null | undefined} idOrConfig
+       * @returns {ProviderAdapter | null}
+       */
+      get(idOrConfig) {
+        const id = typeof idOrConfig === "string" ? idOrConfig : idOrConfig?.provider;
+        return this.adapters.get(String(id || "").trim()) || null;
+      }
+      /**
+       * Resolves an adapter by its responseParser identifier.
+       * @param {string} parserName
+       * @returns {ProviderAdapter | null}
+       */
+      getByParser(parserName) {
+        return this.byParser.get(String(parserName || "").trim()) || null;
+      }
+      /**
+       * @param {string} id
+       * @returns {boolean}
+       */
+      has(id) {
+        return this.adapters.has(String(id || "").trim());
+      }
+      /**
+       * @returns {ProviderAdapter[]}
+       */
+      list() {
+        return [...this.adapters.values()];
+      }
+      /**
+       * @returns {string[]}
+       */
+      getOrder() {
+        return [...this.adapters.keys()];
+      }
+      /**
+       * @param {"polish"|"translation"} taskKind
+       * @returns {ProviderAdapter[]}
+       */
+      listForTask(taskKind) {
+        return this.list().filter((adapter) => Boolean(adapter.tasks?.[taskKind]));
+      }
+      /**
+       * @param {string | { provider?: string } | null | undefined} idOrConfig
+       * @returns {boolean}
+       */
+      isDirectTranslate(idOrConfig) {
+        return this.get(idOrConfig)?.kind === "direct";
+      }
+      /**
+       * @param {string | { provider?: string } | null | undefined} idOrConfig
+       * @returns {boolean}
+       */
+      isLocal(idOrConfig) {
+        return Boolean(this.get(idOrConfig)?.isLocal);
+      }
+      /**
+       * @param {string | { provider?: string } | null | undefined} idOrConfig
+       * @returns {boolean}
+       */
+      allowCloudFallback(idOrConfig) {
+        const adapter = this.get(idOrConfig);
+        return adapter ? adapter.allowCloudFallback !== false : true;
+      }
+      /**
+       * @param {string | { provider?: string } | null | undefined} idOrConfig
+       * @returns {boolean}
+       */
+      supportsModelDetection(idOrConfig) {
+        return Boolean(this.get(idOrConfig)?.supportsModelDetection);
+      }
+      /**
+       * @param {string | { provider?: string } | null | undefined} idOrConfig
+       * @returns {string[]}
+       */
+      getCredentialFields(idOrConfig) {
+        return [...this.get(idOrConfig)?.credentialFields || ["apiKey"]];
+      }
+    };
+    module2.exports = {
+      ProviderRegistry,
+      createOpenAIChatAdapter
+    };
+  }
+});
+
+// src/providers/adapters/deepseek.js
+var require_deepseek = __commonJS({
+  "src/providers/adapters/deepseek.js"(exports2, module2) {
+    "use strict";
+    var { PROVIDER_DEFAULTS } = require_constants();
+    var { createOpenAIChatAdapter } = require_registry();
+    var deepseekAdapter = createOpenAIChatAdapter({
+      id: "deepseek",
+      label: PROVIDER_DEFAULTS.deepseek.label,
+      defaultProfile: PROVIDER_DEFAULTS.deepseek,
+      applyBodyOptions(config, body) {
+        if (config?.enableThinking) {
+          body.thinking = { type: "enabled" };
+          delete body.temperature;
+        } else {
+          body.thinking = { type: "disabled" };
+        }
+        return body;
+      }
+    });
+    module2.exports = { deepseekAdapter };
+  }
+});
+
+// src/providers/adapters/openai-compatible.js
+var require_openai_compatible = __commonJS({
+  "src/providers/adapters/openai-compatible.js"(exports2, module2) {
+    "use strict";
+    var { PROVIDER_DEFAULTS } = require_constants();
+    var { createOpenAIChatAdapter } = require_registry();
+    var openaiCompatibleAdapter = createOpenAIChatAdapter({
+      id: "openaiCompatible",
+      label: PROVIDER_DEFAULTS.openaiCompatible.label,
+      defaultProfile: PROVIDER_DEFAULTS.openaiCompatible,
+      supportsModelDetection: true
+    });
+    module2.exports = { openaiCompatibleAdapter };
+  }
+});
+
+// src/providers/adapters/sakura-local.js
+var require_sakura_local = __commonJS({
+  "src/providers/adapters/sakura-local.js"(exports2, module2) {
+    "use strict";
+    var { PROVIDER_DEFAULTS } = require_constants();
+    var { createOpenAIChatAdapter } = require_registry();
+    var sakuraLocalAdapter = createOpenAIChatAdapter({
+      id: "sakuraLocal",
+      label: PROVIDER_DEFAULTS.sakuraLocal.label,
+      defaultProfile: PROVIDER_DEFAULTS.sakuraLocal,
+      isLocal: true,
+      allowCloudFallback: false,
+      supportsModelDetection: true,
+      apiKeyOptional: true
+    });
+    module2.exports = { sakuraLocalAdapter };
+  }
+});
+
+// src/providers/adapters/google-cloud.js
+var require_google_cloud = __commonJS({
+  "src/providers/adapters/google-cloud.js"(exports2, module2) {
+    "use strict";
+    var { PROVIDER_DEFAULTS } = require_constants();
+    var googleCloudAdapter = {
+      id: "googleCloud",
+      label: PROVIDER_DEFAULTS.googleCloud.label,
+      kind: "direct",
+      tasks: { polish: false, translation: true },
+      defaultProfile: PROVIDER_DEFAULTS.googleCloud,
+      credentialFields: [],
+      apiKeyOptional: true,
+      responseParser: "googleTranslate",
+      getEffectiveEndpoint() {
+        return PROVIDER_DEFAULTS.googleCloud.endpoint;
+      },
+      buildRequest(kind, input, config, _defaultConfig, options, plugin) {
+        if (kind !== "translation") throw new Error(plugin.t("translationDisabled"));
+        return plugin.buildGoogleTranslateRequest(input, config, {
+          ignoreReservations: Boolean(options?.deferGoogleTranslateReservation),
+          ignoreCooldown: Boolean(options?.ignoreGoogleTranslateCooldown),
+          reserve: Boolean(options?.reserveGoogleTranslateQuota)
+        });
+      },
+      parseResponse(raw, request, options, plugin) {
+        const result = plugin.parseGoogleTranslateResponse(raw, request?.googleTranslate?.expectedCount || 1, {
+          asArray: Boolean(options?.googleTranslateAsArray || options?.translateAsArray),
+          restoreMaps: request?.googleTranslate?.restoreMaps
+        });
+        plugin.markGoogleTranslateKeyUsage(request?.googleTranslate?.apiKey, request?.googleTranslate?.charCount || 0, {
+          clearCooldown: Boolean(options?.connectionTest)
+        });
+        plugin.markGoogleTranslateProviderSuccess(request);
+        return result;
+      },
+      applyCacheScope(_config, snapshot, plugin) {
+        snapshot.endpoint = PROVIDER_DEFAULTS.googleCloud.endpoint;
+        snapshot.model = PROVIDER_DEFAULTS.googleCloud.model;
+        snapshot.temperature = 0;
+        snapshot.maxTokens = 0;
+        snapshot.enableThinking = false;
+        snapshot.prompt = "";
+        snapshot.promptPolicyVersion = plugin.getPromptPolicyVersion("googleCloud");
+      }
+    };
+    module2.exports = { googleCloudAdapter };
+  }
+});
+
+// src/providers/adapters/microsoft.js
+var require_microsoft = __commonJS({
+  "src/providers/adapters/microsoft.js"(exports2, module2) {
+    "use strict";
+    var { PROVIDER_DEFAULTS } = require_constants();
+    var microsoftAdapter = {
+      id: "microsoft",
+      label: PROVIDER_DEFAULTS.microsoft.label,
+      kind: "direct",
+      tasks: { polish: false, translation: true },
+      defaultProfile: PROVIDER_DEFAULTS.microsoft,
+      credentialFields: ["apiKey", "region"],
+      responseParser: "microsoftTranslate",
+      getEffectiveEndpoint(config, _defaultConfig, plugin) {
+        const endpoint = String(config?.endpoint || PROVIDER_DEFAULTS.microsoft.endpoint).trim();
+        if (!endpoint) return "";
+        const target = plugin.getMicrosoftLanguageCode(config?.targetLanguageCode || config?.targetLanguage);
+        const source = plugin.getMicrosoftLanguageCode(config?.sourceLanguage, { source: true });
+        const params = new URLSearchParams({ "api-version": "3.0", to: target });
+        if (source) params.set("from", source);
+        return `${endpoint}${endpoint.includes("?") ? "&" : "?"}${params}`;
+      },
+      buildRequest(kind, input, config, _defaultConfig, _options, plugin) {
+        if (kind !== "translation") throw new Error(plugin.t("translationDisabled"));
+        return plugin.buildMicrosoftTranslateRequest(input, config);
+      },
+      parseResponse(raw, request, options, plugin) {
+        return plugin.parseMicrosoftTranslateResponse(raw, request?.translate?.expectedCount || 1, {
+          asArray: Boolean(options?.translateAsArray)
+        });
+      }
+    };
+    module2.exports = { microsoftAdapter };
+  }
+});
+
+// src/providers/adapters/deepl.js
+var require_deepl = __commonJS({
+  "src/providers/adapters/deepl.js"(exports2, module2) {
+    "use strict";
+    var { PROVIDER_DEFAULTS } = require_constants();
+    var deeplAdapter = {
+      id: "deepl",
+      label: PROVIDER_DEFAULTS.deepl.label,
+      kind: "direct",
+      tasks: { polish: false, translation: true },
+      defaultProfile: PROVIDER_DEFAULTS.deepl,
+      credentialFields: ["apiKey", "deeplPlan"],
+      responseParser: "deepLTranslate",
+      getEffectiveEndpoint(config, _defaultConfig, plugin) {
+        const endpoint = PROVIDER_DEFAULTS.deepl.endpoint;
+        return plugin.normalizeDeepLPlan(config?.deeplPlan) === "pro" ? endpoint.replace("api-free.deepl.com", "api.deepl.com") : endpoint;
+      },
+      buildRequest(kind, input, config, _defaultConfig, _options, plugin) {
+        if (kind !== "translation") throw new Error(plugin.t("translationDisabled"));
+        return plugin.buildDeepLTranslateRequest(input, config);
+      },
+      parseResponse(raw, request, options, plugin) {
+        return plugin.parseDeepLTranslateResponse(raw, request?.translate?.expectedCount || 1, {
+          asArray: Boolean(options?.translateAsArray)
+        });
+      },
+      applyCacheScope(config, snapshot, plugin, options) {
+        snapshot.endpoint = this.getEffectiveEndpoint(config, {}, plugin);
+        if (options?.servedModel && plugin.getDeepLLanguageCode(config?.targetLanguageCode || config?.targetLanguage) === "ZH-HANT") {
+          snapshot.model = "zh-hant";
+        }
+      }
+    };
+    module2.exports = { deeplAdapter };
+  }
+});
+
+// src/providers/adapters/baidu.js
+var require_baidu = __commonJS({
+  "src/providers/adapters/baidu.js"(exports2, module2) {
+    "use strict";
+    var { PROVIDER_DEFAULTS } = require_constants();
+    var baiduAdapter = {
+      id: "baidu",
+      label: PROVIDER_DEFAULTS.baidu.label,
+      kind: "direct",
+      tasks: { polish: false, translation: true },
+      defaultProfile: PROVIDER_DEFAULTS.baidu,
+      credentialFields: ["appId", "secretKey"],
+      responseParser: "baiduTranslate",
+      getEffectiveEndpoint(config) {
+        return String(config?.endpoint || PROVIDER_DEFAULTS.baidu.endpoint).trim();
+      },
+      buildRequest(kind, input, config, _defaultConfig, _options, plugin) {
+        if (kind !== "translation") throw new Error(plugin.t("translationDisabled"));
+        return plugin.buildBaiduTranslateRequest(input, config);
+      },
+      parseResponse(raw, request, options, plugin) {
+        return plugin.parseBaiduTranslateResponse(raw, request?.translate?.expectedCount || 1, {
+          asArray: Boolean(options?.translateAsArray),
+          rowCounts: request?.translate?.rowCounts
+        });
+      }
+    };
+    module2.exports = { baiduAdapter };
+  }
+});
+
+// src/providers/adapters/index.js
+var require_adapters = __commonJS({
+  "src/providers/adapters/index.js"(exports2, module2) {
+    "use strict";
+    var { ProviderRegistry } = require_registry();
+    var { deepseekAdapter } = require_deepseek();
+    var { openaiCompatibleAdapter } = require_openai_compatible();
+    var { sakuraLocalAdapter } = require_sakura_local();
+    var { googleCloudAdapter } = require_google_cloud();
+    var { microsoftAdapter } = require_microsoft();
+    var { deeplAdapter } = require_deepl();
+    var { baiduAdapter } = require_baidu();
+    function createDefaultProviderRegistry() {
+      const registry = new ProviderRegistry();
+      registry.register(deepseekAdapter);
+      registry.register(openaiCompatibleAdapter);
+      registry.register(sakuraLocalAdapter);
+      registry.register(googleCloudAdapter);
+      registry.register(microsoftAdapter);
+      registry.register(deeplAdapter);
+      registry.register(baiduAdapter);
+      return registry;
+    }
+    module2.exports = {
+      createDefaultProviderRegistry,
+      deepseekAdapter,
+      openaiCompatibleAdapter,
+      sakuraLocalAdapter,
+      googleCloudAdapter,
+      microsoftAdapter,
+      deeplAdapter,
+      baiduAdapter
+    };
+  }
+});
+
+// src/providers/local-model-health.js
+var require_local_model_health = __commonJS({
+  "src/providers/local-model-health.js"(exports2, module2) {
     "use strict";
     var {
-      API_TEST_REQUEST_TIMEOUT_MS,
-      AUTO_LANGUAGE_VALUE,
-      AUTO_TRANSLATE_FAILURE_MAX_TTL,
-      AUTO_TRANSLATE_INVALID_OUTPUT_FAILURE_TTL,
-      AUTO_TRANSLATE_PROVIDER_FAILURE_TTL,
-      AUTO_TRANSLATE_VIEWPORT_STABLE_RESCAN_MS,
-      DEFAULT_SETTINGS,
-      DIAGNOSTIC_REASON_CODES,
-      GOOGLE_TRANSLATE_DEFAULT_MONTHLY_LIMIT,
-      GOOGLE_TRANSLATE_MAX_MONTHLY_LIMIT,
-      GOOGLE_TRANSLATE_RUNTIME_WRITE_DEBOUNCE_MS,
-      LANGUAGE_PRESETS,
-      LOCAL_PROVIDER_AUTO_MODEL_VALUE,
+      PROVIDER_DEFAULTS,
+      LOCAL_PROVIDER_UNAVAILABLE_RETRY_MS,
       LOCAL_PROVIDER_HEALTH_RETRY_MS,
+      LOCAL_PROVIDER_AUTO_MODEL_VALUE,
+      LOCAL_PROVIDER_MODEL_DETECTION_TTL_MS,
       LOCAL_PROVIDER_MODEL_DETECTION_RETRY_MS,
       LOCAL_PROVIDER_MODEL_DETECTION_TIMEOUT_MS,
-      LOCAL_PROVIDER_MODEL_DETECTION_TTL_MS,
-      LOCAL_PROVIDER_UNAVAILABLE_RETRY_MS,
-      MODEL_REQUEST_TIMEOUT_MS,
-      PROVIDER_DEFAULTS,
-      PROVIDER_ORDER,
-      SETTINGS_WRITE_DEBOUNCE_MS
+      API_TEST_REQUEST_TIMEOUT_MS,
+      AUTO_TRANSLATE_VIEWPORT_STABLE_RESCAN_MS,
+      DEFAULT_SETTINGS
     } = require_constants();
-    var GOOGLE_API_KEY_PATTERN = /AIza[0-9A-Za-z_-]{10,}/;
-    var GOOGLE_TRANSLATE_PROTECT_PATTERNS = [
-      /```[\s\S]*?```/g,
-      /`[^`\n]+`/g,
-      /https?:\/\/[^\s<>"']+/gi,
-      /<a?:[A-Za-z0-9_~.-]+:\d{15,}>/g,
-      /<[@#][!&]?\d{15,}>/g,
-      /<@&\d{15,}>/g,
-      /<t:\d{1,12}(?::[tTdDfFR])?>/g,
-      /:[A-Za-z0-9_~.-]{2,}:/g,
-      /\b[A-Za-z]:\\[^\s]+/g
-    ];
-    var ProviderLayer = class {
-      constructor(plugin) {
-        this.plugin = plugin;
-        this.lastApiTestResults = /* @__PURE__ */ new Map();
-        this.runningApiTests = /* @__PURE__ */ new Map();
-        this.bdNetPreferredOrigins = /* @__PURE__ */ new Set();
-      }
-      getProviderDefaults(provider) {
-        return PROVIDER_DEFAULTS[String(provider || "").trim()] || null;
-      }
-      isGoogleTranslateProvider(configOrProvider) {
-        const provider = typeof configOrProvider === "string" ? configOrProvider : configOrProvider?.provider;
-        return provider === "googleCloud";
-      }
-      isMicrosoftTranslateProvider(configOrProvider) {
-        const provider = typeof configOrProvider === "string" ? configOrProvider : configOrProvider?.provider;
-        return provider === "microsoft";
-      }
-      isDeepLTranslateProvider(configOrProvider) {
-        const provider = typeof configOrProvider === "string" ? configOrProvider : configOrProvider?.provider;
-        return provider === "deepl";
-      }
-      isBaiduTranslateProvider(configOrProvider) {
-        const provider = typeof configOrProvider === "string" ? configOrProvider : configOrProvider?.provider;
-        return provider === "baidu";
-      }
-      isDirectTranslateProvider(configOrProvider) {
-        return this.plugin.isGoogleTranslateProvider(configOrProvider) || this.plugin.isMicrosoftTranslateProvider(configOrProvider) || this.plugin.isDeepLTranslateProvider(configOrProvider) || this.plugin.isBaiduTranslateProvider(configOrProvider);
-      }
-      isLocalTranslationProvider(configOrProvider) {
-        const provider = typeof configOrProvider === "string" ? configOrProvider : configOrProvider?.provider;
-        return provider === "sakuraLocal";
-      }
+    var methods = {
       isLocalProviderAutoModelValue(model) {
         const value = String(model || "").trim();
         return !value || value === LOCAL_PROVIDER_AUTO_MODEL_VALUE;
-      }
-      // Accepts either a full chat/completions URL or an OpenAI-style base URL (e.g. http://127.0.0.1:18080/v1
-      // or https://host/openai/v1) and completes it to .../chat/completions without altering custom paths.
-      normalizeChatCompletionEndpoint(endpoint) {
-        const raw = String(endpoint || "").trim();
-        if (!raw) return "";
-        try {
-          const url = new URL(raw);
-          if (!["http:", "https:"].includes(url.protocol)) return raw;
-          const trimmedPath = String(url.pathname || "").replace(/\/+$/g, "");
-          if (/\/(?:chat\/completions|completions)$/i.test(trimmedPath)) return raw;
-          if (/\/v\d+$/i.test(trimmedPath)) {
-            url.pathname = `${trimmedPath}/chat/completions`;
-            return url.toString();
-          }
-          if (!trimmedPath && this.plugin.isLoopbackEndpoint(raw)) {
-            url.pathname = "/v1/chat/completions";
-            return url.toString();
-          }
-          return raw;
-        } catch {
-          return raw;
-        }
-      }
-      getEffectiveChatCompletionEndpoint(config = {}, defaultConfig = {}) {
-        const providerDefault = PROVIDER_DEFAULTS[config.provider] || {};
-        const raw = String(config.endpoint || providerDefault.endpoint || defaultConfig.endpoint || "").trim();
-        return this.normalizeChatCompletionEndpoint(raw);
-      }
-      getEffectiveProviderEndpoint(config, defaultConfig = {}) {
-        if (config.provider === "googleCloud") return PROVIDER_DEFAULTS.googleCloud.endpoint;
-        if (config.provider === "deepl") {
-          const endpoint = PROVIDER_DEFAULTS.deepl.endpoint;
-          return this.plugin.normalizeDeepLPlan(config.deeplPlan) === "pro" ? endpoint.replace("api-free.deepl.com", "api.deepl.com") : endpoint;
-        }
-        if (config.provider === "baidu") return String(config.endpoint || PROVIDER_DEFAULTS.baidu.endpoint).trim();
-        if (config.provider === "microsoft") {
-          const endpoint = String(config.endpoint || PROVIDER_DEFAULTS.microsoft.endpoint).trim();
-          if (!endpoint) return "";
-          const target = this.plugin.getMicrosoftLanguageCode(config.targetLanguageCode || config.targetLanguage);
-          const source = this.plugin.getMicrosoftLanguageCode(config.sourceLanguage, { source: true });
-          const params = new URLSearchParams({ "api-version": "3.0", to: target });
-          if (source) params.set("from", source);
-          return `${endpoint}${endpoint.includes("?") ? "&" : "?"}${params}`;
-        }
-        return this.getEffectiveChatCompletionEndpoint(config, defaultConfig);
-      }
-      getProviderEndpointIdentity(config, defaultConfig = {}) {
-        const endpoint = this.getEffectiveProviderEndpoint(config, defaultConfig);
-        try {
-          const url = new URL(endpoint);
-          url.hash = "";
-          return url.href;
-        } catch {
-          return endpoint;
-        }
-      }
+      },
       shouldAutoDetectLocalProviderModel(config = {}, defaultConfig = {}) {
         if (!this.plugin.isLocalTranslationProvider(config)) return false;
         const providerDefault = PROVIDER_DEFAULTS[config.provider] || {};
         const model = String(config.model || providerDefault.model || defaultConfig.model || "").trim();
         if (!this.plugin.isLocalProviderAutoModelValue(model)) return false;
         return this.plugin.isLoopbackEndpoint(this.plugin.getEffectiveChatCompletionEndpoint(config, defaultConfig)) && (typeof config.apiKeyOrigin !== "string" || config.apiKeyOrigin === this.plugin.getProviderEndpointOrigin(config));
-      }
+      },
       getLocalProviderModelDetectionCacheKey(config = {}, defaultConfig = {}) {
         if (!this.plugin.isLocalTranslationProvider(config)) return "";
         const endpoint = this.plugin.getEffectiveChatCompletionEndpoint(config, defaultConfig);
@@ -18466,7 +18741,7 @@ var require_provider_layer = __commonJS({
           endpoint,
           this.plugin.getTextFingerprint(String(config.apiKey || "").trim())
         ].join("\n---\n");
-      }
+      },
       getCachedLocalProviderDetectedModel(config = {}, options = {}) {
         const key = this.plugin.getLocalProviderModelDetectionCacheKey(config, options.defaultConfig);
         if (!key) return "";
@@ -18475,7 +18750,7 @@ var require_provider_layer = __commonJS({
         if (!model) return "";
         if (options.allowExpired === false && Number(entry.expiresAt || 0) <= Date.now()) return "";
         return model;
-      }
+      },
       setCachedLocalProviderDetectedModel(config = {}, model = "", options = {}) {
         const normalized = this.plugin.normalizeLocalProviderModelId(model);
         const key = this.plugin.getLocalProviderModelDetectionCacheKey(config, options.defaultConfig);
@@ -18494,10 +18769,10 @@ var require_provider_layer = __commonJS({
           this.plugin.cachedDrawMemo?.clear?.();
         }
         return normalized;
-      }
+      },
       getPersistableLocalProviderDetectedModels() {
         return [...this.plugin.localProviderDetectedModels?.entries?.() || []].filter(([key, entry]) => key && String(entry?.model || "").trim()).sort((left, right) => Number(right[1].detectedAt || 0) - Number(left[1].detectedAt || 0)).slice(0, 8).map(([key, entry]) => ({ key, model: String(entry.model).trim() }));
-      }
+      },
       // Restores the last served model per local server after a restart, so cached lines keep
       // their keys (and draw) before the server answers again; the next request re-detects.
       restoreLocalProviderDetectedModels(list) {
@@ -18508,7 +18783,7 @@ var require_provider_layer = __commonJS({
           if (!key || !model || this.plugin.localProviderDetectedModels.get(key)?.model) return;
           this.plugin.localProviderDetectedModels.set(key, { model, detectedAt: 0, expiresAt: 0, retryAt: 0 });
         });
-      }
+      },
       getEffectiveChatCompletionModel(kind, config = {}, defaultConfig = DEFAULT_SETTINGS[kind] || {}) {
         const providerDefault = PROVIDER_DEFAULTS[config.provider] || {};
         const configured = String(config.model || providerDefault.model || defaultConfig.model || "").trim();
@@ -18516,61 +18791,7 @@ var require_provider_layer = __commonJS({
           return this.plugin.getCachedLocalProviderDetectedModel(config, { defaultConfig }) || configured || LOCAL_PROVIDER_AUTO_MODEL_VALUE;
         }
         return configured;
-      }
-      createProviderRequestCancelledError() {
-        return Object.assign(new Error("Request cancelled"), { name: "AbortError", code: "REQUEST_CANCELLED" });
-      }
-      throwIfProviderRequestCancelled(signal, lifecycleToken = this.plugin.getLifecycleToken()) {
-        if (signal?.aborted || this.plugin.apiRequestsClosed || lifecycleToken !== this.plugin.getLifecycleToken()) {
-          throw this.createProviderRequestCancelledError();
-        }
-      }
-      subscribeToProviderRequest(requests, key, signal, run, isCurrent = () => true) {
-        this.throwIfProviderRequestCancelled(signal);
-        let entry = requests.get(key);
-        const startsRequest = !entry;
-        if (startsRequest) {
-          entry = { controller: new AbortController(), subscribers: /* @__PURE__ */ new Set() };
-          requests.set(key, entry);
-        }
-        const result = new Promise((resolve, reject) => {
-          const subscriber = {
-            resolve,
-            reject,
-            isCurrent,
-            release: () => {
-              entry.subscribers.delete(subscriber);
-              signal?.removeEventListener("abort", cancel);
-            }
-          };
-          const cancel = () => {
-            subscriber.release();
-            if (!entry.subscribers.size) entry.controller.abort();
-            reject(this.createProviderRequestCancelledError());
-          };
-          entry.subscribers.add(subscriber);
-          signal?.addEventListener("abort", cancel, { once: true });
-        });
-        if (startsRequest) {
-          const { controller, subscribers } = entry;
-          const settle = (method, value) => {
-            controller.signal.removeEventListener("abort", cancel);
-            if (requests.get(key) === entry) requests.delete(key);
-            for (const subscriber of subscribers) {
-              subscriber.release();
-              subscriber[method](value);
-            }
-          };
-          const cancel = () => settle("reject", this.createProviderRequestCancelledError());
-          controller.signal.addEventListener("abort", cancel, { once: true });
-          const hasCurrentSubscriber = () => [...subscribers].some((subscriber) => subscriber.isCurrent());
-          run(controller.signal, hasCurrentSubscriber).then(
-            (value) => settle("resolve", value),
-            (error) => settle("reject", error)
-          );
-        }
-        return result;
-      }
+      },
       async refreshLocalProviderDetectedModel(config = {}, options = {}) {
         const { defaultConfig, force, signal, timeoutMs } = options;
         const lifecycleToken = this.plugin.getLifecycleToken();
@@ -18620,7 +18841,7 @@ var require_provider_layer = __commonJS({
         }, isCurrent);
         if (!isCurrent()) throw this.createProviderRequestCancelledError();
         return model;
-      }
+      },
       async fetchLocalProviderDetectedModel(config = {}, options = {}) {
         const endpoint = this.plugin.getEffectiveChatCompletionEndpoint(config, options.defaultConfig);
         const modelsEndpoint = this.plugin.getLocalProviderModelsEndpoint(endpoint);
@@ -18633,7 +18854,7 @@ var require_provider_layer = __commonJS({
           signal: options.signal
         });
         return this.plugin.parseLocalProviderModelsResponse(raw);
-      }
+      },
       getLocalProviderModelsEndpoint(endpoint) {
         const source = String(endpoint || PROVIDER_DEFAULTS.sakuraLocal.endpoint || "").trim();
         if (!source) return "";
@@ -18668,7 +18889,7 @@ var require_provider_layer = __commonJS({
           if (/\/v\d+$/i.test(clean)) return `${clean}/models`;
           return `${clean || "http://127.0.0.1:8080/v1"}/models`;
         }
-      }
+      },
       parseLocalProviderModelsResponse(raw, options = {}) {
         const data = typeof raw === "string" ? this.plugin.parseApiJson(raw) : raw;
         const candidates = /* @__PURE__ */ new Set();
@@ -18706,7 +18927,7 @@ var require_provider_layer = __commonJS({
         if (options?.all) return [...candidates];
         const preferred = [...ids.size ? ids : files];
         return preferred.find(isModelFile) || preferred[0] || "";
-      }
+      },
       async detectProviderModels(kind, options = {}) {
         const { provider, endpoint: configuredEndpoint, apiKey, apiKeyOrigin, model } = options.config || this.plugin.getTaskConfig(kind);
         const snapshot = Object.freeze({ provider, endpoint: configuredEndpoint, apiKey, apiKeyOrigin, model });
@@ -18762,15 +18983,12 @@ var require_provider_layer = __commonJS({
           });
           throw error;
         }
-      }
-      isModelDetectionProvider(provider) {
-        return ["sakuraLocal", "openaiCompatible"].includes(String(provider || ""));
-      }
+      },
       normalizeLocalProviderModelId(value) {
         const text = String(value || "").trim();
         if (!text || /^(?:list|model|models)$/i.test(text)) return "";
         return text;
-      }
+      },
       getLocalProviderDetectedModelSnapshot(config = this.plugin.settings.translation) {
         const key = this.plugin.getLocalProviderModelDetectionCacheKey(config);
         const entry = key ? this.plugin.localProviderDetectedModels?.get?.(key) : null;
@@ -18784,21 +19002,156 @@ var require_provider_layer = __commonJS({
           expiresAt: Number(entry?.expiresAt || 0) || 0,
           retryAt: Number(entry?.retryAt || 0) || 0
         };
+      },
+      markLocalProviderHealthy(providerKey) {
+        if (!providerKey) return;
+        this.plugin.localProviderHealthyKeys.add(providerKey);
+        this.plugin.releaseProviderBlockedAutoTranslationItems(providerKey);
+      },
+      shouldBlockAutoTranslationForLocalProviderHealth(requestOptions = this.plugin.getAutoTranslationOptions()) {
+        const config = this.plugin.getEffectiveTaskConfig("translation", requestOptions?.configOverrides);
+        if (!this.plugin.isLocalTranslationProvider(config)) return false;
+        const providerKey = this.plugin.getAutoTranslationProviderKey(requestOptions);
+        if (!providerKey) return true;
+        if (this.plugin.localProviderHealthyKeys.has(providerKey) && this.plugin.getApiStatus("translation").state === "success") return false;
+        this.plugin.startLocalProviderHealthProbe(providerKey, requestOptions, { reason: this.plugin.getApiStatus("translation").state || "untested" });
+        return true;
+      },
+      getLocalProviderHealthProbeRetryMs(requestOptions = this.plugin.getAutoTranslationOptions(), now = Date.now()) {
+        const providerKey = this.plugin.getAutoTranslationProviderKey(requestOptions);
+        if (!providerKey) return LOCAL_PROVIDER_HEALTH_RETRY_MS;
+        const startedAt = Number(this.plugin.localProviderHealthProbeStartedAt.get(providerKey) || 0);
+        if (!startedAt || !this.plugin.localProviderHealthChecks.has(providerKey)) return LOCAL_PROVIDER_HEALTH_RETRY_MS;
+        return Math.max(
+          LOCAL_PROVIDER_HEALTH_RETRY_MS,
+          API_TEST_REQUEST_TIMEOUT_MS + 500 - Math.max(0, now - startedAt)
+        );
+      },
+      getLocalProviderHealthRetryMs(requestOptions = this.plugin.getAutoTranslationOptions(), now = Date.now()) {
+        const providerFailure = this.plugin.getAutoTranslationProviderFailure(requestOptions);
+        if (providerFailure && !this.plugin.isAutoTranslationFailureExpired(providerFailure, now)) {
+          return this.plugin.getAutoTranslationFailureRemainingMs(providerFailure, now);
+        }
+        return this.plugin.getLocalProviderHealthProbeRetryMs(requestOptions, now);
+      },
+      startLocalProviderHealthProbe(providerKey, requestOptions = this.plugin.getAutoTranslationOptions(), options = {}) {
+        if (!providerKey || this.plugin.localProviderHealthChecks.has(providerKey)) return;
+        const config = this.plugin.clone(this.plugin.getEffectiveTaskConfig("translation", requestOptions?.configOverrides));
+        if (!this.plugin.isLocalTranslationProvider(config)) return;
+        const lifecycleToken = this.plugin.getLifecycleToken();
+        const signal = this.plugin.getAutoTranslationAbortSignal();
+        const isCurrent = () => !signal?.aborted && this.plugin.isLifecycleTokenCurrent(lifecycleToken) && this.plugin.isAutoTranslationProviderSnapshotCurrent(providerKey, requestOptions);
+        if (!isCurrent()) return;
+        this.plugin.setApiRuntimeStatus("translation", "testing", this.plugin.t("apiStatusTesting"));
+        const startedAt = Date.now();
+        this.plugin.localProviderHealthProbeStartedAt.set(providerKey, startedAt);
+        const promise = (async () => {
+          let endpoint = "";
+          try {
+            if (this.plugin.shouldAutoDetectLocalProviderModel(config, DEFAULT_SETTINGS.translation)) {
+              await this.plugin.refreshLocalProviderDetectedModel(config, { defaultConfig: DEFAULT_SETTINGS.translation, signal, isCurrent });
+            }
+            if (!isCurrent()) return;
+            const test = this.plugin.buildConnectionTestRequest("translation", config);
+            endpoint = test.endpoint;
+            const raw = await this.plugin.fetchApiResponseText(test.endpoint, test.request, API_TEST_REQUEST_TIMEOUT_MS, { signal });
+            if (!isCurrent()) return;
+            try {
+              this.plugin.parseModelResponse(raw);
+            } catch (error) {
+              if (!this.plugin.isAcceptableConnectionTestTruncation(error, "translation", config)) throw error;
+              this.plugin.logDiagnostic("auto.provider.health", "truncated-ok", {
+                key: this.plugin.getTextFingerprint(providerKey),
+                reason: options.reason || "",
+                partialOutputLength: Number(error.partialOutputLength || 0),
+                finishReason: error.finishReason || "",
+                ms: Date.now() - startedAt
+              });
+            }
+            this.plugin.autoTranslationProviderFailures.delete(providerKey);
+            this.plugin.setApiRuntimeStatus("translation", "success", this.plugin.t("apiStatusSuccess"));
+            this.plugin.markLocalProviderHealthy(providerKey);
+            this.plugin.logDiagnostic("auto.provider.health", "success", {
+              key: this.plugin.getTextFingerprint(providerKey),
+              reason: options.reason || "",
+              ms: Date.now() - startedAt
+            });
+            if (this.plugin.isStarted) this.plugin.queueScan({ delayMs: AUTO_TRANSLATE_VIEWPORT_STABLE_RESCAN_MS });
+          } catch (error) {
+            if (!isCurrent() || this.plugin.isRequestCancelled(error)) return;
+            this.plugin.annotateModelRequestError(error, "translation", endpoint || config.endpoint, config, requestOptions);
+            if (!error.localProviderUnavailable) {
+              error.localProviderUnavailable = true;
+              error.retryAfterMs = Math.max(Number(error.retryAfterMs || 0), LOCAL_PROVIDER_UNAVAILABLE_RETRY_MS);
+              error.providerKey = providerKey;
+              error.localProviderEndpoint = error.localProviderEndpoint || String(endpoint || config.endpoint || "");
+            }
+            this.plugin.markAutoTranslationProviderFailure(requestOptions, error);
+            if (this.plugin.getApiStatus("translation").state === "testing" && !this.plugin.isRequestCancelled(error)) {
+              this.plugin.setApiRuntimeStatus("translation", "failed", this.plugin.t("apiStatusFailed"), this.plugin.formatError(error));
+            }
+            this.plugin.logDiagnostic("auto.provider.health", "failed", {
+              key: this.plugin.getTextFingerprint(providerKey),
+              reason: options.reason || "",
+              type: this.plugin.getAutoTranslationFailureType(error),
+              ms: Date.now() - startedAt
+            });
+            this.plugin.scheduleAutoTranslationRetryScan(this.plugin.getAutoTranslationRetryAfter(error, 1));
+          }
+        })().finally(() => {
+          if (this.plugin.localProviderHealthChecks.get(providerKey) === promise) {
+            this.plugin.localProviderHealthChecks.delete(providerKey);
+            this.plugin.localProviderHealthProbeStartedAt.delete(providerKey);
+          }
+        });
+        this.plugin.localProviderHealthChecks.set(providerKey, promise);
       }
+    };
+    module2.exports = methods;
+  }
+});
+
+// src/providers/google-key-pool.js
+var require_google_key_pool = __commonJS({
+  "src/providers/google-key-pool.js"(exports2, module2) {
+    "use strict";
+    var {
+      PROVIDER_DEFAULTS,
+      AUTO_LANGUAGE_VALUE,
+      AUTO_TRANSLATE_FAILURE_MAX_TTL,
+      AUTO_TRANSLATE_PROVIDER_FAILURE_TTL,
+      GOOGLE_TRANSLATE_DEFAULT_MONTHLY_LIMIT,
+      GOOGLE_TRANSLATE_MAX_MONTHLY_LIMIT,
+      GOOGLE_TRANSLATE_RUNTIME_WRITE_DEBOUNCE_MS,
+      LANGUAGE_PRESETS
+    } = require_constants();
+    var GOOGLE_API_KEY_PATTERN = /AIza[0-9A-Za-z_-]{10,}/;
+    var GOOGLE_TRANSLATE_PROTECT_PATTERNS = [
+      /```[\s\S]*?```/g,
+      /`[^`\n]+`/g,
+      /https?:\/\/[^\s<>"']+/gi,
+      /<a?:[A-Za-z0-9_~.-]+:\d{15,}>/g,
+      /<[@#][!&]?\d{15,}>/g,
+      /<@&\d{15,}>/g,
+      /<t:\d{1,12}(?::[tTdDfFR])?>/g,
+      /:[A-Za-z0-9_~.-]{2,}:/g,
+      /\b[A-Za-z]:\\[^\s]+/g
+    ];
+    var methods = {
       getGoogleTranslateKeys() {
         const normalized = this.plugin.normalizeGoogleTranslateKeyPool(this.plugin.settings.googleTranslate || {});
         this.plugin.settings.googleTranslate.keys = normalized.keys;
         this.plugin.settings.googleTranslate.keyPoolText = normalized.keyPoolText;
         this.plugin.settings.googleTranslate.usageById = normalized.usageById;
         return normalized.keys;
-      }
+      },
       countGoogleTranslateChars(texts) {
         const values = Array.isArray(texts) ? texts : [texts];
         return values.reduce((sum, text) => sum + [...String(text || "")].length, 0);
-      }
+      },
       peekGoogleTranslateAvailableKey(charCount = 1, options = {}) {
         return this.plugin.selectGoogleTranslateKey(charCount, { ...options, persist: false });
-      }
+      },
       selectGoogleTranslateKey(charCount = 1, options = {}) {
         const now = Date.now();
         const keys = this.plugin.getGoogleTranslateKeys();
@@ -18807,18 +19160,18 @@ var require_provider_layer = __commonJS({
         if (available || options.persist === false) return available || null;
         this.plugin.saveGoogleTranslateRuntimeState();
         return null;
-      }
+      },
       getGoogleTranslateReservedChars(keyOrId) {
         const id = typeof keyOrId === "string" ? keyOrId : keyOrId?.id;
         return Math.max(0, Number(this.plugin.googleTranslateReservedChars.get(String(id || "")) || 0) || 0);
-      }
+      },
       reserveGoogleTranslateKey(key, charCount = 0) {
         const id = String(key?.id || "");
         const chars = Math.max(0, Math.round(Number(charCount) || 0));
         if (!id || !chars) return null;
         this.plugin.googleTranslateReservedChars.set(id, this.plugin.getGoogleTranslateReservedChars(id) + chars);
         return { keyId: id, charCount: chars };
-      }
+      },
       releaseGoogleTranslateReservation(reservation) {
         const id = String(reservation?.keyId || "");
         const chars = Math.max(0, Math.round(Number(reservation?.charCount) || 0));
@@ -18826,7 +19179,7 @@ var require_provider_layer = __commonJS({
         const next = this.plugin.getGoogleTranslateReservedChars(id) - chars;
         if (next > 0) this.plugin.googleTranslateReservedChars.set(id, next);
         else this.plugin.googleTranslateReservedChars.delete(id);
-      }
+      },
       reserveGoogleTranslateRequest(request) {
         const meta = request?.googleTranslate;
         if (request?.provider !== "googleCloud" || !meta || meta.reservation) return;
@@ -18836,7 +19189,7 @@ var require_provider_layer = __commonJS({
           throw this.plugin.createGoogleTranslateQuotaError({ charCount: needed, key });
         }
         meta.reservation = this.plugin.reserveGoogleTranslateKey(key, needed);
-      }
+      },
       createGoogleTranslateQuotaError(options = {}) {
         const error = new Error(this.plugin.t("googleTranslateQuotaExceeded"));
         error.googleTranslateQuotaExceeded = true;
@@ -18848,7 +19201,7 @@ var require_provider_layer = __commonJS({
         }
         if (options.charCount !== void 0) error.googleTranslateCharCount = Math.max(0, Math.round(Number(options.charCount) || 0));
         return error;
-      }
+      },
       // No key can take the request, but one with room this month only waits out a cooldown
       // (a per-minute limit, a rejected request). Returns when the first of those comes back, or 0.
       getGoogleTranslateCoolingKeyReadyAt(charCount = 1, options = {}) {
@@ -18856,7 +19209,7 @@ var require_provider_layer = __commonJS({
         const needed = Math.max(1, Math.round(Number(charCount) || 1));
         const readyAt = this.plugin.getGoogleTranslateKeys().filter((key) => key.enabled !== false && Number(key.cooldownUntil || 0) > now && Number(key.usedChars || 0) + (options.ignoreReservations ? 0 : this.plugin.getGoogleTranslateReservedChars(key)) + needed <= Number(key.monthlyLimit || GOOGLE_TRANSLATE_DEFAULT_MONTHLY_LIMIT)).map((key) => Number(key.cooldownUntil));
         return readyAt.length ? Math.min(...readyAt) : 0;
-      }
+      },
       // Every usable key is cooling down: the pool waits until the first one is back. This is a
       // rate limit for the whole pool, not an exhausted quota.
       createGoogleTranslateCooldownError(options = {}) {
@@ -18869,10 +19222,10 @@ var require_provider_layer = __commonJS({
         error.retryAfterMs = until - Date.now();
         if (options.charCount !== void 0) error.googleTranslateCharCount = Math.max(0, Math.round(Number(options.charCount) || 0));
         return error;
-      }
+      },
       formatGoogleTranslateCooldownMessage(until) {
         return this.plugin.t("googleTranslateKeysCooling", { time: this.plugin.formatDiagnosticSummaryTime(until) });
-      }
+      },
       // Names the pool key a Google error came from (by its label, never the key itself).
       formatGoogleTranslateKeyError(error, options = {}) {
         const message = this.plugin.formatError(error, options);
@@ -18883,7 +19236,7 @@ var require_provider_layer = __commonJS({
         const key = keys.find((item) => keyId && item.id === keyId || apiKey && item.apiKey === apiKey);
         if (!key) return message;
         return this.plugin.t("googleTranslateKeyError", { label: this.plugin.getGoogleTranslateKeyDisplayLabel(key, keys), error: message });
-      }
+      },
       // The name a pool key is shown by on screen (the error toast, the service card, the overview checklist, the
       // status). A label that looks like a Google key or holds a key of the pool (a key typed into the label field)
       // is replaced by the key's generated name, so a key never appears where others can see the screen.
@@ -18897,28 +19250,28 @@ var require_provider_layer = __commonJS({
           return Boolean(apiKey) && (label === apiKey || apiKey.length >= 8 && label.includes(apiKey));
         });
         return holdsPoolKey ? generated : label;
-      }
+      },
       // A failure of one pool key needs the user only when no other key can take over.
       isGoogleTranslatePoolServing(error) {
         if (!error?.googleTranslateApiKey || error.googleTranslateKeysCooling) return false;
         return Boolean(this.plugin.peekGoogleTranslateAvailableKey(1, { ignoreReservations: true }));
-      }
+      },
       createGoogleTranslateNoKeyError() {
         const error = new Error(this.plugin.t("googleTranslateNoKey"));
         error.googleTranslateNoKey = true;
         error.providerKey = this.plugin.getGoogleTranslateProviderKey();
         error.retryAfterMs = AUTO_TRANSLATE_FAILURE_MAX_TTL;
         return error;
-      }
+      },
       getGoogleTranslateQuotaRetryAfterMs(now = Date.now()) {
         const date = new Date(now);
         const nextMonth = new Date(date.getFullYear(), date.getMonth() + 1, 1, 0, 5, 0, 0).getTime();
         return Math.max(AUTO_TRANSLATE_FAILURE_MAX_TTL, Math.min(nextMonth - now, 7 * 24 * 60 * 60 * 1e3));
-      }
+      },
       releaseGoogleTranslateRequestReservation(request) {
         this.plugin.releaseGoogleTranslateReservation(request?.googleTranslate?.reservation);
         if (request?.googleTranslate) request.googleTranslate.reservation = null;
-      }
+      },
       getGoogleTranslateUsageSummary() {
         const keys = this.plugin.getGoogleTranslateKeys();
         const now = Date.now();
@@ -18932,11 +19285,11 @@ var require_provider_layer = __commonJS({
           coolingDown: coolingUntil.length,
           nextCooldownEndsAt: coolingUntil.length ? Math.min(...coolingUntil) : 0
         };
-      }
+      },
       saveGoogleTranslateRuntimeState() {
         this.plugin.scheduleGoogleTranslateRuntimeStatePersist();
         return true;
-      }
+      },
       scheduleGoogleTranslateRuntimeStatePersist(delayMs = GOOGLE_TRANSLATE_RUNTIME_WRITE_DEBOUNCE_MS) {
         const delay = Math.max(0, Number(delayMs) || 0);
         const persistAt = Date.now() + delay;
@@ -18946,7 +19299,7 @@ var require_provider_layer = __commonJS({
         this.plugin.googleTranslateRuntimeDirtyAt = persistAt;
         this.plugin.googleTranslateRuntimeDirtyTimer = setTimeout(() => this.plugin.flushGoogleTranslateRuntimeState(), delay);
         this.plugin.unrefTimer(this.plugin.googleTranslateRuntimeDirtyTimer);
-      }
+      },
       flushGoogleTranslateRuntimeState(options = {}) {
         if (!this.plugin.googleTranslateRuntimeDirty && options.force !== true) return true;
         if (this.plugin.googleTranslateRuntimeDirtyTimer) {
@@ -18965,7 +19318,7 @@ var require_provider_layer = __commonJS({
         this.plugin.googleTranslateRuntimeDirty = true;
         if (options.retryOnError !== false) this.plugin.scheduleGoogleTranslateRuntimeStatePersist(GOOGLE_TRANSLATE_RUNTIME_WRITE_DEBOUNCE_MS);
         return false;
-      }
+      },
       resetGoogleTranslateUsageStats() {
         const monthKey = this.plugin.getCurrentMonthKey();
         this.plugin.settings.googleTranslate.keys = this.plugin.getGoogleTranslateKeys().map((key) => ({
@@ -18978,7 +19331,7 @@ var require_provider_layer = __commonJS({
         this.plugin.settings.googleTranslate.usageById = {};
         this.plugin.saveGoogleTranslateRuntimeState();
         this.plugin.showToast(this.plugin.t("googleTranslateStatsReset"), "success");
-      }
+      },
       markGoogleTranslateKeyUsage(apiKey, charCount, options = {}) {
         const keyHash = this.plugin.getTextFingerprint(String(apiKey || "").trim());
         const monthKey = this.plugin.getCurrentMonthKey();
@@ -19001,7 +19354,7 @@ var require_provider_layer = __commonJS({
         });
         this.plugin.settings.googleTranslate.usageById = usageById;
         this.plugin.saveGoogleTranslateRuntimeState();
-      }
+      },
       markGoogleTranslateKeyFailure(apiKey, error, options = {}) {
         const keyHash = this.plugin.getTextFingerprint(String(apiKey || "").trim());
         const type = this.plugin.getAutoTranslationFailureType(error);
@@ -19016,7 +19369,7 @@ var require_provider_layer = __commonJS({
           };
         });
         this.plugin.saveGoogleTranslateRuntimeState();
-      }
+      },
       markGoogleTranslateProviderSuccess(request = null) {
         const providerKey = request?.providerKey || this.plugin.getGoogleTranslateProviderKey();
         if (providerKey) this.plugin.autoTranslationProviderFailures.delete(providerKey);
@@ -19025,7 +19378,7 @@ var require_provider_layer = __commonJS({
         if (this.plugin.isGoogleTranslateProvider(currentConfig)) {
           this.plugin.setApiRuntimeStatus("translation", "success", this.plugin.t("apiStatusSuccess"));
         }
-      }
+      },
       getGoogleLanguageCode(language, options = {}) {
         if (options.source && (!language || language === AUTO_LANGUAGE_VALUE)) return "";
         const normalized = this.plugin.normalizeLanguageName(language);
@@ -19052,12 +19405,809 @@ var require_provider_layer = __commonJS({
         const embedded = explicit || value.match(/(?<![\p{L}\p{N}_-])([a-z]{2,3}(?:-[A-Za-z0-9]+)?)(?![\p{L}\p{N}_-])/u);
         if (embedded?.[1]) return embedded[1] === "zh" ? "zh-CN" : embedded[1];
         return value;
-      }
+      },
       // The raw target of a request for direct translation APIs, resolved from the user's
       // language setting rather than from the LLM instruction text.
       getTargetLanguageCode(language) {
         if (!language || language === AUTO_LANGUAGE_VALUE) return "";
         return this.plugin.getGoogleLanguageCode(language);
+      },
+      getCurrentMonthKey(date = /* @__PURE__ */ new Date()) {
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, "0");
+        return `${year}-${month}`;
+      },
+      normalizeGoogleTranslateMonthlyLimit(value, fallback = GOOGLE_TRANSLATE_DEFAULT_MONTHLY_LIMIT) {
+        const number = Number(value);
+        const normalized = Number.isFinite(number) && number > 0 ? Math.round(number) : Number(fallback);
+        return Math.min(GOOGLE_TRANSLATE_MAX_MONTHLY_LIMIT, Math.max(1, normalized || GOOGLE_TRANSLATE_DEFAULT_MONTHLY_LIMIT));
+      },
+      parseGoogleTranslateKeyPoolText(text, existingKeys = []) {
+        const existingByKey = new Map((existingKeys || []).map((entry) => [String(entry?.apiKey || "").trim(), entry]));
+        return String(text || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line, index) => {
+          const parts = line.split(/[|\t]/).map((part) => part.trim());
+          while (parts.length > 1 && !parts[parts.length - 1]) parts.pop();
+          let label = "";
+          let apiKey = "";
+          let monthlyLimit = "";
+          if (parts.length === 2 && /^\d+$/.test(parts[1])) {
+            [apiKey, monthlyLimit] = parts;
+          } else if (parts.length >= 2) {
+            [label, apiKey, monthlyLimit = ""] = parts;
+          } else {
+            apiKey = parts[0];
+          }
+          return {
+            ...existingByKey.get(apiKey) || {},
+            label: label || existingByKey.get(apiKey)?.label || `Google ${index + 1}`,
+            apiKey,
+            monthlyLimit
+          };
+        });
+      },
+      formatGoogleTranslateKeyPoolText(keys = []) {
+        return (keys || []).filter((entry) => String(entry?.apiKey || "").trim()).map((entry) => [entry.label || "", entry.apiKey || "", entry.monthlyLimit || ""].map((value) => String(value || "").trim()).join("|").replace(/\|+$/g, "")).join("\n");
+      },
+      normalizeGoogleTranslateKeyPool(settings = this.plugin.settings.googleTranslate || {}) {
+        const currentMonth = this.plugin.getCurrentMonthKey();
+        const defaultLimit = this.plugin.normalizeGoogleTranslateMonthlyLimit(settings.defaultMonthlyLimit, GOOGLE_TRANSLATE_DEFAULT_MONTHLY_LIMIT);
+        const hasKeyPoolText = Object.prototype.hasOwnProperty.call(settings || {}, "keyPoolText");
+        const source = hasKeyPoolText ? this.plugin.parseGoogleTranslateKeyPoolText(settings.keyPoolText, settings.keys) : Array.isArray(settings.keys) ? settings.keys : [];
+        const usageById = this.plugin.getGoogleTranslateUsageLedger(settings, currentMonth);
+        const seen = /* @__PURE__ */ new Set();
+        const keys = [];
+        source.forEach((entry, index) => {
+          const apiKey = String(entry?.apiKey || "").trim();
+          if (!apiKey || seen.has(apiKey)) return;
+          seen.add(apiKey);
+          const id = this.plugin.getTextFingerprint(apiKey);
+          const monthKey = /^\d{4}-\d{2}$/.test(String(entry?.monthKey || "")) ? String(entry.monthKey) : currentMonth;
+          const sameMonth = monthKey === currentMonth;
+          const usedChars = sameMonth ? Math.max(0, Math.round(Number(entry?.usedChars || 0) || 0)) : 0;
+          keys.push({
+            id,
+            label: String(entry?.label || `Google ${index + 1}`).trim() || `Google ${index + 1}`,
+            apiKey,
+            enabled: entry?.enabled !== false,
+            monthlyLimit: this.plugin.normalizeGoogleTranslateMonthlyLimit(entry?.monthlyLimit, defaultLimit),
+            // A key pasted back after its line was removed keeps this month's usage.
+            usedChars: Math.max(usedChars, Number(usageById[id]?.usedChars || 0)),
+            monthKey: currentMonth,
+            cooldownUntil: Math.max(0, Math.round(Number(entry?.cooldownUntil || 0) || 0)),
+            lastError: String(entry?.lastError || "").slice(0, 160)
+          });
+        });
+        keys.forEach((key) => {
+          if (key.usedChars > 0) usageById[key.id] = { monthKey: currentMonth, usedChars: key.usedChars };
+        });
+        return {
+          keys,
+          keyPoolText: this.plugin.formatGoogleTranslateKeyPoolText(keys),
+          usageById
+        };
+      },
+      // This month's usage per key fingerprint (never the key itself). It outlives the key's
+      // line in the pool, so removing a key and pasting it back cannot reset its usage.
+      getGoogleTranslateUsageLedger(settings = this.plugin.settings.googleTranslate || {}, currentMonth = this.plugin.getCurrentMonthKey()) {
+        const ledger = {};
+        const remember = (id, value) => {
+          const usedChars = Math.max(0, Math.round(Number(value) || 0));
+          if (!id || !usedChars || Number(ledger[id]?.usedChars || 0) >= usedChars) return;
+          ledger[id] = { monthKey: currentMonth, usedChars };
+        };
+        const stored = settings?.usageById;
+        if (stored && typeof stored === "object" && !Array.isArray(stored)) {
+          Object.entries(stored).forEach(([id, record]) => {
+            if (/^[a-z0-9]{1,16}$/.test(id) && record?.monthKey === currentMonth) remember(id, record.usedChars);
+          });
+        }
+        (Array.isArray(settings?.keys) ? settings.keys : []).forEach((entry) => {
+          const apiKey = String(entry?.apiKey || "").trim();
+          const monthKey = /^\d{4}-\d{2}$/.test(String(entry?.monthKey || "")) ? String(entry.monthKey) : currentMonth;
+          if (apiKey && monthKey === currentMonth) remember(this.plugin.getTextFingerprint(apiKey), entry?.usedChars);
+        });
+        return ledger;
+      },
+      getGoogleTranslateProviderKey(key = null) {
+        const apiKey = String(key?.apiKey || "").trim();
+        return [
+          "googleCloud",
+          PROVIDER_DEFAULTS.googleCloud.endpoint,
+          PROVIDER_DEFAULTS.googleCloud.model,
+          apiKey ? this.plugin.getTextFingerprint(apiKey) : "pool"
+        ].join("\n---\n");
+      },
+      annotateGoogleTranslateApiError(error, raw = "", request = {}) {
+        if (!error) return error;
+        error.providerKey = request.providerKey || this.plugin.getGoogleTranslateProviderKey();
+        error.googleTranslateApiKey = request.googleTranslate?.apiKey || "";
+        error.googleTranslateKeyId = request.googleTranslate?.keyId || "";
+        const status = Number(error.status || 0);
+        const text = String(raw || "").slice(0, 4e3);
+        const dailyLimit = /dailyLimitExceeded|daily limit|per\s*day\b/i.test(text);
+        const shortWindowLimit = /userRateLimitExceeded|rateLimitExceeded|per\s*(?:minute|second|100\s*seconds)\b/i.test(text);
+        if (!dailyLimit && (shortWindowLimit || status === 429)) {
+          error.providerRateLimited = true;
+          error.retryAfterMs = Number(error.retryAfterMs || 0) > 0 ? Number(error.retryAfterMs) : AUTO_TRANSLATE_PROVIDER_FAILURE_TTL;
+        } else if (dailyLimit) {
+          error.googleTranslateQuotaExceeded = true;
+          error.retryAfterMs = Math.max(Number(error.retryAfterMs || 0), this.plugin.getGoogleTranslateDailyQuotaRetryAfterMs());
+        } else if (/RESOURCE_EXHAUSTED|quota|limit exceeded|monthly limit/i.test(text)) {
+          error.googleTranslateQuotaExceeded = true;
+          error.retryAfterMs = Math.max(Number(error.retryAfterMs || 0), this.plugin.getGoogleTranslateQuotaRetryAfterMs());
+        } else if (/API_KEY_INVALID|API_KEY_EXPIRED|API key not valid|API key expired|PERMISSION_DENIED/i.test(text)) {
+          error.providerAuthFailed = true;
+          error.googleTranslateKeyInvalid = true;
+        }
+        return error;
+      },
+      // Google resets daily quota at midnight Pacific Time.
+      getGoogleTranslateDailyQuotaRetryAfterMs(now = Date.now()) {
+        const day = 24 * 60 * 60 * 1e3;
+        try {
+          const parts = new Intl.DateTimeFormat("en-US", {
+            timeZone: "America/Los_Angeles",
+            hourCycle: "h23",
+            hour: "2-digit",
+            minute: "2-digit",
+            second: "2-digit"
+          }).formatToParts(new Date(now));
+          const part = (type) => Number(parts.find((item) => item.type === type)?.value || 0);
+          const elapsedMs = (part("hour") % 24 * 3600 + part("minute") * 60 + part("second")) * 1e3;
+          return Math.max(AUTO_TRANSLATE_FAILURE_MAX_TTL, day - elapsedMs + 5 * 60 * 1e3);
+        } catch {
+          return day;
+        }
+      },
+      protectGoogleTranslateText(text) {
+        const source = String(text || "");
+        const spans = [];
+        for (const regex of GOOGLE_TRANSLATE_PROTECT_PATTERNS) {
+          regex.lastIndex = 0;
+          let match = null;
+          while ((match = regex.exec(source)) !== null) {
+            const value = String(match[0] || "");
+            if (!value) continue;
+            spans.push({ start: match.index, end: match.index + value.length, value });
+            if (match.index === regex.lastIndex) regex.lastIndex++;
+          }
+        }
+        spans.sort((left, right) => left.start - right.start || right.end - left.end);
+        const selected = [];
+        let lastEnd = -1;
+        spans.forEach((span) => {
+          if (span.start < lastEnd) return;
+          selected.push(span);
+          lastEnd = span.end;
+        });
+        if (!selected.length) return { text: source, tokens: [] };
+        let output = "";
+        let cursor = 0;
+        const tokens = [];
+        selected.forEach((span, index) => {
+          const placeholder = `__DAIT_KEEP_${String(index).padStart(3, "0")}__`;
+          output += source.slice(cursor, span.start);
+          output += placeholder;
+          cursor = span.end;
+          tokens.push({ placeholder, value: span.value });
+        });
+        output += source.slice(cursor);
+        return { text: output, tokens };
+      },
+      restoreGoogleTranslateText(text, tokens = []) {
+        let output = String(text || "");
+        if (!Array.isArray(tokens) || !tokens.length) return output;
+        tokens.forEach((token) => {
+          const placeholder = String(token?.placeholder || "");
+          if (!placeholder) return;
+          output = output.split(placeholder).join(String(token?.value || ""));
+        });
+        return output;
+      }
+    };
+    module2.exports = methods;
+  }
+});
+
+// src/providers/provider-codecs.js
+var require_provider_codecs = __commonJS({
+  "src/providers/provider-codecs.js"(exports2, module2) {
+    "use strict";
+    var { AUTO_LANGUAGE_VALUE, AUTO_TRANSLATE_INVALID_OUTPUT_FAILURE_TTL, DEFAULT_SETTINGS } = require_constants();
+    var methods = {
+      buildChatCompletionRequest(kind, input, effectiveConfig, defaultConfig = DEFAULT_SETTINGS[kind] || {}) {
+        const effectiveApiKey = this.plugin.getEffectiveRequestApiKey(effectiveConfig);
+        if (!effectiveApiKey) throw new Error(kind === "polish" ? this.plugin.t("apiKeyMissingPolish") : this.plugin.t("apiKeyMissingTranslation"));
+        const effectiveEndpoint = this.plugin.getEffectiveChatCompletionEndpoint(effectiveConfig, defaultConfig);
+        const effectiveModel = this.plugin.getEffectiveChatCompletionModel(kind, effectiveConfig, defaultConfig);
+        if (!effectiveEndpoint) throw new Error(this.plugin.t("endpointMissing"));
+        if (!effectiveModel) throw new Error(this.plugin.t("modelMissing"));
+        const temperature = this.plugin.normalizeRequestNumber(effectiveConfig.temperature, defaultConfig.temperature ?? 0.2, { min: 0, max: 2 });
+        const maxTokens = this.plugin.normalizeRequestNumber(effectiveConfig.maxTokens, defaultConfig.maxTokens ?? 800, { min: 1, integer: true });
+        const systemPrompt = this.plugin.buildSystemPrompt(kind, effectiveConfig);
+        const body = this.plugin.applyProviderBodyOptions(effectiveConfig, {
+          model: effectiveModel,
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: input }
+          ],
+          temperature,
+          max_tokens: maxTokens,
+          stream: false
+        });
+        return {
+          endpoint: effectiveEndpoint,
+          request: {
+            provider: effectiveConfig.provider,
+            providerKey: kind === "translation" ? this.plugin.getAutoTranslationProviderKey({ configOverrides: effectiveConfig }) : "",
+            headers: this.plugin.getRequestHeaders(effectiveConfig, effectiveApiKey),
+            body
+          }
+        };
+      },
+      buildGoogleTranslateRequest(input, config, options = {}) {
+        const texts = Array.isArray(input) ? input.map((text) => String(text || "")) : [String(input || "")];
+        const protectedPayloads = texts.map((text) => this.plugin.protectGoogleTranslateText(text));
+        const protectedTexts = protectedPayloads.map((payload) => payload.text);
+        const charCount = this.plugin.countGoogleTranslateChars(protectedTexts);
+        const endpoint = this.getEffectiveProviderEndpoint({ provider: "googleCloud" });
+        const target = this.plugin.getGoogleLanguageCode(config.targetLanguageCode || config.targetLanguage);
+        if (!target || target === AUTO_LANGUAGE_VALUE) throw new Error(this.plugin.t("targetLanguageDesc"));
+        const source = this.plugin.getGoogleLanguageCode(config.sourceLanguage, { source: true });
+        const selectOptions = { ignoreReservations: Boolean(options.ignoreReservations) };
+        const key = options.ignoreCooldown ? this.plugin.selectGoogleTranslateKey(charCount, { ...selectOptions, persist: false }) || this.plugin.selectGoogleTranslateKey(charCount, { ...selectOptions, ignoreCooldown: true }) : this.plugin.selectGoogleTranslateKey(charCount, selectOptions);
+        if (!key) {
+          if (!this.plugin.getGoogleTranslateKeys().length) throw this.plugin.createGoogleTranslateNoKeyError();
+          const coolingReadyAt = this.plugin.getGoogleTranslateCoolingKeyReadyAt(charCount, { ignoreReservations: Boolean(options.ignoreReservations) });
+          throw coolingReadyAt ? this.plugin.createGoogleTranslateCooldownError({ until: coolingReadyAt, charCount }) : this.plugin.createGoogleTranslateQuotaError({ charCount });
+        }
+        const reservation = options.reserve ? this.plugin.reserveGoogleTranslateKey(key, charCount) : null;
+        const body = {
+          q: Array.isArray(input) ? protectedTexts : protectedTexts[0],
+          target,
+          format: "text"
+        };
+        if (source) body.source = source;
+        return {
+          // The key goes in a header so it never shows up in logged or wrapped request URLs.
+          endpoint,
+          request: {
+            provider: "googleCloud",
+            providerKey: this.plugin.getGoogleTranslateProviderKey(key),
+            responseParser: "googleTranslate",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Goog-Api-Key": key.apiKey
+            },
+            body,
+            googleTranslate: {
+              apiKey: key.apiKey,
+              keyId: key.id,
+              charCount,
+              expectedCount: texts.length,
+              restoreMaps: protectedPayloads.map((payload) => payload.tokens),
+              reservation
+            }
+          }
+        };
+      },
+      buildMicrosoftTranslateRequest(input, config) {
+        const texts = Array.isArray(input) ? input.map((text) => String(text || "")) : [String(input || "")];
+        const endpoint = this.getEffectiveProviderEndpoint({ ...config, provider: "microsoft" });
+        const apiKey = this.plugin.getEffectiveRequestApiKey(config);
+        if (!endpoint) throw new Error(this.plugin.t("endpointMissing"));
+        if (!apiKey) throw new Error(this.plugin.t("apiKeyMissingTranslation"));
+        const target = this.plugin.getMicrosoftLanguageCode(config.targetLanguageCode || config.targetLanguage);
+        if (!target || target === AUTO_LANGUAGE_VALUE) throw new Error(this.plugin.t("targetLanguageDesc"));
+        return {
+          endpoint,
+          request: {
+            provider: "microsoft",
+            providerKey: this.plugin.getAutoTranslationProviderKey({ configOverrides: config }),
+            responseParser: "microsoftTranslate",
+            headers: this.plugin.getRequestHeaders(config, apiKey),
+            body: texts.map((text) => ({ Text: text })),
+            translate: {
+              expectedCount: texts.length
+            }
+          }
+        };
+      },
+      buildDeepLTranslateRequest(input, config) {
+        const texts = Array.isArray(input) ? input.map((text) => String(text || "")) : [String(input || "")];
+        const plan = this.plugin.normalizeDeepLPlan(config.deeplPlan);
+        const endpoint = this.getEffectiveProviderEndpoint({ provider: "deepl", deeplPlan: plan });
+        const apiKey = this.plugin.getEffectiveRequestApiKey(config);
+        if (!endpoint) throw new Error(this.plugin.t("endpointMissing"));
+        if (!apiKey) throw new Error(this.plugin.t("apiKeyMissingTranslation"));
+        const target = this.plugin.getDeepLLanguageCode(config.targetLanguageCode || config.targetLanguage);
+        if (!target || target === AUTO_LANGUAGE_VALUE) throw new Error(this.plugin.t("targetLanguageDesc"));
+        const source = this.plugin.getDeepLLanguageCode(config.sourceLanguage, { source: true });
+        const body = {
+          text: texts,
+          target_lang: target
+        };
+        if (source) body.source_lang = source;
+        return {
+          endpoint,
+          request: {
+            provider: "deepl",
+            providerKey: this.plugin.getAutoTranslationProviderKey({ configOverrides: { ...config, deeplPlan: plan, endpoint } }),
+            responseParser: "deepLTranslate",
+            headers: this.plugin.getRequestHeaders(config, apiKey),
+            body,
+            translate: {
+              expectedCount: texts.length
+            }
+          }
+        };
+      },
+      buildBaiduTranslateRequest(input, config) {
+        const texts = Array.isArray(input) ? input.map((text) => String(text || "")) : [String(input || "")];
+        const endpoint = this.getEffectiveProviderEndpoint({ ...config, provider: "baidu" });
+        const appId = String(config.appId || "").trim();
+        const secretKey = String(config.secretKey || "").trim();
+        if (!endpoint) throw new Error(this.plugin.t("endpointMissing"));
+        if (!appId || !secretKey) throw new Error(this.plugin.t("apiKeyMissingTranslation"));
+        const target = this.plugin.getBaiduLanguageCode(config.targetLanguageCode || config.targetLanguage);
+        if (!target || target === AUTO_LANGUAGE_VALUE) throw new Error(this.plugin.t("targetLanguageDesc"));
+        const source = this.plugin.getBaiduLanguageCode(config.sourceLanguage, { source: true }) || "auto";
+        const lineGroups = texts.map((text) => {
+          const lines = String(text || "").split(/\r?\n/).filter((line) => line.trim());
+          return lines.length ? lines : [String(text || "")];
+        });
+        const q = lineGroups.flat().join("\n");
+        const salt = String(Date.now());
+        const sign = this.plugin.createMd5Hash(`${appId}${q}${salt}${secretKey}`);
+        const body = {
+          q,
+          from: source,
+          to: target,
+          appid: appId,
+          salt,
+          sign
+        };
+        return {
+          endpoint,
+          request: {
+            provider: "baidu",
+            providerKey: this.plugin.getAutoTranslationProviderKey({ configOverrides: config }),
+            responseParser: "baiduTranslate",
+            headers: {
+              "Content-Type": "application/x-www-form-urlencoded"
+            },
+            body,
+            bodyEncoding: "form",
+            translate: {
+              expectedCount: texts.length,
+              rowCounts: lineGroups.map((group) => group.length)
+            }
+          }
+        };
+      },
+      normalizeDeepLPlan(value) {
+        return String(value || "").trim() === "pro" ? "pro" : "free";
+      },
+      getMicrosoftLanguageCode(language, options = {}) {
+        const code = this.plugin.getGoogleLanguageCode(language, options);
+        if (options.source && (!code || code === AUTO_LANGUAGE_VALUE)) return "";
+        if (code === "zh-CN") return "zh-Hans";
+        if (code === "zh-TW") return "zh-Hant";
+        return code;
+      },
+      getDeepLLanguageCode(language, options = {}) {
+        const code = this.plugin.getGoogleLanguageCode(language, options);
+        if (options.source && (!code || code === AUTO_LANGUAGE_VALUE)) return "";
+        const upper = String(code || "").replace("_", "-").toUpperCase();
+        if (upper === "ZH-CN" || upper === "ZH-TW" || upper === "ZH-HANS" || upper === "ZH-HANT") {
+          if (options.source) return "ZH";
+          return upper === "ZH-TW" || upper === "ZH-HANT" ? "ZH-HANT" : "ZH-HANS";
+        }
+        if (upper === "EN") return "EN";
+        if (upper === "PT") return "PT";
+        return upper;
+      },
+      getBaiduLanguageCode(language, options = {}) {
+        const code = this.plugin.getGoogleLanguageCode(language, options);
+        if (options.source && (!code || code === AUTO_LANGUAGE_VALUE)) return "";
+        const normalized = String(code || "").trim();
+        const map = {
+          "zh": "zh",
+          "zh-CN": "zh",
+          "zh-Hans": "zh",
+          "zh-TW": "cht",
+          "zh-Hant": "cht",
+          "ja": "jp",
+          "ko": "kor",
+          "fr": "fra",
+          "es": "spa",
+          "ar": "ara",
+          "bg": "bul",
+          "et": "est",
+          "da": "dan",
+          "fi": "fin",
+          "ro": "rom",
+          "sl": "slo",
+          "sv": "swe",
+          "vi": "vie"
+        };
+        return map[normalized] || normalized;
+      },
+      createMd5Hash(text) {
+        const value = String(text || "");
+        try {
+          if (typeof require === "function") {
+            const crypto = (() => {
+              try {
+                return require("node:crypto");
+              } catch {
+                return require("crypto");
+              }
+            })();
+            return crypto.createHash("md5").update(value, "utf8").digest("hex");
+          }
+        } catch {
+        }
+        throw new Error("MD5_UNAVAILABLE");
+      },
+      buildSystemPrompt(kind, config) {
+        return this.plugin.buildPromptPolicySystemPrompt(kind, config);
+      },
+      isModelFinishReasonTruncated(reason) {
+        return /^(?:length|truncated|incomplete|max_tokens|max_output_tokens|token_limit)$/i.test(String(reason || "").trim());
+      },
+      getModelResponseTruncationReason(value) {
+        if (!value || typeof value !== "object") return "";
+        const reasons = [
+          value.finish_reason,
+          value.finishReason,
+          value.stop_reason,
+          value.stopReason,
+          value.status,
+          value.incomplete_details?.reason,
+          value.incompleteDetails?.reason
+        ];
+        return String(reasons.find((reason) => this.plugin.isModelFinishReasonTruncated(reason)) || "");
+      },
+      createModelOutputTruncatedError(output = "", finishReason = "") {
+        const error = new Error("MODEL_OUTPUT_TRUNCATED");
+        error.modelOutputTruncated = true;
+        error.autoTranslationInvalidReason = "truncated";
+        error.retryAfterMs = AUTO_TRANSLATE_INVALID_OUTPUT_FAILURE_TTL;
+        error.partialOutputLength = String(output || "").trim().length;
+        error.finishReason = String(finishReason || "");
+        return error;
+      },
+      parseModelResponse(raw) {
+        const data = this.plugin.parseApiJson(raw);
+        let output = "";
+        for (const choice of data?.choices || []) {
+          output = this.plugin.extractModelContent(choice?.message?.content ?? choice?.text);
+          const choiceTruncationReason = this.plugin.getModelResponseTruncationReason(choice);
+          if (choiceTruncationReason) {
+            throw this.plugin.createModelOutputTruncatedError(output, choiceTruncationReason);
+          }
+          if (output && String(output).trim()) break;
+        }
+        if (!output) output = this.plugin.extractModelContent(data?.output_text);
+        const responseTruncationReason = this.plugin.getModelResponseTruncationReason(data);
+        if (responseTruncationReason) {
+          throw this.plugin.createModelOutputTruncatedError(output, responseTruncationReason);
+        }
+        if (!output || !String(output).trim()) throw new Error(this.plugin.t("emptyResult"));
+        return String(output).trim();
+      },
+      parseGoogleTranslateResponse(raw, expectedCount = 1, options = {}) {
+        const data = this.plugin.parseApiJson(raw);
+        const translations = data?.data?.translations;
+        if (!Array.isArray(translations) || !translations.length) throw new Error(this.plugin.t("emptyResult"));
+        const restoreMaps = Array.isArray(options.restoreMaps) ? options.restoreMaps : [];
+        const values = translations.map((item, index) => {
+          const text = item?.translatedText;
+          if (typeof text !== "string") return "";
+          return this.plugin.restoreGoogleTranslateText(this.plugin.decodeHtmlEntities(text), restoreMaps[index]).trim();
+        });
+        if (values.some((value) => !value)) throw new Error(this.plugin.t("emptyResult"));
+        const count = Math.max(1, Math.round(Number(expectedCount) || 1));
+        if (values.length < count) throw new Error(this.plugin.t("emptyResult"));
+        const result = values.slice(0, count);
+        if (options.asArray) return result;
+        return count === 1 ? result[0] : JSON.stringify(result);
+      },
+      parseMicrosoftTranslateResponse(raw, expectedCount = 1, options = {}) {
+        const data = this.plugin.parseProviderJson(raw, "microsoft");
+        if (!Array.isArray(data) || !data.length) throw this.plugin.createProviderParseError("microsoft", this.plugin.t("emptyResult"));
+        const values = data.map((item) => Array.isArray(item?.translations) ? item.translations[0]?.text : void 0);
+        return this.plugin.normalizeDirectTranslateParseResult("microsoft", values, expectedCount, options);
+      },
+      parseDeepLTranslateResponse(raw, expectedCount = 1, options = {}) {
+        const data = this.plugin.parseProviderJson(raw, "deepl");
+        const translations = data?.translations;
+        if (!Array.isArray(translations) || !translations.length) throw this.plugin.createProviderParseError("deepl", this.plugin.t("emptyResult"));
+        const values = translations.map((item) => item?.text);
+        return this.plugin.normalizeDirectTranslateParseResult("deepl", values, expectedCount, options);
+      },
+      parseBaiduTranslateResponse(raw, expectedCount = 1, options = {}) {
+        const data = this.plugin.parseProviderJson(raw, "baidu");
+        if (data?.error_code && String(data.error_code) !== "52000") {
+          throw this.plugin.createBaiduTranslateError(data);
+        }
+        const results = data?.trans_result;
+        if (!Array.isArray(results) || !results.length) throw this.plugin.createProviderParseError("baidu", this.plugin.t("emptyResult"));
+        const rows = results.map((item) => typeof item?.dst === "string" ? item.dst.trim() : "");
+        if (rows.some((row) => !row)) throw this.plugin.createProviderParseError("baidu", this.plugin.t("emptyResult"));
+        const values = this.plugin.regroupBaiduTranslateRows(rows, expectedCount, options.rowCounts);
+        return this.plugin.normalizeDirectTranslateParseResult("baidu", values, expectedCount, options);
+      },
+      regroupBaiduTranslateRows(rows, expectedCount = 1, rowCounts = null) {
+        const count = Math.max(1, Math.round(Number(expectedCount) || 1));
+        const counts = Array.isArray(rowCounts) ? rowCounts.map((value) => Math.max(1, Math.round(Number(value) || 1))) : null;
+        if (counts && counts.length === count && counts.reduce((sum, value) => sum + value, 0) === rows.length) {
+          const values = [];
+          let cursor = 0;
+          for (const groupSize of counts) {
+            values.push(rows.slice(cursor, cursor + groupSize).join("\n"));
+            cursor += groupSize;
+          }
+          return values;
+        }
+        if (rows.length === count) return rows;
+        if (count === 1) return [rows.join("\n")];
+        throw this.plugin.createProviderParseError("baidu", this.plugin.t("emptyResult"));
+      },
+      normalizeDirectTranslateParseResult(provider, values, expectedCount = 1, options = {}) {
+        const count = Math.max(1, Math.round(Number(expectedCount) || 1));
+        const normalized = (Array.isArray(values) ? values : []).map((value) => typeof value === "string" ? value.trim() : "");
+        if (normalized.length < count || normalized.some((value) => !value)) {
+          throw this.plugin.createProviderParseError(provider, this.plugin.t("emptyResult"));
+        }
+        const result = normalized.slice(0, count);
+        if (options.asArray) return result;
+        return count === 1 ? result[0] : JSON.stringify(result);
+      },
+      createProviderParseError(provider, message = this.plugin.t("invalidJson")) {
+        const error = new Error(message);
+        error.providerParseFailed = true;
+        error.provider = String(provider || "");
+        return error;
+      },
+      parseProviderJson(raw, provider) {
+        try {
+          return this.plugin.parseApiJson(raw);
+        } catch {
+          throw this.plugin.createProviderParseError(provider, this.plugin.t("invalidJson"));
+        }
+      },
+      createBaiduTranslateError(data = {}) {
+        const code = String(data?.error_code || "");
+        const message = String(data?.error_msg || code || "BAIDU_TRANSLATE_ERROR");
+        const error = new Error(message);
+        error.baiduApiError = true;
+        error.baiduErrorCode = code;
+        if (["52003", "54001", "58002", "90107"].includes(code)) error.providerAuthFailed = true;
+        else if (code === "58000") {
+          error.providerAuthFailed = true;
+          error.providerIpRejected = true;
+        } else if (["54000", "58001"].includes(code)) {
+          error.providerAuthFailed = true;
+          error.providerRequestRejected = true;
+          if (code === "58001") error.providerLanguageUnsupported = true;
+        } else if (code === "54003") error.providerRateLimited = true;
+        else if (code === "54005") {
+          error.providerRateLimited = true;
+          error.retryAfterMs = 3e3;
+        } else if (code === "54004") error.providerQuotaExceeded = true;
+        else if (code === "20003") {
+          error.providerRequestRejected = true;
+          error.autoTranslationTerminalFailure = true;
+        } else if (["52001", "52002"].includes(code)) error.providerServerError = true;
+        else {
+          error.providerServerError = true;
+          error.providerRequestRejected = true;
+        }
+        return error;
+      },
+      decodeHtmlEntities(text) {
+        const value = String(text || "");
+        if (!value || !value.includes("&")) return value;
+        if (typeof document !== "undefined") {
+          const textarea = document.createElement?.("textarea");
+          if (textarea) {
+            textarea.innerHTML = value;
+            return textarea.value;
+          }
+        }
+        return value.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+      },
+      extractModelContent(content) {
+        const raw = Array.isArray(content) ? content.map((part) => {
+          if (typeof part === "string") return part;
+          const type = String(part?.type || "").trim().toLowerCase();
+          if (["thinking", "reasoning", "thought", "redacted_thinking"].includes(type)) return "";
+          const text = part?.text ?? part?.content;
+          return typeof text === "string" ? text : "";
+        }).join("") : typeof content === "string" ? content : "";
+        return raw.replace(/<(think|thought|reasoning)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, "").replace(/<(think|thought|reasoning)\b[^>]*>[\s\S]*$/gi, "").trim();
+      },
+      parseApiJson(raw) {
+        try {
+          return JSON.parse(raw);
+        } catch {
+          throw new Error(this.plugin.t("invalidJson"));
+        }
+      }
+    };
+    module2.exports = methods;
+  }
+});
+
+// src/providers/provider-layer.js
+var require_provider_layer = __commonJS({
+  "src/providers/provider-layer.js"(exports2, module2) {
+    "use strict";
+    var {
+      API_TEST_REQUEST_TIMEOUT_MS,
+      AUTO_LANGUAGE_VALUE,
+      AUTO_TRANSLATE_FAILURE_MAX_TTL,
+      AUTO_TRANSLATE_INVALID_OUTPUT_FAILURE_TTL,
+      AUTO_TRANSLATE_PROVIDER_FAILURE_TTL,
+      AUTO_TRANSLATE_VIEWPORT_STABLE_RESCAN_MS,
+      DEFAULT_SETTINGS,
+      DIAGNOSTIC_REASON_CODES,
+      GOOGLE_TRANSLATE_DEFAULT_MONTHLY_LIMIT,
+      GOOGLE_TRANSLATE_MAX_MONTHLY_LIMIT,
+      GOOGLE_TRANSLATE_RUNTIME_WRITE_DEBOUNCE_MS,
+      LANGUAGE_PRESETS,
+      LOCAL_PROVIDER_AUTO_MODEL_VALUE,
+      LOCAL_PROVIDER_HEALTH_RETRY_MS,
+      LOCAL_PROVIDER_MODEL_DETECTION_RETRY_MS,
+      LOCAL_PROVIDER_MODEL_DETECTION_TIMEOUT_MS,
+      LOCAL_PROVIDER_MODEL_DETECTION_TTL_MS,
+      LOCAL_PROVIDER_UNAVAILABLE_RETRY_MS,
+      MODEL_REQUEST_TIMEOUT_MS,
+      PROVIDER_DEFAULTS,
+      PROVIDER_ORDER,
+      SETTINGS_WRITE_DEBOUNCE_MS
+    } = require_constants();
+    var { attachControllerMethods } = require_delegate_methods();
+    var { createDefaultProviderRegistry } = require_adapters();
+    var localModelHealthMethods = require_local_model_health();
+    var googleKeyPoolMethods = require_google_key_pool();
+    var providerCodecMethods = require_provider_codecs();
+    var ProviderLayer = class {
+      constructor(plugin) {
+        this.plugin = plugin;
+        this.registry = createDefaultProviderRegistry();
+        this.lastApiTestResults = /* @__PURE__ */ new Map();
+        this.runningApiTests = /* @__PURE__ */ new Map();
+        this.bdNetPreferredOrigins = /* @__PURE__ */ new Set();
+      }
+      getProviderDefaults(provider) {
+        const id = String(provider || "").trim();
+        return this.registry.get(id)?.defaultProfile || PROVIDER_DEFAULTS[id] || null;
+      }
+      isGoogleTranslateProvider(configOrProvider) {
+        const provider = typeof configOrProvider === "string" ? configOrProvider : configOrProvider?.provider;
+        return provider === "googleCloud";
+      }
+      isMicrosoftTranslateProvider(configOrProvider) {
+        const provider = typeof configOrProvider === "string" ? configOrProvider : configOrProvider?.provider;
+        return provider === "microsoft";
+      }
+      isDeepLTranslateProvider(configOrProvider) {
+        const provider = typeof configOrProvider === "string" ? configOrProvider : configOrProvider?.provider;
+        return provider === "deepl";
+      }
+      isBaiduTranslateProvider(configOrProvider) {
+        const provider = typeof configOrProvider === "string" ? configOrProvider : configOrProvider?.provider;
+        return provider === "baidu";
+      }
+      isDirectTranslateProvider(configOrProvider) {
+        if (this.registry.isDirectTranslate(configOrProvider)) return true;
+        return this.plugin.isGoogleTranslateProvider(configOrProvider) || this.plugin.isMicrosoftTranslateProvider(configOrProvider) || this.plugin.isDeepLTranslateProvider(configOrProvider) || this.plugin.isBaiduTranslateProvider(configOrProvider);
+      }
+      isLocalTranslationProvider(configOrProvider) {
+        return this.registry.isLocal(configOrProvider);
+      }
+      // Accepts either a full chat/completions URL or an OpenAI-style base URL (e.g. http://127.0.0.1:18080/v1
+      // or https://host/openai/v1) and completes it to .../chat/completions without altering custom paths.
+      normalizeChatCompletionEndpoint(endpoint) {
+        const raw = String(endpoint || "").trim();
+        if (!raw) return "";
+        try {
+          const url = new URL(raw);
+          if (!["http:", "https:"].includes(url.protocol)) return raw;
+          const trimmedPath = String(url.pathname || "").replace(/\/+$/g, "");
+          if (/\/(?:chat\/completions|completions)$/i.test(trimmedPath)) return raw;
+          if (/\/v\d+$/i.test(trimmedPath)) {
+            url.pathname = `${trimmedPath}/chat/completions`;
+            return url.toString();
+          }
+          if (!trimmedPath && this.plugin.isLoopbackEndpoint(raw)) {
+            url.pathname = "/v1/chat/completions";
+            return url.toString();
+          }
+          return raw;
+        } catch {
+          return raw;
+        }
+      }
+      getEffectiveChatCompletionEndpoint(config = {}, defaultConfig = {}) {
+        const providerDefault = PROVIDER_DEFAULTS[config.provider] || {};
+        const raw = String(config.endpoint || providerDefault.endpoint || defaultConfig.endpoint || "").trim();
+        return this.normalizeChatCompletionEndpoint(raw);
+      }
+      getEffectiveProviderEndpoint(config, defaultConfig = {}) {
+        const adapter = this.registry.get(config);
+        if (adapter?.getEffectiveEndpoint) return adapter.getEffectiveEndpoint(config, defaultConfig, this.plugin);
+        return this.getEffectiveChatCompletionEndpoint(config, defaultConfig);
+      }
+      getProviderEndpointIdentity(config, defaultConfig = {}) {
+        const endpoint = this.getEffectiveProviderEndpoint(config, defaultConfig);
+        try {
+          const url = new URL(endpoint);
+          url.hash = "";
+          return url.href;
+        } catch {
+          return endpoint;
+        }
+      }
+      createProviderRequestCancelledError() {
+        return Object.assign(new Error("Request cancelled"), { name: "AbortError", code: "REQUEST_CANCELLED" });
+      }
+      throwIfProviderRequestCancelled(signal, lifecycleToken = this.plugin.getLifecycleToken()) {
+        if (signal?.aborted || this.plugin.apiRequestsClosed || lifecycleToken !== this.plugin.getLifecycleToken()) {
+          throw this.createProviderRequestCancelledError();
+        }
+      }
+      subscribeToProviderRequest(requests, key, signal, run, isCurrent = () => true) {
+        this.throwIfProviderRequestCancelled(signal);
+        let entry = requests.get(key);
+        const startsRequest = !entry;
+        if (startsRequest) {
+          entry = { controller: new AbortController(), subscribers: /* @__PURE__ */ new Set() };
+          requests.set(key, entry);
+        }
+        const result = new Promise((resolve, reject) => {
+          const subscriber = {
+            resolve,
+            reject,
+            isCurrent,
+            release: () => {
+              entry.subscribers.delete(subscriber);
+              signal?.removeEventListener("abort", cancel);
+            }
+          };
+          const cancel = () => {
+            subscriber.release();
+            if (!entry.subscribers.size) entry.controller.abort();
+            reject(this.createProviderRequestCancelledError());
+          };
+          entry.subscribers.add(subscriber);
+          signal?.addEventListener("abort", cancel, { once: true });
+        });
+        if (startsRequest) {
+          const { controller, subscribers } = entry;
+          const settle = (method, value) => {
+            controller.signal.removeEventListener("abort", cancel);
+            if (requests.get(key) === entry) requests.delete(key);
+            for (const subscriber of subscribers) {
+              subscriber.release();
+              subscriber[method](value);
+            }
+          };
+          const cancel = () => settle("reject", this.createProviderRequestCancelledError());
+          controller.signal.addEventListener("abort", cancel, { once: true });
+          const hasCurrentSubscriber = () => [...subscribers].some((subscriber) => subscriber.isCurrent());
+          run(controller.signal, hasCurrentSubscriber).then(
+            (value) => settle("resolve", value),
+            (error) => settle("reject", error)
+          );
+        }
+        return result;
+      }
+      isModelDetectionProvider(provider) {
+        return ["sakuraLocal", "openaiCompatible"].includes(String(provider || ""));
       }
       getEffectiveRequestApiKey(config) {
         if (config?.provider === "googleCloud") {
@@ -19134,109 +20284,6 @@ var require_provider_layer = __commonJS({
         }
         if (typeof document === "undefined") return;
         document.querySelectorAll(`.dait-api-status[data-dait-kind='${kind}']`).forEach((status) => this.renderStatusBadge(status, kind, state, text, title));
-      }
-      markLocalProviderHealthy(providerKey) {
-        if (!providerKey) return;
-        this.plugin.localProviderHealthyKeys.add(providerKey);
-        this.plugin.releaseProviderBlockedAutoTranslationItems(providerKey);
-      }
-      shouldBlockAutoTranslationForLocalProviderHealth(requestOptions = this.plugin.getAutoTranslationOptions()) {
-        const config = this.plugin.getEffectiveTaskConfig("translation", requestOptions?.configOverrides);
-        if (!this.plugin.isLocalTranslationProvider(config)) return false;
-        const providerKey = this.plugin.getAutoTranslationProviderKey(requestOptions);
-        if (!providerKey) return true;
-        if (this.plugin.localProviderHealthyKeys.has(providerKey) && this.plugin.getApiStatus("translation").state === "success") return false;
-        this.plugin.startLocalProviderHealthProbe(providerKey, requestOptions, { reason: this.plugin.getApiStatus("translation").state || "untested" });
-        return true;
-      }
-      getLocalProviderHealthProbeRetryMs(requestOptions = this.plugin.getAutoTranslationOptions(), now = Date.now()) {
-        const providerKey = this.plugin.getAutoTranslationProviderKey(requestOptions);
-        if (!providerKey) return LOCAL_PROVIDER_HEALTH_RETRY_MS;
-        const startedAt = Number(this.plugin.localProviderHealthProbeStartedAt.get(providerKey) || 0);
-        if (!startedAt || !this.plugin.localProviderHealthChecks.has(providerKey)) return LOCAL_PROVIDER_HEALTH_RETRY_MS;
-        return Math.max(
-          LOCAL_PROVIDER_HEALTH_RETRY_MS,
-          API_TEST_REQUEST_TIMEOUT_MS + 500 - Math.max(0, now - startedAt)
-        );
-      }
-      getLocalProviderHealthRetryMs(requestOptions = this.plugin.getAutoTranslationOptions(), now = Date.now()) {
-        const providerFailure = this.plugin.getAutoTranslationProviderFailure(requestOptions);
-        if (providerFailure && !this.plugin.isAutoTranslationFailureExpired(providerFailure, now)) {
-          return this.plugin.getAutoTranslationFailureRemainingMs(providerFailure, now);
-        }
-        return this.plugin.getLocalProviderHealthProbeRetryMs(requestOptions, now);
-      }
-      startLocalProviderHealthProbe(providerKey, requestOptions = this.plugin.getAutoTranslationOptions(), options = {}) {
-        if (!providerKey || this.plugin.localProviderHealthChecks.has(providerKey)) return;
-        const config = this.plugin.clone(this.plugin.getEffectiveTaskConfig("translation", requestOptions?.configOverrides));
-        if (!this.plugin.isLocalTranslationProvider(config)) return;
-        const lifecycleToken = this.plugin.getLifecycleToken();
-        const signal = this.plugin.getAutoTranslationAbortSignal();
-        const isCurrent = () => !signal?.aborted && this.plugin.isLifecycleTokenCurrent(lifecycleToken) && this.plugin.isAutoTranslationProviderSnapshotCurrent(providerKey, requestOptions);
-        if (!isCurrent()) return;
-        this.plugin.setApiRuntimeStatus("translation", "testing", this.plugin.t("apiStatusTesting"));
-        const startedAt = Date.now();
-        this.plugin.localProviderHealthProbeStartedAt.set(providerKey, startedAt);
-        const promise = (async () => {
-          let endpoint = "";
-          try {
-            if (this.plugin.shouldAutoDetectLocalProviderModel(config, DEFAULT_SETTINGS.translation)) {
-              await this.plugin.refreshLocalProviderDetectedModel(config, { defaultConfig: DEFAULT_SETTINGS.translation, signal, isCurrent });
-            }
-            if (!isCurrent()) return;
-            const test = this.plugin.buildConnectionTestRequest("translation", config);
-            endpoint = test.endpoint;
-            const raw = await this.plugin.fetchApiResponseText(test.endpoint, test.request, API_TEST_REQUEST_TIMEOUT_MS, { signal });
-            if (!isCurrent()) return;
-            try {
-              this.plugin.parseModelResponse(raw);
-            } catch (error) {
-              if (!this.plugin.isAcceptableConnectionTestTruncation(error, "translation", config)) throw error;
-              this.plugin.logDiagnostic("auto.provider.health", "truncated-ok", {
-                key: this.plugin.getTextFingerprint(providerKey),
-                reason: options.reason || "",
-                partialOutputLength: Number(error.partialOutputLength || 0),
-                finishReason: error.finishReason || "",
-                ms: Date.now() - startedAt
-              });
-            }
-            this.plugin.autoTranslationProviderFailures.delete(providerKey);
-            this.plugin.setApiRuntimeStatus("translation", "success", this.plugin.t("apiStatusSuccess"));
-            this.plugin.markLocalProviderHealthy(providerKey);
-            this.plugin.logDiagnostic("auto.provider.health", "success", {
-              key: this.plugin.getTextFingerprint(providerKey),
-              reason: options.reason || "",
-              ms: Date.now() - startedAt
-            });
-            if (this.plugin.isStarted) this.plugin.queueScan({ delayMs: AUTO_TRANSLATE_VIEWPORT_STABLE_RESCAN_MS });
-          } catch (error) {
-            if (!isCurrent() || this.plugin.isRequestCancelled(error)) return;
-            this.plugin.annotateModelRequestError(error, "translation", endpoint || config.endpoint, config, requestOptions);
-            if (!error.localProviderUnavailable) {
-              error.localProviderUnavailable = true;
-              error.retryAfterMs = Math.max(Number(error.retryAfterMs || 0), LOCAL_PROVIDER_UNAVAILABLE_RETRY_MS);
-              error.providerKey = providerKey;
-              error.localProviderEndpoint = error.localProviderEndpoint || String(endpoint || config.endpoint || "");
-            }
-            this.plugin.markAutoTranslationProviderFailure(requestOptions, error);
-            if (this.plugin.getApiStatus("translation").state === "testing" && !this.plugin.isRequestCancelled(error)) {
-              this.plugin.setApiRuntimeStatus("translation", "failed", this.plugin.t("apiStatusFailed"), this.plugin.formatError(error));
-            }
-            this.plugin.logDiagnostic("auto.provider.health", "failed", {
-              key: this.plugin.getTextFingerprint(providerKey),
-              reason: options.reason || "",
-              type: this.plugin.getAutoTranslationFailureType(error),
-              ms: Date.now() - startedAt
-            });
-            this.plugin.scheduleAutoTranslationRetryScan(this.plugin.getAutoTranslationRetryAfter(error, 1));
-          }
-        })().finally(() => {
-          if (this.plugin.localProviderHealthChecks.get(providerKey) === promise) {
-            this.plugin.localProviderHealthChecks.delete(providerKey);
-            this.plugin.localProviderHealthProbeStartedAt.delete(providerKey);
-          }
-        });
-        this.plugin.localProviderHealthChecks.set(providerKey, promise);
       }
       // { ok, model, latencyMs, at, message } of the last connection test of this task, or null when none ran since
       // the service settings last changed. model is the model the server reported (Sakura local, OpenAI-compatible),
@@ -19408,102 +20455,6 @@ var require_provider_layer = __commonJS({
         }
         return null;
       }
-      getCurrentMonthKey(date = /* @__PURE__ */ new Date()) {
-        const year = date.getFullYear();
-        const month = String(date.getMonth() + 1).padStart(2, "0");
-        return `${year}-${month}`;
-      }
-      normalizeGoogleTranslateMonthlyLimit(value, fallback = GOOGLE_TRANSLATE_DEFAULT_MONTHLY_LIMIT) {
-        const number = Number(value);
-        const normalized = Number.isFinite(number) && number > 0 ? Math.round(number) : Number(fallback);
-        return Math.min(GOOGLE_TRANSLATE_MAX_MONTHLY_LIMIT, Math.max(1, normalized || GOOGLE_TRANSLATE_DEFAULT_MONTHLY_LIMIT));
-      }
-      parseGoogleTranslateKeyPoolText(text, existingKeys = []) {
-        const existingByKey = new Map((existingKeys || []).map((entry) => [String(entry?.apiKey || "").trim(), entry]));
-        return String(text || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line, index) => {
-          const parts = line.split(/[|\t]/).map((part) => part.trim());
-          while (parts.length > 1 && !parts[parts.length - 1]) parts.pop();
-          let label = "";
-          let apiKey = "";
-          let monthlyLimit = "";
-          if (parts.length === 2 && /^\d+$/.test(parts[1])) {
-            [apiKey, monthlyLimit] = parts;
-          } else if (parts.length >= 2) {
-            [label, apiKey, monthlyLimit = ""] = parts;
-          } else {
-            apiKey = parts[0];
-          }
-          return {
-            ...existingByKey.get(apiKey) || {},
-            label: label || existingByKey.get(apiKey)?.label || `Google ${index + 1}`,
-            apiKey,
-            monthlyLimit
-          };
-        });
-      }
-      formatGoogleTranslateKeyPoolText(keys = []) {
-        return (keys || []).filter((entry) => String(entry?.apiKey || "").trim()).map((entry) => [entry.label || "", entry.apiKey || "", entry.monthlyLimit || ""].map((value) => String(value || "").trim()).join("|").replace(/\|+$/g, "")).join("\n");
-      }
-      normalizeGoogleTranslateKeyPool(settings = this.plugin.settings.googleTranslate || {}) {
-        const currentMonth = this.plugin.getCurrentMonthKey();
-        const defaultLimit = this.plugin.normalizeGoogleTranslateMonthlyLimit(settings.defaultMonthlyLimit, GOOGLE_TRANSLATE_DEFAULT_MONTHLY_LIMIT);
-        const hasKeyPoolText = Object.prototype.hasOwnProperty.call(settings || {}, "keyPoolText");
-        const source = hasKeyPoolText ? this.plugin.parseGoogleTranslateKeyPoolText(settings.keyPoolText, settings.keys) : Array.isArray(settings.keys) ? settings.keys : [];
-        const usageById = this.plugin.getGoogleTranslateUsageLedger(settings, currentMonth);
-        const seen = /* @__PURE__ */ new Set();
-        const keys = [];
-        source.forEach((entry, index) => {
-          const apiKey = String(entry?.apiKey || "").trim();
-          if (!apiKey || seen.has(apiKey)) return;
-          seen.add(apiKey);
-          const id = this.plugin.getTextFingerprint(apiKey);
-          const monthKey = /^\d{4}-\d{2}$/.test(String(entry?.monthKey || "")) ? String(entry.monthKey) : currentMonth;
-          const sameMonth = monthKey === currentMonth;
-          const usedChars = sameMonth ? Math.max(0, Math.round(Number(entry?.usedChars || 0) || 0)) : 0;
-          keys.push({
-            id,
-            label: String(entry?.label || `Google ${index + 1}`).trim() || `Google ${index + 1}`,
-            apiKey,
-            enabled: entry?.enabled !== false,
-            monthlyLimit: this.plugin.normalizeGoogleTranslateMonthlyLimit(entry?.monthlyLimit, defaultLimit),
-            // A key pasted back after its line was removed keeps this month's usage.
-            usedChars: Math.max(usedChars, Number(usageById[id]?.usedChars || 0)),
-            monthKey: currentMonth,
-            cooldownUntil: Math.max(0, Math.round(Number(entry?.cooldownUntil || 0) || 0)),
-            lastError: String(entry?.lastError || "").slice(0, 160)
-          });
-        });
-        keys.forEach((key) => {
-          if (key.usedChars > 0) usageById[key.id] = { monthKey: currentMonth, usedChars: key.usedChars };
-        });
-        return {
-          keys,
-          keyPoolText: this.plugin.formatGoogleTranslateKeyPoolText(keys),
-          usageById
-        };
-      }
-      // This month's usage per key fingerprint (never the key itself). It outlives the key's
-      // line in the pool, so removing a key and pasting it back cannot reset its usage.
-      getGoogleTranslateUsageLedger(settings = this.plugin.settings.googleTranslate || {}, currentMonth = this.plugin.getCurrentMonthKey()) {
-        const ledger = {};
-        const remember = (id, value) => {
-          const usedChars = Math.max(0, Math.round(Number(value) || 0));
-          if (!id || !usedChars || Number(ledger[id]?.usedChars || 0) >= usedChars) return;
-          ledger[id] = { monthKey: currentMonth, usedChars };
-        };
-        const stored = settings?.usageById;
-        if (stored && typeof stored === "object" && !Array.isArray(stored)) {
-          Object.entries(stored).forEach(([id, record]) => {
-            if (/^[a-z0-9]{1,16}$/.test(id) && record?.monthKey === currentMonth) remember(id, record.usedChars);
-          });
-        }
-        (Array.isArray(settings?.keys) ? settings.keys : []).forEach((entry) => {
-          const apiKey = String(entry?.apiKey || "").trim();
-          const monthKey = /^\d{4}-\d{2}$/.test(String(entry?.monthKey || "")) ? String(entry.monthKey) : currentMonth;
-          if (apiKey && monthKey === currentMonth) remember(this.plugin.getTextFingerprint(apiKey), entry?.usedChars);
-        });
-        return ledger;
-      }
       getAutoTranslationProviderKey(requestOptions = this.plugin.getAutoTranslationOptions()) {
         if (requestOptions?.providerKey) return requestOptions.providerKey;
         const config = this.plugin.getCacheConfigSnapshot("translation", this.plugin.getEffectiveTaskConfig("translation", requestOptions?.configOverrides));
@@ -19519,15 +20470,6 @@ var require_provider_layer = __commonJS({
           config.deeplPlan || "",
           config.appIdHash || "",
           apiKeyFingerprint
-        ].join("\n---\n");
-      }
-      getGoogleTranslateProviderKey(key = null) {
-        const apiKey = String(key?.apiKey || "").trim();
-        return [
-          "googleCloud",
-          PROVIDER_DEFAULTS.googleCloud.endpoint,
-          PROVIDER_DEFAULTS.googleCloud.model,
-          apiKey ? this.plugin.getTextFingerprint(apiKey) : "pool"
         ].join("\n---\n");
       }
       async runModelTask(kind, input, options = {}) {
@@ -19688,32 +20630,9 @@ var require_provider_layer = __commonJS({
             } catch {
             }
           }
-          if (request?.responseParser === "googleTranslate") {
-            const result = this.plugin.parseGoogleTranslateResponse(raw, request?.googleTranslate?.expectedCount || 1, {
-              asArray: Boolean(options.googleTranslateAsArray || options.translateAsArray),
-              restoreMaps: request?.googleTranslate?.restoreMaps
-            });
-            this.plugin.markGoogleTranslateKeyUsage(request.googleTranslate?.apiKey, request.googleTranslate?.charCount || 0, {
-              clearCooldown: Boolean(options.connectionTest)
-            });
-            this.plugin.markGoogleTranslateProviderSuccess(request);
-            return result;
-          }
-          if (request?.responseParser === "microsoftTranslate") {
-            return this.plugin.parseMicrosoftTranslateResponse(raw, request?.translate?.expectedCount || 1, {
-              asArray: Boolean(options.translateAsArray)
-            });
-          }
-          if (request?.responseParser === "deepLTranslate") {
-            return this.plugin.parseDeepLTranslateResponse(raw, request?.translate?.expectedCount || 1, {
-              asArray: Boolean(options.translateAsArray)
-            });
-          }
-          if (request?.responseParser === "baiduTranslate") {
-            return this.plugin.parseBaiduTranslateResponse(raw, request?.translate?.expectedCount || 1, {
-              asArray: Boolean(options.translateAsArray),
-              rowCounts: request?.translate?.rowCounts
-            });
+          const adapter = request?.responseParser && this.registry.getByParser(request.responseParser) || this.registry.get(request?.provider);
+          if (adapter?.parseResponse) {
+            return adapter.parseResponse(raw, request, options, this.plugin);
           }
           return this.plugin.parseModelResponse(raw);
         } catch (error) {
@@ -19946,30 +20865,6 @@ var require_provider_layer = __commonJS({
         }
         this.plugin.activeApiControllers.clear();
       }
-      annotateGoogleTranslateApiError(error, raw = "", request = {}) {
-        if (!error) return error;
-        error.providerKey = request.providerKey || this.plugin.getGoogleTranslateProviderKey();
-        error.googleTranslateApiKey = request.googleTranslate?.apiKey || "";
-        error.googleTranslateKeyId = request.googleTranslate?.keyId || "";
-        const status = Number(error.status || 0);
-        const text = String(raw || "").slice(0, 4e3);
-        const dailyLimit = /dailyLimitExceeded|daily limit|per\s*day\b/i.test(text);
-        const shortWindowLimit = /userRateLimitExceeded|rateLimitExceeded|per\s*(?:minute|second|100\s*seconds)\b/i.test(text);
-        if (!dailyLimit && (shortWindowLimit || status === 429)) {
-          error.providerRateLimited = true;
-          error.retryAfterMs = Number(error.retryAfterMs || 0) > 0 ? Number(error.retryAfterMs) : AUTO_TRANSLATE_PROVIDER_FAILURE_TTL;
-        } else if (dailyLimit) {
-          error.googleTranslateQuotaExceeded = true;
-          error.retryAfterMs = Math.max(Number(error.retryAfterMs || 0), this.plugin.getGoogleTranslateDailyQuotaRetryAfterMs());
-        } else if (/RESOURCE_EXHAUSTED|quota|limit exceeded|monthly limit/i.test(text)) {
-          error.googleTranslateQuotaExceeded = true;
-          error.retryAfterMs = Math.max(Number(error.retryAfterMs || 0), this.plugin.getGoogleTranslateQuotaRetryAfterMs());
-        } else if (/API_KEY_INVALID|API_KEY_EXPIRED|API key not valid|API key expired|PERMISSION_DENIED/i.test(text)) {
-          error.providerAuthFailed = true;
-          error.googleTranslateKeyInvalid = true;
-        }
-        return error;
-      }
       // OpenAI-compatible services answer a model name they do not know with 400 or 404 (DeepSeek:
       // "Model Not Exist"); the message then points to the model setting, not to account permissions.
       annotateChatCompletionApiError(error, raw = "", request = {}) {
@@ -19980,24 +20875,6 @@ var require_provider_layer = __commonJS({
           error.providerModelNotFound = true;
         }
         return error;
-      }
-      // Google resets daily quota at midnight Pacific Time.
-      getGoogleTranslateDailyQuotaRetryAfterMs(now = Date.now()) {
-        const day = 24 * 60 * 60 * 1e3;
-        try {
-          const parts = new Intl.DateTimeFormat("en-US", {
-            timeZone: "America/Los_Angeles",
-            hourCycle: "h23",
-            hour: "2-digit",
-            minute: "2-digit",
-            second: "2-digit"
-          }).formatToParts(new Date(now));
-          const part = (type) => Number(parts.find((item) => item.type === type)?.value || 0);
-          const elapsedMs = (part("hour") % 24 * 3600 + part("minute") * 60 + part("second")) * 1e3;
-          return Math.max(AUTO_TRANSLATE_FAILURE_MAX_TTL, day - elapsedMs + 5 * 60 * 1e3);
-        } catch {
-          return day;
-        }
       }
       getModelRequestKey(endpoint, request, input) {
         const body = request?.body || {};
@@ -20202,505 +21079,18 @@ var require_provider_layer = __commonJS({
         const config = this.plugin.getTaskConfig(kind);
         const defaultConfig = DEFAULT_SETTINGS[kind] || {};
         const effectiveConfig = options.configOverrides ? { ...config, ...options.configOverrides } : config;
-        if (this.plugin.isGoogleTranslateProvider(effectiveConfig)) {
-          if (kind !== "translation") throw new Error(this.plugin.t("translationDisabled"));
-          return this.plugin.buildGoogleTranslateRequest(input, effectiveConfig, {
-            ignoreReservations: Boolean(options.deferGoogleTranslateReservation),
-            ignoreCooldown: Boolean(options.ignoreGoogleTranslateCooldown),
-            reserve: Boolean(options.reserveGoogleTranslateQuota)
-          });
-        }
-        if (this.plugin.isMicrosoftTranslateProvider(effectiveConfig)) {
-          if (kind !== "translation") throw new Error(this.plugin.t("translationDisabled"));
-          return this.plugin.buildMicrosoftTranslateRequest(input, effectiveConfig);
-        }
-        if (this.plugin.isDeepLTranslateProvider(effectiveConfig)) {
-          if (kind !== "translation") throw new Error(this.plugin.t("translationDisabled"));
-          return this.plugin.buildDeepLTranslateRequest(input, effectiveConfig);
-        }
-        if (this.plugin.isBaiduTranslateProvider(effectiveConfig)) {
-          if (kind !== "translation") throw new Error(this.plugin.t("translationDisabled"));
-          return this.plugin.buildBaiduTranslateRequest(input, effectiveConfig);
+        const adapter = this.registry.get(effectiveConfig);
+        if (adapter?.buildRequest) {
+          return adapter.buildRequest(kind, input, effectiveConfig, defaultConfig, options, this.plugin);
         }
         return this.plugin.buildChatCompletionRequest(kind, input, effectiveConfig, defaultConfig);
       }
-      buildChatCompletionRequest(kind, input, effectiveConfig, defaultConfig = DEFAULT_SETTINGS[kind] || {}) {
-        const effectiveApiKey = this.plugin.getEffectiveRequestApiKey(effectiveConfig);
-        if (!effectiveApiKey) throw new Error(kind === "polish" ? this.plugin.t("apiKeyMissingPolish") : this.plugin.t("apiKeyMissingTranslation"));
-        const effectiveEndpoint = this.plugin.getEffectiveChatCompletionEndpoint(effectiveConfig, defaultConfig);
-        const effectiveModel = this.plugin.getEffectiveChatCompletionModel(kind, effectiveConfig, defaultConfig);
-        if (!effectiveEndpoint) throw new Error(this.plugin.t("endpointMissing"));
-        if (!effectiveModel) throw new Error(this.plugin.t("modelMissing"));
-        const temperature = this.plugin.normalizeRequestNumber(effectiveConfig.temperature, defaultConfig.temperature ?? 0.2, { min: 0, max: 2 });
-        const maxTokens = this.plugin.normalizeRequestNumber(effectiveConfig.maxTokens, defaultConfig.maxTokens ?? 800, { min: 1, integer: true });
-        const systemPrompt = this.plugin.buildSystemPrompt(kind, effectiveConfig);
-        const body = this.plugin.applyProviderBodyOptions(effectiveConfig, {
-          model: effectiveModel,
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: input }
-          ],
-          temperature,
-          max_tokens: maxTokens,
-          stream: false
-        });
-        return {
-          endpoint: effectiveEndpoint,
-          request: {
-            provider: effectiveConfig.provider,
-            providerKey: kind === "translation" ? this.plugin.getAutoTranslationProviderKey({ configOverrides: effectiveConfig }) : "",
-            headers: this.plugin.getRequestHeaders(effectiveConfig, effectiveApiKey),
-            body
-          }
-        };
-      }
-      buildGoogleTranslateRequest(input, config, options = {}) {
-        const texts = Array.isArray(input) ? input.map((text) => String(text || "")) : [String(input || "")];
-        const protectedPayloads = texts.map((text) => this.plugin.protectGoogleTranslateText(text));
-        const protectedTexts = protectedPayloads.map((payload) => payload.text);
-        const charCount = this.plugin.countGoogleTranslateChars(protectedTexts);
-        const endpoint = this.getEffectiveProviderEndpoint({ provider: "googleCloud" });
-        const target = this.plugin.getGoogleLanguageCode(config.targetLanguageCode || config.targetLanguage);
-        if (!target || target === AUTO_LANGUAGE_VALUE) throw new Error(this.plugin.t("targetLanguageDesc"));
-        const source = this.plugin.getGoogleLanguageCode(config.sourceLanguage, { source: true });
-        const selectOptions = { ignoreReservations: Boolean(options.ignoreReservations) };
-        const key = options.ignoreCooldown ? this.plugin.selectGoogleTranslateKey(charCount, { ...selectOptions, persist: false }) || this.plugin.selectGoogleTranslateKey(charCount, { ...selectOptions, ignoreCooldown: true }) : this.plugin.selectGoogleTranslateKey(charCount, selectOptions);
-        if (!key) {
-          if (!this.plugin.getGoogleTranslateKeys().length) throw this.plugin.createGoogleTranslateNoKeyError();
-          const coolingReadyAt = this.plugin.getGoogleTranslateCoolingKeyReadyAt(charCount, { ignoreReservations: Boolean(options.ignoreReservations) });
-          throw coolingReadyAt ? this.plugin.createGoogleTranslateCooldownError({ until: coolingReadyAt, charCount }) : this.plugin.createGoogleTranslateQuotaError({ charCount });
-        }
-        const reservation = options.reserve ? this.plugin.reserveGoogleTranslateKey(key, charCount) : null;
-        const body = {
-          q: Array.isArray(input) ? protectedTexts : protectedTexts[0],
-          target,
-          format: "text"
-        };
-        if (source) body.source = source;
-        return {
-          // The key goes in a header so it never shows up in logged or wrapped request URLs.
-          endpoint,
-          request: {
-            provider: "googleCloud",
-            providerKey: this.plugin.getGoogleTranslateProviderKey(key),
-            responseParser: "googleTranslate",
-            headers: {
-              "Content-Type": "application/json",
-              "X-Goog-Api-Key": key.apiKey
-            },
-            body,
-            googleTranslate: {
-              apiKey: key.apiKey,
-              keyId: key.id,
-              charCount,
-              expectedCount: texts.length,
-              restoreMaps: protectedPayloads.map((payload) => payload.tokens),
-              reservation
-            }
-          }
-        };
-      }
-      buildMicrosoftTranslateRequest(input, config) {
-        const texts = Array.isArray(input) ? input.map((text) => String(text || "")) : [String(input || "")];
-        const endpoint = this.getEffectiveProviderEndpoint({ ...config, provider: "microsoft" });
-        const apiKey = this.plugin.getEffectiveRequestApiKey(config);
-        if (!endpoint) throw new Error(this.plugin.t("endpointMissing"));
-        if (!apiKey) throw new Error(this.plugin.t("apiKeyMissingTranslation"));
-        const target = this.plugin.getMicrosoftLanguageCode(config.targetLanguageCode || config.targetLanguage);
-        if (!target || target === AUTO_LANGUAGE_VALUE) throw new Error(this.plugin.t("targetLanguageDesc"));
-        return {
-          endpoint,
-          request: {
-            provider: "microsoft",
-            providerKey: this.plugin.getAutoTranslationProviderKey({ configOverrides: config }),
-            responseParser: "microsoftTranslate",
-            headers: this.plugin.getRequestHeaders(config, apiKey),
-            body: texts.map((text) => ({ Text: text })),
-            translate: {
-              expectedCount: texts.length
-            }
-          }
-        };
-      }
-      buildDeepLTranslateRequest(input, config) {
-        const texts = Array.isArray(input) ? input.map((text) => String(text || "")) : [String(input || "")];
-        const plan = this.plugin.normalizeDeepLPlan(config.deeplPlan);
-        const endpoint = this.getEffectiveProviderEndpoint({ provider: "deepl", deeplPlan: plan });
-        const apiKey = this.plugin.getEffectiveRequestApiKey(config);
-        if (!endpoint) throw new Error(this.plugin.t("endpointMissing"));
-        if (!apiKey) throw new Error(this.plugin.t("apiKeyMissingTranslation"));
-        const target = this.plugin.getDeepLLanguageCode(config.targetLanguageCode || config.targetLanguage);
-        if (!target || target === AUTO_LANGUAGE_VALUE) throw new Error(this.plugin.t("targetLanguageDesc"));
-        const source = this.plugin.getDeepLLanguageCode(config.sourceLanguage, { source: true });
-        const body = {
-          text: texts,
-          target_lang: target
-        };
-        if (source) body.source_lang = source;
-        return {
-          endpoint,
-          request: {
-            provider: "deepl",
-            providerKey: this.plugin.getAutoTranslationProviderKey({ configOverrides: { ...config, deeplPlan: plan, endpoint } }),
-            responseParser: "deepLTranslate",
-            headers: this.plugin.getRequestHeaders(config, apiKey),
-            body,
-            translate: {
-              expectedCount: texts.length
-            }
-          }
-        };
-      }
-      buildBaiduTranslateRequest(input, config) {
-        const texts = Array.isArray(input) ? input.map((text) => String(text || "")) : [String(input || "")];
-        const endpoint = this.getEffectiveProviderEndpoint({ ...config, provider: "baidu" });
-        const appId = String(config.appId || "").trim();
-        const secretKey = String(config.secretKey || "").trim();
-        if (!endpoint) throw new Error(this.plugin.t("endpointMissing"));
-        if (!appId || !secretKey) throw new Error(this.plugin.t("apiKeyMissingTranslation"));
-        const target = this.plugin.getBaiduLanguageCode(config.targetLanguageCode || config.targetLanguage);
-        if (!target || target === AUTO_LANGUAGE_VALUE) throw new Error(this.plugin.t("targetLanguageDesc"));
-        const source = this.plugin.getBaiduLanguageCode(config.sourceLanguage, { source: true }) || "auto";
-        const lineGroups = texts.map((text) => {
-          const lines = String(text || "").split(/\r?\n/).filter((line) => line.trim());
-          return lines.length ? lines : [String(text || "")];
-        });
-        const q = lineGroups.flat().join("\n");
-        const salt = String(Date.now());
-        const sign = this.plugin.createMd5Hash(`${appId}${q}${salt}${secretKey}`);
-        const body = {
-          q,
-          from: source,
-          to: target,
-          appid: appId,
-          salt,
-          sign
-        };
-        return {
-          endpoint,
-          request: {
-            provider: "baidu",
-            providerKey: this.plugin.getAutoTranslationProviderKey({ configOverrides: config }),
-            responseParser: "baiduTranslate",
-            headers: {
-              "Content-Type": "application/x-www-form-urlencoded"
-            },
-            body,
-            bodyEncoding: "form",
-            translate: {
-              expectedCount: texts.length,
-              rowCounts: lineGroups.map((group) => group.length)
-            }
-          }
-        };
-      }
-      normalizeDeepLPlan(value) {
-        return String(value || "").trim() === "pro" ? "pro" : "free";
-      }
-      getMicrosoftLanguageCode(language, options = {}) {
-        const code = this.plugin.getGoogleLanguageCode(language, options);
-        if (options.source && (!code || code === AUTO_LANGUAGE_VALUE)) return "";
-        if (code === "zh-CN") return "zh-Hans";
-        if (code === "zh-TW") return "zh-Hant";
-        return code;
-      }
-      getDeepLLanguageCode(language, options = {}) {
-        const code = this.plugin.getGoogleLanguageCode(language, options);
-        if (options.source && (!code || code === AUTO_LANGUAGE_VALUE)) return "";
-        const upper = String(code || "").replace("_", "-").toUpperCase();
-        if (upper === "ZH-CN" || upper === "ZH-TW" || upper === "ZH-HANS" || upper === "ZH-HANT") {
-          if (options.source) return "ZH";
-          return upper === "ZH-TW" || upper === "ZH-HANT" ? "ZH-HANT" : "ZH-HANS";
-        }
-        if (upper === "EN") return "EN";
-        if (upper === "PT") return "PT";
-        return upper;
-      }
-      getBaiduLanguageCode(language, options = {}) {
-        const code = this.plugin.getGoogleLanguageCode(language, options);
-        if (options.source && (!code || code === AUTO_LANGUAGE_VALUE)) return "";
-        const normalized = String(code || "").trim();
-        const map = {
-          "zh": "zh",
-          "zh-CN": "zh",
-          "zh-Hans": "zh",
-          "zh-TW": "cht",
-          "zh-Hant": "cht",
-          "ja": "jp",
-          "ko": "kor",
-          "fr": "fra",
-          "es": "spa",
-          "ar": "ara",
-          "bg": "bul",
-          "et": "est",
-          "da": "dan",
-          "fi": "fin",
-          "ro": "rom",
-          "sl": "slo",
-          "sv": "swe",
-          "vi": "vie"
-        };
-        return map[normalized] || normalized;
-      }
-      createMd5Hash(text) {
-        const value = String(text || "");
-        try {
-          if (typeof require === "function") {
-            const crypto = (() => {
-              try {
-                return require("node:crypto");
-              } catch {
-                return require("crypto");
-              }
-            })();
-            return crypto.createHash("md5").update(value, "utf8").digest("hex");
-          }
-        } catch {
-        }
-        throw new Error("MD5_UNAVAILABLE");
-      }
-      protectGoogleTranslateText(text) {
-        const source = String(text || "");
-        const spans = [];
-        for (const regex of GOOGLE_TRANSLATE_PROTECT_PATTERNS) {
-          regex.lastIndex = 0;
-          let match = null;
-          while ((match = regex.exec(source)) !== null) {
-            const value = String(match[0] || "");
-            if (!value) continue;
-            spans.push({ start: match.index, end: match.index + value.length, value });
-            if (match.index === regex.lastIndex) regex.lastIndex++;
-          }
-        }
-        spans.sort((left, right) => left.start - right.start || right.end - left.end);
-        const selected = [];
-        let lastEnd = -1;
-        spans.forEach((span) => {
-          if (span.start < lastEnd) return;
-          selected.push(span);
-          lastEnd = span.end;
-        });
-        if (!selected.length) return { text: source, tokens: [] };
-        let output = "";
-        let cursor = 0;
-        const tokens = [];
-        selected.forEach((span, index) => {
-          const placeholder = `__DAIT_KEEP_${String(index).padStart(3, "0")}__`;
-          output += source.slice(cursor, span.start);
-          output += placeholder;
-          cursor = span.end;
-          tokens.push({ placeholder, value: span.value });
-        });
-        output += source.slice(cursor);
-        return { text: output, tokens };
-      }
-      restoreGoogleTranslateText(text, tokens = []) {
-        let output = String(text || "");
-        if (!Array.isArray(tokens) || !tokens.length) return output;
-        tokens.forEach((token) => {
-          const placeholder = String(token?.placeholder || "");
-          if (!placeholder) return;
-          output = output.split(placeholder).join(String(token?.value || ""));
-        });
-        return output;
-      }
       applyProviderBodyOptions(config, body) {
-        if (config?.provider !== "deepseek") return body;
-        if (config.enableThinking) {
-          body.thinking = { type: "enabled" };
-          delete body.temperature;
-        } else {
-          body.thinking = { type: "disabled" };
-        }
-        return body;
-      }
-      buildSystemPrompt(kind, config) {
-        return this.plugin.buildPromptPolicySystemPrompt(kind, config);
-      }
-      isModelFinishReasonTruncated(reason) {
-        return /^(?:length|truncated|incomplete|max_tokens|max_output_tokens|token_limit)$/i.test(String(reason || "").trim());
-      }
-      getModelResponseTruncationReason(value) {
-        if (!value || typeof value !== "object") return "";
-        const reasons = [
-          value.finish_reason,
-          value.finishReason,
-          value.stop_reason,
-          value.stopReason,
-          value.status,
-          value.incomplete_details?.reason,
-          value.incompleteDetails?.reason
-        ];
-        return String(reasons.find((reason) => this.plugin.isModelFinishReasonTruncated(reason)) || "");
-      }
-      createModelOutputTruncatedError(output = "", finishReason = "") {
-        const error = new Error("MODEL_OUTPUT_TRUNCATED");
-        error.modelOutputTruncated = true;
-        error.autoTranslationInvalidReason = "truncated";
-        error.retryAfterMs = AUTO_TRANSLATE_INVALID_OUTPUT_FAILURE_TTL;
-        error.partialOutputLength = String(output || "").trim().length;
-        error.finishReason = String(finishReason || "");
-        return error;
-      }
-      parseModelResponse(raw) {
-        const data = this.plugin.parseApiJson(raw);
-        let output = "";
-        for (const choice of data?.choices || []) {
-          output = this.plugin.extractModelContent(choice?.message?.content ?? choice?.text);
-          const choiceTruncationReason = this.plugin.getModelResponseTruncationReason(choice);
-          if (choiceTruncationReason) {
-            throw this.plugin.createModelOutputTruncatedError(output, choiceTruncationReason);
-          }
-          if (output && String(output).trim()) break;
-        }
-        if (!output) output = this.plugin.extractModelContent(data?.output_text);
-        const responseTruncationReason = this.plugin.getModelResponseTruncationReason(data);
-        if (responseTruncationReason) {
-          throw this.plugin.createModelOutputTruncatedError(output, responseTruncationReason);
-        }
-        if (!output || !String(output).trim()) throw new Error(this.plugin.t("emptyResult"));
-        return String(output).trim();
-      }
-      parseGoogleTranslateResponse(raw, expectedCount = 1, options = {}) {
-        const data = this.plugin.parseApiJson(raw);
-        const translations = data?.data?.translations;
-        if (!Array.isArray(translations) || !translations.length) throw new Error(this.plugin.t("emptyResult"));
-        const restoreMaps = Array.isArray(options.restoreMaps) ? options.restoreMaps : [];
-        const values = translations.map((item, index) => {
-          const text = item?.translatedText;
-          if (typeof text !== "string") return "";
-          return this.plugin.restoreGoogleTranslateText(this.plugin.decodeHtmlEntities(text), restoreMaps[index]).trim();
-        });
-        if (values.some((value) => !value)) throw new Error(this.plugin.t("emptyResult"));
-        const count = Math.max(1, Math.round(Number(expectedCount) || 1));
-        if (values.length < count) throw new Error(this.plugin.t("emptyResult"));
-        const result = values.slice(0, count);
-        if (options.asArray) return result;
-        return count === 1 ? result[0] : JSON.stringify(result);
-      }
-      parseMicrosoftTranslateResponse(raw, expectedCount = 1, options = {}) {
-        const data = this.plugin.parseProviderJson(raw, "microsoft");
-        if (!Array.isArray(data) || !data.length) throw this.plugin.createProviderParseError("microsoft", this.plugin.t("emptyResult"));
-        const values = data.map((item) => Array.isArray(item?.translations) ? item.translations[0]?.text : void 0);
-        return this.plugin.normalizeDirectTranslateParseResult("microsoft", values, expectedCount, options);
-      }
-      parseDeepLTranslateResponse(raw, expectedCount = 1, options = {}) {
-        const data = this.plugin.parseProviderJson(raw, "deepl");
-        const translations = data?.translations;
-        if (!Array.isArray(translations) || !translations.length) throw this.plugin.createProviderParseError("deepl", this.plugin.t("emptyResult"));
-        const values = translations.map((item) => item?.text);
-        return this.plugin.normalizeDirectTranslateParseResult("deepl", values, expectedCount, options);
-      }
-      parseBaiduTranslateResponse(raw, expectedCount = 1, options = {}) {
-        const data = this.plugin.parseProviderJson(raw, "baidu");
-        if (data?.error_code && String(data.error_code) !== "52000") {
-          throw this.plugin.createBaiduTranslateError(data);
-        }
-        const results = data?.trans_result;
-        if (!Array.isArray(results) || !results.length) throw this.plugin.createProviderParseError("baidu", this.plugin.t("emptyResult"));
-        const rows = results.map((item) => typeof item?.dst === "string" ? item.dst.trim() : "");
-        if (rows.some((row) => !row)) throw this.plugin.createProviderParseError("baidu", this.plugin.t("emptyResult"));
-        const values = this.plugin.regroupBaiduTranslateRows(rows, expectedCount, options.rowCounts);
-        return this.plugin.normalizeDirectTranslateParseResult("baidu", values, expectedCount, options);
-      }
-      regroupBaiduTranslateRows(rows, expectedCount = 1, rowCounts = null) {
-        const count = Math.max(1, Math.round(Number(expectedCount) || 1));
-        const counts = Array.isArray(rowCounts) ? rowCounts.map((value) => Math.max(1, Math.round(Number(value) || 1))) : null;
-        if (counts && counts.length === count && counts.reduce((sum, value) => sum + value, 0) === rows.length) {
-          const values = [];
-          let cursor = 0;
-          for (const groupSize of counts) {
-            values.push(rows.slice(cursor, cursor + groupSize).join("\n"));
-            cursor += groupSize;
-          }
-          return values;
-        }
-        if (rows.length === count) return rows;
-        if (count === 1) return [rows.join("\n")];
-        throw this.plugin.createProviderParseError("baidu", this.plugin.t("emptyResult"));
-      }
-      normalizeDirectTranslateParseResult(provider, values, expectedCount = 1, options = {}) {
-        const count = Math.max(1, Math.round(Number(expectedCount) || 1));
-        const normalized = (Array.isArray(values) ? values : []).map((value) => typeof value === "string" ? value.trim() : "");
-        if (normalized.length < count || normalized.some((value) => !value)) {
-          throw this.plugin.createProviderParseError(provider, this.plugin.t("emptyResult"));
-        }
-        const result = normalized.slice(0, count);
-        if (options.asArray) return result;
-        return count === 1 ? result[0] : JSON.stringify(result);
-      }
-      createProviderParseError(provider, message = this.plugin.t("invalidJson")) {
-        const error = new Error(message);
-        error.providerParseFailed = true;
-        error.provider = String(provider || "");
-        return error;
-      }
-      parseProviderJson(raw, provider) {
-        try {
-          return this.plugin.parseApiJson(raw);
-        } catch {
-          throw this.plugin.createProviderParseError(provider, this.plugin.t("invalidJson"));
-        }
-      }
-      createBaiduTranslateError(data = {}) {
-        const code = String(data?.error_code || "");
-        const message = String(data?.error_msg || code || "BAIDU_TRANSLATE_ERROR");
-        const error = new Error(message);
-        error.baiduApiError = true;
-        error.baiduErrorCode = code;
-        if (["52003", "54001", "58002", "90107"].includes(code)) error.providerAuthFailed = true;
-        else if (code === "58000") {
-          error.providerAuthFailed = true;
-          error.providerIpRejected = true;
-        } else if (["54000", "58001"].includes(code)) {
-          error.providerAuthFailed = true;
-          error.providerRequestRejected = true;
-          if (code === "58001") error.providerLanguageUnsupported = true;
-        } else if (code === "54003") error.providerRateLimited = true;
-        else if (code === "54005") {
-          error.providerRateLimited = true;
-          error.retryAfterMs = 3e3;
-        } else if (code === "54004") error.providerQuotaExceeded = true;
-        else if (code === "20003") {
-          error.providerRequestRejected = true;
-          error.autoTranslationTerminalFailure = true;
-        } else if (["52001", "52002"].includes(code)) error.providerServerError = true;
-        else {
-          error.providerServerError = true;
-          error.providerRequestRejected = true;
-        }
-        return error;
-      }
-      decodeHtmlEntities(text) {
-        const value = String(text || "");
-        if (!value || !value.includes("&")) return value;
-        if (typeof document !== "undefined") {
-          const textarea = document.createElement?.("textarea");
-          if (textarea) {
-            textarea.innerHTML = value;
-            return textarea.value;
-          }
-        }
-        return value.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'");
-      }
-      extractModelContent(content) {
-        const raw = Array.isArray(content) ? content.map((part) => {
-          if (typeof part === "string") return part;
-          const type = String(part?.type || "").trim().toLowerCase();
-          if (["thinking", "reasoning", "thought", "redacted_thinking"].includes(type)) return "";
-          const text = part?.text ?? part?.content;
-          return typeof text === "string" ? text : "";
-        }).join("") : typeof content === "string" ? content : "";
-        return raw.replace(/<(think|thought|reasoning)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, "").replace(/<(think|thought|reasoning)\b[^>]*>[\s\S]*$/gi, "").trim();
-      }
-      parseApiJson(raw) {
-        try {
-          return JSON.parse(raw);
-        } catch {
-          throw new Error(this.plugin.t("invalidJson"));
-        }
+        const adapter = this.registry.get(config);
+        return typeof adapter?.applyBodyOptions === "function" ? adapter.applyBodyOptions(config, body) : body;
       }
     };
+    attachControllerMethods(ProviderLayer, [localModelHealthMethods, googleKeyPoolMethods, providerCodecMethods]);
     module2.exports = { ProviderLayer };
   }
 });

@@ -664,37 +664,20 @@ class TranslationCacheStore {
             promptPolicyVersion: String(config.promptPolicyVersion || "").trim(),
             prompt: String(config.prompt || "").trim()
         };
-        if (provider === "googleCloud") {
-            snapshot.endpoint = PROVIDER_DEFAULTS.googleCloud.endpoint;
-            snapshot.model = PROVIDER_DEFAULTS.googleCloud.model;
-            snapshot.temperature = 0;
-            snapshot.maxTokens = 0;
-            snapshot.enableThinking = false;
-            snapshot.promptPolicyVersion = this.plugin.getPromptPolicyVersion("googleCloud");
-            snapshot.prompt = "";
-        }
-        else if (this.plugin.isDirectTranslateProvider(provider)) {
-            snapshot.model = PROVIDER_DEFAULTS[provider]?.model || "";
+        const adapter = this.plugin.providerLayer?.registry?.get?.(provider) || null;
+        if (this.plugin.isDirectTranslateProvider(provider)) {
+            snapshot.model = adapter?.defaultProfile?.model || PROVIDER_DEFAULTS[provider]?.model || "";
             snapshot.temperature = 0;
             snapshot.maxTokens = 0;
             snapshot.enableThinking = false;
             snapshot.promptPolicyVersion = `${provider}-v1`;
             snapshot.prompt = "";
-            if (provider === "deepl") {
-                snapshot.endpoint = this.plugin.normalizeDeepLPlan(config.deeplPlan) === "pro"
-                    ? PROVIDER_DEFAULTS.deepl.endpoint.replace("api-free.deepl.com", "api.deepl.com")
-                    : PROVIDER_DEFAULTS.deepl.endpoint;
-            }
         }
-        if (options.servedModel) {
-            if (provider === "deepl" && this.plugin.getDeepLLanguageCode(config.targetLanguageCode || config.targetLanguage) === "ZH-HANT") {
-                // DeepL used to receive "ZH" (Simplified) for Traditional Chinese; a distinct
-                // value retires the Simplified text cached as Traditional.
-                snapshot.model = "zh-hant";
-            }
-            else if (!options.legacyModel && this.plugin.shouldAutoDetectLocalProviderModel(config, defaults)) {
-                snapshot.model = this.plugin.getCachedLocalProviderDetectedModel(config, { defaultConfig: defaults }) || snapshot.model;
-            }
+        if (typeof adapter?.applyCacheScope === "function") {
+            adapter.applyCacheScope(config, snapshot, this.plugin, options);
+        }
+        if (options.servedModel && !options.legacyModel && this.plugin.shouldAutoDetectLocalProviderModel(config, defaults)) {
+            snapshot.model = this.plugin.getCachedLocalProviderDetectedModel(config, { defaultConfig: defaults }) || snapshot.model;
         }
         return snapshot;
     }

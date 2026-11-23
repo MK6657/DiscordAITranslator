@@ -16,6 +16,8 @@
   "include": [
     "src/core/**/*.js",
     "src/presets/**/*.js",
+    "src/providers/registry.js",
+    "src/providers/adapters/**/*.js",
     "src/discord/selectors.js",
     "src/discord/stores.js",
     "src/discord/host-health.js",
