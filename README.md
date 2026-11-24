@@ -5,7 +5,7 @@
 **面向 Windows BetterDiscord 的 AI 频道消息翻译、输入润色与公开双语插件**
 
 [![Windows CI](https://github.com/MK6657/DiscordAITranslator/actions/workflows/ci.yml/badge.svg)](https://github.com/MK6657/DiscordAITranslator/actions/workflows/ci.yml)
-![Release](https://img.shields.io/badge/release-v0.5.0-2EA043)
+![Release](https://img.shields.io/badge/release-v0.5.1-2EA043)
 ![Platform](https://img.shields.io/badge/platform-Windows%20BetterDiscord-0078D4)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
@@ -101,11 +101,11 @@ Discord AI Translator 专为跨语言交流与高频聊天场景打造：既支�
 
 ## 插件安装（无需 Node.js）
 
-当前最新正式发布版本为 `v0.5.0`（2026-11-24）：
+当前最新正式发布版本为 `v0.5.1`（2026-11-24）：
 
 1. 为 Discord 桌面端安装 [BetterDiscord](https://betterdiscord.app/)。
 2. 打开 Discord 设置 -> `BetterDiscord` -> `Plugins` -> 点击 `Open Plugins Folder`。
-3. 下载 [v0.5.0 正式发布版 DiscordAITranslator.plugin.js](https://github.com/MK6657/DiscordAITranslator/releases/download/v0.5.0/DiscordAITranslator.plugin.js)。
+3. 下载 [v0.5.1 正式发布版 DiscordAITranslator.plugin.js](https://github.com/MK6657/DiscordAITranslator/releases/download/v0.5.1/DiscordAITranslator.plugin.js)。
 4. 将文件放入插件目录并在插件列表中启用，随后点击左下角 AI 按钮配置服务商。
 
 常见 Windows 插件目录：
@@ -115,7 +115,7 @@ Discord AI Translator 专为跨语言交流与高频聊天场景打造：既支�
 
 ### 当前分支源码预览
 
-如果你希望从当前 `main` 分支（`v0.5.0`）直接获取源码构建产物，或使用 Windows 自动安装脚本（改动详情见 [CHANGELOG.md](CHANGELOG.md)）：
+如果你希望从当前 `main` 分支（`v0.5.1`）直接获取源码构建产物，或使用 Windows 自动安装脚本（改动详情见 [CHANGELOG.md](CHANGELOG.md)）：
 
 - **方式一（直接下载单文件）**：直接下载仓库根目录的 [DiscordAITranslator.plugin.js](DiscordAITranslator.plugin.js) 原始文件，放入 BetterDiscord 插件目录即可（无需安装 Node.js）。
 - **方式二（使用 Windows 安装脚本）**：克隆仓库后，在开始菜单打开**普通 Windows PowerShell** 运行（自动校验语法与 SHA256、备份旧版并事务式启用）：
@@ -177,7 +177,7 @@ npm run verify
 <details>
 <summary>更新、卸载与常见问题排查</summary>
 
-- **更新**：覆盖替换 `DiscordAITranslator.plugin.js` 后重新启用即可；使用安装脚本会自动创建带时间戳的备份文件。从 `v0.3.0` 升级至 `v0.5.0` 会自动将缓存与诊断日志迁移至独立文件，并平滑转换频道规则（不会擅自对任何频道开启自动翻译）。
+- **更新**：覆盖替换 `DiscordAITranslator.plugin.js` 后重新启用即可；使用安装脚本会自动创建带时间戳的备份文件。从 `v0.3.0` 升级至 `v0.5.1` 会自动将缓存与诊断日志迁移至独立文件，并平滑转换频道规则（不会擅自对任何频道开启自动翻译）。
 - **卸载与清理**：在 BetterDiscord 中禁用并删除 `DiscordAITranslator.plugin.js`；如需彻底清除数据，可再删除同目录下的 `DiscordAITranslator.config.json`、`DiscordAITranslator.cache.config.json` 与 `DiscordAITranslator.diagnostics.config.json`。
 - **`npm ci` 失败**：确认 Node 版本为 22 / 24 LTS，删除残缺的 `node_modules` 后重试（不要删除 `package-lock.json`）。
 - **`build:check` 提示产物过期**：运行 `npm run build`。
@@ -190,7 +190,7 @@ npm run verify
 <summary>当前已知边界与维护文档索引</summary>
 
 - 仅面向桌面端 BetterDiscord（Android 移动端不支持）；Discord DOM、内部 Webpack 模块与 BetterDiscord API 的上游变动可能影响挂载兼容性。
-- 当前验证基线为 Windows 11 + Discord Stable；`v0.5.0` 模块化重构、新界面与全部服务商路径均已通过 710+ 自动化单测、9 组离线回归及 Windows 真机实测（旧版 `v0.4.0` 快照保留在 `backup/v0.4.0` 分支）。
+- 当前验证基线为 Windows 11 + Discord Stable；`v0.5.1` 模块化架构、性能与安全加固、新界面与全部服务商路径均已通过 740+ 自动化单测、9 组离线回归及 Windows 真机部署校验（旧版 `v0.4.0` 快照保留在 `backup/v0.4.0` 分支）。
 - 维护与贡献参考：
   - [CHANGELOG.md](CHANGELOG.md) — 详细版本变更日志
   - [CONTRIBUTING.md](CONTRIBUTING.md) — 贡献与提交流程

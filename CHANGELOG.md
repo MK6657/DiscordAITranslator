@@ -2,9 +2,9 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## 0.5.1 - 2026-11-24
 
-### Fixes & Hardening (v0.5 Follow-up)
+### Fixes & Hardening
 
 - **Lifecycle & `DisposableScope` fixes**: Fixed `SettingsUiController.scope` and `ComposerUiController.scope` being permanently disposed when `start()` resets `runtimeScope` (both controllers now resolve live child scopes across `start()` / `stop()` / restart cycles). Moved `start()` global `document`/`window` listeners and `focusSettingsResetControl` delayed timers onto `runtimeScope`.
 - **Complete `stop()` cleanup**: `stop()` now aborts `autoTranslationAbortController` via `abortAutoTranslationRequests("stop")`, clears `autoTranslationPartialResults` across stop/start cycles, and releases stale DOM button/controller references from `apiTestRuns` and `modelDetectionRuns` while preserving monotonic sequence numbers.

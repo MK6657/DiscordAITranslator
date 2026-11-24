@@ -1,15 +1,15 @@
 # Windows Host Smoke Test
 
-## v0.5.0 verification checkpoint (2026-11-24)
+## v0.5.1 verification checkpoint (2026-11-24)
 
-- **Repository release tag (`v0.5.0`, commit `99acf80`)**:
-  - Built artifact: `2,200,450` bytes, SHA256 `EF80ADB6C5271C9D99674BA7382DE3243CC0874246E5E2176F514A7011FE13A9`.
-  - Host inspection (`npm run plugin:check`): Discord Stable `app-1.0.9269` with BetterDiscord core present (`resources/app hook (BD 1.14+)`), plugin installed and enabled in `BetterDiscord/data/stable/plugins.json`, matching repository build `v0.5.0`.
-- **Post-v0.5.0 follow-up fixes (working tree / Unreleased)**:
-  - Rebuilt artifact: `2,243,164` bytes, SHA256 `36F3E54E747207B0A47E4B00FB36E27BAED5FC4E02EAFECB45AA6A35BCD29EFA`.
+- **Repository release tag (`v0.5.1`)**:
+  - Built artifact: `2,243,164` bytes, SHA256 `B5B1C28B47EC52B86839D1E6746B6E260E27182E3C8C11D1297F2DAD92F3046E`.
   - Fixes included: `DisposableScope` child-scope lifecycle across `start()`/`stop()`, `runtimeScope` wiring for global listeners and reset-focus timers, `stop()` aborting `autoTranslationAbortController` and clearing `autoTranslationPartialResults`, `ProviderRegistry.byParser` multi-adapter isolation and full custom-adapter wiring (including `SettingsSchema`, fallback order parsing, verified service-config save/apply, shared UI/runtime eligible fallback candidates, strict `isolatedConfig` credential isolation and `providerProfiles` stripping across fallback/public-bilingual/removed-provider reload with live-profile archive refresh preserving `recentModels`, unified Fetch-spec duplicate and empty-value header handling across `BdApi.Net.fetch` and digested auth deduplication keys for plain objects/Web `Headers`/tuple arrays, and `testApiConnection` snapshots), production `AutoTranslationStateMachine` transition wiring, manual click budget enforcement across provider fallback (including manual long-text chunk reservation across initial attempts & rescue via `requestOrigin`, consecutive transient failure stop, and `fallbackBudgetReserved`/`fallbackBudgetExhausted` partial preservation), actual-config fallback ordering plus translation-capability and isolated usability checks for public bilingual, and critical-chain blocking/stutter optimizations (visibility & queue layout memoization, active-channel incremental scan anti-starvation and interrupted dirty-scan root preservation, observer/scroll hot-path caching, nested-scroller-safe render-frame caching and post-render reflow removal, plus `reconcileTranslationLines`/`PanelTheme`/`handleKeydown` micro-overhead cleanup).
   - Automated checks passed: `npm run release:check` (source checks, ESLint, `tsc -p jsconfig.json --noEmit` across 43 `src/` files, `build:check`, 746 core unit tests, 9 modular artifact regression suites, Windows installer rollback tests, and BetterDiscord dual-sandbox artifact check) plus `npm run test:integration`.
-  - **Note on live-host acceptance**: Automated/installer checks above do not substitute for re-recording individual live-Discord checklist rows below after code changes. Re-run `npm run plugin:install` and `npm run plugin:check` to deploy the post-fix build to local BetterDiscord, and record live interactive observations against the deployed SHA256.
+  - **Note on live-host acceptance**: Automated/installer checks above do not substitute for re-recording individual live-Discord checklist rows below after code changes. Record live interactive observations against the deployed `v0.5.1` SHA256 after deployment.
+- **Previous release tag (`v0.5.0`, commit `99acf80`)**:
+  - Built artifact: `2,200,450` bytes, SHA256 `EF80ADB6C5271C9D99674BA7382DE3243CC0874246E5E2176F514A7011FE13A9`.
+  - Host inspection (`npm run plugin:check`): Discord Stable `app-1.0.9269` with BetterDiscord core present (`resources/app hook (BD 1.14+)`), plugin installed and enabled in `BetterDiscord/data/stable/plugins.json`, matching repository build `v0.5.0`.
 
 ## Maintenance checkpoint (2026-10-22)
 
