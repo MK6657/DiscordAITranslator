@@ -5,8 +5,7 @@
 **面向 Windows BetterDiscord 的 AI 频道消息翻译、输入润色与公开双语插件**
 
 [![Windows CI](https://github.com/MK6657/DiscordAITranslator/actions/workflows/ci.yml/badge.svg)](https://github.com/MK6657/DiscordAITranslator/actions/workflows/ci.yml)
-![Preview](https://img.shields.io/badge/preview-v0.5.0-5865F2)
-![Release](https://img.shields.io/badge/release-v0.3.0-2EA043)
+![Release](https://img.shields.io/badge/release-v0.5.0-2EA043)
 ![Platform](https://img.shields.io/badge/platform-Windows%20BetterDiscord-0078D4)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
@@ -102,11 +101,11 @@ Discord AI Translator 专为跨语言交流与高频聊天场景打造：既支�
 
 ## 插件安装（无需 Node.js）
 
-当前已发布的固定版本为 `v0.3.0`（2026-09-25 预发布）：
+当前最新正式发布版本为 `v0.5.0`（2026-11-24）：
 
 1. 为 Discord 桌面端安装 [BetterDiscord](https://betterdiscord.app/)。
 2. 打开 Discord 设置 -> `BetterDiscord` -> `Plugins` -> 点击 `Open Plugins Folder`。
-3. 下载 [v0.3.0 正式发布版 DiscordAITranslator.plugin.js](https://github.com/MK6657/DiscordAITranslator/releases/download/v0.3.0/DiscordAITranslator.plugin.js)。
+3. 下载 [v0.5.0 正式发布版 DiscordAITranslator.plugin.js](https://github.com/MK6657/DiscordAITranslator/releases/download/v0.5.0/DiscordAITranslator.plugin.js)。
 4. 将文件放入插件目录并在插件列表中启用，随后点击左下角 AI 按钮配置服务商。
 
 常见 Windows 插件目录：
@@ -116,7 +115,7 @@ Discord AI Translator 专为跨语言交流与高频聊天场景打造：既支�
 
 ### 当前分支源码预览
 
-如果你希望体验包含**双模式快捷面板、输入框分裂式语气选择器、59 套方言/名人润色预设、新版 6 标签设置窗口、V0.5 模块化架构与插件化服务商注册表**在内的最新 `v0.5.0` 源码预览版（改动详情见 [CHANGELOG.md](CHANGELOG.md)）：
+如果你希望从当前 `main` 分支（`v0.5.0`）直接获取源码构建产物，或使用 Windows 自动安装脚本（改动详情见 [CHANGELOG.md](CHANGELOG.md)）：
 
 - **方式一（直接下载单文件）**：直接下载仓库根目录的 [DiscordAITranslator.plugin.js](DiscordAITranslator.plugin.js) 原始文件，放入 BetterDiscord 插件目录即可（无需安装 Node.js）。
 - **方式二（使用 Windows 安装脚本）**：克隆仓库后，在开始菜单打开**普通 Windows PowerShell** 运行（自动校验语法与 SHA256、备份旧版并事务式启用）：

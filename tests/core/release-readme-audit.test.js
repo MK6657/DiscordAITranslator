@@ -9,6 +9,21 @@ const { version } = require("../../package.json");
 const root = path.resolve(__dirname, "../..");
 const assetPattern = /\]\(https:\/\/github\.com\/MK6657\/DiscordAITranslator\/releases\/download\/(v[0-9.]+)\/DiscordAITranslator\.plugin\.js\)/g;
 
+function parseSemver(tag) {
+    return String(tag || "").replace(/^v/, "").split(".").map(part => Number.parseInt(part, 10) || 0);
+}
+
+function compareSemver(a, b) {
+    const left = parseSemver(a);
+    const right = parseSemver(b);
+    const len = Math.max(left.length, right.length);
+    for (let i = 0; i < len; i++) {
+        const diff = (left[i] || 0) - (right[i] || 0);
+        if (diff !== 0) return diff;
+    }
+    return 0;
+}
+
 test("R06 both READMEs pin the same release asset and label the branch bundle as a source preview", () => {
     const releases = [];
     for (const { filename, installHeading, previewHeading } of [
@@ -27,7 +42,7 @@ test("R06 both READMEs pin the same release asset and label the branch bundle as
         assert.ok(preview.includes(`\`v${version}\``), filename);
         assert.match(preview, /\[DiscordAITranslator\.plugin\.js\]\(DiscordAITranslator\.plugin\.js\)/);
         assert.doesNotMatch(releaseSection, /\]\(DiscordAITranslator\.plugin\.js\)/);
-        assert.notEqual(assets[0][1], `v${version}`, filename);
+        assert.ok(compareSemver(assets[0][1], `v${version}`) <= 0, `${filename}: pinned release ${assets[0][1]} exceeds package version v${version}`);
         releases.push(assets[0][1]);
     }
     assert.equal(releases[0], releases[1]);
