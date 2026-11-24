@@ -234,7 +234,7 @@ const methods = {
     },
 
     getProviderFallbackCandidates() {
-        return PROVIDER_ORDER.filter(provider => !this.plugin.isLocalTranslationProvider(provider));
+        return this.plugin.providerLayer.getEligibleProviderFallbackCandidates("translation");
     },
 
     // Chosen services first, in their saved order, then the others.
@@ -605,7 +605,7 @@ const methods = {
     // A chip shows a short label for its code (service names for services); the code stays in the tooltip.
     getDiagnosticChipLabel(code) {
         const value = String(code ?? "");
-        if (PROVIDER_ORDER.includes(value)) return this.plugin.getProviderDisplayName(value);
+        if (this.plugin.providerLayer?.registry?.has?.(value) || PROVIDER_ORDER.includes(value)) return this.plugin.getProviderDisplayName(value);
         return getDiagnosticCodeLabel(value, this.plugin.getLocale());
     },
 

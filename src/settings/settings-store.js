@@ -18,6 +18,7 @@ const {
     POLISH_REPOLISH_SOURCE_LAST_RESULT,
     POLISH_REPOLISH_SOURCE_ORIGINAL,
     PROMPT_TEMPLATE_CATEGORY_GENERAL,
+    PROVIDER_PROFILE_FIELDS,
     QUICK_PANEL_TABS,
     SETTINGS_WRITE_DEBOUNCE_MS,
     TRANSLATION_CACHE_WRITE_DEBOUNCE_MS,
@@ -347,13 +348,70 @@ class SettingsStore {
                 this.plugin.settings[kind].providerProfiles = {};
                 changed = true;
             }
-            const provider = this.plugin.normalizeProviderForTask(kind, this.plugin.settings[kind].provider);
+            const previousProvider = String(this.plugin.settings[kind].provider || "").trim();
+            const provider = this.plugin.normalizeProviderForTask(kind, previousProvider);
             if (provider !== this.plugin.settings[kind].provider) {
-                const preset = this.plugin.getProviderDefaults(provider);
-                this.plugin.settings[kind].provider = provider;
-                if (preset?.endpoint) this.plugin.settings[kind].endpoint = preset.endpoint;
-                if (preset?.model) this.plugin.settings[kind].model = preset.model;
-                this.plugin.settings[kind].enableThinking = false;
+                const task = this.plugin.settings[kind];
+                const defaultKeys = new Set(Object.keys(DEFAULT_SETTINGS[kind] || {}));
+                if (previousProvider) {
+                    const existing = task.providerProfiles[previousProvider];
+                    const archivedProfile = existing && typeof existing === "object" && !Array.isArray(existing)
+                        ? { ...existing }
+                        : {};
+                    // Overwrite stale profile/credential fields with the live active task values
+                    // (including cleared or removed credentials) while preserving non-credential
+                    // metadata such as recentModels.
+                    Object.keys(archivedProfile).forEach(key => {
+                        if (key === "apiKeyOrigin" || PROVIDER_PROFILE_FIELDS.includes(key)) {
+                            delete archivedProfile[key];
+                            return;
+                        }
+                        if (!defaultKeys.has(key) && typeof archivedProfile[key] === "string") {
+                            delete archivedProfile[key];
+                        }
+                    });
+                    PROVIDER_PROFILE_FIELDS.forEach(field => {
+                        if (task[field] !== undefined) archivedProfile[field] = task[field];
+                    });
+                    Object.keys(task).forEach(key => {
+                        if (!defaultKeys.has(key) && typeof task[key] === "string") archivedProfile[key] = task[key];
+                    });
+                    if (typeof task.apiKeyOrigin === "string") archivedProfile.apiKeyOrigin = task.apiKeyOrigin;
+                    if (Array.isArray(existing?.recentModels)) archivedProfile.recentModels = existing.recentModels.slice(0, 8);
+                    task.providerProfiles[previousProvider] = archivedProfile;
+                }
+                const targetCredentialFields = this.plugin.providerLayer?.registry?.getCredentialFields?.(provider) || [];
+                const targetProfile = this.getTaskProviderProfile(kind, provider);
+                const preset = this.plugin.getProviderDefaults(provider) || {};
+                // Strip any custom credential keys left over from the removed/unavailable provider so they
+                // can never leak into the fallback provider's requests.
+                Object.keys(task).forEach(key => {
+                    if (!defaultKeys.has(key) && !targetCredentialFields.includes(key)) delete task[key];
+                });
+                task.provider = provider;
+                task.endpoint = targetProfile?.endpoint ?? preset.endpoint ?? "";
+                task.model = targetProfile?.model ?? preset.model ?? "";
+                task.apiKey = targetProfile?.apiKey ?? "";
+                if (typeof targetProfile?.apiKeyOrigin === "string") task.apiKeyOrigin = targetProfile.apiKeyOrigin;
+                else delete task.apiKeyOrigin;
+                if (Object.prototype.hasOwnProperty.call(DEFAULT_SETTINGS[kind] || {}, "region")) {
+                    task.region = targetProfile?.region ?? preset.region ?? "";
+                }
+                if (Object.prototype.hasOwnProperty.call(DEFAULT_SETTINGS[kind] || {}, "deeplPlan")) {
+                    task.deeplPlan = targetProfile?.deeplPlan ?? preset.deeplPlan ?? "free";
+                }
+                if (Object.prototype.hasOwnProperty.call(DEFAULT_SETTINGS[kind] || {}, "appId")) {
+                    task.appId = targetProfile?.appId ?? preset.appId ?? "";
+                }
+                if (Object.prototype.hasOwnProperty.call(DEFAULT_SETTINGS[kind] || {}, "secretKey")) {
+                    task.secretKey = targetProfile?.secretKey ?? preset.secretKey ?? "";
+                }
+                targetCredentialFields.forEach(field => {
+                    if (!field || defaultKeys.has(field)) return;
+                    task[field] = targetProfile?.[field] ?? preset[field] ?? "";
+                });
+                task.enableThinking = provider === "deepseek" ? Boolean(targetProfile?.enableThinking) : false;
+                task.apiStatus = { state: "untested", message: "" };
                 changed = true;
             }
             const sourceLanguage = this.plugin.normalizeSourceLanguage(this.plugin.settings[kind].sourceLanguage);
@@ -1175,16 +1233,25 @@ class SettingsStore {
     carryOverResetCredentials(previous, next) {
         const isObject = value => Boolean(value) && typeof value === "object" && !Array.isArray(value);
         const isFilled = value => typeof value === "string" && Boolean(value.trim());
-        const pickCredentials = source => {
+        const pickCredentials = (source, provider = "") => {
             const picked = {};
-            RESET_KEPT_CREDENTIAL_FIELDS.forEach(field => {
+            const extraAdapterFields = provider && this.plugin.providerLayer?.registry?.has?.(provider)
+                ? this.plugin.providerLayer.registry.getCredentialFields(provider)
+                : [];
+            const credentialFields = extraAdapterFields.length
+                ? [...new Set([...RESET_KEPT_CREDENTIAL_FIELDS, ...extraAdapterFields])]
+                : RESET_KEPT_CREDENTIAL_FIELDS;
+            const customSecretFields = extraAdapterFields.filter(field => !RESET_KEPT_CREDENTIAL_FIELDS.includes(field));
+            credentialFields.forEach(field => {
                 if (isFilled(source?.[field])) picked[field] = source[field];
             });
-            if (!RESET_SECRET_FIELDS.some(field => picked[field])) return picked;
+            const hasSecret = RESET_SECRET_FIELDS.some(field => picked[field])
+                || customSecretFields.some(field => picked[field]);
+            if (!hasSecret) return picked;
             // An empty or missing endpoint means the preset one, before and after the reset. An endpoint that
             // cannot be read leaves no known host to pair the secret with, so the secret is dropped instead.
             if (source.endpoint !== undefined && typeof source.endpoint !== "string") {
-                RESET_SECRET_FIELDS.forEach(field => delete picked[field]);
+                [...RESET_SECRET_FIELDS, ...customSecretFields].forEach(field => delete picked[field]);
                 return picked;
             }
             RESET_KEPT_CONNECTION_FIELDS.forEach(field => {
@@ -1200,14 +1267,14 @@ class SettingsStore {
             const profiles = {};
             Object.entries(isObject(before.providerProfiles) ? before.providerProfiles : {}).forEach(([provider, profile]) => {
                 if (!isObject(profile)) return;
-                const kept = pickCredentials(profile);
+                const kept = pickCredentials(profile, provider);
                 if (Object.keys(kept).length) profiles[provider] = kept;
             });
             // The active provider's stored profile is only as new as the last switch away from it; its live
             // fields are what the user sees, and a field cleared there stays cleared.
             const activeProvider = String(before.provider || "").trim();
             if (activeProvider) {
-                const live = pickCredentials(before);
+                const live = pickCredentials(before, activeProvider);
                 if (Object.keys(live).length) profiles[activeProvider] = live;
                 else delete profiles[activeProvider];
             }
@@ -1313,6 +1380,10 @@ class SettingsStore {
         const previousProvider = this.plugin.normalizeProviderForTask(kind, this.plugin.settings[kind].provider);
         if (previousProvider && previousProvider !== nextProvider) {
             this.plugin.saveTaskProviderProfile(kind, previousProvider);
+            const prevCredentials = this.plugin.providerLayer?.registry?.getCredentialFields?.(previousProvider) || [];
+            prevCredentials.forEach(field => {
+                if (field && !PROVIDER_PROFILE_FIELDS.includes(field)) delete this.plugin.settings[kind][field];
+            });
         }
         this.plugin.settings[kind].provider = nextProvider;
         this.plugin.applyProviderPreset(kind, nextProvider, { restoreProfile: true, save: false, syncControls: false, invalidate: false });

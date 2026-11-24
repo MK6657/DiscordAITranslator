@@ -151,9 +151,15 @@ test("stop() aborts in-flight apiTestRuns and modelDetectionRuns, clears running
         const plugin = new Plugin();
         const apiController = new AbortController();
         const detectController = new AbortController();
-        plugin.providerLayer.apiTestRuns = new Map([["translation", { sequence: 1, controller: apiController }]]);
-        plugin.providerLayer.runningApiTests.set("translation", 1);
-        plugin.modelDetectionRuns = new Map([["translation", { sequence: 1, controller: detectController }]]);
+        const fakeButton = { disabled: true };
+        plugin.providerLayer.apiTestRuns = new Map([["translation", { sequence: 3, controller: apiController, button: fakeButton }]]);
+        plugin.providerLayer.runningApiTests.set("translation", 3);
+        plugin.modelDetectionRuns = new Map([["translation", { sequence: 2, controller: detectController, button: fakeButton }]]);
+
+        const autoAbortSignal = plugin.getAutoTranslationAbortSignal();
+        plugin.rememberAutoTranslationPartialResult("partial-key", "hello world", "你好", {
+            partialInfo: { missingSegments: [2], totalSegments: 2 }
+        });
 
         let statusEvents = 0;
         plugin.events.on("api:status", () => { statusEvents++; });
@@ -161,7 +167,14 @@ test("stop() aborts in-flight apiTestRuns and modelDetectionRuns, clears running
         plugin.stop();
         assert.equal(apiController.signal.aborted, true);
         assert.equal(detectController.signal.aborted, true);
+        assert.equal(plugin.providerLayer.apiTestRuns.get("translation")?.sequence, 3);
+        assert.equal(plugin.providerLayer.apiTestRuns.get("translation")?.button, undefined);
+        assert.equal(plugin.modelDetectionRuns.get("translation")?.sequence, 2);
+        assert.equal(plugin.modelDetectionRuns.get("translation")?.button, undefined);
         assert.equal(plugin.isApiTestRunning("translation"), false);
+        assert.equal(autoAbortSignal.aborted, true);
+        assert.equal(plugin.autoTranslationAbortController, null);
+        assert.equal(plugin.autoTranslationPartialResults.size, 0);
 
         // Domain event bus subscriptions remain active after a stop() cycle.
         plugin.setApiRuntimeStatus("translation", "success", "OK");
@@ -170,6 +183,66 @@ test("stop() aborts in-flight apiTestRuns and modelDetectionRuns, clears running
         plugin.quickPanel?.destroy?.("test");
     }
     finally {
+        restore();
+    }
+});
+
+test("settingsUi.scope and composerUi.scope remain live across start(), stop(), and restart cycles", async () => {
+    const { installChatGlobals } = require("../fixtures/chat-harness");
+    const { restore } = installChatGlobals({});
+    const prevMutationObserver = globalThis.MutationObserver;
+    const prevBdApi = globalThis.BdApi;
+    globalThis.MutationObserver = class {
+        observe() {}
+        disconnect() {}
+    };
+    globalThis.BdApi = {
+        Data: { load() { return null; }, save() {} },
+        DOM: { addStyle() {}, removeStyle() {} },
+        UI: { showToast() {} }
+    };
+    try {
+        const plugin = new Plugin();
+        assert.equal(plugin.settingsUi.scope.disposed, false);
+        assert.equal(plugin.composerUi.scope.disposed, false);
+
+        plugin.start();
+        const settingsScopeAfterStart = plugin.settingsUi.scope;
+        const composerScopeAfterStart = plugin.composerUi.scope;
+        assert.equal(settingsScopeAfterStart.disposed, false);
+        assert.equal(composerScopeAfterStart.disposed, false);
+        assert.equal(plugin.runtimeScope.children.has(settingsScopeAfterStart), true);
+        assert.equal(plugin.runtimeScope.children.has(composerScopeAfterStart), true);
+
+        let settingsTimerFired = false;
+        let composerCleanupRan = false;
+        settingsScopeAfterStart.setTimeout(() => { settingsTimerFired = true; }, 5);
+        composerScopeAfterStart.add(() => { composerCleanupRan = true; });
+        await new Promise(resolve => setTimeout(resolve, 25));
+        assert.equal(settingsTimerFired, true);
+
+        // stop() disposes child scopes and runs their cleanups.
+        let pendingTimerFired = false;
+        settingsScopeAfterStart.setTimeout(() => { pendingTimerFired = true; }, 20);
+        plugin.stop();
+        assert.equal(composerCleanupRan, true);
+        assert.equal(plugin.settingsUi.scope.disposed, true);
+        assert.equal(plugin.composerUi.scope.disposed, true);
+        await new Promise(resolve => setTimeout(resolve, 35));
+        assert.equal(pendingTimerFired, false);
+
+        // Restarting produces fresh live child scopes again.
+        plugin.start();
+        assert.equal(plugin.settingsUi.scope.disposed, false);
+        assert.equal(plugin.composerUi.scope.disposed, false);
+        assert.notEqual(plugin.settingsUi.scope, settingsScopeAfterStart);
+        plugin.stop();
+    }
+    finally {
+        if (prevMutationObserver === undefined) delete globalThis.MutationObserver;
+        else globalThis.MutationObserver = prevMutationObserver;
+        if (prevBdApi === undefined) delete globalThis.BdApi;
+        else globalThis.BdApi = prevBdApi;
         restore();
     }
 });

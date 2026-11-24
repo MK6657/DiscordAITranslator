@@ -792,10 +792,14 @@ const methods = {
 
     handleKeydown(event) {
         if (!this.plugin.isStarted || event.repeat) return;
-        if (event.target?.closest?.(".dait-settings")) return;
         if (!this.plugin.settings.ui.enablePolishHotkey) return;
         // Polish switched off: the shortcut is not ours, so the key goes to Discord untouched.
         if (!this.plugin.settings.polish?.enabled) return;
+        // Allowed shortcuts always require Ctrl/Alt/Meta (or Shift+F1..F12); short-circuit ordinary typing
+        // before running DOM closest() or parsing hotkey strings.
+        if (!event?.ctrlKey && !event?.altKey && !event?.metaKey
+            && !(event?.shiftKey && /^F\d{1,2}$/.test(String(event?.key || "")))) return;
+        if (event.target?.closest?.(".dait-settings")) return;
         if (!this.isAllowedPolishHotkey(this.plugin.settings.ui.polishHotkey || DEFAULT_SETTINGS.ui.polishHotkey)) return;
         if (!this.isHotkeyEvent(event, this.plugin.settings.ui.polishHotkey)) return;
 

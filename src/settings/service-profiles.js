@@ -4,7 +4,6 @@ const { attachControllerMethods } = require("../core/delegate-methods");
 const { SETTINGS_TAB_COMPOSE, SETTINGS_TAB_TRANSLATE } = require("./settings-schema");
 const {
     PLUGIN_NAME,
-    PROVIDER_DEFAULTS,
     PROVIDER_PROFILE_FIELDS,
     MAX_SAVED_SERVICE_CONFIGS,
     DEEPSEEK_MODELS,
@@ -353,6 +352,13 @@ const methods = {
         return this.plugin.getProviderDefaults(normalized)?.label || normalized || "";
     },
 
+    getProviderProfileFields(provider) {
+        const fields = new Set(PROVIDER_PROFILE_FIELDS);
+        const credentialFields = this.plugin.providerLayer?.registry?.getCredentialFields?.(provider) || [];
+        credentialFields.forEach(field => { if (field) fields.add(field); });
+        return [...fields];
+    },
+
     saveTaskProviderProfile(kind, provider) {
         const task = this.plugin.settings[kind];
         if (!task || !provider) return;
@@ -361,7 +367,7 @@ const methods = {
         }
         const existing = task.providerProfiles[provider] || {};
         const profile = { ...existing };
-        PROVIDER_PROFILE_FIELDS.forEach(field => {
+        this.getProviderProfileFields(provider).forEach(field => {
             if (task[field] !== undefined) profile[field] = task[field];
         });
         if (typeof task.apiKeyOrigin === "string") profile.apiKeyOrigin = task.apiKeyOrigin;
@@ -415,9 +421,9 @@ const methods = {
     normalizeSavedServiceConfigEntry(entry) {
         if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
         const provider = String(entry.provider || "").trim();
-        if (!provider || !PROVIDER_DEFAULTS[provider]) return null;
+        const preset = provider ? this.plugin.getProviderDefaults(provider) : null;
+        if (!provider || !preset) return null;
         if (entry.endpoint !== undefined && typeof entry.endpoint !== "string") return null;
-        const preset = PROVIDER_DEFAULTS[provider] || {};
         const endpoint = String(entry.endpoint !== undefined ? entry.endpoint : (preset.endpoint || "")).trim();
         const model = String(entry.model !== undefined ? entry.model : (preset.model || "")).trim();
         const apiKey = typeof entry.apiKey === "string" ? entry.apiKey : "";
@@ -430,7 +436,7 @@ const methods = {
         const latencyMs = Number(entry.latencyMs);
         const reportedModel = this.getDiagnosticModelLabel(entry.reportedModel || "");
         const id = String(entry.id || "").trim() || `svc-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-        return {
+        const normalized = {
             id,
             provider,
             apiKey,
@@ -445,6 +451,12 @@ const methods = {
             latencyMs: Number.isFinite(latencyMs) && latencyMs >= 0 ? Math.round(latencyMs) : null,
             reportedModel
         };
+        const credentialFields = this.plugin.providerLayer?.registry?.getCredentialFields?.(provider) || [];
+        credentialFields.forEach(field => {
+            if (!field || Object.prototype.hasOwnProperty.call(normalized, field)) return;
+            if (typeof entry[field] === "string") normalized[field] = entry[field];
+        });
+        return normalized;
     },
 
     normalizeSavedServiceConfigs(list) {
@@ -470,8 +482,8 @@ const methods = {
 
     getServiceConfigIdentityKey(config) {
         const provider = String(config?.provider || "").trim();
-        if (!provider || !PROVIDER_DEFAULTS[provider]) return "";
-        const preset = PROVIDER_DEFAULTS[provider] || {};
+        const preset = provider ? this.plugin.getProviderDefaults(provider) : null;
+        if (!provider || !preset) return "";
         const chatCompletion = this.isChatCompletionProvider(provider);
         const endpoint = String(config?.endpoint || "").trim();
         const deeplPlan = provider === "deepl" ? this.plugin.normalizeDeepLPlan(config?.deeplPlan) : "";
@@ -506,7 +518,7 @@ const methods = {
             const modelName = this.getDiagnosticModelLabel(config?.model || config?.reportedModel || "");
             if (modelName) parts.push(modelName);
             const rawEndpoint = String(config?.endpoint || "").trim();
-            const defaultEndpoint = String(PROVIDER_DEFAULTS[provider]?.endpoint || "").trim();
+            const defaultEndpoint = String(this.plugin.getProviderDefaults(provider)?.endpoint || "").trim();
             try {
                 const host = rawEndpoint ? new URL(rawEndpoint).host : "";
                 const defaultHost = defaultEndpoint ? new URL(defaultEndpoint).host : "";
@@ -569,7 +581,7 @@ const methods = {
     saveVerifiedServiceConfig(kind, configOverride = null, options = {}) {
         const source = configOverride || this.plugin.settings?.[kind];
         if (!source || !this.plugin.hasUsableApiConfig(kind, source)) return { entry: null, syncedTo: "" };
-        const entry = this.normalizeSavedServiceConfigEntry({
+        const rawEntry = {
             provider: source.provider,
             apiKey: source.apiKey,
             endpoint: source.endpoint,
@@ -582,7 +594,13 @@ const methods = {
             verifiedAt: Date.now(),
             latencyMs: options.latencyMs,
             reportedModel: options.model
+        };
+        const credentialFields = this.plugin.providerLayer?.registry?.getCredentialFields?.(source.provider) || [];
+        credentialFields.forEach(field => {
+            if (!field || Object.prototype.hasOwnProperty.call(rawEntry, field)) return;
+            if (typeof source[field] === "string") rawEntry[field] = source[field];
         });
+        const entry = this.normalizeSavedServiceConfigEntry(rawEntry);
         if (!entry) return { entry: null, syncedTo: "" };
         if (!Array.isArray(this.plugin.settings.serviceConfigs)) this.plugin.settings.serviceConfigs = [];
         const identity = this.getServiceConfigIdentityKey(entry);
@@ -663,8 +681,12 @@ const methods = {
         const previousProvider = this.normalizeProviderForTask(kind, task.provider);
         if (previousProvider && previousProvider !== entry.provider) {
             this.saveTaskProviderProfile(kind, previousProvider);
+            const prevCredentials = this.plugin.providerLayer?.registry?.getCredentialFields?.(previousProvider) || [];
+            prevCredentials.forEach(field => {
+                if (field && !PROVIDER_PROFILE_FIELDS.includes(field)) delete task[field];
+            });
         }
-        const preset = PROVIDER_DEFAULTS[entry.provider] || {};
+        const preset = this.plugin.getProviderDefaults(entry.provider) || {};
         task.provider = entry.provider;
         task.apiKey = entry.apiKey || "";
         task.endpoint = entry.endpoint || preset.endpoint || "";
@@ -678,6 +700,11 @@ const methods = {
             task.secretKey = entry.secretKey || "";
             this.plugin.applyProviderIntakeMode(entry.provider);
         }
+        const savedCredentialFields = this.plugin.providerLayer?.registry?.getCredentialFields?.(entry.provider) || [];
+        savedCredentialFields.forEach(field => {
+            if (!field || PROVIDER_PROFILE_FIELDS.includes(field)) return;
+            task[field] = typeof entry[field] === "string" ? entry[field] : (preset[field] ?? "");
+        });
         this.saveTaskProviderProfile(kind, entry.provider);
         if (task.model) this.rememberTaskProviderModel(kind, entry.provider, task.model);
         task.apiStatus = { state: "success", message: "" };
@@ -733,13 +760,18 @@ const methods = {
         if (previousTargetProvider && previousTargetProvider !== provider) {
             this.saveTaskProviderProfile(toKind, previousTargetProvider);
         }
-        const preset = PROVIDER_DEFAULTS[provider] || {};
+        const preset = this.plugin.getProviderDefaults(provider) || {};
         toTask.provider = provider;
         toTask.apiKey = fromTask.apiKey || "";
         toTask.endpoint = fromTask.endpoint || preset.endpoint || "";
         toTask.apiKeyOrigin = fromTask.apiKeyOrigin;
         toTask.model = fromTask.model || preset.model || "";
         toTask.enableThinking = provider === "deepseek" ? Boolean(fromTask.enableThinking) : false;
+        const syncCredentialFields = this.plugin.providerLayer?.registry?.getCredentialFields?.(provider) || [];
+        syncCredentialFields.forEach(field => {
+            if (!field || PROVIDER_PROFILE_FIELDS.includes(field)) return;
+            toTask[field] = typeof fromTask[field] === "string" ? fromTask[field] : "";
+        });
         this.saveTaskProviderProfile(toKind, provider);
         if (toTask.model) this.rememberTaskProviderModel(toKind, provider, toTask.model);
         if (toKind === "translation") this.plugin.applyProviderIntakeMode(provider);
@@ -786,11 +818,11 @@ const methods = {
     },
 
     applyProviderPreset(kind, provider, options = {}) {
-        const preset = PROVIDER_DEFAULTS[provider];
+        const preset = this.plugin.getProviderDefaults(provider);
         if (!preset || !this.plugin.settings[kind]) return;
         const profile = options.restoreProfile ? this.plugin.getTaskProviderProfile(kind, provider) : null;
-        this.plugin.settings[kind].endpoint = profile?.endpoint ?? preset.endpoint;
-        this.plugin.settings[kind].model = profile?.model ?? preset.model;
+        this.plugin.settings[kind].endpoint = profile?.endpoint ?? preset.endpoint ?? "";
+        this.plugin.settings[kind].model = profile?.model ?? preset.model ?? "";
         this.plugin.settings[kind].region = profile?.region ?? preset.region ?? "";
         this.plugin.settings[kind].deeplPlan = profile?.deeplPlan ?? preset.deeplPlan ?? "free";
         this.plugin.settings[kind].appId = profile?.appId ?? preset.appId ?? "";
@@ -799,6 +831,11 @@ const methods = {
             this.plugin.settings[kind].apiKey = profile?.apiKey ?? "";
             this.plugin.settings[kind].apiKeyOrigin = profile?.apiKeyOrigin;
             this.plugin.settings[kind].enableThinking = typeof profile?.enableThinking === "boolean" ? profile.enableThinking : false;
+            const credentialFields = this.plugin.providerLayer?.registry?.getCredentialFields?.(provider) || [];
+            credentialFields.forEach(field => {
+                if (!field || PROVIDER_PROFILE_FIELDS.includes(field)) return;
+                this.plugin.settings[kind][field] = profile?.[field] ?? preset[field] ?? "";
+            });
         }
         if (options.save !== false) this.plugin.saveSettings();
         if (options.syncControls !== false) {
@@ -829,7 +866,8 @@ const methods = {
     },
 
     isProviderApiKeyOptional(provider) {
-        return this.plugin.getProviderDefaults(provider)?.apiKeyOptional === true;
+        return this.plugin.providerLayer?.registry?.isApiKeyOptional?.(provider) === true
+            || this.plugin.getProviderDefaults(provider)?.apiKeyOptional === true;
     },
 
     inferDiagnosticStageFromAction(action = "", status = "", meta = {}) {

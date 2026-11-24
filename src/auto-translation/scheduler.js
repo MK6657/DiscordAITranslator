@@ -27,20 +27,20 @@ class TranslationScheduler {
         return this.isLongText(item?.text || "");
     }
 
-    getQueueType(item = {}) {
+    getQueueType(item = {}, context = null, options = {}) {
         if (!item) return "";
         if (item.daitManualRequest) return AUTO_TRANSLATION_QUEUE_TYPES.MANUAL;
         if (item.daitHistoryRequest) return AUTO_TRANSLATION_QUEUE_TYPES.HISTORY;
         if (item.daitPrefetchRequest) return AUTO_TRANSLATION_QUEUE_TYPES.PREFETCH;
         if (Number.isFinite(Number(item.priority)) && Number(item.priority) >= AUTO_TRANSLATE_PREFETCH_PRIORITY_BASE) return AUTO_TRANSLATION_QUEUE_TYPES.PREFETCH;
-        if (item.messageNode && item.content && this.isPrefetchItem(item)) return AUTO_TRANSLATION_QUEUE_TYPES.PREFETCH;
+        if (!options?.skipDomCheck && item.messageNode && item.content && this.isPrefetchItem(item, context)) return AUTO_TRANSLATION_QUEUE_TYPES.PREFETCH;
         if (this.isLongItem(item)) return AUTO_TRANSLATION_QUEUE_TYPES.LONG_TEXT;
         if (item.messageNode && item.content) return AUTO_TRANSLATION_QUEUE_TYPES.VISIBLE;
         return "";
     }
 
-    getQueueTypeRank(item = {}, queueType = null) {
-        const type = queueType === null || queueType === undefined ? this.getQueueType(item) : queueType;
+    getQueueTypeRank(item = {}, queueType = null, context = null) {
+        const type = queueType === null || queueType === undefined ? this.getQueueType(item, context) : queueType;
         if (type === AUTO_TRANSLATION_QUEUE_TYPES.MANUAL) return 0;
         if (type === AUTO_TRANSLATION_QUEUE_TYPES.VISIBLE) return 10;
         if (type === AUTO_TRANSLATION_QUEUE_TYPES.LONG_TEXT) return 20;
@@ -57,18 +57,21 @@ class TranslationScheduler {
             && this.plugin.autoTranslationInFlight < Math.max(0, total - 1);
     }
 
-    isPrefetchBatch(batch) {
-        return Array.isArray(batch) && batch.length > 0 && batch.every(item => this.isPrefetchItem(item));
+    isPrefetchBatch(batch, context = null) {
+        return Array.isArray(batch) && batch.length > 0 && batch.every(item => this.isPrefetchItem(item, context));
     }
 
-    isPrefetchItem(item) {
-        return !this.isVisibleItem(item);
+    isPrefetchItem(item, context = null) {
+        return !this.isVisibleItem(item, context);
     }
 
-    isVisibleItem(item) {
+    isVisibleItem(item, context = null) {
         if (!item?.messageNode?.isConnected || !item?.content?.isConnected) return false;
-        if (!this.plugin.isElementVisibleInViewport(item.content)) return false;
-        return this.plugin.isElementVisibleInViewport(item.messageNode)
+        const isVisible = context
+            ? element => this.plugin.isElementVisibleInViewportCached(element, context)
+            : element => this.plugin.isElementVisibleInViewport(element);
+        if (!isVisible(item.content)) return false;
+        return isVisible(item.messageNode)
             || this.plugin.isAutoTranslationContentInsideMessage(item);
     }
 
@@ -180,13 +183,14 @@ class TranslationScheduler {
         return true;
     }
 
-    sortQueue(queue = []) {
+    sortQueue(queue = [], context = null) {
         if (!Array.isArray(queue) || queue.length < 2) return;
+        const layoutContext = context || this.plugin.createAutoTranslationLayoutContext?.() || null;
         // Rank resolution can hit the DOM (viewport visibility); compute it once per item
-        // instead of on every comparison so a sort does O(n) rect reads, not O(n log n).
+        // with a shared layout context so shared ancestors are only measured once.
         const ranks = new Map();
         for (const item of queue) {
-            if (!ranks.has(item)) ranks.set(item, this.getQueueTypeRank(item));
+            if (!ranks.has(item)) ranks.set(item, this.getQueueTypeRank(item, null, layoutContext));
         }
         queue.sort((left, right) => {
             const typeDelta = ranks.get(left) - ranks.get(right);

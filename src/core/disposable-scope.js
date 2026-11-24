@@ -42,9 +42,10 @@ class DisposableScope {
      * Schedules a timeout that auto-clears on dispose.
      * @param {() => void} fn
      * @param {number} delayMs
+     * @param {{ unref?: boolean }} [options]
      * @returns {() => void}
      */
-    setTimeout(fn, delayMs) {
+    setTimeout(fn, delayMs, options = {}) {
         if (this.disposed || typeof fn !== "function") return () => {};
         let timer = null;
         const release = this.add(() => {
@@ -58,6 +59,9 @@ class DisposableScope {
             this.cleanups.delete(release);
             if (!this.disposed) fn();
         }, delayMs);
+        if (options?.unref) {
+            try { /** @type {any} */ (timer)?.unref?.(); } catch { /* ignore */ }
+        }
         return release;
     }
 
@@ -65,13 +69,17 @@ class DisposableScope {
      * Schedules an interval that auto-clears on dispose.
      * @param {() => void} fn
      * @param {number} intervalMs
+     * @param {{ unref?: boolean }} [options]
      * @returns {() => void}
      */
-    setInterval(fn, intervalMs) {
+    setInterval(fn, intervalMs, options = {}) {
         if (this.disposed || typeof fn !== "function") return () => {};
         let timer = setInterval(() => {
             if (!this.disposed) fn();
         }, intervalMs);
+        if (options?.unref) {
+            try { /** @type {any} */ (timer)?.unref?.(); } catch { /* ignore */ }
+        }
         return this.add(() => {
             if (timer !== null) {
                 clearInterval(timer);

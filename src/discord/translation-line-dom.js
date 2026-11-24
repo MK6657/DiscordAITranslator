@@ -42,9 +42,10 @@ const methods = {
             : String(value || "").split(/[\s,;|]+/);
         const seen = new Set();
         const order = [];
+        const registry = this.plugin.providerLayer?.registry;
         raw.forEach(provider => {
             const normalized = String(provider || "").trim();
-            if (!PROVIDER_ORDER.includes(normalized) || seen.has(normalized)) return;
+            if (!(registry?.has?.(normalized) || PROVIDER_ORDER.includes(normalized)) || seen.has(normalized)) return;
             seen.add(normalized);
             order.push(normalized);
         });
@@ -878,17 +879,21 @@ const methods = {
                 this.plugin.syncTranslationSourceVisibility(line, content, sourceText);
                 return;
             }
-            const currentIdentityKey = this.getCurrentTranslationIdentityFingerprint(line, content, textOptions, sourceText);
-            const currentIdentitySig = this.getCurrentTranslationIdentitySignature(line, content, textOptions, sourceText);
-            if (line.dataset.daitIdentitySig && currentIdentitySig && line.dataset.daitIdentitySig !== currentIdentitySig) {
-                this.plugin.restoreTranslationSourceVisibility(content);
-                line.remove();
-                return;
+            if (line.dataset.daitIdentitySig) {
+                const currentIdentitySig = this.getCurrentTranslationIdentitySignature(line, content, textOptions, sourceText);
+                if (currentIdentitySig && line.dataset.daitIdentitySig !== currentIdentitySig) {
+                    this.plugin.restoreTranslationSourceVisibility(content);
+                    line.remove();
+                    return;
+                }
             }
-            if (!line.dataset.daitIdentitySig && line.dataset.daitIdentityKey && currentIdentityKey && line.dataset.daitIdentityKey !== currentIdentityKey) {
-                this.plugin.restoreTranslationSourceVisibility(content);
-                line.remove();
-                return;
+            else if (line.dataset.daitIdentityKey) {
+                const currentIdentityKey = this.getCurrentTranslationIdentityFingerprint(line, content, textOptions, sourceText);
+                if (currentIdentityKey && line.dataset.daitIdentityKey !== currentIdentityKey) {
+                    this.plugin.restoreTranslationSourceVisibility(content);
+                    line.remove();
+                    return;
+                }
             }
             if (isAutoLine && this.isStaleAutoTranslationLoadingLine(line)) {
                 if (preserveAutoLines) return;
@@ -1257,7 +1262,10 @@ const methods = {
     },
 
     renderTranslation(messageNode, content, translatedText, cacheKey = "", sourceText = null, renderOptions = {}) {
-        const scrollOptions = { allowScrollCorrectionWhilePaused: Boolean(renderOptions?.allowScrollCorrectionWhilePaused) };
+        const scrollOptions = {
+            allowScrollCorrectionWhilePaused: Boolean(renderOptions?.allowScrollCorrectionWhilePaused),
+            ...(renderOptions?.anchorRect ? { anchorRect: renderOptions.anchorRect } : {})
+        };
         return this.plugin.withTranslationScrollStability(content, () => {
             const line = this.plugin.ensureTranslationNode(messageNode, content);
             line.classList.remove("dait-translation-error", "dait-translation-loading", "dait-translation-masked", "dait-translation-revealed");

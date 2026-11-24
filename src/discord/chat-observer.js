@@ -17,12 +17,17 @@ const {
     MUTATION_DIRTY_SCAN_MAX_ROOTS,
     MUTATION_DIRTY_SCAN_MAX_MESSAGES,
     INCREMENTAL_MESSAGE_WORK_BUDGET_MS,
-    INCREMENTAL_MESSAGE_WORK_MAX_PER_SLICE
+    INCREMENTAL_MESSAGE_WORK_MAX_PER_SLICE,
+    INCREMENTAL_MESSAGE_WORK_AUTO_MAX_PER_SLICE
 } = require("../constants");
+
+const LIFECYCLE_OUTSIDE_IGNORE_SELECTOR = "[class*='membersWrap'], [class*='members_'], [class*='guilds'], [class*='privateChannels'], [class*='emojiPicker'], [class*='expressionPicker'], [class*='stickerPicker'], [class*='gifPicker'], [class*='tooltip']";
+const OBSERVER_ROOT_LEAF_TAGS = new Set(["IMG", "SVG", "PATH", "BR", "HR", "INPUT", "TIME", "CANVAS", "VIDEO", "PICTURE", "SOURCE", "SPAN", "BUTTON", "A", "I", "EM", "STRONG", "CODE", "LABEL"]);
 
 class DiscordChatObserverController {
     constructor(plugin) {
         this.plugin = plugin;
+        this._mutationBatchCache = null;
     }
 }
 
@@ -51,10 +56,21 @@ const methods = {
 
     isInsideDiscordSettingsSurface(element) {
         if (!element || element.nodeType !== 1) return false;
-        if (this.isOwnPluginElement(element)) return false;
-        if (this.isDiscordSettingsSurfaceElement(element)) return true;
-        const surface = element.closest?.(DISCORD_SETTINGS_SURFACE_SELECTOR);
-        return Boolean(surface && this.isDiscordSettingsSurfaceElement(surface));
+        const cache = this._mutationBatchCache?.settingsSurfaceByElement;
+        if (cache?.has(element)) return cache.get(element);
+        let inside = false;
+        if (!this.isOwnPluginElement(element)) {
+            const surface = element.matches?.(DISCORD_SETTINGS_SURFACE_SELECTOR)
+                ? element
+                : element.closest?.(DISCORD_SETTINGS_SURFACE_SELECTOR);
+            if (surface && !surface.hidden && surface.getAttribute?.("aria-hidden") !== "true"
+                && !surface.closest?.(".dait-quick-settings-modal-root, .dait-settings")) {
+                const rect = surface.getBoundingClientRect?.();
+                inside = !rect || (Number(rect.width || 0) > 0 && Number(rect.height || 0) > 0);
+            }
+        }
+        cache?.set(element, inside);
+        return inside;
     },
 
     isDiscordSettingsSurfaceElement(element) {
@@ -62,6 +78,7 @@ const methods = {
         if (this.isOwnPluginElement(element)) return false;
         const matchesSurface = Boolean(element.matches?.(DISCORD_SETTINGS_SURFACE_SELECTOR) || element.closest?.(DISCORD_SETTINGS_SURFACE_SELECTOR));
         if (!matchesSurface) return false;
+        if (element.hidden || element.getAttribute?.("aria-hidden") === "true") return false;
         if (element.closest?.(".dait-quick-settings-modal-root, .dait-settings")) return false;
         const rect = element.getBoundingClientRect?.();
         if (!rect) return true;
@@ -124,48 +141,60 @@ const methods = {
 
     handleDiscordObservedMutations(mutations = []) {
         if (!this.plugin.isStarted) return;
-        if (this.plugin.observerRoot === document.body && this.hasPotentialDiscordObserverRootMutation(mutations)) {
-            const nextRoot = this.getDiscordChatMutationObserverRoot();
-            if (nextRoot && nextRoot !== document.body) this.plugin.scheduleDiscordObserverRebind("chat-root-available");
+        const previousBatchCache = this._mutationBatchCache;
+        this._mutationBatchCache = {
+            mediaViewerByMutation: new Map(),
+            mediaOnlyByMutation: new Map(),
+            settingsSurfaceByElement: new Map()
+        };
+        try {
+            if (this.plugin.observerRoot === document.body && this.hasPotentialDiscordObserverRootMutation(mutations)) {
+                const nextRoot = this.getDiscordChatMutationObserverRoot();
+                if (nextRoot && nextRoot !== document.body) this.plugin.scheduleDiscordObserverRebind("chat-root-available");
+            }
+            if (this.plugin.isDiscordMediaViewerQuiet()) {
+                if (this.plugin.hasLightweightDiscordMediaViewerMutation(mutations)) this.enterDiscordMediaViewerQuietMode("quiet-mutation");
+                // Even while quiet, real content mutations (e.g. a message edited behind the
+                // media viewer) must drop cached element text, or stale-text guards compare
+                // stale-vs-stale after the viewer closes. Own-mutation filtering is skipped
+                // on purpose: renders are deferred while quiet, so plugin-caused mutations
+                // are rare and an occasional self-invalidation only re-extracts text once.
+                this.invalidateElementTextCacheForMutations(mutations);
+                return;
+            }
+            const externalMutations = [...(mutations || [])].filter(mutation => !this.plugin.isOwnMutation(mutation));
+            const strippedButtonRoots = this.collectStrippedMessageButtonRoots(mutations);
+            if (strippedButtonRoots.length) this.scheduleLightweightButtonRecovery(strippedButtonRoots);
+            if (!externalMutations.length) return;
+            this.invalidateElementTextCacheForMutations(externalMutations);
+            if (this.plugin.hasDiscordMediaViewerMutation(externalMutations)) {
+                this.enterDiscordMediaViewerQuietMode("mutation");
+                return;
+            }
+            if (this.hasDiscordThemeMutation(externalMutations)) this.plugin.refreshDiscordThemeClasses();
+            const inputMutations = this.getInputButtonRelevantMutations(externalMutations);
+            if (inputMutations.length) {
+                this.markInputComposerBusy();
+                this.plugin.queueInputButtonScan({ delayMs: 500, trailing: true });
+            }
+            const shouldProbeMediaViewer = Boolean(this.plugin.mediaViewerProbeOpen || this.plugin.hasLightweightDiscordMediaViewerMutation(externalMutations));
+            if ((shouldProbeMediaViewer && this.plugin.isDiscordMediaViewerOpen()) || this.areDiscordMediaViewerMutations(externalMutations)) {
+                this.enterDiscordMediaViewerQuietMode("open");
+                return;
+            }
+            const scanMutations = this.getScanRelevantMutations(externalMutations);
+            if (!scanMutations.length) return;
+            if (this.plugin.shouldInjectMessageButtons() && this.plugin.isAutoTranslationRenderPaused()) {
+                const addedMessageRoots = this.collectAddedMessageRootsForButtons(scanMutations);
+                if (addedMessageRoots.length) this.scheduleLightweightButtonRecovery(addedMessageRoots);
+            }
+            const largeMutation = this.hasLargeMessageMutation(scanMutations);
+            if (largeMutation) this.plugin.markAutoTranslationViewportBusy("mutation");
+            this.plugin.queueMutationScan(scanMutations, { largeMutation });
         }
-        if (this.plugin.isDiscordMediaViewerQuiet()) {
-            if (this.plugin.hasLightweightDiscordMediaViewerMutation(mutations)) this.enterDiscordMediaViewerQuietMode("quiet-mutation");
-            // Even while quiet, real content mutations (e.g. a message edited behind the
-            // media viewer) must drop cached element text, or stale-text guards compare
-            // stale-vs-stale after the viewer closes. Own-mutation filtering is skipped
-            // on purpose: renders are deferred while quiet, so plugin-caused mutations
-            // are rare and an occasional self-invalidation only re-extracts text once.
-            this.invalidateElementTextCacheForMutations(mutations);
-            return;
+        finally {
+            this._mutationBatchCache = previousBatchCache;
         }
-        const externalMutations = [...(mutations || [])].filter(mutation => !this.plugin.isOwnMutation(mutation));
-        const strippedButtonRoots = this.collectStrippedMessageButtonRoots(mutations);
-        if (strippedButtonRoots.length) this.scheduleLightweightButtonRecovery(strippedButtonRoots);
-        if (!externalMutations.length) return;
-        this.invalidateElementTextCacheForMutations(externalMutations);
-        if (this.plugin.hasDiscordMediaViewerMutation(externalMutations)) {
-            this.enterDiscordMediaViewerQuietMode("mutation");
-            return;
-        }
-        if (this.hasDiscordThemeMutation(externalMutations)) this.plugin.refreshDiscordThemeClasses();
-        const inputMutations = this.getInputButtonRelevantMutations(externalMutations);
-        if (inputMutations.length) {
-            this.markInputComposerBusy();
-            this.plugin.queueInputButtonScan({ delayMs: 500, trailing: true });
-        }
-        const shouldProbeMediaViewer = Boolean(this.plugin.mediaViewerProbeOpen || this.plugin.hasLightweightDiscordMediaViewerMutation(externalMutations));
-        if ((shouldProbeMediaViewer && this.plugin.isDiscordMediaViewerOpen()) || this.areDiscordMediaViewerMutations(externalMutations)) {
-            this.enterDiscordMediaViewerQuietMode("open");
-            return;
-        }
-        const scanMutations = this.getScanRelevantMutations(externalMutations);
-        if (!scanMutations.length) return;
-        if (this.plugin.shouldInjectMessageButtons() && this.plugin.isAutoTranslationRenderPaused()) {
-            const addedMessageRoots = this.collectAddedMessageRootsForButtons(scanMutations);
-            if (addedMessageRoots.length) this.scheduleLightweightButtonRecovery(addedMessageRoots);
-        }
-        if (this.hasLargeMessageMutation(scanMutations)) this.plugin.markAutoTranslationViewportBusy("mutation");
-        this.plugin.queueMutationScan(scanMutations);
     },
 
     startDiscordObserverLifecycle(observerRoot) {
@@ -182,9 +211,20 @@ const methods = {
                 this.plugin.scheduleDiscordObserverRebind("app-mount-detached");
                 return;
             }
+            const ignoredTargetCache = new Map();
+            const isIgnoredOutsideTarget = mutation => {
+                const raw = mutation?.target;
+                const target = raw?.nodeType === 3 ? raw.parentElement : raw;
+                if (!target || target.nodeType !== 1) return false;
+                if (ignoredTargetCache.has(target)) return ignoredTargetCache.get(target);
+                const ignored = Boolean(target.matches?.(LIFECYCLE_OUTSIDE_IGNORE_SELECTOR) || target.closest?.(LIFECYCLE_OUTSIDE_IGNORE_SELECTOR));
+                ignoredTargetCache.set(target, ignored);
+                return ignored;
+            };
             const outsideMutations = [...(mutations || [])].filter(mutation =>
                 !this.isMutationWithinDiscordObserverRoot(mutation, this.plugin.observerRoot)
-                && this.isMutationWithinDiscordObserverRoot(mutation, lifecycleRoot));
+                && this.isMutationWithinDiscordObserverRoot(mutation, lifecycleRoot)
+                && !isIgnoredOutsideTarget(mutation));
             if (!outsideMutations.length) return;
             if (this.hasPotentialDiscordObserverRootMutation(outsideMutations)) {
                 const nextRoot = this.getDiscordChatMutationObserverRoot();
@@ -227,6 +267,8 @@ const methods = {
             return [...(mutation.addedNodes || []), ...(mutation.removedNodes || [])].some(node => {
                 const element = node?.nodeType === 3 ? node.parentElement : node;
                 if (!element || element.nodeType !== 1) return false;
+                const tagName = String(element.tagName || "").toUpperCase();
+                if (tagName && OBSERVER_ROOT_LEAF_TAGS.has(tagName)) return false;
                 try {
                     return Boolean(element.matches?.(selectors) || element.querySelector?.(selectors));
                 }
@@ -356,16 +398,24 @@ const methods = {
     },
 
     isMediaOnlyMutation(mutation) {
+        const cache = this._mutationBatchCache?.mediaOnlyByMutation;
+        if (cache?.has(mutation)) return cache.get(mutation);
+        let result = false;
         const target = mutation?.target?.nodeType === 3 ? mutation.target.parentElement : mutation?.target;
-        if (this.plugin.isDiscordMessageElement(target)) return false;
-        if (this.isDiscordMediaViewerMutation(mutation)) return true;
-        if (mutation?.type === "attributes" || mutation?.type === "characterData") {
-            return this.plugin.isMediaOnlyMutationElement(target);
+        if (!this.plugin.isDiscordMessageElement(target)) {
+            if (this.isDiscordMediaViewerMutation(mutation)) result = true;
+            else if (mutation?.type === "attributes" || mutation?.type === "characterData") {
+                result = this.plugin.isMediaOnlyMutationElement(target);
+            }
+            else if (mutation?.type === "childList") {
+                const nodes = [...(mutation.addedNodes || []), ...(mutation.removedNodes || [])];
+                result = !nodes.length
+                    ? this.plugin.isMediaOnlyMutationElement(target)
+                    : nodes.every(node => this.isMediaOnlyMutationNode(node));
+            }
         }
-        if (mutation?.type !== "childList") return false;
-        const nodes = [...(mutation.addedNodes || []), ...(mutation.removedNodes || [])];
-        if (!nodes.length) return this.plugin.isMediaOnlyMutationElement(target);
-        return nodes.every(node => this.isMediaOnlyMutationNode(node));
+        cache?.set(mutation, result);
+        return result;
     },
 
     areDiscordMediaViewerMutations(mutations = []) {
@@ -377,11 +427,17 @@ const methods = {
     },
 
     isDiscordMediaViewerMutation(mutation) {
+        const cache = this._mutationBatchCache?.mediaViewerByMutation;
+        if (cache?.has(mutation)) return cache.get(mutation);
+        let result = false;
         const target = mutation?.target?.nodeType === 3 ? mutation.target.parentElement : mutation?.target;
-        if (this.isDiscordMediaViewerElement(target)) return true;
-        if (mutation?.type !== "childList") return false;
-        const nodes = [...(mutation.addedNodes || []), ...(mutation.removedNodes || [])];
-        return nodes.length > 0 && nodes.every(node => this.isDiscordMediaViewerMutationNode(node));
+        if (this.isDiscordMediaViewerElement(target)) result = true;
+        else if (mutation?.type === "childList") {
+            const nodes = [...(mutation.addedNodes || []), ...(mutation.removedNodes || [])];
+            result = nodes.length > 0 && nodes.every(node => this.isDiscordMediaViewerMutationNode(node));
+        }
+        cache?.set(mutation, result);
+        return result;
     },
 
     isDiscordMediaViewerMutationNode(node) {
@@ -779,6 +835,17 @@ const methods = {
         const type = String(event?.type || "");
         if (!["focus", "resize", "scroll", "visibilitychange"].includes(type)) return false;
         const target = event?.target?.nodeType === 3 ? event.target.parentElement : event?.target;
+        if (type === "scroll" && target?.nodeType === 1) {
+            const cached = this.plugin.autoQueueCore?.getCachedScrollRelevance?.(target);
+            if (cached) {
+                if (cached.mediaViewer) return true;
+                if (cached.relevant) return false;
+                if (!this.plugin.mediaViewerProbeOpen && Date.now() - Number(this.plugin.mediaViewerProbeAt || 0) >= DISCORD_MEDIA_VIEWER_PROBE_CACHE_MS) {
+                    return false;
+                }
+                return this.plugin.isDiscordMediaViewerOpen();
+            }
+        }
         if (target?.nodeType === 1 && (this.plugin.isInsideDiscordMediaViewer(target) || this.plugin.isMediaOnlyMutationElement(target))) return true;
         if (type === "scroll" && target?.nodeType === 1 && (scrollRelevant === null ? this.plugin.isAutoTranslationScrollEventRelevant(event) : scrollRelevant)) return false;
         if (type === "scroll" && !this.plugin.mediaViewerProbeOpen && Date.now() - Number(this.plugin.mediaViewerProbeAt || 0) >= DISCORD_MEDIA_VIEWER_PROBE_CACHE_MS) return false;
@@ -828,8 +895,11 @@ const methods = {
         return null;
     },
 
-    shouldUseDirtyMutationScan(mutations = [], roots = new Set()) {
-        if (!roots?.size || this.hasLargeMessageMutation(mutations)) return false;
+    shouldUseDirtyMutationScan(mutations = [], roots = new Set(), options = {}) {
+        const largeMutation = typeof options?.largeMutation === "boolean"
+            ? options.largeMutation
+            : this.hasLargeMessageMutation(mutations);
+        if (!roots?.size || largeMutation) return false;
         if (roots.size > MUTATION_DIRTY_SCAN_MAX_ROOTS) return false;
         let messageCount = 0;
         for (const root of roots) {
@@ -862,13 +932,39 @@ const methods = {
         return roots;
     },
 
-    queueMutationScan(scanMutations = []) {
-        this.plugin.cancelIncrementalMessageScan();
+    collectRemainingIncrementalDirtyRoots() {
+        if (!this.plugin.incrementalMessageScanPendingWork || !this.plugin.incrementalMessageScanDirtyOnly) return [];
+        if (typeof this.plugin.incrementalMessageScanRemainingGetter !== "function") return [];
+        if (this.plugin.getCurrentRouteKey() !== this.plugin.incrementalMessageScanRouteKey) return [];
+        if (Number(this.plugin.autoTranslationConfigVersion || 0) !== Number(this.plugin.incrementalMessageScanConfigVersion || 0)) return [];
+        try {
+            return (this.plugin.incrementalMessageScanRemainingGetter() || [])
+                .filter(node => node && node.isConnected !== false);
+        }
+        catch {
+            return [];
+        }
+    },
+
+    queueMutationScan(scanMutations = [], options = {}) {
+        const interruptedFullScan = Boolean(this.plugin.incrementalMessageScanPendingWork && !this.plugin.incrementalMessageScanDirtyOnly);
+        const remainingDirtyRoots = this.collectRemainingIncrementalDirtyRoots();
+        this.plugin.cancelIncrementalMessageScan({ drainQueued: true });
         // Discord mounts messages as the chat scrolls; draw their cached translations promptly.
         if (this.plugin.isAutoTranslationRenderPaused() || this.hasAddedMessageNodes(scanMutations)) this.plugin.scheduleCachedTranslationDrawPass();
         const roots = this.getMutationScanRoots(scanMutations);
-        const dirtyOnly = this.shouldUseDirtyMutationScan(scanMutations, roots);
-        if (dirtyOnly) this.rememberPendingMutationScanRoots([...roots]);
+        const combinedRoots = new Set();
+        for (const root of remainingDirtyRoots) {
+            if (root && root.isConnected !== false) combinedRoots.add(root);
+        }
+        for (const root of this.plugin.pendingMutationScanRoots || []) {
+            if (root && root.isConnected !== false) combinedRoots.add(root);
+        }
+        for (const root of roots) {
+            if (root && root.isConnected !== false) combinedRoots.add(root);
+        }
+        const dirtyOnly = !interruptedFullScan && this.shouldUseDirtyMutationScan(scanMutations, combinedRoots, options);
+        if (dirtyOnly) this.rememberPendingMutationScanRoots([...combinedRoots]);
         else this.plugin.pendingMutationScanRoots?.clear?.();
         const delay = Math.max(
             this.plugin.getAutoTranslationRenderPauseRemainingMs(),
@@ -1082,15 +1178,18 @@ const methods = {
         finishStage("inputMs");
         // Message buttons are ultra-lightweight and idempotent: inject them synchronously in one pass so rapid
         // incoming chat messages never cancel button injection halfway down the viewport (leaving stranded messages
-        // or flashing). Only heavy auto-translation scanning runs incrementally in idle slices.
+        // or flashing). Measure any missing visible buttons before writing dirty buttons to avoid forced reflow.
         if (this.plugin.shouldInjectMessageButtons()) {
-            this.plugin.injectMessageButtons(context);
             if (dirtyRoots.length) this.ensureMissingVisibleMessageButtons(context);
+            this.plugin.injectMessageButtons(context);
         }
         finishStage("buttonMs");
         const incremental = this.plugin.isAutoTranslateEnabled() && this.shouldUseIncrementalMessageScan(context);
         if (incremental) {
-            this.scheduleIncrementalMessageScan(context, { skipButtons: true });
+            this.scheduleIncrementalMessageScan(context, {
+                skipButtons: true,
+                maxPerSlice: INCREMENTAL_MESSAGE_WORK_AUTO_MAX_PER_SLICE
+            });
             finishStage("scheduleMs");
             scanStages.autoMs = 0;
         }
@@ -1253,6 +1352,7 @@ const methods = {
         const generation = this.plugin.incrementalMessageScanGeneration;
         const messageNodes = [...new Set(context?.messageNodes || [])];
         const skipButtons = Boolean(options?.skipButtons);
+        const maxPerSlice = Math.max(1, Number(options?.maxPerSlice) || INCREMENTAL_MESSAGE_WORK_MAX_PER_SLICE);
         const tasks = [];
         messageNodes.forEach(messageNode => {
             if (!skipButtons && this.plugin.shouldInjectMessageButtons()) tasks.push({ kind: "button", messageNode });
@@ -1262,6 +1362,14 @@ const methods = {
         let work = null;
         let initialized = false;
         let intakeEnhance = false;
+        this.plugin.incrementalMessageScanPendingWork = tasks.length > 0;
+        this.plugin.incrementalMessageScanDirtyOnly = Boolean(context?.dirtyOnly);
+        this.plugin.incrementalMessageScanHasQueuedDrainable = false;
+        this.plugin.incrementalMessageScanRouteKey = this.plugin.getCurrentRouteKey();
+        this.plugin.incrementalMessageScanConfigVersion = Number(this.plugin.autoTranslationConfigVersion || 0);
+        this.plugin.incrementalMessageScanRemainingGetter = tasks.length > 0
+            ? () => [...new Set(tasks.slice(index).map(task => task?.messageNode).filter(node => node && node.isConnected !== false))]
+            : null;
 
         const runSlice = deadline => {
             this.plugin.incrementalMessageScanIdleCallback = null;
@@ -1334,7 +1442,7 @@ const methods = {
                 processed++;
                 const elapsed = this.plugin.getDiagnosticTime() - sliceStartedAt;
                 const idleRemaining = typeof deadline?.timeRemaining === "function" ? deadline.timeRemaining() : 0;
-                if (processed >= INCREMENTAL_MESSAGE_WORK_MAX_PER_SLICE
+                if (processed >= maxPerSlice
                     || elapsed >= INCREMENTAL_MESSAGE_WORK_BUDGET_MS
                     || (processed > 0 && idleRemaining <= 1)) break;
             }
@@ -1347,11 +1455,25 @@ const methods = {
             if (work?.scanState?.enqueueSortPending) {
                 work.scanState.enqueueSortPending = false;
                 this.plugin.sortAutoTranslationQueue();
+                if (!work.scanState.apiWorkBlocked && this.plugin.autoTranslationQueue?.length) {
+                    this.plugin.incrementalMessageScanHasQueuedDrainable = true;
+                    const batchSize = Math.max(1, Number(this.plugin.getAutoTranslationRequestBatchSize(work.requestOptions)) || 1);
+                    if (this.plugin.autoTranslationQueue.length >= batchSize) {
+                        this.plugin.drainAutoTranslationQueue();
+                        this.plugin.incrementalMessageScanHasQueuedDrainable = Boolean(this.plugin.autoTranslationQueue?.length);
+                    }
+                }
             }
             if (index < tasks.length) {
                 this.plugin.scheduleIncrementalMessageScanCallback(runSlice);
                 return;
             }
+            this.plugin.incrementalMessageScanPendingWork = false;
+            this.plugin.incrementalMessageScanDirtyOnly = false;
+            this.plugin.incrementalMessageScanHasQueuedDrainable = false;
+            this.plugin.incrementalMessageScanRouteKey = "";
+            this.plugin.incrementalMessageScanConfigVersion = 0;
+            this.plugin.incrementalMessageScanRemainingGetter = null;
             if (work) {
                 const finishStartedAt = this.plugin.getDiagnosticTime();
                 this.plugin.finishAutoTranslationScanWork(work);
@@ -1374,8 +1496,20 @@ const methods = {
         this.plugin.unrefTimer(this.plugin.incrementalMessageScanTimer);
     },
 
-    cancelIncrementalMessageScan() {
+    cancelIncrementalMessageScan(options = {}) {
+        const shouldDrain = Boolean(
+            options?.drainQueued
+            && this.plugin.incrementalMessageScanHasQueuedDrainable
+            && this.plugin.isStarted
+            && this.plugin.autoTranslationQueue?.length
+        );
         this.plugin.incrementalMessageScanGeneration = Number(this.plugin.incrementalMessageScanGeneration || 0) + 1;
+        this.plugin.incrementalMessageScanPendingWork = false;
+        this.plugin.incrementalMessageScanDirtyOnly = false;
+        this.plugin.incrementalMessageScanHasQueuedDrainable = false;
+        this.plugin.incrementalMessageScanRouteKey = "";
+        this.plugin.incrementalMessageScanConfigVersion = 0;
+        this.plugin.incrementalMessageScanRemainingGetter = null;
         if (this.plugin.incrementalMessageScanIdleCallback !== null) {
             try { window.cancelIdleCallback?.(this.plugin.incrementalMessageScanIdleCallback); }
             catch {}
@@ -1383,6 +1517,12 @@ const methods = {
         if (this.plugin.incrementalMessageScanTimer) clearTimeout(this.plugin.incrementalMessageScanTimer);
         this.plugin.incrementalMessageScanIdleCallback = null;
         this.plugin.incrementalMessageScanTimer = null;
+        if (shouldDrain
+            && !this.plugin.isAutoTranslationRenderPaused()
+            && !this.plugin.isAutoTranslationViewportSettling()
+            && !this.plugin.isAutoTranslationJumpCoolingDown()) {
+            this.plugin.drainAutoTranslationQueue();
+        }
     },
 
     getCurrentRouteKey() {
@@ -1395,6 +1535,7 @@ const methods = {
         const context = {
             messageNodes: [],
             contentByMessage: new Map(),
+            contentCandidatesByMessage: new Map(),
             contentElementsByMessage: new Map(),
             textByElement: new Map(),
             replyTextByElement: new Map(),
@@ -1464,13 +1605,25 @@ const methods = {
 
     isMessageNodeVisibleForScan(messageNode, context = null) {
         if (this.plugin.isElementVisibleInViewportCached(messageNode, context)) return true;
-        return this.plugin.getMessageContentCandidates(messageNode)
+        // Only probe inner content candidates when the message row itself is collapsed (0x0 wrapper)
+        // or overlaps/touches the viewport edge; clearly off-screen non-empty rows cannot have visible children.
+        const rect = this.getCachedElementRect(messageNode, context);
+        if (rect && rect.width > 0 && rect.height > 0) {
+            const documentHeight = typeof document !== "undefined" ? Number(document.documentElement?.clientHeight || 0) : 0;
+            const documentWidth = typeof document !== "undefined" ? Number(document.documentElement?.clientWidth || 0) : 0;
+            const height = typeof window !== "undefined" ? Number(window.innerHeight || documentHeight || 0) : documentHeight;
+            const width = typeof window !== "undefined" ? Number(window.innerWidth || documentWidth || 0) : documentWidth;
+            if (height > 0 && width > 0 && (rect.bottom <= -24 || rect.top >= height + 24 || rect.right <= -24 || rect.left >= width + 24)) {
+                return false;
+            }
+        }
+        return this.plugin.getMessageContentCandidates(messageNode, context)
             .some(candidate => this.plugin.isElementVisibleInViewportCached(candidate, context));
     },
 
     isMessageNodeNearForScan(messageNode, context = null) {
         if (this.plugin.isElementNearViewport(messageNode, SCAN_VIEWPORT_BUFFER_PX, context)) return true;
-        return this.plugin.getMessageContentCandidates(messageNode)
+        return this.plugin.getMessageContentCandidates(messageNode, context)
             .some(candidate => this.plugin.isElementNearViewport(candidate, SCAN_VIEWPORT_BUFFER_PX, context));
     },
 
@@ -1493,7 +1646,11 @@ const methods = {
     isElementVisibleInViewportCached(element, context = null) {
         if (!context?.visibleByElement) return this.plugin.isElementVisibleInViewport(element);
         if (!context.visibleByElement.has(element)) {
-            context.visibleByElement.set(element, this.plugin.isElementVisibleForScan(element, this.getCachedElementRect(element, context), context));
+            const rect = this.getCachedElementRect(element, context);
+            const visible = context.useViewportVisibility
+                ? this.plugin.isElementVisibleInViewport(element, rect, context)
+                : this.plugin.isElementVisibleForScan(element, rect, context);
+            context.visibleByElement.set(element, visible);
         }
         return context.visibleByElement.get(element);
     },
@@ -1507,15 +1664,9 @@ const methods = {
         const height = typeof window !== "undefined" ? Number(window.innerHeight || documentHeight || 0) : documentHeight;
         const width = typeof window !== "undefined" ? Number(window.innerWidth || documentWidth || 0) : documentWidth;
         if (!(elementRect.bottom > 0 && elementRect.right > 0 && elementRect.top < height && elementRect.left < width)) return false;
-
-        let current = element;
-        let depth = 0;
-        while (current && current.nodeType === 1 && depth < 12) {
-            if (current.hidden || current.getAttribute?.("aria-hidden") === "true") return false;
-            current = current.parentElement;
-            depth++;
-        }
+        if (element.hidden || element.getAttribute?.("aria-hidden") === "true") return false;
         // Same clipping rule as the draw step, so a message behind the header or composer is not "visible".
+        // Ancestor hidden/aria-hidden and computed visibility/overflow are checked in one memoized walk.
         return this.plugin.isRectInsideScrollClips(element, elementRect, context, { checkHidden: true });
     },
 

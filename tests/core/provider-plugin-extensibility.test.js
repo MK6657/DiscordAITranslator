@@ -3,6 +3,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 const Plugin = require("../../src");
+const { createOpenAIChatAdapter } = require("../../src/providers/registry");
 
 test("M4 ProviderRegistry supports registering a custom 8th provider adapter without modifying core code", async () => {
     const plugin = new Plugin();
@@ -91,4 +92,102 @@ test("M4 ProviderRegistry supports registering a custom 8th provider adapter wit
 
     assert.equal(registry.unregister("mockCustom"), true);
     assert.equal(registry.has("mockCustom"), false);
+});
+
+test("ProviderRegistry isolates shared responseParser keys, prioritizes provider adapter, and wires custom chat capabilities", async () => {
+    const plugin = new Plugin();
+    const registry = plugin.providerLayer.registry;
+
+    // Canonical default chatCompletion parser stays bound to deepseek (first registered).
+    assert.equal(registry.getByParser("chatCompletion")?.id, "deepseek");
+
+    registry.register(createOpenAIChatAdapter({
+        id: "mockCustomChat",
+        label: "Mock Custom Chat",
+        defaultProfile: {
+            label: "Mock Custom Chat",
+            endpoint: "https://chat.example.invalid/v1/chat/completions",
+            model: "custom-chat-1"
+        },
+        credentialFields: ["customToken"],
+        supportsModelDetection: true,
+        apiKeyOptional: true,
+        allowCloudFallback: false,
+        buildHeaders(config, effectiveApiKey) {
+            return { "Content-Type": "application/json", "X-Custom-Token": config.customToken || effectiveApiKey };
+        },
+        parseResponse(raw) {
+            return `CUSTOM:${JSON.parse(raw).customText}`;
+        }
+    }));
+
+    // Custom chat adapter capabilities flow through ProviderLayer & SettingsStore.
+    assert.equal(
+        plugin.getEffectiveChatCompletionEndpoint({ provider: "mockCustomChat", endpoint: "" }, {}),
+        "https://chat.example.invalid/v1/chat/completions"
+    );
+    assert.equal(plugin.isModelDetectionProvider("mockCustomChat"), true);
+    assert.equal(plugin.isProviderApiKeyOptional("mockCustomChat"), true);
+    assert.equal(
+        plugin.hasUsableApiConfig("translation", { provider: "mockCustomChat", endpoint: "", model: "custom-chat-1", apiKey: "" }),
+        true
+    );
+    assert.equal(
+        plugin.getRequestHeaders({ provider: "mockCustomChat", customToken: "tok-123" }, "local")["X-Custom-Token"],
+        "tok-123"
+    );
+
+    // allowCloudFallback: false blocks cloud fallback even when isLocal is false.
+    plugin.settings.ui.providerFallbackEnabled = true;
+    plugin.settings.ui.providerFallbackOrder = ["deepseek", "mockCustomChat"];
+    plugin.settings.translation.provider = "mockCustomChat";
+    assert.deepEqual(plugin.getProviderFallbackOrder("translation"), []);
+    assert.equal(
+        plugin.shouldTryProviderFallback("translation", { mode: "manual" }, { provider: "mockCustomChat" }, { status: 500 }),
+        false
+    );
+    // Custom adapter with allowCloudFallback: false is also excluded as a fallback target from another provider.
+    plugin.settings.translation.provider = "deepseek";
+    assert.deepEqual(plugin.getProviderFallbackOrder("translation"), []);
+
+    // Custom credentialFields are preserved on resetSettingsToDefaults({ keepCredentials: true }).
+    const carried = plugin.settingsStore.carryOverResetCredentials(
+        {
+            polish: {},
+            translation: {
+                provider: "mockCustomChat",
+                endpoint: "https://chat.example.invalid/v1/chat/completions",
+                model: "custom-chat-1",
+                customToken: "tok-keep-me",
+                providerProfiles: {}
+            }
+        },
+        plugin.clone(plugin.settings)
+    );
+    assert.equal(carried.translation.providerProfiles.mockCustomChat?.customToken, "tok-keep-me");
+
+    // DeepSeek parsing is NOT hijacked by mockCustomChat even when responseParser is "chatCompletion".
+    plugin.fetchApiResponseText = async () => JSON.stringify({ choices: [{ message: { content: "DeepSeek OK" } }] });
+    const dsBuilt = plugin.buildModelRequest("translation", "hello", {
+        configOverrides: { provider: "deepseek", apiKey: "sk-test", targetLanguage: "汉语" }
+    });
+    const dsParsed = await plugin.fetchModelResponse(
+        dsBuilt.endpoint,
+        { ...dsBuilt.request, responseParser: "chatCompletion" },
+        5000
+    );
+    assert.equal(dsParsed, "DeepSeek OK");
+
+    // mockCustomChat invokes its own parseResponse.
+    plugin.fetchApiResponseText = async () => JSON.stringify({ customText: "from-custom" });
+    const customParsed = await plugin.fetchModelResponse(
+        "https://chat.example.invalid/v1/chat/completions",
+        { provider: "mockCustomChat", responseParser: "chatCompletion" },
+        5000
+    );
+    assert.equal(customParsed, "CUSTOM:from-custom");
+
+    // Unregistering mockCustomChat does NOT remove "chatCompletion" from byParser.
+    assert.equal(registry.unregister("mockCustomChat"), true);
+    assert.equal(registry.getByParser("chatCompletion")?.id, "deepseek");
 });

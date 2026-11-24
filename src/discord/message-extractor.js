@@ -71,7 +71,7 @@ const methods = {
     getMessageContentElement(messageNode, context = null) {
         if (context?.contentByMessage?.has(messageNode)) return context.contentByMessage.get(messageNode);
 
-        const candidates = this.getMessageContentCandidates(messageNode);
+        const candidates = this.getMessageContentCandidates(messageNode, context);
         for (const candidate of candidates) {
             if (this.plugin.getCachedElementText(candidate, context)) {
                 context?.contentByMessage?.set(messageNode, candidate);
@@ -86,7 +86,7 @@ const methods = {
     getMessageContentElements(messageNode, context = null) {
         if (context?.contentElementsByMessage?.has(messageNode)) return context.contentElementsByMessage.get(messageNode);
 
-        const candidates = this.getMessageContentCandidates(messageNode);
+        const candidates = this.getMessageContentCandidates(messageNode, context);
 
         const elements = candidates
             .filter((candidate, index, all) => candidate && all.indexOf(candidate) === index)
@@ -104,7 +104,10 @@ const methods = {
         }
     },
 
-    getMessageContentCandidates(messageNode) {
+    getMessageContentCandidates(messageNode, context = null) {
+        if (context?.contentCandidatesByMessage?.has(messageNode)) {
+            return context.contentCandidatesByMessage.get(messageNode);
+        }
         const primary = [...(messageNode?.querySelectorAll?.("[class*='messageContent']") || [])]
             .filter(candidate => this.isUsableMessageContentCandidate(candidate));
         const fallback = primary.length
@@ -113,6 +116,7 @@ const methods = {
                 .filter(candidate => this.isUsableMessageContentCandidate(candidate));
         const candidates = [...new Set([...primary, ...fallback])];
         if (!candidates.length && messageNode?.content && this.isUsableMessageContentCandidate(messageNode.content)) candidates.push(messageNode.content);
+        context?.contentCandidatesByMessage?.set(messageNode, candidates);
         return candidates;
     },
 

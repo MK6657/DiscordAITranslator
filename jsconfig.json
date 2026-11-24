@@ -20,8 +20,12 @@
     "src/providers/adapters/**/*.js",
     "src/auto-translation/state-machine.js",
     "src/auto-translation/cooldown-store.js",
-    "src/discord/**/*.js",
+    "src/auto-translation/task-state.js",
+    "src/auto-translation/translation-renderer.js",
     "src/auto-translation/channel-rule.js",
+    "src/composer/composer-writer.js",
+    "src/settings/settings-schema.js",
+    "src/discord/**/*.js",
     "src/intake/emoji-text.js"
   ]
 }

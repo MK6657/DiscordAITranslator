@@ -18,7 +18,16 @@ class SettingsUiController {
     constructor(plugin) {
         this.plugin = plugin;
         this.events = plugin.events || null;
-        this.scope = plugin.runtimeScope ? plugin.runtimeScope.createChild() : null;
+        this._scope = plugin.runtimeScope ? plugin.runtimeScope.createChild() : null;
+    }
+
+    get scope() {
+        const rootScope = this.plugin?.runtimeScope;
+        if (!rootScope) return null;
+        if (!this._scope || (this._scope.disposed && !rootScope.disposed)) {
+            this._scope = rootScope.createChild();
+        }
+        return this._scope;
     }
 }
 

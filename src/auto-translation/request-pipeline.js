@@ -1079,8 +1079,13 @@ class AutoTranslationRequestPipeline {
                 ? this.buildCompactLocalAutoTranslationPrompt(options, "longText")
                 : this.buildPromptPolicyLongTextPrompt(options)
         };
+        const requestOrigin = options?.requestOrigin
+            || (/^manual(?:-|$)/.test(String(options?.mode || ""))
+                ? "manual"
+                : (/^public-bilingual(?:-|$)/.test(String(options?.mode || "")) ? "public-bilingual" : ""));
         return {
             ...options,
+            ...(requestOrigin ? { requestOrigin } : {}),
             mode: "long-text",
             longTextSourceLength: sourceLength,
             longTextBaseMaxTokens: baseMaxTokens,
@@ -1270,13 +1275,37 @@ class AutoTranslationRequestPipeline {
         const sourceHash = this.plugin.getStrongTextFingerprint(text);
         let budgetError = null;
         let stopError = null;
+        let consecutiveReservedStopFailures = 0;
         const hasFinishedChunk = () => translatedChunks.some(chunk => chunk && !this.plugin.hasLongAutoTranslationChunkFailurePlaceholder(chunk));
+        // When a chunk's fallback chain was cut short solely by later-chunk budget reservations
+        // (rather than exhausting all providers), allow a single transient failure
+        // (server/timeout/network) to probe the next reserved chunk instead of discarding the
+        // reserved slots. Keep hard account/rate-limit failures fatal, stop on a second
+        // consecutive failure so a truly down primary is not hammered across every remaining
+        // chunk, and preserve any already-translated chunks as a partial result when stopping.
+        const isTransientReservedStopError = chunkError => {
+            const type = this.plugin.getAutoTranslationFailureType(chunkError);
+            return ["server", "timeout", "network"].includes(type);
+        };
+        const canContinueAfterReservedFallbackStop = chunkError => {
+            if (!chunkError?.fallbackBudgetReserved) return false;
+            if (!isTransientReservedStopError(chunkError)) return false;
+            return consecutiveReservedStopFailures === 0;
+        };
         // The provider itself is failing (rate limit, auth, quota, server, timeout...): the remaining
         // chunks would fail too, so no more are sent. A timeout or network error after some chunks
         // succeeded keeps those as a partial result; otherwise the whole message fails now.
         const stopOnChunkError = chunkError => {
             if (!this.shouldStopLongAutoTranslationOnChunkError(chunkError)) return false;
-            if (!this.shouldKeepLongAutoTranslationChunksOnError(chunkError) || !hasFinishedChunk()) throw chunkError;
+            if (canContinueAfterReservedFallbackStop(chunkError)) {
+                consecutiveReservedStopFailures++;
+                return false;
+            }
+            const keepAfterBudgetCappedTransient = isTransientReservedStopError(chunkError)
+                && Boolean(chunkError?.fallbackBudgetReserved || chunkError?.fallbackBudgetExhausted || consecutiveReservedStopFailures > 0);
+            if ((!this.shouldKeepLongAutoTranslationChunksOnError(chunkError) && !keepAfterBudgetCappedTransient) || !hasFinishedChunk()) {
+                throw chunkError;
+            }
             stopError = chunkError;
             return true;
         };
@@ -1285,19 +1314,34 @@ class AutoTranslationRequestPipeline {
                 throw this.createAutoTranslationStaleError("long-text-stale-before-chunk");
             }
             const chunkOptions = this.getLongTextChunkTranslationOptions(longOptions, chunks[index], index, chunks.length, sourceHash);
+            const requestBudget = taskOptions.requestBudget;
+            const remainingLaterChunks = chunks.length - index - 1;
+            const previousReserved = requestBudget ? Math.max(0, Number(requestBudget.reserved || 0)) : 0;
             let translated = "";
             try {
-                translated = await this.plugin.runAutoTranslationTaskWithOptions(chunks[index], chunkOptions, taskOptions);
+                if (requestBudget) {
+                    // Hold back one request for each remaining chunk across this chunk's entire
+                    // initial attempt (including provider fallbacks and strict retries), while still
+                    // permitting this chunk's own primary request whenever any budget remains.
+                    const remainingTotal = Math.max(0, Number(requestBudget.limit || 0) - Number(requestBudget.used || 0));
+                    const initialReserved = Math.min(remainingLaterChunks, Math.max(0, remainingTotal - 1));
+                    requestBudget.reserved = Math.max(previousReserved, initialReserved);
+                }
+                try {
+                    translated = await this.plugin.runAutoTranslationTaskWithOptions(chunks[index], chunkOptions, taskOptions);
+                }
+                finally {
+                    if (requestBudget) requestBudget.reserved = previousReserved;
+                }
             }
             catch (error) {
                 if (this.isAbandonedTranslationError(error)) throw error;
                 stopOnChunkError(error);
-                if (this.isAutoTranslationRequestBudgetError(error)) budgetError = error;
+                if (this.isAutoTranslationRequestBudgetError(error) && !error.requestBudgetReserved) budgetError = error;
                 let rescued = null;
                 if (taskOptions?.manualRescue && !budgetError && !stopError) {
                     // The rescue may not spend the requests the later chunks need: one each is held back.
-                    const requestBudget = taskOptions.requestBudget;
-                    if (requestBudget) requestBudget.reserved = chunks.length - index - 1;
+                    if (requestBudget) requestBudget.reserved = Math.max(previousReserved, remainingLaterChunks);
                     try {
                         rescued = await this.plugin.runLongAutoTranslationChunkManualRescue(chunks[index], chunkOptions, error, taskOptions, {
                             sourceHash,
@@ -1312,7 +1356,7 @@ class AutoTranslationRequestPipeline {
                         rescued = { translated: "", error };
                     }
                     finally {
-                        if (requestBudget) requestBudget.reserved = 0;
+                        if (requestBudget) requestBudget.reserved = previousReserved;
                     }
                 }
                 if (rescued?.translated) {
@@ -1341,7 +1385,11 @@ class AutoTranslationRequestPipeline {
             if (typeof taskOptions.heartbeat === "function" && taskOptions.heartbeat() === false) {
                 throw this.createAutoTranslationStaleError("long-text-stale-after-chunk");
             }
-            translatedChunks.push(String(translated || "").trim());
+            const trimmedTranslated = String(translated || "").trim();
+            if (trimmedTranslated && !this.plugin.hasLongAutoTranslationChunkFailurePlaceholder(trimmedTranslated)) {
+                consecutiveReservedStopFailures = 0;
+            }
+            translatedChunks.push(trimmedTranslated);
             if (budgetError || stopError) {
                 // No requests are left for this click, or the provider stopped answering: the
                 // remaining chunks stay untranslated.
@@ -1591,16 +1639,22 @@ class AutoTranslationRequestPipeline {
         const timeoutMs = this.getAutoTranslationRequestTimeoutMs(options, text);
         const isCurrent = () => this.isAutoTranslationAttemptCurrent(options, taskOptions);
         if (!isCurrent()) throw this.createAutoTranslationStaleError("model-attempt-stale");
+        const requestOrigin = options?.requestOrigin
+            || (taskOptions?.manualRescue || /^manual(?:-|$)/.test(String(options?.mode || ""))
+                ? "manual"
+                : (/^public-bilingual(?:-|$)/.test(String(options?.mode || "")) ? "public-bilingual" : ""));
         const translated = await this.plugin.runModelTask("translation", text, {
             configOverrides: options.configOverrides,
             timeoutMs,
             mode: options.mode || "auto",
+            ...(requestOrigin ? { requestOrigin } : {}),
             requestContext: options.requestContext,
             isCurrent,
             longTextChunk: Boolean(options.longTextChunk),
             longTextSourceLength: Number(options.longTextSourceLength || String(text || "").length) || 0,
             ...(options.truncationRetry ? { truncationRetry: true } : {}),
-            ...(taskOptions?.signal ? { signal: taskOptions.signal } : {})
+            ...(taskOptions?.signal ? { signal: taskOptions.signal } : {}),
+            ...(taskOptions?.requestBudget ? { requestBudget: taskOptions.requestBudget } : {})
         });
         return this.plugin.sanitizeAutoTranslationOutput(text, translated, this.getAutoTranslationTargetLanguage(options), this.getAutoTranslationOutputValidationOptions(text, translated, options));
     }
@@ -2447,8 +2501,10 @@ class AutoTranslationRequestPipeline {
     }
 
     getAutoTranslationRequestSnapshot(options = null) {
-        const config = this.plugin.getEffectiveTaskConfig("translation", options?.configOverrides);
-        return {
+        const config = options?.isolatedConfig && options?.configOverrides
+            ? options.configOverrides
+            : this.plugin.getEffectiveTaskConfig("translation", options?.configOverrides);
+        const snapshot = {
             provider: config.provider,
             apiKey: config.apiKey,
             apiKeyOrigin: config.apiKeyOrigin,
@@ -2463,6 +2519,12 @@ class AutoTranslationRequestPipeline {
             // APIs read this raw code instead.
             targetLanguageCode: this.plugin.getTargetLanguageCode(this.getAutoTranslationTargetLanguage(options || {}))
         };
+        const credentialFields = this.plugin.providerLayer?.registry?.getCredentialFields?.(config) || [];
+        credentialFields.forEach(field => {
+            if (!field || Object.prototype.hasOwnProperty.call(snapshot, field)) return;
+            snapshot[field] = config[field] ?? "";
+        });
+        return snapshot;
     }
 
     getAutoTranslationTargetInstruction(language) {

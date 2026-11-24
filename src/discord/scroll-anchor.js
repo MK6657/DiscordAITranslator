@@ -443,17 +443,7 @@ const methods = {
         const key = task.key || this.getAutoTranslationRenderTaskKey(task.kind, task.target, task.cacheKey, task.target?.text);
         if (!key) return false;
         const queuedTask = { ...task, key };
-        const existingTask = this.plugin.autoTranslationRenderQueuedTasks?.get?.(key);
-        if (existingTask) {
-            Object.assign(existingTask, queuedTask);
-        }
-        else {
-            this.plugin.autoTranslationRenderQueue.push(queuedTask);
-            this.plugin.autoTranslationRenderQueuedKeys.add(key);
-            this.plugin.autoTranslationRenderQueuedTasks.set(key, queuedTask);
-        }
-        if (queuedTask.cacheKey) this.plugin.autoTranslationRenderPendingKeys.add(queuedTask.cacheKey);
-        this.plugin.autoTranslationRenderQueueDirty = true;
+        this.plugin.autoStateMachine.enqueueRenderTask(queuedTask);
         this.plugin.scheduleAutoTranslationRenderQueue();
         return true;
     },
@@ -499,11 +489,7 @@ const methods = {
     },
 
     cancelAutoTranslationRenderQueue(options = {}) {
-        this.plugin.autoTranslationRenderQueue = [];
-        this.plugin.autoTranslationRenderQueuedKeys?.clear?.();
-        this.plugin.autoTranslationRenderQueuedTasks?.clear?.();
-        this.plugin.autoTranslationRenderPendingKeys?.clear?.();
-        this.plugin.autoTranslationRenderQueueDirty = false;
+        this.plugin.autoStateMachine.clearRenderQueue();
         if (this.plugin.autoTranslationRenderTimer) {
             clearTimeout(this.plugin.autoTranslationRenderTimer);
             this.plugin.autoTranslationRenderTimer = null;
@@ -561,41 +547,55 @@ const methods = {
             cacheTasksOnly = true;
         }
 
-        const startedAt = Date.now();
+        const startedAt = this.plugin.getDiagnosticTime();
+        const startedWallAt = Date.now();
+        const budgetExceeded = () => (this.plugin.getDiagnosticTime() - startedAt >= AUTO_TRANSLATE_RENDER_FRAME_BUDGET_MS)
+            || (Date.now() - startedWallAt >= AUTO_TRANSLATE_RENDER_FRAME_BUDGET_MS);
         let rendered = 0;
         if (this.plugin.autoTranslationRenderQueueDirty) {
             this.plugin.translationRenderer.sortQueue(this.plugin.autoTranslationRenderQueue);
             this.plugin.autoTranslationRenderQueueDirty = false;
         }
-        while (this.plugin.autoTranslationRenderQueue.length && rendered < AUTO_TRANSLATE_RENDER_MAX_PER_FRAME) {
-            if (rendered > 0 && Date.now() - startedAt >= AUTO_TRANSLATE_RENDER_FRAME_BUDGET_MS) break;
-            const index = cacheTasksOnly ? this.plugin.autoTranslationRenderQueue.findIndex(task => task?.kind === "cache") : 0;
-            if (index < 0) break;
-            const task = this.plugin.autoTranslationRenderQueue[index];
-            if (rendered > 0 && this.isAutoTranslationRenderTaskHeavy(task)) break;
-            this.plugin.autoTranslationRenderQueue.splice(index, 1);
-            if (task?.key) {
-                const queuedTask = this.plugin.autoTranslationRenderQueuedTasks?.get?.(task.key);
-                if (!queuedTask || queuedTask === task) {
-                    this.plugin.autoTranslationRenderQueuedTasks?.delete?.(task.key);
-                    this.plugin.autoTranslationRenderQueuedKeys.delete(task.key);
+        const previousFrameScrollCache = this.plugin.renderFrameScrollCache;
+        this.plugin.renderFrameScrollCache = {
+            nearestByNode: new Map(),
+            scrollableByNode: new Map(),
+            bandByScroller: new Map()
+        };
+        try {
+            while (this.plugin.autoTranslationRenderQueue.length && rendered < AUTO_TRANSLATE_RENDER_MAX_PER_FRAME) {
+                if (rendered > 0 && budgetExceeded()) break;
+                const index = cacheTasksOnly ? this.plugin.autoTranslationRenderQueue.findIndex(task => task?.kind === "cache") : 0;
+                if (index < 0) break;
+                const task = this.plugin.autoTranslationRenderQueue[index];
+                if (rendered > 0 && this.isAutoTranslationRenderTaskHeavy(task)) break;
+                this.plugin.autoTranslationRenderQueue.splice(index, 1);
+                if (task?.key) {
+                    const queuedTask = this.plugin.autoTranslationRenderQueuedTasks?.get?.(task.key);
+                    if (!queuedTask || queuedTask === task) {
+                        this.plugin.autoTranslationRenderQueuedTasks?.delete?.(task.key);
+                        this.plugin.autoTranslationRenderQueuedKeys.delete(task.key);
+                    }
                 }
-            }
-            try {
-                task?.run?.();
-            }
-            catch (error) {
-                this.plugin.warnSanitized("Failed to run queued auto translation render", error);
-            }
-            finally {
-                // Another queued render for the same translation keeps it counted as active.
-                if (task?.cacheKey && !this.plugin.autoTranslationRenderQueue.some(queued => queued?.cacheKey === task.cacheKey)) {
-                    this.plugin.autoTranslationRenderPendingKeys?.delete?.(task.cacheKey);
+                try {
+                    task?.run?.();
                 }
+                catch (error) {
+                    this.plugin.warnSanitized("Failed to run queued auto translation render", error);
+                }
+                finally {
+                    // Another queued render for the same translation keeps it counted as active.
+                    if (task?.cacheKey && !this.plugin.autoTranslationRenderQueue.some(queued => queued?.cacheKey === task.cacheKey)) {
+                        this.plugin.autoTranslationRenderPendingKeys?.delete?.(task.cacheKey);
+                    }
+                }
+                rendered++;
+                if (this.isAutoTranslationRenderTaskHeavy(task)) break;
+                if (budgetExceeded()) break;
             }
-            rendered++;
-            if (this.isAutoTranslationRenderTaskHeavy(task)) break;
-            if (Date.now() - startedAt >= AUTO_TRANSLATE_RENDER_FRAME_BUDGET_MS) break;
+        }
+        finally {
+            this.plugin.renderFrameScrollCache = previousFrameScrollCache;
         }
 
         if (this.plugin.autoTranslationRenderQueue.length) {
@@ -662,7 +662,8 @@ const methods = {
             );
             return false;
         }
-        if (!this.plugin.isAutoTranslationCacheTargetDrawable(target)) {
+        const preRenderContext = { rectByElement: new Map() };
+        if (!this.plugin.isAutoTranslationCacheTargetDrawable(target, preRenderContext)) {
             // The draw pass re-checks on its next run, so it needs no rescan of its own.
             if (options.drawPass) return false;
             this.plugin.logAutoTranslationMessageState(
@@ -678,8 +679,10 @@ const methods = {
         }
         // Cache tasks only run once the scroller is still, so scroll correction is safe even during the pause.
         const renderMeta = options.renderMeta || null;
+        const anchorRect = preRenderContext.rectByElement.get(target.content) || null;
         const renderedLine = this.plugin.renderTranslation(target.messageNode, target.content, translated, cacheKey, this.plugin.getAutoTranslationTargetDomText(target), {
             allowScrollCorrectionWhilePaused: true,
+            ...(anchorRect ? { anchorRect } : {}),
             ...(renderMeta?.partial
                 ? {
                     partial: true,
@@ -766,15 +769,16 @@ const methods = {
         });
     },
 
-    getReadyAutoTranslationTargets(item) {
+    getReadyAutoTranslationTargets(item, context = null) {
         if (!this.plugin.isAutoTranslationRequestCurrent(item?.requestOptions)) return [];
+        const priorityOptions = context ? { context } : undefined;
         return this.plugin.getAutoTranslationPendingTargets(item)
             .map(target => {
                 const next = { ...target };
                 delete next.priority;
-                return this.plugin.withAutoTranslationPriority(next);
+                return this.plugin.withAutoTranslationPriority(next, priorityOptions);
             })
-            .filter(target => this.plugin.isAutoTranslationTargetReady(target, item?.cacheKey))
+            .filter(target => this.plugin.isAutoTranslationTargetReady(target, item?.cacheKey, context))
             .sort((left, right) => (left?.priority ?? Number.MAX_SAFE_INTEGER) - (right?.priority ?? Number.MAX_SAFE_INTEGER));
     },
 
@@ -812,15 +816,36 @@ const methods = {
         return Math.min(100, Math.max(1, normalized || DEFAULT_SETTINGS.ui.historyBackfillLimit));
     },
 
-    isElementVisibleInViewport(element, rect = null) {
+    isElementVisibleInViewport(element, rect = null, context = null) {
         if (!element?.isConnected) return false;
-        if (this.hasHiddenAncestor(element)) return false;
-        const elementRect = rect || element?.getBoundingClientRect?.();
-        if (!elementRect || elementRect.width <= 0 || elementRect.height <= 0) return false;
-        const height = window.innerHeight || document.documentElement.clientHeight || 0;
-        const width = window.innerWidth || document.documentElement.clientWidth || 0;
-        if (!(elementRect.bottom > 0 && elementRect.right > 0 && elementRect.top < height && elementRect.left < width)) return false;
-        return this.isVisibleInsideScrollContainers(element, elementRect);
+        if (context?.visibleByElement?.has(element)) return context.visibleByElement.get(element);
+        const elementRect = rect || this.plugin.getCachedElementRect(element, context);
+        if (!elementRect || elementRect.width <= 0 || elementRect.height <= 0) {
+            context?.visibleByElement?.set(element, false);
+            return false;
+        }
+        const documentHeight = typeof document !== "undefined" ? Number(document.documentElement?.clientHeight || 0) : 0;
+        const documentWidth = typeof document !== "undefined" ? Number(document.documentElement?.clientWidth || 0) : 0;
+        const height = typeof window !== "undefined" ? Number(window.innerHeight || documentHeight || 0) : documentHeight;
+        const width = typeof window !== "undefined" ? Number(window.innerWidth || documentWidth || 0) : documentWidth;
+        if (!(elementRect.bottom > 0 && elementRect.right > 0 && elementRect.top < height && elementRect.left < width)) {
+            context?.visibleByElement?.set(element, false);
+            return false;
+        }
+        if (element.hidden || element.getAttribute?.("aria-hidden") === "true") {
+            context?.visibleByElement?.set(element, false);
+            return false;
+        }
+        if (typeof getComputedStyle === "function") {
+            const style = getComputedStyle(element);
+            if (style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse" || style.opacity === "0") {
+                context?.visibleByElement?.set(element, false);
+                return false;
+            }
+        }
+        const visible = this.isRectInsideScrollClips(element, elementRect, context, { checkHidden: true });
+        context?.visibleByElement?.set(element, visible);
+        return visible;
     },
 
     hasHiddenAncestor(element) {
@@ -858,11 +883,12 @@ const methods = {
     getScrollClipInfo(element, context = null) {
         const memo = context?.scrollClipByElement;
         if (memo?.has(element)) return memo.get(element);
-        const info = { hidden: false, rect: null };
-        if (typeof getComputedStyle === "function") {
+        const attrHidden = Boolean(element.hidden || element.getAttribute?.("aria-hidden") === "true");
+        const info = { hidden: attrHidden, rect: null };
+        if (!attrHidden && typeof getComputedStyle === "function") {
             const style = getComputedStyle(element);
             info.hidden = style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse" || style.opacity === "0";
-            if (/(auto|scroll|hidden|clip)/.test(`${style.overflow || ""} ${style.overflowX || ""} ${style.overflowY || ""}`)) {
+            if (!info.hidden && /(auto|scroll|hidden|clip)/.test(`${style.overflow || ""} ${style.overflowX || ""} ${style.overflowY || ""}`)) {
                 const clipRect = this.plugin.getCachedElementRect(element, context);
                 if (clipRect && clipRect.width > 0 && clipRect.height > 0) info.rect = clipRect;
             }
@@ -887,7 +913,7 @@ const methods = {
         if (this.plugin.getAutoTranslationScrollStillRemainingMs() > 0) return null;
         const scroller = this.getTranslationScrollContainer(anchor);
         if (!scroller) return null;
-        const rect = anchor.getBoundingClientRect();
+        const rect = options.anchorRect || anchor.getBoundingClientRect();
         const scrollTop = this.getScrollContainerTop(scroller);
         if (!Number.isFinite(scrollTop) || !rect) return null;
         const atBottom = this.isScrollContainerAtBottom(scroller, scrollTop);
@@ -961,15 +987,24 @@ const methods = {
 
     // The visible part of a scroller: its box clipped to the window.
     getScrollContainerBand(scroller) {
+        const frameCache = this.plugin.renderFrameScrollCache;
+        if (frameCache?.bandByScroller?.has(scroller)) return frameCache.bandByScroller.get(scroller);
         if (typeof window === "undefined" || !window) return null;
         const height = Number(window.innerHeight || 0);
         if (!(height > 0)) return null;
-        if (this.isDocumentScroller(scroller)) return { top: 0, bottom: height };
-        const rect = scroller.getBoundingClientRect?.();
-        if (!rect || !(rect.height > 0)) return null;
-        const top = Math.max(0, Number(rect.top || 0));
-        const bottom = Math.min(height, Number(rect.bottom || 0));
-        return bottom > top ? { top, bottom } : null;
+        let band = null;
+        if (this.isDocumentScroller(scroller)) {
+            band = { top: 0, bottom: height };
+        }
+        else {
+            const rect = scroller.getBoundingClientRect?.();
+            if (!rect || !(rect.height > 0)) return null;
+            const top = Math.max(0, Number(rect.top || 0));
+            const bottom = Math.min(height, Number(rect.bottom || 0));
+            band = bottom > top ? { top, bottom } : null;
+        }
+        if (frameCache?.bandByScroller && band) frameCache.bandByScroller.set(scroller, band);
+        return band;
     },
 
     // The plugin's own scrollTop writes fire scroll events; the next one from that scroller is not a user scroll.
@@ -993,16 +1028,50 @@ const methods = {
 
     getTranslationScrollContainer(anchor) {
         if (typeof document === "undefined") return null;
-        if (this.plugin.cachedDrawScroller?.isConnected && anchor && this.plugin.cachedDrawScroller.contains?.(anchor)
+        const frameCache = this.plugin.renderFrameScrollCache;
+        const startNode = anchor?.parentElement;
+        if (frameCache?.nearestByNode && startNode && frameCache.nearestByNode.has(startNode)) {
+            const cached = frameCache.nearestByNode.get(startNode);
+            if (!cached || cached.isConnected !== false) return cached;
+            frameCache.nearestByNode.delete(startNode);
+        }
+        // Outside a render frame, keep the cachedDrawScroller fast-path; inside a render frame, walk
+        // through memoized nearestByNode / scrollableByNode so nested inner scrollers are never bypassed.
+        if (!frameCache && this.plugin.cachedDrawScroller?.isConnected && anchor && this.plugin.cachedDrawScroller.contains?.(anchor)
             && this.isVerticalScrollContainer(this.plugin.cachedDrawScroller)) {
             return this.plugin.cachedDrawScroller;
         }
-        let node = anchor?.parentElement;
+        const isScrollable = node => {
+            if (!frameCache?.scrollableByNode) return this.isVerticalScrollContainer(node);
+            if (frameCache.scrollableByNode.has(node)) return frameCache.scrollableByNode.get(node);
+            const result = this.isVerticalScrollContainer(node);
+            frameCache.scrollableByNode.set(node, result);
+            return result;
+        };
+        let scroller = null;
+        const visited = frameCache?.nearestByNode ? [] : null;
+        let node = startNode;
         while (node && node.nodeType === 1) {
-            if (this.isVerticalScrollContainer(node)) return node;
+            if (frameCache?.nearestByNode?.has(node)) {
+                const cached = frameCache.nearestByNode.get(node);
+                if (!cached || cached.isConnected !== false) {
+                    scroller = cached;
+                    break;
+                }
+                frameCache.nearestByNode.delete(node);
+            }
+            if (isScrollable(node)) {
+                scroller = node;
+                break;
+            }
+            visited?.push(node);
             node = node.parentElement;
         }
-        return document.scrollingElement || document.documentElement || null;
+        scroller ||= document.scrollingElement || document.documentElement || null;
+        if (visited) {
+            for (const ancestor of visited) frameCache.nearestByNode.set(ancestor, scroller);
+        }
+        return scroller;
     },
 
     isVerticalScrollContainer(node) {

@@ -158,8 +158,19 @@ class AutoTranslationQueueCore {
         };
     }
 
-    getAutoTranslationDiagnosticQueueType(item = {}) {
-        return this.plugin.translationScheduler.getQueueType(item);
+    getAutoTranslationDiagnosticQueueType(item = {}, context = null, options = null) {
+        return this.plugin.translationScheduler.getQueueType(item, context, options || undefined);
+    }
+
+    createAutoTranslationLayoutContext() {
+        return {
+            useViewportVisibility: true,
+            rectByElement: new Map(),
+            visibleByElement: new Map(),
+            scrollClipByElement: new Map(),
+            nearByElement: new Map(),
+            priorityByElement: new Map()
+        };
     }
 
     getAutoTranslationDiagnosticQueuePriority(item = {}, queueType = null) {
@@ -233,8 +244,10 @@ class AutoTranslationQueueCore {
         const requestStarted = reasonCode === DIAGNOSTIC_REASON_CODES.REQUEST_STARTED
             || (messageState === DIAGNOSTIC_MESSAGE_STATES.IN_FLIGHT && String(decision.status || "").toLowerCase() === "start");
         // Queue type resolution may touch the DOM; compute it once for both fields.
+        // Avoid forcing a post-render layout reflow right after inserting a translation line.
         const decisionQueueItem = candidate || decision?.item || {};
-        const decisionQueueType = this.getAutoTranslationDiagnosticQueueType(decisionQueueItem);
+        const skipDomQueueType = Boolean(decision?.status === "rendered" || decision?.extra?.skipDomQueueType || this.plugin.renderFrameScrollCache);
+        const decisionQueueType = this.getAutoTranslationDiagnosticQueueType(decisionQueueItem, null, skipDomQueueType ? { skipDomCheck: true } : null);
         const decisionIdentity = requestOptions?.messageIdentity || candidate?.messageIdentity || "";
         const decisionIdentityHash = this.plugin.getTextFingerprint(decisionIdentity);
         const now = Date.now();
@@ -360,27 +373,45 @@ class AutoTranslationQueueCore {
         return expected === String(this.plugin.getAutoTranslationProviderKey(this.plugin.getAutoTranslationOptions()) || "");
     }
 
+    getCachedScrollRelevance(element, now = Date.now()) {
+        if (!element || element.nodeType !== 1) return null;
+        const cached = this.scrollRelevanceCache?.get?.(element);
+        if (cached && now >= cached.at && now - cached.at < 500) return cached;
+        return null;
+    }
+
     isAutoTranslationScrollEventRelevant(event = null) {
         const target = event?.target;
         if (!target || typeof document === "undefined" || target === document || target === window || target === document.body || target === document.documentElement) return true;
         const element = target?.nodeType === 3 ? target.parentElement : target;
         if (!element || element.nodeType !== 1) return true;
-        if (this.plugin.isInsideDiscordSettingsSurface(element)) return false;
-        if (this.plugin.isInsideDiscordMediaViewer(element) || this.plugin.isMediaOnlyMutationElement(element)) return false;
-        if (element.closest?.(".dait-settings, .dait-quick-settings-modal-root, .dait-quick-popover, .dait-polish-result-panel, .dait-polish-restore-control, .dait-input-action-menu, .dait-polish-preset-menu, .dait-translation-line, .dait-translation-box")) return false;
-        if (element.closest?.("[class*='channelTextArea'], [role='textbox']")) return false;
         const now = Date.now();
-        const cached = this.scrollRelevanceCache?.get?.(element);
-        if (cached && now >= cached.at && now - cached.at < (cached.relevant ? 500 : 100)) return cached.relevant;
-        const selector = [
-            DISCORD_MESSAGE_NODE_SELECTOR,
-            "[data-list-id*='chat-messages']",
-            "[class*='messagesWrapper']",
-            "[class*='scrollerInner']",
-            "[class*='chatContent']"
-        ].join(",");
-        const relevant = Boolean(element.matches?.(selector) || element.closest?.(selector) || element.querySelector?.(DISCORD_MESSAGE_NODE_SELECTOR));
-        this.scrollRelevanceCache?.set?.(element, { relevant, at: now });
+        const cached = this.getCachedScrollRelevance(element, now);
+        if (cached) return cached.relevant;
+        let relevant = false;
+        let mediaViewer = false;
+        if (this.plugin.isInsideDiscordSettingsSurface(element)) {
+            relevant = false;
+        }
+        else if (this.plugin.isInsideDiscordMediaViewer(element) || this.plugin.isMediaOnlyMutationElement(element)) {
+            relevant = false;
+            mediaViewer = true;
+        }
+        else if (element.closest?.(".dait-settings, .dait-quick-settings-modal-root, .dait-quick-popover, .dait-polish-result-panel, .dait-polish-restore-control, .dait-input-action-menu, .dait-polish-preset-menu, .dait-translation-line, .dait-translation-box")
+            || element.closest?.("[class*='channelTextArea'], [role='textbox']")) {
+            relevant = false;
+        }
+        else {
+            const selector = [
+                DISCORD_MESSAGE_NODE_SELECTOR,
+                "[data-list-id*='chat-messages']",
+                "[class*='messagesWrapper']",
+                "[class*='scrollerInner']",
+                "[class*='chatContent']"
+            ].join(",");
+            relevant = Boolean(element.matches?.(selector) || element.closest?.(selector) || element.querySelector?.(DISCORD_MESSAGE_NODE_SELECTOR));
+        }
+        this.scrollRelevanceCache?.set?.(element, { relevant, mediaViewer, at: now });
         return relevant;
     }
 
@@ -534,18 +565,17 @@ class AutoTranslationQueueCore {
     removeQueuedAutoTranslationItem(cacheKey) {
         if (!cacheKey || !this.stateMachine.queue.length) return 0;
         const before = this.stateMachine.queue.length;
-        this.stateMachine.queue = this.stateMachine.queue.filter(item => item?.cacheKey !== cacheKey);
-        const removed = before - this.stateMachine.queue.length;
-        if (removed && !this.stateMachine.inFlightKeys.has(cacheKey)) this.stateMachine.queuedKeys.delete(cacheKey);
-        return removed;
+        this.stateMachine.removeQueued(cacheKey);
+        return before - this.stateMachine.queue.length;
     }
 
     pruneAutoTranslationQueue() {
         if (!this.stateMachine.queue.length) return;
 
+        const layoutContext = this.createAutoTranslationLayoutContext();
         const next = [];
         for (const item of this.stateMachine.queue) {
-            const readyTargets = this.plugin.getReadyAutoTranslationTargets(item);
+            const readyTargets = this.plugin.getReadyAutoTranslationTargets(item, layoutContext);
             if (!readyTargets.length) {
                 this.stateMachine.queuedKeys.delete(item?.cacheKey);
                 this.clearAutoTranslationPendingTargets(item?.cacheKey);
@@ -555,12 +585,12 @@ class AutoTranslationQueueCore {
             this.stateMachine.pendingTargets.set(item.cacheKey, { targets: readyTargets });
             next.push(this.plugin.withAutoTranslationPriority(
                 { ...item, ...this.plugin.getAutoTranslationPrimaryTarget(readyTargets[0]) },
-                { preserveExisting: true }
+                { preserveExisting: true, context: layoutContext }
             ));
         }
 
         this.stateMachine.queue = next;
-        this.plugin.sortAutoTranslationQueue();
+        this.plugin.sortAutoTranslationQueue(layoutContext);
     }
 
     drainAutoTranslationQueue() {
@@ -609,8 +639,9 @@ class AutoTranslationQueueCore {
         const blockedPrefetch = [];
 
         while (this.stateMachine.inFlight < concurrency && this.stateMachine.queue.length) {
-            let batch = this.plugin.takeAutoTranslationBatch({ visibility: "visible" });
-            if (!batch.length) batch = this.plugin.takeAutoTranslationBatch({ visibility: "prefetch" });
+            const layoutContext = this.createAutoTranslationLayoutContext();
+            let batch = this.plugin.takeAutoTranslationBatch({ visibility: "visible", layoutContext });
+            if (!batch.length) batch = this.plugin.takeAutoTranslationBatch({ visibility: "prefetch", layoutContext });
             if (!batch.length) break;
             const providerFailure = this.getAutoTranslationProviderFailure(batch[0]?.requestOptions);
             if (providerFailure && !this.isAutoTranslationFailureExpired(providerFailure)) {
@@ -714,14 +745,23 @@ class AutoTranslationQueueCore {
                 break;
             }
 
-            this.stateMachine.inFlight++;
-            this.stateMachine.inFlightItems += batch.length;
-            if (isPrefetchBatch) this.stateMachine.prefetchInFlight++;
             const startedAt = Date.now();
-            batch.forEach(item => {
-                item.daitPrefetchRequest = isPrefetchBatch;
-                this.setAutoTranslationDiagnosticState(item, DIAGNOSTIC_MESSAGE_STATES.IN_FLIGHT, DIAGNOSTIC_REASON_CODES.REQUEST_STARTED);
-                this.markAutoTranslationInFlightItem(item, startedAt);
+            this.stateMachine.beginInFlightBatch(batch, {
+                isPrefetch: isPrefetchBatch,
+                startedAt,
+                createToken: key => this.createAutoTranslationInFlightToken(key),
+                isVisibleLong: item => this.plugin.isLongAutoTranslationItem(item) && !this.plugin.isAutoTranslationPrefetchItem(item),
+                onItemMarked: (item, itemStartedAt) => {
+                    this.setAutoTranslationDiagnosticState(item, DIAGNOSTIC_MESSAGE_STATES.IN_FLIGHT, DIAGNOSTIC_REASON_CODES.REQUEST_STARTED);
+                    this.logAutoTranslationMessageState(
+                        "auto.message.state",
+                        "in-flight",
+                        item,
+                        DIAGNOSTIC_MESSAGE_STATES.IN_FLIGHT,
+                        DIAGNOSTIC_REASON_CODES.REQUEST_STARTED,
+                        { startedAt: itemStartedAt }
+                    );
+                }
             });
             this.plugin.logDiagnostic("auto.batch.start", "start", {
                 ...this.plugin.getDiagnosticBaseMeta("auto", batch[0]?.requestOptions?.mode || "auto", DIAGNOSTIC_REASON_CODES.REQUEST_STARTED),
@@ -906,16 +946,16 @@ class AutoTranslationQueueCore {
         return this.plugin.translationScheduler.canStartPrefetchRequest(concurrency);
     }
 
-    isAutoTranslationPrefetchBatch(batch) {
-        return this.plugin.translationScheduler.isPrefetchBatch(batch);
+    isAutoTranslationPrefetchBatch(batch, context = null) {
+        return this.plugin.translationScheduler.isPrefetchBatch(batch, context);
     }
 
-    isAutoTranslationPrefetchItem(item) {
-        return this.plugin.translationScheduler.isPrefetchItem(item);
+    isAutoTranslationPrefetchItem(item, context = null) {
+        return this.plugin.translationScheduler.isPrefetchItem(item, context);
     }
 
-    isAutoTranslationVisibleItem(item) {
-        return this.plugin.translationScheduler.isVisibleItem(item);
+    isAutoTranslationVisibleItem(item, context = null) {
+        return this.plugin.translationScheduler.isVisibleItem(item, context);
     }
 
     hasActiveVisibleAutoTranslationWork() {
@@ -926,17 +966,20 @@ class AutoTranslationQueueCore {
         return Math.max(0, Number(this.stateMachine.inFlight || 0) - Number(this.stateMachine.prefetchInFlight || 0)) > 0;
     }
 
-    hasQueuedVisibleAutoTranslationWork() {
-        return (this.stateMachine.queue || []).some(item => {
-            const queueType = this.getAutoTranslationDiagnosticQueueType(item);
+    hasQueuedVisibleAutoTranslationWork(context = null) {
+        const queue = this.stateMachine.queue || [];
+        const layoutContext = context || (queue.length > 1 ? this.createAutoTranslationLayoutContext() : null);
+        return queue.some(item => {
+            const queueType = this.getAutoTranslationDiagnosticQueueType(item, layoutContext);
             return queueType === AUTO_TRANSLATION_QUEUE_TYPES.VISIBLE
                 || queueType === AUTO_TRANSLATION_QUEUE_TYPES.LONG_TEXT;
         });
     }
 
     takeAutoTranslationBatch(options = {}) {
+        const layoutContext = options.layoutContext || this.createAutoTranslationLayoutContext();
         if (this.stateMachine.queueSortDirty && this.stateMachine.queue.length > 1) {
-            this.plugin.sortAutoTranslationQueue();
+            this.plugin.sortAutoTranslationQueue(layoutContext);
         }
         else {
             this.stateMachine.queueSortDirty = false;
@@ -964,7 +1007,7 @@ class AutoTranslationQueueCore {
                 deferred.push(item);
                 continue;
             }
-            const readyTargets = this.plugin.getReadyAutoTranslationTargets(item);
+            const readyTargets = this.plugin.getReadyAutoTranslationTargets(item, layoutContext);
             if (!readyTargets.length) {
                 this.stateMachine.queuedKeys.delete(item?.cacheKey);
                 this.clearAutoTranslationPendingTargets(item?.cacheKey);
@@ -973,8 +1016,8 @@ class AutoTranslationQueueCore {
 
             this.stateMachine.pendingTargets.set(item.cacheKey, { targets: readyTargets });
             const readyItem = { ...item, ...this.plugin.getAutoTranslationPrimaryTarget(readyTargets[0]) };
-            const itemPrefetchState = this.plugin.isAutoTranslationPrefetchItem(readyItem);
-            if (itemPrefetchState && !this.isAutoTranslationPrefetchAllowed(readyItem)) {
+            const itemPrefetchState = this.plugin.isAutoTranslationPrefetchItem(readyItem, layoutContext);
+            if (itemPrefetchState && !this.isAutoTranslationPrefetchAllowed(readyItem, layoutContext)) {
                 this.discardAutoTranslationItemWork(readyItem);
                 continue;
             }
@@ -986,11 +1029,11 @@ class AutoTranslationQueueCore {
                 deferred.push(readyItem);
                 continue;
             }
-            if (this.shouldDeferShortAutoTranslationItemForVisibleLong(readyItem, { visibility, batch })) {
+            if (this.shouldDeferShortAutoTranslationItemForVisibleLong(readyItem, { visibility, batch, layoutContext })) {
                 deferred.push(readyItem);
                 continue;
             }
-            if (this.plugin.shouldDeferLongAutoTranslationItem(readyItem, { visibility, batch })) {
+            if (this.plugin.shouldDeferLongAutoTranslationItem(readyItem, { visibility, batch, layoutContext })) {
                 readyItem.daitLongTextDeferrals = Math.min(
                     AUTO_TRANSLATE_LONG_TEXT_DEFER_MAX,
                     Math.max(0, Number(readyItem.daitLongTextDeferrals) || 0) + 1
@@ -1039,7 +1082,7 @@ class AutoTranslationQueueCore {
 
         if (deferred.length) {
             this.stateMachine.queue.unshift(...deferred);
-            this.plugin.sortAutoTranslationQueue();
+            this.plugin.sortAutoTranslationQueue(layoutContext);
         }
         if (nextReadyAt) this.plugin.scheduleAutoTranslationRetryScan(Math.max(0, nextReadyAt - now));
         return batch;
@@ -1051,17 +1094,18 @@ class AutoTranslationQueueCore {
 
     hasReadyShortAutoTranslationCandidate(referenceItem, options = {}) {
         const visibility = options.visibility || "";
+        const layoutContext = options.layoutContext || this.createAutoTranslationLayoutContext();
         const now = Date.now();
         for (const queued of this.stateMachine.queue) {
             if (!queued?.cacheKey || queued.cacheKey === referenceItem?.cacheKey) continue;
             const requeueAfter = Number(queued?.daitRequeueAfter || 0);
             if (requeueAfter > now) continue;
-            const readyTargets = this.plugin.getReadyAutoTranslationTargets(queued);
+            const readyTargets = this.plugin.getReadyAutoTranslationTargets(queued, layoutContext);
             if (!readyTargets.length) continue;
             const candidate = { ...queued, ...this.plugin.getAutoTranslationPrimaryTarget(readyTargets[0]) };
-            const candidatePrefetch = this.plugin.isAutoTranslationPrefetchItem(candidate);
+            const candidatePrefetch = this.plugin.isAutoTranslationPrefetchItem(candidate, layoutContext);
             if ((visibility === "visible" && candidatePrefetch) || (visibility === "prefetch" && !candidatePrefetch)) continue;
-            if (candidatePrefetch && !this.isAutoTranslationPrefetchAllowed(candidate)) continue;
+            if (candidatePrefetch && !this.isAutoTranslationPrefetchAllowed(candidate, layoutContext)) continue;
             if (this.plugin.isLongAutoTranslationItem(candidate)) continue;
             return true;
         }
@@ -1072,9 +1116,9 @@ class AutoTranslationQueueCore {
         return this.plugin.translationScheduler.shouldRunItemSingle(item);
     }
 
-    isAutoTranslationPrefetchAllowed(item) {
+    isAutoTranslationPrefetchAllowed(item, context = null) {
         if (item?.daitHistoryRequest) return true;
-        if (!this.plugin.isAutoTranslationPrefetchItem(item)) return true;
+        if (!this.plugin.isAutoTranslationPrefetchItem(item, context)) return true;
         if (!this.isAutoTranslationPrefetchConfigured()) return false;
         const now = Date.now();
         if (this.plugin.isAutoTranslationRenderPaused(now)
@@ -1086,17 +1130,17 @@ class AutoTranslationQueueCore {
         return true;
     }
 
-    isAutoTranslationQueueItemReady(item) {
-        return this.isAutoTranslationTargetReady(item, item?.cacheKey);
+    isAutoTranslationQueueItemReady(item, context = null) {
+        return this.isAutoTranslationTargetReady(item, item?.cacheKey, context);
     }
 
-    isAutoTranslationTargetReady(target, cacheKey = target?.cacheKey) {
+    isAutoTranslationTargetReady(target, cacheKey = target?.cacheKey, context = null) {
         if (!target?.messageNode?.isConnected || !target?.content?.isConnected) return false;
         if (!this.plugin.isAutoTranslationTargetIdentityCurrent(target)) return false;
         const domText = this.plugin.getAutoTranslationTargetDomText(target);
         if (this.plugin.hasCurrentTranslationLine(target.content, cacheKey, domText, this.plugin.getTranslationLineCacheAliases(target.text, target.requestOptions || {}), null, target.text)) return false;
-        const messageInRange = this.plugin.isAutoTranslationTargetInScanRange(target.messageNode);
-        const contentInRange = this.plugin.isAutoTranslationTargetInScanRange(target.content);
+        const messageInRange = this.plugin.isAutoTranslationTargetInScanRange(target.messageNode, context);
+        const contentInRange = this.plugin.isAutoTranslationTargetInScanRange(target.content, context);
         if (!target.daitHistoryRequest) {
             if (!messageInRange && !contentInRange) return false;
             if (!contentInRange && !this.plugin.isAutoTranslationContentInsideMessage(target)) return false;
@@ -1406,9 +1450,10 @@ class AutoTranslationQueueCore {
         finally {
             const finishedCurrent = this.finishAutoTranslationInFlightItem(item);
             if (finishedCurrent) {
-                this.stateMachine.inFlight = Math.max(0, this.stateMachine.inFlight - 1);
-                this.stateMachine.inFlightItems = Math.max(0, this.stateMachine.inFlightItems - 1);
-                if (item.daitPrefetchRequest) this.stateMachine.prefetchInFlight = Math.max(0, this.stateMachine.prefetchInFlight - 1);
+                this.stateMachine.finishInFlightBatch({
+                    batchSize: 1,
+                    isPrefetch: Boolean(item.daitPrefetchRequest)
+                });
             }
             if (!rendered && !item.daitRequeued && !this.hasActiveAutoTranslationKey(item.cacheKey)) {
                 this.plugin.removeAutoTranslationLoadingForItem?.(item, { force: true });
@@ -1440,7 +1485,7 @@ class AutoTranslationQueueCore {
         const releaseBatchItem = item => {
             if (!item || !this.finishAutoTranslationInFlightItem(item)) return false;
             releasedEarlyCount++;
-            this.stateMachine.inFlightItems = Math.max(0, this.stateMachine.inFlightItems - 1);
+            this.stateMachine.releaseInFlightItems(1);
             return true;
         };
         try {
@@ -1598,12 +1643,14 @@ class AutoTranslationQueueCore {
             const currentItems = items.filter(item => this.finishAutoTranslationInFlightItem(item));
             const sameConfigGeneration = Number(this.stateMachine.configVersion || 0) === batchConfigVersion;
             const sameResetVersion = Number(this.plugin.autoTranslationInFlightResetVersion || 0) === batchResetVersion;
-            if (currentItems.length) {
-                this.stateMachine.inFlightItems = Math.max(0, this.stateMachine.inFlightItems - currentItems.length);
-            }
             if (sameConfigGeneration && (currentItems.length > 0 || (releasedEarlyCount === items.length && sameResetVersion))) {
-                this.stateMachine.inFlight = Math.max(0, this.stateMachine.inFlight - 1);
-                if (isPrefetchBatch) this.stateMachine.prefetchInFlight = Math.max(0, this.stateMachine.prefetchInFlight - 1);
+                this.stateMachine.finishInFlightBatch({
+                    batchSize: currentItems.length,
+                    isPrefetch: isPrefetchBatch
+                });
+            }
+            else if (currentItems.length) {
+                this.stateMachine.releaseInFlightItems(currentItems.length);
             }
             items.forEach(item => {
                 if (!renderedItems.has(item) && !item.daitRequeued && !this.hasActiveAutoTranslationKey(item.cacheKey)) {
@@ -1712,6 +1759,7 @@ class AutoTranslationQueueCore {
             this.stateMachine.queue[existingIndex] = (queuedItem.priority ?? Number.MAX_SAFE_INTEGER) < (existing.priority ?? Number.MAX_SAFE_INTEGER)
                 ? { ...existing, ...queuedItem }
                 : { ...queuedItem, ...existing };
+            this.stateMachine.queuedKeys.add(queuedItem.cacheKey);
         }
         else if (this.hasActiveAutoTranslationKey(queuedItem.cacheKey) && !allowActiveRequeue) {
             this.plugin.logDiagnostic("auto.queue.enqueue", "dedupe-active", {
@@ -1721,9 +1769,8 @@ class AutoTranslationQueueCore {
             return false;
         }
         else {
-            this.stateMachine.queue.push(queuedItem);
+            this.stateMachine.enqueue(queuedItem, { allowDuplicateKey: allowActiveRequeue });
         }
-        this.stateMachine.queuedKeys.add(queuedItem.cacheKey);
         if (options.deferSort) this.stateMachine.queueSortDirty = true;
         else this.plugin.sortAutoTranslationQueue();
         this.plugin.logDiagnostic("auto.queue.enqueue", "ok", {
@@ -2024,13 +2071,11 @@ class AutoTranslationQueueCore {
     markAutoTranslationInFlightItem(item, startedAt = Date.now()) {
         if (!item?.cacheKey) return;
         const token = this.createAutoTranslationInFlightToken(item.cacheKey);
-        item.daitInFlightToken = token;
-        this.stateMachine.inFlightKeys.add(item.cacheKey);
-        if (this.plugin.isLongAutoTranslationItem(item) && !this.plugin.isAutoTranslationPrefetchItem(item)) {
-            this.stateMachine.visibleLongInFlightKeys.add(item.cacheKey);
-        }
-        this.stateMachine.inFlightStartedAt.set(item.cacheKey, startedAt);
-        this.stateMachine.inFlightTokens.set(item.cacheKey, token);
+        this.stateMachine.markInFlightItem(item, {
+            token,
+            startedAt,
+            isVisibleLong: this.plugin.isLongAutoTranslationItem(item) && !this.plugin.isAutoTranslationPrefetchItem(item)
+        });
         this.logAutoTranslationMessageState(
             "auto.message.state",
             "in-flight",
@@ -2068,11 +2113,9 @@ class AutoTranslationQueueCore {
     finishAutoTranslationInFlightItem(item) {
         const owned = this.isAutoTranslationInFlightTokenOwned(item);
         if (owned) {
-            if (!item.daitRequeued) this.stateMachine.queuedKeys.delete(item.cacheKey);
-            this.stateMachine.inFlightKeys.delete(item.cacheKey);
-            this.stateMachine.visibleLongInFlightKeys.delete(item.cacheKey);
-            this.stateMachine.inFlightStartedAt.delete(item.cacheKey);
-            this.stateMachine.inFlightTokens.delete(item.cacheKey);
+            this.stateMachine.finishInFlightItem(item.cacheKey, item.daitInFlightToken, {
+                keepQueuedKey: Boolean(item.daitRequeued)
+            });
         }
         delete item.daitInFlightToken;
         return owned;
@@ -2097,22 +2140,22 @@ class AutoTranslationQueueCore {
         return this.plugin.translationScheduler.makeRoomForItem(item, queueLimit);
     }
 
-    sortAutoTranslationQueue() {
+    sortAutoTranslationQueue(context = null) {
         this.stateMachine.queueSortDirty = false;
-        this.plugin.translationScheduler.sortQueue(this.stateMachine.queue);
+        this.plugin.translationScheduler.sortQueue(this.stateMachine.queue, context);
     }
 
     withAutoTranslationPriority(target, options = {}) {
         if (!target) return target;
         const priority = options.preserveExisting && Number.isFinite(Number(target.priority))
             ? Number(target.priority)
-            : this.getAutoTranslationTargetPriority(target);
+            : this.getAutoTranslationTargetPriority(target, options.context || null);
         return { ...target, priority };
     }
 
-    getAutoTranslationTargetPriority(target) {
-        const contentPriority = this.plugin.getViewportPriority(target?.content);
-        const messagePriority = this.plugin.getViewportPriority(target?.messageNode);
+    getAutoTranslationTargetPriority(target, context = null) {
+        const contentPriority = this.plugin.getViewportPriority(target?.content, context);
+        const messagePriority = this.plugin.getViewportPriority(target?.messageNode, context);
         const kindOffset = target?.targetKind === "reply-preview" ? 20 : 0;
         return Math.min(contentPriority, messagePriority) + kindOffset;
     }

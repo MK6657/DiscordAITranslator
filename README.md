@@ -80,7 +80,7 @@ Discord AI Translator 专为跨语言交流与高频聊天场景打造：既支�
 
 ### 🧱 V0.5 模块化架构与工程护栏
 - **清晰分层源码**：主入口 `src/discord-ai-translator.js` 精简为 ~760 行生命周期装配壳，内置 `src/core/`（`DisposableScope` / `EventBus` / `PluginContext`）、`src/presets/`、`src/settings/ui/`、`src/composer/`、`src/discord/`（统一 `DiscordHostAdapter`）与 `src/auto-translation/`（单一状态机 + 冷却表）。
-- **插件化服务商注册表**：7 家服务商均作为独立适配器注册在 `src/providers/adapters/`，新增服务商只需新增 1 个适配器文件并注册 1 行。
+- **插件化服务商注册表**：7 家服务商均作为独立适配器注册在 `src/providers/adapters/`，请求构建/解析、任务能力校验、备用顺序、档案保存与连接测试均以 `ProviderRegistry` 为准（新增自定义适配器只需注册适配器对象；若需专属非标准设置项表单或本地化名称，再补充对应设置 UI 与 i18n 字段）。
 - **完备的静态与回归门禁**：内置 ESLint（含 `src/` `no-unused-vars`）、TypeScript `checkJs`、中英 i18n 键对称审计、710+ 核心单测、9 个领域化离线回归套件与 Windows 安装器回滚校验。
 
 ## 支持的服务商

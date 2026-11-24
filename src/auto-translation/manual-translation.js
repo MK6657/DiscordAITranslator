@@ -265,7 +265,7 @@ const methods = {
             return translated;
         }
         this.plugin.consumeAutoTranslationRequestBudget({ requestBudget });
-        return this.plugin.runAutoTranslationModelAttempt(plan.text, requestOptions);
+        return this.plugin.runAutoTranslationModelAttempt(plan.text, requestOptions, requestBudget ? { requestBudget } : {});
     },
 
     getManualRescueValidation(plan, translated, requestOptions) {

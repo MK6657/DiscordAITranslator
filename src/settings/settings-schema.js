@@ -58,6 +58,7 @@ class SettingsSchema {
         this.sections = Array.isArray(sections) ? sections : [];
         this.providerCapabilities = options.providerCapabilities || {};
         this.providerOrder = Array.isArray(options.providerOrder) ? options.providerOrder : [];
+        this.providerRegistry = options.providerRegistry || null;
         this.defaultProvider = String(options.defaultProvider || "deepseek");
     }
 
@@ -71,15 +72,33 @@ class SettingsSchema {
 
     getProviderCapabilities(provider) {
         const key = String(provider || "").trim();
+        const adapter = this.providerRegistry?.get?.(key);
+        if (adapter) {
+            return {
+                ...(this.providerCapabilities[key] || {}),
+                kind: adapter.kind || "chat",
+                tasks: {
+                    polish: Boolean(adapter.tasks?.polish),
+                    translation: Boolean(adapter.tasks?.translation)
+                }
+            };
+        }
         return this.providerCapabilities[key] || this.providerCapabilities[this.defaultProvider] || null;
     }
 
     isProviderAllowedForTask(kind, provider) {
-        return this.getProviderCapabilities(provider)?.tasks?.[kind] === true;
+        const key = String(provider || "").trim();
+        if (!key) return false;
+        const adapter = this.providerRegistry?.get?.(key);
+        if (adapter) return adapter.tasks?.[kind] === true;
+        return this.providerCapabilities[key]?.tasks?.[kind] === true;
     }
 
     getProviderOptionsForTask(kind, getLabel) {
-        return this.providerOrder
+        const order = this.providerRegistry?.getOrder
+            ? this.providerRegistry.getOrder()
+            : this.providerOrder;
+        return order
             .filter(provider => this.isProviderAllowedForTask(kind, provider))
             .map(provider => [provider, getLabel(provider)]);
     }

@@ -86,6 +86,7 @@ module.exports = class DiscordAITranslator {
             tabs: SETTINGS_TABS_DEFINITION,
             providerCapabilities: PROVIDER_CAPABILITIES,
             providerOrder: PROVIDER_ORDER,
+            providerRegistry: this.providerLayer.registry,
             defaultProvider: "deepseek"
         });
         this.bindDomainEvents();
@@ -126,6 +127,7 @@ module.exports = class DiscordAITranslator {
         this.cachedDrawMemo = new Map();
         this.cachedDrawMessageMemo = new WeakMap();
         this.cachedDrawScroller = null;
+        this.renderFrameScrollCache = null;
         this.localProviderHealthChecks = new Map();
         this.localProviderHealthProbeStartedAt = new Map();
         this.localProviderHealthyKeys = new Set();
@@ -190,6 +192,12 @@ module.exports = class DiscordAITranslator {
         this.incrementalMessageScanGeneration = 0;
         this.incrementalMessageScanIdleCallback = null;
         this.incrementalMessageScanTimer = null;
+        this.incrementalMessageScanPendingWork = false;
+        this.incrementalMessageScanDirtyOnly = false;
+        this.incrementalMessageScanHasQueuedDrainable = false;
+        this.incrementalMessageScanRouteKey = "";
+        this.incrementalMessageScanConfigVersion = 0;
+        this.incrementalMessageScanRemainingGetter = null;
         this.cacheOnlyScanTimer = null;
         this.cacheOnlyScanDueAt = 0;
         this.scanProtectedUntil = 0;
@@ -293,13 +301,13 @@ module.exports = class DiscordAITranslator {
             this.panelTheme.startWatching();
             this.patchMessageContextMenu();
             this.startObserver();
-            document.addEventListener("keydown", this.boundKeydown, true);
-            window.addEventListener("scroll", this.boundViewportScan, { capture: true, passive: true });
-            window.addEventListener("resize", this.boundViewportScan, { capture: true, passive: true });
-            window.addEventListener("focus", this.boundViewportScan, { capture: true, passive: true });
-            document.addEventListener("visibilitychange", this.boundViewportScan, true);
-            window.addEventListener("pagehide", this.getPageHideHandler(), true);
-            window.addEventListener("beforeunload", this.getPageHideHandler(), true);
+            this.runtimeScope.on(document, "keydown", this.boundKeydown, true);
+            this.runtimeScope.on(window, "scroll", this.boundViewportScan, { capture: true, passive: true });
+            this.runtimeScope.on(window, "resize", this.boundViewportScan, { capture: true, passive: true });
+            this.runtimeScope.on(window, "focus", this.boundViewportScan, { capture: true, passive: true });
+            this.runtimeScope.on(document, "visibilitychange", this.boundViewportScan, true);
+            this.runtimeScope.on(window, "pagehide", this.getPageHideHandler(), true);
+            this.runtimeScope.on(window, "beforeunload", this.getPageHideHandler(), true);
             this.queueScan();
             this.events.emit("lifecycle:start", { version: PLUGIN_VERSION, token: this.lifecycleToken });
             this.showToast(this.t("pluginStarted", { version: PLUGIN_VERSION }), "success");
@@ -347,10 +355,17 @@ module.exports = class DiscordAITranslator {
         if (this.googleTranslateRuntimeDirtyTimer) clearTimeout(this.googleTranslateRuntimeDirtyTimer);
         if (this.diagnosticLogsDirtyTimer) clearTimeout(this.diagnosticLogsDirtyTimer);
         this.apiRequestsClosed = true;
+        this.abortAutoTranslationRequests("stop");
         this.abortActiveApiRequests();
-        this.providerLayer.apiTestRuns?.forEach?.(run => run?.controller?.abort?.());
+        this.providerLayer.apiTestRuns?.forEach?.((run, key) => {
+            run?.controller?.abort?.();
+            this.providerLayer.apiTestRuns.set(key, { sequence: run?.sequence || 0 });
+        });
         this.providerLayer.runningApiTests?.clear?.();
-        this.modelDetectionRuns?.forEach?.(run => run?.controller?.abort?.());
+        this.modelDetectionRuns?.forEach?.((run, key) => {
+            run?.controller?.abort?.();
+            this.modelDetectionRuns.set(key, { sequence: run?.sequence || 0 });
+        });
         this.composerWriter.cancelAll("stop");
         this.clearHotkeyRecording();
         this.clearPolishSubmitTimer();
@@ -366,13 +381,6 @@ module.exports = class DiscordAITranslator {
         this.flushSettings({ retryOnError: false });
         const diagnosticLogsPersisted = this.flushDiagnosticLogs({ retryOnError: false }) !== false;
         this.unpatchContextMenus();
-        document.removeEventListener("keydown", this.boundKeydown, true);
-        window.removeEventListener("scroll", this.boundViewportScan, { capture: true });
-        window.removeEventListener("resize", this.boundViewportScan, { capture: true });
-        window.removeEventListener("focus", this.boundViewportScan, { capture: true });
-        document.removeEventListener("visibilitychange", this.boundViewportScan, true);
-        window.removeEventListener("pagehide", this.getPageHideHandler(), true);
-        window.removeEventListener("beforeunload", this.getPageHideHandler(), true);
         this.removePolishResultPanel();
         this.removePolishRestoreControl();
         this.removeInputActionMenu();
@@ -419,6 +427,7 @@ module.exports = class DiscordAITranslator {
         this.diagnosticLogsDirty = !diagnosticLogsPersisted;
         this.diagnosticLogsPersistenceDeferredSince = 0;
         this.translationRequests.clear();
+        this.autoTranslationPartialResults?.clear?.();
         this.autoStateMachine.resetAll();
         this.autoCooldowns.clearAll();
         this.cancelCachedTranslationDrawPass();
@@ -644,11 +653,11 @@ module.exports = class DiscordAITranslator {
         };
         this.focusSettingsElement(target());
         if (typeof setTimeout !== "function") return;
-        [300, 1000].forEach(delay => this.unrefTimer(setTimeout(() => {
+        [300, 1000].forEach(delay => this.runtimeScope.setTimeout(() => {
             if (!panel?.isConnected || typeof document === "undefined") return;
             const active = document.activeElement;
             if (!active || active === document.body || active.isConnected === false) this.focusSettingsElement(target());
-        }, delay)));
+        }, delay, { unref: true }));
     }
 
     injectStyles() {

@@ -21,6 +21,29 @@ const localModelHealthMethods = require("./local-model-health");
 const googleKeyPoolMethods = require("./google-key-pool");
 const providerCodecMethods = require("./provider-codecs");
 
+const NON_REQUEST_TASK_CONFIG_KEYS = new Set([
+    "providerProfiles",
+    "promptTemplates",
+    "activePromptTemplate",
+    "apiStatus",
+    "afterAction",
+    "repolishSource"
+]);
+
+const FALLBACK_TASK_PARAM_KEYS = [
+    "enabled",
+    "sourceLanguage",
+    "targetLanguage",
+    "targetLanguageCode",
+    "temperature",
+    "maxTokens",
+    "prompt",
+    "promptPolicyVersion",
+    "localCompactPrompt",
+    "mode",
+    "requestOrigin"
+];
+
 class ProviderLayer {
     constructor(plugin, ctx = createPluginContext(plugin)) {
         this.plugin = plugin;
@@ -38,7 +61,15 @@ class ProviderLayer {
 
     getProviderDefaults(provider) {
         const id = String(provider || "").trim();
-        return this.registry.get(id)?.defaultProfile || PROVIDER_DEFAULTS[id] || null;
+        const adapter = this.registry.get(id);
+        if (adapter) {
+            return {
+                ...(PROVIDER_DEFAULTS[id] || {}),
+                ...(adapter.defaultProfile || {}),
+                ...(adapter.label && !adapter.defaultProfile?.label ? { label: adapter.label } : {})
+            };
+        }
+        return PROVIDER_DEFAULTS[id] || null;
     }
 
     isGoogleTranslateProvider(configOrProvider) {
@@ -99,7 +130,7 @@ class ProviderLayer {
     }
 
     getEffectiveChatCompletionEndpoint(config = {}, defaultConfig = {}) {
-        const providerDefault = PROVIDER_DEFAULTS[config.provider] || {};
+        const providerDefault = this.getProviderDefaults(config.provider) || {};
         const raw = String(config.endpoint || providerDefault.endpoint || defaultConfig.endpoint || "").trim();
         return this.normalizeChatCompletionEndpoint(raw);
     }
@@ -182,7 +213,7 @@ class ProviderLayer {
     }
 
     isModelDetectionProvider(provider) {
-        return ["sakuraLocal", "openaiCompatible"].includes(String(provider || ""));
+        return this.registry.supportsModelDetection(provider);
     }
 
     getEffectiveRequestApiKey(config) {
@@ -203,6 +234,10 @@ class ProviderLayer {
             error.code = "API_KEY_ORIGIN_MISMATCH";
             throw error;
         }
+        const adapter = this.registry.get(config);
+        if (typeof adapter?.buildHeaders === "function") {
+            return adapter.buildHeaders(config, effectiveApiKey, this.plugin);
+        }
         const headers = { "Content-Type": "application/json" };
         if (config?.provider === "microsoft") {
             if (effectiveApiKey) headers["Ocp-Apim-Subscription-Key"] = effectiveApiKey;
@@ -220,9 +255,15 @@ class ProviderLayer {
         return headers;
     }
 
-    hasUsableApiConfig(kind, configOverrides = null) {
-        const config = this.plugin.getEffectiveTaskConfig(kind, configOverrides);
+    hasUsableApiConfig(kind, configOverrides = null, options = null) {
+        const config = options?.isolatedConfig && configOverrides
+            ? this.stripNonRequestTaskFields(configOverrides)
+            : this.plugin.getEffectiveTaskConfig(kind, configOverrides);
         if (this.plugin.hasApiKeyOriginMismatch(config)) return false;
+        const adapter = this.registry.get(config);
+        if (typeof adapter?.hasUsableConfig === "function") {
+            return Boolean(adapter.hasUsableConfig(config, this.plugin));
+        }
         const defaults = DEFAULT_SETTINGS[kind] || {};
         const providerDefaults = this.getProviderDefaults(config.provider) || {};
         const endpoint = String(config.endpoint || providerDefaults.endpoint || defaults.endpoint || "").trim();
@@ -322,7 +363,7 @@ class ProviderLayer {
 
     getApiTestModel(config = {}, request = {}, reportedModel = "") {
         if (this.isDirectTranslateProvider(config)) return "";
-        if (reportedModel && (this.isLocalTranslationProvider(config) || config?.provider === "openaiCompatible")) return reportedModel;
+        if (reportedModel && (this.isLocalTranslationProvider(config) || this.registry.supportsModelDetection(config))) return reportedModel;
         return this.plugin.getDiagnosticModelLabel(String(request?.body?.model || config?.model || ""));
     }
 
@@ -346,35 +387,73 @@ class ProviderLayer {
         return { state, message: String(status.message || "") };
     }
 
-    getProviderFallbackOrder(kind = "translation") {
+    getEligibleProviderFallbackCandidates(kind = "translation") {
+        if (kind !== "translation") return [];
+        const registeredOrder = this.registry.getOrder();
+        const order = registeredOrder.length ? registeredOrder : PROVIDER_ORDER;
+        return order.filter(provider => {
+            const adapter = this.registry.get(provider);
+            if (adapter) {
+                if (adapter.tasks?.translation !== true) return false;
+            }
+            else if (this.plugin.isProviderAllowedForTask && !this.plugin.isProviderAllowedForTask("translation", provider)) {
+                return false;
+            }
+            return this.registry.allowCloudFallback(provider) && !this.isLocalTranslationProvider({ provider });
+        });
+    }
+
+    getProviderFallbackOrder(kind = "translation", currentConfig = null) {
         if (kind !== "translation") return [];
         if (this.plugin.settings.ui?.providerFallbackEnabled !== true) return [];
-        const currentProvider = String(this.plugin.settings.translation?.provider || "");
-        if (this.isLocalTranslationProvider({ provider: currentProvider })) return [];
+        const activeConfig = currentConfig && typeof currentConfig === "object"
+            ? currentConfig
+            : (this.plugin.settings.translation || {});
+        const currentProvider = String(activeConfig.provider || this.plugin.settings.translation?.provider || "");
+        if (!this.registry.allowCloudFallback(activeConfig) || this.isLocalTranslationProvider(activeConfig)) return [];
+        const eligible = new Set(this.getEligibleProviderFallbackCandidates(kind));
         return (this.plugin.settings.ui?.providerFallbackOrder || [])
-            .filter(provider => PROVIDER_ORDER.includes(provider))
-            .filter(provider => provider !== currentProvider)
-            .filter(provider => !this.isLocalTranslationProvider({ provider }));
+            .filter(provider => eligible.has(provider) && provider !== currentProvider);
     }
 
     shouldTryProviderFallback(kind, options = {}, currentConfig = this.plugin.getTaskConfig(kind), error = null) {
         if (kind !== "translation") return false;
         if (options.allowProviderFallback === false) return false;
         if (this.plugin.settings.ui?.providerFallbackEnabled !== true) return false;
-        if (this.isLocalTranslationProvider(currentConfig)) return false;
+        if (!this.registry.allowCloudFallback(currentConfig) || this.isLocalTranslationProvider(currentConfig)) return false;
         const mode = String(options.mode || options.configOverrides?.mode || "");
-        if (!/^manual/.test(mode) && !/^public-bilingual(?:-|$)/.test(mode)) return false;
+        const origin = String(options.requestOrigin || options.configOverrides?.requestOrigin || "");
+        const eligibleMode = /^manual/.test(mode) || /^public-bilingual(?:-|$)/.test(mode)
+            || origin === "manual" || origin === "public-bilingual";
+        if (!eligibleMode) return false;
         const type = this.plugin.getAutoTranslationFailureType(error);
         return ["auth", "quota", "rate-limit", "server", "timeout", "network", "parse", "client", "invalid-output", "truncated"].includes(type);
     }
 
+    getIsolatedFallbackCredentialFields(baseConfig, targetProvider, extraConfig = null) {
+        const fields = new Set(["apiKey", "apiKeyOrigin", "region", "deeplPlan", "appId", "secretKey"]);
+        for (const source of [baseConfig, targetProvider, extraConfig]) {
+            if (!source) continue;
+            for (const field of this.registry.getCredentialFields(source)) {
+                if (field) fields.add(field);
+            }
+        }
+        return fields;
+    }
+
     getProviderFallbackConfig(kind, provider, baseConfig = this.plugin.getTaskConfig(kind)) {
-        if (kind !== "translation" || !PROVIDER_ORDER.includes(provider)) return null;
+        if (kind !== "translation" || (!this.registry.has(provider) && !PROVIDER_ORDER.includes(provider))) return null;
         const defaults = this.getProviderDefaults(provider);
         if (!defaults) return null;
         const profile = this.plugin.getTaskProviderProfile(kind, provider) || {};
-        return {
-            ...baseConfig,
+        const taskParams = {};
+        if (baseConfig && typeof baseConfig === "object") {
+            for (const key of FALLBACK_TASK_PARAM_KEYS) {
+                if (baseConfig[key] !== undefined) taskParams[key] = baseConfig[key];
+            }
+        }
+        const fallbackConfig = {
+            ...taskParams,
             ...defaults,
             provider,
             endpoint: profile.endpoint ?? defaults.endpoint ?? "",
@@ -386,20 +465,27 @@ class ProviderLayer {
             appId: profile.appId ?? "",
             secretKey: profile.secretKey ?? "",
             enableThinking: typeof profile.enableThinking === "boolean" ? profile.enableThinking : false,
-            sourceLanguage: baseConfig.sourceLanguage || AUTO_LANGUAGE_VALUE,
-            targetLanguage: baseConfig.targetLanguage || this.plugin.settings.translation?.targetLanguage
+            sourceLanguage: baseConfig?.sourceLanguage || AUTO_LANGUAGE_VALUE,
+            targetLanguage: baseConfig?.targetLanguage || this.plugin.settings.translation?.targetLanguage
         };
+        for (const field of this.registry.getCredentialFields(provider)) {
+            if (field === "apiKey" || field === "appId" || field === "secretKey") continue;
+            fallbackConfig[field] = profile[field] ?? defaults[field] ?? "";
+        }
+        return fallbackConfig;
     }
 
     async tryProviderFallbackModelTask(kind, input, options = {}, firstError = null, currentConfig = this.plugin.getTaskConfig(kind), diagnosticMode = kind) {
         if (!this.shouldTryProviderFallback(kind, options, currentConfig, firstError)) return null;
-        const order = this.getProviderFallbackOrder(kind);
+        const order = this.getProviderFallbackOrder(kind, currentConfig);
         if (!order.length) return null;
         const firstType = this.plugin.getAutoTranslationFailureType(firstError);
+        let budgetReservedBlocked = false;
+        let budgetExhaustedBlocked = false;
         for (const provider of order) {
             const fallbackConfig = this.getProviderFallbackConfig(kind, provider, currentConfig);
             if (!fallbackConfig) continue;
-            if (!this.plugin.hasUsableApiConfig(kind, fallbackConfig)) {
+            if (!this.plugin.hasUsableApiConfig(kind, fallbackConfig, { isolatedConfig: true })) {
                 this.plugin.logDiagnostic("model.provider-fallback", "skipped", {
                     ...this.plugin.getDiagnosticBaseMeta("model", `${diagnosticMode}-fallback`, DIAGNOSTIC_REASON_CODES.CONFIG_MISSING),
                     fromProvider: currentConfig?.provider || "",
@@ -408,6 +494,27 @@ class ProviderLayer {
                     reason: "missing-config"
                 });
                 continue;
+            }
+            if (options.requestBudget) {
+                try {
+                    this.plugin.consumeAutoTranslationRequestBudget({ requestBudget: options.requestBudget });
+                }
+                catch (budgetError) {
+                    if (this.plugin.isAutoTranslationRequestBudgetError?.(budgetError)) {
+                        if (budgetError.requestBudgetReserved) budgetReservedBlocked = true;
+                        else budgetExhaustedBlocked = true;
+                        this.plugin.logDiagnostic("model.provider-fallback", "budget-exhausted", {
+                            ...this.plugin.getDiagnosticBaseMeta("model", `${diagnosticMode}-fallback`, "budget-exhausted"),
+                            fromProvider: currentConfig?.provider || "",
+                            provider,
+                            firstFailureType: firstType,
+                            requestCount: Number(options.requestBudget?.used || 0),
+                            limit: Number(options.requestBudget?.limit || 0)
+                        });
+                        break;
+                    }
+                    throw budgetError;
+                }
             }
             try {
                 this.plugin.logDiagnostic("model.provider-fallback", "start", {
@@ -418,24 +525,40 @@ class ProviderLayer {
                     inputHash: this.plugin.getStrongTextFingerprint(input),
                     inputLength: String(input || "").length
                 });
+                const sanitizedOverrides = {};
+                if (options.configOverrides && typeof options.configOverrides === "object") {
+                    for (const key of FALLBACK_TASK_PARAM_KEYS) {
+                        const value = options.configOverrides[key];
+                        if (value === undefined) continue;
+                        if ((key === "sourceLanguage" || key === "targetLanguage") && !value) continue;
+                        sanitizedOverrides[key] = value;
+                    }
+                }
+                const fallbackOverrides = {
+                    ...fallbackConfig,
+                    ...sanitizedOverrides,
+                    provider,
+                    endpoint: fallbackConfig.endpoint,
+                    model: fallbackConfig.model,
+                    apiKey: fallbackConfig.apiKey,
+                    apiKeyOrigin: fallbackConfig.apiKeyOrigin,
+                    region: fallbackConfig.region,
+                    deeplPlan: fallbackConfig.deeplPlan,
+                    appId: fallbackConfig.appId,
+                    secretKey: fallbackConfig.secretKey,
+                    enableThinking: fallbackConfig.enableThinking
+                };
+                for (const field of this.registry.getCredentialFields(provider)) {
+                    fallbackOverrides[field] = fallbackConfig[field] ?? "";
+                }
                 const result = await this.plugin.runModelTask(kind, input, {
                     ...options,
+                    requestBudget: undefined,
                     mode: `${diagnosticMode}-provider-fallback`,
-                    configOverrides: {
-                        ...fallbackConfig,
-                        ...(options.configOverrides || {}),
-                        provider,
-                        endpoint: fallbackConfig.endpoint,
-                        model: fallbackConfig.model,
-                        apiKey: fallbackConfig.apiKey,
-                        apiKeyOrigin: fallbackConfig.apiKeyOrigin,
-                        region: fallbackConfig.region,
-                        deeplPlan: fallbackConfig.deeplPlan,
-                        appId: fallbackConfig.appId,
-                        secretKey: fallbackConfig.secretKey
-                    },
+                    configOverrides: fallbackOverrides,
                     allowProviderFallback: false,
-                    providerProfilePinned: true
+                    providerProfilePinned: true,
+                    isolatedConfig: true
                 });
                 this.plugin.logDiagnostic("model.provider-fallback", "success", {
                     ...this.plugin.getDiagnosticBaseMeta("model", `${diagnosticMode}-fallback`, "request-success"),
@@ -463,17 +586,35 @@ class ProviderLayer {
                 });
             }
         }
-        return null;
+        return budgetReservedBlocked || budgetExhaustedBlocked
+            ? { used: false, budgetReservedBlocked, budgetExhaustedBlocked }
+            : null;
     }
 
     getAutoTranslationProviderKey(requestOptions = this.plugin.getAutoTranslationOptions()) {
         if (requestOptions?.providerKey) return requestOptions.providerKey;
-        const config = this.plugin.getCacheConfigSnapshot("translation", this.plugin.getEffectiveTaskConfig("translation", requestOptions?.configOverrides));
+        const rawConfig = requestOptions?.isolatedConfig && requestOptions?.configOverrides
+            ? requestOptions.configOverrides
+            : this.plugin.getEffectiveTaskConfig("translation", requestOptions?.configOverrides);
+        const config = this.plugin.getCacheConfigSnapshot("translation", rawConfig);
         if (config.provider === "googleCloud") return this.getGoogleTranslateProviderKey();
-        const rawConfig = this.plugin.getEffectiveTaskConfig("translation", requestOptions?.configOverrides);
-        const apiKeySource = rawConfig.provider === "baidu"
-            ? `${rawConfig.appId || ""}:${rawConfig.secretKey || ""}`
-            : requestOptions?.configOverrides?.apiKey ?? this.plugin.settings.translation?.apiKey;
+        const adapter = this.registry.get(rawConfig);
+        let apiKeySource = "";
+        if (typeof adapter?.getAuthFingerprint === "function") {
+            apiKeySource = String(adapter.getAuthFingerprint(rawConfig, null, this.plugin) || "");
+        }
+        else if (rawConfig.provider === "baidu") {
+            apiKeySource = `${rawConfig.appId || ""}:${rawConfig.secretKey || ""}`;
+        }
+        else {
+            const credentialFields = this.registry.getCredentialFields(rawConfig);
+            const hasCustomFields = credentialFields.some(field => field !== "apiKey");
+            apiKeySource = hasCustomFields
+                ? credentialFields.map(field => `${field}=${String(rawConfig[field] ?? "").trim()}`).join("|")
+                : (requestOptions?.isolatedConfig
+                    ? String(rawConfig.apiKey ?? "")
+                    : (requestOptions?.configOverrides?.apiKey ?? this.plugin.settings.translation?.apiKey));
+        }
         const apiKeyFingerprint = this.plugin.getTextFingerprint(String(apiKeySource || "").trim());
         return [
             config.provider,
@@ -496,6 +637,32 @@ class ProviderLayer {
     // fallback usage through promise stamping. runModelTask stays as the string-typed
     // facade the rest of the plugin (and the regression suite) programs against.
 
+    stripNonRequestTaskFields(config) {
+        if (!config || typeof config !== "object") return {};
+        const cleaned = { ...config };
+        for (const key of NON_REQUEST_TASK_CONFIG_KEYS) {
+            delete cleaned[key];
+        }
+        return cleaned;
+    }
+
+    resolveEffectiveRequestConfig(kind, options = {}) {
+        const baseConfig = this.stripNonRequestTaskFields(this.plugin.getTaskConfig(kind));
+        if (!options?.configOverrides) return baseConfig;
+        const overrides = this.stripNonRequestTaskFields(options.configOverrides);
+        if (options.isolatedConfig) return overrides;
+        const overrideProvider = String(overrides.provider || "").trim();
+        const baseProvider = String(baseConfig?.provider || "").trim();
+        if (overrideProvider && baseProvider && overrideProvider !== baseProvider) {
+            const sanitizedBase = { ...baseConfig };
+            for (const field of this.getIsolatedFallbackCredentialFields(baseConfig, overrideProvider)) {
+                delete sanitizedBase[field];
+            }
+            return { ...sanitizedBase, ...overrides };
+        }
+        return { ...baseConfig, ...overrides };
+    }
+
     async runModelTaskWithResult(kind, input, options = {}) {
         const { signal, requestContext } = options;
         const diagnosticMode = options?.mode || options?.configOverrides?.mode || kind;
@@ -511,7 +678,7 @@ class ProviderLayer {
 
         this.throwIfProviderRequestCancelled(signal, lifecycleToken);
         try {
-            taskConfig = { ...this.plugin.getEffectiveTaskConfig(kind, options.configOverrides) };
+            taskConfig = this.resolveEffectiveRequestConfig(kind, options);
             const defaultConfig = DEFAULT_SETTINGS[kind] || {};
             if (this.shouldAutoDetectLocalProviderModel(taskConfig, defaultConfig)) {
                 // Never forward generation timeoutMs (45-90s) into the shared /v1/models probe,
@@ -532,7 +699,7 @@ class ProviderLayer {
             const buildOptions = { ...options, configOverrides: taskConfig, reserveGoogleTranslateQuota: false };
             const translateAsArray = Boolean(options.translateAsArray || options.googleTranslateAsArray);
             const getRequestKey = () => JSON.stringify([
-                this.getModelRequestKey(endpoint, request, input),
+                this.getModelRequestKey(endpoint, request, input, taskConfig),
                 Boolean(request?.responseParser && translateAsArray)
             ]);
             const requests = this.plugin.translationRequests;
@@ -634,7 +801,13 @@ class ProviderLayer {
             });
             const fallback = await this.plugin.tryProviderFallbackModelTask(kind, input, { ...options, requestContext: undefined }, error, taskConfig, diagnosticMode);
             this.throwIfProviderRequestCancelled(signal, lifecycleToken);
-            if (!fallback?.used) throw error;
+            if (!fallback?.used) {
+                if (error && typeof error === "object") {
+                    if (fallback?.budgetReservedBlocked) error.fallbackBudgetReserved = true;
+                    if (fallback?.budgetExhaustedBlocked) error.fallbackBudgetExhausted = true;
+                }
+                throw error;
+            }
             if (requestContext && typeof requestContext === "object") requestContext.fallbackProvider = fallback.provider;
             return { text: fallback.result, fallbackProvider: fallback.provider };
         }
@@ -659,8 +832,11 @@ class ProviderLayer {
                 try { options.onRawResponse(raw); }
                 catch {}
             }
-            const adapter = (request?.responseParser && this.registry.getByParser(request.responseParser))
-                || this.registry.get(request?.provider);
+            const providerAdapter = this.registry.get(request?.provider);
+            const parserAdapter = request?.responseParser ? this.registry.getByParser(request.responseParser) : null;
+            const adapter = (providerAdapter && (!request?.responseParser || !providerAdapter.responseParser || providerAdapter.responseParser === request.responseParser))
+                ? providerAdapter
+                : (parserAdapter || providerAdapter);
             if (adapter?.parseResponse) {
                 return adapter.parseResponse(raw, request, options, this.plugin);
             }
@@ -894,9 +1070,11 @@ class ProviderLayer {
     async fetchViaBetterDiscordNet(endpoint, fetchOptions, signal = null, timeoutMs = MODEL_REQUEST_TIMEOUT_MS) {
         const bdFetch = globalThis.BdApi?.Net?.fetch;
         if (typeof bdFetch !== "function") throw new Error("BdApi.Net.fetch unavailable");
+        const rawHeaders = fetchOptions.headers;
+        const bdHeaders = this.serializeHeadersForBetterDiscordNet(rawHeaders);
         const bdOptions = {
             method: fetchOptions.method,
-            headers: fetchOptions.headers,
+            headers: bdHeaders,
             timeout: Math.max(1000, Number(timeoutMs) || MODEL_REQUEST_TIMEOUT_MS),
             redirect: "manual",
             maxRedirects: 0
@@ -961,16 +1139,100 @@ class ProviderLayer {
         return error;
     }
 
-    getModelRequestKey(endpoint, request, input) {
+    normalizeRequestHeadersMap(headers) {
+        const normalized = new Map();
+        if (!headers || typeof headers !== "object") return normalized;
+        const append = (key, value) => {
+            const rawName = String(key || "").trim();
+            const lowerName = rawName.toLowerCase();
+            if (!lowerName || value === undefined || value === null) return;
+            const textValue = String(value).trim();
+            const existing = normalized.get(lowerName);
+            if (existing) {
+                existing.value = `${existing.value}, ${textValue}`;
+            }
+            else {
+                normalized.set(lowerName, { name: rawName, value: textValue });
+            }
+        };
+        if (Array.isArray(headers)) {
+            for (const entry of headers) {
+                if (Array.isArray(entry) && entry.length >= 2) append(entry[0], entry[1]);
+            }
+        }
+        else if (typeof headers.entries === "function") {
+            for (const entry of headers.entries()) {
+                if (Array.isArray(entry) && entry.length >= 2) append(entry[0], entry[1]);
+            }
+        }
+        else if (typeof headers.forEach === "function") {
+            headers.forEach((value, key) => append(key, value));
+        }
+        else {
+            for (const [key, value] of Object.entries(headers)) {
+                append(key, value);
+            }
+        }
+        return normalized;
+    }
+
+    serializeHeadersForBetterDiscordNet(headers) {
+        if (!headers || typeof headers !== "object") return headers;
+        const isStructured = Array.isArray(headers)
+            || typeof headers.entries === "function"
+            || typeof headers.forEach === "function";
+        if (!isStructured) {
+            const keys = Object.keys(headers);
+            const seenLower = new Set();
+            let hasDuplicateCase = false;
+            for (const key of keys) {
+                const lower = String(key || "").trim().toLowerCase();
+                if (!lower) continue;
+                if (seenLower.has(lower)) {
+                    hasDuplicateCase = true;
+                    break;
+                }
+                seenLower.add(lower);
+            }
+            if (!hasDuplicateCase) return headers;
+        }
+        const normalized = this.normalizeRequestHeadersMap(headers);
+        return Object.fromEntries([...normalized.values()].map(item => [item.name, item.value]));
+    }
+
+    getRequestHeaderEntries(headers) {
+        return [...this.normalizeRequestHeadersMap(headers).entries()]
+            .map(([lowerName, item]) => [lowerName, item.value])
+            .sort((a, b) => a[0].localeCompare(b[0]));
+    }
+
+    getModelRequestKey(endpoint, request, input, effectiveConfig = null) {
         const body = request?.body || {};
-        const authFingerprint = request?.provider === "googleCloud"
-            ? this.plugin.getTextFingerprint(String(request?.googleTranslate?.apiKey || ""))
-            : this.plugin.getTextFingerprint([
-                request?.headers?.Authorization || "",
-                request?.headers?.["Ocp-Apim-Subscription-Key"] || "",
+        let authFingerprint = "";
+        if (request?.provider === "googleCloud") {
+            authFingerprint = this.plugin.getTextFingerprint(String(request?.googleTranslate?.apiKey || ""));
+        }
+        else {
+            const adapter = this.registry.get(request?.provider || effectiveConfig);
+            const adapterAuth = typeof adapter?.getAuthFingerprint === "function"
+                ? String(adapter.getAuthFingerprint(effectiveConfig || {}, request, this.plugin) || "")
+                : "";
+            const headerEntries = this.getRequestHeaderEntries(request?.headers)
+                .map(([k, v]) => `${k}:${v}`)
+                .join("\n");
+            const configCreds = effectiveConfig && typeof effectiveConfig === "object"
+                ? this.registry.getCredentialFields(request?.provider || effectiveConfig)
+                    .map(field => `${field}=${String(effectiveConfig[field] ?? "").trim()}`)
+                    .join("|")
+                : "";
+            authFingerprint = this.plugin.getStrongTextFingerprint([
+                adapterAuth,
+                headerEntries,
+                configCreds,
                 body?.appid || "",
                 request?.providerKey || ""
-            ].join("|"));
+            ].join("\n--\n"));
+        }
         const requestText = body?.messages?.[0]?.content ?? body?.q ?? body?.text ?? body?.target ?? body?.to ?? "";
         const serializedRequestText = Array.isArray(requestText) ? JSON.stringify(requestText) : String(requestText ?? "");
         const serializedInput = Array.isArray(input) ? JSON.stringify(input) : String(input ?? "");
@@ -999,8 +1261,11 @@ class ProviderLayer {
         const lifecycleToken = this.ctx.getLifecycleToken();
         if (!this.ctx.isLifecycleTokenCurrent(lifecycleToken)) return false;
         const config = this.plugin.getTaskConfig(kind);
-        const fields = ["enabled", "provider", "endpoint", "apiKey", "apiKeyOrigin", "model", "enableThinking",
-            "region", "deeplPlan", "appId", "secretKey", "targetLanguage"];
+        const fields = [...new Set([
+            "enabled", "provider", "endpoint", "apiKey", "apiKeyOrigin", "model", "enableThinking",
+            "region", "deeplPlan", "appId", "secretKey", "targetLanguage",
+            ...this.registry.getCredentialFields(config)
+        ])];
         const testConfig = Object.freeze(Object.fromEntries(fields.map(field => [field, config[field]])));
         const getGooglePoolConfig = () => this.normalizeGoogleTranslateKeyPool().keyPoolText;
         const googlePoolConfig = testConfig.provider === "googleCloud" ? getGooglePoolConfig() : null;
@@ -1128,35 +1393,39 @@ class ProviderLayer {
     }
 
     buildConnectionTestRequest(kind, config = this.plugin.getTaskConfig(kind)) {
-        if (this.isDirectTranslateProvider(config)) {
+        const safeConfig = this.stripNonRequestTaskFields(config);
+        const defaultConfig = DEFAULT_SETTINGS[kind] || {};
+        const adapter = this.registry.get(safeConfig?.provider);
+        if (typeof adapter?.buildTestRequest === "function") {
+            return adapter.buildTestRequest(kind, safeConfig, defaultConfig, this.plugin);
+        }
+        if (this.isDirectTranslateProvider(safeConfig)) {
             // Test the language pair the user actually translates into: some targets are
             // rejected by some services. When every Google key is cooling down, a cooling key
             // is tested, so a passing test can bring it back.
             const testConfig = {
-                ...config,
+                ...safeConfig,
                 sourceLanguage: AUTO_LANGUAGE_VALUE,
-                targetLanguageCode: this.getTargetLanguageCode(config.targetLanguage)
+                targetLanguageCode: this.getTargetLanguageCode(safeConfig.targetLanguage)
             };
-            const adapter = this.registry.get(config?.provider);
             if (adapter?.buildRequest) {
-                return adapter.buildRequest("translation", "hello", testConfig, DEFAULT_SETTINGS[kind] || {}, {
+                return adapter.buildRequest("translation", "hello", testConfig, defaultConfig, {
                     ignoreGoogleTranslateCooldown: true,
                     connectionTest: true
                 }, this.plugin);
             }
-            if (this.isGoogleTranslateProvider(config)) return this.buildGoogleTranslateRequest("hello", testConfig, { ignoreCooldown: true });
-            if (this.isMicrosoftTranslateProvider(config)) return this.buildMicrosoftTranslateRequest("hello", testConfig);
-            if (this.isDeepLTranslateProvider(config)) return this.buildDeepLTranslateRequest("hello", testConfig);
+            if (this.isGoogleTranslateProvider(safeConfig)) return this.buildGoogleTranslateRequest("hello", testConfig, { ignoreCooldown: true });
+            if (this.isMicrosoftTranslateProvider(safeConfig)) return this.buildMicrosoftTranslateRequest("hello", testConfig);
+            if (this.isDeepLTranslateProvider(safeConfig)) return this.buildDeepLTranslateRequest("hello", testConfig);
             return this.buildBaiduTranslateRequest("hello", testConfig);
         }
-        const defaultConfig = DEFAULT_SETTINGS[kind] || {};
-        const apiKey = this.getEffectiveRequestApiKey(config);
+        const apiKey = this.getEffectiveRequestApiKey(safeConfig);
         if (!apiKey) throw new Error(kind === "polish" ? this.plugin.t("apiKeyMissingPolish") : this.plugin.t("apiKeyMissingTranslation"));
-        const endpoint = this.getEffectiveChatCompletionEndpoint(config, defaultConfig);
-        const model = this.getEffectiveChatCompletionModel(kind, config, defaultConfig);
+        const endpoint = this.getEffectiveChatCompletionEndpoint(safeConfig, defaultConfig);
+        const model = this.getEffectiveChatCompletionModel(kind, safeConfig, defaultConfig);
         if (!endpoint) throw new Error(this.plugin.t("endpointMissing"));
-        if (this.plugin.isChatCompletionProvider(config) && !model) throw new Error(this.plugin.t("modelMissing"));
-        const body = this.applyProviderBodyOptions(config, {
+        if (this.plugin.isChatCompletionProvider(safeConfig) && !model) throw new Error(this.plugin.t("modelMissing"));
+        const body = this.applyProviderBodyOptions(safeConfig, {
             model,
             messages: [
                 { role: "user", content: "Reply with OK only." }
@@ -1169,20 +1438,17 @@ class ProviderLayer {
         return {
             endpoint,
             request: {
-                provider: config.provider,
-                providerKey: kind === "translation" ? this.getAutoTranslationProviderKey({ configOverrides: config }) : "",
-                headers: this.getRequestHeaders(config, apiKey),
+                provider: safeConfig.provider,
+                providerKey: kind === "translation" ? this.getAutoTranslationProviderKey({ configOverrides: safeConfig, isolatedConfig: true }) : "",
+                headers: this.getRequestHeaders(safeConfig, apiKey),
                 body
             }
         };
     }
 
     buildModelRequest(kind, input, options = {}) {
-        const config = this.plugin.getTaskConfig(kind);
         const defaultConfig = DEFAULT_SETTINGS[kind] || {};
-        const effectiveConfig = options.configOverrides
-            ? { ...config, ...options.configOverrides }
-            : config;
+        const effectiveConfig = this.resolveEffectiveRequestConfig(kind, options);
         const adapter = this.registry.get(effectiveConfig);
         if (adapter?.buildRequest) {
             return adapter.buildRequest(kind, input, effectiveConfig, defaultConfig, options, this.plugin);

@@ -25,7 +25,7 @@ class AutoTranslationStateMachine {
         this.visibleLongInFlightKeys = new Set();
         /** @type {Map<string, number>} */
         this.inFlightStartedAt = new Map();
-        /** @type {Map<string, number>} */
+        /** @type {Map<string, string | number>} */
         this.inFlightTokens = new Map();
         /** @type {number} */
         this.inFlightTokenCounter = 0;
@@ -62,11 +62,13 @@ class AutoTranslationStateMachine {
     /**
      * Atomically enqueues a translation item into queue + queuedKeys.
      * @param {any} item
+     * @param {{ allowDuplicateKey?: boolean }} [options]
      * @returns {boolean}
      */
-    enqueue(item) {
+    enqueue(item, options = {}) {
         const key = String(item?.cacheKey || "");
-        if (!key || this.queuedKeys.has(key)) return false;
+        if (!key) return false;
+        if (!options.allowDuplicateKey && this.queuedKeys.has(key)) return false;
         this.queue.push(item);
         this.queuedKeys.add(key);
         this.queueSortDirty = true;
@@ -81,17 +83,44 @@ class AutoTranslationStateMachine {
     removeQueued(cacheKey) {
         const key = String(cacheKey || "");
         if (!key) return false;
-        const hadKey = this.queuedKeys.delete(key);
         const before = this.queue.length;
         this.queue = this.queue.filter(item => item?.cacheKey !== key);
-        return hadKey || this.queue.length !== before;
+        const removed = before - this.queue.length;
+        const hadKey = !this.inFlightKeys.has(key) ? this.queuedKeys.delete(key) : false;
+        return hadKey || removed > 0;
+    }
+
+    /**
+     * Atomically marks a single item as in-flight across keys, timestamps, tokens, and visible-long tracking.
+     * @param {any} item
+     * @param {{ token?: string | number, startedAt?: number, isVisibleLong?: boolean, isPrefetch?: boolean }} [options]
+     * @returns {string | number | null}
+     */
+    markInFlightItem(item, options = {}) {
+        const key = String(item?.cacheKey || "");
+        if (!key) return null;
+        const startedAt = Number(options.startedAt || Date.now());
+        const token = options.token !== undefined ? options.token : ++this.inFlightTokenCounter;
+        this.inFlightKeys.add(key);
+        if (options.isVisibleLong) {
+            this.visibleLongInFlightKeys.add(key);
+        }
+        this.inFlightStartedAt.set(key, startedAt);
+        this.inFlightTokens.set(key, token);
+        if (item && typeof item === "object") {
+            item.daitInFlightToken = token;
+            if (options.isPrefetch !== undefined) {
+                item.daitPrefetchRequest = Boolean(options.isPrefetch);
+            }
+        }
+        return token;
     }
 
     /**
      * Atomically transitions a batch of items into the in-flight state.
      * @param {any[]} batch
-     * @param {{ isPrefetch?: boolean, startedAt?: number, isVisibleLong?: (item: any) => boolean }} [options]
-     * @returns {number[]} Allocated per-item tokens
+     * @param {{ isPrefetch?: boolean, startedAt?: number, isVisibleLong?: (item: any) => boolean, createToken?: (cacheKey: string) => string | number, onItemMarked?: (item: any, startedAt: number, token: string | number | null) => void }} [options]
+     * @returns {Array<string | number>} Allocated per-item tokens
      */
     beginInFlightBatch(batch, options = {}) {
         if (!Array.isArray(batch) || !batch.length) return [];
@@ -101,21 +130,24 @@ class AutoTranslationStateMachine {
         this.inFlightItems += batch.length;
         if (isPrefetch) this.prefetchInFlight++;
 
+        /** @type {Array<string | number>} */
         const tokens = [];
         for (const item of batch) {
             const key = String(item?.cacheKey || "");
-            const token = ++this.inFlightTokenCounter;
+            const token = typeof options.createToken === "function"
+                ? options.createToken(key)
+                : ++this.inFlightTokenCounter;
             tokens.push(token);
-            if (!key) continue;
-            this.inFlightKeys.add(key);
-            this.inFlightStartedAt.set(key, startedAt);
-            this.inFlightTokens.set(key, token);
-            if (typeof options.isVisibleLong === "function" && options.isVisibleLong(item)) {
-                this.visibleLongInFlightKeys.add(key);
+            if (!key) {
+                if (item && typeof item === "object") item.daitPrefetchRequest = isPrefetch;
+                continue;
             }
-            if (item && typeof item === "object") {
-                item.daitInFlightToken = token;
-                item.daitPrefetchRequest = isPrefetch;
+            const isVisibleLong = typeof options.isVisibleLong === "function"
+                ? Boolean(options.isVisibleLong(item))
+                : false;
+            this.markInFlightItem(item, { token, startedAt, isVisibleLong, isPrefetch });
+            if (typeof options.onItemMarked === "function") {
+                options.onItemMarked(item, startedAt, token);
             }
         }
         return tokens;
@@ -124,10 +156,11 @@ class AutoTranslationStateMachine {
     /**
      * Atomically clears in-flight tracking for a single item when its token matches.
      * @param {string} cacheKey
-     * @param {number} [token]
+     * @param {string | number} [token]
+     * @param {{ keepQueuedKey?: boolean }} [options]
      * @returns {boolean}
      */
-    finishInFlightItem(cacheKey, token) {
+    finishInFlightItem(cacheKey, token, options = {}) {
         const key = String(cacheKey || "");
         if (!key) return false;
         if (token !== undefined && this.inFlightTokens.has(key) && this.inFlightTokens.get(key) !== token) {
@@ -137,8 +170,19 @@ class AutoTranslationStateMachine {
         this.visibleLongInFlightKeys.delete(key);
         this.inFlightStartedAt.delete(key);
         this.inFlightTokens.delete(key);
-        this.queuedKeys.delete(key);
+        if (!options.keepQueuedKey) {
+            this.queuedKeys.delete(key);
+        }
         return true;
+    }
+
+    /**
+     * Decrements inFlightItems safely, clamping at 0.
+     * @param {number} count
+     */
+    releaseInFlightItems(count = 1) {
+        const size = Math.max(0, Number(count || 0));
+        this.inFlightItems = Math.max(0, this.inFlightItems - size);
     }
 
     /**
@@ -166,9 +210,16 @@ class AutoTranslationStateMachine {
         const key = String(task?.key || "");
         if (!key) return false;
         if (this.renderQueuedKeys.has(key)) {
-            this.renderQueuedTasks.set(key, task);
-            const idx = this.renderQueue.findIndex(item => item?.key === key);
-            if (idx >= 0) this.renderQueue[idx] = task;
+            const existing = this.renderQueuedTasks.get(key);
+            if (existing && typeof existing === "object") {
+                Object.assign(existing, task);
+            }
+            else {
+                this.renderQueuedTasks.set(key, task);
+                const idx = this.renderQueue.findIndex(item => item?.key === key);
+                if (idx >= 0) this.renderQueue[idx] = task;
+            }
+            if (task?.cacheKey) this.renderPendingKeys.add(String(task.cacheKey));
             this.renderQueueDirty = true;
             return false;
         }

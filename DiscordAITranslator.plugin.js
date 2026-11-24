@@ -1912,6 +1912,7 @@ var require_constants = __commonJS({
     var MUTATION_DIRTY_SCAN_MAX_MESSAGES = 12;
     var INCREMENTAL_MESSAGE_WORK_BUDGET_MS = 8;
     var INCREMENTAL_MESSAGE_WORK_MAX_PER_SLICE = 1;
+    var INCREMENTAL_MESSAGE_WORK_AUTO_MAX_PER_SLICE = 4;
     var MESSAGE_BUTTON_VISIBILITY_ALWAYS = "always";
     var MESSAGE_BUTTON_VISIBILITY_HOVER = "hover";
     var TRANSLATION_LINE_STYLES = Object.freeze(["tint", "muted", "tag"]);
@@ -2295,6 +2296,7 @@ var require_constants = __commonJS({
       MUTATION_DIRTY_SCAN_MAX_MESSAGES,
       INCREMENTAL_MESSAGE_WORK_BUDGET_MS,
       INCREMENTAL_MESSAGE_WORK_MAX_PER_SLICE,
+      INCREMENTAL_MESSAGE_WORK_AUTO_MAX_PER_SLICE,
       MESSAGE_BUTTON_VISIBILITY_ALWAYS,
       MESSAGE_BUTTON_VISIBILITY_HOVER,
       TRANSLATION_LINE_STYLES,
@@ -3020,6 +3022,7 @@ var require_settings_schema = __commonJS({
         this.sections = Array.isArray(sections) ? sections : [];
         this.providerCapabilities = options.providerCapabilities || {};
         this.providerOrder = Array.isArray(options.providerOrder) ? options.providerOrder : [];
+        this.providerRegistry = options.providerRegistry || null;
         this.defaultProvider = String(options.defaultProvider || "deepseek");
       }
       getSections() {
@@ -3030,13 +3033,29 @@ var require_settings_schema = __commonJS({
       }
       getProviderCapabilities(provider) {
         const key = String(provider || "").trim();
+        const adapter = this.providerRegistry?.get?.(key);
+        if (adapter) {
+          return {
+            ...this.providerCapabilities[key] || {},
+            kind: adapter.kind || "chat",
+            tasks: {
+              polish: Boolean(adapter.tasks?.polish),
+              translation: Boolean(adapter.tasks?.translation)
+            }
+          };
+        }
         return this.providerCapabilities[key] || this.providerCapabilities[this.defaultProvider] || null;
       }
       isProviderAllowedForTask(kind, provider) {
-        return this.getProviderCapabilities(provider)?.tasks?.[kind] === true;
+        const key = String(provider || "").trim();
+        if (!key) return false;
+        const adapter = this.providerRegistry?.get?.(key);
+        if (adapter) return adapter.tasks?.[kind] === true;
+        return this.providerCapabilities[key]?.tasks?.[kind] === true;
       }
       getProviderOptionsForTask(kind, getLabel) {
-        return this.providerOrder.filter((provider) => this.isProviderAllowedForTask(kind, provider)).map((provider) => [provider, getLabel(provider)]);
+        const order = this.providerRegistry?.getOrder ? this.providerRegistry.getOrder() : this.providerOrder;
+        return order.filter((provider) => this.isProviderAllowedForTask(kind, provider)).map((provider) => [provider, getLabel(provider)]);
       }
     };
     module2.exports = {
@@ -3940,20 +3959,31 @@ var require_public_bilingual = __commonJS({
         const translation = this.plugin.settings.translation || {};
         const polishCandidate = {
           provider: polish.provider,
-          apiKey: polish.apiKey,
+          apiKey: polish.apiKey ?? "",
           apiKeyOrigin: polish.apiKeyOrigin,
-          endpoint: polish.endpoint,
-          model: polish.model
+          endpoint: polish.endpoint ?? "",
+          model: polish.model ?? "",
+          region: polish.region ?? "",
+          deeplPlan: polish.deeplPlan ?? "free",
+          appId: polish.appId ?? "",
+          secretKey: polish.secretKey ?? ""
         };
-        return this.plugin.hasUsableApiConfig("translation", polishCandidate) ? polish : translation;
+        const polishCredentialFields = this.plugin.providerLayer?.registry?.getCredentialFields?.(polish.provider) || [];
+        polishCredentialFields.forEach((field) => {
+          if (!field || Object.prototype.hasOwnProperty.call(polishCandidate, field)) return;
+          polishCandidate[field] = polish[field] ?? "";
+        });
+        const polishAllowedForTranslation = Boolean(polish.provider) && this.plugin.isProviderAllowedForTask("translation", polish.provider);
+        return polishAllowedForTranslation && this.plugin.hasUsableApiConfig("translation", polishCandidate, { isolatedConfig: true }) ? polish : translation;
       },
       getPublicBilingualTranslationOptions() {
         const configOverrides = this.getPublicBilingualTranslationOverrides();
         return {
           mode: "public-bilingual",
+          isolatedConfig: true,
           promptPolicyVersion: this.plugin.getPromptPolicyVersion("publicBilingual"),
           targetLanguage: this.getPublicBilingualTargetLanguage(),
-          providerKey: this.plugin.getAutoTranslationProviderKey({ configOverrides }),
+          providerKey: this.plugin.getAutoTranslationProviderKey({ configOverrides, isolatedConfig: true }),
           requestContext: {},
           configOverrides
         };
@@ -3966,12 +3996,16 @@ var require_public_bilingual = __commonJS({
           this.plugin.normalizeRequestNumber(baseConfig.maxTokens, DEFAULT_SETTINGS.translation.maxTokens, { min: 1, integer: true }),
           this.plugin.normalizeRequestNumber(this.plugin.settings.translation?.maxTokens, DEFAULT_SETTINGS.translation.maxTokens, { min: 1, integer: true })
         );
-        return {
+        const overrides = {
           provider: baseConfig.provider,
-          apiKey: baseConfig.apiKey,
+          apiKey: baseConfig.apiKey ?? "",
           apiKeyOrigin: baseConfig.apiKeyOrigin,
-          endpoint: baseConfig.endpoint,
-          model: baseConfig.model,
+          endpoint: baseConfig.endpoint ?? "",
+          model: baseConfig.model ?? "",
+          region: baseConfig.region ?? "",
+          deeplPlan: baseConfig.deeplPlan ?? "free",
+          appId: baseConfig.appId ?? "",
+          secretKey: baseConfig.secretKey ?? "",
           sourceLanguage: AUTO_LANGUAGE_VALUE,
           targetLanguage,
           targetLanguageCode: this.plugin.getTargetLanguageCode(targetLanguageValue),
@@ -3981,12 +4015,19 @@ var require_public_bilingual = __commonJS({
           promptPolicyVersion: this.plugin.getPromptPolicyVersion("publicBilingual"),
           prompt: this.plugin.buildPromptPolicyPublicBilingualPrompt(targetLanguageValue)
         };
+        const credentialFields = this.plugin.providerLayer?.registry?.getCredentialFields?.(baseConfig.provider) || [];
+        credentialFields.forEach((field) => {
+          if (!field || Object.prototype.hasOwnProperty.call(overrides, field)) return;
+          overrides[field] = baseConfig[field] ?? "";
+        });
+        return overrides;
       },
       getPublicBilingualRetryOptions(sourceText, badOutput = "", options = this.getPublicBilingualTranslationOptions()) {
         const targetLanguageValue = this.plugin.getAutoTranslationTargetLanguage(options);
         const targetLanguage = this.plugin.getAutoTranslationTargetInstruction(targetLanguageValue);
         return {
           mode: "public-bilingual-retry",
+          isolatedConfig: true,
           promptPolicyVersion: this.plugin.getPromptPolicyVersion("publicBilingualRetry"),
           targetLanguage: targetLanguageValue,
           providerKey: this.plugin.getAutoTranslationProviderKey(options),
@@ -4007,6 +4048,7 @@ var require_public_bilingual = __commonJS({
         const targetLanguage = this.plugin.getAutoTranslationTargetInstruction(targetLanguageValue);
         return {
           mode: "public-bilingual-final",
+          isolatedConfig: true,
           promptPolicyVersion: this.plugin.getPromptPolicyVersion("publicBilingualFinal"),
           targetLanguage: targetLanguageValue,
           providerKey: this.plugin.getAutoTranslationProviderKey(options),
@@ -4028,7 +4070,8 @@ var require_public_bilingual = __commonJS({
           timeoutMs: MODEL_REQUEST_TIMEOUT_MS,
           mode: "public-bilingual",
           requestContext: options.requestContext,
-          providerProfilePinned: true
+          providerProfilePinned: true,
+          isolatedConfig: true
         });
         if (!this.plugin.isInvalidAutoTranslationOutput(text, translated, this.plugin.getAutoTranslationTargetLanguage(options))) return translated;
         const retryOptions = this.getPublicBilingualRetryOptions(text, translated, options);
@@ -4037,7 +4080,8 @@ var require_public_bilingual = __commonJS({
           timeoutMs: MODEL_REQUEST_TIMEOUT_MS,
           mode: "public-bilingual-retry",
           requestContext: retryOptions.requestContext,
-          providerProfilePinned: true
+          providerProfilePinned: true,
+          isolatedConfig: true
         });
         if (!this.plugin.isInvalidAutoTranslationOutput(text, retried, this.plugin.getAutoTranslationTargetLanguage(retryOptions))) return retried;
         const finalOptions = this.getPublicBilingualFinalFallbackOptions(text, options);
@@ -4046,7 +4090,8 @@ var require_public_bilingual = __commonJS({
           timeoutMs: MODEL_REQUEST_TIMEOUT_MS,
           mode: "public-bilingual-final",
           requestContext: finalOptions.requestContext,
-          providerProfilePinned: true
+          providerProfilePinned: true,
+          isolatedConfig: true
         });
         if (!this.plugin.isInvalidAutoTranslationOutput(text, finalText, this.plugin.getAutoTranslationTargetLanguage(finalOptions))) return finalText;
         throw this.plugin.createFinalInvalidAutoTranslationError();
@@ -4898,7 +4943,15 @@ var require_composer = __commonJS({
       constructor(plugin) {
         this.plugin = plugin;
         this.events = plugin.events || null;
-        this.scope = plugin.runtimeScope ? plugin.runtimeScope.createChild() : null;
+        this._scope = plugin.runtimeScope ? plugin.runtimeScope.createChild() : null;
+      }
+      get scope() {
+        const rootScope = this.plugin?.runtimeScope;
+        if (!rootScope) return null;
+        if (!this._scope || this._scope.disposed && !rootScope.disposed) {
+          this._scope = rootScope.createChild();
+        }
+        return this._scope;
       }
     };
     var COMPOSER_UI_METHOD_NAMES = attachControllerMethods(ComposerUiController, methodMaps);
@@ -4952,9 +5005,10 @@ var require_disposable_scope = __commonJS({
        * Schedules a timeout that auto-clears on dispose.
        * @param {() => void} fn
        * @param {number} delayMs
+       * @param {{ unref?: boolean }} [options]
        * @returns {() => void}
        */
-      setTimeout(fn, delayMs) {
+      setTimeout(fn, delayMs, options = {}) {
         if (this.disposed || typeof fn !== "function") return () => {
         };
         let timer = null;
@@ -4969,20 +5023,33 @@ var require_disposable_scope = __commonJS({
           this.cleanups.delete(release);
           if (!this.disposed) fn();
         }, delayMs);
+        if (options?.unref) {
+          try {
+            timer?.unref?.();
+          } catch {
+          }
+        }
         return release;
       }
       /**
        * Schedules an interval that auto-clears on dispose.
        * @param {() => void} fn
        * @param {number} intervalMs
+       * @param {{ unref?: boolean }} [options]
        * @returns {() => void}
        */
-      setInterval(fn, intervalMs) {
+      setInterval(fn, intervalMs, options = {}) {
         if (this.disposed || typeof fn !== "function") return () => {
         };
         let timer = setInterval(() => {
           if (!this.disposed) fn();
         }, intervalMs);
+        if (options?.unref) {
+          try {
+            timer?.unref?.();
+          } catch {
+          }
+        }
         return this.add(() => {
           if (timer !== null) {
             clearInterval(timer);
@@ -10657,11 +10724,13 @@ var require_state_machine = __commonJS({
       /**
        * Atomically enqueues a translation item into queue + queuedKeys.
        * @param {any} item
+       * @param {{ allowDuplicateKey?: boolean }} [options]
        * @returns {boolean}
        */
-      enqueue(item) {
+      enqueue(item, options = {}) {
         const key = String(item?.cacheKey || "");
-        if (!key || this.queuedKeys.has(key)) return false;
+        if (!key) return false;
+        if (!options.allowDuplicateKey && this.queuedKeys.has(key)) return false;
         this.queue.push(item);
         this.queuedKeys.add(key);
         this.queueSortDirty = true;
@@ -10675,16 +10744,42 @@ var require_state_machine = __commonJS({
       removeQueued(cacheKey) {
         const key = String(cacheKey || "");
         if (!key) return false;
-        const hadKey = this.queuedKeys.delete(key);
         const before = this.queue.length;
         this.queue = this.queue.filter((item) => item?.cacheKey !== key);
-        return hadKey || this.queue.length !== before;
+        const removed = before - this.queue.length;
+        const hadKey = !this.inFlightKeys.has(key) ? this.queuedKeys.delete(key) : false;
+        return hadKey || removed > 0;
+      }
+      /**
+       * Atomically marks a single item as in-flight across keys, timestamps, tokens, and visible-long tracking.
+       * @param {any} item
+       * @param {{ token?: string | number, startedAt?: number, isVisibleLong?: boolean, isPrefetch?: boolean }} [options]
+       * @returns {string | number | null}
+       */
+      markInFlightItem(item, options = {}) {
+        const key = String(item?.cacheKey || "");
+        if (!key) return null;
+        const startedAt = Number(options.startedAt || Date.now());
+        const token = options.token !== void 0 ? options.token : ++this.inFlightTokenCounter;
+        this.inFlightKeys.add(key);
+        if (options.isVisibleLong) {
+          this.visibleLongInFlightKeys.add(key);
+        }
+        this.inFlightStartedAt.set(key, startedAt);
+        this.inFlightTokens.set(key, token);
+        if (item && typeof item === "object") {
+          item.daitInFlightToken = token;
+          if (options.isPrefetch !== void 0) {
+            item.daitPrefetchRequest = Boolean(options.isPrefetch);
+          }
+        }
+        return token;
       }
       /**
        * Atomically transitions a batch of items into the in-flight state.
        * @param {any[]} batch
-       * @param {{ isPrefetch?: boolean, startedAt?: number, isVisibleLong?: (item: any) => boolean }} [options]
-       * @returns {number[]} Allocated per-item tokens
+       * @param {{ isPrefetch?: boolean, startedAt?: number, isVisibleLong?: (item: any) => boolean, createToken?: (cacheKey: string) => string | number, onItemMarked?: (item: any, startedAt: number, token: string | number | null) => void }} [options]
+       * @returns {Array<string | number>} Allocated per-item tokens
        */
       beginInFlightBatch(batch, options = {}) {
         if (!Array.isArray(batch) || !batch.length) return [];
@@ -10696,18 +10791,16 @@ var require_state_machine = __commonJS({
         const tokens = [];
         for (const item of batch) {
           const key = String(item?.cacheKey || "");
-          const token = ++this.inFlightTokenCounter;
+          const token = typeof options.createToken === "function" ? options.createToken(key) : ++this.inFlightTokenCounter;
           tokens.push(token);
-          if (!key) continue;
-          this.inFlightKeys.add(key);
-          this.inFlightStartedAt.set(key, startedAt);
-          this.inFlightTokens.set(key, token);
-          if (typeof options.isVisibleLong === "function" && options.isVisibleLong(item)) {
-            this.visibleLongInFlightKeys.add(key);
+          if (!key) {
+            if (item && typeof item === "object") item.daitPrefetchRequest = isPrefetch;
+            continue;
           }
-          if (item && typeof item === "object") {
-            item.daitInFlightToken = token;
-            item.daitPrefetchRequest = isPrefetch;
+          const isVisibleLong = typeof options.isVisibleLong === "function" ? Boolean(options.isVisibleLong(item)) : false;
+          this.markInFlightItem(item, { token, startedAt, isVisibleLong, isPrefetch });
+          if (typeof options.onItemMarked === "function") {
+            options.onItemMarked(item, startedAt, token);
           }
         }
         return tokens;
@@ -10715,10 +10808,11 @@ var require_state_machine = __commonJS({
       /**
        * Atomically clears in-flight tracking for a single item when its token matches.
        * @param {string} cacheKey
-       * @param {number} [token]
+       * @param {string | number} [token]
+       * @param {{ keepQueuedKey?: boolean }} [options]
        * @returns {boolean}
        */
-      finishInFlightItem(cacheKey, token) {
+      finishInFlightItem(cacheKey, token, options = {}) {
         const key = String(cacheKey || "");
         if (!key) return false;
         if (token !== void 0 && this.inFlightTokens.has(key) && this.inFlightTokens.get(key) !== token) {
@@ -10728,8 +10822,18 @@ var require_state_machine = __commonJS({
         this.visibleLongInFlightKeys.delete(key);
         this.inFlightStartedAt.delete(key);
         this.inFlightTokens.delete(key);
-        this.queuedKeys.delete(key);
+        if (!options.keepQueuedKey) {
+          this.queuedKeys.delete(key);
+        }
         return true;
+      }
+      /**
+       * Decrements inFlightItems safely, clamping at 0.
+       * @param {number} count
+       */
+      releaseInFlightItems(count = 1) {
+        const size = Math.max(0, Number(count || 0));
+        this.inFlightItems = Math.max(0, this.inFlightItems - size);
       }
       /**
        * Atomically decrements batch counters, clamping at 0 so I5 never breaks.
@@ -10755,9 +10859,15 @@ var require_state_machine = __commonJS({
         const key = String(task?.key || "");
         if (!key) return false;
         if (this.renderQueuedKeys.has(key)) {
-          this.renderQueuedTasks.set(key, task);
-          const idx = this.renderQueue.findIndex((item) => item?.key === key);
-          if (idx >= 0) this.renderQueue[idx] = task;
+          const existing = this.renderQueuedTasks.get(key);
+          if (existing && typeof existing === "object") {
+            Object.assign(existing, task);
+          } else {
+            this.renderQueuedTasks.set(key, task);
+            const idx = this.renderQueue.findIndex((item) => item?.key === key);
+            if (idx >= 0) this.renderQueue[idx] = task;
+          }
+          if (task?.cacheKey) this.renderPendingKeys.add(String(task.cacheKey));
           this.renderQueueDirty = true;
           return false;
         }
@@ -11979,8 +12089,10 @@ var require_request_pipeline = __commonJS({
           localCompactPrompt: isLocalProvider,
           prompt: isLocalProvider ? this.buildCompactLocalAutoTranslationPrompt(options, "longText") : this.buildPromptPolicyLongTextPrompt(options)
         };
+        const requestOrigin = options?.requestOrigin || (/^manual(?:-|$)/.test(String(options?.mode || "")) ? "manual" : /^public-bilingual(?:-|$)/.test(String(options?.mode || "")) ? "public-bilingual" : "");
         return {
           ...options,
+          ...requestOrigin ? { requestOrigin } : {},
           mode: "long-text",
           longTextSourceLength: sourceLength,
           longTextBaseMaxTokens: baseMaxTokens,
@@ -12153,10 +12265,27 @@ var require_request_pipeline = __commonJS({
         const sourceHash = this.plugin.getStrongTextFingerprint(text);
         let budgetError = null;
         let stopError = null;
+        let consecutiveReservedStopFailures = 0;
         const hasFinishedChunk = () => translatedChunks.some((chunk) => chunk && !this.plugin.hasLongAutoTranslationChunkFailurePlaceholder(chunk));
+        const isTransientReservedStopError = (chunkError) => {
+          const type = this.plugin.getAutoTranslationFailureType(chunkError);
+          return ["server", "timeout", "network"].includes(type);
+        };
+        const canContinueAfterReservedFallbackStop = (chunkError) => {
+          if (!chunkError?.fallbackBudgetReserved) return false;
+          if (!isTransientReservedStopError(chunkError)) return false;
+          return consecutiveReservedStopFailures === 0;
+        };
         const stopOnChunkError = (chunkError) => {
           if (!this.shouldStopLongAutoTranslationOnChunkError(chunkError)) return false;
-          if (!this.shouldKeepLongAutoTranslationChunksOnError(chunkError) || !hasFinishedChunk()) throw chunkError;
+          if (canContinueAfterReservedFallbackStop(chunkError)) {
+            consecutiveReservedStopFailures++;
+            return false;
+          }
+          const keepAfterBudgetCappedTransient = isTransientReservedStopError(chunkError) && Boolean(chunkError?.fallbackBudgetReserved || chunkError?.fallbackBudgetExhausted || consecutiveReservedStopFailures > 0);
+          if (!this.shouldKeepLongAutoTranslationChunksOnError(chunkError) && !keepAfterBudgetCappedTransient || !hasFinishedChunk()) {
+            throw chunkError;
+          }
           stopError = chunkError;
           return true;
         };
@@ -12165,17 +12294,28 @@ var require_request_pipeline = __commonJS({
             throw this.createAutoTranslationStaleError("long-text-stale-before-chunk");
           }
           const chunkOptions = this.getLongTextChunkTranslationOptions(longOptions, chunks[index], index, chunks.length, sourceHash);
+          const requestBudget = taskOptions.requestBudget;
+          const remainingLaterChunks = chunks.length - index - 1;
+          const previousReserved = requestBudget ? Math.max(0, Number(requestBudget.reserved || 0)) : 0;
           let translated = "";
           try {
-            translated = await this.plugin.runAutoTranslationTaskWithOptions(chunks[index], chunkOptions, taskOptions);
+            if (requestBudget) {
+              const remainingTotal = Math.max(0, Number(requestBudget.limit || 0) - Number(requestBudget.used || 0));
+              const initialReserved = Math.min(remainingLaterChunks, Math.max(0, remainingTotal - 1));
+              requestBudget.reserved = Math.max(previousReserved, initialReserved);
+            }
+            try {
+              translated = await this.plugin.runAutoTranslationTaskWithOptions(chunks[index], chunkOptions, taskOptions);
+            } finally {
+              if (requestBudget) requestBudget.reserved = previousReserved;
+            }
           } catch (error) {
             if (this.isAbandonedTranslationError(error)) throw error;
             stopOnChunkError(error);
-            if (this.isAutoTranslationRequestBudgetError(error)) budgetError = error;
+            if (this.isAutoTranslationRequestBudgetError(error) && !error.requestBudgetReserved) budgetError = error;
             let rescued = null;
             if (taskOptions?.manualRescue && !budgetError && !stopError) {
-              const requestBudget = taskOptions.requestBudget;
-              if (requestBudget) requestBudget.reserved = chunks.length - index - 1;
+              if (requestBudget) requestBudget.reserved = Math.max(previousReserved, remainingLaterChunks);
               try {
                 rescued = await this.plugin.runLongAutoTranslationChunkManualRescue(chunks[index], chunkOptions, error, taskOptions, {
                   sourceHash,
@@ -12188,7 +12328,7 @@ var require_request_pipeline = __commonJS({
                 if (this.isAutoTranslationRequestBudgetError(rescueError) && !rescueError.requestBudgetReserved) budgetError = rescueError;
                 rescued = { translated: "", error };
               } finally {
-                if (requestBudget) requestBudget.reserved = 0;
+                if (requestBudget) requestBudget.reserved = previousReserved;
               }
             }
             if (rescued?.translated) {
@@ -12216,7 +12356,11 @@ var require_request_pipeline = __commonJS({
           if (typeof taskOptions.heartbeat === "function" && taskOptions.heartbeat() === false) {
             throw this.createAutoTranslationStaleError("long-text-stale-after-chunk");
           }
-          translatedChunks.push(String(translated || "").trim());
+          const trimmedTranslated = String(translated || "").trim();
+          if (trimmedTranslated && !this.plugin.hasLongAutoTranslationChunkFailurePlaceholder(trimmedTranslated)) {
+            consecutiveReservedStopFailures = 0;
+          }
+          translatedChunks.push(trimmedTranslated);
           if (budgetError || stopError) {
             for (let rest = index + 1; rest < chunks.length; rest++) {
               chunkFailures.push({ index: rest, error: budgetError || stopError });
@@ -12440,16 +12584,19 @@ var require_request_pipeline = __commonJS({
         const timeoutMs = this.getAutoTranslationRequestTimeoutMs(options, text);
         const isCurrent = () => this.isAutoTranslationAttemptCurrent(options, taskOptions);
         if (!isCurrent()) throw this.createAutoTranslationStaleError("model-attempt-stale");
+        const requestOrigin = options?.requestOrigin || (taskOptions?.manualRescue || /^manual(?:-|$)/.test(String(options?.mode || "")) ? "manual" : /^public-bilingual(?:-|$)/.test(String(options?.mode || "")) ? "public-bilingual" : "");
         const translated = await this.plugin.runModelTask("translation", text, {
           configOverrides: options.configOverrides,
           timeoutMs,
           mode: options.mode || "auto",
+          ...requestOrigin ? { requestOrigin } : {},
           requestContext: options.requestContext,
           isCurrent,
           longTextChunk: Boolean(options.longTextChunk),
           longTextSourceLength: Number(options.longTextSourceLength || String(text || "").length) || 0,
           ...options.truncationRetry ? { truncationRetry: true } : {},
-          ...taskOptions?.signal ? { signal: taskOptions.signal } : {}
+          ...taskOptions?.signal ? { signal: taskOptions.signal } : {},
+          ...taskOptions?.requestBudget ? { requestBudget: taskOptions.requestBudget } : {}
         });
         return this.plugin.sanitizeAutoTranslationOutput(text, translated, this.getAutoTranslationTargetLanguage(options), this.getAutoTranslationOutputValidationOptions(text, translated, options));
       }
@@ -13208,8 +13355,8 @@ var require_request_pipeline = __commonJS({
         };
       }
       getAutoTranslationRequestSnapshot(options = null) {
-        const config = this.plugin.getEffectiveTaskConfig("translation", options?.configOverrides);
-        return {
+        const config = options?.isolatedConfig && options?.configOverrides ? options.configOverrides : this.plugin.getEffectiveTaskConfig("translation", options?.configOverrides);
+        const snapshot = {
           provider: config.provider,
           apiKey: config.apiKey,
           apiKeyOrigin: config.apiKeyOrigin,
@@ -13224,6 +13371,12 @@ var require_request_pipeline = __commonJS({
           // APIs read this raw code instead.
           targetLanguageCode: this.plugin.getTargetLanguageCode(this.getAutoTranslationTargetLanguage(options || {}))
         };
+        const credentialFields = this.plugin.providerLayer?.registry?.getCredentialFields?.(config) || [];
+        credentialFields.forEach((field) => {
+          if (!field || Object.prototype.hasOwnProperty.call(snapshot, field)) return;
+          snapshot[field] = config[field] ?? "";
+        });
+        return snapshot;
       }
       getAutoTranslationTargetInstruction(language) {
         const target = this.plugin.normalizeLanguageName(language);
@@ -13859,8 +14012,18 @@ var require_queue_core = __commonJS({
           pendingTargets: this.stateMachine.pendingTargets?.size || 0
         };
       }
-      getAutoTranslationDiagnosticQueueType(item = {}) {
-        return this.plugin.translationScheduler.getQueueType(item);
+      getAutoTranslationDiagnosticQueueType(item = {}, context = null, options = null) {
+        return this.plugin.translationScheduler.getQueueType(item, context, options || void 0);
+      }
+      createAutoTranslationLayoutContext() {
+        return {
+          useViewportVisibility: true,
+          rectByElement: /* @__PURE__ */ new Map(),
+          visibleByElement: /* @__PURE__ */ new Map(),
+          scrollClipByElement: /* @__PURE__ */ new Map(),
+          nearByElement: /* @__PURE__ */ new Map(),
+          priorityByElement: /* @__PURE__ */ new Map()
+        };
       }
       getAutoTranslationDiagnosticQueuePriority(item = {}, queueType = null) {
         const rank = this.plugin.translationScheduler.getQueueTypeRank(item, queueType);
@@ -13927,7 +14090,8 @@ var require_queue_core = __commonJS({
         }, decision?.extra?.flowStage || "");
         const requestStarted = reasonCode === DIAGNOSTIC_REASON_CODES.REQUEST_STARTED || messageState === DIAGNOSTIC_MESSAGE_STATES.IN_FLIGHT && String(decision.status || "").toLowerCase() === "start";
         const decisionQueueItem = candidate || decision?.item || {};
-        const decisionQueueType = this.getAutoTranslationDiagnosticQueueType(decisionQueueItem);
+        const skipDomQueueType = Boolean(decision?.status === "rendered" || decision?.extra?.skipDomQueueType || this.plugin.renderFrameScrollCache);
+        const decisionQueueType = this.getAutoTranslationDiagnosticQueueType(decisionQueueItem, null, skipDomQueueType ? { skipDomCheck: true } : null);
         const decisionIdentity = requestOptions?.messageIdentity || candidate?.messageIdentity || "";
         const decisionIdentityHash = this.plugin.getTextFingerprint(decisionIdentity);
         const now = Date.now();
@@ -14039,27 +14203,40 @@ var require_queue_core = __commonJS({
         if (!expected) return false;
         return expected === String(this.plugin.getAutoTranslationProviderKey(this.plugin.getAutoTranslationOptions()) || "");
       }
+      getCachedScrollRelevance(element, now = Date.now()) {
+        if (!element || element.nodeType !== 1) return null;
+        const cached = this.scrollRelevanceCache?.get?.(element);
+        if (cached && now >= cached.at && now - cached.at < 500) return cached;
+        return null;
+      }
       isAutoTranslationScrollEventRelevant(event = null) {
         const target = event?.target;
         if (!target || typeof document === "undefined" || target === document || target === window || target === document.body || target === document.documentElement) return true;
         const element = target?.nodeType === 3 ? target.parentElement : target;
         if (!element || element.nodeType !== 1) return true;
-        if (this.plugin.isInsideDiscordSettingsSurface(element)) return false;
-        if (this.plugin.isInsideDiscordMediaViewer(element) || this.plugin.isMediaOnlyMutationElement(element)) return false;
-        if (element.closest?.(".dait-settings, .dait-quick-settings-modal-root, .dait-quick-popover, .dait-polish-result-panel, .dait-polish-restore-control, .dait-input-action-menu, .dait-polish-preset-menu, .dait-translation-line, .dait-translation-box")) return false;
-        if (element.closest?.("[class*='channelTextArea'], [role='textbox']")) return false;
         const now = Date.now();
-        const cached = this.scrollRelevanceCache?.get?.(element);
-        if (cached && now >= cached.at && now - cached.at < (cached.relevant ? 500 : 100)) return cached.relevant;
-        const selector = [
-          DISCORD_MESSAGE_NODE_SELECTOR,
-          "[data-list-id*='chat-messages']",
-          "[class*='messagesWrapper']",
-          "[class*='scrollerInner']",
-          "[class*='chatContent']"
-        ].join(",");
-        const relevant = Boolean(element.matches?.(selector) || element.closest?.(selector) || element.querySelector?.(DISCORD_MESSAGE_NODE_SELECTOR));
-        this.scrollRelevanceCache?.set?.(element, { relevant, at: now });
+        const cached = this.getCachedScrollRelevance(element, now);
+        if (cached) return cached.relevant;
+        let relevant = false;
+        let mediaViewer = false;
+        if (this.plugin.isInsideDiscordSettingsSurface(element)) {
+          relevant = false;
+        } else if (this.plugin.isInsideDiscordMediaViewer(element) || this.plugin.isMediaOnlyMutationElement(element)) {
+          relevant = false;
+          mediaViewer = true;
+        } else if (element.closest?.(".dait-settings, .dait-quick-settings-modal-root, .dait-quick-popover, .dait-polish-result-panel, .dait-polish-restore-control, .dait-input-action-menu, .dait-polish-preset-menu, .dait-translation-line, .dait-translation-box") || element.closest?.("[class*='channelTextArea'], [role='textbox']")) {
+          relevant = false;
+        } else {
+          const selector = [
+            DISCORD_MESSAGE_NODE_SELECTOR,
+            "[data-list-id*='chat-messages']",
+            "[class*='messagesWrapper']",
+            "[class*='scrollerInner']",
+            "[class*='chatContent']"
+          ].join(",");
+          relevant = Boolean(element.matches?.(selector) || element.closest?.(selector) || element.querySelector?.(DISCORD_MESSAGE_NODE_SELECTOR));
+        }
+        this.scrollRelevanceCache?.set?.(element, { relevant, mediaViewer, at: now });
         return relevant;
       }
       markAutoTranslationViewportBusy(type = "scroll", event = null, { routeScopeChanged = false } = {}) {
@@ -14190,16 +14367,15 @@ var require_queue_core = __commonJS({
       removeQueuedAutoTranslationItem(cacheKey) {
         if (!cacheKey || !this.stateMachine.queue.length) return 0;
         const before = this.stateMachine.queue.length;
-        this.stateMachine.queue = this.stateMachine.queue.filter((item) => item?.cacheKey !== cacheKey);
-        const removed = before - this.stateMachine.queue.length;
-        if (removed && !this.stateMachine.inFlightKeys.has(cacheKey)) this.stateMachine.queuedKeys.delete(cacheKey);
-        return removed;
+        this.stateMachine.removeQueued(cacheKey);
+        return before - this.stateMachine.queue.length;
       }
       pruneAutoTranslationQueue() {
         if (!this.stateMachine.queue.length) return;
+        const layoutContext = this.createAutoTranslationLayoutContext();
         const next = [];
         for (const item of this.stateMachine.queue) {
-          const readyTargets = this.plugin.getReadyAutoTranslationTargets(item);
+          const readyTargets = this.plugin.getReadyAutoTranslationTargets(item, layoutContext);
           if (!readyTargets.length) {
             this.stateMachine.queuedKeys.delete(item?.cacheKey);
             this.clearAutoTranslationPendingTargets(item?.cacheKey);
@@ -14208,11 +14384,11 @@ var require_queue_core = __commonJS({
           this.stateMachine.pendingTargets.set(item.cacheKey, { targets: readyTargets });
           next.push(this.plugin.withAutoTranslationPriority(
             { ...item, ...this.plugin.getAutoTranslationPrimaryTarget(readyTargets[0]) },
-            { preserveExisting: true }
+            { preserveExisting: true, context: layoutContext }
           ));
         }
         this.stateMachine.queue = next;
-        this.plugin.sortAutoTranslationQueue();
+        this.plugin.sortAutoTranslationQueue(layoutContext);
       }
       drainAutoTranslationQueue() {
         try {
@@ -14256,8 +14432,9 @@ var require_queue_core = __commonJS({
         const concurrency = this.getAutoTranslateConcurrency();
         const blockedPrefetch = [];
         while (this.stateMachine.inFlight < concurrency && this.stateMachine.queue.length) {
-          let batch = this.plugin.takeAutoTranslationBatch({ visibility: "visible" });
-          if (!batch.length) batch = this.plugin.takeAutoTranslationBatch({ visibility: "prefetch" });
+          const layoutContext = this.createAutoTranslationLayoutContext();
+          let batch = this.plugin.takeAutoTranslationBatch({ visibility: "visible", layoutContext });
+          if (!batch.length) batch = this.plugin.takeAutoTranslationBatch({ visibility: "prefetch", layoutContext });
           if (!batch.length) break;
           const providerFailure = this.getAutoTranslationProviderFailure(batch[0]?.requestOptions);
           if (providerFailure && !this.isAutoTranslationFailureExpired(providerFailure)) {
@@ -14358,14 +14535,23 @@ var require_queue_core = __commonJS({
             blockedPrefetch.push(...batch);
             break;
           }
-          this.stateMachine.inFlight++;
-          this.stateMachine.inFlightItems += batch.length;
-          if (isPrefetchBatch) this.stateMachine.prefetchInFlight++;
           const startedAt = Date.now();
-          batch.forEach((item) => {
-            item.daitPrefetchRequest = isPrefetchBatch;
-            this.setAutoTranslationDiagnosticState(item, DIAGNOSTIC_MESSAGE_STATES.IN_FLIGHT, DIAGNOSTIC_REASON_CODES.REQUEST_STARTED);
-            this.markAutoTranslationInFlightItem(item, startedAt);
+          this.stateMachine.beginInFlightBatch(batch, {
+            isPrefetch: isPrefetchBatch,
+            startedAt,
+            createToken: (key) => this.createAutoTranslationInFlightToken(key),
+            isVisibleLong: (item) => this.plugin.isLongAutoTranslationItem(item) && !this.plugin.isAutoTranslationPrefetchItem(item),
+            onItemMarked: (item, itemStartedAt) => {
+              this.setAutoTranslationDiagnosticState(item, DIAGNOSTIC_MESSAGE_STATES.IN_FLIGHT, DIAGNOSTIC_REASON_CODES.REQUEST_STARTED);
+              this.logAutoTranslationMessageState(
+                "auto.message.state",
+                "in-flight",
+                item,
+                DIAGNOSTIC_MESSAGE_STATES.IN_FLIGHT,
+                DIAGNOSTIC_REASON_CODES.REQUEST_STARTED,
+                { startedAt: itemStartedAt }
+              );
+            }
           });
           this.plugin.logDiagnostic("auto.batch.start", "start", {
             ...this.plugin.getDiagnosticBaseMeta("auto", batch[0]?.requestOptions?.mode || "auto", DIAGNOSTIC_REASON_CODES.REQUEST_STARTED),
@@ -14526,14 +14712,14 @@ var require_queue_core = __commonJS({
       canStartAutoTranslationPrefetchRequest(concurrency = this.getAutoTranslateConcurrency()) {
         return this.plugin.translationScheduler.canStartPrefetchRequest(concurrency);
       }
-      isAutoTranslationPrefetchBatch(batch) {
-        return this.plugin.translationScheduler.isPrefetchBatch(batch);
+      isAutoTranslationPrefetchBatch(batch, context = null) {
+        return this.plugin.translationScheduler.isPrefetchBatch(batch, context);
       }
-      isAutoTranslationPrefetchItem(item) {
-        return this.plugin.translationScheduler.isPrefetchItem(item);
+      isAutoTranslationPrefetchItem(item, context = null) {
+        return this.plugin.translationScheduler.isPrefetchItem(item, context);
       }
-      isAutoTranslationVisibleItem(item) {
-        return this.plugin.translationScheduler.isVisibleItem(item);
+      isAutoTranslationVisibleItem(item, context = null) {
+        return this.plugin.translationScheduler.isVisibleItem(item, context);
       }
       hasActiveVisibleAutoTranslationWork() {
         return this.hasVisibleAutoTranslationInFlight() || this.hasQueuedVisibleAutoTranslationWork();
@@ -14541,15 +14727,18 @@ var require_queue_core = __commonJS({
       hasVisibleAutoTranslationInFlight() {
         return Math.max(0, Number(this.stateMachine.inFlight || 0) - Number(this.stateMachine.prefetchInFlight || 0)) > 0;
       }
-      hasQueuedVisibleAutoTranslationWork() {
-        return (this.stateMachine.queue || []).some((item) => {
-          const queueType = this.getAutoTranslationDiagnosticQueueType(item);
+      hasQueuedVisibleAutoTranslationWork(context = null) {
+        const queue = this.stateMachine.queue || [];
+        const layoutContext = context || (queue.length > 1 ? this.createAutoTranslationLayoutContext() : null);
+        return queue.some((item) => {
+          const queueType = this.getAutoTranslationDiagnosticQueueType(item, layoutContext);
           return queueType === AUTO_TRANSLATION_QUEUE_TYPES.VISIBLE || queueType === AUTO_TRANSLATION_QUEUE_TYPES.LONG_TEXT;
         });
       }
       takeAutoTranslationBatch(options = {}) {
+        const layoutContext = options.layoutContext || this.createAutoTranslationLayoutContext();
         if (this.stateMachine.queueSortDirty && this.stateMachine.queue.length > 1) {
-          this.plugin.sortAutoTranslationQueue();
+          this.plugin.sortAutoTranslationQueue(layoutContext);
         } else {
           this.stateMachine.queueSortDirty = false;
         }
@@ -14574,7 +14763,7 @@ var require_queue_core = __commonJS({
             deferred.push(item);
             continue;
           }
-          const readyTargets = this.plugin.getReadyAutoTranslationTargets(item);
+          const readyTargets = this.plugin.getReadyAutoTranslationTargets(item, layoutContext);
           if (!readyTargets.length) {
             this.stateMachine.queuedKeys.delete(item?.cacheKey);
             this.clearAutoTranslationPendingTargets(item?.cacheKey);
@@ -14582,8 +14771,8 @@ var require_queue_core = __commonJS({
           }
           this.stateMachine.pendingTargets.set(item.cacheKey, { targets: readyTargets });
           const readyItem = { ...item, ...this.plugin.getAutoTranslationPrimaryTarget(readyTargets[0]) };
-          const itemPrefetchState = this.plugin.isAutoTranslationPrefetchItem(readyItem);
-          if (itemPrefetchState && !this.isAutoTranslationPrefetchAllowed(readyItem)) {
+          const itemPrefetchState = this.plugin.isAutoTranslationPrefetchItem(readyItem, layoutContext);
+          if (itemPrefetchState && !this.isAutoTranslationPrefetchAllowed(readyItem, layoutContext)) {
             this.discardAutoTranslationItemWork(readyItem);
             continue;
           }
@@ -14595,11 +14784,11 @@ var require_queue_core = __commonJS({
             deferred.push(readyItem);
             continue;
           }
-          if (this.shouldDeferShortAutoTranslationItemForVisibleLong(readyItem, { visibility, batch })) {
+          if (this.shouldDeferShortAutoTranslationItemForVisibleLong(readyItem, { visibility, batch, layoutContext })) {
             deferred.push(readyItem);
             continue;
           }
-          if (this.plugin.shouldDeferLongAutoTranslationItem(readyItem, { visibility, batch })) {
+          if (this.plugin.shouldDeferLongAutoTranslationItem(readyItem, { visibility, batch, layoutContext })) {
             readyItem.daitLongTextDeferrals = Math.min(
               AUTO_TRANSLATE_LONG_TEXT_DEFER_MAX,
               Math.max(0, Number(readyItem.daitLongTextDeferrals) || 0) + 1
@@ -14646,7 +14835,7 @@ var require_queue_core = __commonJS({
         }
         if (deferred.length) {
           this.stateMachine.queue.unshift(...deferred);
-          this.plugin.sortAutoTranslationQueue();
+          this.plugin.sortAutoTranslationQueue(layoutContext);
         }
         if (nextReadyAt) this.plugin.scheduleAutoTranslationRetryScan(Math.max(0, nextReadyAt - now));
         return batch;
@@ -14656,17 +14845,18 @@ var require_queue_core = __commonJS({
       }
       hasReadyShortAutoTranslationCandidate(referenceItem, options = {}) {
         const visibility = options.visibility || "";
+        const layoutContext = options.layoutContext || this.createAutoTranslationLayoutContext();
         const now = Date.now();
         for (const queued of this.stateMachine.queue) {
           if (!queued?.cacheKey || queued.cacheKey === referenceItem?.cacheKey) continue;
           const requeueAfter = Number(queued?.daitRequeueAfter || 0);
           if (requeueAfter > now) continue;
-          const readyTargets = this.plugin.getReadyAutoTranslationTargets(queued);
+          const readyTargets = this.plugin.getReadyAutoTranslationTargets(queued, layoutContext);
           if (!readyTargets.length) continue;
           const candidate = { ...queued, ...this.plugin.getAutoTranslationPrimaryTarget(readyTargets[0]) };
-          const candidatePrefetch = this.plugin.isAutoTranslationPrefetchItem(candidate);
+          const candidatePrefetch = this.plugin.isAutoTranslationPrefetchItem(candidate, layoutContext);
           if (visibility === "visible" && candidatePrefetch || visibility === "prefetch" && !candidatePrefetch) continue;
-          if (candidatePrefetch && !this.isAutoTranslationPrefetchAllowed(candidate)) continue;
+          if (candidatePrefetch && !this.isAutoTranslationPrefetchAllowed(candidate, layoutContext)) continue;
           if (this.plugin.isLongAutoTranslationItem(candidate)) continue;
           return true;
         }
@@ -14675,9 +14865,9 @@ var require_queue_core = __commonJS({
       shouldRunAutoTranslationItemSingle(item) {
         return this.plugin.translationScheduler.shouldRunItemSingle(item);
       }
-      isAutoTranslationPrefetchAllowed(item) {
+      isAutoTranslationPrefetchAllowed(item, context = null) {
         if (item?.daitHistoryRequest) return true;
-        if (!this.plugin.isAutoTranslationPrefetchItem(item)) return true;
+        if (!this.plugin.isAutoTranslationPrefetchItem(item, context)) return true;
         if (!this.isAutoTranslationPrefetchConfigured()) return false;
         const now = Date.now();
         if (this.plugin.isAutoTranslationRenderPaused(now) || this.isAutoTranslationViewportSettling(now) || this.isAutoTranslationJumpCoolingDown(now) || this.plugin.getInputComposerBusyRemainingMs(now) > 0) return false;
@@ -14685,16 +14875,16 @@ var require_queue_core = __commonJS({
         if (this.plugin.isGoogleTranslateProvider(config) && this.plugin.settings.googleTranslate?.allowPrefetch === false) return false;
         return true;
       }
-      isAutoTranslationQueueItemReady(item) {
-        return this.isAutoTranslationTargetReady(item, item?.cacheKey);
+      isAutoTranslationQueueItemReady(item, context = null) {
+        return this.isAutoTranslationTargetReady(item, item?.cacheKey, context);
       }
-      isAutoTranslationTargetReady(target, cacheKey = target?.cacheKey) {
+      isAutoTranslationTargetReady(target, cacheKey = target?.cacheKey, context = null) {
         if (!target?.messageNode?.isConnected || !target?.content?.isConnected) return false;
         if (!this.plugin.isAutoTranslationTargetIdentityCurrent(target)) return false;
         const domText = this.plugin.getAutoTranslationTargetDomText(target);
         if (this.plugin.hasCurrentTranslationLine(target.content, cacheKey, domText, this.plugin.getTranslationLineCacheAliases(target.text, target.requestOptions || {}), null, target.text)) return false;
-        const messageInRange = this.plugin.isAutoTranslationTargetInScanRange(target.messageNode);
-        const contentInRange = this.plugin.isAutoTranslationTargetInScanRange(target.content);
+        const messageInRange = this.plugin.isAutoTranslationTargetInScanRange(target.messageNode, context);
+        const contentInRange = this.plugin.isAutoTranslationTargetInScanRange(target.content, context);
         if (!target.daitHistoryRequest) {
           if (!messageInRange && !contentInRange) return false;
           if (!contentInRange && !this.plugin.isAutoTranslationContentInsideMessage(target)) return false;
@@ -14965,9 +15155,10 @@ var require_queue_core = __commonJS({
         } finally {
           const finishedCurrent = this.finishAutoTranslationInFlightItem(item);
           if (finishedCurrent) {
-            this.stateMachine.inFlight = Math.max(0, this.stateMachine.inFlight - 1);
-            this.stateMachine.inFlightItems = Math.max(0, this.stateMachine.inFlightItems - 1);
-            if (item.daitPrefetchRequest) this.stateMachine.prefetchInFlight = Math.max(0, this.stateMachine.prefetchInFlight - 1);
+            this.stateMachine.finishInFlightBatch({
+              batchSize: 1,
+              isPrefetch: Boolean(item.daitPrefetchRequest)
+            });
           }
           if (!rendered && !item.daitRequeued && !this.hasActiveAutoTranslationKey(item.cacheKey)) {
             this.plugin.removeAutoTranslationLoadingForItem?.(item, { force: true });
@@ -14998,7 +15189,7 @@ var require_queue_core = __commonJS({
         const releaseBatchItem = (item) => {
           if (!item || !this.finishAutoTranslationInFlightItem(item)) return false;
           releasedEarlyCount++;
-          this.stateMachine.inFlightItems = Math.max(0, this.stateMachine.inFlightItems - 1);
+          this.stateMachine.releaseInFlightItems(1);
           return true;
         };
         try {
@@ -15143,12 +15334,13 @@ var require_queue_core = __commonJS({
           const currentItems = items.filter((item) => this.finishAutoTranslationInFlightItem(item));
           const sameConfigGeneration = Number(this.stateMachine.configVersion || 0) === batchConfigVersion;
           const sameResetVersion = Number(this.plugin.autoTranslationInFlightResetVersion || 0) === batchResetVersion;
-          if (currentItems.length) {
-            this.stateMachine.inFlightItems = Math.max(0, this.stateMachine.inFlightItems - currentItems.length);
-          }
           if (sameConfigGeneration && (currentItems.length > 0 || releasedEarlyCount === items.length && sameResetVersion)) {
-            this.stateMachine.inFlight = Math.max(0, this.stateMachine.inFlight - 1);
-            if (isPrefetchBatch) this.stateMachine.prefetchInFlight = Math.max(0, this.stateMachine.prefetchInFlight - 1);
+            this.stateMachine.finishInFlightBatch({
+              batchSize: currentItems.length,
+              isPrefetch: isPrefetchBatch
+            });
+          } else if (currentItems.length) {
+            this.stateMachine.releaseInFlightItems(currentItems.length);
           }
           items.forEach((item) => {
             if (!renderedItems.has(item) && !item.daitRequeued && !this.hasActiveAutoTranslationKey(item.cacheKey)) {
@@ -15249,6 +15441,7 @@ var require_queue_core = __commonJS({
         if (existingIndex >= 0) {
           const existing = this.stateMachine.queue[existingIndex];
           this.stateMachine.queue[existingIndex] = (queuedItem.priority ?? Number.MAX_SAFE_INTEGER) < (existing.priority ?? Number.MAX_SAFE_INTEGER) ? { ...existing, ...queuedItem } : { ...queuedItem, ...existing };
+          this.stateMachine.queuedKeys.add(queuedItem.cacheKey);
         } else if (this.hasActiveAutoTranslationKey(queuedItem.cacheKey) && !allowActiveRequeue) {
           this.plugin.logDiagnostic("auto.queue.enqueue", "dedupe-active", {
             ...this.plugin.getAutoTranslationDiagnosticMeta(queuedItem, DIAGNOSTIC_MESSAGE_STATES.IN_FLIGHT, DIAGNOSTIC_REASON_CODES.DEDUPE_ACTIVE),
@@ -15256,9 +15449,8 @@ var require_queue_core = __commonJS({
           });
           return false;
         } else {
-          this.stateMachine.queue.push(queuedItem);
+          this.stateMachine.enqueue(queuedItem, { allowDuplicateKey: allowActiveRequeue });
         }
-        this.stateMachine.queuedKeys.add(queuedItem.cacheKey);
         if (options.deferSort) this.stateMachine.queueSortDirty = true;
         else this.plugin.sortAutoTranslationQueue();
         this.plugin.logDiagnostic("auto.queue.enqueue", "ok", {
@@ -15531,13 +15723,11 @@ var require_queue_core = __commonJS({
       markAutoTranslationInFlightItem(item, startedAt = Date.now()) {
         if (!item?.cacheKey) return;
         const token = this.createAutoTranslationInFlightToken(item.cacheKey);
-        item.daitInFlightToken = token;
-        this.stateMachine.inFlightKeys.add(item.cacheKey);
-        if (this.plugin.isLongAutoTranslationItem(item) && !this.plugin.isAutoTranslationPrefetchItem(item)) {
-          this.stateMachine.visibleLongInFlightKeys.add(item.cacheKey);
-        }
-        this.stateMachine.inFlightStartedAt.set(item.cacheKey, startedAt);
-        this.stateMachine.inFlightTokens.set(item.cacheKey, token);
+        this.stateMachine.markInFlightItem(item, {
+          token,
+          startedAt,
+          isVisibleLong: this.plugin.isLongAutoTranslationItem(item) && !this.plugin.isAutoTranslationPrefetchItem(item)
+        });
         this.logAutoTranslationMessageState(
           "auto.message.state",
           "in-flight",
@@ -15570,11 +15760,9 @@ var require_queue_core = __commonJS({
       finishAutoTranslationInFlightItem(item) {
         const owned = this.isAutoTranslationInFlightTokenOwned(item);
         if (owned) {
-          if (!item.daitRequeued) this.stateMachine.queuedKeys.delete(item.cacheKey);
-          this.stateMachine.inFlightKeys.delete(item.cacheKey);
-          this.stateMachine.visibleLongInFlightKeys.delete(item.cacheKey);
-          this.stateMachine.inFlightStartedAt.delete(item.cacheKey);
-          this.stateMachine.inFlightTokens.delete(item.cacheKey);
+          this.stateMachine.finishInFlightItem(item.cacheKey, item.daitInFlightToken, {
+            keepQueuedKey: Boolean(item.daitRequeued)
+          });
         }
         delete item.daitInFlightToken;
         return owned;
@@ -15596,18 +15784,18 @@ var require_queue_core = __commonJS({
       makeRoomForAutoTranslationItem(item, queueLimit) {
         return this.plugin.translationScheduler.makeRoomForItem(item, queueLimit);
       }
-      sortAutoTranslationQueue() {
+      sortAutoTranslationQueue(context = null) {
         this.stateMachine.queueSortDirty = false;
-        this.plugin.translationScheduler.sortQueue(this.stateMachine.queue);
+        this.plugin.translationScheduler.sortQueue(this.stateMachine.queue, context);
       }
       withAutoTranslationPriority(target, options = {}) {
         if (!target) return target;
-        const priority = options.preserveExisting && Number.isFinite(Number(target.priority)) ? Number(target.priority) : this.getAutoTranslationTargetPriority(target);
+        const priority = options.preserveExisting && Number.isFinite(Number(target.priority)) ? Number(target.priority) : this.getAutoTranslationTargetPriority(target, options.context || null);
         return { ...target, priority };
       }
-      getAutoTranslationTargetPriority(target) {
-        const contentPriority = this.plugin.getViewportPriority(target?.content);
-        const messagePriority = this.plugin.getViewportPriority(target?.messageNode);
+      getAutoTranslationTargetPriority(target, context = null) {
+        const contentPriority = this.plugin.getViewportPriority(target?.content, context);
+        const messagePriority = this.plugin.getViewportPriority(target?.messageNode, context);
         const kindOffset = target?.targetKind === "reply-preview" ? 20 : 0;
         return Math.min(contentPriority, messagePriority) + kindOffset;
       }
@@ -18532,9 +18720,22 @@ var require_registry = __commonJS({
           throw new Error("ProviderAdapter must define a non-empty string id.");
         }
         const id = adapter.id.trim();
+        const previous = this.adapters.get(id);
+        if (previous?.responseParser) {
+          const prevSet = this.byParser.get(previous.responseParser);
+          if (prevSet) {
+            prevSet.delete(id);
+            if (prevSet.size === 0) this.byParser.delete(previous.responseParser);
+          }
+        }
         this.adapters.set(id, adapter);
         if (adapter.responseParser) {
-          this.byParser.set(adapter.responseParser, adapter);
+          let set = this.byParser.get(adapter.responseParser);
+          if (!set) {
+            set = /* @__PURE__ */ new Set();
+            this.byParser.set(adapter.responseParser, set);
+          }
+          set.add(id);
         }
         return this;
       }
@@ -18548,8 +18749,12 @@ var require_registry = __commonJS({
         const existing = this.adapters.get(key);
         if (!existing) return false;
         this.adapters.delete(key);
-        if (existing.responseParser && this.byParser.get(existing.responseParser) === existing) {
-          this.byParser.delete(existing.responseParser);
+        if (existing.responseParser) {
+          const set = this.byParser.get(existing.responseParser);
+          if (set) {
+            set.delete(key);
+            if (set.size === 0) this.byParser.delete(existing.responseParser);
+          }
         }
         return true;
       }
@@ -18563,12 +18768,15 @@ var require_registry = __commonJS({
         return this.adapters.get(String(id || "").trim()) || null;
       }
       /**
-       * Resolves an adapter by its responseParser identifier.
+       * Resolves the canonical (first-registered) adapter for a responseParser identifier.
        * @param {string} parserName
        * @returns {ProviderAdapter | null}
        */
       getByParser(parserName) {
-        return this.byParser.get(String(parserName || "").trim()) || null;
+        const set = this.byParser.get(String(parserName || "").trim());
+        if (!set || set.size === 0) return null;
+        const firstId = set.values().next().value;
+        return firstId ? this.adapters.get(firstId) || null : null;
       }
       /**
        * @param {string} id
@@ -18624,6 +18832,14 @@ var require_registry = __commonJS({
        */
       supportsModelDetection(idOrConfig) {
         return Boolean(this.get(idOrConfig)?.supportsModelDetection);
+      }
+      /**
+       * @param {string | { provider?: string } | null | undefined} idOrConfig
+       * @returns {boolean}
+       */
+      isApiKeyOptional(idOrConfig) {
+        const adapter = this.get(idOrConfig);
+        return Boolean(adapter?.apiKeyOptional || adapter?.defaultProfile?.apiKeyOptional);
       }
       /**
        * @param {string | { provider?: string } | null | undefined} idOrConfig
@@ -20247,6 +20463,27 @@ var require_provider_layer = __commonJS({
     var localModelHealthMethods = require_local_model_health();
     var googleKeyPoolMethods = require_google_key_pool();
     var providerCodecMethods = require_provider_codecs();
+    var NON_REQUEST_TASK_CONFIG_KEYS = /* @__PURE__ */ new Set([
+      "providerProfiles",
+      "promptTemplates",
+      "activePromptTemplate",
+      "apiStatus",
+      "afterAction",
+      "repolishSource"
+    ]);
+    var FALLBACK_TASK_PARAM_KEYS = [
+      "enabled",
+      "sourceLanguage",
+      "targetLanguage",
+      "targetLanguageCode",
+      "temperature",
+      "maxTokens",
+      "prompt",
+      "promptPolicyVersion",
+      "localCompactPrompt",
+      "mode",
+      "requestOrigin"
+    ];
     var ProviderLayer = class {
       constructor(plugin, ctx = createPluginContext(plugin)) {
         this.plugin = plugin;
@@ -20258,7 +20495,15 @@ var require_provider_layer = __commonJS({
       }
       getProviderDefaults(provider) {
         const id = String(provider || "").trim();
-        return this.registry.get(id)?.defaultProfile || PROVIDER_DEFAULTS[id] || null;
+        const adapter = this.registry.get(id);
+        if (adapter) {
+          return {
+            ...PROVIDER_DEFAULTS[id] || {},
+            ...adapter.defaultProfile || {},
+            ...adapter.label && !adapter.defaultProfile?.label ? { label: adapter.label } : {}
+          };
+        }
+        return PROVIDER_DEFAULTS[id] || null;
       }
       isGoogleTranslateProvider(configOrProvider) {
         const provider = typeof configOrProvider === "string" ? configOrProvider : configOrProvider?.provider;
@@ -20307,7 +20552,7 @@ var require_provider_layer = __commonJS({
         }
       }
       getEffectiveChatCompletionEndpoint(config = {}, defaultConfig = {}) {
-        const providerDefault = PROVIDER_DEFAULTS[config.provider] || {};
+        const providerDefault = this.getProviderDefaults(config.provider) || {};
         const raw = String(config.endpoint || providerDefault.endpoint || defaultConfig.endpoint || "").trim();
         return this.normalizeChatCompletionEndpoint(raw);
       }
@@ -20381,7 +20626,7 @@ var require_provider_layer = __commonJS({
         return result;
       }
       isModelDetectionProvider(provider) {
-        return ["sakuraLocal", "openaiCompatible"].includes(String(provider || ""));
+        return this.registry.supportsModelDetection(provider);
       }
       getEffectiveRequestApiKey(config) {
         if (config?.provider === "googleCloud") {
@@ -20400,6 +20645,10 @@ var require_provider_layer = __commonJS({
           error.code = "API_KEY_ORIGIN_MISMATCH";
           throw error;
         }
+        const adapter = this.registry.get(config);
+        if (typeof adapter?.buildHeaders === "function") {
+          return adapter.buildHeaders(config, effectiveApiKey, this.plugin);
+        }
         const headers = { "Content-Type": "application/json" };
         if (config?.provider === "microsoft") {
           if (effectiveApiKey) headers["Ocp-Apim-Subscription-Key"] = effectiveApiKey;
@@ -20416,9 +20665,13 @@ var require_provider_layer = __commonJS({
         if (shouldSendAuth && effectiveApiKey) headers.Authorization = `Bearer ${actualApiKey || effectiveApiKey}`;
         return headers;
       }
-      hasUsableApiConfig(kind, configOverrides = null) {
-        const config = this.plugin.getEffectiveTaskConfig(kind, configOverrides);
+      hasUsableApiConfig(kind, configOverrides = null, options = null) {
+        const config = options?.isolatedConfig && configOverrides ? this.stripNonRequestTaskFields(configOverrides) : this.plugin.getEffectiveTaskConfig(kind, configOverrides);
         if (this.plugin.hasApiKeyOriginMismatch(config)) return false;
+        const adapter = this.registry.get(config);
+        if (typeof adapter?.hasUsableConfig === "function") {
+          return Boolean(adapter.hasUsableConfig(config, this.plugin));
+        }
         const defaults = DEFAULT_SETTINGS[kind] || {};
         const providerDefaults = this.getProviderDefaults(config.provider) || {};
         const endpoint = String(config.endpoint || providerDefaults.endpoint || defaults.endpoint || "").trim();
@@ -20505,7 +20758,7 @@ var require_provider_layer = __commonJS({
       }
       getApiTestModel(config = {}, request = {}, reportedModel = "") {
         if (this.isDirectTranslateProvider(config)) return "";
-        if (reportedModel && (this.isLocalTranslationProvider(config) || config?.provider === "openaiCompatible")) return reportedModel;
+        if (reportedModel && (this.isLocalTranslationProvider(config) || this.registry.supportsModelDetection(config))) return reportedModel;
         return this.plugin.getDiagnosticModelLabel(String(request?.body?.model || config?.model || ""));
       }
       resetApiStatus(kind, options = {}) {
@@ -20526,30 +20779,64 @@ var require_provider_layer = __commonJS({
         const state = ["untested", "testing", "success", "failed"].includes(status.state) ? status.state : "untested";
         return { state, message: String(status.message || "") };
       }
-      getProviderFallbackOrder(kind = "translation") {
+      getEligibleProviderFallbackCandidates(kind = "translation") {
+        if (kind !== "translation") return [];
+        const registeredOrder = this.registry.getOrder();
+        const order = registeredOrder.length ? registeredOrder : PROVIDER_ORDER;
+        return order.filter((provider) => {
+          const adapter = this.registry.get(provider);
+          if (adapter) {
+            if (adapter.tasks?.translation !== true) return false;
+          } else if (this.plugin.isProviderAllowedForTask && !this.plugin.isProviderAllowedForTask("translation", provider)) {
+            return false;
+          }
+          return this.registry.allowCloudFallback(provider) && !this.isLocalTranslationProvider({ provider });
+        });
+      }
+      getProviderFallbackOrder(kind = "translation", currentConfig = null) {
         if (kind !== "translation") return [];
         if (this.plugin.settings.ui?.providerFallbackEnabled !== true) return [];
-        const currentProvider = String(this.plugin.settings.translation?.provider || "");
-        if (this.isLocalTranslationProvider({ provider: currentProvider })) return [];
-        return (this.plugin.settings.ui?.providerFallbackOrder || []).filter((provider) => PROVIDER_ORDER.includes(provider)).filter((provider) => provider !== currentProvider).filter((provider) => !this.isLocalTranslationProvider({ provider }));
+        const activeConfig = currentConfig && typeof currentConfig === "object" ? currentConfig : this.plugin.settings.translation || {};
+        const currentProvider = String(activeConfig.provider || this.plugin.settings.translation?.provider || "");
+        if (!this.registry.allowCloudFallback(activeConfig) || this.isLocalTranslationProvider(activeConfig)) return [];
+        const eligible = new Set(this.getEligibleProviderFallbackCandidates(kind));
+        return (this.plugin.settings.ui?.providerFallbackOrder || []).filter((provider) => eligible.has(provider) && provider !== currentProvider);
       }
       shouldTryProviderFallback(kind, options = {}, currentConfig = this.plugin.getTaskConfig(kind), error = null) {
         if (kind !== "translation") return false;
         if (options.allowProviderFallback === false) return false;
         if (this.plugin.settings.ui?.providerFallbackEnabled !== true) return false;
-        if (this.isLocalTranslationProvider(currentConfig)) return false;
+        if (!this.registry.allowCloudFallback(currentConfig) || this.isLocalTranslationProvider(currentConfig)) return false;
         const mode = String(options.mode || options.configOverrides?.mode || "");
-        if (!/^manual/.test(mode) && !/^public-bilingual(?:-|$)/.test(mode)) return false;
+        const origin = String(options.requestOrigin || options.configOverrides?.requestOrigin || "");
+        const eligibleMode = /^manual/.test(mode) || /^public-bilingual(?:-|$)/.test(mode) || origin === "manual" || origin === "public-bilingual";
+        if (!eligibleMode) return false;
         const type = this.plugin.getAutoTranslationFailureType(error);
         return ["auth", "quota", "rate-limit", "server", "timeout", "network", "parse", "client", "invalid-output", "truncated"].includes(type);
       }
+      getIsolatedFallbackCredentialFields(baseConfig, targetProvider, extraConfig = null) {
+        const fields = /* @__PURE__ */ new Set(["apiKey", "apiKeyOrigin", "region", "deeplPlan", "appId", "secretKey"]);
+        for (const source of [baseConfig, targetProvider, extraConfig]) {
+          if (!source) continue;
+          for (const field of this.registry.getCredentialFields(source)) {
+            if (field) fields.add(field);
+          }
+        }
+        return fields;
+      }
       getProviderFallbackConfig(kind, provider, baseConfig = this.plugin.getTaskConfig(kind)) {
-        if (kind !== "translation" || !PROVIDER_ORDER.includes(provider)) return null;
+        if (kind !== "translation" || !this.registry.has(provider) && !PROVIDER_ORDER.includes(provider)) return null;
         const defaults = this.getProviderDefaults(provider);
         if (!defaults) return null;
         const profile = this.plugin.getTaskProviderProfile(kind, provider) || {};
-        return {
-          ...baseConfig,
+        const taskParams = {};
+        if (baseConfig && typeof baseConfig === "object") {
+          for (const key of FALLBACK_TASK_PARAM_KEYS) {
+            if (baseConfig[key] !== void 0) taskParams[key] = baseConfig[key];
+          }
+        }
+        const fallbackConfig = {
+          ...taskParams,
           ...defaults,
           provider,
           endpoint: profile.endpoint ?? defaults.endpoint ?? "",
@@ -20561,19 +20848,26 @@ var require_provider_layer = __commonJS({
           appId: profile.appId ?? "",
           secretKey: profile.secretKey ?? "",
           enableThinking: typeof profile.enableThinking === "boolean" ? profile.enableThinking : false,
-          sourceLanguage: baseConfig.sourceLanguage || AUTO_LANGUAGE_VALUE,
-          targetLanguage: baseConfig.targetLanguage || this.plugin.settings.translation?.targetLanguage
+          sourceLanguage: baseConfig?.sourceLanguage || AUTO_LANGUAGE_VALUE,
+          targetLanguage: baseConfig?.targetLanguage || this.plugin.settings.translation?.targetLanguage
         };
+        for (const field of this.registry.getCredentialFields(provider)) {
+          if (field === "apiKey" || field === "appId" || field === "secretKey") continue;
+          fallbackConfig[field] = profile[field] ?? defaults[field] ?? "";
+        }
+        return fallbackConfig;
       }
       async tryProviderFallbackModelTask(kind, input, options = {}, firstError = null, currentConfig = this.plugin.getTaskConfig(kind), diagnosticMode = kind) {
         if (!this.shouldTryProviderFallback(kind, options, currentConfig, firstError)) return null;
-        const order = this.getProviderFallbackOrder(kind);
+        const order = this.getProviderFallbackOrder(kind, currentConfig);
         if (!order.length) return null;
         const firstType = this.plugin.getAutoTranslationFailureType(firstError);
+        let budgetReservedBlocked = false;
+        let budgetExhaustedBlocked = false;
         for (const provider of order) {
           const fallbackConfig = this.getProviderFallbackConfig(kind, provider, currentConfig);
           if (!fallbackConfig) continue;
-          if (!this.plugin.hasUsableApiConfig(kind, fallbackConfig)) {
+          if (!this.plugin.hasUsableApiConfig(kind, fallbackConfig, { isolatedConfig: true })) {
             this.plugin.logDiagnostic("model.provider-fallback", "skipped", {
               ...this.plugin.getDiagnosticBaseMeta("model", `${diagnosticMode}-fallback`, DIAGNOSTIC_REASON_CODES.CONFIG_MISSING),
               fromProvider: currentConfig?.provider || "",
@@ -20582,6 +20876,26 @@ var require_provider_layer = __commonJS({
               reason: "missing-config"
             });
             continue;
+          }
+          if (options.requestBudget) {
+            try {
+              this.plugin.consumeAutoTranslationRequestBudget({ requestBudget: options.requestBudget });
+            } catch (budgetError) {
+              if (this.plugin.isAutoTranslationRequestBudgetError?.(budgetError)) {
+                if (budgetError.requestBudgetReserved) budgetReservedBlocked = true;
+                else budgetExhaustedBlocked = true;
+                this.plugin.logDiagnostic("model.provider-fallback", "budget-exhausted", {
+                  ...this.plugin.getDiagnosticBaseMeta("model", `${diagnosticMode}-fallback`, "budget-exhausted"),
+                  fromProvider: currentConfig?.provider || "",
+                  provider,
+                  firstFailureType: firstType,
+                  requestCount: Number(options.requestBudget?.used || 0),
+                  limit: Number(options.requestBudget?.limit || 0)
+                });
+                break;
+              }
+              throw budgetError;
+            }
           }
           try {
             this.plugin.logDiagnostic("model.provider-fallback", "start", {
@@ -20592,24 +20906,40 @@ var require_provider_layer = __commonJS({
               inputHash: this.plugin.getStrongTextFingerprint(input),
               inputLength: String(input || "").length
             });
+            const sanitizedOverrides = {};
+            if (options.configOverrides && typeof options.configOverrides === "object") {
+              for (const key of FALLBACK_TASK_PARAM_KEYS) {
+                const value = options.configOverrides[key];
+                if (value === void 0) continue;
+                if ((key === "sourceLanguage" || key === "targetLanguage") && !value) continue;
+                sanitizedOverrides[key] = value;
+              }
+            }
+            const fallbackOverrides = {
+              ...fallbackConfig,
+              ...sanitizedOverrides,
+              provider,
+              endpoint: fallbackConfig.endpoint,
+              model: fallbackConfig.model,
+              apiKey: fallbackConfig.apiKey,
+              apiKeyOrigin: fallbackConfig.apiKeyOrigin,
+              region: fallbackConfig.region,
+              deeplPlan: fallbackConfig.deeplPlan,
+              appId: fallbackConfig.appId,
+              secretKey: fallbackConfig.secretKey,
+              enableThinking: fallbackConfig.enableThinking
+            };
+            for (const field of this.registry.getCredentialFields(provider)) {
+              fallbackOverrides[field] = fallbackConfig[field] ?? "";
+            }
             const result = await this.plugin.runModelTask(kind, input, {
               ...options,
+              requestBudget: void 0,
               mode: `${diagnosticMode}-provider-fallback`,
-              configOverrides: {
-                ...fallbackConfig,
-                ...options.configOverrides || {},
-                provider,
-                endpoint: fallbackConfig.endpoint,
-                model: fallbackConfig.model,
-                apiKey: fallbackConfig.apiKey,
-                apiKeyOrigin: fallbackConfig.apiKeyOrigin,
-                region: fallbackConfig.region,
-                deeplPlan: fallbackConfig.deeplPlan,
-                appId: fallbackConfig.appId,
-                secretKey: fallbackConfig.secretKey
-              },
+              configOverrides: fallbackOverrides,
               allowProviderFallback: false,
-              providerProfilePinned: true
+              providerProfilePinned: true,
+              isolatedConfig: true
             });
             this.plugin.logDiagnostic("model.provider-fallback", "success", {
               ...this.plugin.getDiagnosticBaseMeta("model", `${diagnosticMode}-fallback`, "request-success"),
@@ -20635,14 +20965,24 @@ var require_provider_layer = __commonJS({
             });
           }
         }
-        return null;
+        return budgetReservedBlocked || budgetExhaustedBlocked ? { used: false, budgetReservedBlocked, budgetExhaustedBlocked } : null;
       }
       getAutoTranslationProviderKey(requestOptions = this.plugin.getAutoTranslationOptions()) {
         if (requestOptions?.providerKey) return requestOptions.providerKey;
-        const config = this.plugin.getCacheConfigSnapshot("translation", this.plugin.getEffectiveTaskConfig("translation", requestOptions?.configOverrides));
+        const rawConfig = requestOptions?.isolatedConfig && requestOptions?.configOverrides ? requestOptions.configOverrides : this.plugin.getEffectiveTaskConfig("translation", requestOptions?.configOverrides);
+        const config = this.plugin.getCacheConfigSnapshot("translation", rawConfig);
         if (config.provider === "googleCloud") return this.getGoogleTranslateProviderKey();
-        const rawConfig = this.plugin.getEffectiveTaskConfig("translation", requestOptions?.configOverrides);
-        const apiKeySource = rawConfig.provider === "baidu" ? `${rawConfig.appId || ""}:${rawConfig.secretKey || ""}` : requestOptions?.configOverrides?.apiKey ?? this.plugin.settings.translation?.apiKey;
+        const adapter = this.registry.get(rawConfig);
+        let apiKeySource = "";
+        if (typeof adapter?.getAuthFingerprint === "function") {
+          apiKeySource = String(adapter.getAuthFingerprint(rawConfig, null, this.plugin) || "");
+        } else if (rawConfig.provider === "baidu") {
+          apiKeySource = `${rawConfig.appId || ""}:${rawConfig.secretKey || ""}`;
+        } else {
+          const credentialFields = this.registry.getCredentialFields(rawConfig);
+          const hasCustomFields = credentialFields.some((field) => field !== "apiKey");
+          apiKeySource = hasCustomFields ? credentialFields.map((field) => `${field}=${String(rawConfig[field] ?? "").trim()}`).join("|") : requestOptions?.isolatedConfig ? String(rawConfig.apiKey ?? "") : requestOptions?.configOverrides?.apiKey ?? this.plugin.settings.translation?.apiKey;
+        }
         const apiKeyFingerprint = this.plugin.getTextFingerprint(String(apiKeySource || "").trim());
         return [
           config.provider,
@@ -20662,6 +21002,30 @@ var require_provider_layer = __commonJS({
       // TranslationResult value ({ text, fallbackProvider }) instead of signalling
       // fallback usage through promise stamping. runModelTask stays as the string-typed
       // facade the rest of the plugin (and the regression suite) programs against.
+      stripNonRequestTaskFields(config) {
+        if (!config || typeof config !== "object") return {};
+        const cleaned = { ...config };
+        for (const key of NON_REQUEST_TASK_CONFIG_KEYS) {
+          delete cleaned[key];
+        }
+        return cleaned;
+      }
+      resolveEffectiveRequestConfig(kind, options = {}) {
+        const baseConfig = this.stripNonRequestTaskFields(this.plugin.getTaskConfig(kind));
+        if (!options?.configOverrides) return baseConfig;
+        const overrides = this.stripNonRequestTaskFields(options.configOverrides);
+        if (options.isolatedConfig) return overrides;
+        const overrideProvider = String(overrides.provider || "").trim();
+        const baseProvider = String(baseConfig?.provider || "").trim();
+        if (overrideProvider && baseProvider && overrideProvider !== baseProvider) {
+          const sanitizedBase = { ...baseConfig };
+          for (const field of this.getIsolatedFallbackCredentialFields(baseConfig, overrideProvider)) {
+            delete sanitizedBase[field];
+          }
+          return { ...sanitizedBase, ...overrides };
+        }
+        return { ...baseConfig, ...overrides };
+      }
       async runModelTaskWithResult(kind, input, options = {}) {
         const { signal, requestContext } = options;
         const diagnosticMode = options?.mode || options?.configOverrides?.mode || kind;
@@ -20675,7 +21039,7 @@ var require_provider_layer = __commonJS({
         const requestStillCurrent = () => this.ctx.isLifecycleTokenCurrent(lifecycleToken) && (!providerSnapshotKey || this.plugin.isAutoTranslationProviderSnapshotCurrent(providerSnapshotKey, { configOverrides: taskConfig }));
         this.throwIfProviderRequestCancelled(signal, lifecycleToken);
         try {
-          taskConfig = { ...this.plugin.getEffectiveTaskConfig(kind, options.configOverrides) };
+          taskConfig = this.resolveEffectiveRequestConfig(kind, options);
           const defaultConfig = DEFAULT_SETTINGS[kind] || {};
           if (this.shouldAutoDetectLocalProviderModel(taskConfig, defaultConfig)) {
             await this.plugin.refreshLocalProviderDetectedModel(taskConfig, {
@@ -20693,7 +21057,7 @@ var require_provider_layer = __commonJS({
           const buildOptions = { ...options, configOverrides: taskConfig, reserveGoogleTranslateQuota: false };
           const translateAsArray = Boolean(options.translateAsArray || options.googleTranslateAsArray);
           const getRequestKey = () => JSON.stringify([
-            this.getModelRequestKey(endpoint, request, input),
+            this.getModelRequestKey(endpoint, request, input, taskConfig),
             Boolean(request?.responseParser && translateAsArray)
           ]);
           const requests = this.plugin.translationRequests;
@@ -20788,7 +21152,13 @@ var require_provider_layer = __commonJS({
           });
           const fallback = await this.plugin.tryProviderFallbackModelTask(kind, input, { ...options, requestContext: void 0 }, error, taskConfig, diagnosticMode);
           this.throwIfProviderRequestCancelled(signal, lifecycleToken);
-          if (!fallback?.used) throw error;
+          if (!fallback?.used) {
+            if (error && typeof error === "object") {
+              if (fallback?.budgetReservedBlocked) error.fallbackBudgetReserved = true;
+              if (fallback?.budgetExhaustedBlocked) error.fallbackBudgetExhausted = true;
+            }
+            throw error;
+          }
           if (requestContext && typeof requestContext === "object") requestContext.fallbackProvider = fallback.provider;
           return { text: fallback.result, fallbackProvider: fallback.provider };
         }
@@ -20812,7 +21182,9 @@ var require_provider_layer = __commonJS({
             } catch {
             }
           }
-          const adapter = request?.responseParser && this.registry.getByParser(request.responseParser) || this.registry.get(request?.provider);
+          const providerAdapter = this.registry.get(request?.provider);
+          const parserAdapter = request?.responseParser ? this.registry.getByParser(request.responseParser) : null;
+          const adapter = providerAdapter && (!request?.responseParser || !providerAdapter.responseParser || providerAdapter.responseParser === request.responseParser) ? providerAdapter : parserAdapter || providerAdapter;
           if (adapter?.parseResponse) {
             return adapter.parseResponse(raw, request, options, this.plugin);
           }
@@ -20995,9 +21367,11 @@ var require_provider_layer = __commonJS({
       async fetchViaBetterDiscordNet(endpoint, fetchOptions, signal = null, timeoutMs = MODEL_REQUEST_TIMEOUT_MS) {
         const bdFetch = globalThis.BdApi?.Net?.fetch;
         if (typeof bdFetch !== "function") throw new Error("BdApi.Net.fetch unavailable");
+        const rawHeaders = fetchOptions.headers;
+        const bdHeaders = this.serializeHeadersForBetterDiscordNet(rawHeaders);
         const bdOptions = {
           method: fetchOptions.method,
-          headers: fetchOptions.headers,
+          headers: bdHeaders,
           timeout: Math.max(1e3, Number(timeoutMs) || MODEL_REQUEST_TIMEOUT_MS),
           redirect: "manual",
           maxRedirects: 0
@@ -21058,14 +21432,80 @@ var require_provider_layer = __commonJS({
         }
         return error;
       }
-      getModelRequestKey(endpoint, request, input) {
+      normalizeRequestHeadersMap(headers) {
+        const normalized = /* @__PURE__ */ new Map();
+        if (!headers || typeof headers !== "object") return normalized;
+        const append = (key, value) => {
+          const rawName = String(key || "").trim();
+          const lowerName = rawName.toLowerCase();
+          if (!lowerName || value === void 0 || value === null) return;
+          const textValue = String(value).trim();
+          const existing = normalized.get(lowerName);
+          if (existing) {
+            existing.value = `${existing.value}, ${textValue}`;
+          } else {
+            normalized.set(lowerName, { name: rawName, value: textValue });
+          }
+        };
+        if (Array.isArray(headers)) {
+          for (const entry of headers) {
+            if (Array.isArray(entry) && entry.length >= 2) append(entry[0], entry[1]);
+          }
+        } else if (typeof headers.entries === "function") {
+          for (const entry of headers.entries()) {
+            if (Array.isArray(entry) && entry.length >= 2) append(entry[0], entry[1]);
+          }
+        } else if (typeof headers.forEach === "function") {
+          headers.forEach((value, key) => append(key, value));
+        } else {
+          for (const [key, value] of Object.entries(headers)) {
+            append(key, value);
+          }
+        }
+        return normalized;
+      }
+      serializeHeadersForBetterDiscordNet(headers) {
+        if (!headers || typeof headers !== "object") return headers;
+        const isStructured = Array.isArray(headers) || typeof headers.entries === "function" || typeof headers.forEach === "function";
+        if (!isStructured) {
+          const keys = Object.keys(headers);
+          const seenLower = /* @__PURE__ */ new Set();
+          let hasDuplicateCase = false;
+          for (const key of keys) {
+            const lower = String(key || "").trim().toLowerCase();
+            if (!lower) continue;
+            if (seenLower.has(lower)) {
+              hasDuplicateCase = true;
+              break;
+            }
+            seenLower.add(lower);
+          }
+          if (!hasDuplicateCase) return headers;
+        }
+        const normalized = this.normalizeRequestHeadersMap(headers);
+        return Object.fromEntries([...normalized.values()].map((item) => [item.name, item.value]));
+      }
+      getRequestHeaderEntries(headers) {
+        return [...this.normalizeRequestHeadersMap(headers).entries()].map(([lowerName, item]) => [lowerName, item.value]).sort((a, b) => a[0].localeCompare(b[0]));
+      }
+      getModelRequestKey(endpoint, request, input, effectiveConfig = null) {
         const body = request?.body || {};
-        const authFingerprint = request?.provider === "googleCloud" ? this.plugin.getTextFingerprint(String(request?.googleTranslate?.apiKey || "")) : this.plugin.getTextFingerprint([
-          request?.headers?.Authorization || "",
-          request?.headers?.["Ocp-Apim-Subscription-Key"] || "",
-          body?.appid || "",
-          request?.providerKey || ""
-        ].join("|"));
+        let authFingerprint = "";
+        if (request?.provider === "googleCloud") {
+          authFingerprint = this.plugin.getTextFingerprint(String(request?.googleTranslate?.apiKey || ""));
+        } else {
+          const adapter = this.registry.get(request?.provider || effectiveConfig);
+          const adapterAuth = typeof adapter?.getAuthFingerprint === "function" ? String(adapter.getAuthFingerprint(effectiveConfig || {}, request, this.plugin) || "") : "";
+          const headerEntries = this.getRequestHeaderEntries(request?.headers).map(([k, v]) => `${k}:${v}`).join("\n");
+          const configCreds = effectiveConfig && typeof effectiveConfig === "object" ? this.registry.getCredentialFields(request?.provider || effectiveConfig).map((field) => `${field}=${String(effectiveConfig[field] ?? "").trim()}`).join("|") : "";
+          authFingerprint = this.plugin.getStrongTextFingerprint([
+            adapterAuth,
+            headerEntries,
+            configCreds,
+            body?.appid || "",
+            request?.providerKey || ""
+          ].join("\n--\n"));
+        }
         const requestText = body?.messages?.[0]?.content ?? body?.q ?? body?.text ?? body?.target ?? body?.to ?? "";
         const serializedRequestText = Array.isArray(requestText) ? JSON.stringify(requestText) : String(requestText ?? "");
         const serializedInput = Array.isArray(input) ? JSON.stringify(input) : String(input ?? "");
@@ -21090,7 +21530,7 @@ var require_provider_layer = __commonJS({
         const lifecycleToken = this.ctx.getLifecycleToken();
         if (!this.ctx.isLifecycleTokenCurrent(lifecycleToken)) return false;
         const config = this.plugin.getTaskConfig(kind);
-        const fields = [
+        const fields = [.../* @__PURE__ */ new Set([
           "enabled",
           "provider",
           "endpoint",
@@ -21102,8 +21542,9 @@ var require_provider_layer = __commonJS({
           "deeplPlan",
           "appId",
           "secretKey",
-          "targetLanguage"
-        ];
+          "targetLanguage",
+          ...this.registry.getCredentialFields(config)
+        ])];
         const testConfig = Object.freeze(Object.fromEntries(fields.map((field) => [field, config[field]])));
         const getGooglePoolConfig = () => this.normalizeGoogleTranslateKeyPool().keyPoolText;
         const googlePoolConfig = testConfig.provider === "googleCloud" ? getGooglePoolConfig() : null;
@@ -21220,32 +21661,36 @@ var require_provider_layer = __commonJS({
         }
       }
       buildConnectionTestRequest(kind, config = this.plugin.getTaskConfig(kind)) {
-        if (this.isDirectTranslateProvider(config)) {
+        const safeConfig = this.stripNonRequestTaskFields(config);
+        const defaultConfig = DEFAULT_SETTINGS[kind] || {};
+        const adapter = this.registry.get(safeConfig?.provider);
+        if (typeof adapter?.buildTestRequest === "function") {
+          return adapter.buildTestRequest(kind, safeConfig, defaultConfig, this.plugin);
+        }
+        if (this.isDirectTranslateProvider(safeConfig)) {
           const testConfig = {
-            ...config,
+            ...safeConfig,
             sourceLanguage: AUTO_LANGUAGE_VALUE,
-            targetLanguageCode: this.getTargetLanguageCode(config.targetLanguage)
+            targetLanguageCode: this.getTargetLanguageCode(safeConfig.targetLanguage)
           };
-          const adapter = this.registry.get(config?.provider);
           if (adapter?.buildRequest) {
-            return adapter.buildRequest("translation", "hello", testConfig, DEFAULT_SETTINGS[kind] || {}, {
+            return adapter.buildRequest("translation", "hello", testConfig, defaultConfig, {
               ignoreGoogleTranslateCooldown: true,
               connectionTest: true
             }, this.plugin);
           }
-          if (this.isGoogleTranslateProvider(config)) return this.buildGoogleTranslateRequest("hello", testConfig, { ignoreCooldown: true });
-          if (this.isMicrosoftTranslateProvider(config)) return this.buildMicrosoftTranslateRequest("hello", testConfig);
-          if (this.isDeepLTranslateProvider(config)) return this.buildDeepLTranslateRequest("hello", testConfig);
+          if (this.isGoogleTranslateProvider(safeConfig)) return this.buildGoogleTranslateRequest("hello", testConfig, { ignoreCooldown: true });
+          if (this.isMicrosoftTranslateProvider(safeConfig)) return this.buildMicrosoftTranslateRequest("hello", testConfig);
+          if (this.isDeepLTranslateProvider(safeConfig)) return this.buildDeepLTranslateRequest("hello", testConfig);
           return this.buildBaiduTranslateRequest("hello", testConfig);
         }
-        const defaultConfig = DEFAULT_SETTINGS[kind] || {};
-        const apiKey = this.getEffectiveRequestApiKey(config);
+        const apiKey = this.getEffectiveRequestApiKey(safeConfig);
         if (!apiKey) throw new Error(kind === "polish" ? this.plugin.t("apiKeyMissingPolish") : this.plugin.t("apiKeyMissingTranslation"));
-        const endpoint = this.getEffectiveChatCompletionEndpoint(config, defaultConfig);
-        const model = this.getEffectiveChatCompletionModel(kind, config, defaultConfig);
+        const endpoint = this.getEffectiveChatCompletionEndpoint(safeConfig, defaultConfig);
+        const model = this.getEffectiveChatCompletionModel(kind, safeConfig, defaultConfig);
         if (!endpoint) throw new Error(this.plugin.t("endpointMissing"));
-        if (this.plugin.isChatCompletionProvider(config) && !model) throw new Error(this.plugin.t("modelMissing"));
-        const body = this.applyProviderBodyOptions(config, {
+        if (this.plugin.isChatCompletionProvider(safeConfig) && !model) throw new Error(this.plugin.t("modelMissing"));
+        const body = this.applyProviderBodyOptions(safeConfig, {
           model,
           messages: [
             { role: "user", content: "Reply with OK only." }
@@ -21257,17 +21702,16 @@ var require_provider_layer = __commonJS({
         return {
           endpoint,
           request: {
-            provider: config.provider,
-            providerKey: kind === "translation" ? this.getAutoTranslationProviderKey({ configOverrides: config }) : "",
-            headers: this.getRequestHeaders(config, apiKey),
+            provider: safeConfig.provider,
+            providerKey: kind === "translation" ? this.getAutoTranslationProviderKey({ configOverrides: safeConfig, isolatedConfig: true }) : "",
+            headers: this.getRequestHeaders(safeConfig, apiKey),
             body
           }
         };
       }
       buildModelRequest(kind, input, options = {}) {
-        const config = this.plugin.getTaskConfig(kind);
         const defaultConfig = DEFAULT_SETTINGS[kind] || {};
-        const effectiveConfig = options.configOverrides ? { ...config, ...options.configOverrides } : config;
+        const effectiveConfig = this.resolveEffectiveRequestConfig(kind, options);
         const adapter = this.registry.get(effectiveConfig);
         if (adapter?.buildRequest) {
           return adapter.buildRequest(kind, input, effectiveConfig, defaultConfig, options, this.plugin);
@@ -21508,6 +21952,7 @@ var require_panel_theme = __commonJS({
       refresh() {
         const theme = this.resolve();
         this.lastTheme = theme;
+        this.lastHostThemeSignature = this.getHostThemeSignature();
         if (typeof document === "undefined") return theme;
         const roots = /* @__PURE__ */ new Set();
         try {
@@ -21549,12 +21994,12 @@ var require_panel_theme = __commonJS({
           if (!this.plugin.isStarted) return;
           const prevPanelTheme = this.lastTheme;
           const prevHostSignature = this.lastHostThemeSignature;
-          const nextPanelTheme = this.refresh();
+          const nextResolved = this.resolve();
           const nextHostSignature = this.getHostThemeSignature();
+          if (nextResolved === prevPanelTheme && nextHostSignature === prevHostSignature) return;
           this.lastHostThemeSignature = nextHostSignature;
-          if (nextPanelTheme !== prevPanelTheme || nextHostSignature !== prevHostSignature) {
-            this.plugin.refreshDiscordThemeClasses?.({ skipPanelTheme: true });
-          }
+          this.refresh();
+          this.plugin.refreshDiscordThemeClasses?.({ skipPanelTheme: true });
         };
         if (typeof MutationObserver === "function" && typeof document !== "undefined") {
           try {
@@ -21624,6 +22069,7 @@ var require_settings_store = __commonJS({
       POLISH_REPOLISH_SOURCE_LAST_RESULT,
       POLISH_REPOLISH_SOURCE_ORIGINAL,
       PROMPT_TEMPLATE_CATEGORY_GENERAL,
+      PROVIDER_PROFILE_FIELDS,
       QUICK_PANEL_TABS,
       SETTINGS_WRITE_DEBOUNCE_MS,
       TRANSLATION_CACHE_WRITE_DEBOUNCE_MS,
@@ -21894,13 +22340,63 @@ var require_settings_store = __commonJS({
             this.plugin.settings[kind].providerProfiles = {};
             changed = true;
           }
-          const provider = this.plugin.normalizeProviderForTask(kind, this.plugin.settings[kind].provider);
+          const previousProvider = String(this.plugin.settings[kind].provider || "").trim();
+          const provider = this.plugin.normalizeProviderForTask(kind, previousProvider);
           if (provider !== this.plugin.settings[kind].provider) {
-            const preset = this.plugin.getProviderDefaults(provider);
-            this.plugin.settings[kind].provider = provider;
-            if (preset?.endpoint) this.plugin.settings[kind].endpoint = preset.endpoint;
-            if (preset?.model) this.plugin.settings[kind].model = preset.model;
-            this.plugin.settings[kind].enableThinking = false;
+            const task = this.plugin.settings[kind];
+            const defaultKeys = new Set(Object.keys(DEFAULT_SETTINGS[kind] || {}));
+            if (previousProvider) {
+              const existing = task.providerProfiles[previousProvider];
+              const archivedProfile = existing && typeof existing === "object" && !Array.isArray(existing) ? { ...existing } : {};
+              Object.keys(archivedProfile).forEach((key) => {
+                if (key === "apiKeyOrigin" || PROVIDER_PROFILE_FIELDS.includes(key)) {
+                  delete archivedProfile[key];
+                  return;
+                }
+                if (!defaultKeys.has(key) && typeof archivedProfile[key] === "string") {
+                  delete archivedProfile[key];
+                }
+              });
+              PROVIDER_PROFILE_FIELDS.forEach((field) => {
+                if (task[field] !== void 0) archivedProfile[field] = task[field];
+              });
+              Object.keys(task).forEach((key) => {
+                if (!defaultKeys.has(key) && typeof task[key] === "string") archivedProfile[key] = task[key];
+              });
+              if (typeof task.apiKeyOrigin === "string") archivedProfile.apiKeyOrigin = task.apiKeyOrigin;
+              if (Array.isArray(existing?.recentModels)) archivedProfile.recentModels = existing.recentModels.slice(0, 8);
+              task.providerProfiles[previousProvider] = archivedProfile;
+            }
+            const targetCredentialFields = this.plugin.providerLayer?.registry?.getCredentialFields?.(provider) || [];
+            const targetProfile = this.getTaskProviderProfile(kind, provider);
+            const preset = this.plugin.getProviderDefaults(provider) || {};
+            Object.keys(task).forEach((key) => {
+              if (!defaultKeys.has(key) && !targetCredentialFields.includes(key)) delete task[key];
+            });
+            task.provider = provider;
+            task.endpoint = targetProfile?.endpoint ?? preset.endpoint ?? "";
+            task.model = targetProfile?.model ?? preset.model ?? "";
+            task.apiKey = targetProfile?.apiKey ?? "";
+            if (typeof targetProfile?.apiKeyOrigin === "string") task.apiKeyOrigin = targetProfile.apiKeyOrigin;
+            else delete task.apiKeyOrigin;
+            if (Object.prototype.hasOwnProperty.call(DEFAULT_SETTINGS[kind] || {}, "region")) {
+              task.region = targetProfile?.region ?? preset.region ?? "";
+            }
+            if (Object.prototype.hasOwnProperty.call(DEFAULT_SETTINGS[kind] || {}, "deeplPlan")) {
+              task.deeplPlan = targetProfile?.deeplPlan ?? preset.deeplPlan ?? "free";
+            }
+            if (Object.prototype.hasOwnProperty.call(DEFAULT_SETTINGS[kind] || {}, "appId")) {
+              task.appId = targetProfile?.appId ?? preset.appId ?? "";
+            }
+            if (Object.prototype.hasOwnProperty.call(DEFAULT_SETTINGS[kind] || {}, "secretKey")) {
+              task.secretKey = targetProfile?.secretKey ?? preset.secretKey ?? "";
+            }
+            targetCredentialFields.forEach((field) => {
+              if (!field || defaultKeys.has(field)) return;
+              task[field] = targetProfile?.[field] ?? preset[field] ?? "";
+            });
+            task.enableThinking = provider === "deepseek" ? Boolean(targetProfile?.enableThinking) : false;
+            task.apiStatus = { state: "untested", message: "" };
             changed = true;
           }
           const sourceLanguage = this.plugin.normalizeSourceLanguage(this.plugin.settings[kind].sourceLanguage);
@@ -22665,14 +23161,18 @@ var require_settings_store = __commonJS({
       carryOverResetCredentials(previous, next) {
         const isObject = (value) => Boolean(value) && typeof value === "object" && !Array.isArray(value);
         const isFilled = (value) => typeof value === "string" && Boolean(value.trim());
-        const pickCredentials = (source) => {
+        const pickCredentials = (source, provider = "") => {
           const picked = {};
-          RESET_KEPT_CREDENTIAL_FIELDS.forEach((field) => {
+          const extraAdapterFields = provider && this.plugin.providerLayer?.registry?.has?.(provider) ? this.plugin.providerLayer.registry.getCredentialFields(provider) : [];
+          const credentialFields = extraAdapterFields.length ? [.../* @__PURE__ */ new Set([...RESET_KEPT_CREDENTIAL_FIELDS, ...extraAdapterFields])] : RESET_KEPT_CREDENTIAL_FIELDS;
+          const customSecretFields = extraAdapterFields.filter((field) => !RESET_KEPT_CREDENTIAL_FIELDS.includes(field));
+          credentialFields.forEach((field) => {
             if (isFilled(source?.[field])) picked[field] = source[field];
           });
-          if (!RESET_SECRET_FIELDS.some((field) => picked[field])) return picked;
+          const hasSecret = RESET_SECRET_FIELDS.some((field) => picked[field]) || customSecretFields.some((field) => picked[field]);
+          if (!hasSecret) return picked;
           if (source.endpoint !== void 0 && typeof source.endpoint !== "string") {
-            RESET_SECRET_FIELDS.forEach((field) => delete picked[field]);
+            [...RESET_SECRET_FIELDS, ...customSecretFields].forEach((field) => delete picked[field]);
             return picked;
           }
           RESET_KEPT_CONNECTION_FIELDS.forEach((field) => {
@@ -22688,12 +23188,12 @@ var require_settings_store = __commonJS({
           const profiles = {};
           Object.entries(isObject(before.providerProfiles) ? before.providerProfiles : {}).forEach(([provider, profile]) => {
             if (!isObject(profile)) return;
-            const kept = pickCredentials(profile);
+            const kept = pickCredentials(profile, provider);
             if (Object.keys(kept).length) profiles[provider] = kept;
           });
           const activeProvider = String(before.provider || "").trim();
           if (activeProvider) {
-            const live = pickCredentials(before);
+            const live = pickCredentials(before, activeProvider);
             if (Object.keys(live).length) profiles[activeProvider] = live;
             else delete profiles[activeProvider];
           }
@@ -22790,6 +23290,10 @@ var require_settings_store = __commonJS({
         const previousProvider = this.plugin.normalizeProviderForTask(kind, this.plugin.settings[kind].provider);
         if (previousProvider && previousProvider !== nextProvider) {
           this.plugin.saveTaskProviderProfile(kind, previousProvider);
+          const prevCredentials = this.plugin.providerLayer?.registry?.getCredentialFields?.(previousProvider) || [];
+          prevCredentials.forEach((field) => {
+            if (field && !PROVIDER_PROFILE_FIELDS.includes(field)) delete this.plugin.settings[kind][field];
+          });
         }
         this.plugin.settings[kind].provider = nextProvider;
         this.plugin.applyProviderPreset(kind, nextProvider, { restoreProfile: true, save: false, syncControls: false, invalidate: false });
@@ -25515,7 +26019,7 @@ var require_tab_sections = __commonJS({
         });
       },
       getProviderFallbackCandidates() {
-        return PROVIDER_ORDER.filter((provider) => !this.plugin.isLocalTranslationProvider(provider));
+        return this.plugin.providerLayer.getEligibleProviderFallbackCandidates("translation");
       },
       // Chosen services first, in their saved order, then the others.
       renderProviderFallbackOrderList(list) {
@@ -25849,7 +26353,7 @@ var require_tab_sections = __commonJS({
       // A chip shows a short label for its code (service names for services); the code stays in the tooltip.
       getDiagnosticChipLabel(code) {
         const value = String(code ?? "");
-        if (PROVIDER_ORDER.includes(value)) return this.plugin.getProviderDisplayName(value);
+        if (this.plugin.providerLayer?.registry?.has?.(value) || PROVIDER_ORDER.includes(value)) return this.plugin.getProviderDisplayName(value);
         return getDiagnosticCodeLabel(value, this.plugin.getLocale());
       },
       createDiagnosticSummaryGroup(label, items = []) {
@@ -27541,7 +28045,15 @@ var require_ui = __commonJS({
       constructor(plugin) {
         this.plugin = plugin;
         this.events = plugin.events || null;
-        this.scope = plugin.runtimeScope ? plugin.runtimeScope.createChild() : null;
+        this._scope = plugin.runtimeScope ? plugin.runtimeScope.createChild() : null;
+      }
+      get scope() {
+        const rootScope = this.plugin?.runtimeScope;
+        if (!rootScope) return null;
+        if (!this._scope || this._scope.disposed && !rootScope.disposed) {
+          this._scope = rootScope.createChild();
+        }
+        return this._scope;
       }
     };
     var SETTINGS_UI_METHOD_NAMES = attachControllerMethods(SettingsUiController, methodMaps);
@@ -30277,11 +30789,15 @@ var require_chat_observer = __commonJS({
       MUTATION_DIRTY_SCAN_MAX_ROOTS,
       MUTATION_DIRTY_SCAN_MAX_MESSAGES,
       INCREMENTAL_MESSAGE_WORK_BUDGET_MS,
-      INCREMENTAL_MESSAGE_WORK_MAX_PER_SLICE
+      INCREMENTAL_MESSAGE_WORK_MAX_PER_SLICE,
+      INCREMENTAL_MESSAGE_WORK_AUTO_MAX_PER_SLICE
     } = require_constants();
+    var LIFECYCLE_OUTSIDE_IGNORE_SELECTOR = "[class*='membersWrap'], [class*='members_'], [class*='guilds'], [class*='privateChannels'], [class*='emojiPicker'], [class*='expressionPicker'], [class*='stickerPicker'], [class*='gifPicker'], [class*='tooltip']";
+    var OBSERVER_ROOT_LEAF_TAGS = /* @__PURE__ */ new Set(["IMG", "SVG", "PATH", "BR", "HR", "INPUT", "TIME", "CANVAS", "VIDEO", "PICTURE", "SOURCE", "SPAN", "BUTTON", "A", "I", "EM", "STRONG", "CODE", "LABEL"]);
     var DiscordChatObserverController = class {
       constructor(plugin) {
         this.plugin = plugin;
+        this._mutationBatchCache = null;
       }
     };
     var methods = {
@@ -30306,16 +30822,25 @@ var require_chat_observer = __commonJS({
       },
       isInsideDiscordSettingsSurface(element) {
         if (!element || element.nodeType !== 1) return false;
-        if (this.isOwnPluginElement(element)) return false;
-        if (this.isDiscordSettingsSurfaceElement(element)) return true;
-        const surface = element.closest?.(DISCORD_SETTINGS_SURFACE_SELECTOR);
-        return Boolean(surface && this.isDiscordSettingsSurfaceElement(surface));
+        const cache = this._mutationBatchCache?.settingsSurfaceByElement;
+        if (cache?.has(element)) return cache.get(element);
+        let inside = false;
+        if (!this.isOwnPluginElement(element)) {
+          const surface = element.matches?.(DISCORD_SETTINGS_SURFACE_SELECTOR) ? element : element.closest?.(DISCORD_SETTINGS_SURFACE_SELECTOR);
+          if (surface && !surface.hidden && surface.getAttribute?.("aria-hidden") !== "true" && !surface.closest?.(".dait-quick-settings-modal-root, .dait-settings")) {
+            const rect = surface.getBoundingClientRect?.();
+            inside = !rect || Number(rect.width || 0) > 0 && Number(rect.height || 0) > 0;
+          }
+        }
+        cache?.set(element, inside);
+        return inside;
       },
       isDiscordSettingsSurfaceElement(element) {
         if (!element || element.nodeType !== 1) return false;
         if (this.isOwnPluginElement(element)) return false;
         const matchesSurface = Boolean(element.matches?.(DISCORD_SETTINGS_SURFACE_SELECTOR) || element.closest?.(DISCORD_SETTINGS_SURFACE_SELECTOR));
         if (!matchesSurface) return false;
+        if (element.hidden || element.getAttribute?.("aria-hidden") === "true") return false;
         if (element.closest?.(".dait-quick-settings-modal-root, .dait-settings")) return false;
         const rect = element.getBoundingClientRect?.();
         if (!rect) return true;
@@ -30373,43 +30898,54 @@ var require_chat_observer = __commonJS({
       },
       handleDiscordObservedMutations(mutations = []) {
         if (!this.plugin.isStarted) return;
-        if (this.plugin.observerRoot === document.body && this.hasPotentialDiscordObserverRootMutation(mutations)) {
-          const nextRoot = this.getDiscordChatMutationObserverRoot();
-          if (nextRoot && nextRoot !== document.body) this.plugin.scheduleDiscordObserverRebind("chat-root-available");
+        const previousBatchCache = this._mutationBatchCache;
+        this._mutationBatchCache = {
+          mediaViewerByMutation: /* @__PURE__ */ new Map(),
+          mediaOnlyByMutation: /* @__PURE__ */ new Map(),
+          settingsSurfaceByElement: /* @__PURE__ */ new Map()
+        };
+        try {
+          if (this.plugin.observerRoot === document.body && this.hasPotentialDiscordObserverRootMutation(mutations)) {
+            const nextRoot = this.getDiscordChatMutationObserverRoot();
+            if (nextRoot && nextRoot !== document.body) this.plugin.scheduleDiscordObserverRebind("chat-root-available");
+          }
+          if (this.plugin.isDiscordMediaViewerQuiet()) {
+            if (this.plugin.hasLightweightDiscordMediaViewerMutation(mutations)) this.enterDiscordMediaViewerQuietMode("quiet-mutation");
+            this.invalidateElementTextCacheForMutations(mutations);
+            return;
+          }
+          const externalMutations = [...mutations || []].filter((mutation) => !this.plugin.isOwnMutation(mutation));
+          const strippedButtonRoots = this.collectStrippedMessageButtonRoots(mutations);
+          if (strippedButtonRoots.length) this.scheduleLightweightButtonRecovery(strippedButtonRoots);
+          if (!externalMutations.length) return;
+          this.invalidateElementTextCacheForMutations(externalMutations);
+          if (this.plugin.hasDiscordMediaViewerMutation(externalMutations)) {
+            this.enterDiscordMediaViewerQuietMode("mutation");
+            return;
+          }
+          if (this.hasDiscordThemeMutation(externalMutations)) this.plugin.refreshDiscordThemeClasses();
+          const inputMutations = this.getInputButtonRelevantMutations(externalMutations);
+          if (inputMutations.length) {
+            this.markInputComposerBusy();
+            this.plugin.queueInputButtonScan({ delayMs: 500, trailing: true });
+          }
+          const shouldProbeMediaViewer = Boolean(this.plugin.mediaViewerProbeOpen || this.plugin.hasLightweightDiscordMediaViewerMutation(externalMutations));
+          if (shouldProbeMediaViewer && this.plugin.isDiscordMediaViewerOpen() || this.areDiscordMediaViewerMutations(externalMutations)) {
+            this.enterDiscordMediaViewerQuietMode("open");
+            return;
+          }
+          const scanMutations = this.getScanRelevantMutations(externalMutations);
+          if (!scanMutations.length) return;
+          if (this.plugin.shouldInjectMessageButtons() && this.plugin.isAutoTranslationRenderPaused()) {
+            const addedMessageRoots = this.collectAddedMessageRootsForButtons(scanMutations);
+            if (addedMessageRoots.length) this.scheduleLightweightButtonRecovery(addedMessageRoots);
+          }
+          const largeMutation = this.hasLargeMessageMutation(scanMutations);
+          if (largeMutation) this.plugin.markAutoTranslationViewportBusy("mutation");
+          this.plugin.queueMutationScan(scanMutations, { largeMutation });
+        } finally {
+          this._mutationBatchCache = previousBatchCache;
         }
-        if (this.plugin.isDiscordMediaViewerQuiet()) {
-          if (this.plugin.hasLightweightDiscordMediaViewerMutation(mutations)) this.enterDiscordMediaViewerQuietMode("quiet-mutation");
-          this.invalidateElementTextCacheForMutations(mutations);
-          return;
-        }
-        const externalMutations = [...mutations || []].filter((mutation) => !this.plugin.isOwnMutation(mutation));
-        const strippedButtonRoots = this.collectStrippedMessageButtonRoots(mutations);
-        if (strippedButtonRoots.length) this.scheduleLightweightButtonRecovery(strippedButtonRoots);
-        if (!externalMutations.length) return;
-        this.invalidateElementTextCacheForMutations(externalMutations);
-        if (this.plugin.hasDiscordMediaViewerMutation(externalMutations)) {
-          this.enterDiscordMediaViewerQuietMode("mutation");
-          return;
-        }
-        if (this.hasDiscordThemeMutation(externalMutations)) this.plugin.refreshDiscordThemeClasses();
-        const inputMutations = this.getInputButtonRelevantMutations(externalMutations);
-        if (inputMutations.length) {
-          this.markInputComposerBusy();
-          this.plugin.queueInputButtonScan({ delayMs: 500, trailing: true });
-        }
-        const shouldProbeMediaViewer = Boolean(this.plugin.mediaViewerProbeOpen || this.plugin.hasLightweightDiscordMediaViewerMutation(externalMutations));
-        if (shouldProbeMediaViewer && this.plugin.isDiscordMediaViewerOpen() || this.areDiscordMediaViewerMutations(externalMutations)) {
-          this.enterDiscordMediaViewerQuietMode("open");
-          return;
-        }
-        const scanMutations = this.getScanRelevantMutations(externalMutations);
-        if (!scanMutations.length) return;
-        if (this.plugin.shouldInjectMessageButtons() && this.plugin.isAutoTranslationRenderPaused()) {
-          const addedMessageRoots = this.collectAddedMessageRootsForButtons(scanMutations);
-          if (addedMessageRoots.length) this.scheduleLightweightButtonRecovery(addedMessageRoots);
-        }
-        if (this.hasLargeMessageMutation(scanMutations)) this.plugin.markAutoTranslationViewportBusy("mutation");
-        this.plugin.queueMutationScan(scanMutations);
       },
       startDiscordObserverLifecycle(observerRoot) {
         const appMount = document.getElementById?.("app-mount");
@@ -30425,7 +30961,17 @@ var require_chat_observer = __commonJS({
             this.plugin.scheduleDiscordObserverRebind("app-mount-detached");
             return;
           }
-          const outsideMutations = [...mutations || []].filter((mutation) => !this.isMutationWithinDiscordObserverRoot(mutation, this.plugin.observerRoot) && this.isMutationWithinDiscordObserverRoot(mutation, lifecycleRoot));
+          const ignoredTargetCache = /* @__PURE__ */ new Map();
+          const isIgnoredOutsideTarget = (mutation) => {
+            const raw = mutation?.target;
+            const target = raw?.nodeType === 3 ? raw.parentElement : raw;
+            if (!target || target.nodeType !== 1) return false;
+            if (ignoredTargetCache.has(target)) return ignoredTargetCache.get(target);
+            const ignored = Boolean(target.matches?.(LIFECYCLE_OUTSIDE_IGNORE_SELECTOR) || target.closest?.(LIFECYCLE_OUTSIDE_IGNORE_SELECTOR));
+            ignoredTargetCache.set(target, ignored);
+            return ignored;
+          };
+          const outsideMutations = [...mutations || []].filter((mutation) => !this.isMutationWithinDiscordObserverRoot(mutation, this.plugin.observerRoot) && this.isMutationWithinDiscordObserverRoot(mutation, lifecycleRoot) && !isIgnoredOutsideTarget(mutation));
           if (!outsideMutations.length) return;
           if (this.hasPotentialDiscordObserverRootMutation(outsideMutations)) {
             const nextRoot = this.getDiscordChatMutationObserverRoot();
@@ -30460,6 +31006,8 @@ var require_chat_observer = __commonJS({
           return [...mutation.addedNodes || [], ...mutation.removedNodes || []].some((node) => {
             const element = node?.nodeType === 3 ? node.parentElement : node;
             if (!element || element.nodeType !== 1) return false;
+            const tagName = String(element.tagName || "").toUpperCase();
+            if (tagName && OBSERVER_ROOT_LEAF_TAGS.has(tagName)) return false;
             try {
               return Boolean(element.matches?.(selectors) || element.querySelector?.(selectors));
             } catch {
@@ -30569,16 +31117,21 @@ var require_chat_observer = __commonJS({
         return Boolean(element?.matches?.(".dait-settings, .dait-quick-settings-button, .dait-quick-settings-modal-root, .dait-quick-popover, .dait-message-button, .dait-polish-button, .dait-polish-preset-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-group, .dait-input-action-menu-button, .dait-input-action-menu, .dait-polish-preset-menu, .dait-polish-result-panel, .dait-polish-restore-control, .dait-translation-line, .dait-translation-box"));
       },
       isMediaOnlyMutation(mutation) {
+        const cache = this._mutationBatchCache?.mediaOnlyByMutation;
+        if (cache?.has(mutation)) return cache.get(mutation);
+        let result = false;
         const target = mutation?.target?.nodeType === 3 ? mutation.target.parentElement : mutation?.target;
-        if (this.plugin.isDiscordMessageElement(target)) return false;
-        if (this.isDiscordMediaViewerMutation(mutation)) return true;
-        if (mutation?.type === "attributes" || mutation?.type === "characterData") {
-          return this.plugin.isMediaOnlyMutationElement(target);
+        if (!this.plugin.isDiscordMessageElement(target)) {
+          if (this.isDiscordMediaViewerMutation(mutation)) result = true;
+          else if (mutation?.type === "attributes" || mutation?.type === "characterData") {
+            result = this.plugin.isMediaOnlyMutationElement(target);
+          } else if (mutation?.type === "childList") {
+            const nodes = [...mutation.addedNodes || [], ...mutation.removedNodes || []];
+            result = !nodes.length ? this.plugin.isMediaOnlyMutationElement(target) : nodes.every((node) => this.isMediaOnlyMutationNode(node));
+          }
         }
-        if (mutation?.type !== "childList") return false;
-        const nodes = [...mutation.addedNodes || [], ...mutation.removedNodes || []];
-        if (!nodes.length) return this.plugin.isMediaOnlyMutationElement(target);
-        return nodes.every((node) => this.isMediaOnlyMutationNode(node));
+        cache?.set(mutation, result);
+        return result;
       },
       areDiscordMediaViewerMutations(mutations = []) {
         return [...mutations || []].length > 0 && [...mutations || []].every((mutation) => this.isDiscordMediaViewerMutation(mutation) || this.isMediaOnlyMutation(mutation));
@@ -30587,11 +31140,17 @@ var require_chat_observer = __commonJS({
         return [...mutations || []].some((mutation) => this.isDiscordMediaViewerMutation(mutation));
       },
       isDiscordMediaViewerMutation(mutation) {
+        const cache = this._mutationBatchCache?.mediaViewerByMutation;
+        if (cache?.has(mutation)) return cache.get(mutation);
+        let result = false;
         const target = mutation?.target?.nodeType === 3 ? mutation.target.parentElement : mutation?.target;
-        if (this.isDiscordMediaViewerElement(target)) return true;
-        if (mutation?.type !== "childList") return false;
-        const nodes = [...mutation.addedNodes || [], ...mutation.removedNodes || []];
-        return nodes.length > 0 && nodes.every((node) => this.isDiscordMediaViewerMutationNode(node));
+        if (this.isDiscordMediaViewerElement(target)) result = true;
+        else if (mutation?.type === "childList") {
+          const nodes = [...mutation.addedNodes || [], ...mutation.removedNodes || []];
+          result = nodes.length > 0 && nodes.every((node) => this.isDiscordMediaViewerMutationNode(node));
+        }
+        cache?.set(mutation, result);
+        return result;
       },
       isDiscordMediaViewerMutationNode(node) {
         if (!node) return false;
@@ -30941,6 +31500,17 @@ var require_chat_observer = __commonJS({
         const type = String(event?.type || "");
         if (!["focus", "resize", "scroll", "visibilitychange"].includes(type)) return false;
         const target = event?.target?.nodeType === 3 ? event.target.parentElement : event?.target;
+        if (type === "scroll" && target?.nodeType === 1) {
+          const cached = this.plugin.autoQueueCore?.getCachedScrollRelevance?.(target);
+          if (cached) {
+            if (cached.mediaViewer) return true;
+            if (cached.relevant) return false;
+            if (!this.plugin.mediaViewerProbeOpen && Date.now() - Number(this.plugin.mediaViewerProbeAt || 0) >= DISCORD_MEDIA_VIEWER_PROBE_CACHE_MS) {
+              return false;
+            }
+            return this.plugin.isDiscordMediaViewerOpen();
+          }
+        }
         if (target?.nodeType === 1 && (this.plugin.isInsideDiscordMediaViewer(target) || this.plugin.isMediaOnlyMutationElement(target))) return true;
         if (type === "scroll" && target?.nodeType === 1 && (scrollRelevant === null ? this.plugin.isAutoTranslationScrollEventRelevant(event) : scrollRelevant)) return false;
         if (type === "scroll" && !this.plugin.mediaViewerProbeOpen && Date.now() - Number(this.plugin.mediaViewerProbeAt || 0) >= DISCORD_MEDIA_VIEWER_PROBE_CACHE_MS) return false;
@@ -30985,8 +31555,9 @@ var require_chat_observer = __commonJS({
         if (element.matches?.(chatSelector)) return element;
         return null;
       },
-      shouldUseDirtyMutationScan(mutations = [], roots = /* @__PURE__ */ new Set()) {
-        if (!roots?.size || this.hasLargeMessageMutation(mutations)) return false;
+      shouldUseDirtyMutationScan(mutations = [], roots = /* @__PURE__ */ new Set(), options = {}) {
+        const largeMutation = typeof options?.largeMutation === "boolean" ? options.largeMutation : this.hasLargeMessageMutation(mutations);
+        if (!roots?.size || largeMutation) return false;
         if (roots.size > MUTATION_DIRTY_SCAN_MAX_ROOTS) return false;
         let messageCount = 0;
         for (const root of roots) {
@@ -31015,12 +31586,35 @@ var require_chat_observer = __commonJS({
         this.plugin.pendingMutationScanRoots?.clear?.();
         return roots;
       },
-      queueMutationScan(scanMutations = []) {
-        this.plugin.cancelIncrementalMessageScan();
+      collectRemainingIncrementalDirtyRoots() {
+        if (!this.plugin.incrementalMessageScanPendingWork || !this.plugin.incrementalMessageScanDirtyOnly) return [];
+        if (typeof this.plugin.incrementalMessageScanRemainingGetter !== "function") return [];
+        if (this.plugin.getCurrentRouteKey() !== this.plugin.incrementalMessageScanRouteKey) return [];
+        if (Number(this.plugin.autoTranslationConfigVersion || 0) !== Number(this.plugin.incrementalMessageScanConfigVersion || 0)) return [];
+        try {
+          return (this.plugin.incrementalMessageScanRemainingGetter() || []).filter((node) => node && node.isConnected !== false);
+        } catch {
+          return [];
+        }
+      },
+      queueMutationScan(scanMutations = [], options = {}) {
+        const interruptedFullScan = Boolean(this.plugin.incrementalMessageScanPendingWork && !this.plugin.incrementalMessageScanDirtyOnly);
+        const remainingDirtyRoots = this.collectRemainingIncrementalDirtyRoots();
+        this.plugin.cancelIncrementalMessageScan({ drainQueued: true });
         if (this.plugin.isAutoTranslationRenderPaused() || this.hasAddedMessageNodes(scanMutations)) this.plugin.scheduleCachedTranslationDrawPass();
         const roots = this.getMutationScanRoots(scanMutations);
-        const dirtyOnly = this.shouldUseDirtyMutationScan(scanMutations, roots);
-        if (dirtyOnly) this.rememberPendingMutationScanRoots([...roots]);
+        const combinedRoots = /* @__PURE__ */ new Set();
+        for (const root of remainingDirtyRoots) {
+          if (root && root.isConnected !== false) combinedRoots.add(root);
+        }
+        for (const root of this.plugin.pendingMutationScanRoots || []) {
+          if (root && root.isConnected !== false) combinedRoots.add(root);
+        }
+        for (const root of roots) {
+          if (root && root.isConnected !== false) combinedRoots.add(root);
+        }
+        const dirtyOnly = !interruptedFullScan && this.shouldUseDirtyMutationScan(scanMutations, combinedRoots, options);
+        if (dirtyOnly) this.rememberPendingMutationScanRoots([...combinedRoots]);
         else this.plugin.pendingMutationScanRoots?.clear?.();
         const delay = Math.max(
           this.plugin.getAutoTranslationRenderPauseRemainingMs(),
@@ -31217,13 +31811,16 @@ var require_chat_observer = __commonJS({
         }
         finishStage("inputMs");
         if (this.plugin.shouldInjectMessageButtons()) {
-          this.plugin.injectMessageButtons(context);
           if (dirtyRoots.length) this.ensureMissingVisibleMessageButtons(context);
+          this.plugin.injectMessageButtons(context);
         }
         finishStage("buttonMs");
         const incremental = this.plugin.isAutoTranslateEnabled() && this.shouldUseIncrementalMessageScan(context);
         if (incremental) {
-          this.scheduleIncrementalMessageScan(context, { skipButtons: true });
+          this.scheduleIncrementalMessageScan(context, {
+            skipButtons: true,
+            maxPerSlice: INCREMENTAL_MESSAGE_WORK_AUTO_MAX_PER_SLICE
+          });
           finishStage("scheduleMs");
           scanStages.autoMs = 0;
         } else {
@@ -31373,6 +31970,7 @@ var require_chat_observer = __commonJS({
         const generation = this.plugin.incrementalMessageScanGeneration;
         const messageNodes = [...new Set(context?.messageNodes || [])];
         const skipButtons = Boolean(options?.skipButtons);
+        const maxPerSlice = Math.max(1, Number(options?.maxPerSlice) || INCREMENTAL_MESSAGE_WORK_MAX_PER_SLICE);
         const tasks = [];
         messageNodes.forEach((messageNode) => {
           if (!skipButtons && this.plugin.shouldInjectMessageButtons()) tasks.push({ kind: "button", messageNode });
@@ -31382,6 +31980,12 @@ var require_chat_observer = __commonJS({
         let work = null;
         let initialized = false;
         let intakeEnhance = false;
+        this.plugin.incrementalMessageScanPendingWork = tasks.length > 0;
+        this.plugin.incrementalMessageScanDirtyOnly = Boolean(context?.dirtyOnly);
+        this.plugin.incrementalMessageScanHasQueuedDrainable = false;
+        this.plugin.incrementalMessageScanRouteKey = this.plugin.getCurrentRouteKey();
+        this.plugin.incrementalMessageScanConfigVersion = Number(this.plugin.autoTranslationConfigVersion || 0);
+        this.plugin.incrementalMessageScanRemainingGetter = tasks.length > 0 ? () => [...new Set(tasks.slice(index).map((task) => task?.messageNode).filter((node) => node && node.isConnected !== false))] : null;
         const runSlice = (deadline) => {
           this.plugin.incrementalMessageScanIdleCallback = null;
           this.plugin.incrementalMessageScanTimer = null;
@@ -31444,7 +32048,7 @@ var require_chat_observer = __commonJS({
             processed++;
             const elapsed = this.plugin.getDiagnosticTime() - sliceStartedAt;
             const idleRemaining = typeof deadline?.timeRemaining === "function" ? deadline.timeRemaining() : 0;
-            if (processed >= INCREMENTAL_MESSAGE_WORK_MAX_PER_SLICE || elapsed >= INCREMENTAL_MESSAGE_WORK_BUDGET_MS || processed > 0 && idleRemaining <= 1) break;
+            if (processed >= maxPerSlice || elapsed >= INCREMENTAL_MESSAGE_WORK_BUDGET_MS || processed > 0 && idleRemaining <= 1) break;
           }
           this.plugin.logSlowOperation("scan.incremental-slice", sliceStartedAt, {
             processed,
@@ -31454,11 +32058,25 @@ var require_chat_observer = __commonJS({
           if (work?.scanState?.enqueueSortPending) {
             work.scanState.enqueueSortPending = false;
             this.plugin.sortAutoTranslationQueue();
+            if (!work.scanState.apiWorkBlocked && this.plugin.autoTranslationQueue?.length) {
+              this.plugin.incrementalMessageScanHasQueuedDrainable = true;
+              const batchSize = Math.max(1, Number(this.plugin.getAutoTranslationRequestBatchSize(work.requestOptions)) || 1);
+              if (this.plugin.autoTranslationQueue.length >= batchSize) {
+                this.plugin.drainAutoTranslationQueue();
+                this.plugin.incrementalMessageScanHasQueuedDrainable = Boolean(this.plugin.autoTranslationQueue?.length);
+              }
+            }
           }
           if (index < tasks.length) {
             this.plugin.scheduleIncrementalMessageScanCallback(runSlice);
             return;
           }
+          this.plugin.incrementalMessageScanPendingWork = false;
+          this.plugin.incrementalMessageScanDirtyOnly = false;
+          this.plugin.incrementalMessageScanHasQueuedDrainable = false;
+          this.plugin.incrementalMessageScanRouteKey = "";
+          this.plugin.incrementalMessageScanConfigVersion = 0;
+          this.plugin.incrementalMessageScanRemainingGetter = null;
           if (work) {
             const finishStartedAt = this.plugin.getDiagnosticTime();
             this.plugin.finishAutoTranslationScanWork(work);
@@ -31478,8 +32096,17 @@ var require_chat_observer = __commonJS({
         this.plugin.incrementalMessageScanTimer = setTimeout(() => callback(null), 0);
         this.plugin.unrefTimer(this.plugin.incrementalMessageScanTimer);
       },
-      cancelIncrementalMessageScan() {
+      cancelIncrementalMessageScan(options = {}) {
+        const shouldDrain = Boolean(
+          options?.drainQueued && this.plugin.incrementalMessageScanHasQueuedDrainable && this.plugin.isStarted && this.plugin.autoTranslationQueue?.length
+        );
         this.plugin.incrementalMessageScanGeneration = Number(this.plugin.incrementalMessageScanGeneration || 0) + 1;
+        this.plugin.incrementalMessageScanPendingWork = false;
+        this.plugin.incrementalMessageScanDirtyOnly = false;
+        this.plugin.incrementalMessageScanHasQueuedDrainable = false;
+        this.plugin.incrementalMessageScanRouteKey = "";
+        this.plugin.incrementalMessageScanConfigVersion = 0;
+        this.plugin.incrementalMessageScanRemainingGetter = null;
         if (this.plugin.incrementalMessageScanIdleCallback !== null) {
           try {
             window.cancelIdleCallback?.(this.plugin.incrementalMessageScanIdleCallback);
@@ -31489,6 +32116,9 @@ var require_chat_observer = __commonJS({
         if (this.plugin.incrementalMessageScanTimer) clearTimeout(this.plugin.incrementalMessageScanTimer);
         this.plugin.incrementalMessageScanIdleCallback = null;
         this.plugin.incrementalMessageScanTimer = null;
+        if (shouldDrain && !this.plugin.isAutoTranslationRenderPaused() && !this.plugin.isAutoTranslationViewportSettling() && !this.plugin.isAutoTranslationJumpCoolingDown()) {
+          this.plugin.drainAutoTranslationQueue();
+        }
       },
       getCurrentRouteKey() {
         const route = this.plugin.messageTracker.getRouteIds();
@@ -31499,6 +32129,7 @@ var require_chat_observer = __commonJS({
         const context = {
           messageNodes: [],
           contentByMessage: /* @__PURE__ */ new Map(),
+          contentCandidatesByMessage: /* @__PURE__ */ new Map(),
           contentElementsByMessage: /* @__PURE__ */ new Map(),
           textByElement: /* @__PURE__ */ new Map(),
           replyTextByElement: /* @__PURE__ */ new Map(),
@@ -31555,11 +32186,21 @@ var require_chat_observer = __commonJS({
       },
       isMessageNodeVisibleForScan(messageNode, context = null) {
         if (this.plugin.isElementVisibleInViewportCached(messageNode, context)) return true;
-        return this.plugin.getMessageContentCandidates(messageNode).some((candidate) => this.plugin.isElementVisibleInViewportCached(candidate, context));
+        const rect = this.getCachedElementRect(messageNode, context);
+        if (rect && rect.width > 0 && rect.height > 0) {
+          const documentHeight = typeof document !== "undefined" ? Number(document.documentElement?.clientHeight || 0) : 0;
+          const documentWidth = typeof document !== "undefined" ? Number(document.documentElement?.clientWidth || 0) : 0;
+          const height = typeof window !== "undefined" ? Number(window.innerHeight || documentHeight || 0) : documentHeight;
+          const width = typeof window !== "undefined" ? Number(window.innerWidth || documentWidth || 0) : documentWidth;
+          if (height > 0 && width > 0 && (rect.bottom <= -24 || rect.top >= height + 24 || rect.right <= -24 || rect.left >= width + 24)) {
+            return false;
+          }
+        }
+        return this.plugin.getMessageContentCandidates(messageNode, context).some((candidate) => this.plugin.isElementVisibleInViewportCached(candidate, context));
       },
       isMessageNodeNearForScan(messageNode, context = null) {
         if (this.plugin.isElementNearViewport(messageNode, SCAN_VIEWPORT_BUFFER_PX, context)) return true;
-        return this.plugin.getMessageContentCandidates(messageNode).some((candidate) => this.plugin.isElementNearViewport(candidate, SCAN_VIEWPORT_BUFFER_PX, context));
+        return this.plugin.getMessageContentCandidates(messageNode, context).some((candidate) => this.plugin.isElementNearViewport(candidate, SCAN_VIEWPORT_BUFFER_PX, context));
       },
       rememberScanRangeElements(elements = [], context = null) {
         if (!context?.scanRangeElements?.add) return;
@@ -31578,7 +32219,9 @@ var require_chat_observer = __commonJS({
       isElementVisibleInViewportCached(element, context = null) {
         if (!context?.visibleByElement) return this.plugin.isElementVisibleInViewport(element);
         if (!context.visibleByElement.has(element)) {
-          context.visibleByElement.set(element, this.plugin.isElementVisibleForScan(element, this.getCachedElementRect(element, context), context));
+          const rect = this.getCachedElementRect(element, context);
+          const visible = context.useViewportVisibility ? this.plugin.isElementVisibleInViewport(element, rect, context) : this.plugin.isElementVisibleForScan(element, rect, context);
+          context.visibleByElement.set(element, visible);
         }
         return context.visibleByElement.get(element);
       },
@@ -31591,13 +32234,7 @@ var require_chat_observer = __commonJS({
         const height = typeof window !== "undefined" ? Number(window.innerHeight || documentHeight || 0) : documentHeight;
         const width = typeof window !== "undefined" ? Number(window.innerWidth || documentWidth || 0) : documentWidth;
         if (!(elementRect.bottom > 0 && elementRect.right > 0 && elementRect.top < height && elementRect.left < width)) return false;
-        let current = element;
-        let depth = 0;
-        while (current && current.nodeType === 1 && depth < 12) {
-          if (current.hidden || current.getAttribute?.("aria-hidden") === "true") return false;
-          current = current.parentElement;
-          depth++;
-        }
+        if (element.hidden || element.getAttribute?.("aria-hidden") === "true") return false;
         return this.plugin.isRectInsideScrollClips(element, elementRect, context, { checkHidden: true });
       },
       isElementNearViewport(element, bufferPx = 0, context = null) {
@@ -32318,9 +32955,10 @@ var require_launcher_and_theme = __commonJS({
       },
       handleKeydown(event) {
         if (!this.plugin.isStarted || event.repeat) return;
-        if (event.target?.closest?.(".dait-settings")) return;
         if (!this.plugin.settings.ui.enablePolishHotkey) return;
         if (!this.plugin.settings.polish?.enabled) return;
+        if (!event?.ctrlKey && !event?.altKey && !event?.metaKey && !(event?.shiftKey && /^F\d{1,2}$/.test(String(event?.key || "")))) return;
+        if (event.target?.closest?.(".dait-settings")) return;
         if (!this.isAllowedPolishHotkey(this.plugin.settings.ui.polishHotkey || DEFAULT_SETTINGS.ui.polishHotkey)) return;
         if (!this.isHotkeyEvent(event, this.plugin.settings.ui.polishHotkey)) return;
         const textbox = this.plugin.getActiveTextbox();
@@ -32633,7 +33271,7 @@ var require_message_extractor = __commonJS({
       },
       getMessageContentElement(messageNode, context = null) {
         if (context?.contentByMessage?.has(messageNode)) return context.contentByMessage.get(messageNode);
-        const candidates = this.getMessageContentCandidates(messageNode);
+        const candidates = this.getMessageContentCandidates(messageNode, context);
         for (const candidate of candidates) {
           if (this.plugin.getCachedElementText(candidate, context)) {
             context?.contentByMessage?.set(messageNode, candidate);
@@ -32645,7 +33283,7 @@ var require_message_extractor = __commonJS({
       },
       getMessageContentElements(messageNode, context = null) {
         if (context?.contentElementsByMessage?.has(messageNode)) return context.contentElementsByMessage.get(messageNode);
-        const candidates = this.getMessageContentCandidates(messageNode);
+        const candidates = this.getMessageContentCandidates(messageNode, context);
         const elements = candidates.filter((candidate, index, all) => candidate && all.indexOf(candidate) === index).filter((candidate) => !allContainsOtherCandidate.call(this.plugin, candidate, candidates)).filter((candidate) => Boolean(this.plugin.getCachedElementText(candidate, context)));
         const result = elements.length ? elements : [this.plugin.getMessageContentElement(messageNode, context)].filter(Boolean);
         context?.contentElementsByMessage?.set(messageNode, result);
@@ -32654,11 +33292,15 @@ var require_message_extractor = __commonJS({
           return all.some((other) => other !== candidate && candidate.contains?.(other) && !this.isForeignTranslationElement(other));
         }
       },
-      getMessageContentCandidates(messageNode) {
+      getMessageContentCandidates(messageNode, context = null) {
+        if (context?.contentCandidatesByMessage?.has(messageNode)) {
+          return context.contentCandidatesByMessage.get(messageNode);
+        }
         const primary = [...messageNode?.querySelectorAll?.("[class*='messageContent']") || []].filter((candidate) => this.isUsableMessageContentCandidate(candidate));
         const fallback = primary.length ? [] : [...messageNode?.querySelectorAll?.("[class*='markup']") || []].filter((candidate) => this.isUsableMessageContentCandidate(candidate));
         const candidates = [.../* @__PURE__ */ new Set([...primary, ...fallback])];
         if (!candidates.length && messageNode?.content && this.isUsableMessageContentCandidate(messageNode.content)) candidates.push(messageNode.content);
+        context?.contentCandidatesByMessage?.set(messageNode, candidates);
         return candidates;
       },
       isUsableMessageContentCandidate(candidate) {
@@ -34067,16 +34709,7 @@ var require_scroll_anchor = __commonJS({
         const key = task.key || this.getAutoTranslationRenderTaskKey(task.kind, task.target, task.cacheKey, task.target?.text);
         if (!key) return false;
         const queuedTask = { ...task, key };
-        const existingTask = this.plugin.autoTranslationRenderQueuedTasks?.get?.(key);
-        if (existingTask) {
-          Object.assign(existingTask, queuedTask);
-        } else {
-          this.plugin.autoTranslationRenderQueue.push(queuedTask);
-          this.plugin.autoTranslationRenderQueuedKeys.add(key);
-          this.plugin.autoTranslationRenderQueuedTasks.set(key, queuedTask);
-        }
-        if (queuedTask.cacheKey) this.plugin.autoTranslationRenderPendingKeys.add(queuedTask.cacheKey);
-        this.plugin.autoTranslationRenderQueueDirty = true;
+        this.plugin.autoStateMachine.enqueueRenderTask(queuedTask);
         this.plugin.scheduleAutoTranslationRenderQueue();
         return true;
       },
@@ -34117,11 +34750,7 @@ var require_scroll_anchor = __commonJS({
         this.processAutoTranslationRenderQueue();
       },
       cancelAutoTranslationRenderQueue(options = {}) {
-        this.plugin.autoTranslationRenderQueue = [];
-        this.plugin.autoTranslationRenderQueuedKeys?.clear?.();
-        this.plugin.autoTranslationRenderQueuedTasks?.clear?.();
-        this.plugin.autoTranslationRenderPendingKeys?.clear?.();
-        this.plugin.autoTranslationRenderQueueDirty = false;
+        this.plugin.autoStateMachine.clearRenderQueue();
         if (this.plugin.autoTranslationRenderTimer) {
           clearTimeout(this.plugin.autoTranslationRenderTimer);
           this.plugin.autoTranslationRenderTimer = null;
@@ -34174,38 +34803,50 @@ var require_scroll_anchor = __commonJS({
           }
           cacheTasksOnly = true;
         }
-        const startedAt = Date.now();
+        const startedAt = this.plugin.getDiagnosticTime();
+        const startedWallAt = Date.now();
+        const budgetExceeded = () => this.plugin.getDiagnosticTime() - startedAt >= AUTO_TRANSLATE_RENDER_FRAME_BUDGET_MS || Date.now() - startedWallAt >= AUTO_TRANSLATE_RENDER_FRAME_BUDGET_MS;
         let rendered = 0;
         if (this.plugin.autoTranslationRenderQueueDirty) {
           this.plugin.translationRenderer.sortQueue(this.plugin.autoTranslationRenderQueue);
           this.plugin.autoTranslationRenderQueueDirty = false;
         }
-        while (this.plugin.autoTranslationRenderQueue.length && rendered < AUTO_TRANSLATE_RENDER_MAX_PER_FRAME) {
-          if (rendered > 0 && Date.now() - startedAt >= AUTO_TRANSLATE_RENDER_FRAME_BUDGET_MS) break;
-          const index = cacheTasksOnly ? this.plugin.autoTranslationRenderQueue.findIndex((task2) => task2?.kind === "cache") : 0;
-          if (index < 0) break;
-          const task = this.plugin.autoTranslationRenderQueue[index];
-          if (rendered > 0 && this.isAutoTranslationRenderTaskHeavy(task)) break;
-          this.plugin.autoTranslationRenderQueue.splice(index, 1);
-          if (task?.key) {
-            const queuedTask = this.plugin.autoTranslationRenderQueuedTasks?.get?.(task.key);
-            if (!queuedTask || queuedTask === task) {
-              this.plugin.autoTranslationRenderQueuedTasks?.delete?.(task.key);
-              this.plugin.autoTranslationRenderQueuedKeys.delete(task.key);
+        const previousFrameScrollCache = this.plugin.renderFrameScrollCache;
+        this.plugin.renderFrameScrollCache = {
+          nearestByNode: /* @__PURE__ */ new Map(),
+          scrollableByNode: /* @__PURE__ */ new Map(),
+          bandByScroller: /* @__PURE__ */ new Map()
+        };
+        try {
+          while (this.plugin.autoTranslationRenderQueue.length && rendered < AUTO_TRANSLATE_RENDER_MAX_PER_FRAME) {
+            if (rendered > 0 && budgetExceeded()) break;
+            const index = cacheTasksOnly ? this.plugin.autoTranslationRenderQueue.findIndex((task2) => task2?.kind === "cache") : 0;
+            if (index < 0) break;
+            const task = this.plugin.autoTranslationRenderQueue[index];
+            if (rendered > 0 && this.isAutoTranslationRenderTaskHeavy(task)) break;
+            this.plugin.autoTranslationRenderQueue.splice(index, 1);
+            if (task?.key) {
+              const queuedTask = this.plugin.autoTranslationRenderQueuedTasks?.get?.(task.key);
+              if (!queuedTask || queuedTask === task) {
+                this.plugin.autoTranslationRenderQueuedTasks?.delete?.(task.key);
+                this.plugin.autoTranslationRenderQueuedKeys.delete(task.key);
+              }
             }
-          }
-          try {
-            task?.run?.();
-          } catch (error) {
-            this.plugin.warnSanitized("Failed to run queued auto translation render", error);
-          } finally {
-            if (task?.cacheKey && !this.plugin.autoTranslationRenderQueue.some((queued) => queued?.cacheKey === task.cacheKey)) {
-              this.plugin.autoTranslationRenderPendingKeys?.delete?.(task.cacheKey);
+            try {
+              task?.run?.();
+            } catch (error) {
+              this.plugin.warnSanitized("Failed to run queued auto translation render", error);
+            } finally {
+              if (task?.cacheKey && !this.plugin.autoTranslationRenderQueue.some((queued) => queued?.cacheKey === task.cacheKey)) {
+                this.plugin.autoTranslationRenderPendingKeys?.delete?.(task.cacheKey);
+              }
             }
+            rendered++;
+            if (this.isAutoTranslationRenderTaskHeavy(task)) break;
+            if (budgetExceeded()) break;
           }
-          rendered++;
-          if (this.isAutoTranslationRenderTaskHeavy(task)) break;
-          if (Date.now() - startedAt >= AUTO_TRANSLATE_RENDER_FRAME_BUDGET_MS) break;
+        } finally {
+          this.plugin.renderFrameScrollCache = previousFrameScrollCache;
         }
         if (this.plugin.autoTranslationRenderQueue.length) {
           const remainingCacheTasks = this.plugin.autoTranslationRenderQueue.some((task) => task?.kind === "cache");
@@ -34270,7 +34911,8 @@ var require_scroll_anchor = __commonJS({
           );
           return false;
         }
-        if (!this.plugin.isAutoTranslationCacheTargetDrawable(target)) {
+        const preRenderContext = { rectByElement: /* @__PURE__ */ new Map() };
+        if (!this.plugin.isAutoTranslationCacheTargetDrawable(target, preRenderContext)) {
           if (options.drawPass) return false;
           this.plugin.logAutoTranslationMessageState(
             "auto.message.state",
@@ -34284,8 +34926,10 @@ var require_scroll_anchor = __commonJS({
           return false;
         }
         const renderMeta = options.renderMeta || null;
+        const anchorRect = preRenderContext.rectByElement.get(target.content) || null;
         const renderedLine = this.plugin.renderTranslation(target.messageNode, target.content, translated, cacheKey, this.plugin.getAutoTranslationTargetDomText(target), {
           allowScrollCorrectionWhilePaused: true,
+          ...anchorRect ? { anchorRect } : {},
           ...renderMeta?.partial ? {
             partial: true,
             validationQuality: renderMeta.validationQuality || TRANSLATION_VALIDATION_QUALITIES.PARTIAL,
@@ -34360,13 +35004,14 @@ var require_scroll_anchor = __commonJS({
           return true;
         });
       },
-      getReadyAutoTranslationTargets(item) {
+      getReadyAutoTranslationTargets(item, context = null) {
         if (!this.plugin.isAutoTranslationRequestCurrent(item?.requestOptions)) return [];
+        const priorityOptions = context ? { context } : void 0;
         return this.plugin.getAutoTranslationPendingTargets(item).map((target) => {
           const next = { ...target };
           delete next.priority;
-          return this.plugin.withAutoTranslationPriority(next);
-        }).filter((target) => this.plugin.isAutoTranslationTargetReady(target, item?.cacheKey)).sort((left, right) => (left?.priority ?? Number.MAX_SAFE_INTEGER) - (right?.priority ?? Number.MAX_SAFE_INTEGER));
+          return this.plugin.withAutoTranslationPriority(next, priorityOptions);
+        }).filter((target) => this.plugin.isAutoTranslationTargetReady(target, item?.cacheKey, context)).sort((left, right) => (left?.priority ?? Number.MAX_SAFE_INTEGER) - (right?.priority ?? Number.MAX_SAFE_INTEGER));
       },
       getAutoTranslationPrimaryTarget(target) {
         return {
@@ -34397,15 +35042,36 @@ var require_scroll_anchor = __commonJS({
         const normalized = Number.isFinite(number) ? Math.round(number) : DEFAULT_SETTINGS.ui.historyBackfillLimit;
         return Math.min(100, Math.max(1, normalized || DEFAULT_SETTINGS.ui.historyBackfillLimit));
       },
-      isElementVisibleInViewport(element, rect = null) {
+      isElementVisibleInViewport(element, rect = null, context = null) {
         if (!element?.isConnected) return false;
-        if (this.hasHiddenAncestor(element)) return false;
-        const elementRect = rect || element?.getBoundingClientRect?.();
-        if (!elementRect || elementRect.width <= 0 || elementRect.height <= 0) return false;
-        const height = window.innerHeight || document.documentElement.clientHeight || 0;
-        const width = window.innerWidth || document.documentElement.clientWidth || 0;
-        if (!(elementRect.bottom > 0 && elementRect.right > 0 && elementRect.top < height && elementRect.left < width)) return false;
-        return this.isVisibleInsideScrollContainers(element, elementRect);
+        if (context?.visibleByElement?.has(element)) return context.visibleByElement.get(element);
+        const elementRect = rect || this.plugin.getCachedElementRect(element, context);
+        if (!elementRect || elementRect.width <= 0 || elementRect.height <= 0) {
+          context?.visibleByElement?.set(element, false);
+          return false;
+        }
+        const documentHeight = typeof document !== "undefined" ? Number(document.documentElement?.clientHeight || 0) : 0;
+        const documentWidth = typeof document !== "undefined" ? Number(document.documentElement?.clientWidth || 0) : 0;
+        const height = typeof window !== "undefined" ? Number(window.innerHeight || documentHeight || 0) : documentHeight;
+        const width = typeof window !== "undefined" ? Number(window.innerWidth || documentWidth || 0) : documentWidth;
+        if (!(elementRect.bottom > 0 && elementRect.right > 0 && elementRect.top < height && elementRect.left < width)) {
+          context?.visibleByElement?.set(element, false);
+          return false;
+        }
+        if (element.hidden || element.getAttribute?.("aria-hidden") === "true") {
+          context?.visibleByElement?.set(element, false);
+          return false;
+        }
+        if (typeof getComputedStyle === "function") {
+          const style = getComputedStyle(element);
+          if (style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse" || style.opacity === "0") {
+            context?.visibleByElement?.set(element, false);
+            return false;
+          }
+        }
+        const visible = this.isRectInsideScrollClips(element, elementRect, context, { checkHidden: true });
+        context?.visibleByElement?.set(element, visible);
+        return visible;
       },
       hasHiddenAncestor(element) {
         let current = element;
@@ -34439,11 +35105,12 @@ var require_scroll_anchor = __commonJS({
       getScrollClipInfo(element, context = null) {
         const memo = context?.scrollClipByElement;
         if (memo?.has(element)) return memo.get(element);
-        const info = { hidden: false, rect: null };
-        if (typeof getComputedStyle === "function") {
+        const attrHidden = Boolean(element.hidden || element.getAttribute?.("aria-hidden") === "true");
+        const info = { hidden: attrHidden, rect: null };
+        if (!attrHidden && typeof getComputedStyle === "function") {
           const style = getComputedStyle(element);
           info.hidden = style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse" || style.opacity === "0";
-          if (/(auto|scroll|hidden|clip)/.test(`${style.overflow || ""} ${style.overflowX || ""} ${style.overflowY || ""}`)) {
+          if (!info.hidden && /(auto|scroll|hidden|clip)/.test(`${style.overflow || ""} ${style.overflowX || ""} ${style.overflowY || ""}`)) {
             const clipRect = this.plugin.getCachedElementRect(element, context);
             if (clipRect && clipRect.width > 0 && clipRect.height > 0) info.rect = clipRect;
           }
@@ -34465,7 +35132,7 @@ var require_scroll_anchor = __commonJS({
         if (this.plugin.getAutoTranslationScrollStillRemainingMs() > 0) return null;
         const scroller = this.getTranslationScrollContainer(anchor);
         if (!scroller) return null;
-        const rect = anchor.getBoundingClientRect();
+        const rect = options.anchorRect || anchor.getBoundingClientRect();
         const scrollTop = this.getScrollContainerTop(scroller);
         if (!Number.isFinite(scrollTop) || !rect) return null;
         const atBottom = this.isScrollContainerAtBottom(scroller, scrollTop);
@@ -34529,15 +35196,23 @@ var require_scroll_anchor = __commonJS({
       },
       // The visible part of a scroller: its box clipped to the window.
       getScrollContainerBand(scroller) {
+        const frameCache = this.plugin.renderFrameScrollCache;
+        if (frameCache?.bandByScroller?.has(scroller)) return frameCache.bandByScroller.get(scroller);
         if (typeof window === "undefined" || !window) return null;
         const height = Number(window.innerHeight || 0);
         if (!(height > 0)) return null;
-        if (this.isDocumentScroller(scroller)) return { top: 0, bottom: height };
-        const rect = scroller.getBoundingClientRect?.();
-        if (!rect || !(rect.height > 0)) return null;
-        const top = Math.max(0, Number(rect.top || 0));
-        const bottom = Math.min(height, Number(rect.bottom || 0));
-        return bottom > top ? { top, bottom } : null;
+        let band = null;
+        if (this.isDocumentScroller(scroller)) {
+          band = { top: 0, bottom: height };
+        } else {
+          const rect = scroller.getBoundingClientRect?.();
+          if (!rect || !(rect.height > 0)) return null;
+          const top = Math.max(0, Number(rect.top || 0));
+          const bottom = Math.min(height, Number(rect.bottom || 0));
+          band = bottom > top ? { top, bottom } : null;
+        }
+        if (frameCache?.bandByScroller && band) frameCache.bandByScroller.set(scroller, band);
+        return band;
       },
       // The plugin's own scrollTop writes fire scroll events; the next one from that scroller is not a user scroll.
       rememberOwnScrollAdjustment(scroller, top) {
@@ -34558,15 +35233,47 @@ var require_scroll_anchor = __commonJS({
       },
       getTranslationScrollContainer(anchor) {
         if (typeof document === "undefined") return null;
-        if (this.plugin.cachedDrawScroller?.isConnected && anchor && this.plugin.cachedDrawScroller.contains?.(anchor) && this.isVerticalScrollContainer(this.plugin.cachedDrawScroller)) {
+        const frameCache = this.plugin.renderFrameScrollCache;
+        const startNode = anchor?.parentElement;
+        if (frameCache?.nearestByNode && startNode && frameCache.nearestByNode.has(startNode)) {
+          const cached = frameCache.nearestByNode.get(startNode);
+          if (!cached || cached.isConnected !== false) return cached;
+          frameCache.nearestByNode.delete(startNode);
+        }
+        if (!frameCache && this.plugin.cachedDrawScroller?.isConnected && anchor && this.plugin.cachedDrawScroller.contains?.(anchor) && this.isVerticalScrollContainer(this.plugin.cachedDrawScroller)) {
           return this.plugin.cachedDrawScroller;
         }
-        let node = anchor?.parentElement;
+        const isScrollable = (node2) => {
+          if (!frameCache?.scrollableByNode) return this.isVerticalScrollContainer(node2);
+          if (frameCache.scrollableByNode.has(node2)) return frameCache.scrollableByNode.get(node2);
+          const result = this.isVerticalScrollContainer(node2);
+          frameCache.scrollableByNode.set(node2, result);
+          return result;
+        };
+        let scroller = null;
+        const visited = frameCache?.nearestByNode ? [] : null;
+        let node = startNode;
         while (node && node.nodeType === 1) {
-          if (this.isVerticalScrollContainer(node)) return node;
+          if (frameCache?.nearestByNode?.has(node)) {
+            const cached = frameCache.nearestByNode.get(node);
+            if (!cached || cached.isConnected !== false) {
+              scroller = cached;
+              break;
+            }
+            frameCache.nearestByNode.delete(node);
+          }
+          if (isScrollable(node)) {
+            scroller = node;
+            break;
+          }
+          visited?.push(node);
           node = node.parentElement;
         }
-        return document.scrollingElement || document.documentElement || null;
+        scroller ||= document.scrollingElement || document.documentElement || null;
+        if (visited) {
+          for (const ancestor of visited) frameCache.nearestByNode.set(ancestor, scroller);
+        }
+        return scroller;
       },
       isVerticalScrollContainer(node) {
         if (!node || node.nodeType !== 1) return false;
@@ -36164,9 +36871,10 @@ var require_translation_line_dom = __commonJS({
         const raw = Array.isArray(value) ? value : String(value || "").split(/[\s,;|]+/);
         const seen = /* @__PURE__ */ new Set();
         const order = [];
+        const registry = this.plugin.providerLayer?.registry;
         raw.forEach((provider) => {
           const normalized = String(provider || "").trim();
-          if (!PROVIDER_ORDER.includes(normalized) || seen.has(normalized)) return;
+          if (!(registry?.has?.(normalized) || PROVIDER_ORDER.includes(normalized)) || seen.has(normalized)) return;
           seen.add(normalized);
           order.push(normalized);
         });
@@ -36913,17 +37621,20 @@ var require_translation_line_dom = __commonJS({
             this.plugin.syncTranslationSourceVisibility(line, content, sourceText);
             return;
           }
-          const currentIdentityKey = this.getCurrentTranslationIdentityFingerprint(line, content, textOptions, sourceText);
-          const currentIdentitySig = this.getCurrentTranslationIdentitySignature(line, content, textOptions, sourceText);
-          if (line.dataset.daitIdentitySig && currentIdentitySig && line.dataset.daitIdentitySig !== currentIdentitySig) {
-            this.plugin.restoreTranslationSourceVisibility(content);
-            line.remove();
-            return;
-          }
-          if (!line.dataset.daitIdentitySig && line.dataset.daitIdentityKey && currentIdentityKey && line.dataset.daitIdentityKey !== currentIdentityKey) {
-            this.plugin.restoreTranslationSourceVisibility(content);
-            line.remove();
-            return;
+          if (line.dataset.daitIdentitySig) {
+            const currentIdentitySig = this.getCurrentTranslationIdentitySignature(line, content, textOptions, sourceText);
+            if (currentIdentitySig && line.dataset.daitIdentitySig !== currentIdentitySig) {
+              this.plugin.restoreTranslationSourceVisibility(content);
+              line.remove();
+              return;
+            }
+          } else if (line.dataset.daitIdentityKey) {
+            const currentIdentityKey = this.getCurrentTranslationIdentityFingerprint(line, content, textOptions, sourceText);
+            if (currentIdentityKey && line.dataset.daitIdentityKey !== currentIdentityKey) {
+              this.plugin.restoreTranslationSourceVisibility(content);
+              line.remove();
+              return;
+            }
           }
           if (isAutoLine && this.isStaleAutoTranslationLoadingLine(line)) {
             if (preserveAutoLines) return;
@@ -37234,7 +37945,10 @@ var require_translation_line_dom = __commonJS({
         return true;
       },
       renderTranslation(messageNode, content, translatedText, cacheKey = "", sourceText = null, renderOptions = {}) {
-        const scrollOptions = { allowScrollCorrectionWhilePaused: Boolean(renderOptions?.allowScrollCorrectionWhilePaused) };
+        const scrollOptions = {
+          allowScrollCorrectionWhilePaused: Boolean(renderOptions?.allowScrollCorrectionWhilePaused),
+          ...renderOptions?.anchorRect ? { anchorRect: renderOptions.anchorRect } : {}
+        };
         return this.plugin.withTranslationScrollStability(content, () => {
           const line = this.plugin.ensureTranslationNode(messageNode, content);
           line.classList.remove("dait-translation-error", "dait-translation-loading", "dait-translation-masked", "dait-translation-revealed");
@@ -39106,19 +39820,19 @@ var require_scheduler = __commonJS({
       isLongItem(item) {
         return this.isLongText(item?.text || "");
       }
-      getQueueType(item = {}) {
+      getQueueType(item = {}, context = null, options = {}) {
         if (!item) return "";
         if (item.daitManualRequest) return AUTO_TRANSLATION_QUEUE_TYPES.MANUAL;
         if (item.daitHistoryRequest) return AUTO_TRANSLATION_QUEUE_TYPES.HISTORY;
         if (item.daitPrefetchRequest) return AUTO_TRANSLATION_QUEUE_TYPES.PREFETCH;
         if (Number.isFinite(Number(item.priority)) && Number(item.priority) >= AUTO_TRANSLATE_PREFETCH_PRIORITY_BASE) return AUTO_TRANSLATION_QUEUE_TYPES.PREFETCH;
-        if (item.messageNode && item.content && this.isPrefetchItem(item)) return AUTO_TRANSLATION_QUEUE_TYPES.PREFETCH;
+        if (!options?.skipDomCheck && item.messageNode && item.content && this.isPrefetchItem(item, context)) return AUTO_TRANSLATION_QUEUE_TYPES.PREFETCH;
         if (this.isLongItem(item)) return AUTO_TRANSLATION_QUEUE_TYPES.LONG_TEXT;
         if (item.messageNode && item.content) return AUTO_TRANSLATION_QUEUE_TYPES.VISIBLE;
         return "";
       }
-      getQueueTypeRank(item = {}, queueType = null) {
-        const type = queueType === null || queueType === void 0 ? this.getQueueType(item) : queueType;
+      getQueueTypeRank(item = {}, queueType = null, context = null) {
+        const type = queueType === null || queueType === void 0 ? this.getQueueType(item, context) : queueType;
         if (type === AUTO_TRANSLATION_QUEUE_TYPES.MANUAL) return 0;
         if (type === AUTO_TRANSLATION_QUEUE_TYPES.VISIBLE) return 10;
         if (type === AUTO_TRANSLATION_QUEUE_TYPES.LONG_TEXT) return 20;
@@ -39132,16 +39846,17 @@ var require_scheduler = __commonJS({
         if (this.plugin.hasActiveVisibleAutoTranslationWork()) return false;
         return this.plugin.autoTranslationPrefetchInFlight < limit && this.plugin.autoTranslationInFlight < Math.max(0, total - 1);
       }
-      isPrefetchBatch(batch) {
-        return Array.isArray(batch) && batch.length > 0 && batch.every((item) => this.isPrefetchItem(item));
+      isPrefetchBatch(batch, context = null) {
+        return Array.isArray(batch) && batch.length > 0 && batch.every((item) => this.isPrefetchItem(item, context));
       }
-      isPrefetchItem(item) {
-        return !this.isVisibleItem(item);
+      isPrefetchItem(item, context = null) {
+        return !this.isVisibleItem(item, context);
       }
-      isVisibleItem(item) {
+      isVisibleItem(item, context = null) {
         if (!item?.messageNode?.isConnected || !item?.content?.isConnected) return false;
-        if (!this.plugin.isElementVisibleInViewport(item.content)) return false;
-        return this.plugin.isElementVisibleInViewport(item.messageNode) || this.plugin.isAutoTranslationContentInsideMessage(item);
+        const isVisible = context ? (element) => this.plugin.isElementVisibleInViewportCached(element, context) : (element) => this.plugin.isElementVisibleInViewport(element);
+        if (!isVisible(item.content)) return false;
+        return isVisible(item.messageNode) || this.plugin.isAutoTranslationContentInsideMessage(item);
       }
       shouldRunItemSingle(item) {
         if (!item) return false;
@@ -39240,11 +39955,12 @@ var require_scheduler = __commonJS({
         }
         return true;
       }
-      sortQueue(queue = []) {
+      sortQueue(queue = [], context = null) {
         if (!Array.isArray(queue) || queue.length < 2) return;
+        const layoutContext = context || this.plugin.createAutoTranslationLayoutContext?.() || null;
         const ranks = /* @__PURE__ */ new Map();
         for (const item of queue) {
-          if (!ranks.has(item)) ranks.set(item, this.getQueueTypeRank(item));
+          if (!ranks.has(item)) ranks.set(item, this.getQueueTypeRank(item, null, layoutContext));
         }
         queue.sort((left, right) => {
           const typeDelta = ranks.get(left) - ranks.get(right);
@@ -39307,7 +40023,6 @@ var require_service_profiles = __commonJS({
     var { SETTINGS_TAB_COMPOSE, SETTINGS_TAB_TRANSLATE } = require_settings_schema();
     var {
       PLUGIN_NAME,
-      PROVIDER_DEFAULTS,
       PROVIDER_PROFILE_FIELDS,
       MAX_SAVED_SERVICE_CONFIGS,
       DEEPSEEK_MODELS,
@@ -39682,6 +40397,14 @@ var require_service_profiles = __commonJS({
         if (normalized === "baidu") return this.plugin.t("providerBaidu");
         return this.plugin.getProviderDefaults(normalized)?.label || normalized || "";
       },
+      getProviderProfileFields(provider) {
+        const fields = new Set(PROVIDER_PROFILE_FIELDS);
+        const credentialFields = this.plugin.providerLayer?.registry?.getCredentialFields?.(provider) || [];
+        credentialFields.forEach((field) => {
+          if (field) fields.add(field);
+        });
+        return [...fields];
+      },
       saveTaskProviderProfile(kind, provider) {
         const task = this.plugin.settings[kind];
         if (!task || !provider) return;
@@ -39690,7 +40413,7 @@ var require_service_profiles = __commonJS({
         }
         const existing = task.providerProfiles[provider] || {};
         const profile = { ...existing };
-        PROVIDER_PROFILE_FIELDS.forEach((field) => {
+        this.getProviderProfileFields(provider).forEach((field) => {
           if (task[field] !== void 0) profile[field] = task[field];
         });
         if (typeof task.apiKeyOrigin === "string") profile.apiKeyOrigin = task.apiKeyOrigin;
@@ -39742,9 +40465,9 @@ var require_service_profiles = __commonJS({
       normalizeSavedServiceConfigEntry(entry) {
         if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
         const provider = String(entry.provider || "").trim();
-        if (!provider || !PROVIDER_DEFAULTS[provider]) return null;
+        const preset = provider ? this.plugin.getProviderDefaults(provider) : null;
+        if (!provider || !preset) return null;
         if (entry.endpoint !== void 0 && typeof entry.endpoint !== "string") return null;
-        const preset = PROVIDER_DEFAULTS[provider] || {};
         const endpoint = String(entry.endpoint !== void 0 ? entry.endpoint : preset.endpoint || "").trim();
         const model = String(entry.model !== void 0 ? entry.model : preset.model || "").trim();
         const apiKey = typeof entry.apiKey === "string" ? entry.apiKey : "";
@@ -39757,7 +40480,7 @@ var require_service_profiles = __commonJS({
         const latencyMs = Number(entry.latencyMs);
         const reportedModel = this.getDiagnosticModelLabel(entry.reportedModel || "");
         const id = String(entry.id || "").trim() || `svc-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-        return {
+        const normalized = {
           id,
           provider,
           apiKey,
@@ -39772,6 +40495,12 @@ var require_service_profiles = __commonJS({
           latencyMs: Number.isFinite(latencyMs) && latencyMs >= 0 ? Math.round(latencyMs) : null,
           reportedModel
         };
+        const credentialFields = this.plugin.providerLayer?.registry?.getCredentialFields?.(provider) || [];
+        credentialFields.forEach((field) => {
+          if (!field || Object.prototype.hasOwnProperty.call(normalized, field)) return;
+          if (typeof entry[field] === "string") normalized[field] = entry[field];
+        });
+        return normalized;
       },
       normalizeSavedServiceConfigs(list) {
         if (!Array.isArray(list)) return [];
@@ -39795,8 +40524,8 @@ var require_service_profiles = __commonJS({
       },
       getServiceConfigIdentityKey(config) {
         const provider = String(config?.provider || "").trim();
-        if (!provider || !PROVIDER_DEFAULTS[provider]) return "";
-        const preset = PROVIDER_DEFAULTS[provider] || {};
+        const preset = provider ? this.plugin.getProviderDefaults(provider) : null;
+        if (!provider || !preset) return "";
         const chatCompletion = this.isChatCompletionProvider(provider);
         const endpoint = String(config?.endpoint || "").trim();
         const deeplPlan = provider === "deepl" ? this.plugin.normalizeDeepLPlan(config?.deeplPlan) : "";
@@ -39825,7 +40554,7 @@ var require_service_profiles = __commonJS({
           const modelName = this.getDiagnosticModelLabel(config?.model || config?.reportedModel || "");
           if (modelName) parts.push(modelName);
           const rawEndpoint = String(config?.endpoint || "").trim();
-          const defaultEndpoint = String(PROVIDER_DEFAULTS[provider]?.endpoint || "").trim();
+          const defaultEndpoint = String(this.plugin.getProviderDefaults(provider)?.endpoint || "").trim();
           try {
             const host = rawEndpoint ? new URL(rawEndpoint).host : "";
             const defaultHost = defaultEndpoint ? new URL(defaultEndpoint).host : "";
@@ -39882,7 +40611,7 @@ var require_service_profiles = __commonJS({
       saveVerifiedServiceConfig(kind, configOverride = null, options = {}) {
         const source = configOverride || this.plugin.settings?.[kind];
         if (!source || !this.plugin.hasUsableApiConfig(kind, source)) return { entry: null, syncedTo: "" };
-        const entry = this.normalizeSavedServiceConfigEntry({
+        const rawEntry = {
           provider: source.provider,
           apiKey: source.apiKey,
           endpoint: source.endpoint,
@@ -39895,7 +40624,13 @@ var require_service_profiles = __commonJS({
           verifiedAt: Date.now(),
           latencyMs: options.latencyMs,
           reportedModel: options.model
+        };
+        const credentialFields = this.plugin.providerLayer?.registry?.getCredentialFields?.(source.provider) || [];
+        credentialFields.forEach((field) => {
+          if (!field || Object.prototype.hasOwnProperty.call(rawEntry, field)) return;
+          if (typeof source[field] === "string") rawEntry[field] = source[field];
         });
+        const entry = this.normalizeSavedServiceConfigEntry(rawEntry);
         if (!entry) return { entry: null, syncedTo: "" };
         if (!Array.isArray(this.plugin.settings.serviceConfigs)) this.plugin.settings.serviceConfigs = [];
         const identity = this.getServiceConfigIdentityKey(entry);
@@ -39968,8 +40703,12 @@ var require_service_profiles = __commonJS({
         const previousProvider = this.normalizeProviderForTask(kind, task.provider);
         if (previousProvider && previousProvider !== entry.provider) {
           this.saveTaskProviderProfile(kind, previousProvider);
+          const prevCredentials = this.plugin.providerLayer?.registry?.getCredentialFields?.(previousProvider) || [];
+          prevCredentials.forEach((field) => {
+            if (field && !PROVIDER_PROFILE_FIELDS.includes(field)) delete task[field];
+          });
         }
-        const preset = PROVIDER_DEFAULTS[entry.provider] || {};
+        const preset = this.plugin.getProviderDefaults(entry.provider) || {};
         task.provider = entry.provider;
         task.apiKey = entry.apiKey || "";
         task.endpoint = entry.endpoint || preset.endpoint || "";
@@ -39983,6 +40722,11 @@ var require_service_profiles = __commonJS({
           task.secretKey = entry.secretKey || "";
           this.plugin.applyProviderIntakeMode(entry.provider);
         }
+        const savedCredentialFields = this.plugin.providerLayer?.registry?.getCredentialFields?.(entry.provider) || [];
+        savedCredentialFields.forEach((field) => {
+          if (!field || PROVIDER_PROFILE_FIELDS.includes(field)) return;
+          task[field] = typeof entry[field] === "string" ? entry[field] : preset[field] ?? "";
+        });
         this.saveTaskProviderProfile(kind, entry.provider);
         if (task.model) this.rememberTaskProviderModel(kind, entry.provider, task.model);
         task.apiStatus = { state: "success", message: "" };
@@ -40037,13 +40781,18 @@ var require_service_profiles = __commonJS({
         if (previousTargetProvider && previousTargetProvider !== provider) {
           this.saveTaskProviderProfile(toKind, previousTargetProvider);
         }
-        const preset = PROVIDER_DEFAULTS[provider] || {};
+        const preset = this.plugin.getProviderDefaults(provider) || {};
         toTask.provider = provider;
         toTask.apiKey = fromTask.apiKey || "";
         toTask.endpoint = fromTask.endpoint || preset.endpoint || "";
         toTask.apiKeyOrigin = fromTask.apiKeyOrigin;
         toTask.model = fromTask.model || preset.model || "";
         toTask.enableThinking = provider === "deepseek" ? Boolean(fromTask.enableThinking) : false;
+        const syncCredentialFields = this.plugin.providerLayer?.registry?.getCredentialFields?.(provider) || [];
+        syncCredentialFields.forEach((field) => {
+          if (!field || PROVIDER_PROFILE_FIELDS.includes(field)) return;
+          toTask[field] = typeof fromTask[field] === "string" ? fromTask[field] : "";
+        });
         this.saveTaskProviderProfile(toKind, provider);
         if (toTask.model) this.rememberTaskProviderModel(toKind, provider, toTask.model);
         if (toKind === "translation") this.plugin.applyProviderIntakeMode(provider);
@@ -40086,11 +40835,11 @@ var require_service_profiles = __commonJS({
         return true;
       },
       applyProviderPreset(kind, provider, options = {}) {
-        const preset = PROVIDER_DEFAULTS[provider];
+        const preset = this.plugin.getProviderDefaults(provider);
         if (!preset || !this.plugin.settings[kind]) return;
         const profile = options.restoreProfile ? this.plugin.getTaskProviderProfile(kind, provider) : null;
-        this.plugin.settings[kind].endpoint = profile?.endpoint ?? preset.endpoint;
-        this.plugin.settings[kind].model = profile?.model ?? preset.model;
+        this.plugin.settings[kind].endpoint = profile?.endpoint ?? preset.endpoint ?? "";
+        this.plugin.settings[kind].model = profile?.model ?? preset.model ?? "";
         this.plugin.settings[kind].region = profile?.region ?? preset.region ?? "";
         this.plugin.settings[kind].deeplPlan = profile?.deeplPlan ?? preset.deeplPlan ?? "free";
         this.plugin.settings[kind].appId = profile?.appId ?? preset.appId ?? "";
@@ -40099,6 +40848,11 @@ var require_service_profiles = __commonJS({
           this.plugin.settings[kind].apiKey = profile?.apiKey ?? "";
           this.plugin.settings[kind].apiKeyOrigin = profile?.apiKeyOrigin;
           this.plugin.settings[kind].enableThinking = typeof profile?.enableThinking === "boolean" ? profile.enableThinking : false;
+          const credentialFields = this.plugin.providerLayer?.registry?.getCredentialFields?.(provider) || [];
+          credentialFields.forEach((field) => {
+            if (!field || PROVIDER_PROFILE_FIELDS.includes(field)) return;
+            this.plugin.settings[kind][field] = profile?.[field] ?? preset[field] ?? "";
+          });
         }
         if (options.save !== false) this.plugin.saveSettings();
         if (options.syncControls !== false) {
@@ -40126,7 +40880,7 @@ var require_service_profiles = __commonJS({
         return basename.length > 120 ? `${basename.slice(0, 120)}...` : basename;
       },
       isProviderApiKeyOptional(provider) {
-        return this.plugin.getProviderDefaults(provider)?.apiKeyOptional === true;
+        return this.plugin.providerLayer?.registry?.isApiKeyOptional?.(provider) === true || this.plugin.getProviderDefaults(provider)?.apiKeyOptional === true;
       },
       inferDiagnosticStageFromAction(action = "", status = "", meta = {}) {
         const value = String(action || "");
@@ -42134,7 +42888,7 @@ var require_manual_translation = __commonJS({
           return translated;
         }
         this.plugin.consumeAutoTranslationRequestBudget({ requestBudget });
-        return this.plugin.runAutoTranslationModelAttempt(plan.text, requestOptions);
+        return this.plugin.runAutoTranslationModelAttempt(plan.text, requestOptions, requestBudget ? { requestBudget } : {});
       },
       getManualRescueValidation(plan, translated, requestOptions) {
         return this.plugin.getAutoTranslationOutputValidationResult(
@@ -42695,6 +43449,7 @@ var require_discord_ai_translator = __commonJS({
           tabs: SETTINGS_TABS_DEFINITION,
           providerCapabilities: PROVIDER_CAPABILITIES,
           providerOrder: PROVIDER_ORDER,
+          providerRegistry: this.providerLayer.registry,
           defaultProvider: "deepseek"
         });
         this.bindDomainEvents();
@@ -42734,6 +43489,7 @@ var require_discord_ai_translator = __commonJS({
         this.cachedDrawMemo = /* @__PURE__ */ new Map();
         this.cachedDrawMessageMemo = /* @__PURE__ */ new WeakMap();
         this.cachedDrawScroller = null;
+        this.renderFrameScrollCache = null;
         this.localProviderHealthChecks = /* @__PURE__ */ new Map();
         this.localProviderHealthProbeStartedAt = /* @__PURE__ */ new Map();
         this.localProviderHealthyKeys = /* @__PURE__ */ new Set();
@@ -42796,6 +43552,12 @@ var require_discord_ai_translator = __commonJS({
         this.incrementalMessageScanGeneration = 0;
         this.incrementalMessageScanIdleCallback = null;
         this.incrementalMessageScanTimer = null;
+        this.incrementalMessageScanPendingWork = false;
+        this.incrementalMessageScanDirtyOnly = false;
+        this.incrementalMessageScanHasQueuedDrainable = false;
+        this.incrementalMessageScanRouteKey = "";
+        this.incrementalMessageScanConfigVersion = 0;
+        this.incrementalMessageScanRemainingGetter = null;
         this.cacheOnlyScanTimer = null;
         this.cacheOnlyScanDueAt = 0;
         this.scanProtectedUntil = 0;
@@ -42898,13 +43660,13 @@ var require_discord_ai_translator = __commonJS({
           this.panelTheme.startWatching();
           this.patchMessageContextMenu();
           this.startObserver();
-          document.addEventListener("keydown", this.boundKeydown, true);
-          window.addEventListener("scroll", this.boundViewportScan, { capture: true, passive: true });
-          window.addEventListener("resize", this.boundViewportScan, { capture: true, passive: true });
-          window.addEventListener("focus", this.boundViewportScan, { capture: true, passive: true });
-          document.addEventListener("visibilitychange", this.boundViewportScan, true);
-          window.addEventListener("pagehide", this.getPageHideHandler(), true);
-          window.addEventListener("beforeunload", this.getPageHideHandler(), true);
+          this.runtimeScope.on(document, "keydown", this.boundKeydown, true);
+          this.runtimeScope.on(window, "scroll", this.boundViewportScan, { capture: true, passive: true });
+          this.runtimeScope.on(window, "resize", this.boundViewportScan, { capture: true, passive: true });
+          this.runtimeScope.on(window, "focus", this.boundViewportScan, { capture: true, passive: true });
+          this.runtimeScope.on(document, "visibilitychange", this.boundViewportScan, true);
+          this.runtimeScope.on(window, "pagehide", this.getPageHideHandler(), true);
+          this.runtimeScope.on(window, "beforeunload", this.getPageHideHandler(), true);
           this.queueScan();
           this.events.emit("lifecycle:start", { version: PLUGIN_VERSION, token: this.lifecycleToken });
           this.showToast(this.t("pluginStarted", { version: PLUGIN_VERSION }), "success");
@@ -42951,10 +43713,17 @@ var require_discord_ai_translator = __commonJS({
         if (this.googleTranslateRuntimeDirtyTimer) clearTimeout(this.googleTranslateRuntimeDirtyTimer);
         if (this.diagnosticLogsDirtyTimer) clearTimeout(this.diagnosticLogsDirtyTimer);
         this.apiRequestsClosed = true;
+        this.abortAutoTranslationRequests("stop");
         this.abortActiveApiRequests();
-        this.providerLayer.apiTestRuns?.forEach?.((run) => run?.controller?.abort?.());
+        this.providerLayer.apiTestRuns?.forEach?.((run, key) => {
+          run?.controller?.abort?.();
+          this.providerLayer.apiTestRuns.set(key, { sequence: run?.sequence || 0 });
+        });
         this.providerLayer.runningApiTests?.clear?.();
-        this.modelDetectionRuns?.forEach?.((run) => run?.controller?.abort?.());
+        this.modelDetectionRuns?.forEach?.((run, key) => {
+          run?.controller?.abort?.();
+          this.modelDetectionRuns.set(key, { sequence: run?.sequence || 0 });
+        });
         this.composerWriter.cancelAll("stop");
         this.clearHotkeyRecording();
         this.clearPolishSubmitTimer();
@@ -42970,13 +43739,6 @@ var require_discord_ai_translator = __commonJS({
         this.flushSettings({ retryOnError: false });
         const diagnosticLogsPersisted = this.flushDiagnosticLogs({ retryOnError: false }) !== false;
         this.unpatchContextMenus();
-        document.removeEventListener("keydown", this.boundKeydown, true);
-        window.removeEventListener("scroll", this.boundViewportScan, { capture: true });
-        window.removeEventListener("resize", this.boundViewportScan, { capture: true });
-        window.removeEventListener("focus", this.boundViewportScan, { capture: true });
-        document.removeEventListener("visibilitychange", this.boundViewportScan, true);
-        window.removeEventListener("pagehide", this.getPageHideHandler(), true);
-        window.removeEventListener("beforeunload", this.getPageHideHandler(), true);
         this.removePolishResultPanel();
         this.removePolishRestoreControl();
         this.removeInputActionMenu();
@@ -43023,6 +43785,7 @@ var require_discord_ai_translator = __commonJS({
         this.diagnosticLogsDirty = !diagnosticLogsPersisted;
         this.diagnosticLogsPersistenceDeferredSince = 0;
         this.translationRequests.clear();
+        this.autoTranslationPartialResults?.clear?.();
         this.autoStateMachine.resetAll();
         this.autoCooldowns.clearAll();
         this.cancelCachedTranslationDrawPass();
@@ -43245,11 +44008,11 @@ var require_discord_ai_translator = __commonJS({
         };
         this.focusSettingsElement(target());
         if (typeof setTimeout !== "function") return;
-        [300, 1e3].forEach((delay) => this.unrefTimer(setTimeout(() => {
+        [300, 1e3].forEach((delay) => this.runtimeScope.setTimeout(() => {
           if (!panel?.isConnected || typeof document === "undefined") return;
           const active = document.activeElement;
           if (!active || active === document.body || active.isConnected === false) this.focusSettingsElement(target());
-        }, delay)));
+        }, delay, { unref: true }));
       }
       injectStyles() {
         const css = PLUGIN_CSS;

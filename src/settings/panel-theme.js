@@ -259,6 +259,7 @@ class PanelTheme {
     refresh() {
         const theme = this.resolve();
         this.lastTheme = theme;
+        this.lastHostThemeSignature = this.getHostThemeSignature();
         if (typeof document === "undefined") return theme;
         const roots = new Set();
         try {
@@ -303,14 +304,14 @@ class PanelTheme {
             if (!this.plugin.isStarted) return;
             const prevPanelTheme = this.lastTheme;
             const prevHostSignature = this.lastHostThemeSignature;
-            const nextPanelTheme = this.refresh();
+            const nextResolved = this.resolve();
             const nextHostSignature = this.getHostThemeSignature();
-            this.lastHostThemeSignature = nextHostSignature;
             // Ignore non-theme class toggles on <html>/<body> (e.g. mouse-mode / keyboard-mode / app-focused)
-            // so routine clicks or emoji picker focus changes do not trigger a full-page button theme resync.
-            if (nextPanelTheme !== prevPanelTheme || nextHostSignature !== prevHostSignature) {
-                this.plugin.refreshDiscordThemeClasses?.({ skipPanelTheme: true });
-            }
+            // so routine clicks or focus changes do not query the DOM or trigger a full-page button theme resync.
+            if (nextResolved === prevPanelTheme && nextHostSignature === prevHostSignature) return;
+            this.lastHostThemeSignature = nextHostSignature;
+            this.refresh();
+            this.plugin.refreshDiscordThemeClasses?.({ skipPanelTheme: true });
         };
         if (typeof MutationObserver === "function" && typeof document !== "undefined") {
             try {

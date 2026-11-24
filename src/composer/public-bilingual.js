@@ -39,21 +39,35 @@ const methods = {
         const translation = this.plugin.settings.translation || {};
         const polishCandidate = {
             provider: polish.provider,
-            apiKey: polish.apiKey,
+            apiKey: polish.apiKey ?? "",
             apiKeyOrigin: polish.apiKeyOrigin,
-            endpoint: polish.endpoint,
-            model: polish.model
+            endpoint: polish.endpoint ?? "",
+            model: polish.model ?? "",
+            region: polish.region ?? "",
+            deeplPlan: polish.deeplPlan ?? "free",
+            appId: polish.appId ?? "",
+            secretKey: polish.secretKey ?? ""
         };
-        return this.plugin.hasUsableApiConfig("translation", polishCandidate) ? polish : translation;
+        const polishCredentialFields = this.plugin.providerLayer?.registry?.getCredentialFields?.(polish.provider) || [];
+        polishCredentialFields.forEach(field => {
+            if (!field || Object.prototype.hasOwnProperty.call(polishCandidate, field)) return;
+            polishCandidate[field] = polish[field] ?? "";
+        });
+        const polishAllowedForTranslation = Boolean(polish.provider)
+            && this.plugin.isProviderAllowedForTask("translation", polish.provider);
+        return polishAllowedForTranslation && this.plugin.hasUsableApiConfig("translation", polishCandidate, { isolatedConfig: true })
+            ? polish
+            : translation;
     },
 
     getPublicBilingualTranslationOptions() {
         const configOverrides = this.getPublicBilingualTranslationOverrides();
         return {
             mode: "public-bilingual",
+            isolatedConfig: true,
             promptPolicyVersion: this.plugin.getPromptPolicyVersion("publicBilingual"),
             targetLanguage: this.getPublicBilingualTargetLanguage(),
-            providerKey: this.plugin.getAutoTranslationProviderKey({ configOverrides }),
+            providerKey: this.plugin.getAutoTranslationProviderKey({ configOverrides, isolatedConfig: true }),
             requestContext: {},
             configOverrides
         };
@@ -68,12 +82,16 @@ const methods = {
             this.plugin.normalizeRequestNumber(this.plugin.settings.translation?.maxTokens, DEFAULT_SETTINGS.translation.maxTokens, { min: 1, integer: true })
         );
 
-        return {
+        const overrides = {
             provider: baseConfig.provider,
-            apiKey: baseConfig.apiKey,
+            apiKey: baseConfig.apiKey ?? "",
             apiKeyOrigin: baseConfig.apiKeyOrigin,
-            endpoint: baseConfig.endpoint,
-            model: baseConfig.model,
+            endpoint: baseConfig.endpoint ?? "",
+            model: baseConfig.model ?? "",
+            region: baseConfig.region ?? "",
+            deeplPlan: baseConfig.deeplPlan ?? "free",
+            appId: baseConfig.appId ?? "",
+            secretKey: baseConfig.secretKey ?? "",
             sourceLanguage: AUTO_LANGUAGE_VALUE,
             targetLanguage,
             targetLanguageCode: this.plugin.getTargetLanguageCode(targetLanguageValue),
@@ -83,6 +101,12 @@ const methods = {
             promptPolicyVersion: this.plugin.getPromptPolicyVersion("publicBilingual"),
             prompt: this.plugin.buildPromptPolicyPublicBilingualPrompt(targetLanguageValue)
         };
+        const credentialFields = this.plugin.providerLayer?.registry?.getCredentialFields?.(baseConfig.provider) || [];
+        credentialFields.forEach(field => {
+            if (!field || Object.prototype.hasOwnProperty.call(overrides, field)) return;
+            overrides[field] = baseConfig[field] ?? "";
+        });
+        return overrides;
     },
 
     getPublicBilingualRetryOptions(sourceText, badOutput = "", options = this.getPublicBilingualTranslationOptions()) {
@@ -91,6 +115,7 @@ const methods = {
 
         return {
             mode: "public-bilingual-retry",
+            isolatedConfig: true,
             promptPolicyVersion: this.plugin.getPromptPolicyVersion("publicBilingualRetry"),
             targetLanguage: targetLanguageValue,
             providerKey: this.plugin.getAutoTranslationProviderKey(options),
@@ -113,6 +138,7 @@ const methods = {
 
         return {
             mode: "public-bilingual-final",
+            isolatedConfig: true,
             promptPolicyVersion: this.plugin.getPromptPolicyVersion("publicBilingualFinal"),
             targetLanguage: targetLanguageValue,
             providerKey: this.plugin.getAutoTranslationProviderKey(options),
@@ -135,7 +161,8 @@ const methods = {
             timeoutMs: MODEL_REQUEST_TIMEOUT_MS,
             mode: "public-bilingual",
             requestContext: options.requestContext,
-            providerProfilePinned: true
+            providerProfilePinned: true,
+            isolatedConfig: true
         });
         if (!this.plugin.isInvalidAutoTranslationOutput(text, translated, this.plugin.getAutoTranslationTargetLanguage(options))) return translated;
 
@@ -145,7 +172,8 @@ const methods = {
             timeoutMs: MODEL_REQUEST_TIMEOUT_MS,
             mode: "public-bilingual-retry",
             requestContext: retryOptions.requestContext,
-            providerProfilePinned: true
+            providerProfilePinned: true,
+            isolatedConfig: true
         });
         if (!this.plugin.isInvalidAutoTranslationOutput(text, retried, this.plugin.getAutoTranslationTargetLanguage(retryOptions))) return retried;
 
@@ -155,7 +183,8 @@ const methods = {
             timeoutMs: MODEL_REQUEST_TIMEOUT_MS,
             mode: "public-bilingual-final",
             requestContext: finalOptions.requestContext,
-            providerProfilePinned: true
+            providerProfilePinned: true,
+            isolatedConfig: true
         });
         if (!this.plugin.isInvalidAutoTranslationOutput(text, finalText, this.plugin.getAutoTranslationTargetLanguage(finalOptions))) return finalText;
 

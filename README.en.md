@@ -80,7 +80,7 @@ Discord AI Translator brings seamless multilingual communication and expressive 
 
 ### 🧱 V0.5 Modular Architecture & Engineering Guardrails
 - **Clean layered codebase**: `src/discord-ai-translator.js` is now a ~760-line lifecycle shell coordinating `src/core/` (`DisposableScope`, `EventBus`, `PluginContext`), `src/presets/`, `src/settings/ui/`, `src/composer/`, `src/discord/` (unified behind `DiscordHostAdapter`), and `src/auto-translation/` (single state machine + cooldown store).
-- **Pluggable provider registry**: All 7 providers live as standalone adapters under `src/providers/adapters/`; adding a new provider takes one adapter file plus one registration line.
+- **Pluggable provider registry**: All 7 built-in providers live as standalone adapters under `src/providers/adapters/`, with `ProviderRegistry` driving request building/parsing, task capability checks, fallback order, saved profiles, and connection testing (registering a new adapter wires it into those paths automatically; custom non-standard settings inputs or localized labels can be added in settings UI / i18n as needed).
 - **Automated quality gates**: ESLint (including `no-unused-vars` across `src/`), TypeScript `checkJs`, zh-CN/en i18n key-parity audit, 710+ core unit tests, 9 domain artifact regression suites, and Windows installer rollback verification.
 
 ## Supported Providers

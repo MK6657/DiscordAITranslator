@@ -17,8 +17,12 @@
  * @property {(config: any, defaultConfig: any, plugin: any) => string} getEffectiveEndpoint
  * @property {(kind: string, input: any, config: any, defaultConfig: any, options: any, plugin: any) => any} buildRequest
  * @property {(raw: string, request: any, options: any, plugin: any) => any} parseResponse
+ * @property {(kind: string, config: any, defaultConfig: any, plugin: any) => any} [buildTestRequest]
+ * @property {(config: any, effectiveApiKey: string, plugin: any) => Record<string, string>} [buildHeaders]
+ * @property {(config: any, plugin: any) => boolean} [hasUsableConfig]
  * @property {(config: any, body: any) => any} [applyBodyOptions]
- * @property {(config: any, snapshot: any, plugin: any) => void} [applyCacheScope]
+ * @property {(config: any, snapshot: any, plugin: any, options?: any) => void} [applyCacheScope]
+ * @property {(config: any, request: any, plugin: any) => string} [getAuthFingerprint]
  */
 
 /**
@@ -57,7 +61,7 @@ class ProviderRegistry {
     constructor() {
         /** @type {Map<string, ProviderAdapter>} */
         this.adapters = new Map();
-        /** @type {Map<string, ProviderAdapter>} */
+        /** @type {Map<string, Set<string>>} */
         this.byParser = new Map();
     }
 
@@ -71,9 +75,22 @@ class ProviderRegistry {
             throw new Error("ProviderAdapter must define a non-empty string id.");
         }
         const id = adapter.id.trim();
+        const previous = this.adapters.get(id);
+        if (previous?.responseParser) {
+            const prevSet = this.byParser.get(previous.responseParser);
+            if (prevSet) {
+                prevSet.delete(id);
+                if (prevSet.size === 0) this.byParser.delete(previous.responseParser);
+            }
+        }
         this.adapters.set(id, adapter);
         if (adapter.responseParser) {
-            this.byParser.set(adapter.responseParser, adapter);
+            let set = this.byParser.get(adapter.responseParser);
+            if (!set) {
+                set = new Set();
+                this.byParser.set(adapter.responseParser, set);
+            }
+            set.add(id);
         }
         return this;
     }
@@ -88,8 +105,12 @@ class ProviderRegistry {
         const existing = this.adapters.get(key);
         if (!existing) return false;
         this.adapters.delete(key);
-        if (existing.responseParser && this.byParser.get(existing.responseParser) === existing) {
-            this.byParser.delete(existing.responseParser);
+        if (existing.responseParser) {
+            const set = this.byParser.get(existing.responseParser);
+            if (set) {
+                set.delete(key);
+                if (set.size === 0) this.byParser.delete(existing.responseParser);
+            }
         }
         return true;
     }
@@ -105,12 +126,15 @@ class ProviderRegistry {
     }
 
     /**
-     * Resolves an adapter by its responseParser identifier.
+     * Resolves the canonical (first-registered) adapter for a responseParser identifier.
      * @param {string} parserName
      * @returns {ProviderAdapter | null}
      */
     getByParser(parserName) {
-        return this.byParser.get(String(parserName || "").trim()) || null;
+        const set = this.byParser.get(String(parserName || "").trim());
+        if (!set || set.size === 0) return null;
+        const firstId = set.values().next().value;
+        return firstId ? (this.adapters.get(firstId) || null) : null;
     }
 
     /**
@@ -174,6 +198,15 @@ class ProviderRegistry {
      */
     supportsModelDetection(idOrConfig) {
         return Boolean(this.get(idOrConfig)?.supportsModelDetection);
+    }
+
+    /**
+     * @param {string | { provider?: string } | null | undefined} idOrConfig
+     * @returns {boolean}
+     */
+    isApiKeyOptional(idOrConfig) {
+        const adapter = this.get(idOrConfig);
+        return Boolean(adapter?.apiKeyOptional || adapter?.defaultProfile?.apiKeyOptional);
     }
 
     /**

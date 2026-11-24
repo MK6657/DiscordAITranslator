@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 const { AutoTranslationStateMachine } = require("../../src/auto-translation/state-machine");
 const { AutoTranslationCooldownStore } = require("../../src/auto-translation/cooldown-store");
+const Plugin = require("../../src");
 
 test("AutoTranslationStateMachine maintains I1-I5 invariants across enqueue, in-flight, render, and reset transitions", () => {
     const sm = new AutoTranslationStateMachine();
@@ -77,4 +78,45 @@ test("AutoTranslationCooldownStore isolates failure clearing and notice preserva
     store.clearAll();
     assert.equal(store.providerNoticeAt.size, 0);
     assert.equal(store.precheckSkips.size, 0);
+});
+
+test("Plugin queue and render paths delegate through AutoTranslationStateMachine while maintaining invariants", () => {
+    const plugin = new Plugin();
+    plugin.settings.translation.enabled = true;
+    plugin.settings.ui.autoTranslateMessages = true;
+    const sm = plugin.autoStateMachine;
+    const item = {
+        cacheKey: "auto-k1",
+        text: "hello",
+        priority: 10,
+        requestOptions: plugin.getAutoTranslationOptions()
+    };
+
+    assert.equal(plugin.enqueueAutoTranslationItem(item), true);
+    assert.equal(sm.queuedKeys.has("auto-k1"), true);
+    assert.deepEqual(plugin.checkAutoTranslationTaskInvariants(), []);
+
+    assert.equal(plugin.removeQueuedAutoTranslationItem("auto-k1"), 1);
+    assert.equal(sm.queuedKeys.has("auto-k1"), false);
+    assert.deepEqual(plugin.checkAutoTranslationTaskInvariants(), []);
+
+    plugin.markAutoTranslationInFlightItem(item);
+    assert.equal(sm.inFlightKeys.has("auto-k1"), true);
+    assert.equal(plugin.finishAutoTranslationInFlightItem(item), true);
+    assert.equal(sm.inFlightKeys.has("auto-k1"), false);
+    assert.deepEqual(plugin.checkAutoTranslationTaskInvariants(), []);
+
+    // Render task enqueue & cancel delegate through stateMachine cleanly.
+    plugin.scheduleAutoTranslationRenderQueue = () => {};
+    const target = { messageNode: { isConnected: true }, content: { isConnected: true }, text: "hello" };
+    assert.equal(plugin.queueAutoTranslationRenderTask({ key: "rk1", cacheKey: "auto-k1", target, run: () => {} }), true);
+    assert.equal(sm.renderQueuedKeys.has("rk1"), true);
+    assert.equal(sm.renderPendingKeys.has("auto-k1"), true);
+    assert.deepEqual(plugin.checkAutoTranslationTaskInvariants(), []);
+
+    plugin.cancelAutoTranslationRenderQueue();
+    assert.equal(sm.renderQueue.length, 0);
+    assert.equal(sm.renderQueuedKeys.size, 0);
+    assert.equal(sm.renderPendingKeys.size, 0);
+    assert.deepEqual(plugin.checkAutoTranslationTaskInvariants(), []);
 });
