@@ -72,7 +72,7 @@ class AutoTranslationQueueCore {
         if (["googleTranslate.keyPoolText", "googleTranslate.defaultMonthlyLimit", "googleTranslate.allowPrefetch"].includes(path)) return true;
         if (!path.startsWith("translation.")) return false;
         const field = path.split(".")[1];
-        return [
+        if ([
             "enabled",
             "apiKey",
             "endpoint",
@@ -88,7 +88,11 @@ class AutoTranslationQueueCore {
             "temperature",
             "maxTokens",
             "prompt"
-        ].includes(field);
+        ].includes(field)) return true;
+        const customFields = this.plugin.getRegisteredCredentialFieldNames?.()
+            || this.plugin.providerLayer?.registry?.getCredentialFields?.(this.plugin.settings?.translation)
+            || [];
+        return customFields.includes(field);
     }
 
     invalidateAutoTranslationQueue(options = {}) {

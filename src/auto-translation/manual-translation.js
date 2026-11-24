@@ -354,7 +354,11 @@ const methods = {
                 });
                 break;
             }
-            const requestOptions = { ...this.getManualRescueAttemptOptions(plan, attemptName, previousOutput, previousReason) };
+            const baseAttemptOptions = this.getManualRescueAttemptOptions(plan, attemptName, previousOutput, previousReason);
+            const requestOptions = {
+                ...baseAttemptOptions,
+                requestContext: {}
+            };
             let translated = "";
             let validation = null;
             try {
@@ -369,6 +373,14 @@ const methods = {
                     cacheable: Boolean(validation.cacheable)
                 });
                 if (validation.renderable) {
+                    if (plan?.requestOptions?.requestContext && typeof plan.requestOptions.requestContext === "object") {
+                        if (requestOptions.requestContext.fallbackProvider) {
+                            plan.requestOptions.requestContext.fallbackProvider = requestOptions.requestContext.fallbackProvider;
+                        }
+                        else {
+                            delete plan.requestOptions.requestContext.fallbackProvider;
+                        }
+                    }
                     return { translated, validation, requestOptions, attemptName, attempts };
                 }
                 previousOutput = String(translated || "");

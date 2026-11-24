@@ -606,7 +606,12 @@ const methods = {
             this.plugin.removeAutoTranslationNode(target, cacheKey);
             return;
         }
-        this.plugin.renderTranslationError(target.messageNode, target.content, error, cacheKey, this.plugin.getAutoTranslationTargetDomText(target));
+        const domText = this.plugin.getAutoTranslationTargetDomText(target);
+        if (this.plugin.hasManualTranslationLine(target.content, domText)) {
+            this.logAutoTranslationRenderSkip({ ...target, cacheKey, requestOptions }, target, "manual-line");
+            return;
+        }
+        this.plugin.renderTranslationError(target.messageNode, target.content, error, cacheKey, domText);
         this.plugin.logAutoTranslationMessageState(
             "auto.message.state",
             "failure-rendered",
@@ -1969,7 +1974,8 @@ const methods = {
             return;
         }
 
-        const requestOptions = this.withMessageIdentity(this.plugin.getAutoTranslationOptions(), messageNode, content, text);
+        const baseOptions = this.plugin.getAutoTranslationRequestOptionsForText(text, this.plugin.getAutoTranslationOptions());
+        const requestOptions = this.withMessageIdentity(baseOptions, messageNode, content, text);
         const cacheKey = this.plugin.getTranslationCacheKey(text, requestOptions);
         this.plugin.clearAutoTranslationFailure(cacheKey, requestOptions, { clearProvider: true });
         this.clearAutoTextTranslationFailure(text, requestOptions);

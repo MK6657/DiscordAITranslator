@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.5.2 - 2026-11-24
+
+### Fixes & Hardening
+
+- **Custom `ProviderRegistry` secret redaction & nested diagnostic array sanitization**: Extended `createSettingsSnapshot()` and `isSensitiveDiagnosticKey()` across all registered adapters' `credentialFields` so custom secrets never leak in exported troubleshooting snapshots or diagnostic logs; fixed `sanitizeDiagnosticMeta()` to recursively sanitize objects inside arrays (such as `candidateLengths`) instead of serializing them to `"[object Object]"`.
+- **Service profile sync, fallback live-credential overlay & custom provider wiring**:
+  - Updated `syncTaskServiceConfig()` to scrub stale custom `credentialFields` from the previous target provider and sync/reset `region`, `deeplPlan`, `appId`, and `secretKey` when syncing to translation; guarded `applySavedServiceConfig()` / `findMatchingSavedServiceConfig()` / `isTaskAtPristineDefault()` for `googleCloud` against empty key pools.
+  - Updated `getProviderFallbackConfig()` to overlay live `settings[kind]` fields when the fallback provider matches the active task provider, picking up newly typed credentials and respecting cleared credentials over stale `providerProfiles`.
+  - Derived complete default `ui` capabilities in `SettingsSchema.getProviderCapabilities()`, rendered custom `credentialFields` password inputs in `tab-services.js`, respected custom `defaultProfile.model` / `defaultProfile.endpoint` in `local-model-health.js` and `translation-cache-store.js` (preserving 100% of built-in v0.3–v0.5 cache keys), routed `startLocalProviderHealthProbe()` through `fetchModelResponse(..., { connectionTest: true })`, separated `translateAsArray` request dedupe keys for custom direct-translate adapters without `responseParser`, and wired custom credentials into `shouldInvalidateAutoTranslationForSetting()`, `getAutoTranslationOverrides()`, and `getComposerMenuConfigKey()`.
+- **Google Cloud stale connection-test & fallback status isolation**: Aborted in-flight translation connection tests when `googleTranslate.keyPoolText` changes, gated `markGoogleTranslateProviderSuccess()` on current primary requests, and recorded connection-test key success only after `isCurrent()` passes.
+- **Public bilingual, manual rescue & output-guard hardening**:
+  - Sanitized public-bilingual outputs via `sanitizeAutoTranslationOutput()`, enforced a shared per-click `MANUAL_TRANSLATION_REQUEST_BUDGET` across attempts and provider fallbacks, and isolated per-attempt `requestContext` across public-bilingual, manual rescue, and long-text chunk/subchunk rescue so rejected fallback outputs never taint a subsequent primary success; preserved `requestOrigin` and `isolatedConfig` on long-text retry/final-fallback options.
+  - Fixed `isAutoTranslationCodeOnlyText()` so multi-code-block messages containing prose between fences are translated instead of skipped; guarded outer fence unwrapping against nested fences and replaced loose quote matching in `extractAutoTranslationOutputCandidates()` with paired quote patterns that ignore English contraction apostrophes (`I'm`, `can't`); excluded `404`/`405`/`providerModelNotFound` and endpoint validation errors from `shouldFallbackAutoTranslationBatchRequestError()`.
+- **DOM manual-line protection, Discord settings close rescan, `stop()` persistence & script hardening**: Guarded `renderAutoTranslationFailure()` against overwriting manual translation lines, applied `getAutoTranslationRequestOptionsForText()` in `retryAutoTranslationTarget()` for long messages, tracked `discordSettingsScanDeferred` so closing Discord's native settings surface resumes deferred scans, committed open `.dait-settings` controls before `flushSettings()` in `stop()` while clearing any newly scheduled `settingsDirtyTimer`, hardened the `%APPDATA%` redirect probe in `scripts/check-installed-plugin.ps1`, and added regression coverage in `tests/core/v052-audit-fixes.test.js`.
+
 ## 0.5.1 - 2026-11-24
 
 ### Fixes & Hardening

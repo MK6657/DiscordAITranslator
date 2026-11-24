@@ -79,8 +79,11 @@ class DiscordContextMenuAdapter {
             plugin.isPublicBilingualUseInitialOriginalEnabled(),
             plugin.isPublicBilingualPolishBeforeTranslateEnabled()
         ];
+        const customCredentials = (plugin.providerLayer?.registry?.getCredentialFields?.(config) || [])
+            .filter(field => field && !["apiKey", "secretKey"].includes(field))
+            .map(field => [field, config[field] ?? ""]);
         return plugin.getStrongTextFingerprint(JSON.stringify([
-            plugin.getCacheConfigSnapshot(kind, config), config.apiKey, config.apiKeyOrigin, config.secretKey, behavior
+            plugin.getCacheConfigSnapshot(kind, config), config.apiKey, config.apiKeyOrigin, config.secretKey, customCredentials, behavior
         ]));
     }
 

@@ -21,7 +21,7 @@ const methods = {
 
     shouldAutoDetectLocalProviderModel(config = {}, defaultConfig = {}) {
         if (!this.plugin.isLocalTranslationProvider(config)) return false;
-        const providerDefault = PROVIDER_DEFAULTS[config.provider] || {};
+        const providerDefault = this.plugin.getProviderDefaults?.(config.provider) || PROVIDER_DEFAULTS[config.provider] || {};
         const model = String(config.model || providerDefault.model || defaultConfig.model || "").trim();
         if (!this.plugin.isLocalProviderAutoModelValue(model)) return false;
         return this.plugin.isLoopbackEndpoint(this.plugin.getEffectiveChatCompletionEndpoint(config, defaultConfig))
@@ -32,10 +32,15 @@ const methods = {
         if (!this.plugin.isLocalTranslationProvider(config)) return "";
         const endpoint = this.plugin.getEffectiveChatCompletionEndpoint(config, defaultConfig);
         if (!endpoint) return "";
+        const credentialFields = this.plugin.providerLayer?.registry?.getCredentialFields?.(config) || ["apiKey"];
+        const hasCustomFields = credentialFields.some(field => field !== "apiKey");
+        const credSource = hasCustomFields
+            ? credentialFields.map(field => `${field}=${String(config[field] ?? "").trim()}`).join("|")
+            : String(config.apiKey || "").trim();
         return [
             config.provider || "sakuraLocal",
             endpoint,
-            this.plugin.getTextFingerprint(String(config.apiKey || "").trim())
+            this.plugin.getTextFingerprint(credSource)
         ].join("\n---\n");
     },
 
@@ -93,7 +98,7 @@ const methods = {
     },
 
     getEffectiveChatCompletionModel(kind, config = {}, defaultConfig = DEFAULT_SETTINGS[kind] || {}) {
-        const providerDefault = PROVIDER_DEFAULTS[config.provider] || {};
+        const providerDefault = this.plugin.getProviderDefaults?.(config.provider) || PROVIDER_DEFAULTS[config.provider] || {};
         const configured = String(config.model || providerDefault.model || defaultConfig.model || "").trim();
         if (this.plugin.shouldAutoDetectLocalProviderModel(config, defaultConfig)) {
             return this.plugin.getCachedLocalProviderDetectedModel(config, { defaultConfig }) || configured || LOCAL_PROVIDER_AUTO_MODEL_VALUE;
@@ -253,9 +258,19 @@ const methods = {
     },
 
     async detectProviderModels(kind, options = {}) {
-        const { provider, endpoint: configuredEndpoint, apiKey, apiKeyOrigin, model } = options.config || this.plugin.getTaskConfig(kind);
-        const snapshot = Object.freeze({ provider, endpoint: configuredEndpoint, apiKey, apiKeyOrigin, model });
-        const config = options.omitApiKey ? Object.freeze({ ...snapshot, apiKey: "" }) : snapshot;
+        const rawConfig = options.config || this.plugin.getTaskConfig(kind);
+        const { provider, endpoint: configuredEndpoint, apiKey, apiKeyOrigin, model } = rawConfig;
+        const snapshotBase = { provider, endpoint: configuredEndpoint, apiKey, apiKeyOrigin, model };
+        const extraFields = this.plugin.providerLayer?.registry?.getCredentialFields?.(provider) || [];
+        extraFields.forEach(field => {
+            if (field && !Object.prototype.hasOwnProperty.call(snapshotBase, field)) snapshotBase[field] = rawConfig[field];
+        });
+        const snapshot = Object.freeze(snapshotBase);
+        const omitBase = { ...snapshot, apiKey: "" };
+        if (options.omitApiKey) {
+            extraFields.forEach(field => { if (field) omitBase[field] = ""; });
+        }
+        const config = options.omitApiKey ? Object.freeze(omitBase) : snapshot;
         const assertCurrent = () => {
             if (options.signal?.aborted || options.isCurrent?.() === false || !this.plugin.matchesModelDetectionConfig(kind, snapshot)) {
                 throw new DOMException("Model detection superseded", "AbortError");
@@ -388,12 +403,15 @@ const methods = {
                 if (!isCurrent()) return;
                 const test = this.plugin.buildConnectionTestRequest("translation", config);
                 endpoint = test.endpoint;
-                const raw = await this.plugin.fetchApiResponseText(test.endpoint, test.request, API_TEST_REQUEST_TIMEOUT_MS, { signal });
-                if (!isCurrent()) return;
                 try {
-                    this.plugin.parseModelResponse(raw);
+                    await this.plugin.fetchModelResponse(test.endpoint, test.request, API_TEST_REQUEST_TIMEOUT_MS, {
+                        signal,
+                        connectionTest: true
+                    });
+                    if (!isCurrent()) return;
                 }
                 catch (error) {
+                    if (!isCurrent()) return;
                     if (!this.plugin.isAcceptableConnectionTestTruncation(error, "translation", config)) throw error;
                     this.plugin.logDiagnostic("auto.provider.health", "truncated-ok", {
                         key: this.plugin.getTextFingerprint(providerKey),

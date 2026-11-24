@@ -564,7 +564,8 @@ class TranslationCacheStore {
         const cacheEndpoint = precomputedCacheEndpoint || this.getTranslationCacheEndpoint(config);
         const legacyFallback = String(defaults.endpoint || "").trim();
         const oldEndpoint = this.getCacheConfigSnapshot("translation", config).endpoint;
-        const candidates = new Set([oldEndpoint, endpoint, PROVIDER_DEFAULTS[config.provider]?.endpoint]);
+        const providerDefaultEndpoint = this.plugin.getProviderDefaults?.(config.provider)?.endpoint || PROVIDER_DEFAULTS[config.provider]?.endpoint;
+        const candidates = new Set([oldEndpoint, endpoint, providerDefaultEndpoint]);
         return [...candidates].filter(candidate => {
             if (!candidate || candidate === cacheEndpoint) return false;
             if (candidate === legacyFallback && endpoint !== provider.getProviderEndpointIdentity({ ...config, endpoint: "" }, defaults)) return false;
@@ -651,10 +652,12 @@ class TranslationCacheStore {
     getCacheConfigSnapshot(kind, config, options = {}) {
         const defaults = DEFAULT_SETTINGS[kind] || {};
         const provider = String(config.provider || defaults.provider || "").trim();
+        const adapter = this.plugin.providerLayer?.registry?.get?.(provider) || null;
+        const customDefaults = !PROVIDER_DEFAULTS[provider] && adapter?.defaultProfile ? adapter.defaultProfile : null;
         const snapshot = {
             provider,
-            endpoint: String(config.endpoint || defaults.endpoint || "").trim(),
-            model: String(config.model || defaults.model || "").trim(),
+            endpoint: String(config.endpoint || customDefaults?.endpoint || defaults.endpoint || "").trim(),
+            model: String(config.model || customDefaults?.model || defaults.model || "").trim(),
             sourceLanguage: String(config.sourceLanguage || defaults.sourceLanguage || "").trim(),
             targetLanguage: String(config.targetLanguage || defaults.targetLanguage || "").trim(),
             temperature: this.plugin.normalizeRequestNumber(config.temperature, defaults.temperature ?? 0.2, { min: 0, max: 2 }),
@@ -666,7 +669,6 @@ class TranslationCacheStore {
             promptPolicyVersion: String(config.promptPolicyVersion || "").trim(),
             prompt: String(config.prompt || "").trim()
         };
-        const adapter = this.plugin.providerLayer?.registry?.get?.(provider) || null;
         if (this.plugin.isDirectTranslateProvider(provider)) {
             snapshot.model = adapter?.defaultProfile?.model || PROVIDER_DEFAULTS[provider]?.model || "";
             snapshot.temperature = 0;

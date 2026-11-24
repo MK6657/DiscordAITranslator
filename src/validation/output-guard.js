@@ -63,7 +63,7 @@ class OutputGuard {
         };
 
         const fenced = raw.match(/^```[A-Za-z0-9_-]*\s*([\s\S]*?)\s*```$/);
-        if (fenced) push(fenced[1]);
+        if (fenced && !fenced[1].includes("```")) push(fenced[1]);
 
         const labeled = raw.match(/^(?:(?:translation|translated text|translated_text|translated message|translated_message|translated-message|translatedMessage|result|answer|output|target|final)|(?:\u4ee5\u4e0b\u662f|\u8fd9\u662f).{0,8}(?:\u7ffb\u8bd1|\u8bd1\u6587)|(?:\u7ffb\u8bd1|\u8bd1\u6587|\u7ffb\u8bd1\u7ed3\u679c))\s*[:\uff1a]\s*([\s\S]+)$/i);
         if (labeled) push(labeled[1]);
@@ -77,7 +77,18 @@ class OutputGuard {
                 const inner = raw.slice(1, -1);
                 if (!inner.includes(closingQuote)) push(inner);
             }
-            const quotedMatches = [...raw.matchAll(/["'\u201c\u201d\u2018\u2019\u300c\u300d\u300e\u300f\u300a\u300b]([^"'\u201c\u201d\u2018\u2019\u300c\u300d\u300e\u300f\u300a\u300b]{1,220})["'\u201c\u201d\u2018\u2019\u300c\u300d\u300e\u300f\u300a\u300b]/g)];
+            const quotedPatterns = [
+                /"([^"]{1,220})"/gu,
+                /\u201c([^\u201c\u201d]{1,220})\u201d/gu,
+                /\u300c([^\u300c\u300d]{1,220})\u300d/gu,
+                /\u300e([^\u300e\u300f]{1,220})\u300f/gu,
+                /\u300a([^\u300a\u300b]{1,220})\u300b/gu,
+                /(?<![\p{L}\p{N}])'([^'\n]{1,220})'(?![\p{L}\p{N}])/gu,
+                /(?<![\p{L}\p{N}])\u2018([^\u2018\u2019\n]{1,220})\u2019(?![\p{L}\p{N}])/gu
+            ];
+            const quotedMatches = quotedPatterns
+                .flatMap(pattern => [...raw.matchAll(pattern)])
+                .sort((left, right) => Number(left.index || 0) - Number(right.index || 0));
             if (quotedMatches.length && (options.allowQuotedFragments?.() ?? true)) {
                 quotedMatches.forEach(match => {
                     const rest = raw.slice(match.index + match[0].length);

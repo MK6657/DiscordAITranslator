@@ -165,6 +165,7 @@ module.exports = class DiscordAITranslator {
         this.quickSettingsLastInjectAt = 0;
         this.quickSettingsScanDeferred = false;
         this.quickSettingsRenderDeferred = false;
+        this.discordSettingsScanDeferred = false;
         this.settingsSurfaceProbeAt = 0;
         this.settingsSurfaceProbeOpen = false;
         this.slowDiagnosticLastLoggedAt = new Map();
@@ -378,7 +379,11 @@ module.exports = class DiscordAITranslator {
         this.googleTranslateReservedChars.clear();
         const translationCachePersisted = this.flushTranslationCache({ retryOnError: false }) !== false;
         this.flushGoogleTranslateRuntimeState({ retryOnError: false });
-        this.flushSettings({ retryOnError: false });
+        if (typeof document !== "undefined") {
+            document.querySelectorAll?.(".dait-settings")?.forEach(panel => this.commitSettingsControls?.(panel));
+        }
+        this.closeQuickSettingsPanel(null, "stop");
+        this.flushSettings({ force: true, retryOnError: false });
         const diagnosticLogsPersisted = this.flushDiagnosticLogs({ retryOnError: false }) !== false;
         this.unpatchContextMenus();
         this.removePolishResultPanel();
@@ -390,9 +395,10 @@ module.exports = class DiscordAITranslator {
         this.lastMissingMessageButtonSweepAt = 0;
         this.polishSession = null;
         this.latestPolishRequestIds = new WeakMap();
-        this.closeQuickSettingsPanel(null, "stop");
         this.quickPanel.destroy("stop");
-        document.querySelectorAll?.(".dait-settings")?.forEach(panel => this.destroySettingsModalSizing(panel));
+        if (typeof document !== "undefined") {
+            document.querySelectorAll?.(".dait-settings")?.forEach(panel => this.destroySettingsModalSizing(panel));
+        }
         this.restoreAllTranslationSourceVisibility();
         document.querySelectorAll(".dait-message-button, .dait-polish-button, .dait-polish-preset-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-menu-button, .dait-input-action-menu, .dait-polish-preset-menu, .dait-quick-settings-button, .dait-translation-line, .dait-translation-box, .dait-input-action-group").forEach(node => node.remove());
         document.querySelectorAll(".dait-input-actions-host").forEach(node => node.classList?.remove?.("dait-input-actions-host"));
@@ -448,8 +454,12 @@ module.exports = class DiscordAITranslator {
         this.observerRetryTimer = null;
         this.diagnosticLogsIdleCallback = null;
         this.translationCacheIdleCallback = null;
+        if (this.settingsDirtyTimer) clearTimeout(this.settingsDirtyTimer);
         this.settingsDirtyTimer = null;
         this.settingsDirtyAt = 0;
+        this.discordSettingsScanDeferred = false;
+        this.settingsSurfaceProbeAt = 0;
+        this.settingsSurfaceProbeOpen = false;
         this.scanTimer = null;
         this.scanDueAt = 0;
         this.cacheOnlyScanTimer = null;

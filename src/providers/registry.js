@@ -14,6 +14,7 @@
  * @property {boolean} [supportsModelDetection]
  * @property {boolean} [apiKeyOptional]
  * @property {string} [responseParser]
+ * @property {Record<string, any>} [ui]
  * @property {(config: any, defaultConfig: any, plugin: any) => string} getEffectiveEndpoint
  * @property {(kind: string, input: any, config: any, defaultConfig: any, options: any, plugin: any) => any} buildRequest
  * @property {(raw: string, request: any, options: any, plugin: any) => any} parseResponse

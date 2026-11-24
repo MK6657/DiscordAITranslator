@@ -234,7 +234,11 @@ class DiagnosticsRecorder {
                 return;
             }
             if (Array.isArray(value)) {
-                result[key] = value.slice(0, 12).map(item => this.plugin.sanitizeDiagnosticValue(item));
+                result[key] = value.slice(0, 12).map(item => (
+                    item && typeof item === "object" && !Array.isArray(item)
+                        ? this.plugin.sanitizeDiagnosticObject(item)
+                        : this.plugin.sanitizeDiagnosticValue(item)
+                ));
                 return;
             }
             if (typeof value === "object") {

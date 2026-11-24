@@ -548,9 +548,13 @@ const methods = {
         const list = this.getSavedServiceConfigsForTask(kind);
         return list.find(entry => {
             if (this.getServiceConfigIdentityKey(entry) !== identity) return false;
+            if (entry.provider === "googleCloud" && !this.plugin.hasUsableApiConfig(kind)) return false;
             if (String(entry.apiKey || "") !== String(task.apiKey || "")) return false;
             if (entry.provider === "baidu" && String(entry.secretKey || "") !== String(task.secretKey || "")) return false;
             if (entry.provider === "deepseek" && Boolean(entry.enableThinking) !== Boolean(task.enableThinking)) return false;
+            const customFields = (this.plugin.providerLayer?.registry?.getCredentialFields?.(entry.provider) || [])
+                .filter(field => field && !PROVIDER_PROFILE_FIELDS.includes(field));
+            if (customFields.some(field => String(entry[field] || "") !== String(task[field] || ""))) return false;
             return true;
         }) || null;
     },
@@ -563,19 +567,37 @@ const methods = {
         if (String(task.apiKey || "").trim()) return false;
         if (String(task.secretKey || "").trim()) return false;
         if (String(task.appId || "").trim()) return false;
+        const registeredCredentialFields = this.getRegisteredCredentialFieldNames();
+        if (registeredCredentialFields.some(field => !PROVIDER_PROFILE_FIELDS.includes(field) && String(task[field] || "").trim())) {
+            return false;
+        }
         if (String(task.endpoint || "") !== String(defaults.endpoint || "")) return false;
         if (String(task.model || "") !== String(defaults.model || "")) return false;
         if (task.apiStatus?.state && task.apiStatus.state !== "untested") return false;
         const profiles = task.providerProfiles;
         if (profiles && typeof profiles === "object") {
-            for (const profile of Object.values(profiles)) {
+            for (const [provider, profile] of Object.entries(profiles)) {
                 if (!profile || typeof profile !== "object") continue;
                 if (String(profile.apiKey || "").trim() || String(profile.secretKey || "").trim() || String(profile.appId || "").trim()) {
                     return false;
                 }
+                const extraFields = (this.plugin.providerLayer?.registry?.getCredentialFields?.(provider) || [])
+                    .filter(field => field && !PROVIDER_PROFILE_FIELDS.includes(field));
+                if (extraFields.some(field => String(profile[field] || "").trim())) return false;
             }
         }
         return true;
+    },
+
+    getRegisteredCredentialFieldNames() {
+        const fields = new Set();
+        for (const adapter of this.plugin.providerLayer?.registry?.list?.() || []) {
+            for (const field of adapter?.credentialFields || []) {
+                const name = String(field || "").trim();
+                if (name) fields.add(name);
+            }
+        }
+        return [...fields];
     },
 
     saveVerifiedServiceConfig(kind, configOverride = null, options = {}) {
@@ -671,6 +693,11 @@ const methods = {
                 this.plugin.syncSettingControls(`translation.${field}`, task[field], { includeActive: true });
             });
         }
+        const customFields = (this.plugin.providerLayer?.registry?.getCredentialFields?.(task.provider) || [])
+            .filter(field => field && !PROVIDER_PROFILE_FIELDS.includes(field));
+        customFields.forEach(field => {
+            this.plugin.syncSettingControls(`${kind}.${field}`, task[field] ?? "", { includeActive: true });
+        });
     },
 
     applySavedServiceConfig(kind, configId, options = {}) {
@@ -707,14 +734,20 @@ const methods = {
         });
         this.saveTaskProviderProfile(kind, entry.provider);
         if (task.model) this.rememberTaskProviderModel(kind, entry.provider, task.model);
-        task.apiStatus = { state: "success", message: "" };
-        this.plugin.recordApiTestResult?.(kind, {
-            ok: true,
-            model: entry.reportedModel || (this.isChatCompletionProvider(entry.provider) ? this.getDiagnosticModelLabel(task.model) : ""),
-            latencyMs: entry.latencyMs,
-            at: entry.verifiedAt || Date.now(),
-            message: ""
-        });
+        const usableAfterApply = entry.provider !== "googleCloud" || this.plugin.hasUsableApiConfig(kind);
+        task.apiStatus = usableAfterApply ? { state: "success", message: "" } : { state: "untested", message: "" };
+        if (usableAfterApply) {
+            this.plugin.recordApiTestResult?.(kind, {
+                ok: true,
+                model: entry.reportedModel || (this.isChatCompletionProvider(entry.provider) ? this.getDiagnosticModelLabel(task.model) : ""),
+                latencyMs: entry.latencyMs,
+                at: entry.verifiedAt || Date.now(),
+                message: ""
+            });
+        }
+        else {
+            this.plugin.clearLastApiTestResult?.(kind);
+        }
         if (kind === "translation") this.plugin.invalidateAutoTranslationQueue();
         if (options.save !== false) this.plugin.saveSettings();
         if (options.refreshUi !== false) {
@@ -729,6 +762,10 @@ const methods = {
                 this.plugin.syncSettingControls("translation.appId", task.appId, { includeActive: true });
                 this.plugin.syncSettingControls("translation.secretKey", task.secretKey, { includeActive: true });
             }
+            savedCredentialFields.forEach(field => {
+                if (!field || PROVIDER_PROFILE_FIELDS.includes(field)) return;
+                this.plugin.syncSettingControls(`${kind}.${field}`, task[field] ?? "", { includeActive: true });
+            });
             this.syncTaskControlsInOpenPanels(kind);
             this.plugin.refreshApiTestViews(kind);
             this.plugin.refreshSavedServiceConfigControls();
@@ -759,14 +796,25 @@ const methods = {
         const previousTargetProvider = this.normalizeProviderForTask(toKind, toTask.provider);
         if (previousTargetProvider && previousTargetProvider !== provider) {
             this.saveTaskProviderProfile(toKind, previousTargetProvider);
+            const prevCredentials = this.plugin.providerLayer?.registry?.getCredentialFields?.(previousTargetProvider) || [];
+            prevCredentials.forEach(field => {
+                if (field && !PROVIDER_PROFILE_FIELDS.includes(field)) delete toTask[field];
+            });
         }
         const preset = this.plugin.getProviderDefaults(provider) || {};
         toTask.provider = provider;
         toTask.apiKey = fromTask.apiKey || "";
         toTask.endpoint = fromTask.endpoint || preset.endpoint || "";
-        toTask.apiKeyOrigin = fromTask.apiKeyOrigin;
+        if (typeof fromTask.apiKeyOrigin === "string") toTask.apiKeyOrigin = fromTask.apiKeyOrigin;
+        else delete toTask.apiKeyOrigin;
         toTask.model = fromTask.model || preset.model || "";
         toTask.enableThinking = provider === "deepseek" ? Boolean(fromTask.enableThinking) : false;
+        if (toKind === "translation") {
+            toTask.region = typeof fromTask.region === "string" ? fromTask.region : (preset.region || "");
+            toTask.deeplPlan = ["free", "pro"].includes(fromTask.deeplPlan) ? fromTask.deeplPlan : (preset.deeplPlan || "free");
+            toTask.appId = typeof fromTask.appId === "string" ? fromTask.appId : (preset.appId || "");
+            toTask.secretKey = typeof fromTask.secretKey === "string" ? fromTask.secretKey : (preset.secretKey || "");
+        }
         const syncCredentialFields = this.plugin.providerLayer?.registry?.getCredentialFields?.(provider) || [];
         syncCredentialFields.forEach(field => {
             if (!field || PROVIDER_PROFILE_FIELDS.includes(field)) return;
@@ -848,6 +896,11 @@ const methods = {
             if (options.restoreProfile) {
                 this.plugin.syncSettingControls(`${kind}.apiKey`, this.plugin.settings[kind].apiKey);
                 this.plugin.syncSettingControls(`${kind}.enableThinking`, this.plugin.settings[kind].enableThinking);
+                const credentialFields = this.plugin.providerLayer?.registry?.getCredentialFields?.(provider) || [];
+                credentialFields.forEach(field => {
+                    if (!field || PROVIDER_PROFILE_FIELDS.includes(field)) return;
+                    this.plugin.syncSettingControls(`${kind}.${field}`, this.plugin.settings[kind][field] ?? "");
+                });
             }
         }
         if (kind === "translation" && options.invalidate !== false) this.plugin.invalidateAutoTranslationQueue();
@@ -972,6 +1025,7 @@ const methods = {
         const normalized = value.toLowerCase();
         if (SAFE_DIAGNOSTIC_KEYS.has(normalized)) return false;
         if (SENSITIVE_DIAGNOSTIC_KEYS.has(normalized)) return true;
+        if (this.getRegisteredCredentialFieldNames().some(field => field.toLowerCase() === normalized)) return true;
         return /api.?key|authorization|token|password|secret|body|prompt|message|endpoint|url|uri|guild.*id|channel.*id|author.*id|user.*id/i.test(value);
     },
 
@@ -1227,7 +1281,10 @@ const methods = {
 
     // Troubleshooting copy of the settings: switches and numbers as-is, secrets and private text reduced to markers.
     createSettingsSnapshot() {
-        const secretKeys = new Set(["apikey", "secretkey", "appid", "keypooltext", "keys", "token", "password", "authorization"]);
+        const secretKeys = new Set([
+            "apikey", "secretkey", "appid", "keypooltext", "keys", "token", "password", "authorization",
+            ...this.getRegisteredCredentialFieldNames().map(field => field.toLowerCase())
+        ]);
         const sanitize = (value, key = "", defaults = undefined) => {
             const name = String(key).toLowerCase();
             if (secretKeys.has(name)) {

@@ -85,6 +85,46 @@ const methods = {
         return Number(rect.width || 0) > 0 && Number(rect.height || 0) > 0;
     },
 
+    maybeResumeAfterDiscordSettingsClose(mutations = []) {
+        if (!this.plugin.discordSettingsScanDeferred && !this.plugin.settingsSurfaceProbeOpen) return;
+        if (![...(mutations || [])].some(mutation => this.isDiscordSettingsSurfaceCloseMutation(mutation))) return;
+        this.plugin.settingsSurfaceProbeAt = 0;
+        if (this.plugin.isDiscordSettingsSurfaceOpen({ force: true })) return;
+        if (!this.plugin.discordSettingsScanDeferred) return;
+        this.plugin.discordSettingsScanDeferred = false;
+        this.plugin.queueScan({ delayMs: AUTO_TRANSLATE_VIEWPORT_STABLE_RESCAN_MS, trailing: true });
+        this.plugin.queueInputButtonScan({ delayMs: 120, trailing: true });
+    },
+
+    isDiscordSettingsSurfaceCloseMutation(mutation) {
+        if (!mutation) return false;
+        const selector = `${DISCORD_SETTINGS_SURFACE_SELECTOR}, .dait-settings[data-dait-settings-inline='true']`;
+        const matchesSurfaceNode = node => {
+            const element = node?.nodeType === 3 ? node.parentElement : node;
+            if (!element || element.nodeType !== 1) return false;
+            try {
+                return Boolean(element.matches?.(selector) || element.querySelector?.(selector));
+            }
+            catch {
+                return false;
+            }
+        };
+        if (mutation.type === "childList") {
+            return [...(mutation.removedNodes || [])].some(matchesSurfaceNode);
+        }
+        if (mutation.type === "attributes") {
+            const target = mutation.target?.nodeType === 3 ? mutation.target.parentElement : mutation.target;
+            if (!target || target.nodeType !== 1) return false;
+            try {
+                return Boolean(target.matches?.(selector) || target.closest?.(DISCORD_SETTINGS_SURFACE_SELECTOR));
+            }
+            catch {
+                return false;
+            }
+        }
+        return false;
+    },
+
     isOwnPluginElement(element) {
         return Boolean(element?.closest?.(".dait-settings, .dait-quick-settings-button, .dait-quick-settings-modal-root, .dait-quick-popover, .dait-message-button, .dait-polish-button, .dait-polish-preset-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-group, .dait-input-action-menu-button, .dait-input-action-menu, .dait-polish-preset-menu, .dait-polish-result-panel, .dait-polish-restore-control, .dait-translation-line, .dait-translation-box"));
     },
@@ -148,9 +188,12 @@ const methods = {
             settingsSurfaceByElement: new Map()
         };
         try {
-            if (this.plugin.observerRoot === document.body && this.hasPotentialDiscordObserverRootMutation(mutations)) {
-                const nextRoot = this.getDiscordChatMutationObserverRoot();
-                if (nextRoot && nextRoot !== document.body) this.plugin.scheduleDiscordObserverRebind("chat-root-available");
+            if (this.plugin.observerRoot === document.body) {
+                this.maybeResumeAfterDiscordSettingsClose(mutations);
+                if (this.hasPotentialDiscordObserverRootMutation(mutations)) {
+                    const nextRoot = this.getDiscordChatMutationObserverRoot();
+                    if (nextRoot && nextRoot !== document.body) this.plugin.scheduleDiscordObserverRebind("chat-root-available");
+                }
             }
             if (this.plugin.isDiscordMediaViewerQuiet()) {
                 if (this.plugin.hasLightweightDiscordMediaViewerMutation(mutations)) this.enterDiscordMediaViewerQuietMode("quiet-mutation");
@@ -233,6 +276,7 @@ const methods = {
                     return;
                 }
             }
+            this.maybeResumeAfterDiscordSettingsClose(outsideMutations);
             // Only forward outside-chat mutations that actually matter (media viewer overlays, newly mounted
             // thread/sidebar composers, or theme switches). Drop emoji pickers, popouts, member lists, and sidebars.
             const relevantOutside = outsideMutations.filter(mutation =>
@@ -798,7 +842,10 @@ const methods = {
             this.plugin.queueInputButtonScan({ delayMs: mediaDelayMs, trailing: true });
             return;
         }
-        if (this.plugin.isDiscordSettingsSurfaceOpen()) return;
+        if (this.plugin.isDiscordSettingsSurfaceOpen()) {
+            this.plugin.discordSettingsScanDeferred = true;
+            return;
+        }
         this.plugin.injectInputButtons();
     },
 
@@ -1115,11 +1162,13 @@ const methods = {
             return;
         }
         if (this.plugin.isDiscordSettingsSurfaceOpen()) {
+            this.plugin.discordSettingsScanDeferred = true;
             this.plugin.cancelAutoTranslationRuntimeWork("route-change", { staleRouteOnly: true });
             this.plugin.logDiagnostic("scan.discord-ui", "blocked", { reason: "discord-settings-open" });
             this.plugin.logSlowOperation("scan.discord-ui", startedAt, { outcome: "blocked", reason: "discord-settings-open" });
             return;
         }
+        this.plugin.discordSettingsScanDeferred = false;
         const routeChanged = this.plugin.trackAutoTranslationRouteChange();
         if (routeChanged) {
             this.plugin.refreshChannelRuleControls();

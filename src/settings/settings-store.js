@@ -1118,8 +1118,23 @@ class SettingsStore {
         else if (options.save === "immediate") this.plugin.saveSettings({ retryOnError: options.retryOnError });
         else this.plugin.saveSettings({ debounce: true, delayMs: options.delayMs });
         this.plugin.syncSettingControls(path, this.getSetting(path), { includeActive: options.live !== true });
-        if (["polish", "translation"].includes(parts[0]) && ["apiKey", "endpoint", "model", "provider", "region", "deeplPlan", "appId", "secretKey"].includes(parts[1])) {
-            this.plugin.resetApiStatus(parts[0], { save: "debounce" });
+        if (["polish", "translation"].includes(parts[0])) {
+            const customCredentials = this.plugin.providerLayer?.registry?.getCredentialFields?.(this.plugin.settings[parts[0]]) || [];
+            if (["apiKey", "endpoint", "model", "provider", "region", "deeplPlan", "appId", "secretKey"].includes(parts[1])
+                || customCredentials.includes(parts[1])) {
+                this.plugin.resetApiStatus(parts[0], { save: "debounce" });
+                this.plugin.refreshSavedServiceConfigControls?.();
+            }
+            else if (parts[1] === "enableThinking") {
+                this.plugin.refreshSavedServiceConfigControls?.();
+            }
+        }
+        if (path === "googleTranslate.keyPoolText") {
+            this.plugin.providerLayer?.apiTestRuns?.get?.("translation")?.controller?.abort?.();
+            if (this.plugin.settings.translation?.provider === "googleCloud") {
+                this.plugin.resetApiStatus("translation", { save: "debounce" });
+            }
+            this.plugin.refreshSavedServiceConfigControls?.();
         }
         if (this.plugin.shouldInvalidateAutoTranslationForSetting(path)) {
             this.plugin.invalidateAutoTranslationQueue();

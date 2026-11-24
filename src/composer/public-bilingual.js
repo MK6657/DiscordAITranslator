@@ -2,6 +2,7 @@
 
 const {
     AUTO_LANGUAGE_VALUE,
+    MANUAL_TRANSLATION_REQUEST_BUDGET,
     MODEL_REQUEST_TIMEOUT_MS,
     DIAGNOSTIC_MESSAGE_STATES,
     DIAGNOSTIC_REASON_CODES,
@@ -156,37 +157,43 @@ const methods = {
     },
 
     async runPublicBilingualTranslationTask(text, options = this.getPublicBilingualTranslationOptions()) {
-        const translated = await this.plugin.runModelTask("translation", text, {
-            configOverrides: options.configOverrides,
-            timeoutMs: MODEL_REQUEST_TIMEOUT_MS,
-            mode: "public-bilingual",
-            requestContext: options.requestContext,
-            providerProfilePinned: true,
-            isolatedConfig: true
-        });
+        const requestBudget = options?.requestBudget
+            || this.plugin.createAutoTranslationRequestBudget?.(MANUAL_TRANSLATION_REQUEST_BUDGET)
+            || null;
+        const resetFallbackContext = ctx => {
+            if (ctx && typeof ctx === "object") delete ctx.fallbackProvider;
+        };
+        const runAttempt = async (mode, attemptOptions) => {
+            if (requestBudget) this.plugin.consumeAutoTranslationRequestBudget({ requestBudget });
+            resetFallbackContext(attemptOptions.requestContext);
+            const rawTranslated = await this.plugin.runModelTask("translation", text, {
+                configOverrides: attemptOptions.configOverrides,
+                timeoutMs: MODEL_REQUEST_TIMEOUT_MS,
+                mode,
+                requestContext: attemptOptions.requestContext,
+                providerProfilePinned: true,
+                isolatedConfig: true,
+                ...(requestBudget ? { requestBudget } : {})
+            });
+            const targetLang = this.plugin.getAutoTranslationTargetLanguage(attemptOptions);
+            return this.plugin.sanitizeAutoTranslationOutput(text, rawTranslated, targetLang);
+        };
+
+        const translated = await runAttempt("public-bilingual", options);
         if (!this.plugin.isInvalidAutoTranslationOutput(text, translated, this.plugin.getAutoTranslationTargetLanguage(options))) return translated;
 
-        const retryOptions = this.getPublicBilingualRetryOptions(text, translated, options);
-        const retried = await this.plugin.runModelTask("translation", text, {
-            configOverrides: retryOptions.configOverrides,
-            timeoutMs: MODEL_REQUEST_TIMEOUT_MS,
-            mode: "public-bilingual-retry",
-            requestContext: retryOptions.requestContext,
-            providerProfilePinned: true,
-            isolatedConfig: true
-        });
-        if (!this.plugin.isInvalidAutoTranslationOutput(text, retried, this.plugin.getAutoTranslationTargetLanguage(retryOptions))) return retried;
+        try {
+            const retryOptions = this.getPublicBilingualRetryOptions(text, translated, options);
+            const retried = await runAttempt("public-bilingual-retry", retryOptions);
+            if (!this.plugin.isInvalidAutoTranslationOutput(text, retried, this.plugin.getAutoTranslationTargetLanguage(retryOptions))) return retried;
 
-        const finalOptions = this.getPublicBilingualFinalFallbackOptions(text, options);
-        const finalText = await this.plugin.runModelTask("translation", text, {
-            configOverrides: finalOptions.configOverrides,
-            timeoutMs: MODEL_REQUEST_TIMEOUT_MS,
-            mode: "public-bilingual-final",
-            requestContext: finalOptions.requestContext,
-            providerProfilePinned: true,
-            isolatedConfig: true
-        });
-        if (!this.plugin.isInvalidAutoTranslationOutput(text, finalText, this.plugin.getAutoTranslationTargetLanguage(finalOptions))) return finalText;
+            const finalOptions = this.getPublicBilingualFinalFallbackOptions(text, options);
+            const finalText = await runAttempt("public-bilingual-final", finalOptions);
+            if (!this.plugin.isInvalidAutoTranslationOutput(text, finalText, this.plugin.getAutoTranslationTargetLanguage(finalOptions))) return finalText;
+        }
+        catch (error) {
+            if (!this.plugin.isAutoTranslationRequestBudgetError?.(error)) throw error;
+        }
 
         throw this.plugin.createFinalInvalidAutoTranslationError();
     },

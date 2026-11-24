@@ -186,22 +186,40 @@ foreach ($shadow in $shadows) {
 }
 
 # Detect whether this window's AppData writes are redirected into an app package.
-$probeName = "dait-redirect-probe-$([guid]::NewGuid().ToString('N')).tmp"
-$probe = Join-Path $env:APPDATA $probeName
-try {
-    Set-Content -LiteralPath $probe -Value "probe" -Encoding ASCII
-    $redirected = @(Get-ChildItem -Path (Join-Path $packagesRoot "*\LocalCache\Roaming\$probeName") -ErrorAction SilentlyContinue)
-    if ($redirected.Count) {
-        $package = Split-Path -Leaf (Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $redirected[0].FullName)))
-        Write-Host "This window:       AppData writes are redirected into app package $package"
-        $problems.Add("This window runs inside app package $package, so installs from here are invisible to a normally started Discord. Use a normal PowerShell window.")
+if ($env:APPDATA -and (Test-Path -LiteralPath $env:APPDATA -PathType Container)) {
+    $probeName = "dait-redirect-probe-$([guid]::NewGuid().ToString('N')).tmp"
+    $probe = Join-Path $env:APPDATA $probeName
+    $probeWritten = $false
+    try {
+        try {
+            [System.IO.File]::WriteAllText($probe, "probe")
+            $probeWritten = $true
+        }
+        catch {
+            Write-Verbose "Could not write the AppData redirect probe: $($_.Exception.Message)"
+        }
+        if ($probeWritten) {
+            $redirectedPackage = ""
+            if (Test-Path -LiteralPath $packagesRoot -PathType Container) {
+                foreach ($packageDir in @(Get-ChildItem -LiteralPath $packagesRoot -Directory -ErrorAction SilentlyContinue)) {
+                    if (Test-Path -LiteralPath (Join-Path $packageDir.FullName "LocalCache\Roaming\$probeName") -PathType Leaf) {
+                        $redirectedPackage = $packageDir.Name
+                        break
+                    }
+                }
+            }
+            if ($redirectedPackage) {
+                Write-Host "This window:       AppData writes are redirected into app package $redirectedPackage"
+                $problems.Add("This window runs inside app package $redirectedPackage, so installs from here are invisible to a normally started Discord. Use a normal PowerShell window.")
+            }
+            else {
+                Write-Host "This window:       AppData writes go to the real folder"
+            }
+        }
     }
-    else {
-        Write-Host "This window:       AppData writes go to the real folder"
+    finally {
+        try { [System.IO.File]::Delete($probe) } catch { }
     }
-}
-finally {
-    Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
 }
 
 $discordFolders = @{ stable = "Discord"; ptb = "DiscordPTB"; canary = "DiscordCanary" }

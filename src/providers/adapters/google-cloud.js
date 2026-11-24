@@ -32,7 +32,9 @@ const googleCloudAdapter = {
         plugin.markGoogleTranslateKeyUsage(request?.googleTranslate?.apiKey, request?.googleTranslate?.charCount || 0, {
             clearCooldown: Boolean(options?.connectionTest)
         });
-        plugin.markGoogleTranslateProviderSuccess(request);
+        if (!options?.connectionTest && options?.isCurrent?.() !== false) {
+            plugin.markGoogleTranslateProviderSuccess(request);
+        }
         return result;
     },
     applyCacheScope(_config, snapshot, plugin) {

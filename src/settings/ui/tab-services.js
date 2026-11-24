@@ -208,6 +208,11 @@ const methods = {
         const apiKeyOptional = Boolean(ui.apiKey && this.plugin.isProviderApiKeyOptional(provider));
 
         if (ui.apiKey && !apiKeyOptional) append(this.createApiKeyRow(kind));
+        const customCredentialFields = (this.plugin.providerLayer?.registry?.getCredentialFields?.(provider) || [])
+            .filter(field => field && !["apiKey", "region", "deeplPlan", "appId", "secretKey"].includes(field));
+        customCredentialFields.forEach(field => {
+            append(this.createInputRow(`${kind}.${field}`, field, "password", "", {}, { stacked: true }));
+        });
         if (ui.endpoint) append(this.createInputRow(`${kind}.endpoint`, this.plugin.t("endpoint"), "text", defaults.endpoint || "", {}, { description: this.getProviderFieldHelp("endpoint", provider), stacked: true }));
         if (ui.region) append(this.createInputRow(`${kind}.region`, this.plugin.t("providerRegion"), "text", "eastus", {}, { description: this.plugin.t("providerRegionDesc") }));
         if (ui.deeplPlan) append(this.plugin.createSelectRow(`${kind}.deeplPlan`, this.plugin.t("deeplPlan"), [
@@ -240,7 +245,11 @@ const methods = {
                     previousOrigin = origin;
                     if (!this.plugin.isStarted || config.provider !== provider || originChanged || !origin || !String(endpoint || "").trim()) return;
                     if ((apiKeyOrigin ?? origin) !== origin || (!this.plugin.isLoopbackEndpoint(origin) && !String(apiKey || "").trim())) return;
+                    const extraFields = this.plugin.providerLayer?.registry?.getCredentialFields?.(provider) || [];
                     const snapshot = { provider, endpoint, apiKey, apiKeyOrigin };
+                    extraFields.forEach(field => {
+                        if (field && !Object.prototype.hasOwnProperty.call(snapshot, field)) snapshot[field] = config[field];
+                    });
                     const lifecycleToken = this.plugin.getLifecycleToken();
                     detectionTimer = setTimeout(() => {
                         if (!endpointInput.isConnected || !this.plugin.isLifecycleTokenCurrent(lifecycleToken)
@@ -436,8 +445,14 @@ const methods = {
     async runModelDetection(kind, { button = null, picker = null, status = null, input = null, auto = false } = {}) {
         const lifecycleToken = this.plugin.getLifecycleToken();
         if (!this.plugin.isLifecycleTokenCurrent(lifecycleToken)) return null;
-        const { provider, endpoint, apiKey, apiKeyOrigin, model } = this.plugin.getTaskConfig(kind);
-        let snapshot = Object.freeze({ provider, endpoint, apiKey, apiKeyOrigin, model });
+        const taskConfig = this.plugin.getTaskConfig(kind);
+        const { provider, endpoint, apiKey, apiKeyOrigin, model } = taskConfig;
+        const snapshotBase = { provider, endpoint, apiKey, apiKeyOrigin, model };
+        const extraFields = this.plugin.providerLayer?.registry?.getCredentialFields?.(provider) || [];
+        extraFields.forEach(field => {
+            if (field && !Object.prototype.hasOwnProperty.call(snapshotBase, field)) snapshotBase[field] = taskConfig[field];
+        });
+        let snapshot = Object.freeze(snapshotBase);
         const origin = this.getProviderEndpointOrigin(snapshot);
         const previousOrigin = apiKeyOrigin ?? origin;
         if (auto && (!origin || previousOrigin !== origin)) return null;

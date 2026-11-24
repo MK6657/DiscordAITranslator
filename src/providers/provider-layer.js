@@ -445,7 +445,27 @@ class ProviderLayer {
         if (kind !== "translation" || (!this.registry.has(provider) && !PROVIDER_ORDER.includes(provider))) return null;
         const defaults = this.getProviderDefaults(provider);
         if (!defaults) return null;
-        const profile = this.plugin.getTaskProviderProfile(kind, provider) || {};
+        const storedProfile = this.plugin.getTaskProviderProfile(kind, provider) || {};
+        const liveTask = this.plugin.settings?.[kind];
+        const profile = liveTask && String(liveTask.provider || "").trim() === provider
+            ? {
+                ...storedProfile,
+                endpoint: liveTask.endpoint,
+                model: liveTask.model,
+                apiKey: liveTask.apiKey,
+                apiKeyOrigin: liveTask.apiKeyOrigin,
+                region: liveTask.region,
+                deeplPlan: liveTask.deeplPlan,
+                appId: liveTask.appId,
+                secretKey: liveTask.secretKey,
+                enableThinking: liveTask.enableThinking,
+                ...Object.fromEntries(
+                    this.registry.getCredentialFields(provider)
+                        .filter(field => field && liveTask[field] !== undefined)
+                        .map(field => [field, liveTask[field]])
+                )
+            }
+            : storedProfile;
         const taskParams = {};
         if (baseConfig && typeof baseConfig === "object") {
             for (const key of FALLBACK_TASK_PARAM_KEYS) {
@@ -700,7 +720,7 @@ class ProviderLayer {
             const translateAsArray = Boolean(options.translateAsArray || options.googleTranslateAsArray);
             const getRequestKey = () => JSON.stringify([
                 this.getModelRequestKey(endpoint, request, input, taskConfig),
-                Boolean(request?.responseParser && translateAsArray)
+                Boolean((request?.responseParser || this.isDirectTranslateProvider(request?.provider || taskConfig)) && translateAsArray)
             ]);
             const requests = this.plugin.translationRequests;
             ({ endpoint, request } = this.buildModelRequest(kind, input, { ...buildOptions, deferGoogleTranslateReservation: true }));
@@ -735,7 +755,8 @@ class ProviderLayer {
                         googleTranslateAsArray: Boolean(options.googleTranslateAsArray),
                         translateAsArray,
                         lifecycleToken,
-                        signal: sharedSignal
+                        signal: sharedSignal,
+                        isCurrent: () => requestStillCurrent() && !options.providerProfilePinned
                     });
                 }
                 catch (error) {
@@ -1305,6 +1326,9 @@ class ProviderLayer {
         const completeSuccess = () => {
             if (!isCurrent()) return false;
             const recorded = record(true);
+            if (kind === "translation" && testConfig.provider === "googleCloud") {
+                this.plugin.markGoogleTranslateProviderSuccess?.(testRequest);
+            }
             this.plugin.setApiStatus(status, "success", this.plugin.t("apiStatusSuccess"));
             this.plugin.clearAutoTranslationProviderFailureForCurrentConfig(kind);
             if (kind === "translation" && this.isLocalTranslationProvider(testConfig)) this.markLocalProviderHealthy(providerSnapshotKey);

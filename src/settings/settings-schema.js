@@ -74,12 +74,51 @@ class SettingsSchema {
         const key = String(provider || "").trim();
         const adapter = this.providerRegistry?.get?.(key);
         if (adapter) {
+            const isDirect = adapter.kind === "direct";
+            const credentialFields = Array.isArray(adapter.credentialFields) ? adapter.credentialFields : ["apiKey"];
+            const defaultUi = isDirect
+                ? {
+                    apiKey: credentialFields.includes("apiKey"),
+                    apiTest: true,
+                    endpoint: true,
+                    deepseekPreset: false,
+                    localModelPreset: false,
+                    model: false,
+                    enableThinking: false,
+                    sourceLanguage: true,
+                    targetLanguage: true,
+                    temperature: false,
+                    maxTokens: false,
+                    promptManager: false,
+                    googleTranslateSettings: false
+                }
+                : {
+                    apiKey: credentialFields.includes("apiKey"),
+                    apiTest: true,
+                    endpoint: true,
+                    deepseekPreset: false,
+                    localModelPreset: Boolean(adapter.isLocal),
+                    model: true,
+                    enableThinking: false,
+                    sourceLanguage: true,
+                    targetLanguage: true,
+                    temperature: true,
+                    maxTokens: true,
+                    promptManager: true,
+                    googleTranslateSettings: false
+                };
+            const builtInCapabilities = this.providerCapabilities[key] || {};
             return {
-                ...(this.providerCapabilities[key] || {}),
+                ...builtInCapabilities,
                 kind: adapter.kind || "chat",
                 tasks: {
                     polish: Boolean(adapter.tasks?.polish),
                     translation: Boolean(adapter.tasks?.translation)
+                },
+                ui: {
+                    ...defaultUi,
+                    ...(builtInCapabilities.ui || {}),
+                    ...(adapter.ui || {})
                 }
             };
         }

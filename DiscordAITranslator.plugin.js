@@ -1,7 +1,7 @@
 /**
  * @name DiscordAITranslator
  * @author /insert 始皇
- * @version 0.5.1
+ * @version 0.5.2
  * @description Discord AI 翻译/润色插件，支持输入润色和频道消息翻译。
  * @license MIT
  */
@@ -3035,12 +3035,49 @@ var require_settings_schema = __commonJS({
         const key = String(provider || "").trim();
         const adapter = this.providerRegistry?.get?.(key);
         if (adapter) {
+          const isDirect = adapter.kind === "direct";
+          const credentialFields = Array.isArray(adapter.credentialFields) ? adapter.credentialFields : ["apiKey"];
+          const defaultUi = isDirect ? {
+            apiKey: credentialFields.includes("apiKey"),
+            apiTest: true,
+            endpoint: true,
+            deepseekPreset: false,
+            localModelPreset: false,
+            model: false,
+            enableThinking: false,
+            sourceLanguage: true,
+            targetLanguage: true,
+            temperature: false,
+            maxTokens: false,
+            promptManager: false,
+            googleTranslateSettings: false
+          } : {
+            apiKey: credentialFields.includes("apiKey"),
+            apiTest: true,
+            endpoint: true,
+            deepseekPreset: false,
+            localModelPreset: Boolean(adapter.isLocal),
+            model: true,
+            enableThinking: false,
+            sourceLanguage: true,
+            targetLanguage: true,
+            temperature: true,
+            maxTokens: true,
+            promptManager: true,
+            googleTranslateSettings: false
+          };
+          const builtInCapabilities = this.providerCapabilities[key] || {};
           return {
-            ...this.providerCapabilities[key] || {},
+            ...builtInCapabilities,
             kind: adapter.kind || "chat",
             tasks: {
               polish: Boolean(adapter.tasks?.polish),
               translation: Boolean(adapter.tasks?.translation)
+            },
+            ui: {
+              ...defaultUi,
+              ...builtInCapabilities.ui || {},
+              ...adapter.ui || {}
             }
           };
         }
@@ -3929,6 +3966,7 @@ var require_public_bilingual = __commonJS({
     "use strict";
     var {
       AUTO_LANGUAGE_VALUE,
+      MANUAL_TRANSLATION_REQUEST_BUDGET,
       MODEL_REQUEST_TIMEOUT_MS,
       DIAGNOSTIC_MESSAGE_STATES,
       DIAGNOSTIC_REASON_CODES,
@@ -4065,35 +4103,37 @@ var require_public_bilingual = __commonJS({
         };
       },
       async runPublicBilingualTranslationTask(text, options = this.getPublicBilingualTranslationOptions()) {
-        const translated = await this.plugin.runModelTask("translation", text, {
-          configOverrides: options.configOverrides,
-          timeoutMs: MODEL_REQUEST_TIMEOUT_MS,
-          mode: "public-bilingual",
-          requestContext: options.requestContext,
-          providerProfilePinned: true,
-          isolatedConfig: true
-        });
+        const requestBudget = options?.requestBudget || this.plugin.createAutoTranslationRequestBudget?.(MANUAL_TRANSLATION_REQUEST_BUDGET) || null;
+        const resetFallbackContext = (ctx) => {
+          if (ctx && typeof ctx === "object") delete ctx.fallbackProvider;
+        };
+        const runAttempt = async (mode, attemptOptions) => {
+          if (requestBudget) this.plugin.consumeAutoTranslationRequestBudget({ requestBudget });
+          resetFallbackContext(attemptOptions.requestContext);
+          const rawTranslated = await this.plugin.runModelTask("translation", text, {
+            configOverrides: attemptOptions.configOverrides,
+            timeoutMs: MODEL_REQUEST_TIMEOUT_MS,
+            mode,
+            requestContext: attemptOptions.requestContext,
+            providerProfilePinned: true,
+            isolatedConfig: true,
+            ...requestBudget ? { requestBudget } : {}
+          });
+          const targetLang = this.plugin.getAutoTranslationTargetLanguage(attemptOptions);
+          return this.plugin.sanitizeAutoTranslationOutput(text, rawTranslated, targetLang);
+        };
+        const translated = await runAttempt("public-bilingual", options);
         if (!this.plugin.isInvalidAutoTranslationOutput(text, translated, this.plugin.getAutoTranslationTargetLanguage(options))) return translated;
-        const retryOptions = this.getPublicBilingualRetryOptions(text, translated, options);
-        const retried = await this.plugin.runModelTask("translation", text, {
-          configOverrides: retryOptions.configOverrides,
-          timeoutMs: MODEL_REQUEST_TIMEOUT_MS,
-          mode: "public-bilingual-retry",
-          requestContext: retryOptions.requestContext,
-          providerProfilePinned: true,
-          isolatedConfig: true
-        });
-        if (!this.plugin.isInvalidAutoTranslationOutput(text, retried, this.plugin.getAutoTranslationTargetLanguage(retryOptions))) return retried;
-        const finalOptions = this.getPublicBilingualFinalFallbackOptions(text, options);
-        const finalText = await this.plugin.runModelTask("translation", text, {
-          configOverrides: finalOptions.configOverrides,
-          timeoutMs: MODEL_REQUEST_TIMEOUT_MS,
-          mode: "public-bilingual-final",
-          requestContext: finalOptions.requestContext,
-          providerProfilePinned: true,
-          isolatedConfig: true
-        });
-        if (!this.plugin.isInvalidAutoTranslationOutput(text, finalText, this.plugin.getAutoTranslationTargetLanguage(finalOptions))) return finalText;
+        try {
+          const retryOptions = this.getPublicBilingualRetryOptions(text, translated, options);
+          const retried = await runAttempt("public-bilingual-retry", retryOptions);
+          if (!this.plugin.isInvalidAutoTranslationOutput(text, retried, this.plugin.getAutoTranslationTargetLanguage(retryOptions))) return retried;
+          const finalOptions = this.getPublicBilingualFinalFallbackOptions(text, options);
+          const finalText = await runAttempt("public-bilingual-final", finalOptions);
+          if (!this.plugin.isInvalidAutoTranslationOutput(text, finalText, this.plugin.getAutoTranslationTargetLanguage(finalOptions))) return finalText;
+        } catch (error) {
+          if (!this.plugin.isAutoTranslationRequestBudgetError?.(error)) throw error;
+        }
         throw this.plugin.createFinalInvalidAutoTranslationError();
       },
       async getPublicBilingualTranslation(text, options = this.getPublicBilingualTranslationOptions(), behavior = {}) {
@@ -11166,6 +11206,7 @@ var require_request_pipeline = __commonJS({
           return 0;
         }
         if (this.plugin.isDiscordSettingsSurfaceOpen()) {
+          this.plugin.discordSettingsScanDeferred = true;
           return 0;
         }
         const mediaQuietMs = this.plugin.getDiscordMediaViewerQuietRemainingMs();
@@ -12009,7 +12050,12 @@ var require_request_pipeline = __commonJS({
       }
       shouldFallbackAutoTranslationBatchRequestError(error) {
         const type = this.plugin.getAutoTranslationFailureType(error);
-        return !["cancelled", "auth", "quota", "rate-limit", "server", "local-unavailable"].includes(type);
+        if (["cancelled", "auth", "quota", "rate-limit", "server", "local-unavailable"].includes(type)) return false;
+        const status = Number(error?.status || 0);
+        if (status === 404 || status === 405 || error?.providerModelNotFound) return false;
+        const code = String(error?.code || "");
+        if (["INVALID_API_ENDPOINT", "UNSAFE_API_ENDPOINT", "API_KEY_ORIGIN_MISMATCH", "API_REDIRECT_BLOCKED"].includes(code)) return false;
+        return true;
       }
       buildPromptPolicyAutoTranslationPrompt(options = this.getAutoTranslationOptions()) {
         return this.plugin.buildPromptPolicyPrompt("auto", {
@@ -12289,6 +12335,7 @@ var require_request_pipeline = __commonJS({
           stopError = chunkError;
           return true;
         };
+        const parentRequestContext = longOptions?.requestContext && typeof longOptions.requestContext === "object" ? longOptions.requestContext : null;
         for (let index = 0; index < chunks.length; index++) {
           if (typeof taskOptions.heartbeat === "function" && taskOptions.heartbeat() === false) {
             throw this.createAutoTranslationStaleError("long-text-stale-before-chunk");
@@ -12304,8 +12351,13 @@ var require_request_pipeline = __commonJS({
               const initialReserved = Math.min(remainingLaterChunks, Math.max(0, remainingTotal - 1));
               requestBudget.reserved = Math.max(previousReserved, initialReserved);
             }
+            const attemptContext = parentRequestContext ? {} : null;
+            const initialChunkOptions = attemptContext ? { ...chunkOptions, requestContext: attemptContext } : chunkOptions;
             try {
-              translated = await this.plugin.runAutoTranslationTaskWithOptions(chunks[index], chunkOptions, taskOptions);
+              translated = await this.plugin.runAutoTranslationTaskWithOptions(chunks[index], initialChunkOptions, taskOptions);
+              if (parentRequestContext && attemptContext?.fallbackProvider && !parentRequestContext.fallbackProvider && String(translated || "").trim() && !this.plugin.hasLongAutoTranslationChunkFailurePlaceholder(translated)) {
+                parentRequestContext.fallbackProvider = attemptContext.fallbackProvider;
+              }
             } finally {
               if (requestBudget) requestBudget.reserved = previousReserved;
             }
@@ -12413,6 +12465,7 @@ var require_request_pipeline = __commonJS({
       }
       async runLongAutoTranslationChunkManualRescue(chunkText, chunkOptions, firstError, taskOptions = {}, meta = {}) {
         if (!this.plugin.isManualRescueRetryableError(firstError)) return null;
+        const parentRequestContext = chunkOptions?.requestContext && typeof chunkOptions.requestContext === "object" ? chunkOptions.requestContext : null;
         const attempts = [
           { name: "chunk-force-target", options: this.plugin.getAutoTranslationRetryOptions(chunkText, "", chunkOptions) },
           { name: "chunk-repair", options: this.getAutoTranslationFinalFallbackOptions(chunkText, chunkOptions) }
@@ -12420,8 +12473,10 @@ var require_request_pipeline = __commonJS({
         let lastError = firstError;
         for (let attemptIndex = 0; attemptIndex < attempts.length; attemptIndex++) {
           const attempt = attempts[attemptIndex];
+          const attemptContext = parentRequestContext ? {} : null;
+          const attemptOptions = attemptContext ? { ...attempt.options, requestContext: attemptContext } : attempt.options;
           try {
-            const translated = await this.plugin.runAutoTranslationTaskWithOptions(chunkText, attempt.options, {
+            const translated = await this.plugin.runAutoTranslationTaskWithOptions(chunkText, attemptOptions, {
               ...taskOptions,
               retryInvalidOutput: false,
               manualRescue: false
@@ -12429,9 +12484,9 @@ var require_request_pipeline = __commonJS({
             const validation = this.plugin.getAutoTranslationOutputValidationResult(
               chunkText,
               translated,
-              this.getAutoTranslationTargetLanguage(attempt.options),
-              this.getAutoTranslationOutputValidationOptions(chunkText, translated, attempt.options),
-              attempt.options
+              this.getAutoTranslationTargetLanguage(attemptOptions),
+              this.getAutoTranslationOutputValidationOptions(chunkText, translated, attemptOptions),
+              attemptOptions
             );
             this.plugin.logDiagnostic("auto.long-text.chunk-rescue", validation.renderable ? "success" : "failed", {
               sourceHash: meta.sourceHash || this.plugin.getStrongTextFingerprint(chunkText),
@@ -12445,7 +12500,12 @@ var require_request_pipeline = __commonJS({
               outputHash: translated ? this.plugin.getStrongTextFingerprint(translated) : "",
               outputLength: String(translated || "").length
             });
-            if (validation.renderable) return { translated, validation, attemptName: attempt.name };
+            if (validation.renderable) {
+              if (parentRequestContext && attemptContext?.fallbackProvider && !parentRequestContext.fallbackProvider) {
+                parentRequestContext.fallbackProvider = attemptContext.fallbackProvider;
+              }
+              return { translated, validation, attemptName: attempt.name };
+            }
             lastError = this.createFinalInvalidAutoTranslationError(validation.reasonCode || "invalid-output", {
               terminal: false,
               validationQuality: validation.quality
@@ -12477,13 +12537,16 @@ var require_request_pipeline = __commonJS({
         const splitLimit = Math.max(200, Math.min(320, Math.floor(text.length / 2)));
         const parts = this.plugin.splitLongAutoTranslationText(text, splitLimit).map((part) => String(part || "").trim()).filter(Boolean);
         if (parts.length <= 1 || parts.join("\n").length >= text.length * 1.4) return null;
+        const parentRequestContext = chunkOptions?.requestContext && typeof chunkOptions.requestContext === "object" ? chunkOptions.requestContext : null;
         const translatedParts = [];
         const failures = [];
         for (let index = 0; index < parts.length; index++) {
           const part = parts[index];
           const partOptions = this.getLongTextChunkTranslationOptions(chunkOptions, part, index, parts.length, meta.sourceHash || this.plugin.getStrongTextFingerprint(text));
+          const partContext = parentRequestContext ? {} : null;
+          const effectivePartOptions = partContext ? { ...partOptions, requestContext: partContext } : partOptions;
           try {
-            const translated = await this.plugin.runAutoTranslationTaskWithOptions(part, partOptions, {
+            const translated = await this.plugin.runAutoTranslationTaskWithOptions(part, effectivePartOptions, {
               ...taskOptions,
               retryInvalidOutput: false,
               manualRescue: false,
@@ -12492,9 +12555,9 @@ var require_request_pipeline = __commonJS({
             const validation = this.plugin.getAutoTranslationOutputValidationResult(
               part,
               translated,
-              this.getAutoTranslationTargetLanguage(partOptions),
-              this.getAutoTranslationOutputValidationOptions(part, translated, partOptions),
-              partOptions
+              this.getAutoTranslationTargetLanguage(effectivePartOptions),
+              this.getAutoTranslationOutputValidationOptions(part, translated, effectivePartOptions),
+              effectivePartOptions
             );
             this.plugin.logDiagnostic("auto.long-text.subchunk-rescue", validation.renderable ? "success" : "failed", {
               sourceHash: meta.sourceHash || this.plugin.getStrongTextFingerprint(text),
@@ -12508,8 +12571,12 @@ var require_request_pipeline = __commonJS({
               outputHash: translated ? this.plugin.getStrongTextFingerprint(translated) : "",
               outputLength: String(translated || "").length
             });
-            if (validation.renderable) translatedParts.push(String(translated || "").trim());
-            else failures.push({ index, reason: validation.reasonCode || "invalid-output" });
+            if (validation.renderable) {
+              if (parentRequestContext && partContext?.fallbackProvider && !parentRequestContext.fallbackProvider) {
+                parentRequestContext.fallbackProvider = partContext.fallbackProvider;
+              }
+              translatedParts.push(String(translated || "").trim());
+            } else failures.push({ index, reason: validation.reasonCode || "invalid-output" });
           } catch (error) {
             if (this.isAbandonedTranslationError(error)) throw error;
             failures.push({ index, reason: error?.autoTranslationInvalidReason || this.plugin.getAutoTranslationFailureType(error) });
@@ -13285,8 +13352,12 @@ var require_request_pipeline = __commonJS({
         const targetLanguageValue = this.getAutoTranslationTargetLanguage(options);
         const targetLanguage = this.getAutoTranslationTargetInstruction(targetLanguageValue);
         const isLocalProvider = this.isLocalAutoTranslationOptions(options);
+        const requestOrigin = options?.requestOrigin || (/^manual(?:-|$)/.test(String(options?.mode || "")) ? "manual" : /^public-bilingual(?:-|$)/.test(String(options?.mode || "")) ? "public-bilingual" : "");
         return {
           mode: "auto-retry",
+          ...requestOrigin ? { requestOrigin } : {},
+          ...options?.requestContext ? { requestContext: options.requestContext } : {},
+          ...options?.isolatedConfig ? { isolatedConfig: true } : {},
           version: options?.version ?? this.stateMachine.configVersion,
           promptPolicyVersion: this.plugin.getPromptPolicyVersion("autoRetry"),
           routeKey: options?.routeKey || this.plugin.getCurrentRouteKey(),
@@ -13310,8 +13381,12 @@ var require_request_pipeline = __commonJS({
         const targetLanguageValue = this.getAutoTranslationTargetLanguage(options);
         const targetLanguage = this.getAutoTranslationTargetInstruction(targetLanguageValue);
         const isLocalProvider = this.isLocalAutoTranslationOptions(options);
+        const requestOrigin = options?.requestOrigin || (/^manual(?:-|$)/.test(String(options?.mode || "")) ? "manual" : /^public-bilingual(?:-|$)/.test(String(options?.mode || "")) ? "public-bilingual" : "");
         return {
           mode: "auto-final-fallback",
+          ...requestOrigin ? { requestOrigin } : {},
+          ...options?.requestContext ? { requestContext: options.requestContext } : {},
+          ...options?.isolatedConfig ? { isolatedConfig: true } : {},
           version: options?.version ?? this.stateMachine.configVersion,
           promptPolicyVersion: this.plugin.getPromptPolicyVersion("autoFinalFallback"),
           routeKey: options?.routeKey || this.plugin.getCurrentRouteKey(),
@@ -13332,27 +13407,38 @@ var require_request_pipeline = __commonJS({
         };
       }
       getAutoTranslationOverrides() {
-        const targetLanguage = this.getAutoTranslationTargetInstruction(this.plugin.settings.translation.targetLanguage);
-        const isLocalProvider = this.plugin.isLocalTranslationProvider({ provider: this.plugin.settings.translation.provider });
-        return {
-          provider: this.plugin.settings.translation.provider,
-          apiKey: this.plugin.settings.translation.apiKey,
-          apiKeyOrigin: this.plugin.settings.translation.apiKeyOrigin,
-          endpoint: this.plugin.settings.translation.endpoint,
-          model: this.plugin.settings.translation.model,
+        const translation = this.plugin.settings.translation;
+        const targetLanguage = this.getAutoTranslationTargetInstruction(translation.targetLanguage);
+        const isLocalProvider = this.plugin.isLocalTranslationProvider({ provider: translation.provider });
+        const overrides = {
+          provider: translation.provider,
+          apiKey: translation.apiKey,
+          apiKeyOrigin: translation.apiKeyOrigin,
+          endpoint: translation.endpoint,
+          model: translation.model,
+          region: translation.region,
+          deeplPlan: translation.deeplPlan,
+          appId: translation.appId,
+          secretKey: translation.secretKey,
           sourceLanguage: AUTO_LANGUAGE_VALUE,
           targetLanguage,
-          targetLanguageCode: this.plugin.getTargetLanguageCode(this.plugin.settings.translation.targetLanguage),
+          targetLanguageCode: this.plugin.getTargetLanguageCode(translation.targetLanguage),
           temperature: 0,
-          maxTokens: this.plugin.settings.translation.maxTokens,
+          maxTokens: translation.maxTokens,
           enableThinking: false,
           promptPolicyVersion: this.plugin.getPromptPolicyVersion("auto"),
           localCompactPrompt: isLocalProvider,
-          prompt: isLocalProvider ? this.buildCompactLocalAutoTranslationPrompt({ targetLanguage: this.plugin.settings.translation.targetLanguage }, "auto") : this.plugin.buildPromptPolicyPrompt("auto", {
+          prompt: isLocalProvider ? this.buildCompactLocalAutoTranslationPrompt({ targetLanguage: translation.targetLanguage }, "auto") : this.plugin.buildPromptPolicyPrompt("auto", {
             targetLanguage,
-            basePrompt: this.plugin.settings.translation.prompt
+            basePrompt: translation.prompt
           })
         };
+        const credentialFields = this.plugin.providerLayer?.registry?.getCredentialFields?.(translation) || [];
+        credentialFields.forEach((field) => {
+          if (!field || Object.prototype.hasOwnProperty.call(overrides, field)) return;
+          overrides[field] = translation[field] ?? "";
+        });
+        return overrides;
       }
       getAutoTranslationRequestSnapshot(options = null) {
         const config = options?.isolatedConfig && options?.configOverrides ? options.configOverrides : this.plugin.getEffectiveTaskConfig("translation", options?.configOverrides);
@@ -13663,8 +13749,9 @@ var require_request_pipeline = __commonJS({
       }
       isAutoTranslationCodeOnlyText(text) {
         const value = String(text || "").trim();
-        if (!value) return false;
-        return /^```[\s\S]*```$/.test(value) || /^`[^`\n]+`$/.test(value);
+        if (!value || !value.includes("`")) return false;
+        const withoutCode = value.replace(/```[\s\S]*?```/g, " ").replace(/~~~[\s\S]*?~~~/g, " ").replace(/`[^`\n]+`/g, " ").trim();
+        return withoutCode.length === 0;
       }
       shouldAutoTranslateText(text, targetLanguage = this.plugin.settings.translation.targetLanguage) {
         const value = String(text || "").trim();
@@ -13932,7 +14019,7 @@ var require_queue_core = __commonJS({
         if (["googleTranslate.keyPoolText", "googleTranslate.defaultMonthlyLimit", "googleTranslate.allowPrefetch"].includes(path)) return true;
         if (!path.startsWith("translation.")) return false;
         const field = path.split(".")[1];
-        return [
+        if ([
           "enabled",
           "apiKey",
           "endpoint",
@@ -13948,7 +14035,9 @@ var require_queue_core = __commonJS({
           "temperature",
           "maxTokens",
           "prompt"
-        ].includes(field);
+        ].includes(field)) return true;
+        const customFields = this.plugin.getRegisteredCredentialFieldNames?.() || this.plugin.providerLayer?.registry?.getCredentialFields?.(this.plugin.settings?.translation) || [];
+        return customFields.includes(field);
       }
       invalidateAutoTranslationQueue(options = {}) {
         if (!options.preserveVersion) this.stateMachine.configVersion++;
@@ -16303,7 +16392,7 @@ var require_queue_core = __commonJS({
 // package.json
 var require_package = __commonJS({
   "package.json"(exports2, module2) {
-    module2.exports = { version: "0.5.1" };
+    module2.exports = { version: "0.5.2" };
   }
 });
 
@@ -16529,7 +16618,7 @@ var require_diagnostics_recorder = __commonJS({
             return;
           }
           if (Array.isArray(value)) {
-            result[key] = value.slice(0, 12).map((item) => this.plugin.sanitizeDiagnosticValue(item));
+            result[key] = value.slice(0, 12).map((item) => item && typeof item === "object" && !Array.isArray(item) ? this.plugin.sanitizeDiagnosticObject(item) : this.plugin.sanitizeDiagnosticValue(item));
             return;
           }
           if (typeof value === "object") {
@@ -16943,7 +17032,7 @@ var require_output_guard = __commonJS({
           if (candidate && !candidates.includes(candidate)) candidates.push(candidate);
         };
         const fenced = raw.match(/^```[A-Za-z0-9_-]*\s*([\s\S]*?)\s*```$/);
-        if (fenced) push(fenced[1]);
+        if (fenced && !fenced[1].includes("```")) push(fenced[1]);
         const labeled = raw.match(/^(?:(?:translation|translated text|translated_text|translated message|translated_message|translated-message|translatedMessage|result|answer|output|target|final)|(?:\u4ee5\u4e0b\u662f|\u8fd9\u662f).{0,8}(?:\u7ffb\u8bd1|\u8bd1\u6587)|(?:\u7ffb\u8bd1|\u8bd1\u6587|\u7ffb\u8bd1\u7ed3\u679c))\s*[:\uff1a]\s*([\s\S]+)$/i);
         if (labeled) push(labeled[1]);
         const wrapped = raw.match(/^<\s*(translation|translatedText|translated_text|translatedMessage|targetMessage|target_message|answer|output|result|response)\b[^>]*>([\s\S]*?)<\/\s*\1\s*>$/i);
@@ -16954,7 +17043,16 @@ var require_output_guard = __commonJS({
             const inner = raw.slice(1, -1);
             if (!inner.includes(closingQuote)) push(inner);
           }
-          const quotedMatches = [...raw.matchAll(/["'\u201c\u201d\u2018\u2019\u300c\u300d\u300e\u300f\u300a\u300b]([^"'\u201c\u201d\u2018\u2019\u300c\u300d\u300e\u300f\u300a\u300b]{1,220})["'\u201c\u201d\u2018\u2019\u300c\u300d\u300e\u300f\u300a\u300b]/g)];
+          const quotedPatterns = [
+            /"([^"]{1,220})"/gu,
+            /\u201c([^\u201c\u201d]{1,220})\u201d/gu,
+            /\u300c([^\u300c\u300d]{1,220})\u300d/gu,
+            /\u300e([^\u300e\u300f]{1,220})\u300f/gu,
+            /\u300a([^\u300a\u300b]{1,220})\u300b/gu,
+            /(?<![\p{L}\p{N}])'([^'\n]{1,220})'(?![\p{L}\p{N}])/gu,
+            /(?<![\p{L}\p{N}])\u2018([^\u2018\u2019\n]{1,220})\u2019(?![\p{L}\p{N}])/gu
+          ];
+          const quotedMatches = quotedPatterns.flatMap((pattern) => [...raw.matchAll(pattern)]).sort((left, right) => Number(left.index || 0) - Number(right.index || 0));
           if (quotedMatches.length && (options.allowQuotedFragments?.() ?? true)) {
             quotedMatches.forEach((match) => {
               const rest = raw.slice(match.index + match[0].length);
@@ -17924,7 +18022,8 @@ ${hash}`;
         const cacheEndpoint = precomputedCacheEndpoint || this.getTranslationCacheEndpoint(config);
         const legacyFallback = String(defaults.endpoint || "").trim();
         const oldEndpoint = this.getCacheConfigSnapshot("translation", config).endpoint;
-        const candidates = /* @__PURE__ */ new Set([oldEndpoint, endpoint, PROVIDER_DEFAULTS[config.provider]?.endpoint]);
+        const providerDefaultEndpoint = this.plugin.getProviderDefaults?.(config.provider)?.endpoint || PROVIDER_DEFAULTS[config.provider]?.endpoint;
+        const candidates = /* @__PURE__ */ new Set([oldEndpoint, endpoint, providerDefaultEndpoint]);
         return [...candidates].filter((candidate) => {
           if (!candidate || candidate === cacheEndpoint) return false;
           if (candidate === legacyFallback && endpoint !== provider.getProviderEndpointIdentity({ ...config, endpoint: "" }, defaults)) return false;
@@ -18005,10 +18104,12 @@ ${hash}`;
       getCacheConfigSnapshot(kind, config, options = {}) {
         const defaults = DEFAULT_SETTINGS[kind] || {};
         const provider = String(config.provider || defaults.provider || "").trim();
+        const adapter = this.plugin.providerLayer?.registry?.get?.(provider) || null;
+        const customDefaults = !PROVIDER_DEFAULTS[provider] && adapter?.defaultProfile ? adapter.defaultProfile : null;
         const snapshot = {
           provider,
-          endpoint: String(config.endpoint || defaults.endpoint || "").trim(),
-          model: String(config.model || defaults.model || "").trim(),
+          endpoint: String(config.endpoint || customDefaults?.endpoint || defaults.endpoint || "").trim(),
+          model: String(config.model || customDefaults?.model || defaults.model || "").trim(),
           sourceLanguage: String(config.sourceLanguage || defaults.sourceLanguage || "").trim(),
           targetLanguage: String(config.targetLanguage || defaults.targetLanguage || "").trim(),
           temperature: this.plugin.normalizeRequestNumber(config.temperature, defaults.temperature ?? 0.2, { min: 0, max: 2 }),
@@ -18020,7 +18121,6 @@ ${hash}`;
           promptPolicyVersion: String(config.promptPolicyVersion || "").trim(),
           prompt: String(config.prompt || "").trim()
         };
-        const adapter = this.plugin.providerLayer?.registry?.get?.(provider) || null;
         if (this.plugin.isDirectTranslateProvider(provider)) {
           snapshot.model = adapter?.defaultProfile?.model || PROVIDER_DEFAULTS[provider]?.model || "";
           snapshot.temperature = 0;
@@ -18948,7 +19048,9 @@ var require_google_cloud = __commonJS({
         plugin.markGoogleTranslateKeyUsage(request?.googleTranslate?.apiKey, request?.googleTranslate?.charCount || 0, {
           clearCooldown: Boolean(options?.connectionTest)
         });
-        plugin.markGoogleTranslateProviderSuccess(request);
+        if (!options?.connectionTest && options?.isCurrent?.() !== false) {
+          plugin.markGoogleTranslateProviderSuccess(request);
+        }
         return result;
       },
       applyCacheScope(_config, snapshot, plugin) {
@@ -19128,7 +19230,7 @@ var require_local_model_health = __commonJS({
       },
       shouldAutoDetectLocalProviderModel(config = {}, defaultConfig = {}) {
         if (!this.plugin.isLocalTranslationProvider(config)) return false;
-        const providerDefault = PROVIDER_DEFAULTS[config.provider] || {};
+        const providerDefault = this.plugin.getProviderDefaults?.(config.provider) || PROVIDER_DEFAULTS[config.provider] || {};
         const model = String(config.model || providerDefault.model || defaultConfig.model || "").trim();
         if (!this.plugin.isLocalProviderAutoModelValue(model)) return false;
         return this.plugin.isLoopbackEndpoint(this.plugin.getEffectiveChatCompletionEndpoint(config, defaultConfig)) && (typeof config.apiKeyOrigin !== "string" || config.apiKeyOrigin === this.plugin.getProviderEndpointOrigin(config));
@@ -19137,10 +19239,13 @@ var require_local_model_health = __commonJS({
         if (!this.plugin.isLocalTranslationProvider(config)) return "";
         const endpoint = this.plugin.getEffectiveChatCompletionEndpoint(config, defaultConfig);
         if (!endpoint) return "";
+        const credentialFields = this.plugin.providerLayer?.registry?.getCredentialFields?.(config) || ["apiKey"];
+        const hasCustomFields = credentialFields.some((field) => field !== "apiKey");
+        const credSource = hasCustomFields ? credentialFields.map((field) => `${field}=${String(config[field] ?? "").trim()}`).join("|") : String(config.apiKey || "").trim();
         return [
           config.provider || "sakuraLocal",
           endpoint,
-          this.plugin.getTextFingerprint(String(config.apiKey || "").trim())
+          this.plugin.getTextFingerprint(credSource)
         ].join("\n---\n");
       },
       getCachedLocalProviderDetectedModel(config = {}, options = {}) {
@@ -19186,7 +19291,7 @@ var require_local_model_health = __commonJS({
         });
       },
       getEffectiveChatCompletionModel(kind, config = {}, defaultConfig = DEFAULT_SETTINGS[kind] || {}) {
-        const providerDefault = PROVIDER_DEFAULTS[config.provider] || {};
+        const providerDefault = this.plugin.getProviderDefaults?.(config.provider) || PROVIDER_DEFAULTS[config.provider] || {};
         const configured = String(config.model || providerDefault.model || defaultConfig.model || "").trim();
         if (this.plugin.shouldAutoDetectLocalProviderModel(config, defaultConfig)) {
           return this.plugin.getCachedLocalProviderDetectedModel(config, { defaultConfig }) || configured || LOCAL_PROVIDER_AUTO_MODEL_VALUE;
@@ -19330,9 +19435,21 @@ var require_local_model_health = __commonJS({
         return preferred.find(isModelFile) || preferred[0] || "";
       },
       async detectProviderModels(kind, options = {}) {
-        const { provider, endpoint: configuredEndpoint, apiKey, apiKeyOrigin, model } = options.config || this.plugin.getTaskConfig(kind);
-        const snapshot = Object.freeze({ provider, endpoint: configuredEndpoint, apiKey, apiKeyOrigin, model });
-        const config = options.omitApiKey ? Object.freeze({ ...snapshot, apiKey: "" }) : snapshot;
+        const rawConfig = options.config || this.plugin.getTaskConfig(kind);
+        const { provider, endpoint: configuredEndpoint, apiKey, apiKeyOrigin, model } = rawConfig;
+        const snapshotBase = { provider, endpoint: configuredEndpoint, apiKey, apiKeyOrigin, model };
+        const extraFields = this.plugin.providerLayer?.registry?.getCredentialFields?.(provider) || [];
+        extraFields.forEach((field) => {
+          if (field && !Object.prototype.hasOwnProperty.call(snapshotBase, field)) snapshotBase[field] = rawConfig[field];
+        });
+        const snapshot = Object.freeze(snapshotBase);
+        const omitBase = { ...snapshot, apiKey: "" };
+        if (options.omitApiKey) {
+          extraFields.forEach((field) => {
+            if (field) omitBase[field] = "";
+          });
+        }
+        const config = options.omitApiKey ? Object.freeze(omitBase) : snapshot;
         const assertCurrent = () => {
           if (options.signal?.aborted || options.isCurrent?.() === false || !this.plugin.matchesModelDetectionConfig(kind, snapshot)) {
             throw new DOMException("Model detection superseded", "AbortError");
@@ -19455,11 +19572,14 @@ var require_local_model_health = __commonJS({
             if (!isCurrent()) return;
             const test = this.plugin.buildConnectionTestRequest("translation", config);
             endpoint = test.endpoint;
-            const raw = await this.plugin.fetchApiResponseText(test.endpoint, test.request, API_TEST_REQUEST_TIMEOUT_MS, { signal });
-            if (!isCurrent()) return;
             try {
-              this.plugin.parseModelResponse(raw);
+              await this.plugin.fetchModelResponse(test.endpoint, test.request, API_TEST_REQUEST_TIMEOUT_MS, {
+                signal,
+                connectionTest: true
+              });
+              if (!isCurrent()) return;
             } catch (error) {
+              if (!isCurrent()) return;
               if (!this.plugin.isAcceptableConnectionTestTruncation(error, "translation", config)) throw error;
               this.plugin.logDiagnostic("auto.provider.health", "truncated-ok", {
                 key: this.plugin.getTextFingerprint(providerKey),
@@ -20828,7 +20948,23 @@ var require_provider_layer = __commonJS({
         if (kind !== "translation" || !this.registry.has(provider) && !PROVIDER_ORDER.includes(provider)) return null;
         const defaults = this.getProviderDefaults(provider);
         if (!defaults) return null;
-        const profile = this.plugin.getTaskProviderProfile(kind, provider) || {};
+        const storedProfile = this.plugin.getTaskProviderProfile(kind, provider) || {};
+        const liveTask = this.plugin.settings?.[kind];
+        const profile = liveTask && String(liveTask.provider || "").trim() === provider ? {
+          ...storedProfile,
+          endpoint: liveTask.endpoint,
+          model: liveTask.model,
+          apiKey: liveTask.apiKey,
+          apiKeyOrigin: liveTask.apiKeyOrigin,
+          region: liveTask.region,
+          deeplPlan: liveTask.deeplPlan,
+          appId: liveTask.appId,
+          secretKey: liveTask.secretKey,
+          enableThinking: liveTask.enableThinking,
+          ...Object.fromEntries(
+            this.registry.getCredentialFields(provider).filter((field) => field && liveTask[field] !== void 0).map((field) => [field, liveTask[field]])
+          )
+        } : storedProfile;
         const taskParams = {};
         if (baseConfig && typeof baseConfig === "object") {
           for (const key of FALLBACK_TASK_PARAM_KEYS) {
@@ -21058,7 +21194,7 @@ var require_provider_layer = __commonJS({
           const translateAsArray = Boolean(options.translateAsArray || options.googleTranslateAsArray);
           const getRequestKey = () => JSON.stringify([
             this.getModelRequestKey(endpoint, request, input, taskConfig),
-            Boolean(request?.responseParser && translateAsArray)
+            Boolean((request?.responseParser || this.isDirectTranslateProvider(request?.provider || taskConfig)) && translateAsArray)
           ]);
           const requests = this.plugin.translationRequests;
           ({ endpoint, request } = this.buildModelRequest(kind, input, { ...buildOptions, deferGoogleTranslateReservation: true }));
@@ -21092,7 +21228,8 @@ var require_provider_layer = __commonJS({
                 googleTranslateAsArray: Boolean(options.googleTranslateAsArray),
                 translateAsArray,
                 lifecycleToken,
-                signal: sharedSignal
+                signal: sharedSignal,
+                isCurrent: () => requestStillCurrent() && !options.providerProfilePinned
               });
             } catch (error) {
               if (error?.googleTranslateApiKey && !sharedSignal.aborted) {
@@ -21579,6 +21716,9 @@ var require_provider_layer = __commonJS({
         const completeSuccess = () => {
           if (!isCurrent()) return false;
           const recorded = record(true);
+          if (kind === "translation" && testConfig.provider === "googleCloud") {
+            this.plugin.markGoogleTranslateProviderSuccess?.(testRequest);
+          }
           this.plugin.setApiStatus(status, "success", this.plugin.t("apiStatusSuccess"));
           this.plugin.clearAutoTranslationProviderFailureForCurrentConfig(kind);
           if (kind === "translation" && this.isLocalTranslationProvider(testConfig)) this.markLocalProviderHealthy(providerSnapshotKey);
@@ -23052,8 +23192,21 @@ var require_settings_store = __commonJS({
         } else if (options.save === "immediate") this.plugin.saveSettings({ retryOnError: options.retryOnError });
         else this.plugin.saveSettings({ debounce: true, delayMs: options.delayMs });
         this.plugin.syncSettingControls(path, this.getSetting(path), { includeActive: options.live !== true });
-        if (["polish", "translation"].includes(parts[0]) && ["apiKey", "endpoint", "model", "provider", "region", "deeplPlan", "appId", "secretKey"].includes(parts[1])) {
-          this.plugin.resetApiStatus(parts[0], { save: "debounce" });
+        if (["polish", "translation"].includes(parts[0])) {
+          const customCredentials = this.plugin.providerLayer?.registry?.getCredentialFields?.(this.plugin.settings[parts[0]]) || [];
+          if (["apiKey", "endpoint", "model", "provider", "region", "deeplPlan", "appId", "secretKey"].includes(parts[1]) || customCredentials.includes(parts[1])) {
+            this.plugin.resetApiStatus(parts[0], { save: "debounce" });
+            this.plugin.refreshSavedServiceConfigControls?.();
+          } else if (parts[1] === "enableThinking") {
+            this.plugin.refreshSavedServiceConfigControls?.();
+          }
+        }
+        if (path === "googleTranslate.keyPoolText") {
+          this.plugin.providerLayer?.apiTestRuns?.get?.("translation")?.controller?.abort?.();
+          if (this.plugin.settings.translation?.provider === "googleCloud") {
+            this.plugin.resetApiStatus("translation", { save: "debounce" });
+          }
+          this.plugin.refreshSavedServiceConfigControls?.();
         }
         if (this.plugin.shouldInvalidateAutoTranslationForSetting(path)) {
           this.plugin.invalidateAutoTranslationQueue();
@@ -24928,6 +25081,10 @@ var require_tab_services = __commonJS({
         };
         const apiKeyOptional = Boolean(ui.apiKey && this.plugin.isProviderApiKeyOptional(provider));
         if (ui.apiKey && !apiKeyOptional) append(this.createApiKeyRow(kind));
+        const customCredentialFields = (this.plugin.providerLayer?.registry?.getCredentialFields?.(provider) || []).filter((field) => field && !["apiKey", "region", "deeplPlan", "appId", "secretKey"].includes(field));
+        customCredentialFields.forEach((field) => {
+          append(this.createInputRow(`${kind}.${field}`, field, "password", "", {}, { stacked: true }));
+        });
         if (ui.endpoint) append(this.createInputRow(`${kind}.endpoint`, this.plugin.t("endpoint"), "text", defaults.endpoint || "", {}, { description: this.getProviderFieldHelp("endpoint", provider), stacked: true }));
         if (ui.region) append(this.createInputRow(`${kind}.region`, this.plugin.t("providerRegion"), "text", "eastus", {}, { description: this.plugin.t("providerRegionDesc") }));
         if (ui.deeplPlan) append(this.plugin.createSelectRow(`${kind}.deeplPlan`, this.plugin.t("deeplPlan"), [
@@ -24957,7 +25114,11 @@ var require_tab_services = __commonJS({
               previousOrigin = origin;
               if (!this.plugin.isStarted || config.provider !== provider || originChanged || !origin || !String(endpoint || "").trim()) return;
               if ((apiKeyOrigin ?? origin) !== origin || !this.plugin.isLoopbackEndpoint(origin) && !String(apiKey || "").trim()) return;
+              const extraFields = this.plugin.providerLayer?.registry?.getCredentialFields?.(provider) || [];
               const snapshot = { provider, endpoint, apiKey, apiKeyOrigin };
+              extraFields.forEach((field) => {
+                if (field && !Object.prototype.hasOwnProperty.call(snapshot, field)) snapshot[field] = config[field];
+              });
               const lifecycleToken = this.plugin.getLifecycleToken();
               detectionTimer = setTimeout(() => {
                 if (!endpointInput.isConnected || !this.plugin.isLifecycleTokenCurrent(lifecycleToken) || !this.matchesModelDetectionConfig(kind, snapshot) || lastDetection && Object.keys(snapshot).every((field) => snapshot[field] === lastDetection[field])) return;
@@ -25132,8 +25293,14 @@ var require_tab_services = __commonJS({
       async runModelDetection(kind, { button = null, picker = null, status = null, input = null, auto = false } = {}) {
         const lifecycleToken = this.plugin.getLifecycleToken();
         if (!this.plugin.isLifecycleTokenCurrent(lifecycleToken)) return null;
-        const { provider, endpoint, apiKey, apiKeyOrigin, model } = this.plugin.getTaskConfig(kind);
-        let snapshot = Object.freeze({ provider, endpoint, apiKey, apiKeyOrigin, model });
+        const taskConfig = this.plugin.getTaskConfig(kind);
+        const { provider, endpoint, apiKey, apiKeyOrigin, model } = taskConfig;
+        const snapshotBase = { provider, endpoint, apiKey, apiKeyOrigin, model };
+        const extraFields = this.plugin.providerLayer?.registry?.getCredentialFields?.(provider) || [];
+        extraFields.forEach((field) => {
+          if (field && !Object.prototype.hasOwnProperty.call(snapshotBase, field)) snapshotBase[field] = taskConfig[field];
+        });
+        let snapshot = Object.freeze(snapshotBase);
         const origin = this.getProviderEndpointOrigin(snapshot);
         const previousOrigin = apiKeyOrigin ?? origin;
         if (auto && (!origin || previousOrigin !== origin)) return null;
@@ -30208,11 +30375,13 @@ var require_context_menu = __commonJS({
           plugin.isPublicBilingualUseInitialOriginalEnabled(),
           plugin.isPublicBilingualPolishBeforeTranslateEnabled()
         ];
+        const customCredentials = (plugin.providerLayer?.registry?.getCredentialFields?.(config) || []).filter((field) => field && !["apiKey", "secretKey"].includes(field)).map((field) => [field, config[field] ?? ""]);
         return plugin.getStrongTextFingerprint(JSON.stringify([
           plugin.getCacheConfigSnapshot(kind, config),
           config.apiKey,
           config.apiKeyOrigin,
           config.secretKey,
+          customCredentials,
           behavior
         ]));
       }
@@ -30846,6 +31015,42 @@ var require_chat_observer = __commonJS({
         if (!rect) return true;
         return Number(rect.width || 0) > 0 && Number(rect.height || 0) > 0;
       },
+      maybeResumeAfterDiscordSettingsClose(mutations = []) {
+        if (!this.plugin.discordSettingsScanDeferred && !this.plugin.settingsSurfaceProbeOpen) return;
+        if (![...mutations || []].some((mutation) => this.isDiscordSettingsSurfaceCloseMutation(mutation))) return;
+        this.plugin.settingsSurfaceProbeAt = 0;
+        if (this.plugin.isDiscordSettingsSurfaceOpen({ force: true })) return;
+        if (!this.plugin.discordSettingsScanDeferred) return;
+        this.plugin.discordSettingsScanDeferred = false;
+        this.plugin.queueScan({ delayMs: AUTO_TRANSLATE_VIEWPORT_STABLE_RESCAN_MS, trailing: true });
+        this.plugin.queueInputButtonScan({ delayMs: 120, trailing: true });
+      },
+      isDiscordSettingsSurfaceCloseMutation(mutation) {
+        if (!mutation) return false;
+        const selector = `${DISCORD_SETTINGS_SURFACE_SELECTOR}, .dait-settings[data-dait-settings-inline='true']`;
+        const matchesSurfaceNode = (node) => {
+          const element = node?.nodeType === 3 ? node.parentElement : node;
+          if (!element || element.nodeType !== 1) return false;
+          try {
+            return Boolean(element.matches?.(selector) || element.querySelector?.(selector));
+          } catch {
+            return false;
+          }
+        };
+        if (mutation.type === "childList") {
+          return [...mutation.removedNodes || []].some(matchesSurfaceNode);
+        }
+        if (mutation.type === "attributes") {
+          const target = mutation.target?.nodeType === 3 ? mutation.target.parentElement : mutation.target;
+          if (!target || target.nodeType !== 1) return false;
+          try {
+            return Boolean(target.matches?.(selector) || target.closest?.(DISCORD_SETTINGS_SURFACE_SELECTOR));
+          } catch {
+            return false;
+          }
+        }
+        return false;
+      },
       isOwnPluginElement(element) {
         return Boolean(element?.closest?.(".dait-settings, .dait-quick-settings-button, .dait-quick-settings-modal-root, .dait-quick-popover, .dait-message-button, .dait-polish-button, .dait-polish-preset-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-group, .dait-input-action-menu-button, .dait-input-action-menu, .dait-polish-preset-menu, .dait-polish-result-panel, .dait-polish-restore-control, .dait-translation-line, .dait-translation-box"));
       },
@@ -30905,9 +31110,12 @@ var require_chat_observer = __commonJS({
           settingsSurfaceByElement: /* @__PURE__ */ new Map()
         };
         try {
-          if (this.plugin.observerRoot === document.body && this.hasPotentialDiscordObserverRootMutation(mutations)) {
-            const nextRoot = this.getDiscordChatMutationObserverRoot();
-            if (nextRoot && nextRoot !== document.body) this.plugin.scheduleDiscordObserverRebind("chat-root-available");
+          if (this.plugin.observerRoot === document.body) {
+            this.maybeResumeAfterDiscordSettingsClose(mutations);
+            if (this.hasPotentialDiscordObserverRootMutation(mutations)) {
+              const nextRoot = this.getDiscordChatMutationObserverRoot();
+              if (nextRoot && nextRoot !== document.body) this.plugin.scheduleDiscordObserverRebind("chat-root-available");
+            }
           }
           if (this.plugin.isDiscordMediaViewerQuiet()) {
             if (this.plugin.hasLightweightDiscordMediaViewerMutation(mutations)) this.enterDiscordMediaViewerQuietMode("quiet-mutation");
@@ -30980,6 +31188,7 @@ var require_chat_observer = __commonJS({
               return;
             }
           }
+          this.maybeResumeAfterDiscordSettingsClose(outsideMutations);
           const relevantOutside = outsideMutations.filter((mutation) => !this.plugin.isOwnMutation(mutation) && (this.isDiscordMediaViewerMutation(mutation) || this.isInputButtonRelevantMutation(mutation) || this.hasDiscordThemeMutation([mutation])));
           if (relevantOutside.length) this.handleDiscordObservedMutations(relevantOutside);
         });
@@ -31467,7 +31676,10 @@ var require_chat_observer = __commonJS({
           this.plugin.queueInputButtonScan({ delayMs: mediaDelayMs, trailing: true });
           return;
         }
-        if (this.plugin.isDiscordSettingsSurfaceOpen()) return;
+        if (this.plugin.isDiscordSettingsSurfaceOpen()) {
+          this.plugin.discordSettingsScanDeferred = true;
+          return;
+        }
         this.plugin.injectInputButtons();
       },
       queueViewportScan(event = null) {
@@ -31751,11 +31963,13 @@ var require_chat_observer = __commonJS({
           return;
         }
         if (this.plugin.isDiscordSettingsSurfaceOpen()) {
+          this.plugin.discordSettingsScanDeferred = true;
           this.plugin.cancelAutoTranslationRuntimeWork("route-change", { staleRouteOnly: true });
           this.plugin.logDiagnostic("scan.discord-ui", "blocked", { reason: "discord-settings-open" });
           this.plugin.logSlowOperation("scan.discord-ui", startedAt, { outcome: "blocked", reason: "discord-settings-open" });
           return;
         }
+        this.plugin.discordSettingsScanDeferred = false;
         const routeChanged = this.plugin.trackAutoTranslationRouteChange();
         if (routeChanged) {
           this.plugin.refreshChannelRuleControls();
@@ -37379,7 +37593,12 @@ var require_translation_line_dom = __commonJS({
           this.plugin.removeAutoTranslationNode(target, cacheKey);
           return;
         }
-        this.plugin.renderTranslationError(target.messageNode, target.content, error, cacheKey, this.plugin.getAutoTranslationTargetDomText(target));
+        const domText = this.plugin.getAutoTranslationTargetDomText(target);
+        if (this.plugin.hasManualTranslationLine(target.content, domText)) {
+          this.logAutoTranslationRenderSkip({ ...target, cacheKey, requestOptions }, target, "manual-line");
+          return;
+        }
+        this.plugin.renderTranslationError(target.messageNode, target.content, error, cacheKey, domText);
         this.plugin.logAutoTranslationMessageState(
           "auto.message.state",
           "failure-rendered",
@@ -38567,7 +38786,8 @@ var require_translation_line_dom = __commonJS({
           this.plugin.showToast(this.plugin.t("apiKeyMissingTranslation"), "error");
           return;
         }
-        const requestOptions = this.withMessageIdentity(this.plugin.getAutoTranslationOptions(), messageNode, content, text);
+        const baseOptions = this.plugin.getAutoTranslationRequestOptionsForText(text, this.plugin.getAutoTranslationOptions());
+        const requestOptions = this.withMessageIdentity(baseOptions, messageNode, content, text);
         const cacheKey = this.plugin.getTranslationCacheKey(text, requestOptions);
         this.plugin.clearAutoTranslationFailure(cacheKey, requestOptions, { clearProvider: true });
         this.clearAutoTextTranslationFailure(text, requestOptions);
@@ -40580,9 +40800,12 @@ var require_service_profiles = __commonJS({
         const list = this.getSavedServiceConfigsForTask(kind);
         return list.find((entry) => {
           if (this.getServiceConfigIdentityKey(entry) !== identity) return false;
+          if (entry.provider === "googleCloud" && !this.plugin.hasUsableApiConfig(kind)) return false;
           if (String(entry.apiKey || "") !== String(task.apiKey || "")) return false;
           if (entry.provider === "baidu" && String(entry.secretKey || "") !== String(task.secretKey || "")) return false;
           if (entry.provider === "deepseek" && Boolean(entry.enableThinking) !== Boolean(task.enableThinking)) return false;
+          const customFields = (this.plugin.providerLayer?.registry?.getCredentialFields?.(entry.provider) || []).filter((field) => field && !PROVIDER_PROFILE_FIELDS.includes(field));
+          if (customFields.some((field) => String(entry[field] || "") !== String(task[field] || ""))) return false;
           return true;
         }) || null;
       },
@@ -40594,19 +40817,35 @@ var require_service_profiles = __commonJS({
         if (String(task.apiKey || "").trim()) return false;
         if (String(task.secretKey || "").trim()) return false;
         if (String(task.appId || "").trim()) return false;
+        const registeredCredentialFields = this.getRegisteredCredentialFieldNames();
+        if (registeredCredentialFields.some((field) => !PROVIDER_PROFILE_FIELDS.includes(field) && String(task[field] || "").trim())) {
+          return false;
+        }
         if (String(task.endpoint || "") !== String(defaults.endpoint || "")) return false;
         if (String(task.model || "") !== String(defaults.model || "")) return false;
         if (task.apiStatus?.state && task.apiStatus.state !== "untested") return false;
         const profiles = task.providerProfiles;
         if (profiles && typeof profiles === "object") {
-          for (const profile of Object.values(profiles)) {
+          for (const [provider, profile] of Object.entries(profiles)) {
             if (!profile || typeof profile !== "object") continue;
             if (String(profile.apiKey || "").trim() || String(profile.secretKey || "").trim() || String(profile.appId || "").trim()) {
               return false;
             }
+            const extraFields = (this.plugin.providerLayer?.registry?.getCredentialFields?.(provider) || []).filter((field) => field && !PROVIDER_PROFILE_FIELDS.includes(field));
+            if (extraFields.some((field) => String(profile[field] || "").trim())) return false;
           }
         }
         return true;
+      },
+      getRegisteredCredentialFieldNames() {
+        const fields = /* @__PURE__ */ new Set();
+        for (const adapter of this.plugin.providerLayer?.registry?.list?.() || []) {
+          for (const field of adapter?.credentialFields || []) {
+            const name = String(field || "").trim();
+            if (name) fields.add(name);
+          }
+        }
+        return [...fields];
       },
       saveVerifiedServiceConfig(kind, configOverride = null, options = {}) {
         const source = configOverride || this.plugin.settings?.[kind];
@@ -40694,6 +40933,10 @@ var require_service_profiles = __commonJS({
             this.plugin.syncSettingControls(`translation.${field}`, task[field], { includeActive: true });
           });
         }
+        const customFields = (this.plugin.providerLayer?.registry?.getCredentialFields?.(task.provider) || []).filter((field) => field && !PROVIDER_PROFILE_FIELDS.includes(field));
+        customFields.forEach((field) => {
+          this.plugin.syncSettingControls(`${kind}.${field}`, task[field] ?? "", { includeActive: true });
+        });
       },
       applySavedServiceConfig(kind, configId, options = {}) {
         const task = this.plugin.settings?.[kind];
@@ -40729,14 +40972,19 @@ var require_service_profiles = __commonJS({
         });
         this.saveTaskProviderProfile(kind, entry.provider);
         if (task.model) this.rememberTaskProviderModel(kind, entry.provider, task.model);
-        task.apiStatus = { state: "success", message: "" };
-        this.plugin.recordApiTestResult?.(kind, {
-          ok: true,
-          model: entry.reportedModel || (this.isChatCompletionProvider(entry.provider) ? this.getDiagnosticModelLabel(task.model) : ""),
-          latencyMs: entry.latencyMs,
-          at: entry.verifiedAt || Date.now(),
-          message: ""
-        });
+        const usableAfterApply = entry.provider !== "googleCloud" || this.plugin.hasUsableApiConfig(kind);
+        task.apiStatus = usableAfterApply ? { state: "success", message: "" } : { state: "untested", message: "" };
+        if (usableAfterApply) {
+          this.plugin.recordApiTestResult?.(kind, {
+            ok: true,
+            model: entry.reportedModel || (this.isChatCompletionProvider(entry.provider) ? this.getDiagnosticModelLabel(task.model) : ""),
+            latencyMs: entry.latencyMs,
+            at: entry.verifiedAt || Date.now(),
+            message: ""
+          });
+        } else {
+          this.plugin.clearLastApiTestResult?.(kind);
+        }
         if (kind === "translation") this.plugin.invalidateAutoTranslationQueue();
         if (options.save !== false) this.plugin.saveSettings();
         if (options.refreshUi !== false) {
@@ -40751,6 +40999,10 @@ var require_service_profiles = __commonJS({
             this.plugin.syncSettingControls("translation.appId", task.appId, { includeActive: true });
             this.plugin.syncSettingControls("translation.secretKey", task.secretKey, { includeActive: true });
           }
+          savedCredentialFields.forEach((field) => {
+            if (!field || PROVIDER_PROFILE_FIELDS.includes(field)) return;
+            this.plugin.syncSettingControls(`${kind}.${field}`, task[field] ?? "", { includeActive: true });
+          });
           this.syncTaskControlsInOpenPanels(kind);
           this.plugin.refreshApiTestViews(kind);
           this.plugin.refreshSavedServiceConfigControls();
@@ -40780,14 +41032,25 @@ var require_service_profiles = __commonJS({
         const previousTargetProvider = this.normalizeProviderForTask(toKind, toTask.provider);
         if (previousTargetProvider && previousTargetProvider !== provider) {
           this.saveTaskProviderProfile(toKind, previousTargetProvider);
+          const prevCredentials = this.plugin.providerLayer?.registry?.getCredentialFields?.(previousTargetProvider) || [];
+          prevCredentials.forEach((field) => {
+            if (field && !PROVIDER_PROFILE_FIELDS.includes(field)) delete toTask[field];
+          });
         }
         const preset = this.plugin.getProviderDefaults(provider) || {};
         toTask.provider = provider;
         toTask.apiKey = fromTask.apiKey || "";
         toTask.endpoint = fromTask.endpoint || preset.endpoint || "";
-        toTask.apiKeyOrigin = fromTask.apiKeyOrigin;
+        if (typeof fromTask.apiKeyOrigin === "string") toTask.apiKeyOrigin = fromTask.apiKeyOrigin;
+        else delete toTask.apiKeyOrigin;
         toTask.model = fromTask.model || preset.model || "";
         toTask.enableThinking = provider === "deepseek" ? Boolean(fromTask.enableThinking) : false;
+        if (toKind === "translation") {
+          toTask.region = typeof fromTask.region === "string" ? fromTask.region : preset.region || "";
+          toTask.deeplPlan = ["free", "pro"].includes(fromTask.deeplPlan) ? fromTask.deeplPlan : preset.deeplPlan || "free";
+          toTask.appId = typeof fromTask.appId === "string" ? fromTask.appId : preset.appId || "";
+          toTask.secretKey = typeof fromTask.secretKey === "string" ? fromTask.secretKey : preset.secretKey || "";
+        }
         const syncCredentialFields = this.plugin.providerLayer?.registry?.getCredentialFields?.(provider) || [];
         syncCredentialFields.forEach((field) => {
           if (!field || PROVIDER_PROFILE_FIELDS.includes(field)) return;
@@ -40865,6 +41128,11 @@ var require_service_profiles = __commonJS({
           if (options.restoreProfile) {
             this.plugin.syncSettingControls(`${kind}.apiKey`, this.plugin.settings[kind].apiKey);
             this.plugin.syncSettingControls(`${kind}.enableThinking`, this.plugin.settings[kind].enableThinking);
+            const credentialFields = this.plugin.providerLayer?.registry?.getCredentialFields?.(provider) || [];
+            credentialFields.forEach((field) => {
+              if (!field || PROVIDER_PROFILE_FIELDS.includes(field)) return;
+              this.plugin.syncSettingControls(`${kind}.${field}`, this.plugin.settings[kind][field] ?? "");
+            });
           }
         }
         if (kind === "translation" && options.invalidate !== false) this.plugin.invalidateAutoTranslationQueue();
@@ -40972,6 +41240,7 @@ var require_service_profiles = __commonJS({
         const normalized = value.toLowerCase();
         if (SAFE_DIAGNOSTIC_KEYS.has(normalized)) return false;
         if (SENSITIVE_DIAGNOSTIC_KEYS.has(normalized)) return true;
+        if (this.getRegisteredCredentialFieldNames().some((field) => field.toLowerCase() === normalized)) return true;
         return /api.?key|authorization|token|password|secret|body|prompt|message|endpoint|url|uri|guild.*id|channel.*id|author.*id|user.*id/i.test(value);
       },
       sanitizeDiagnosticValue(value) {
@@ -41194,7 +41463,17 @@ var require_service_profiles = __commonJS({
       },
       // Troubleshooting copy of the settings: switches and numbers as-is, secrets and private text reduced to markers.
       createSettingsSnapshot() {
-        const secretKeys = /* @__PURE__ */ new Set(["apikey", "secretkey", "appid", "keypooltext", "keys", "token", "password", "authorization"]);
+        const secretKeys = /* @__PURE__ */ new Set([
+          "apikey",
+          "secretkey",
+          "appid",
+          "keypooltext",
+          "keys",
+          "token",
+          "password",
+          "authorization",
+          ...this.getRegisteredCredentialFieldNames().map((field) => field.toLowerCase())
+        ]);
         const sanitize = (value, key = "", defaults = void 0) => {
           const name = String(key).toLowerCase();
           if (secretKeys.has(name)) {
@@ -42969,7 +43248,11 @@ var require_manual_translation = __commonJS({
             });
             break;
           }
-          const requestOptions = { ...this.getManualRescueAttemptOptions(plan, attemptName, previousOutput, previousReason) };
+          const baseAttemptOptions = this.getManualRescueAttemptOptions(plan, attemptName, previousOutput, previousReason);
+          const requestOptions = {
+            ...baseAttemptOptions,
+            requestContext: {}
+          };
           let translated = "";
           let validation = null;
           try {
@@ -42984,6 +43267,13 @@ var require_manual_translation = __commonJS({
               cacheable: Boolean(validation.cacheable)
             });
             if (validation.renderable) {
+              if (plan?.requestOptions?.requestContext && typeof plan.requestOptions.requestContext === "object") {
+                if (requestOptions.requestContext.fallbackProvider) {
+                  plan.requestOptions.requestContext.fallbackProvider = requestOptions.requestContext.fallbackProvider;
+                } else {
+                  delete plan.requestOptions.requestContext.fallbackProvider;
+                }
+              }
               return { translated, validation, requestOptions, attemptName, attempts };
             }
             previousOutput = String(translated || "");
@@ -43526,6 +43816,7 @@ var require_discord_ai_translator = __commonJS({
         this.quickSettingsLastInjectAt = 0;
         this.quickSettingsScanDeferred = false;
         this.quickSettingsRenderDeferred = false;
+        this.discordSettingsScanDeferred = false;
         this.settingsSurfaceProbeAt = 0;
         this.settingsSurfaceProbeOpen = false;
         this.slowDiagnosticLastLoggedAt = /* @__PURE__ */ new Map();
@@ -43736,7 +44027,11 @@ var require_discord_ai_translator = __commonJS({
         this.googleTranslateReservedChars.clear();
         const translationCachePersisted = this.flushTranslationCache({ retryOnError: false }) !== false;
         this.flushGoogleTranslateRuntimeState({ retryOnError: false });
-        this.flushSettings({ retryOnError: false });
+        if (typeof document !== "undefined") {
+          document.querySelectorAll?.(".dait-settings")?.forEach((panel) => this.commitSettingsControls?.(panel));
+        }
+        this.closeQuickSettingsPanel(null, "stop");
+        this.flushSettings({ force: true, retryOnError: false });
         const diagnosticLogsPersisted = this.flushDiagnosticLogs({ retryOnError: false }) !== false;
         this.unpatchContextMenus();
         this.removePolishResultPanel();
@@ -43748,9 +44043,10 @@ var require_discord_ai_translator = __commonJS({
         this.lastMissingMessageButtonSweepAt = 0;
         this.polishSession = null;
         this.latestPolishRequestIds = /* @__PURE__ */ new WeakMap();
-        this.closeQuickSettingsPanel(null, "stop");
         this.quickPanel.destroy("stop");
-        document.querySelectorAll?.(".dait-settings")?.forEach((panel) => this.destroySettingsModalSizing(panel));
+        if (typeof document !== "undefined") {
+          document.querySelectorAll?.(".dait-settings")?.forEach((panel) => this.destroySettingsModalSizing(panel));
+        }
         this.restoreAllTranslationSourceVisibility();
         document.querySelectorAll(".dait-message-button, .dait-polish-button, .dait-polish-preset-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-menu-button, .dait-input-action-menu, .dait-polish-preset-menu, .dait-quick-settings-button, .dait-translation-line, .dait-translation-box, .dait-input-action-group").forEach((node) => node.remove());
         document.querySelectorAll(".dait-input-actions-host").forEach((node) => node.classList?.remove?.("dait-input-actions-host"));
@@ -43804,8 +44100,12 @@ var require_discord_ai_translator = __commonJS({
         this.observerRetryTimer = null;
         this.diagnosticLogsIdleCallback = null;
         this.translationCacheIdleCallback = null;
+        if (this.settingsDirtyTimer) clearTimeout(this.settingsDirtyTimer);
         this.settingsDirtyTimer = null;
         this.settingsDirtyAt = 0;
+        this.discordSettingsScanDeferred = false;
+        this.settingsSurfaceProbeAt = 0;
+        this.settingsSurfaceProbeOpen = false;
         this.scanTimer = null;
         this.scanDueAt = 0;
         this.cacheOnlyScanTimer = null;
