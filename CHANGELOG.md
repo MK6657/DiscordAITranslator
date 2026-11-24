@@ -6,7 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ## 0.5.0 - 2026-11-24
 
-Architecture overhaul and long-term maintainability release (preserving all v0.4.0 user features, settings compatibility, and critical-chain behavior contracts; offline/CI gates pass 100%, live Discord acceptance checklist prepared).
+Architecture overhaul and long-term maintainability release (preserving all v0.4.0 user features, settings compatibility, and critical-chain behavior contracts; offline/CI gates and Windows Discord Stable live testing passed).
 
 ### Architecture & Modularization
 

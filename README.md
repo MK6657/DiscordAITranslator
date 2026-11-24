@@ -79,6 +79,11 @@ Discord AI Translator 专为跨语言交流与高频聊天场景打造：既支�
 
 - **6 标签完整设置窗口**：包含 **概览**（含新手上手清单与服务状态卡片）、**翻译消息**、**输入框工具**、**显示**（支持跟随 Discord / 浅色 / 深色三套窗口主题）、**高级**、**数据与诊断**（含宿主健康检查）。顶部支持**全文搜索设置项**直达定位，内置**本机/兼容接口模型自动检测**与**试译一句 / 试润色**，切换中英文界面原地即时刷新。
 
+### 🧱 V0.5 模块化架构与工程护栏
+- **清晰分层源码**：主入口 `src/discord-ai-translator.js` 精简为 ~760 行生命周期装配壳，内置 `src/core/`（`DisposableScope` / `EventBus` / `PluginContext`）、`src/presets/`、`src/settings/ui/`、`src/composer/`、`src/discord/`（统一 `DiscordHostAdapter`）与 `src/auto-translation/`（单一状态机 + 冷却表）。
+- **插件化服务商注册表**：7 家服务商均作为独立适配器注册在 `src/providers/adapters/`，新增服务商只需新增 1 个适配器文件并注册 1 行。
+- **完备的静态与回归门禁**：内置 ESLint（含 `src/` `no-unused-vars`）、TypeScript `checkJs`、中英 i18n 键对称审计、710+ 核心单测、9 个领域化离线回归套件与 Windows 安装器回滚校验。
+
 ## 支持的服务商
 
 消息翻译与输入润色**各自独立保存**服务商、凭据、目标语言、模型参数与提示词，并支持保存多套服务配置档案快速切换。
@@ -156,6 +161,7 @@ npm run verify
 | --- | --- |
 | `npm run build` | 从 `src/` 使用 esbuild 重新生成根目录 `DiscordAITranslator.plugin.js`（**请勿直接手改生成产物**） |
 | `npm run build:check` | 检查根目录插件产物与源码是否完全同步 |
+| `npm run lint` / `typecheck` | 运行 ESLint 静态规则检查与 TypeScript JSDoc `checkJs` 类型检查 |
 | `npm test` | 运行核心模块单测（`tests/core/`）与模块化根插件离线回归（`scripts/verify-plugin.js` / `tests/integration/`） |
 | `npm run ci` | 执行源码检查、ESLint、TypeScript 类型检查、产物一致性、全套测试、安装脚本回滚测试与产物完整性检查 |
 | `npm run verify` | 先重新构建，再执行完整验证链 |
@@ -185,11 +191,12 @@ npm run verify
 <summary>当前已知边界与维护文档索引</summary>
 
 - 仅面向桌面端 BetterDiscord（Android 移动端不支持）；Discord DOM、内部 Webpack 模块与 BetterDiscord API 的上游变动可能影响挂载兼容性。
-- 当前验证基线为 Windows 11 + Discord Stable；`v0.5.0` 模块化重构、新界面与全部服务商路径均已通过完整自动化单测与离线回归，真机验收持续推进中。
+- 当前验证基线为 Windows 11 + Discord Stable；`v0.5.0` 模块化重构、新界面与全部服务商路径均已通过 710+ 自动化单测、9 组离线回归及 Windows 真机实测（旧版 `v0.4.0` 快照保留在 `backup/v0.4.0` 分支）。
 - 维护与贡献参考：
   - [CHANGELOG.md](CHANGELOG.md) — 详细版本变更日志
   - [CONTRIBUTING.md](CONTRIBUTING.md) — 贡献与提交流程
-  - [docs/architecture.md](docs/architecture.md) — 源码/产物边界与模块架构
+  - [docs/architecture.md](docs/architecture.md) — V0.5 源码/产物边界与模块架构
+  - [docs/V0.5版本重构修复指南.md](docs/V0.5版本重构修复指南.md) — V0.5 架构重构方案与量化验收结果
   - [docs/critical-chain-contracts.md](docs/critical-chain-contracts.md) — 重构不可破坏的关键链行为契约
   - [docs/host-smoke-test.md](docs/host-smoke-test.md) — 真机宿主冒烟记录
   - [docs/optimization-handoff.md](docs/optimization-handoff.md) & [docs/maintenance-handoff-2026-10-22.md](docs/maintenance-handoff-2026-10-22.md) — 历史验收清单与维护交接

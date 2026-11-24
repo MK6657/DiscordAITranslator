@@ -79,6 +79,11 @@ Discord AI Translator brings seamless multilingual communication and expressive 
 
 - **6-tab full settings window**: *Overview* (setup checklist + live service status cards), *Translate messages*, *Composer tools*, *Display* (including *Follow Discord / Light / Dark* window themes), *Advanced*, and *Data & diagnostics* (including a host-health diagnostics card). Includes instant **settings search**, **model auto-detection** for local/OpenAI-compatible endpoints, built-in **Try a sentence / Try polishing**, and live in-place Chinese/English UI switching.
 
+### 🧱 V0.5 Modular Architecture & Engineering Guardrails
+- **Clean layered codebase**: `src/discord-ai-translator.js` is now a ~760-line lifecycle shell coordinating `src/core/` (`DisposableScope`, `EventBus`, `PluginContext`), `src/presets/`, `src/settings/ui/`, `src/composer/`, `src/discord/` (unified behind `DiscordHostAdapter`), and `src/auto-translation/` (single state machine + cooldown store).
+- **Pluggable provider registry**: All 7 providers live as standalone adapters under `src/providers/adapters/`; adding a new provider takes one adapter file plus one registration line.
+- **Automated quality gates**: ESLint (including `no-unused-vars` across `src/`), TypeScript `checkJs`, zh-CN/en i18n key-parity audit, 710+ core unit tests, 9 domain artifact regression suites, and Windows installer rollback verification.
+
 ## Supported Providers
 
 Message translation and composer polishing store **separate** provider profiles, credentials, target languages, model parameters, and prompt templates, and let you save multiple service profiles for quick switching.
@@ -156,6 +161,7 @@ npm run verify
 | --- | --- |
 | `npm run build` | Rebuild `DiscordAITranslator.plugin.js` from `src/` via esbuild (**never hand-edit the generated bundle**) |
 | `npm run build:check` | Verify that the committed plugin bundle matches `src/` |
+| `npm run lint` / `typecheck` | Run ESLint static rules and TypeScript JSDoc `checkJs` type checks |
 | `npm test` | Run core module tests (`tests/core/`) and modular offline artifact regressions (`scripts/verify-plugin.js` / `tests/integration/`) |
 | `npm run ci` | Run source checks, ESLint, TypeScript checks, build consistency, unit/artifact tests, installer rollback tests, and artifact checks |
 | `npm run verify` | Rebuild first, then run the full validation suite |
@@ -185,11 +191,12 @@ npm run verify
 <summary>Known Limitations & Maintainer Docs</summary>
 
 - Desktop BetterDiscord only (Android/mobile clients are not supported). Upstream Discord DOM, Webpack module, and BetterDiscord API changes remain ongoing compatibility risks.
-- Validated on Windows 11 + Discord Stable; `v0.5.0` modular architecture, UI, and provider error paths have comprehensive automated unit and simulated DOM coverage while live host acceptance continues.
+- Validated on Windows 11 + Discord Stable; `v0.5.0` modular architecture, UI, and provider paths are verified by 710+ automated unit tests, 9 offline artifact regression suites, and live Windows Discord testing (the previous `v0.4.0` snapshot is preserved on branch `backup/v0.4.0`).
 - Documentation & maintenance links:
   - [CHANGELOG.md](CHANGELOG.md) — Version history and upgrade/downgrade notes
   - [CONTRIBUTING.md](CONTRIBUTING.md) — Contribution guidelines
-  - [docs/architecture.md](docs/architecture.md) — Source/artifact boundary and module architecture
+  - [docs/architecture.md](docs/architecture.md) — V0.5 source/artifact boundary and module architecture
+  - [docs/V0.5版本重构修复指南.md](docs/V0.5版本重构修复指南.md) — V0.5 refactoring roadmap and quantitative scorecard
   - [docs/critical-chain-contracts.md](docs/critical-chain-contracts.md) — Behavioral contracts for refactors
   - [docs/host-smoke-test.md](docs/host-smoke-test.md) — Live Discord host smoke test records
   - [docs/optimization-handoff.md](docs/optimization-handoff.md) & [docs/maintenance-handoff-2026-10-22.md](docs/maintenance-handoff-2026-10-22.md) — Acceptance checklists and maintenance handoff notes
