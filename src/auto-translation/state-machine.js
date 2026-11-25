@@ -110,7 +110,7 @@ class AutoTranslationStateMachine {
         if (item && typeof item === "object") {
             item.daitInFlightToken = token;
             if (options.isPrefetch !== undefined) {
-                item.daitPrefetchRequest = Boolean(options.isPrefetch);
+                item.daitPrefetchRequest = Boolean(options.isPrefetch && !item.daitHistoryRequest);
             }
         }
         return token;

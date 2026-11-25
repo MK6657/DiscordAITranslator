@@ -32,7 +32,7 @@ class DiscordStores {
 
     getMessageStore() {
         const named = this.getStore("MessageStore");
-        if (named && (typeof named.getMessage === "function" || typeof named.getMessages === "function")) return named;
+        if (named && (typeof named.getMessage === "function" || typeof named.getMessages === "function" || typeof named.getMessagesForChannel === "function")) return named;
         const fallbackKey = "__MessageStoreByKeys";
         const cached = this.stores.get(fallbackKey);
         if (cached?.store) return cached.store;

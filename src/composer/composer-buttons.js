@@ -156,9 +156,18 @@ const methods = {
     // switched off loses its composer button (it comes back on the next scan once re-enabled).
     removeDisabledInputActionButtons(group) {
         if (!group?.querySelectorAll) return false;
+        const polishOff = this.plugin.settings.polish?.enabled === false;
+        const bilingualOff = !this.isPublicBilingualFeatureEnabled();
+        const session = this.plugin.polishSession;
+        const hasPolishedRestore = Boolean(session?.lastResultRawText || session?.lastResult);
+        const hasBilingualRestore = Boolean(session?.lastBilingualRawText || session?.lastBilingualText);
+        const dropRestore = (polishOff && bilingualOff)
+            || (polishOff && !hasBilingualRestore)
+            || (bilingualOff && !hasPolishedRestore && Boolean(session));
         const selectors = [];
-        if (this.plugin.settings.polish?.enabled === false) selectors.push(".dait-polish-button", ".dait-polish-preset-button");
-        if (!this.isPublicBilingualFeatureEnabled()) selectors.push(".dait-public-bilingual-button");
+        if (polishOff) selectors.push(".dait-polish-button", ".dait-polish-preset-button");
+        if (bilingualOff) selectors.push(".dait-public-bilingual-button");
+        if (dropRestore) selectors.push(".dait-polish-restore-button");
         let removed = false;
         selectors.forEach(selector => {
             [...(group.querySelectorAll(selector) || [])].forEach(button => {
@@ -166,20 +175,27 @@ const methods = {
                 removed = true;
             });
         });
-        if (removed && this.plugin.settings.polish?.enabled === false) this.removePolishPresetMenu();
+        if (polishOff) this.removePolishPresetMenu();
+        if (dropRestore) this.removePolishRestoreControl();
         return removed;
     },
 
     syncInputActionButtonsForSettings() {
         this.removeInputActionMenu();
         this.removePolishPresetMenu();
+        if (this.plugin.settings.polish?.enabled === false && !this.isPublicBilingualFeatureEnabled()) {
+            this.removePolishRestoreControl();
+        }
         if (typeof document === "undefined") return;
         [...(document.querySelectorAll?.(".dait-input-action-group") || [])].forEach(group => {
             if (this.removeDisabledInputActionButtons(group)) this.syncInputActionGroupState(group);
         });
         // Re-enabling shows the buttons right away unless Discord's settings cover the composer; the
         // next input-button scan adds them then.
-        if (!this.plugin.isStarted || !(this.plugin.settings.ui?.injectInputButton || this.plugin.settings.ui?.publicBilingualInputButton)) return;
+        const hasSurface = typeof this.plugin.hasActiveInputButtonSurface === "function"
+            ? this.plugin.hasActiveInputButtonSurface()
+            : Boolean(this.plugin.settings.ui?.injectInputButton || this.plugin.settings.ui?.publicBilingualInputButton);
+        if (!this.plugin.isStarted || !hasSurface) return;
         if (this.plugin.isDiscordSettingsSurfaceOpen()) this.plugin.queueInputButtonScan({ delayMs: 120, trailing: true });
         else this.plugin.injectInputButtons();
     },
@@ -476,10 +492,27 @@ const methods = {
             this.removeInputActionMenu();
         };
         const escapeKeydown = event => {
-            if (event.isComposing || event.keyCode === 229 || event.key !== "Escape") return;
+            if (event.isComposing || event.keyCode === 229) return;
+            if (event.key === "Escape") {
+                event.preventDefault?.();
+                event.stopPropagation?.();
+                this.removeInputActionMenu();
+                button?.focus?.();
+                return;
+            }
+            if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+            if (!menu.contains?.(event.target) && event.target !== button) return;
+            const items = [...(menu.querySelectorAll?.(".dait-input-action-menu-item") || [])].filter(item => !item.disabled);
+            if (!items.length) return;
             event.preventDefault?.();
             event.stopPropagation?.();
-            this.removeInputActionMenu();
+            const currentIndex = items.indexOf(document.activeElement);
+            let nextIndex = 0;
+            if (event.key === "Home") nextIndex = 0;
+            else if (event.key === "End") nextIndex = items.length - 1;
+            else if (event.key === "ArrowDown") nextIndex = currentIndex < 0 ? 0 : (currentIndex + 1) % items.length;
+            else if (event.key === "ArrowUp") nextIndex = currentIndex <= 0 ? items.length - 1 : currentIndex - 1;
+            items[nextIndex]?.focus?.();
         };
         this.plugin.inputActionMenuCleanup = () => {
             button?.setAttribute?.("aria-expanded", "false");
@@ -512,9 +545,13 @@ const methods = {
         const width = Math.min(210, Math.max(156, viewportWidth - 24));
         const left = rect ? Math.max(12, Math.min(rect.right - width, viewportWidth - width - 12)) : viewportWidth - width - 16;
         const bottom = rect ? Math.max(12, viewportHeight - rect.top + 8) : 76;
+        const safeBottom = Math.min(Math.max(bottom, 12), Math.max(12, viewportHeight - 80));
+        const maxHeight = Math.max(96, viewportHeight - safeBottom - 12);
         menu.style.left = `${left}px`;
         menu.style.right = "auto";
-        menu.style.bottom = `${Math.min(Math.max(bottom, 12), Math.max(12, viewportHeight - 80))}px`;
+        menu.style.bottom = `${safeBottom}px`;
+        menu.style.maxHeight = `${maxHeight}px`;
+        menu.style.overflowY = "auto";
         menu.style.width = `${width}px`;
     },
 

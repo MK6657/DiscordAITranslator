@@ -38,10 +38,10 @@ class EventBus {
     once(event, handler) {
         if (typeof handler !== "function") return () => {};
         let unsub = () => {};
-        const wrapped = payload => {
+        const wrapped = Object.assign(payload => {
             unsub();
             handler(payload);
-        };
+        }, { _originalHandler: handler });
         unsub = this.on(event, wrapped);
         return unsub;
     }
@@ -52,10 +52,14 @@ class EventBus {
      * @param {(payload: any) => void} handler
      */
     off(event, handler) {
-        const set = this.listeners.get(String(event || "").trim());
+        const name = String(event || "").trim();
+        const set = this.listeners.get(name);
         if (!set) return;
         set.delete(handler);
-        if (set.size === 0) this.listeners.delete(String(event || "").trim());
+        for (const entry of set) {
+            if (/** @type {any} */ (entry)?._originalHandler === handler) set.delete(entry);
+        }
+        if (set.size === 0) this.listeners.delete(name);
     }
 
     /**

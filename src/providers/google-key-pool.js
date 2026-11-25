@@ -173,10 +173,35 @@ const methods = {
         return error;
     },
 
+    // Google Cloud resets monthly Translation quotas at midnight Pacific Time on the 1st of the month.
     getGoogleTranslateQuotaRetryAfterMs(now = Date.now()) {
-        const date = new Date(now);
-        const nextMonth = new Date(date.getFullYear(), date.getMonth() + 1, 1, 0, 5, 0, 0).getTime();
-        return Math.max(AUTO_TRANSLATE_FAILURE_MAX_TTL, Math.min(nextMonth - now, 7 * 24 * 60 * 60 * 1000));
+        const dayMs = 24 * 60 * 60 * 1000;
+        const maxRetryMs = 7 * dayMs;
+        try {
+            const parts = new Intl.DateTimeFormat("en-US", {
+                timeZone: "America/Los_Angeles",
+                hourCycle: "h23",
+                year: "numeric",
+                month: "2-digit",
+                day: "2-digit",
+                hour: "2-digit",
+                minute: "2-digit",
+                second: "2-digit"
+            }).formatToParts(new Date(now));
+            const part = type => Number(parts.find(item => item.type === type)?.value || 0);
+            const year = part("year");
+            const month = part("month");
+            const day = part("day");
+            const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+            const elapsedTodayMs = ((part("hour") % 24) * 3600 + part("minute") * 60 + part("second")) * 1000;
+            const remainingMs = Math.max(0, daysInMonth - day) * dayMs + (dayMs - elapsedTodayMs) + 5 * 60 * 1000;
+            return Math.max(AUTO_TRANSLATE_FAILURE_MAX_TTL, Math.min(remainingMs, maxRetryMs));
+        }
+        catch {
+            const date = new Date(now);
+            const nextMonth = Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1, 8, 5, 0, 0);
+            return Math.max(AUTO_TRANSLATE_FAILURE_MAX_TTL, Math.min(nextMonth - now, maxRetryMs));
+        }
     },
 
     releaseGoogleTranslateRequestReservation(request) {
@@ -340,8 +365,20 @@ const methods = {
     },
 
     getCurrentMonthKey(date = new Date()) {
-        const year = date.getFullYear();
-        const month = String(date.getMonth() + 1).padStart(2, "0");
+        const target = date instanceof Date ? date : new Date(date);
+        try {
+            const parts = new Intl.DateTimeFormat("en-US", {
+                timeZone: "America/Los_Angeles",
+                year: "numeric",
+                month: "2-digit"
+            }).formatToParts(target);
+            const year = parts.find(item => item.type === "year")?.value || "";
+            const month = parts.find(item => item.type === "month")?.value || "";
+            if (year && month) return `${year}-${month.padStart(2, "0")}`;
+        }
+        catch {}
+        const year = target.getUTCFullYear();
+        const month = String(target.getUTCMonth() + 1).padStart(2, "0");
         return `${year}-${month}`;
     },
 
@@ -559,10 +596,16 @@ const methods = {
     restoreGoogleTranslateText(text, tokens = []) {
         let output = String(text || "");
         if (!Array.isArray(tokens) || !tokens.length) return output;
+        output = output.replace(/__\s*DAIT\s*_\s*KEEP\s*_\s*(\d{3})\s*__/gi, (full, rawIndex) => {
+            const token = tokens[Number.parseInt(rawIndex, 10)];
+            return token && token.value !== undefined ? String(token.value) : full;
+        });
         tokens.forEach(token => {
-            const placeholder = String(token?.placeholder || "");
-            if (!placeholder) return;
-            output = output.split(placeholder).join(String(token?.value || ""));
+            if (!token?.placeholder || token.value === undefined) return;
+            if (/^__DAIT_KEEP_\d{3}__$/.test(token.placeholder) && !output.includes(token.placeholder)) return;
+            if (output.includes(token.placeholder)) {
+                output = output.split(token.placeholder).join(String(token.value));
+            }
         });
         return output;
     }

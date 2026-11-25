@@ -173,6 +173,30 @@ class SettingsStore {
         return String(value).padStart(3, "0");
     }
 
+    refreshOpenPromptManagers(kind) {
+        if (typeof document === "undefined" || !document.querySelectorAll) return;
+        document.querySelectorAll(`[data-dait-prompt-manager='${kind}']`).forEach(node => {
+            try { node.__daitRefresh?.(); }
+            catch {}
+        });
+    }
+
+    normalizeTaskTemperature(kind, value) {
+        const fallback = Number(DEFAULT_SETTINGS[kind]?.temperature ?? 0.2);
+        if (value === "" || value === null || value === undefined || typeof value === "boolean") return fallback;
+        const numeric = Number(value);
+        if (!Number.isFinite(numeric)) return fallback;
+        return Math.min(2, Math.max(0, Math.round(numeric * 100) / 100));
+    }
+
+    normalizeTaskMaxTokens(kind, value) {
+        const fallback = Number(DEFAULT_SETTINGS[kind]?.maxTokens ?? 1000);
+        if (value === "" || value === null || value === undefined || typeof value === "boolean") return fallback;
+        const numeric = Number(value);
+        if (!Number.isFinite(numeric)) return fallback;
+        return Math.min(65536, Math.max(1, Math.round(numeric)));
+    }
+
     applyPromptTemplate(kind, templateId) {
         const template = this.getPromptTemplates(kind).find(item => item.id === templateId);
         if (!template) return;
@@ -181,6 +205,7 @@ class SettingsStore {
         this.plugin.settings[kind].prompt = template.prompt;
         this.plugin.saveSettings();
         this.plugin.syncSettingControls(`${kind}.prompt`, template.prompt);
+        this.refreshOpenPromptManagers(kind);
         if (kind === "translation") this.plugin.invalidateAutoTranslationQueue();
         if (kind === "polish") this.plugin.syncPolishPresetControls?.();
         this.plugin.quickPanel?.scheduleUpdate?.();
@@ -201,6 +226,7 @@ class SettingsStore {
         templates.push(template);
         this.plugin.settings[kind].activePromptTemplate = template.id;
         this.plugin.saveSettings();
+        this.refreshOpenPromptManagers(kind);
         if (kind === "polish") this.plugin.syncPolishPresetControls?.();
         this.plugin.quickPanel?.scheduleUpdate?.();
         this.plugin.showToast(this.plugin.t("promptSaved", { name, code: template.serial }), "success");
@@ -213,6 +239,7 @@ class SettingsStore {
         template.prompt = prompt;
         this.plugin.settings[kind].activePromptTemplate = template.id;
         this.plugin.saveSettings();
+        this.refreshOpenPromptManagers(kind);
         if (kind === "translation") this.plugin.invalidateAutoTranslationQueue();
         if (kind === "polish") this.plugin.syncPolishPresetControls?.();
         this.plugin.quickPanel?.scheduleUpdate?.();
@@ -251,6 +278,7 @@ class SettingsStore {
             }
         }
         this.plugin.saveSettings();
+        this.refreshOpenPromptManagers(kind);
         if (kind === "translation" && wasActive) this.plugin.invalidateAutoTranslationQueue();
         if (kind === "polish") this.plugin.syncPolishPresetControls?.();
         this.plugin.quickPanel?.scheduleUpdate?.();
@@ -304,6 +332,7 @@ class SettingsStore {
         missing.forEach(template => templates.push(this.plugin.clone(template)));
         this.ensurePromptTemplateSerials(kind);
         if (options.save !== false) this.plugin.saveSettings();
+        this.refreshOpenPromptManagers(kind);
         if (kind === "polish") this.plugin.syncPolishPresetControls?.();
         this.plugin.quickPanel?.scheduleUpdate?.();
         if (options.silent !== true) {
@@ -461,6 +490,16 @@ class SettingsStore {
             }
             if (typeof this.plugin.settings[kind].enableThinking !== "boolean") {
                 this.plugin.settings[kind].enableThinking = false;
+                changed = true;
+            }
+            const normalizedTemperature = this.normalizeTaskTemperature(kind, this.plugin.settings[kind].temperature);
+            if (!Object.is(normalizedTemperature, this.plugin.settings[kind].temperature)) {
+                this.plugin.settings[kind].temperature = normalizedTemperature;
+                changed = true;
+            }
+            const normalizedMaxTokens = this.normalizeTaskMaxTokens(kind, this.plugin.settings[kind].maxTokens);
+            if (!Object.is(normalizedMaxTokens, this.plugin.settings[kind].maxTokens)) {
+                this.plugin.settings[kind].maxTokens = normalizedMaxTokens;
                 changed = true;
             }
             if (kind === "translation") {
@@ -1051,6 +1090,18 @@ class SettingsStore {
         if (path === "translation.deeplPlan") {
             value = ["free", "pro"].includes(String(value || "")) ? String(value) : DEFAULT_SETTINGS.translation.deeplPlan;
         }
+        if (/^(polish|translation)\.temperature$/.test(path)) {
+            value = this.normalizeTaskTemperature(parts[0], value);
+        }
+        if (/^(polish|translation)\.maxTokens$/.test(path)) {
+            value = this.normalizeTaskMaxTokens(parts[0], value);
+        }
+        if (/^(polish|translation)\.sourceLanguage$/.test(path)) {
+            value = this.plugin.normalizeSourceLanguage(value);
+        }
+        if (/^(polish|translation)\.targetLanguage$/.test(path)) {
+            value = this.plugin.normalizeLanguageName(value);
+        }
         if (path === "ui.translationStyle") {
             value = normalizeTranslationLineStyle(value);
         }
@@ -1119,7 +1170,7 @@ class SettingsStore {
         else this.plugin.saveSettings({ debounce: true, delayMs: options.delayMs });
         this.plugin.syncSettingControls(path, this.getSetting(path), { includeActive: options.live !== true });
         if (["polish", "translation"].includes(parts[0])) {
-            const customCredentials = this.plugin.providerLayer?.registry?.getCredentialFields?.(this.plugin.settings[parts[0]]) || [];
+            const customCredentials = this.plugin.providerLayer?.registry?.getCredentialFields?.(this.plugin.settings[parts[0]]?.provider) || [];
             if (["apiKey", "endpoint", "model", "provider", "region", "deeplPlan", "appId", "secretKey"].includes(parts[1])
                 || customCredentials.includes(parts[1])) {
                 this.plugin.resetApiStatus(parts[0], { save: "debounce" });

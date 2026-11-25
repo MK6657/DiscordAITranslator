@@ -581,6 +581,7 @@ class AutoTranslationQueueCore {
         for (const item of this.stateMachine.queue) {
             const readyTargets = this.plugin.getReadyAutoTranslationTargets(item, layoutContext);
             if (!readyTargets.length) {
+                this.plugin.removeAutoTranslationLoadingForItem?.(item, { force: true });
                 this.stateMachine.queuedKeys.delete(item?.cacheKey);
                 this.clearAutoTranslationPendingTargets(item?.cacheKey);
                 continue;
@@ -857,7 +858,7 @@ class AutoTranslationQueueCore {
     shouldRetainAutoTranslationProviderBlockedItem(item) {
         return Boolean(item?.cacheKey
             && this.plugin.isAutoTranslationRequestCurrent(item?.requestOptions)
-            && this.plugin.isAutoTranslationVisibleItem(item));
+            && (this.plugin.isAutoTranslationVisibleItem(item) || item?.daitHistoryRequest));
     }
 
     shouldRetainAutoTranslationFailureItem(item, error, failure = null) {
@@ -1013,6 +1014,7 @@ class AutoTranslationQueueCore {
             }
             const readyTargets = this.plugin.getReadyAutoTranslationTargets(item, layoutContext);
             if (!readyTargets.length) {
+                this.plugin.removeAutoTranslationLoadingForItem?.(item, { force: true });
                 this.stateMachine.queuedKeys.delete(item?.cacheKey);
                 this.clearAutoTranslationPendingTargets(item?.cacheKey);
                 continue;
@@ -1620,10 +1622,14 @@ class AutoTranslationQueueCore {
                 });
             }
             else {
+                const retryTaskOptions = {
+                    ...taskOptions,
+                    markRendered: item => renderedItems.add(item)
+                };
                 heartbeat(pending);
-                await this.plugin.runAutoTranslationBatchRetryItems(pending, taskOptions);
+                await this.plugin.runAutoTranslationBatchRetryItems(pending, retryTaskOptions);
                 heartbeat(pending);
-                await this.plugin.runAutoTranslationFallbackItems(pending, taskOptions);
+                await this.plugin.runAutoTranslationFallbackItems(pending, retryTaskOptions);
             }
 
             pending.forEach(item => {

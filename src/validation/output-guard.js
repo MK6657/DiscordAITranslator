@@ -35,6 +35,7 @@ class OutputGuard {
         if (!raw) return raw;
         const validationOptions = { ...options, skipCandidateExtraction: true };
         const candidates = this.extractAutoTranslationOutputCandidates(raw, {
+            sourceText,
             includeQuoted: !this.plugin.shouldSkipQuotedAutoTranslationCandidates(sourceText, raw, options),
             allowQuotedFragments: () => Boolean(this.plugin.getAutoTranslationInvalidOutputReason(sourceText, raw, targetLanguage, validationOptions))
         });
@@ -56,6 +57,7 @@ class OutputGuard {
 
     extractAutoTranslationOutputCandidates(text, options = {}) {
         const raw = String(text || "").trim();
+        const source = String(options?.sourceText || "").trim();
         const candidates = [raw];
         const push = value => {
             const candidate = String(value || "").trim();
@@ -63,16 +65,21 @@ class OutputGuard {
         };
 
         const fenced = raw.match(/^```[A-Za-z0-9_-]*\s*([\s\S]*?)\s*```$/);
-        if (fenced && !fenced[1].includes("```")) push(fenced[1]);
+        if (fenced && !fenced[1].includes("```") && !source.startsWith("```")) push(fenced[1]);
 
-        const labeled = raw.match(/^(?:(?:translation|translated text|translated_text|translated message|translated_message|translated-message|translatedMessage|result|answer|output|target|final)|(?:\u4ee5\u4e0b\u662f|\u8fd9\u662f).{0,8}(?:\u7ffb\u8bd1|\u8bd1\u6587)|(?:\u7ffb\u8bd1|\u8bd1\u6587|\u7ffb\u8bd1\u7ed3\u679c))\s*[:\uff1a]\s*([\s\S]+)$/i);
-        if (labeled) push(labeled[1]);
+        const labeled = raw.match(/^((?:translation|translated text|translated_text|translated message|translated_message|translated-message|translatedMessage|result|answer|output|target|final)|(?:\u4ee5\u4e0b\u662f|\u8fd9\u662f).{0,8}(?:\u7ffb\u8bd1|\u8bd1\u6587)|(?:\u7ffb\u8bd1|\u8bd1\u6587|\u7ffb\u8bd1\u7ed3\u679c))\s*[:\uff1a]\s*([\s\S]+)$/i);
+        if (labeled) {
+            const prefix = String(labeled[1] || "").trim();
+            const sourceSharesGenericPrefix = /^(?:result|answer|output|target|final)$/i.test(prefix)
+                && new RegExp(`^${prefix}\\s*[:\\uff1a]`, "i").test(source);
+            if (!sourceSharesGenericPrefix) push(labeled[2]);
+        }
 
         const wrapped = raw.match(/^<\s*(translation|translatedText|translated_text|translatedMessage|targetMessage|target_message|answer|output|result|response)\b[^>]*>([\s\S]*?)<\/\s*\1\s*>$/i);
         if (wrapped) push(wrapped[2]);
 
         if (options?.includeQuoted !== false) {
-            const closingQuote = { '"': '"', "'": "'", "\u201c": "\u201d", "\u2018": "\u2019", "\u300c": "\u300d", "\u300e": "\u300f", "\u300a": "\u300b" }[raw[0]];
+            const closingQuote = { '"': '"', "'": "'", "\u201c": "\u201d", "\u2018": "\u2019", "\u300c": "\u300d", "\u300e": "\u300f" }[raw[0]];
             if (closingQuote && raw.endsWith(closingQuote)) {
                 const inner = raw.slice(1, -1);
                 if (!inner.includes(closingQuote)) push(inner);
@@ -82,7 +89,6 @@ class OutputGuard {
                 /\u201c([^\u201c\u201d]{1,220})\u201d/gu,
                 /\u300c([^\u300c\u300d]{1,220})\u300d/gu,
                 /\u300e([^\u300e\u300f]{1,220})\u300f/gu,
-                /\u300a([^\u300a\u300b]{1,220})\u300b/gu,
                 /(?<![\p{L}\p{N}])'([^'\n]{1,220})'(?![\p{L}\p{N}])/gu,
                 /(?<![\p{L}\p{N}])\u2018([^\u2018\u2019\n]{1,220})\u2019(?![\p{L}\p{N}])/gu
             ];
@@ -98,7 +104,8 @@ class OutputGuard {
             }
         }
 
-        if (raw[0] === "{" || raw[0] === "[" || raw[0] === "\"") {
+        const sourceLooksJson = /^[\[{]/.test(source);
+        if (!sourceLooksJson && (raw[0] === "{" || raw[0] === "[" || raw[0] === "\"")) {
             try {
                 const parsed = JSON.parse(raw);
                 push(this.plugin.extractTranslationValue(parsed));
@@ -118,13 +125,26 @@ class OutputGuard {
 
     getDiscordEmojiTokenCounts(text) {
         const value = String(text || "");
+        if (!value) return new Map();
         const counts = new Map();
-        const pattern = /<a?:([A-Za-z0-9_]{1,64}):\d+>|:([A-Za-z0-9_]{1,64}):/g;
-        let match = pattern.exec(value);
-        while (match) {
-            const name = match[1] || match[2] || "";
+        const bump = name => {
             if (name) counts.set(name, Number(counts.get(name) || 0) + 1);
-            match = pattern.exec(value);
+        };
+        const withoutCode = value
+            .replace(/```[\s\S]*?```/g, " ")
+            .replace(/~~~[\s\S]*?~~~/g, " ")
+            .replace(/`[^`\n]+`/g, " ");
+        for (const match of withoutCode.matchAll(/<a?:([A-Za-z0-9_~]{1,64}):\d+>/g)) {
+            bump(match[1]);
+        }
+        const withoutTagsAndUrls = withoutCode
+            .replace(/<a?:[A-Za-z0-9_~]{1,64}:\d+>/g, " ")
+            .replace(/(?:https?|steam|discord):\/\/[^\s<>"']+/gi, " ")
+            .replace(/\bwww\.[^\s<>"']+/gi, " ");
+        const shortcodePattern = /(?<![A-Za-z0-9_~:/]):([A-Za-z0-9_~]{2,64}):(?![A-Za-z0-9_~:/])/g;
+        for (const match of withoutTagsAndUrls.matchAll(shortcodePattern)) {
+            const name = match[1] || "";
+            if (/[A-Za-z_]/.test(name)) bump(name);
         }
         return counts;
     }
@@ -148,11 +168,14 @@ class OutputGuard {
         const output = String(outputText || "");
         if (!output) return { text: output, neutralized: false, addedMentions: [] };
 
-        const groupMentionPattern = /(?<![a-z0-9_@])@(everyone|here)(?![a-z0-9_])/gi;
+        const groupMentionPattern = /@(everyone|here)(?![a-z0-9_])/gi;
         const roleMentionPattern = /<@&(\d{15,})>/g;
-        const maskLiteralText = value => this.plugin.splitDiscordCodeSegments(value)
-            .map(segment => segment.code ? " ".repeat(segment.text.length) : segment.text.replace(/\\[\s\S]/g, "  "))
-            .join("");
+        // Discord's simple-markdown closes a code block on the first ``` even when opened by 4+ backticks,
+        // and triggers @everyone / @here without requiring a leading whitespace boundary.
+        const maskLiteralText = value => String(value || "").replace(
+            /```[\s\S]*?```|``[\s\S]*?``|`[^`\n]+?`|\\[\s\S]/g,
+            match => " ".repeat(match.length)
+        );
 
         const countMentions = value => {
             const cleaned = maskLiteralText(value);

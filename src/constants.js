@@ -364,7 +364,8 @@ const API_TEST_REQUEST_TIMEOUT_MS = 15000;
 const API_ENDPOINT_ERROR_MESSAGE_KEYS = Object.freeze({
     INVALID_API_ENDPOINT: "errorInvalidEndpoint",
     UNSAFE_API_ENDPOINT: "errorUnsafeEndpoint",
-    API_KEY_ORIGIN_MISMATCH: "apiKeyOriginMismatch"
+    API_KEY_ORIGIN_MISMATCH: "apiKeyOriginMismatch",
+    API_REDIRECT_BLOCKED: "errorUnsafeEndpoint"
 });
 const SCAN_VIEWPORT_BUFFER_PX = 480;
 const AUTO_TRANSLATE_VIEWPORT_SETTLE_MS = 450;

@@ -18,7 +18,10 @@ const methods = {
         if (panel.__daitReplacedBy && panel.isConnected === false) return panel.__daitReplacedBy;
         const scrollTop = Number(panel.__daitSettingsUi?.content?.scrollTop || 0);
         const active = typeof document !== "undefined" ? document.activeElement : null;
-        const focusPath = active && panel.contains?.(active) ? String(active.dataset?.daitPath || "") : "";
+        const focusOwner = active && panel.contains?.(active)
+            ? (active.dataset?.daitPath ? active : active.closest?.("[data-dait-path]"))
+            : null;
+        const focusPath = focusOwner ? String(focusOwner.dataset?.daitPath || "") : "";
         const focusSavedKind = !focusPath && active && panel.contains?.(active) ? String(active.dataset?.daitSavedConfigs || "") : "";
         // A reset restores the default tab; the rebuilt panel still opens where the user was.
         const activeTab = panel.__daitSettingsUi?.activeTab;
@@ -35,7 +38,12 @@ const methods = {
         if (content && scrollTop) content.scrollTop = scrollTop;
         if (focusPath) {
             const control = [...(nextPanel.querySelectorAll?.(`[data-dait-path='${focusPath}']`) || [])].find(node => !node.closest?.("[hidden]"));
-            this.focusSettingsElement(control);
+            const focusTarget = control?.dataset?.daitControl === "language"
+                ? (control.querySelector?.("input:not([hidden]), select") || control)
+                : control?.dataset?.daitControl === "segmented"
+                    ? (control.querySelector?.("[tabindex='0']") || control)
+                    : control;
+            this.focusSettingsElement(focusTarget);
         }
         else if (focusSavedKind) {
             const control = [...(nextPanel.querySelectorAll?.(`[data-dait-saved-configs='${focusSavedKind}']`) || [])].find(node => !node.closest?.("[hidden]"));

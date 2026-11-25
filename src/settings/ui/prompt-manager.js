@@ -153,6 +153,7 @@ const methods = {
     createPromptManager(kind) {
         const manager = document.createElement("div");
         manager.className = "dait-prompt-manager";
+        manager.dataset.daitPromptManager = kind;
         const idBase = `dait-prompt-${kind}-${Math.random().toString(36).slice(2, 8)}`;
 
         manager.appendChild(this.buildPromptManagerHeader());
@@ -330,6 +331,13 @@ const methods = {
             syncStatus();
         });
 
+        manager.__daitRefresh = () => {
+            if (textarea !== (typeof document !== "undefined" ? document.activeElement : null)) {
+                textarea.value = this.plugin.settings[kind]?.prompt ?? "";
+            }
+            renderOptions();
+            syncStatus();
+        };
         renderOptions();
         syncStatus();
         return manager;

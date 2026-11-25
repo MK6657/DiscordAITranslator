@@ -96,6 +96,37 @@ const methods = {
         this.plugin.queueInputButtonScan({ delayMs: 120, trailing: true });
     },
 
+    maybeResumeAfterMediaViewerClose(mutations = []) {
+        if (!this.plugin.mediaViewerScanDeferred && !this.plugin.mediaViewerProbeOpen && !this.isDiscordMediaViewerQuiet()) return;
+        if (![...(mutations || [])].some(mutation => this.isDiscordMediaViewerCloseMutation(mutation))) return;
+        this.plugin.mediaViewerProbeAt = 0;
+        if (this.plugin.isDiscordMediaViewerOpen()) return;
+        this.plugin.mediaViewerQuietUntil = 0;
+        this.plugin.mediaViewerProbeOpen = false;
+        if (this.plugin.lightweightButtonRecoveryRoots?.size) {
+            this.scheduleLightweightButtonRecovery([...this.plugin.lightweightButtonRecoveryRoots], 40);
+        }
+        if (!this.plugin.mediaViewerScanDeferred) return;
+        this.plugin.mediaViewerScanDeferred = false;
+        this.plugin.queueScan({ delayMs: AUTO_TRANSLATE_VIEWPORT_STABLE_RESCAN_MS, trailing: true });
+        if (this.hasActiveInputButtonSurface()) this.plugin.queueInputButtonScan({ delayMs: 120, trailing: true });
+    },
+
+    isDiscordMediaViewerCloseMutation(mutation) {
+        if (!mutation || mutation.type !== "childList" || !mutation.removedNodes?.length) return false;
+        const selector = `${DISCORD_MEDIA_VIEWER_SELECTOR}, ${DISCORD_MEDIA_VIEWER_CONTAINER_SELECTOR}`;
+        return [...mutation.removedNodes].some(node => {
+            const element = node?.nodeType === 3 ? node.parentElement : node;
+            if (!element || element.nodeType !== 1) return false;
+            try {
+                return Boolean(this.isDiscordMediaViewerElement(element) || element.matches?.(selector) || element.querySelector?.(selector));
+            }
+            catch {
+                return false;
+            }
+        });
+    },
+
     isDiscordSettingsSurfaceCloseMutation(mutation) {
         if (!mutation) return false;
         const selector = `${DISCORD_SETTINGS_SURFACE_SELECTOR}, .dait-settings[data-dait-settings-inline='true']`;
@@ -195,8 +226,11 @@ const methods = {
                     if (nextRoot && nextRoot !== document.body) this.plugin.scheduleDiscordObserverRebind("chat-root-available");
                 }
             }
+            this.recoverDetachedHiddenSourceLines(mutations);
+            this.maybeResumeAfterMediaViewerClose(mutations);
             if (this.plugin.isDiscordMediaViewerQuiet()) {
                 if (this.plugin.hasLightweightDiscordMediaViewerMutation(mutations)) this.enterDiscordMediaViewerQuietMode("quiet-mutation");
+                else this.plugin.mediaViewerScanDeferred = true;
                 // Even while quiet, real content mutations (e.g. a message edited behind the
                 // media viewer) must drop cached element text, or stale-text guards compare
                 // stale-vs-stale after the viewer closes. Own-mutation filtering is skipped
@@ -211,6 +245,9 @@ const methods = {
             if (!externalMutations.length) return;
             this.invalidateElementTextCacheForMutations(externalMutations);
             if (this.plugin.hasDiscordMediaViewerMutation(externalMutations)) {
+                if (externalMutations.some(mutation => !this.isDiscordMediaViewerMutation(mutation) && this.isScanRelevantMutation(mutation))) {
+                    this.plugin.mediaViewerScanDeferred = true;
+                }
                 this.enterDiscordMediaViewerQuietMode("mutation");
                 return;
             }
@@ -222,6 +259,9 @@ const methods = {
             }
             const shouldProbeMediaViewer = Boolean(this.plugin.mediaViewerProbeOpen || this.plugin.hasLightweightDiscordMediaViewerMutation(externalMutations));
             if ((shouldProbeMediaViewer && this.plugin.isDiscordMediaViewerOpen()) || this.areDiscordMediaViewerMutations(externalMutations)) {
+                if (externalMutations.some(mutation => !this.isDiscordMediaViewerMutation(mutation) && !this.isMediaOnlyMutation(mutation) && this.isScanRelevantMutation(mutation))) {
+                    this.plugin.mediaViewerScanDeferred = true;
+                }
                 this.enterDiscordMediaViewerQuietMode("open");
                 return;
             }
@@ -273,16 +313,17 @@ const methods = {
                 const nextRoot = this.getDiscordChatMutationObserverRoot();
                 if (nextRoot && nextRoot !== this.plugin.observerRoot && !this.plugin.observerRoot.contains?.(nextRoot)) {
                     this.plugin.scheduleDiscordObserverRebind("chat-root-replaced");
-                    return;
                 }
             }
             this.maybeResumeAfterDiscordSettingsClose(outsideMutations);
+            this.maybeResumeAfterMediaViewerClose(outsideMutations);
             // Only forward outside-chat mutations that actually matter (media viewer overlays, newly mounted
-            // thread/sidebar composers, or theme switches). Drop emoji pickers, popouts, member lists, and sidebars.
+            // thread/sidebar composers or secondary split-view chat messages, or theme switches).
             const relevantOutside = outsideMutations.filter(mutation =>
                 !this.plugin.isOwnMutation(mutation)
                 && (this.isDiscordMediaViewerMutation(mutation)
                     || this.isInputButtonRelevantMutation(mutation)
+                    || this.isScanRelevantMutation(mutation)
                     || this.hasDiscordThemeMutation([mutation])));
             if (relevantOutside.length) this.handleDiscordObservedMutations(relevantOutside);
         });
@@ -343,9 +384,29 @@ const methods = {
 
     getDiscordChatMutationObserverRoot() {
         if (typeof document === "undefined" || !document.querySelector) return null;
+        const appMount = document.getElementById?.("app-mount") || null;
         for (const selector of this.getDiscordChatMutationObserverSelectors()) {
-            const element = document.querySelector(selector);
-            if (element?.nodeType === 1) return element;
+            const queriedAll = typeof document.querySelectorAll === "function"
+                ? [...(document.querySelectorAll(selector) || [])].filter(el => el?.nodeType === 1)
+                : [];
+            const matches = queriedAll.length
+                ? queriedAll
+                : [document.querySelector(selector)].filter(el => el?.nodeType === 1);
+            if (!matches.length) continue;
+            if (matches.length === 1) return matches[0];
+            // Multiple chat roots (e.g. split-view Thread or Voice text chat): observe their lowest common ancestor
+            // within #app-mount so mutations in secondary panes are captured directly.
+            let lca = matches[0];
+            for (let index = 1; index < matches.length && lca; index++) {
+                const other = matches[index];
+                while (lca && lca !== other && !lca.contains?.(other)) {
+                    lca = lca.parentElement;
+                }
+            }
+            if (lca && lca.nodeType === 1 && (!appMount || appMount === lca || appMount.contains?.(lca))) {
+                return lca;
+            }
+            return matches[0];
         }
         return null;
     },
@@ -363,7 +424,15 @@ const methods = {
             const isRootThemeHost = (typeof document !== "undefined" && (target === document.body || target === document.documentElement))
                 || id === "app-mount"
                 || /app-?mount/i.test(className);
-            if (isRootThemeHost) return true;
+            if (isRootThemeHost) {
+                if (attributeName === "class") {
+                    const nextRootTheme = this.plugin.getFastRootDiscordThemeClass?.() || "";
+                    if (nextRootTheme && this.plugin.lastObservedRootThemeClass && nextRootTheme === this.plugin.lastObservedRootThemeClass) {
+                        return false;
+                    }
+                }
+                return true;
+            }
             // Elements inside chat, composer, popouts, pickers, reactions, or typing bars frequently update
             // class/style on incoming messages or hover; those are local UI updates, not app-wide theme switches.
             if (target.closest?.("[data-list-id*='chat-messages'], [class*='messagesWrapper'], [class*='scrollerInner'], [class*='chatContent'], [class*='channelTextArea'], [class*='popout'], [class*='popover'], [class*='emojiPicker'], [class*='expressionPicker'], [class*='stickerPicker'], [class*='reaction'], [class*='typing'], [class*='newMessagesBar']")) return false;
@@ -410,13 +479,53 @@ const methods = {
     invalidateElementTextCacheFromNode(node) {
         let element = node?.nodeType === 3 ? node.parentElement : node;
         let depth = 0;
-        while (element && element.nodeType === 1 && depth < 12) {
+        let hitMessage = false;
+        while (element && element.nodeType === 1 && depth < 32) {
             this.plugin.elementTextCache?.delete?.(element);
             this.plugin.cachedDrawMessageMemo?.delete(element);
             this.plugin.nonTranslatableMessageCache?.delete?.(element);
-            if (this.plugin.isDiscordMessageElement(element)) break;
+            if (this.plugin.isDiscordMessageElement(element)) {
+                hitMessage = true;
+                break;
+            }
             element = element.parentElement;
             depth++;
+        }
+        if (!hitMessage && element && element.nodeType === 1) {
+            const messageAncestor = element.closest?.(DISCORD_MESSAGE_NODE_SELECTOR);
+            if (messageAncestor) {
+                this.plugin.elementTextCache?.delete?.(messageAncestor);
+                this.plugin.cachedDrawMessageMemo?.delete(messageAncestor);
+                this.plugin.nonTranslatableMessageCache?.delete?.(messageAncestor);
+            }
+        }
+    },
+
+    recoverDetachedHiddenSourceLines(mutations = []) {
+        if (!this.plugin.settings?.ui?.hideOriginalAfterTranslation) return;
+        for (const mutation of mutations || []) {
+            if (mutation?.type !== "childList" || !mutation.removedNodes?.length) continue;
+            const target = mutation.target?.nodeType === 3 ? mutation.target.parentElement : mutation.target;
+            for (const node of mutation.removedNodes) {
+                if (!node || node.nodeType !== 1) continue;
+                const removedLine = this.plugin.elementHasClassName(node, "dait-translation-line")
+                    ? node
+                    : node.querySelector?.(".dait-translation-line");
+                if (!removedLine) continue;
+                this.plugin.clearTranslationErrorWaitTimer?.(removedLine);
+                if (!target || target.isConnected === false) continue;
+                const candidates = [];
+                if (target.dataset?.daitSourceHidden === "true") candidates.push(target);
+                const msg = this.plugin.isDiscordMessageElement(target) ? target : target.closest?.(DISCORD_MESSAGE_NODE_SELECTOR);
+                for (const hidden of (msg || target).querySelectorAll?.("[data-dait-source-hidden='true']") || []) {
+                    if (!candidates.includes(hidden)) candidates.push(hidden);
+                }
+                candidates.forEach(content => {
+                    const lines = this.plugin.getTranslationLines(content);
+                    const hasHidingLine = lines.some(line => line?.isConnected !== false && this.plugin.shouldHideOriginalForTranslationLine(line, content));
+                    if (!hasHidingLine) this.plugin.restoreTranslationSourceVisibility(content);
+                });
+            }
         }
     },
 
@@ -581,8 +690,19 @@ const methods = {
             this.plugin.queueScan({ delayMs: this.getDiscordMediaViewerQuietRemainingMs() + 80, trailing: true });
         }
         this.deferInputButtonScanForMediaViewer();
-        this.cancelLightweightButtonRecovery();
+        this.deferLightweightButtonRecoveryForMediaViewer();
         this.deferAutoTranslationRenderQueueForMediaViewer();
+    },
+
+    deferLightweightButtonRecoveryForMediaViewer() {
+        if (!this.plugin.lightweightButtonRecoveryRoots?.size) {
+            if (this.plugin.lightweightButtonRecoveryTimer) {
+                clearTimeout(this.plugin.lightweightButtonRecoveryTimer);
+                this.plugin.lightweightButtonRecoveryTimer = null;
+            }
+            return;
+        }
+        this.scheduleLightweightButtonRecovery([...this.plugin.lightweightButtonRecoveryRoots], this.getDiscordMediaViewerQuietRemainingMs() + 80);
     },
 
     isDiscordMediaViewerQuiet(now = Date.now()) {
@@ -776,8 +896,15 @@ const methods = {
         );
     },
 
+    hasActiveInputButtonSurface() {
+        if (this.plugin.settings.ui?.injectInputButton || this.plugin.settings.ui?.publicBilingualInputButton) return true;
+        if (this.plugin.polishSession) return true;
+        if (typeof document !== "undefined" && document.querySelector?.(".dait-input-action-group")) return true;
+        return false;
+    },
+
     getInputButtonRelevantMutations(mutations = []) {
-        if (!this.plugin.settings.ui?.injectInputButton && !this.plugin.settings.ui?.publicBilingualInputButton) return [];
+        if (!this.hasActiveInputButtonSurface()) return [];
         return [...(mutations || [])].filter(mutation => this.isInputButtonRelevantMutation(mutation));
     },
 
@@ -817,7 +944,7 @@ const methods = {
 
     queueInputButtonScan(options = {}) {
         if (!this.plugin.isStarted) return;
-        if (!this.plugin.settings.ui?.injectInputButton && !this.plugin.settings.ui?.publicBilingualInputButton) return;
+        if (!this.hasActiveInputButtonSurface()) return;
         const now = Date.now();
         const delay = Math.max(0, Number(options.delayMs ?? 350) || 0);
         const dueAt = now + delay;
@@ -836,7 +963,7 @@ const methods = {
         this.plugin.inputButtonScanTimer = null;
         this.plugin.inputButtonScanDueAt = 0;
         if (!this.plugin.isStarted) return;
-        if (!this.plugin.settings.ui?.injectInputButton && !this.plugin.settings.ui?.publicBilingualInputButton) return;
+        if (!this.hasActiveInputButtonSurface()) return;
         const mediaDelayMs = this.getDiscordMediaViewerDeferredDelayMs();
         if (mediaDelayMs > 0) {
             this.plugin.queueInputButtonScan({ delayMs: mediaDelayMs, trailing: true });
@@ -1147,6 +1274,7 @@ const methods = {
             return;
         }
         if (this.plugin.isDiscordMediaViewerOpen()) {
+            this.plugin.mediaViewerScanDeferred = true;
             this.plugin.cancelAutoTranslationRuntimeWork("route-change", { staleRouteOnly: true });
             const delayMs = this.getDiscordMediaViewerQuietRemainingMs() + 80;
             if (delayMs > 80) this.plugin.queueScan({ delayMs, trailing: true });
@@ -1168,6 +1296,7 @@ const methods = {
             this.plugin.logSlowOperation("scan.discord-ui", startedAt, { outcome: "blocked", reason: "discord-settings-open" });
             return;
         }
+        this.plugin.mediaViewerScanDeferred = false;
         this.plugin.discordSettingsScanDeferred = false;
         const routeChanged = this.plugin.trackAutoTranslationRouteChange();
         if (routeChanged) {
@@ -1219,7 +1348,7 @@ const methods = {
         finishStage("contextMs");
         this.plugin.reconcileTranslationLines(context);
         finishStage("reconcileMs");
-        if (!dirtyRoots.length && (this.plugin.settings.ui.injectInputButton || this.plugin.settings.ui.publicBilingualInputButton)) {
+        if (!dirtyRoots.length && this.hasActiveInputButtonSurface()) {
             const inputBusyMs = this.getInputComposerBusyRemainingMs();
             if (inputBusyMs > 0) this.plugin.queueInputButtonScan({ delayMs: inputBusyMs + 80, trailing: true });
             else this.plugin.injectInputButtons();
@@ -1229,6 +1358,7 @@ const methods = {
         // incoming chat messages never cancel button injection halfway down the viewport (leaving stranded messages
         // or flashing). Measure any missing visible buttons before writing dirty buttons to avoid forced reflow.
         if (this.plugin.shouldInjectMessageButtons()) {
+            if (this.plugin.lightweightButtonRecoveryRoots?.size) this.flushLightweightButtonRecovery();
             if (dirtyRoots.length) this.ensureMissingVisibleMessageButtons(context);
             this.plugin.injectMessageButtons(context);
         }
@@ -1369,8 +1499,20 @@ const methods = {
             this.plugin.lightweightButtonRecoveryRoots?.clear?.();
             return 0;
         }
-        if (this.plugin.isQuickSettingsPanelOpen() || this.plugin.isDiscordSettingsSurfaceOpen() || this.plugin.isDiscordMediaViewerQuiet()) {
+        if (this.plugin.isQuickSettingsPanelOpen() || this.plugin.isDiscordSettingsSurfaceOpen() || this.plugin.isDiscordMediaViewerQuiet() || this.plugin.isDiscordMediaViewerOpen()) {
+            const liveRoots = [...(this.plugin.lightweightButtonRecoveryRoots || [])]
+                .filter(node => node?.isConnected !== false && !node.querySelector?.(".dait-message-button"));
             this.plugin.lightweightButtonRecoveryRoots?.clear?.();
+            liveRoots.forEach(node => this.plugin.lightweightButtonRecoveryRoots?.add?.(node));
+            if (liveRoots.length) {
+                if (this.plugin.isQuickSettingsPanelOpen()) this.plugin.quickSettingsScanDeferred = true;
+                else if (this.plugin.isDiscordSettingsSurfaceOpen()) this.plugin.discordSettingsScanDeferred = true;
+                else {
+                    this.plugin.mediaViewerScanDeferred = true;
+                    const quietDelay = this.getDiscordMediaViewerQuietRemainingMs();
+                    if (quietDelay > 0) this.scheduleLightweightButtonRecovery(liveRoots, quietDelay + 80);
+                }
+            }
             return 0;
         }
         const roots = this.dedupeNestedMessageNodes([...(this.plugin.lightweightButtonRecoveryRoots || [])])
@@ -1464,7 +1606,7 @@ const methods = {
                 const nav = globalThis.navigator;
                 const inputPending = Boolean(nav?.scheduling?.isInputPending?.());
                 const idleRemainingBeforeTask = typeof deadline?.timeRemaining === "function" ? deadline.timeRemaining() : 0;
-                if (processed === 0 && (inputPending || (!deadline?.didTimeout && idleRemainingBeforeTask <= 1))) break;
+                if (processed === 0 && !deadline?.didTimeout && (inputPending || idleRemainingBeforeTask <= 1)) break;
                 const task = tasks[index++];
                 const messageNode = task.messageNode;
                 if (messageNode?.isConnected) {

@@ -24,8 +24,12 @@ const methods = {
         const providerDefault = this.plugin.getProviderDefaults?.(config.provider) || PROVIDER_DEFAULTS[config.provider] || {};
         const model = String(config.model || providerDefault.model || defaultConfig.model || "").trim();
         if (!this.plugin.isLocalProviderAutoModelValue(model)) return false;
-        return this.plugin.isLoopbackEndpoint(this.plugin.getEffectiveChatCompletionEndpoint(config, defaultConfig))
-            && (typeof config.apiKeyOrigin !== "string" || config.apiKeyOrigin === this.plugin.getProviderEndpointOrigin(config));
+        const endpoint = this.plugin.getEffectiveChatCompletionEndpoint(config, defaultConfig);
+        if (!this.plugin.isLoopbackEndpoint(endpoint)) return false;
+        if (typeof config.apiKeyOrigin === "string") {
+            return config.apiKeyOrigin === this.plugin.getProviderEndpointOrigin({ ...config, endpoint });
+        }
+        return !this.plugin.hasApiKeyOriginMismatch(config);
     },
 
     getLocalProviderModelDetectionCacheKey(config = {}, defaultConfig = {}) {

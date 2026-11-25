@@ -2,6 +2,115 @@
 
 const { AUTO_LANGUAGE_VALUE, AUTO_TRANSLATE_INVALID_OUTPUT_FAILURE_TTL, DEFAULT_SETTINGS } = require("../constants");
 
+const MD5_S = Object.freeze([
+    7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22,
+    5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20,
+    4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23,
+    6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21
+]);
+const MD5_K = Object.freeze(Array.from({ length: 64 }, (_, index) => Math.floor(4294967296 * Math.abs(Math.sin(index + 1))) >>> 0));
+
+function encodeMd5Utf8Bytes(text) {
+    const value = String(text ?? "");
+    if (typeof TextEncoder === "function") return new TextEncoder().encode(value);
+    const bytes = [];
+    for (let index = 0; index < value.length; index++) {
+        let code = value.charCodeAt(index);
+        if (code >= 0xd800 && code <= 0xdbff) {
+            const next = index + 1 < value.length ? value.charCodeAt(index + 1) : 0;
+            if (next >= 0xdc00 && next <= 0xdfff) {
+                code = ((code - 0xd800) << 10) + (next - 0xdc00) + 0x10000;
+                index++;
+            }
+            else {
+                code = 0xfffd;
+            }
+        }
+        else if (code >= 0xdc00 && code <= 0xdfff) {
+            code = 0xfffd;
+        }
+        if (code < 0x80) bytes.push(code);
+        else if (code < 0x800) bytes.push(0xc0 | (code >> 6), 0x80 | (code & 0x3f));
+        else if (code < 0x10000) bytes.push(0xe0 | (code >> 12), 0x80 | ((code >> 6) & 0x3f), 0x80 | (code & 0x3f));
+        else {
+            bytes.push(
+                0xf0 | (code >> 18),
+                0x80 | ((code >> 12) & 0x3f),
+                0x80 | ((code >> 6) & 0x3f),
+                0x80 | (code & 0x3f)
+            );
+        }
+    }
+    return new Uint8Array(bytes);
+}
+
+// Pure-JS RFC 1321 MD5 fallback for BetterDiscord's sandboxed renderer where node:crypto is unavailable.
+function md5HexFallback(text) {
+    const bytes = encodeMd5Utf8Bytes(text);
+    const totalLen = (((bytes.length + 8) >>> 6) + 1) << 6;
+    const padded = new Uint8Array(totalLen);
+    padded.set(bytes);
+    padded[bytes.length] = 0x80;
+    const view = new DataView(padded.buffer);
+    view.setUint32(totalLen - 8, (bytes.length << 3) >>> 0, true);
+    view.setUint32(totalLen - 4, (bytes.length >>> 29) >>> 0, true);
+
+    let a0 = 0x67452301;
+    let b0 = 0xefcdab89;
+    let c0 = 0x98badcfe;
+    let d0 = 0x10325476;
+    const words = new Int32Array(16);
+
+    for (let offset = 0; offset < totalLen; offset += 64) {
+        for (let j = 0; j < 16; j++) words[j] = view.getInt32(offset + j * 4, true);
+        let a = a0;
+        let b = b0;
+        let c = c0;
+        let d = d0;
+        for (let i = 0; i < 64; i++) {
+            let f = 0;
+            let g = 0;
+            if (i < 16) {
+                f = (b & c) | ((~b) & d);
+                g = i;
+            }
+            else if (i < 32) {
+                f = (d & b) | ((~d) & c);
+                g = (5 * i + 1) & 15;
+            }
+            else if (i < 48) {
+                f = b ^ c ^ d;
+                g = (3 * i + 5) & 15;
+            }
+            else {
+                f = c ^ (b | (~d));
+                g = (7 * i) & 15;
+            }
+            const temp = d;
+            d = c;
+            c = b;
+            const sum = (a + f + MD5_K[i] + words[g]) | 0;
+            const shift = MD5_S[i];
+            b = (b + ((sum << shift) | (sum >>> (32 - shift)))) | 0;
+            a = temp;
+        }
+        a0 = (a0 + a) | 0;
+        b0 = (b0 + b) | 0;
+        c0 = (c0 + c) | 0;
+        d0 = (d0 + d) | 0;
+    }
+
+    const out = new Uint8Array(16);
+    const outView = new DataView(out.buffer);
+    outView.setInt32(0, a0, true);
+    outView.setInt32(4, b0, true);
+    outView.setInt32(8, c0, true);
+    outView.setInt32(12, d0, true);
+    let hex = "";
+    for (let i = 0; i < 16; i++) hex += out[i].toString(16).padStart(2, "0");
+    return hex;
+}
+
 const methods = {
     buildChatCompletionRequest(kind, input, effectiveConfig, defaultConfig = DEFAULT_SETTINGS[kind] || {}) {
         const effectiveApiKey = this.plugin.getEffectiveRequestApiKey(effectiveConfig);
@@ -243,6 +352,10 @@ const methods = {
         return map[normalized] || normalized;
     },
 
+    md5HexFallback(text) {
+        return md5HexFallback(text);
+    },
+
     createMd5Hash(text) {
         const value = String(text || "");
         try {
@@ -255,7 +368,7 @@ const methods = {
             }
         }
         catch {}
-        throw new Error("MD5_UNAVAILABLE");
+        return md5HexFallback(value);
     },
 
     buildSystemPrompt(kind, config) {
@@ -451,19 +564,14 @@ const methods = {
     decodeHtmlEntities(text) {
         const value = String(text || "");
         if (!value || !value.includes("&")) return value;
-        if (typeof document !== "undefined") {
-            const textarea = document.createElement?.("textarea");
-            if (textarea) {
-                textarea.innerHTML = value;
-                return textarea.value;
-            }
-        }
-        return value
-            .replace(/&amp;/g, "&")
-            .replace(/&lt;/g, "<")
-            .replace(/&gt;/g, ">")
-            .replace(/&quot;/g, "\"")
-            .replace(/&#39;/g, "'");
+        const named = { amp: "&", lt: "<", gt: ">", quot: "\"", apos: "'" };
+        return value.replace(/&(?:#(\d+)|#x([0-9a-fA-F]+)|(amp|lt|gt|quot|apos));/gi, (full, dec, hex, entity) => {
+            if (entity) return named[entity.toLowerCase()] || full;
+            const code = dec ? Number.parseInt(dec, 10) : Number.parseInt(hex, 16);
+            if (!Number.isFinite(code) || code < 0 || code > 0x10ffff) return full;
+            try { return String.fromCodePoint(code); }
+            catch { return full; }
+        });
     },
 
     extractModelContent(content) {

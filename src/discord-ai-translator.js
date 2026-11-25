@@ -166,6 +166,7 @@ module.exports = class DiscordAITranslator {
         this.quickSettingsScanDeferred = false;
         this.quickSettingsRenderDeferred = false;
         this.discordSettingsScanDeferred = false;
+        this.mediaViewerScanDeferred = false;
         this.settingsSurfaceProbeAt = 0;
         this.settingsSurfaceProbeOpen = false;
         this.slowDiagnosticLastLoggedAt = new Map();
@@ -276,8 +277,12 @@ module.exports = class DiscordAITranslator {
                 this.diagnosticCompressedCount = 0;
                 this.diagnosticLogsLoaded = false;
             }
+            if (!this.settingsLoadBlocked && this.googleTranslateRuntimeDirty) {
+                this.flushGoogleTranslateRuntimeState({ retryOnError: false });
+            }
             if (!this.settingsLoadBlocked && this.settingsDirty) {
                 this.flushSettings({ retryOnError: false });
+                if (this.settingsDirty) this.scheduleSettingsPersist();
             }
             const settingsLoaded = (this.settingsLoadBlocked || !this.settingsDirty) && this.loadSettings() === true;
             try { this.migrateLegacyDataStores(); }
@@ -377,12 +382,12 @@ module.exports = class DiscordAITranslator {
         this.localProviderHealthyKeys.clear();
         this.autoTranslationPrecheckSkips.clear();
         this.googleTranslateReservedChars.clear();
-        const translationCachePersisted = this.flushTranslationCache({ retryOnError: false }) !== false;
-        this.flushGoogleTranslateRuntimeState({ retryOnError: false });
         if (typeof document !== "undefined") {
             document.querySelectorAll?.(".dait-settings")?.forEach(panel => this.commitSettingsControls?.(panel));
         }
         this.closeQuickSettingsPanel(null, "stop");
+        const translationCachePersisted = this.flushTranslationCache({ retryOnError: false }) !== false;
+        this.flushGoogleTranslateRuntimeState({ retryOnError: false });
         this.flushSettings({ force: true, retryOnError: false });
         const diagnosticLogsPersisted = this.flushDiagnosticLogs({ retryOnError: false }) !== false;
         this.unpatchContextMenus();
@@ -408,10 +413,14 @@ module.exports = class DiscordAITranslator {
             this.translationCacheMeta.clear();
             this.translationCacheNegativeLookup.clear();
         }
+        if (this.translationCacheDirtyTimer) clearTimeout(this.translationCacheDirtyTimer);
         this.translationCacheDirtyTimer = null;
         this.translationCacheDirtyAt = 0;
         this.translationCacheDirty = !translationCachePersisted;
         this.translationCachePersistenceDeferredSince = 0;
+        if (this.googleTranslateRuntimeDirtyTimer) clearTimeout(this.googleTranslateRuntimeDirtyTimer);
+        this.googleTranslateRuntimeDirtyTimer = null;
+        this.googleTranslateRuntimeDirtyAt = 0;
         this.inputButtonScanTimer = null;
         this.inputButtonScanDueAt = 0;
         this.quickSettingsRetryTimer = null;
@@ -428,6 +437,7 @@ module.exports = class DiscordAITranslator {
             this.diagnosticCompressedCount = 0;
             this.diagnosticLogsLoaded = false;
         }
+        if (this.diagnosticLogsDirtyTimer) clearTimeout(this.diagnosticLogsDirtyTimer);
         this.diagnosticLogsDirtyTimer = null;
         this.diagnosticLogsDirtyAt = 0;
         this.diagnosticLogsDirty = !diagnosticLogsPersisted;
@@ -458,6 +468,7 @@ module.exports = class DiscordAITranslator {
         this.settingsDirtyTimer = null;
         this.settingsDirtyAt = 0;
         this.discordSettingsScanDeferred = false;
+        this.mediaViewerScanDeferred = false;
         this.settingsSurfaceProbeAt = 0;
         this.settingsSurfaceProbeOpen = false;
         this.scanTimer = null;

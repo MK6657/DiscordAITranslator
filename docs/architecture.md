@@ -1,4 +1,4 @@
-# Architecture (v0.5.2)
+# Architecture (v0.5.3)
 
 ## Distribution Model
 

@@ -61,12 +61,18 @@ function encodeUtf8Bytes(text) {
     const bytes = [];
     for (let index = 0; index < value.length; index++) {
         let code = value.charCodeAt(index);
-        if (code >= 0xd800 && code <= 0xdbff && index + 1 < value.length) {
-            const next = value.charCodeAt(index + 1);
+        if (code >= 0xd800 && code <= 0xdbff) {
+            const next = index + 1 < value.length ? value.charCodeAt(index + 1) : 0;
             if (next >= 0xdc00 && next <= 0xdfff) {
                 code = ((code - 0xd800) << 10) + (next - 0xdc00) + 0x10000;
                 index++;
             }
+            else {
+                code = 0xfffd;
+            }
+        }
+        else if (code >= 0xdc00 && code <= 0xdfff) {
+            code = 0xfffd;
         }
         if (code < 0x80) bytes.push(code);
         else if (code < 0x800) bytes.push(0xc0 | (code >> 6), 0x80 | (code & 0x3f));
@@ -430,7 +436,9 @@ class TranslationCacheStore {
             legacyModel: false
         });
         config.endpoint = this.getTranslationCacheEndpoint(taskConfig);
-        config.promptPolicyVersion = this.plugin.getPromptPolicyCacheVersion("translation", options, config);
+        if (!config._adapterScopedPolicy) {
+            config.promptPolicyVersion = this.plugin.getPromptPolicyCacheVersion("translation", options, config);
+        }
         const mode = options.mode || "manual";
         const normalizedIdentity = this.plugin.normalizeTranslationMessageIdentity(options.messageIdentity);
         const strongIdentity = normalizedIdentity || `text:${strongTextHash}`;
@@ -582,7 +590,9 @@ class TranslationCacheStore {
             legacyModel: Boolean(cacheOptions.legacyModel)
         });
         config.endpoint = cacheOptions.legacyEndpoint ?? this.getTranslationCacheEndpoint(taskConfig);
-        config.promptPolicyVersion = this.plugin.getPromptPolicyCacheVersion("translation", options, config);
+        if (!config._adapterScopedPolicy) {
+            config.promptPolicyVersion = this.plugin.getPromptPolicyCacheVersion("translation", options, config);
+        }
         const messageIdentity = this.plugin.normalizeTranslationMessageIdentity(options.messageIdentity) || `text:${sourceTextHash}`;
         const configParts = cacheOptions.fullConfig
             ? [
@@ -677,8 +687,16 @@ class TranslationCacheStore {
             snapshot.promptPolicyVersion = `${provider}-v1`;
             snapshot.prompt = "";
         }
+        const beforeScopePolicy = snapshot.promptPolicyVersion;
         if (typeof adapter?.applyCacheScope === "function") {
             adapter.applyCacheScope(config, snapshot, this.plugin, options);
+            if (snapshot.promptPolicyVersion !== beforeScopePolicy) {
+                Object.defineProperty(snapshot, "_adapterScopedPolicy", {
+                    value: true,
+                    enumerable: false,
+                    configurable: true
+                });
+            }
         }
         if (options.servedModel && !options.legacyModel && this.plugin.shouldAutoDetectLocalProviderModel(config, defaults)) {
             snapshot.model = this.plugin.getCachedLocalProviderDetectedModel(config, { defaultConfig: defaults }) || snapshot.model;
@@ -1234,6 +1252,7 @@ class TranslationCacheStore {
             this.plugin.scheduleTranslationCachePersist(HEAVY_PERSISTENCE_DEFER_MS);
             return true;
         }
+        this.plugin.cancelHeavyPersistenceIdle("cache");
         if (this.plugin.translationCacheDirtyTimer) {
             clearTimeout(this.plugin.translationCacheDirtyTimer);
             this.plugin.translationCacheDirtyTimer = null;
@@ -1283,6 +1302,7 @@ class TranslationCacheStore {
         const previousLegacyKeys = this.legacyKeys;
         const previousPreEmojiSourceTexts = this.preEmojiSourceTexts;
         const previousClearedAt = this.clearedAt;
+        this.plugin.cancelHeavyPersistenceIdle("cache");
         if (this.plugin.translationCacheDirtyTimer) {
             clearTimeout(this.plugin.translationCacheDirtyTimer);
             this.plugin.translationCacheDirtyTimer = null;

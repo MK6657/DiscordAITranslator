@@ -96,20 +96,23 @@ function runHostHealthCheck(plugin) {
         { hasTextbox: Boolean(textbox), hasToolbar: Boolean(toolbar), settingsOverlayOpen }
     );
 
-    const userSettingsBtn = hasDoc ? plugin.findDiscordUserSettingsButton?.({ force: true }) : null;
+    const launcherEnabled = plugin.settings?.ui?.showQuickSettingsPanelButton !== false;
+    const userSettingsBtn = hasDoc && launcherEnabled ? plugin.findDiscordUserSettingsButton?.({ force: true }) : null;
     const launcher = hasDoc ? document.querySelector?.(".dait-quick-settings-button") : null;
     add(
         "userPanel",
         "hostHealthItemUserPanel",
-        launcher ? "ok" : (userSettingsBtn || settingsOverlayOpen) ? "warn" : "error",
-        launcher
-            ? "AI launcher mounted in user panel"
-            : settingsOverlayOpen
-                ? "Discord settings overlay open (user panel hidden)"
-                : userSettingsBtn
-                    ? "Settings button found, AI launcher not mounted"
-                    : "User panel settings anchor not found",
-        { hasSettingsButton: Boolean(userSettingsBtn), hasLauncher: Boolean(launcher), settingsOverlayOpen }
+        !launcherEnabled ? "ok" : launcher ? "ok" : (userSettingsBtn || settingsOverlayOpen) ? "warn" : "error",
+        !launcherEnabled
+            ? "Disabled in settings"
+            : launcher
+                ? "AI launcher mounted in user panel"
+                : settingsOverlayOpen
+                    ? "Discord settings overlay open (user panel hidden)"
+                    : userSettingsBtn
+                        ? "Settings button found, AI launcher not mounted"
+                        : "User panel settings anchor not found",
+        { enabled: launcherEnabled, hasSettingsButton: Boolean(userSettingsBtn), hasLauncher: Boolean(launcher), settingsOverlayOpen }
     );
 
     const contextEnabled = plugin.settings?.ui?.injectMessageContextMenu !== false;

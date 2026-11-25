@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.5.3 - 2026-11-25
+
+### Fixes & Hardening
+
+- **Sandbox MD5 fallback, redirect enforcement & provider request layer**:
+  - Added a pure-JS RFC 1321 MD5 implementation (`md5HexFallback`) in `src/providers/provider-codecs.js` so Baidu Translate signing works inside restricted BetterDiscord renderer sandboxes where `require("crypto")` is unavailable, replaced `decodeHtmlEntities()` with a single-pass regex decoder, and added RFC 1321 MD5 test-vector assertions to `scripts/check-artifact.js`.
+  - Classified `API_REDIRECT_BLOCKED` as an endpoint configuration error in `src/constants.js`, blocked `response.redirected` and same-origin path redirects in `fetchViaBetterDiscordNet()`, turned synchronous `run()` throws inside `subscribeToProviderRequest()` into rejected promises with immediate map cleanup, distinguished caller `TimeoutError` from user cancellation in `fetchApiResponseText()`, checked cancellation/staleness at the top of `tryProviderFallbackModelTask()`, and persisted `apiStatus` in `setApiStatus()` even when no status badge element is mounted.
+  - Added cross-key active request deduplication for Google Cloud Translation in `runModelTaskWithResult()`, aligned monthly quota reset keys and cooldown windows in `src/providers/google-key-pool.js` to `America/Los_Angeles` (Pacific Time), and made placeholder restoration tolerant of whitespace/case mangling while preserving custom `restoreMaps`.
+- **EventBus, lifecycle persistence, cache scope & diagnostics sanitization**:
+  - Fixed `EventBus.off()` so pending `once()` listeners can be removed before firing, and tightened `start()` / `stop()` flush and timer-teardown ordering in `src/discord-ai-translator.js` (including dirty `googleTranslateRuntimeState` and unblurred settings controls).
+  - Preserved custom adapter `applyCacheScope` `promptPolicyVersion` overrides in `src/cache/translation-cache-store.js`, cancelled pending idle cache callbacks in `clearTranslationCache()`, and mapped lone UTF-16 surrogates safely in non-`TextEncoder` UTF-8 byte counting.
+  - Recursively sanitized nested plain objects in `sanitizeDiagnosticObject()`, stripped query/fragment secrets from model URLs in `getDiagnosticModelLabel()`, redacted `DeepL-Auth-Key` / `Bearer` colon and equals variants, and enforced `HEAVY_PERSISTENCE_MAX_DEFER_MS` across rescheduled idle persistence callbacks.
+- **Output guards, Unicode script validation & translation pipeline**:
+  - Hardened `guardGeneratedMassMentions()` against `@@everyone`, `foo@everyone`, and 4-backtick code-fence smuggling; preserved Chinese book-title guillemets (`《...》`), source code fences, and source JSON from wrapper-stripping heuristics in `extractAutoTranslationOutputCandidates()`; hardened Discord emoji shortcode matching against timestamps (`12:30:45`) and ratios while supporting `~` suffixed custom emoji names; improved `\r\n`, empty quote lines, and balanced-parenthesis masked links in `src/intake/discord-markup.js`.
+  - Extended `src/validation/prompt-policy.js` to `\p{Script=Latin}` (fixing Vietnamese extended Latin validation) and `\p{Script=Han}` plus Kanji+kana Japanese target checks; updated `runLongAutoTranslationTask()` to pass standalone code-only/token-only chunks through without LLM requests, avoid splitting UTF-16 surrogate pairs, and honor `validation.renderable` on merged long-text results; preserved `daitHistoryRequest` semantics in `src/auto-translation/state-machine.js`, cleaned up loading nodes on queue prune in `src/auto-translation/queue-core.js`, and tracked superseded per-message manual runs and `partialInfo` restoration in `src/auto-translation/manual-translation.js`.
+- **Discord DOM, multi-pane observer, composer menus, settings sync & installer race recovery**:
+  - Unified `.dait-translation-line` timer disposal, recovered orphaned `data-dait-source-hidden="true"` nodes on reconcile and line detachment, rebound live action targets after Discord DOM re-renders, observed the lowest common ancestor across split-view chat panes in `src/discord/chat-observer.js`, resumed deferred scans after Media Viewer close without extra quiet-mode DOM probes, preserved deferred lightweight button recovery roots, increased text-cache invalidation depth, and prevented `didTimeout` idle-scan starvation.
+  - Added keyboard arrow/Home/End navigation and viewport `maxHeight` clamping to composer menus/panels, honored disabled user-panel launcher settings in `runHostHealthCheck()`, synced composite language rows and open prompt managers in settings UI, normalized `temperature` / `maxTokens` bounds in `SettingsStore`, deduplicated saved service configs by credential/thinking fingerprints while guarding unconfigured service-sharing checks in `QuickPanel`, hardened `scripts/release-check.js` path scanning, and added live-Discord `fs.watch` disable-race recovery plus backup hygiene to `scripts/install-plugin.ps1` (with regression coverage in `tests/core/full-repo-audit-fixes.test.js` and `scripts/test-install-plugin.ps1`).
+
 ## 0.5.2 - 2026-11-24
 
 ### Fixes & Hardening

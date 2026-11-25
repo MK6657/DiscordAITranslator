@@ -19,7 +19,10 @@ const {
 
 const root = path.resolve(__dirname, "..");
 const artifact = "DiscordAITranslator.plugin.js";
-const textExtensions = new Set(["", ".js", ".json", ".md", ".ps1", ".txt", ".yml", ".yaml"]);
+const textExtensions = new Set([
+    "", ".js", ".mjs", ".cjs", ".ts", ".json", ".md", ".ps1",
+    ".txt", ".yml", ".yaml", ".svg", ".html", ".css", ".cmd", ".bat", ".sh"
+]);
 const secretPatterns = [
     /-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/,
     /\bsk-[A-Za-z0-9_-]{24,}\b/,
@@ -101,13 +104,23 @@ if (nestedRepositories.length) {
 
 // Secrets and private paths in anything Git would publish: staged content, working copies of tracked files,
 // and untracked files that `git add .` would stage. Ignored files outside the index are never published.
-const privateHome = path.join("C:\\Users", os.userInfo().username).toLowerCase();
+const username = String(os.userInfo().username || "").trim();
+const privatePathNeedles = [...new Set([
+    os.homedir(),
+    username ? `C:\\Users\\${username}` : "",
+    username ? `/Users/${username}` : "",
+    username ? `/home/${username}` : ""
+].filter(item => item && item.length > 8).flatMap(item => {
+    const lower = item.toLowerCase();
+    return [lower, lower.replace(/\\/g, "/"), lower.replace(/\//g, "\\")];
+}))];
 const isScannedText = file => textExtensions.has(path.extname(file).toLowerCase());
 for (const text of collectPublishedTexts(root, indexEntries, isScannedText)) {
     if (secretPatterns.some(pattern => pattern.test(text.content))) {
         throw new Error(`Potential secret detected in ${text.path} (${text.source}).`);
     }
-    if (privateHome.length > "C:\\Users\\".length && text.content.toLowerCase().includes(privateHome)) {
+    const lowerContent = text.content.toLowerCase();
+    if (privatePathNeedles.some(needle => lowerContent.includes(needle))) {
         throw new Error(`Private machine path detected in ${text.path} (${text.source}).`);
     }
 }

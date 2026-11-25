@@ -836,7 +836,9 @@ class AutoTranslationRequestPipeline {
                 pending.delete(item);
                 continue;
             }
-            this.plugin.renderAutoTranslationResultSafely(item, translated);
+            if (this.plugin.renderAutoTranslationResultSafely(item, translated)) {
+                taskOptions?.markRendered?.(item);
+            }
             this.plugin.logDiagnostic("auto.fallback", "success", {
                 ...this.plugin.getAutoTranslationDiagnosticMeta(item, DIAGNOSTIC_MESSAGE_STATES.VALIDATING, DIAGNOSTIC_REASON_CODES.OUTPUT_RECEIVED),
                 key: this.plugin.getTextFingerprint(item.cacheKey),
@@ -934,7 +936,9 @@ class AutoTranslationRequestPipeline {
                     DIAGNOSTIC_REASON_CODES.OUTPUT_RECEIVED,
                     { outputLength: translated.length }
                 );
-                this.plugin.renderAutoTranslationResultSafely(item, translated);
+                if (this.plugin.renderAutoTranslationResultSafely(item, translated)) {
+                taskOptions?.markRendered?.(item);
+            }
                 pending.delete(item);
                 rendered++;
             });
@@ -1147,6 +1151,11 @@ class AutoTranslationRequestPipeline {
                 if (!value.trim()) continue;
                 if (value.length > limit) {
                     flush();
+                    if (this.isAutoTranslationCodeOnlyText(value)) {
+                        const codeChunk = value.trim();
+                        if (codeChunk) chunks.push(codeChunk);
+                        continue;
+                    }
                     this.splitOversizedLongAutoTranslationUnit(value, limit).forEach(part => {
                         const chunk = String(part || "").trim();
                         if (chunk) chunks.push(chunk);
@@ -1179,6 +1188,11 @@ class AutoTranslationRequestPipeline {
                     if (best > 0) break;
                 }
                 if (best > 0) end = cursor + best;
+                else if (end > cursor + 1 && end < source.length) {
+                    const prevCode = source.charCodeAt(end - 1);
+                    const nextCode = source.charCodeAt(end);
+                    if (prevCode >= 0xd800 && prevCode <= 0xdbff && nextCode >= 0xdc00 && nextCode <= 0xdfff) end--;
+                }
             }
 
             const chunk = source.slice(cursor, end).trim();
@@ -1194,7 +1208,7 @@ class AutoTranslationRequestPipeline {
         const lines = source.split(/(?<=\n)/);
         const units = [];
         let current = "";
-        let inFence = false;
+        let inFence = null;
         let structuredMode = "";
         const flush = () => {
             if (current.trim()) units.push(current);
@@ -1202,25 +1216,35 @@ class AutoTranslationRequestPipeline {
             structuredMode = "";
         };
         const getMode = line => {
-            if (/^\s{0,3}```|^\s{0,3}~~~/.test(line)) return "fence";
             if (/^\s{0,3}(?:[-*+]\s+|\d+[.)]\s+|>\s+|#{1,6}\s+|\|)/.test(line)) return "structured";
             if (/^\s*$/.test(line)) return "blank";
             return "paragraph";
         };
 
         for (const line of lines) {
+            if (!inFence) {
+                const fenceOpen = line.match(/^\s{0,3}(`{3,}|~{3,})(.*)$/);
+                if (fenceOpen) {
+                    const marker = fenceOpen[1];
+                    const rest = String(fenceOpen[2] || "");
+                    flush();
+                    current += line;
+                    const singleLineClosed = new RegExp(`${marker[0]}{${marker.length},}\\s*$`).test(rest);
+                    if (singleLineClosed) flush();
+                    else inFence = { char: marker[0], length: marker.length };
+                    continue;
+                }
+            }
+            else {
+                current += line;
+                const fenceClose = new RegExp(`^\\s{0,3}${inFence.char}{${inFence.length},}\\s*$`);
+                if (fenceClose.test(line)) {
+                    inFence = null;
+                    flush();
+                }
+                continue;
+            }
             const mode = getMode(line);
-            if (mode === "fence") {
-                if (!inFence) flush();
-                current += line;
-                inFence = !inFence;
-                if (!inFence) flush();
-                continue;
-            }
-            if (inFence) {
-                current += line;
-                continue;
-            }
             if (mode === "blank") {
                 current += line;
                 flush();
@@ -1256,6 +1280,11 @@ class AutoTranslationRequestPipeline {
                     if (best > 0) break;
                 }
                 if (best > 0) end = cursor + best;
+                else if (end > cursor + 1 && end < source.length) {
+                    const prevCode = source.charCodeAt(end - 1);
+                    const nextCode = source.charCodeAt(end);
+                    if (prevCode >= 0xd800 && prevCode <= 0xdbff && nextCode >= 0xdc00 && nextCode <= 0xdfff) end--;
+                }
             }
             const chunk = source.slice(cursor, end).trim();
             if (chunk) parts.push(chunk);
@@ -1282,7 +1311,8 @@ class AutoTranslationRequestPipeline {
         let budgetError = null;
         let stopError = null;
         let consecutiveReservedStopFailures = 0;
-        const hasFinishedChunk = () => translatedChunks.some(chunk => chunk && !this.plugin.hasLongAutoTranslationChunkFailurePlaceholder(chunk));
+        let translatedProseChunks = 0;
+        const hasFinishedChunk = () => translatedProseChunks > 0;
         // When a chunk's fallback chain was cut short solely by later-chunk budget reservations
         // (rather than exhausting all providers), allow a single transient failure
         // (server/timeout/network) to probe the next reserved chunk instead of discarding the
@@ -1321,6 +1351,10 @@ class AutoTranslationRequestPipeline {
         for (let index = 0; index < chunks.length; index++) {
             if (typeof taskOptions.heartbeat === "function" && taskOptions.heartbeat() === false) {
                 throw this.createAutoTranslationStaleError("long-text-stale-before-chunk");
+            }
+            if (this.isAutoTranslationCodeOnlyText(chunks[index]) || this.isAutoTranslationTokenOnlyText?.(chunks[index])) {
+                translatedChunks.push(String(chunks[index] || "").trim());
+                continue;
             }
             const chunkOptions = this.getLongTextChunkTranslationOptions(longOptions, chunks[index], index, chunks.length, sourceHash);
             const requestBudget = taskOptions.requestBudget;
@@ -1406,6 +1440,7 @@ class AutoTranslationRequestPipeline {
             const trimmedTranslated = String(translated || "").trim();
             if (trimmedTranslated && !this.plugin.hasLongAutoTranslationChunkFailurePlaceholder(trimmedTranslated)) {
                 consecutiveReservedStopFailures = 0;
+                translatedProseChunks++;
             }
             translatedChunks.push(trimmedTranslated);
             if (budgetError || stopError) {
@@ -1419,7 +1454,7 @@ class AutoTranslationRequestPipeline {
             }
         }
         const successfulChunks = translatedChunks.filter(chunk => chunk && !this.plugin.hasLongAutoTranslationChunkFailurePlaceholder(chunk));
-        if (!successfulChunks.length) {
+        if (!successfulChunks.length || (translatedProseChunks === 0 && chunkFailures.length)) {
             const firstFailure = chunkFailures[0]?.error;
             if (firstFailure) throw firstFailure;
         }
@@ -1460,7 +1495,8 @@ class AutoTranslationRequestPipeline {
             longTextPartial: chunkFailures.length > 0
         });
         const invalidReason = validation.reasonCode || "";
-        if (invalidReason
+        if (!validation.renderable
+            && invalidReason
             && !chunkFailures.length
             && !this.isMergedLongAutoTranslationAcceptable(text, merged, targetLanguage)) {
             throw this.createFinalInvalidAutoTranslationError(invalidReason);
@@ -1718,14 +1754,9 @@ class AutoTranslationRequestPipeline {
     validateAutoTranslationBatchRow(item, output) {
         const { text, requestOptions } = item;
         const targetLanguage = this.getAutoTranslationTargetLanguage(requestOptions);
-        const trustProvider = this.getAutoTranslationValidationPolicy(requestOptions) === "trust-provider";
-        const outputOptions = trustProvider ? this.getAutoTranslationOutputValidationOptions(text, output, requestOptions) : {};
+        const outputOptions = this.getAutoTranslationOutputValidationOptions(text, output, requestOptions);
         const translated = this.plugin.sanitizeAutoTranslationOutput(text, output, targetLanguage, outputOptions);
         if (!translated) return { translated, invalidReason: "empty" };
-        if (!trustProvider) {
-            const invalidReason = this.plugin.getAutoTranslationInvalidOutputReason(text, translated, targetLanguage) || "";
-            return { translated, invalidReason };
-        }
         const validationOptions = this.getAutoTranslationOutputValidationOptions(text, translated, requestOptions);
         const validation = this.plugin.getAutoTranslationOutputValidationResult(text, translated, targetLanguage, validationOptions, requestOptions);
         return { translated, invalidReason: validation.renderable ? "" : (validation.reasonCode || "invalid-output") };
@@ -2229,22 +2260,31 @@ class AutoTranslationRequestPipeline {
 
     async runAutoTranslationStrictFallbackTask(text, options = this.getAutoTranslationOptions(), taskOptions = {}) {
         const strictOptions = this.plugin.getAutoTranslationRetryOptions(text, "", options);
-        const signalOptions = taskOptions?.signal ? { signal: taskOptions.signal } : {};
+        const signalOptions = {
+            ...(taskOptions?.signal ? { signal: taskOptions.signal } : {}),
+            ...(typeof taskOptions?.heartbeat === "function" ? { heartbeat: taskOptions.heartbeat } : {})
+        };
         try {
             return await this.plugin.runAutoTranslationTask(text, strictOptions, { retryInvalidOutput: false, ...signalOptions });
         }
         catch (error) {
-            if (!error?.autoTranslationFinalInvalidOutput) throw error;
-            const lastChanceOptions = this.getAutoTranslationFinalFallbackOptions(text, options);
-            const translated = await this.plugin.runAutoTranslationModelAttempt(text, lastChanceOptions, signalOptions);
-            const finalInvalidReason = this.plugin.getAutoTranslationInvalidOutputReason(
+            if (!error?.autoTranslationFinalInvalidOutput && !error?.modelOutputTruncated) throw error;
+            const lastChanceOptions = error?.modelOutputTruncated
+                ? this.withRaisedAutoTranslationMaxTokens(this.getAutoTranslationFinalFallbackOptions(text, options), text, 2)
+                : this.getAutoTranslationFinalFallbackOptions(text, options);
+            const targetLanguage = this.getAutoTranslationTargetLanguage(lastChanceOptions);
+            const rawTranslated = await this.plugin.runAutoTranslationModelAttempt(text, lastChanceOptions, signalOptions);
+            const outputOptions = this.getAutoTranslationOutputValidationOptions(text, rawTranslated, lastChanceOptions);
+            const translated = this.plugin.sanitizeAutoTranslationOutput(text, rawTranslated, targetLanguage, outputOptions);
+            const validation = this.plugin.getAutoTranslationOutputValidationResult(
                 text,
                 translated,
-                this.getAutoTranslationTargetLanguage(lastChanceOptions),
-                this.getAutoTranslationOutputValidationOptions(text, translated, lastChanceOptions)
+                targetLanguage,
+                this.getAutoTranslationOutputValidationOptions(text, translated, lastChanceOptions),
+                lastChanceOptions
             );
-            if (!finalInvalidReason) return translated;
-            throw this.createFinalInvalidAutoTranslationError(finalInvalidReason || error?.autoTranslationInvalidReason || "invalid-output");
+            if (validation.renderable) return translated;
+            throw this.createFinalInvalidAutoTranslationError(validation.reasonCode || error?.autoTranslationInvalidReason || "invalid-output");
         }
     }
 
@@ -2834,8 +2874,9 @@ class AutoTranslationRequestPipeline {
         const output = String(translatedText || "").trim();
         if (!source || !output) return false;
 
+        const japaneseOutputHasKana = targetScript === "kana" && (this.plugin.countTextScripts(output)?.kana || 0) > 0;
         const segments = this.plugin.getLanguageScriptSegments(output)
-            .filter(segment => segment.script !== targetScript)
+            .filter(segment => segment.script !== targetScript && !(japaneseOutputHasKana && segment.script === "han"))
             .filter(segment => !this.plugin.isLikelyPreservedForeignSegment(segment.text));
         if (!segments.length) return false;
 

@@ -228,7 +228,7 @@ class DiagnosticsRecorder {
             if (this.plugin.isSensitiveDiagnosticKey(key)) return;
             if (value === undefined || typeof value === "function") return;
             if (value === null || ["string", "number", "boolean"].includes(typeof value)) {
-                result[key] = String(key || "").toLowerCase().includes("model")
+                result[key] = typeof value === "string" && String(key || "").toLowerCase().includes("model")
                     ? this.plugin.getDiagnosticModelLabel(value)
                     : this.plugin.sanitizeDiagnosticValue(value);
                 return;

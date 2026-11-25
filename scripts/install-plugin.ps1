@@ -251,7 +251,32 @@ function Enable-BetterDiscordPlugin {
         throw
     }
 
+    foreach ($change in $changes) {
+        if ($change.Committed -and $change.Backup -and [System.IO.File]::Exists($change.Backup)) {
+            Remove-Item -LiteralPath $change.Backup -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     return $changes | ForEach-Object { $_.Path }
+}
+
+function Test-LiveDiscordWatcherRisk {
+    param([Parameter(Mandatory = $true)][string]$PluginsDir)
+    if ($env:DAIT_TEST_FORCE_LIVE_DISCORD_WATCHER -ne "1") {
+        $full = [System.IO.Path]::GetFullPath($PluginsDir)
+        foreach ($tempBase in @([System.IO.Path]::GetTempPath(), $env:TEMP, $env:TMP, $env:RUNNER_TEMP)) {
+            if (-not $tempBase) { continue }
+            try {
+                $normalizedTemp = [System.IO.Path]::GetFullPath($tempBase).TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
+                if ($full.StartsWith($normalizedTemp, [System.StringComparison]::OrdinalIgnoreCase)) {
+                    return $false
+                }
+            }
+            catch { }
+        }
+    }
+    $discordProcesses = @(Get-Process -Name "Discord", "DiscordPTB", "DiscordCanary", "DiscordDevelopment" -ErrorAction SilentlyContinue)
+    return ($discordProcesses.Count -gt 0)
 }
 
 function Get-PluginVersion {
@@ -439,6 +464,13 @@ if ($PSCmdlet.ShouldProcess($target, "Install DiscordAITranslator plugin")) {
         $enabledFiles = @()
         if (-not $NoEnable) {
             $enabledFiles = @(Enable-BetterDiscordPlugin -ProfileFiles $profileFiles -PluginName $pluginName)
+            if ($previousHash -and $profileFiles.Count -gt 0 -and (Test-LiveDiscordWatcherRisk -PluginsDir $resolvedPluginsDir)) {
+                Start-Sleep -Milliseconds 350
+                $reEnabledFiles = @(Enable-BetterDiscordPlugin -ProfileFiles $profileFiles -PluginName $pluginName)
+                if ($reEnabledFiles.Count) {
+                    $enabledFiles = @(@($enabledFiles) + @($reEnabledFiles) | Select-Object -Unique)
+                }
+            }
         }
     }
     catch {
@@ -473,6 +505,18 @@ if ($PSCmdlet.ShouldProcess($target, "Install DiscordAITranslator plugin")) {
     finally {
         if ([System.IO.File]::Exists($temp)) {
             Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    if ($backupCreated) {
+        $allPluginBackups = @(Get-ChildItem -LiteralPath $resolvedPluginsDir -Filter "DiscordAITranslator.plugin.js.bak-*" -File -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTimeUtc, Name -Descending)
+        if ($allPluginBackups.Count -gt 3) {
+            foreach ($oldBackup in ($allPluginBackups | Select-Object -Skip 3)) {
+                if ($oldBackup.FullName -ne $backup) {
+                    Remove-Item -LiteralPath $oldBackup.FullName -Force -ErrorAction SilentlyContinue
+                }
+            }
         }
     }
 

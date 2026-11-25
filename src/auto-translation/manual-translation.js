@@ -13,6 +13,7 @@ const {
 class ManualTranslationController {
     constructor(plugin) {
         this.plugin = plugin;
+        this.activeContentRuns = typeof WeakMap === "function" ? new WeakMap() : null;
     }
 }
 
@@ -436,14 +437,19 @@ const methods = {
             text,
             partial: line.classList?.contains?.("dait-translation-partial") === true,
             validationQuality: String(line.dataset?.daitValidationQuality || ""),
-            validationReason: String(line.dataset?.daitValidationReason || "")
+            validationReason: String(line.dataset?.daitValidationReason || ""),
+            partialInfo: line.__daitPartialInfo || null
         };
     },
 
     restoreTranslationLineState(plan, state, keptAutoPartial = null) {
         // A kept auto partial that was on screen also goes back into memory for redraw.
-        const partialInfo = state.partial && keptAutoPartial?.translated === state.text ? keptAutoPartial.partialInfo : null;
-        if (partialInfo) this.plugin.rememberAutoTranslationPartialResult(plan.autoCacheKey, plan.text, keptAutoPartial.translated, keptAutoPartial);
+        const partialInfo = state.partial
+            ? ((keptAutoPartial?.translated === state.text ? keptAutoPartial.partialInfo : null) || state.partialInfo || null)
+            : null;
+        if (partialInfo && keptAutoPartial?.translated === state.text) {
+            this.plugin.rememberAutoTranslationPartialResult(plan.autoCacheKey, plan.text, keptAutoPartial.translated, keptAutoPartial);
+        }
         return this.plugin.renderTranslation(plan.messageNode, plan.content, state.text, plan.cacheKey, plan.domText ?? plan.text, {
             partial: state.partial,
             validationQuality: state.validationQuality,
@@ -473,13 +479,22 @@ const methods = {
             this.plugin.showToast(this.plugin.t("noTranslatableText"), "info");
             return;
         }
+        const priorRun = content && this.activeContentRuns ? (this.activeContentRuns.get(content) || null) : null;
         const plan = this.plugin.createManualTranslationPlan(messageNode, content, text, textOptions, source);
         const requestOptions = plan.requestOptions;
         const cacheKey = plan.cacheKey;
         const startedAt = plan.startedAt;
         const lifecycleToken = plan.lifecycleToken;
+        const releaseSupersededButton = () => {
+            if (priorRun?.button && priorRun.button !== button && this.plugin.isLifecycleTokenCurrent(lifecycleToken)) {
+                this.plugin.setButtonBusy(priorRun.button, false, this.plugin.t("translateButton"));
+            }
+        };
         if (!this.plugin.isLifecycleTokenCurrent(lifecycleToken) || !this.plugin.isManualTranslationConfigCurrent(plan)
-            || !this.plugin.isManualTranslationSourceStillCurrent(plan)) return;
+            || !this.plugin.isManualTranslationSourceStillCurrent(plan)) {
+            releaseSupersededButton();
+            return;
+        }
         // Retranslate on a kept auto partial: that partial is drawn back unless the manual result
         // leaves out fewer parts of the message.
         const keptAutoPartial = this.plugin.getAutoTranslationPartialResult(plan.autoCacheKey, text);
@@ -522,13 +537,22 @@ const methods = {
                 });
                 this.plugin.syncManualTranslationToAutoCache(messageNode, content, text, cachedTranslation, textOptions, plan.domText);
                 this.plugin.renderTranslation(messageNode, content, cachedTranslation, cacheKey, plan.domText);
+                releaseSupersededButton();
+                if (content && this.activeContentRuns) this.activeContentRuns.delete(content);
+                if (button) this.plugin.setButtonBusy(button, false, this.plugin.t("translateButton"));
                 return;
             }
         }
 
         // Retranslate replaces a line the user was reading: keep what it showed in case the new
         // request produces nothing usable.
-        const previousLineState = translateOptions?.bypassCache ? this.getRestorableTranslationLineState(plan) : null;
+        const previousLineState = translateOptions?.bypassCache
+            ? (this.getRestorableTranslationLineState(plan)
+                || (priorRun?.domText === plan.domText ? priorRun.previousLineState || null : null))
+            : null;
+        releaseSupersededButton();
+        const runEntry = { button, previousLineState, domText: plan.domText };
+        if (content && this.activeContentRuns) this.activeContentRuns.set(content, runEntry);
         plan.loadingLine = this.plugin.renderManualLoading(plan);
         this.plugin.setButtonBusy(button, true, this.plugin.t("translateBusy"));
         try {
@@ -588,16 +612,19 @@ const methods = {
             // The request may have detected the local model: the result belongs under the served model's key,
             // which the next lookup of this message builds.
             const resultCacheKey = this.plugin.getServedModelTranslationCacheKey(cacheKey, requestOptions);
-            if (validation.cacheable && !usedProviderFallback) {
-                this.plugin.setTranslationCache(resultCacheKey, translated);
-                this.plugin.syncManualTranslationToAutoCache(messageNode, content, text, translated, textOptions, plan.domText);
-            }
-            this.plugin.renderTranslation(messageNode, content, translated, resultCacheKey, plan.domText, {
+            const renderedLine = this.plugin.renderTranslation(messageNode, content, translated, resultCacheKey, plan.domText, {
                 partial: validation.quality === TRANSLATION_VALIDATION_QUALITIES.PARTIAL,
                 validationQuality: validation.quality,
                 validationReason: validation.reasonCode || "",
                 ...(resultRequestOptions.longTextPartialInfo ? { partialInfo: resultRequestOptions.longTextPartialInfo } : {})
             });
+            if (renderedLine === null) {
+                throw this.createManualRescueFailureError("emoji-restore-failed", validation.quality || "", manualResult?.attempts || []);
+            }
+            if (validation.cacheable && !usedProviderFallback) {
+                this.plugin.setTranslationCache(resultCacheKey, translated);
+                this.plugin.syncManualTranslationToAutoCache(messageNode, content, text, translated, textOptions, plan.domText);
+            }
             this.plugin.rememberRecentAutoTranslationRender(plan.autoCacheKey, text, plan.autoRequestOptions, {
                 validationQuality: validation.quality,
                 validationReason: validation.reasonCode || ""
@@ -653,6 +680,9 @@ const methods = {
             if (!silentManualFailure || translateOptions?.bypassCache) this.plugin.showToast(this.plugin.formatError(error), "error");
         }
         finally {
+            if (content && this.activeContentRuns?.get(content) === runEntry) {
+                this.activeContentRuns.delete(content);
+            }
             if (this.plugin.isLifecycleTokenCurrent(lifecycleToken) && this.plugin.isManualTranslationRequestCurrent(plan)) {
                 this.plugin.setButtonBusy(button, false, this.plugin.t("translateButton"));
             }

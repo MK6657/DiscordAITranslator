@@ -569,6 +569,59 @@ module.exports = require("../betterdiscord.app.asar");
         }
     }
 
+    # Live-Discord fs.watch race + backup hygiene:
+    # 1) When Discord is running and BetterDiscord's watcher flips plugins.json back to false right after
+    #    replacement, the post-settle pass re-enables DiscordAITranslator without clobbering sibling keys.
+    # 2) Clean installs remove transient plugins.json.bak-enable-* files and prune older plugin backups to 3.
+    & {
+        $watcherAppData = Join-Path $testRoot "live-watcher-race"
+        $watcherPlugins = Join-Path $watcherAppData "BetterDiscord\plugins"
+        $watcherDestination = Join-Path $watcherPlugins "DiscordAITranslator.plugin.js"
+        $watcherProfile = Join-Path $watcherAppData "BetterDiscord\data\stable\plugins.json"
+        New-Item -ItemType Directory -Force -Path $watcherPlugins, (Split-Path -Parent $watcherProfile) | Out-Null
+        Set-Utf8NoBomContent -Path $watcherDestination -Value "/**`n * @name DiscordAITranslator`n * @version 0.5.1`n */`nmodule.exports = class {};"
+        Set-Utf8NoBomContent -Path $watcherProfile -Value '{"DiscordAITranslator":true,"OtherPlugin":true}'
+        for ($idx = 1; $idx -le 4; $idx++) {
+            $oldBak = "$watcherDestination.bak-2026010$idx-000000-000"
+            Set-Utf8NoBomContent -Path $oldBak -Value "old backup $idx"
+            (Get-Item -LiteralPath $oldBak).LastWriteTimeUtc = [datetime]::UtcNow.AddMinutes(-10 + $idx)
+        }
+        $env:APPDATA = $watcherAppData
+        $env:DAIT_TEST_FORCE_LIVE_DISCORD_WATCHER = "1"
+        $watcherFlipped = $false
+        function Get-Process {
+            [CmdletBinding()]
+            param([string[]]$Name)
+            return @([pscustomobject]@{ Name = "Discord" })
+        }
+        function Start-Sleep {
+            [CmdletBinding()]
+            param([int]$Milliseconds)
+            if ($Milliseconds -ge 300 -and -not $watcherFlipped) {
+                $script:watcherFlipped = $true
+                Set-Utf8NoBomContent -Path $watcherProfile -Value '{"DiscordAITranslator":false,"OtherPlugin":true}'
+            }
+        }
+        try {
+            & $installer -PluginPath $source -PluginsDir $watcherPlugins -SkipSyntaxCheck | Out-Null
+        }
+        finally {
+            Remove-Item Env:\DAIT_TEST_FORCE_LIVE_DISCORD_WATCHER -ErrorAction SilentlyContinue
+        }
+        $finalWatcherState = Microsoft.PowerShell.Utility\ConvertFrom-Json -InputObject ([System.IO.File]::ReadAllText($watcherProfile))
+        if ($finalWatcherState.DiscordAITranslator -ne $true -or $finalWatcherState.OtherPlugin -ne $true) {
+            throw "Installer did not recover from live Discord watcher disable race."
+        }
+        $leftoverEnableBackups = @(Get-ChildItem -LiteralPath (Split-Path -Parent $watcherProfile) -Filter "plugins.json.bak-enable-*")
+        if ($leftoverEnableBackups.Count -ne 0) {
+            throw "Clean install left transient plugins.json.bak-enable-* backups behind."
+        }
+        $remainingPluginBackups = @(Get-ChildItem -LiteralPath $watcherPlugins -Filter "DiscordAITranslator.plugin.js.bak-*")
+        if ($remainingPluginBackups.Count -ne 3) {
+            throw "Clean install did not prune older plugin backups down to 3 (found $($remainingPluginBackups.Count))."
+        }
+    }
+
     $env:APPDATA = $originalAppData
     Write-Host "Installer verification passed."
 }

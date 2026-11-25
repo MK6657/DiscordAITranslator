@@ -630,7 +630,7 @@ const methods = {
         if (targetLetters <= 0) return false;
 
         const foreignSegments = segments
-            .filter(segment => segment.script !== targetScript)
+            .filter(segment => segment.script !== targetScript && !(targetScript === "kana" && segment.script === "han"))
             .filter(segment => !this.isLikelyPreservedForeignSegment(segment.text));
         if (!foreignSegments.length) return false;
         if (foreignSegments.some(segment => segment.script !== "latin")) return false;
@@ -639,7 +639,7 @@ const methods = {
     },
 
     isPreservableSourceLatinSegment(segmentText, sourceText) {
-        const words = String(segmentText || "").match(/[A-Za-z\u00c0-\u024f][A-Za-z\u00c0-\u024f0-9+_.-]*/g) || [];
+        const words = String(segmentText || "").match(/\p{Script=Latin}[\p{Script=Latin}0-9+_.-]*/gu) || [];
         if (!words.length || words.length > 5) return false;
         const normalizedSegment = this.normalizeComparableLatinText(segmentText);
         const normalizedSource = this.normalizeComparableLatinText(sourceText);
@@ -709,7 +709,7 @@ const methods = {
     normalizeComparableLatinText(text) {
         return String(text || "")
             .toLocaleLowerCase()
-            .replace(/[^a-z0-9+_.-]+/g, " ")
+            .replace(/[^\p{Script=Latin}0-9+_.-]+/gu, " ")
             .replace(/\s+/g, " ")
             .trim();
     },
@@ -718,7 +718,7 @@ const methods = {
         return String(word || "")
             .trim()
             .toLocaleLowerCase()
-            .replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, "");
+            .replace(/^[^\p{Script=Latin}0-9]+|[^\p{Script=Latin}0-9]+$/gu, "");
     },
 
     isNamedLatinTermShape(word) {
@@ -853,12 +853,16 @@ const methods = {
     },
 
     isTargetLanguageDominantChunk(text, targetScript, options = {}) {
-        const startsTarget = this.chunkStartsWithTargetScript(text, targetScript);
+        const startsTarget = this.chunkStartsWithTargetScript(text, targetScript)
+            || (targetScript === "kana" && this.getFirstLetterScript(text) === "han");
         const counts = this.countTextScriptsForValidation(text);
-        const targetCount = counts[targetScript] || 0;
+        const japaneseHasKana = targetScript === "kana" && (counts.kana || 0) > 0;
+        const targetCount = japaneseHasKana
+            ? (counts.kana || 0) + (counts.han || 0)
+            : (counts[targetScript] || 0);
         if (targetCount < 2) return false;
         const foreignScripts = ["han", "latin", "cyrillic", "arabic", "devanagari", "kana", "hangul", "other"]
-            .filter(script => script !== targetScript && (counts[script] || 0) > 0);
+            .filter(script => script !== targetScript && !(japaneseHasKana && script === "han") && (counts[script] || 0) > 0);
         if (foreignScripts.some(script => script !== "latin")) return false;
         const foreignCount = foreignScripts.reduce((total, script) => total + (counts[script] || 0), 0);
         if (foreignCount <= 0) return options?.allowPureTarget === true && targetScript !== "latin";
@@ -972,7 +976,7 @@ const methods = {
     },
 
     getMeaningfulLatinWords(text) {
-        const words = String(text || "").match(/[A-Za-z\u00c0-\u024f]{2,}/g) || [];
+        const words = String(text || "").match(/\p{Script=Latin}{2,}/gu) || [];
         return words.filter(word => !this.isLikelyPreservedTokenLine(word));
     },
 
@@ -1113,7 +1117,7 @@ const methods = {
     isMostlyJapanese(text) {
         const counts = this.countTextScripts(text);
         const total = Math.max(1, counts.total);
-        return counts.kana >= 2 || (counts.kana + counts.han >= 4 && counts.kana / total >= 0.12);
+        return counts.kana >= 2 || (counts.kana >= 1 && counts.han >= 1) || (counts.kana + counts.han >= 4 && counts.kana / total >= 0.12);
     },
 
     isLikelyJapaneseHanPhrase(text) {
@@ -1127,16 +1131,21 @@ const methods = {
     },
 
     getCharacterScript(char) {
-        const code = String(char || "").codePointAt(0);
+        const sample = String(char || "");
+        const code = sample.codePointAt(0);
         if (!Number.isFinite(code)) return "";
-        if ((code >= 0x3400 && code <= 0x9fff) || (code >= 0xf900 && code <= 0xfaff)) return "han";
-        if ((code >= 0x3040 && code <= 0x30ff) || (code >= 0x31f0 && code <= 0x31ff)) return "kana";
+        if ((code >= 0x3400 && code <= 0x9fff) || (code >= 0xf900 && code <= 0xfaff) || (code >= 0x20000 && /\p{Script=Han}/u.test(sample))) return "han";
+        if ((code >= 0x3040 && code <= 0x30ff) || (code >= 0x31f0 && code <= 0x31ff) || (code >= 0xff66 && code <= 0xff9f)) return "kana";
         if (code >= 0xac00 && code <= 0xd7af) return "hangul";
         if (code >= 0x0400 && code <= 0x04ff) return "cyrillic";
         if ((code >= 0x0600 && code <= 0x06ff) || (code >= 0x0750 && code <= 0x077f)) return "arabic";
         if (code >= 0x0900 && code <= 0x097f) return "devanagari";
-        if ((code >= 0x0041 && code <= 0x005a) || (code >= 0x0061 && code <= 0x007a) || (code >= 0x00c0 && code <= 0x024f)) return "latin";
-        if (/\p{L}/u.test(String(char || ""))) return "other";
+        if ((code >= 0x0041 && code <= 0x005a)
+            || (code >= 0x0061 && code <= 0x007a)
+            || (code >= 0x00c0 && code <= 0x024f)
+            || (code >= 0x1e00 && code <= 0x1eff)
+            || /\p{Script=Latin}/u.test(sample)) return "latin";
+        if (/\p{L}/u.test(sample)) return "other";
         return "";
     },
 
@@ -1169,7 +1178,7 @@ const methods = {
         if (counts.cyrillic || counts.arabic || counts.devanagari || counts.han || counts.kana || counts.hangul) return false;
 
         const normalized = String(text || "").toLocaleLowerCase();
-        const words = normalized.match(/[a-zà-öø-ÿā-žƀ-ɏ]+/g) || [];
+        const words = normalized.match(/\p{Script=Latin}+/gu) || [];
         const joined = ` ${words.join(" ")} `;
         const dictionaries = {
             english: [" the ", " and ", " are ", " you ", " can ", " help ", " me ", " with ", " this ", " that ", " what ", " have ", " been ", " for ", " to ", " is ", " in ", " of ", " hello ", " hi ", " bro ", " thanks ", " thank ", " okay ", " ok ", " lately ", " up "],

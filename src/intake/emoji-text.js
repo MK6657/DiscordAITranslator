@@ -16,7 +16,7 @@ const STANDARD_EMOJI_SOURCE = [
 const STANDARD_EMOJI_PATTERN = new RegExp(STANDARD_EMOJI_SOURCE, "gu");
 const STANDARD_EMOJI_ONLY_PATTERN = new RegExp(`^(?:${STANDARD_EMOJI_SOURCE})+$`, "u");
 // An emoji written as its name: a custom emoji's ":name:", or a standard emoji's shortcode.
-const EMOJI_SHORTCODE_PATTERN = /:[A-Za-z0-9_~+-]{1,64}:/g;
+const EMOJI_SHORTCODE_PATTERN = /(?<![A-Za-z0-9_~:/]):(?=[A-Za-z0-9_~+-]*[A-Za-z_])[A-Za-z0-9_~+-]{2,64}:(?![A-Za-z0-9_~:/])/g;
 
 // The text with its standard emoji taken out (each becomes a space), for decisions about the words.
 function removeStandardEmoji(text) {

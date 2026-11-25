@@ -51,10 +51,12 @@ class TranslationScheduler {
 
     canStartPrefetchRequest(concurrency) {
         const total = Math.max(0, Number(concurrency) || 0);
-        const limit = Math.min(1, Math.max(0, total - 1));
+        if (total <= 0) return false;
         if (this.plugin.hasActiveVisibleAutoTranslationWork()) return false;
+        const limit = Math.min(1, Math.max(0, total - 1));
+        const maxTotalInFlight = Math.max(0, total - 1);
         return this.plugin.autoTranslationPrefetchInFlight < limit
-            && this.plugin.autoTranslationInFlight < Math.max(0, total - 1);
+            && this.plugin.autoTranslationInFlight < maxTotalInFlight;
     }
 
     isPrefetchBatch(batch, context = null) {

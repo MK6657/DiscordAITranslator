@@ -670,7 +670,7 @@ const methods = {
         const sourceKey = source || null;
         const cached = this.plugin.discordThemeVariableValuesCache;
         if (cached && cached.epoch === this.plugin.discordThemeCacheEpoch
-            && (cached.source === sourceKey || !sourceKey)
+            && cached.source === sourceKey
             && now - cached.at < 5000) {
             return cached.values;
         }

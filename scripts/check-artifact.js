@@ -80,6 +80,10 @@ for (const [mode, sandboxRequire] of [
     if (!/^[0-9a-f]{64}$/.test(String(receipt?.fingerprint || ""))) {
         throw new Error(`Plugin cache receipt hash failed in BetterDiscord sandbox (${mode}).`);
     }
+    if (instance.createMd5Hash?.("abc") !== "900150983cd24fb0d6963f7d28e17f72"
+        || instance.createMd5Hash?.("") !== "d41d8cd98f00b204e9800998ecf8427e") {
+        throw new Error(`Plugin Baidu MD5 hash failed in BetterDiscord sandbox (${mode}).`);
+    }
 }
 
 process.stdout.write(`Artifact checks passed (${artifact.length} bytes).\n`);

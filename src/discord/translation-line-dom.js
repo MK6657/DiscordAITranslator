@@ -32,7 +32,7 @@ const methods = {
         document.querySelectorAll(".dait-translation-line").forEach(/** @param {any} line */ line => {
             if (line.dataset?.daitMode === "manual") return;
             this.plugin.restoreTranslationSourceVisibility(this.plugin.getTranslationContentForLine(line));
-            line.remove();
+            this.disposeTranslationLine(line);
         });
     },
 
@@ -507,7 +507,7 @@ const methods = {
         if (line.dataset.daitMode === "manual") return;
         if (cacheKey && !this.isTranslationLineCacheMatch(line, cacheKey, this.getTranslationLineCacheAliases(target?.text || "", target?.requestOptions || {}))) return;
         this.plugin.restoreTranslationSourceVisibility(target.content);
-        line.remove();
+        this.disposeTranslationLine(line);
     },
 
     removeAutoTranslationLoadingForItem(item, options = {}) {
@@ -525,7 +525,7 @@ const methods = {
         if (line.dataset?.daitMode === "manual") return;
         if (cacheKey && !this.isTranslationLineCacheMatch(line, cacheKey, this.getTranslationLineCacheAliases(target?.text || "", target?.requestOptions || {}))) return;
         this.plugin.restoreTranslationSourceVisibility(target.content);
-        line.remove();
+        this.disposeTranslationLine(line);
     },
 
     isTranslationLineCacheMatch(line, cacheKey, cacheAliases = []) {
@@ -698,7 +698,8 @@ const methods = {
         const sourceSignature = this.plugin.getStrongTextFingerprint(sourceText ?? this.plugin.getElementText(content));
         const requestedMode = this.plugin.getTranslationCacheMode(cacheKey);
         if (line.dataset.daitSourceSig ? line.dataset.daitSourceSig !== sourceSignature : line.dataset.daitSourceKey !== sourceFingerprint) {
-            line.remove();
+            this.plugin.restoreTranslationSourceVisibility(this.plugin.getTranslationContentForLine(line) || content);
+            this.disposeTranslationLine(line);
             return false;
         }
         if (line.classList?.contains?.("dait-translation-error")) return false;
@@ -712,11 +713,13 @@ const methods = {
         const identityFingerprint = this.getTranslationIdentityFingerprintFromCacheKey(cacheKey);
         const identitySignature = this.getTranslationIdentitySignatureFromCacheKey(cacheKey);
         if (line.dataset.daitIdentitySig && identitySignature && line.dataset.daitIdentitySig !== identitySignature) {
-            line.remove();
+            this.plugin.restoreTranslationSourceVisibility(this.plugin.getTranslationContentForLine(line) || content);
+            this.disposeTranslationLine(line);
             return false;
         }
         if (!line.dataset.daitIdentitySig && line.dataset.daitIdentityKey && identityFingerprint && line.dataset.daitIdentityKey !== identityFingerprint) {
-            line.remove();
+            this.plugin.restoreTranslationSourceVisibility(this.plugin.getTranslationContentForLine(line) || content);
+            this.disposeTranslationLine(line);
             return false;
         }
 
@@ -730,7 +733,8 @@ const methods = {
         }
 
         if (this.plugin.isAutoTranslationRenderPaused() && this.plugin.isAutoTranslationCacheMode(line.dataset?.daitMode)) return false;
-        line.remove();
+        this.plugin.restoreTranslationSourceVisibility(this.plugin.getTranslationContentForLine(line) || content);
+        this.disposeTranslationLine(line);
         return false;
     },
 
@@ -772,6 +776,13 @@ const methods = {
     retargetTranslationLineToContent(line, content) {
         if (!line?.dataset || !content?.dataset) return;
         line.dataset.daitOwner = this.ensureTranslationOwnerId(content);
+        const anchor = line.querySelector?.(":scope > .dait-translation-actions-anchor");
+        if (anchor?.__daitActionTarget) {
+            anchor.__daitActionTarget = {
+                messageNode: content.closest?.(DISCORD_MESSAGE_NODE_SELECTOR) || anchor.__daitActionTarget.messageNode || null,
+                content
+            };
+        }
         this.positionExistingTranslationLine(line, content);
         this.plugin.syncTranslationSourceVisibility(line, content);
     },
@@ -806,7 +817,7 @@ const methods = {
         }
 
         this.plugin.restoreTranslationSourceVisibility(content);
-        line.remove?.();
+        this.disposeTranslationLine(line);
         this.plugin.deleteTranslationCacheCandidates(
             cacheKey,
             ...cacheAliases,
@@ -841,7 +852,7 @@ const methods = {
         if (ownedLines.length > 1) {
             ownedLines.slice(1).forEach(line => {
                 if (this.plugin.isAutoTranslationRenderPaused() && this.plugin.isAutoTranslationCacheMode(line.dataset?.daitMode)) return;
-                line.remove();
+                this.disposeTranslationLine(line);
             });
         }
         if (ownedLines[0]) return ownedLines[0];
@@ -857,7 +868,7 @@ const methods = {
             if (!ownerId.startsWith(`${this.plugin.translationOwnerPrefix}-`)) {
                 if (preserveAutoLines && isAutoLine) return;
                 this.plugin.restoreTranslationSourceVisibility(this.plugin.getTranslationContentForLine(line));
-                line.remove();
+                this.disposeTranslationLine(line);
                 return;
             }
 
@@ -865,7 +876,7 @@ const methods = {
             if (!content?.isConnected) {
                 if (preserveAutoLines && isAutoLine) return;
                 this.plugin.restoreTranslationSourceVisibility(content);
-                line.remove();
+                this.disposeTranslationLine(line);
                 return;
             }
 
@@ -877,7 +888,7 @@ const methods = {
             const sourceSig = this.plugin.getStrongTextFingerprint(sourceText);
             if (line.dataset.daitSourceSig ? line.dataset.daitSourceSig !== sourceSig : line.dataset.daitSourceKey && line.dataset.daitSourceKey !== sourceKey) {
                 this.plugin.restoreTranslationSourceVisibility(content);
-                line.remove();
+                this.disposeTranslationLine(line);
                 return;
             }
             if (line.dataset.daitMode === "auto-text") {
@@ -888,7 +899,7 @@ const methods = {
                 const currentIdentitySig = this.getCurrentTranslationIdentitySignature(line, content, textOptions, sourceText);
                 if (currentIdentitySig && line.dataset.daitIdentitySig !== currentIdentitySig) {
                     this.plugin.restoreTranslationSourceVisibility(content);
-                    line.remove();
+                    this.disposeTranslationLine(line);
                     return;
                 }
             }
@@ -896,7 +907,7 @@ const methods = {
                 const currentIdentityKey = this.getCurrentTranslationIdentityFingerprint(line, content, textOptions, sourceText);
                 if (currentIdentityKey && line.dataset.daitIdentityKey !== currentIdentityKey) {
                     this.plugin.restoreTranslationSourceVisibility(content);
-                    line.remove();
+                    this.disposeTranslationLine(line);
                     return;
                 }
             }
@@ -907,10 +918,44 @@ const methods = {
                     ageMs: Date.now() - Number(line.dataset?.daitLoadingAt || 0)
                 });
                 this.plugin.restoreTranslationSourceVisibility(content);
-                line.remove();
+                this.disposeTranslationLine(line);
                 return;
             }
             this.plugin.syncTranslationSourceVisibility(line, content, sourceText);
+        });
+        this.restoreOrphanedHiddenSourceElements(context);
+    },
+
+    restoreOrphanedHiddenSourceElements(context = null) {
+        if (typeof document === "undefined") return;
+        const selector = "[data-dait-source-hidden='true']";
+        const messageNodes = [...new Set(context?.messageNodes || [])].filter(node => node?.querySelectorAll);
+        const hiddenNodes = [];
+        const seen = new Set();
+        if (messageNodes.length) {
+            messageNodes.forEach(messageNode => {
+                if (messageNode.dataset?.daitSourceHidden === "true" && !seen.has(messageNode)) {
+                    seen.add(messageNode);
+                    hiddenNodes.push(messageNode);
+                }
+                for (const node of messageNode.querySelectorAll?.(selector) || []) {
+                    if (!node || seen.has(node)) continue;
+                    seen.add(node);
+                    hiddenNodes.push(node);
+                }
+            });
+        }
+        else {
+            for (const node of document.querySelectorAll?.(selector) || []) {
+                if (!node || seen.has(node)) continue;
+                seen.add(node);
+                hiddenNodes.push(node);
+            }
+        }
+        hiddenNodes.forEach(node => {
+            const lines = this.plugin.getTranslationLines(node);
+            const hasHidingLine = lines.some(line => line?.isConnected !== false && this.shouldHideOriginalForTranslationLine(line, node));
+            if (!hasHidingLine) this.plugin.restoreTranslationSourceVisibility(node);
         });
     },
 
@@ -1111,6 +1156,7 @@ const methods = {
         document.querySelectorAll(".dait-translation-line[data-dait-owner]").forEach(line => {
             this.plugin.syncTranslationSourceVisibility(line, this.plugin.getTranslationContentForLine(line));
         });
+        this.restoreOrphanedHiddenSourceElements();
     },
 
     syncAllTranslationDisplaySettings() {
@@ -1194,7 +1240,7 @@ const methods = {
             }
             catch {}
             const alt = String(image.getAttribute?.("alt") || "").trim();
-            const match = alt.match(/^:([A-Za-z0-9_]{1,64}):$/);
+            const match = alt.match(/^:([A-Za-z0-9_~]{1,64}):$/);
             if (!match) return null;
             return { name: match[1], alt, image };
         }).filter(Boolean);
@@ -1238,7 +1284,7 @@ const methods = {
         });
 
         const value = String(translatedText || "");
-        const tokenPattern = /<a?:([A-Za-z0-9_]{1,64}):\d+>|:([A-Za-z0-9_]{1,64}):/g;
+        const tokenPattern = /<a?:([A-Za-z0-9_~]{1,64}):\d+>|:([A-Za-z0-9_~]{1,64}):/g;
         const parts = [];
         let cursor = 0;
         let handled = false;
@@ -1285,6 +1331,7 @@ const methods = {
             if (renderOptions?.validationReason) line.dataset.daitValidationReason = String(renderOptions.validationReason);
             else delete line.dataset.daitValidationReason;
             this.resetTranslationLineState(line);
+            line.__daitPartialInfo = renderOptions?.partialInfo || null;
             this.applyTranslationLineDisplayClasses(line);
             this.applyTranslationLineMaskState(line);
             this.applyTranslationLineDismissal(line, messageNode, content);
@@ -1557,10 +1604,14 @@ const methods = {
             event.preventDefault();
             event.stopPropagation();
             const currentContent = this.plugin.getTranslationContentForLine(line) || content;
+            const currentMessageNode = (messageNode?.isConnected ? messageNode : null)
+                || currentContent?.closest?.(DISCORD_MESSAGE_NODE_SELECTOR)
+                || line?.closest?.(DISCORD_MESSAGE_NODE_SELECTOR)
+                || messageNode;
             const textOptions = line.classList?.contains?.("dait-translation-preview")
                 ? { includeReplyPreview: true }
                 : null;
-            if (!messageNode?.isConnected || !currentContent?.isConnected) {
+            if (!currentMessageNode?.isConnected || !currentContent?.isConnected) {
                 this.removeTranslationLineStably(line, currentContent);
                 this.plugin.showToast(this.plugin.t("messageMissing"), "error");
                 return;
@@ -1573,7 +1624,7 @@ const methods = {
                 return;
             }
 
-            this.plugin.translateMessage(messageNode, currentContent, null, textOptions);
+            this.plugin.translateMessage(currentMessageNode, currentContent, null, textOptions);
         });
         return retry;
     },
@@ -1582,7 +1633,7 @@ const methods = {
         if (!line) return;
         this.plugin.withTranslationScrollStability(anchor?.isConnected ? anchor : line, () => {
             if (anchor) this.plugin.restoreTranslationSourceVisibility(anchor);
-            line.remove?.();
+            this.disposeTranslationLine(line);
         });
     },
 
@@ -1627,6 +1678,12 @@ const methods = {
         this.plugin.translationErrorWaitTimers?.clear?.();
     },
 
+    disposeTranslationLine(line) {
+        if (!line) return;
+        this.clearTranslationErrorWaitTimer(line);
+        line.remove?.();
+    },
+
     openTranslationSettingsFromChat(source = null) {
         if (this.plugin.settings?.ui) this.plugin.settings.ui.settingsActiveTab = SETTINGS_TAB_TRANSLATE;
         this.plugin.saveSettings({ debounce: true });
@@ -1660,6 +1717,7 @@ const methods = {
         }
         ["dait-translation-style-tint", "dait-translation-style-muted", "dait-translation-style-tag", "dait-translation-scale-90", "dait-translation-dismissed"]
             .forEach(name => line.classList?.remove?.(name));
+        delete line.__daitPartialInfo;
         this.plugin.translationLineTexts?.delete?.(line);
     },
 
@@ -1736,10 +1794,12 @@ const methods = {
 
     revealMaskedTranslationLine(line, content = null) {
         if (!line?.classList?.contains?.("dait-translation-masked")) return false;
+        const resolvedContent = this.plugin.getTranslationContentForLine(line) || content;
         line.classList.remove("dait-translation-masked");
         line.classList.add("dait-translation-revealed");
         this.applyTranslationLineMaskState(line);
-        this.plugin.syncTranslationSourceVisibility(line, content || this.plugin.getTranslationContentForLine(line));
+        this.plugin.syncTranslationSourceVisibility(line, resolvedContent);
+        this.placeTranslationLineActions(line);
         return true;
     },
 
@@ -1764,8 +1824,14 @@ const methods = {
         const anchor = line?.querySelector?.(":scope > .dait-translation-actions-anchor");
         if (!anchor) return null;
         const target = anchor.__daitActionTarget || {};
-        const content = target.content || this.plugin.getTranslationContentForLine(line);
-        const toolbar = this.plugin.createTranslationLineActions(line, target.messageNode || content?.closest?.(DISCORD_MESSAGE_NODE_SELECTOR) || null, content);
+        const liveContent = this.plugin.getTranslationContentForLine(line);
+        const content = (target.content?.isConnected ? target.content : null) || liveContent || target.content || null;
+        const messageNode = (target.messageNode?.isConnected ? target.messageNode : null)
+            || content?.closest?.(DISCORD_MESSAGE_NODE_SELECTOR)
+            || line?.closest?.(DISCORD_MESSAGE_NODE_SELECTOR)
+            || target.messageNode
+            || null;
+        const toolbar = this.plugin.createTranslationLineActions(line, messageNode, content);
         const focused = typeof document !== "undefined" && document.activeElement === anchor;
         line.insertBefore(toolbar, anchor);
         anchor.remove?.();
@@ -1778,12 +1844,19 @@ const methods = {
         toolbar.className = "dait-translation-actions";
         toolbar.setAttribute?.("role", "toolbar");
         toolbar.setAttribute?.("aria-label", this.plugin.t("translationActionsLabel"));
-        const currentContent = () => this.plugin.getTranslationContentForLine(line) || content;
+        const currentContent = () => this.plugin.getTranslationContentForLine(line) || (content?.isConnected ? content : null) || content;
+        const currentMessageNode = () => {
+            const resolvedContent = currentContent();
+            return (messageNode?.isConnected ? messageNode : null)
+                || resolvedContent?.closest?.(DISCORD_MESSAGE_NODE_SELECTOR)
+                || line?.closest?.(DISCORD_MESSAGE_NODE_SELECTOR)
+                || messageNode;
+        };
         /** @type {Array<[string, string, () => any]>} */
         const actionSpecs = [
             ["copy", "translationActionCopy", () => this.plugin.copyTranslationLineText(line)],
-            ["retranslate", "translationActionRetranslate", () => this.plugin.retranslateMessage(messageNode, currentContent())],
-            ["hide", "translationActionHide", () => this.plugin.dismissTranslationLine(line, messageNode, currentContent())]
+            ["retranslate", "translationActionRetranslate", () => this.plugin.retranslateMessage(currentMessageNode(), currentContent())],
+            ["hide", "translationActionHide", () => this.plugin.dismissTranslationLine(line, currentMessageNode(), currentContent())]
         ];
         actionSpecs.forEach(([name, labelKey, run], index) => {
             const button = document.createElement("button");
@@ -1867,7 +1940,12 @@ const methods = {
         button.addEventListener("click", event => {
             event.preventDefault();
             event.stopPropagation();
-            this.retranslateMessage(messageNode, this.plugin.getTranslationContentForLine(line) || content);
+            const resolvedContent = this.plugin.getTranslationContentForLine(line) || content;
+            const resolvedMessageNode = (messageNode?.isConnected ? messageNode : null)
+                || resolvedContent?.closest?.(DISCORD_MESSAGE_NODE_SELECTOR)
+                || line?.closest?.(DISCORD_MESSAGE_NODE_SELECTOR)
+                || messageNode;
+            this.retranslateMessage(resolvedMessageNode, resolvedContent);
         });
         note.appendChild(button);
         return note;
@@ -1979,7 +2057,7 @@ const methods = {
         const cacheKey = this.plugin.getTranslationCacheKey(text, requestOptions);
         this.plugin.clearAutoTranslationFailure(cacheKey, requestOptions, { clearProvider: true });
         this.clearAutoTextTranslationFailure(text, requestOptions);
-        line?.remove?.();
+        this.disposeTranslationLine(line);
 
         const cachedTranslation = this.plugin.getTranslationCacheValue(cacheKey, this.plugin.getTranslationCacheAliases(text, requestOptions));
         if (cachedTranslation !== null) {
@@ -2023,7 +2101,8 @@ const methods = {
                 if (event.key !== "Enter" && event.key !== " " && event.key !== "Spacebar") return;
                 event.preventDefault();
                 event.stopPropagation();
-                this.plugin.withTranslationScrollStability(content, () => this.revealMaskedTranslationLine(line, content));
+                const currentContent = this.plugin.getTranslationContentForLine(line) || content;
+                this.plugin.withTranslationScrollStability(currentContent, () => this.revealMaskedTranslationLine(line, currentContent));
             });
             line.addEventListener("pointerenter", () => {
                 this.ensureTranslationLineActions(line);
@@ -2037,7 +2116,8 @@ const methods = {
                 if (!line.classList.contains("dait-translation-masked")) return;
                 event.preventDefault();
                 event.stopPropagation();
-                this.plugin.withTranslationScrollStability(content, () => this.revealMaskedTranslationLine(line, content));
+                const currentContent = this.plugin.getTranslationContentForLine(line) || content;
+                this.plugin.withTranslationScrollStability(currentContent, () => this.revealMaskedTranslationLine(line, currentContent));
             });
         }
 
@@ -2046,7 +2126,7 @@ const methods = {
             line.remove();
         }
         this.plugin.getTranslationLines(content).forEach(existing => {
-            if (existing !== line) existing.remove();
+            if (existing !== line) this.disposeTranslationLine(existing);
         });
 
         if (anchor === content) {
@@ -2122,7 +2202,7 @@ const methods = {
                     || (identityKey && other.dataset?.daitIdentityKey === identityKey);
                 if (!cacheMatches && !identityMatches) continue;
                 this.plugin.restoreTranslationSourceVisibility(this.plugin.getTranslationContentForLine(other));
-                other.remove?.();
+                this.disposeTranslationLine(other);
             }
         }
     },
@@ -2181,7 +2261,7 @@ const methods = {
             const type = String(line.dataset?.daitFailureType || "invalid-output");
             if (["auth", "rate-limit", "server", "client"].includes(type)) return;
             this.plugin.restoreTranslationSourceVisibility(this.plugin.getTranslationContentForLine(line));
-            line.remove();
+            this.disposeTranslationLine(line);
         });
     },
 

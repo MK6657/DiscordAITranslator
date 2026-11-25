@@ -204,7 +204,14 @@ class ProviderLayer {
             const cancel = () => settle("reject", this.createProviderRequestCancelledError());
             controller.signal.addEventListener("abort", cancel, { once: true });
             const hasCurrentSubscriber = () => [...subscribers].some(subscriber => subscriber.isCurrent());
-            run(controller.signal, hasCurrentSubscriber).then(
+            let runPromise;
+            try {
+                runPromise = Promise.resolve(run(controller.signal, hasCurrentSubscriber));
+            }
+            catch (syncError) {
+                runPromise = Promise.reject(syncError);
+            }
+            runPromise.then(
                 value => settle("resolve", value),
                 error => settle("reject", error)
             );
@@ -288,15 +295,14 @@ class ProviderLayer {
 
     setApiStatus(status, state, text, title = "", kind = status?.dataset?.daitKind) {
         try {
-            if (!status) return;
-            this.renderStatusBadge(status, kind, state, text, title);
+            if (status) this.renderStatusBadge(status, kind, state, text, title);
             if (kind && this.plugin.settings[kind]) {
                 this.plugin.settings[kind].apiStatus = { state, message: title || "" };
                 this.plugin.saveSettings({ debounce: true });
             }
         }
         finally {
-            this.ctx.events?.emit("api:status", { kind, state });
+            if (status || kind) this.ctx.events?.emit("api:status", { kind, state });
         }
     }
 
@@ -503,6 +509,8 @@ class ProviderLayer {
         let budgetReservedBlocked = false;
         let budgetExhaustedBlocked = false;
         for (const provider of order) {
+            this.throwIfProviderRequestCancelled(options.signal);
+            if (options.isCurrent?.() === false) break;
             const fallbackConfig = this.getProviderFallbackConfig(kind, provider, currentConfig);
             if (!fallbackConfig) continue;
             if (!this.plugin.hasUsableApiConfig(kind, fallbackConfig, { isolatedConfig: true })) {
@@ -726,8 +734,30 @@ class ProviderLayer {
             ({ endpoint, request } = this.buildModelRequest(kind, input, { ...buildOptions, deferGoogleTranslateReservation: true }));
             let requestKey = getRequestKey();
             if (request?.provider === "googleCloud" && !requests.has(requestKey)) {
-                ({ endpoint, request } = this.buildModelRequest(kind, input, { ...buildOptions, deferGoogleTranslateReservation: false }));
-                requestKey = getRequestKey();
+                let matchedActiveKey = false;
+                for (const candidateKey of this.plugin.getGoogleTranslateKeys?.() || []) {
+                    const candidateApiKey = String(candidateKey?.apiKey || "").trim();
+                    if (!candidateApiKey || candidateKey?.enabled === false) continue;
+                    const probeRequest = {
+                        ...request,
+                        headers: { ...(request.headers || {}), "X-Goog-Api-Key": candidateApiKey },
+                        googleTranslate: { ...(request.googleTranslate || {}), apiKey: candidateApiKey }
+                    };
+                    const probeKey = JSON.stringify([
+                        this.getModelRequestKey(endpoint, probeRequest, input, taskConfig),
+                        Boolean((probeRequest?.responseParser || this.isDirectTranslateProvider(probeRequest?.provider || taskConfig)) && translateAsArray)
+                    ]);
+                    if (requests.has(probeKey)) {
+                        request = probeRequest;
+                        requestKey = probeKey;
+                        matchedActiveKey = true;
+                        break;
+                    }
+                }
+                if (!matchedActiveKey) {
+                    ({ endpoint, request } = this.buildModelRequest(kind, input, { ...buildOptions, deferGoogleTranslateReservation: false }));
+                    requestKey = getRequestKey();
+                }
             }
             body = request?.body || {};
             const timeoutMs = options.timeoutMs || MODEL_REQUEST_TIMEOUT_MS;
@@ -980,9 +1010,9 @@ class ProviderLayer {
         // The caller's signal (queued auto-translation work) cancels this request when that work is
         // orphaned by a settings change, so it does not keep a local server busy.
         const callerSignal = callerOptions?.signal || null;
-        const abortFromCaller = () => controller?.abort();
+        const abortFromCaller = () => controller?.abort(callerSignal?.reason);
         if (callerSignal && controller) {
-            if (callerSignal.aborted) controller.abort();
+            if (callerSignal.aborted) controller.abort(callerSignal.reason);
             else callerSignal.addEventListener?.("abort", abortFromCaller, { once: true });
         }
         // Whether the request left the plugin: a service may bill a request it received, even when
@@ -1050,7 +1080,8 @@ class ProviderLayer {
             return raw;
         }
         catch (error) {
-            const callerCancelled = Boolean(this.plugin.apiRequestsClosed || callerSignal?.aborted);
+            const callerTimedOut = Boolean(callerSignal?.aborted && callerSignal?.reason?.name === "TimeoutError");
+            const callerCancelled = Boolean(this.plugin.apiRequestsClosed || (callerSignal?.aborted && !callerTimedOut));
             const controllerAborted = Boolean(controller?.signal.aborted);
             const controllerTimedOut = controller?.signal.reason?.name === "TimeoutError";
             // If the transport (e.g. BdApi.Net.fetch) aborted/timed out internally while neither the caller
@@ -1059,7 +1090,7 @@ class ProviderLayer {
                 && (!controllerAborted || controllerTimedOut)
                 && (controllerTimedOut || error?.name === "TimeoutError" || error?.name === "AbortError" || this.isTimeoutError(error));
             if (!controllerAborted && error?.name !== "AbortError" && !transportTimedOut) throw error;
-            const timedOut = Boolean(controllerTimedOut || transportTimedOut);
+            const timedOut = !callerCancelled && Boolean(controllerTimedOut || callerTimedOut || transportTimedOut);
             throw Object.assign(new Error(timedOut
                 ? `API request timed out after ${Math.round(effectiveTimeoutMs / 1000)}s`
                 : "Request cancelled", { cause: error }), {
@@ -1122,10 +1153,17 @@ class ProviderLayer {
         if (status >= 300 && status < 400) {
             throw Object.assign(new Error(`Redirect blocked (${status})`), { code: "API_REDIRECT_BLOCKED", status });
         }
+        if (response?.redirected === true) {
+            throw Object.assign(new Error("Redirect blocked"), { code: "API_REDIRECT_BLOCKED" });
+        }
         if (response?.url) {
             try {
-                if (new URL(response.url).origin !== new URL(endpoint).origin) {
-                    throw Object.assign(new Error("Cross-origin redirect blocked"), { code: "API_REDIRECT_BLOCKED" });
+                const actualUrl = new URL(response.url);
+                const expectedUrl = new URL(endpoint);
+                actualUrl.hash = "";
+                expectedUrl.hash = "";
+                if (actualUrl.href !== expectedUrl.href) {
+                    throw Object.assign(new Error("Redirect blocked"), { code: "API_REDIRECT_BLOCKED" });
                 }
             }
             catch (err) {
@@ -1329,7 +1367,7 @@ class ProviderLayer {
             if (kind === "translation" && testConfig.provider === "googleCloud") {
                 this.plugin.markGoogleTranslateProviderSuccess?.(testRequest);
             }
-            this.plugin.setApiStatus(status, "success", this.plugin.t("apiStatusSuccess"));
+            this.plugin.setApiStatus(status, "success", this.plugin.t("apiStatusSuccess"), "", kind);
             this.plugin.clearAutoTranslationProviderFailureForCurrentConfig(kind);
             if (kind === "translation" && this.isLocalTranslationProvider(testConfig)) this.markLocalProviderHealthy(providerSnapshotKey);
             if (!isCurrent()) return false;
@@ -1355,7 +1393,7 @@ class ProviderLayer {
         try {
             onStart?.(isCurrent);
             if (!isCurrent()) return false;
-            this.plugin.setApiStatus(status, "testing", this.plugin.t("apiStatusTesting"));
+            this.plugin.setApiStatus(status, "testing", this.plugin.t("apiStatusTesting"), "", kind);
             this.plugin.setButtonBusy(button, true, this.plugin.t("apiTestBusy"));
             providerSnapshotKey = kind === "translation"
                 ? this.getAutoTranslationProviderKey({ configOverrides: testConfig })
@@ -1400,7 +1438,7 @@ class ProviderLayer {
             const message = this.formatGoogleTranslateKeyError(error);
             if (!isCurrent()) return false;
             record(false, message);
-            this.plugin.setApiStatus(status, "failed", this.plugin.t("apiStatusFailed"), message);
+            this.plugin.setApiStatus(status, "failed", this.plugin.t("apiStatusFailed"), message, kind);
             this.plugin.showToast(this.plugin.t("apiTestFailed", { name: this.plugin.getTaskDisplayName(kind), error: message }), "error");
             return true;
         }

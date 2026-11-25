@@ -510,6 +510,26 @@ const methods = {
         return JSON.stringify([provider, endpointKey, model, region, deeplPlan, appIdKey]);
     },
 
+    getSavedServiceConfigDedupeKey(config) {
+        const identity = this.getServiceConfigIdentityKey(config);
+        if (!identity) return "";
+        const provider = String(config?.provider || "").trim();
+        const apiKeySig = String(config?.apiKey || "").trim()
+            ? this.plugin.getStrongTextFingerprint(String(config.apiKey).trim())
+            : "";
+        const secretKeySig = provider === "baidu" && String(config?.secretKey || "").trim()
+            ? this.plugin.getStrongTextFingerprint(String(config.secretKey).trim())
+            : "";
+        const thinkingKey = provider === "deepseek" ? String(Boolean(config?.enableThinking)) : "";
+        const customFields = (this.plugin.providerLayer?.registry?.getCredentialFields?.(provider) || [])
+            .filter(field => field && !PROVIDER_PROFILE_FIELDS.includes(field))
+            .sort();
+        const customSig = customFields.length
+            ? customFields.map(field => `${field}:${this.plugin.getStrongTextFingerprint(String(config?.[field] || "").trim())}`).join("|")
+            : "";
+        return JSON.stringify([identity, apiKeySig, secretKeySig, thinkingKey, customSig]);
+    },
+
     formatServiceConfigLabel(config) {
         const provider = String(config?.provider || "").trim();
         const providerName = this.getProviderDisplayName(provider);
@@ -625,8 +645,8 @@ const methods = {
         const entry = this.normalizeSavedServiceConfigEntry(rawEntry);
         if (!entry) return { entry: null, syncedTo: "" };
         if (!Array.isArray(this.plugin.settings.serviceConfigs)) this.plugin.settings.serviceConfigs = [];
-        const identity = this.getServiceConfigIdentityKey(entry);
-        const existingIndex = this.plugin.settings.serviceConfigs.findIndex(item => this.getServiceConfigIdentityKey(item) === identity);
+        const dedupeKey = this.getSavedServiceConfigDedupeKey(entry);
+        const existingIndex = this.plugin.settings.serviceConfigs.findIndex(item => this.getSavedServiceConfigDedupeKey(item) === dedupeKey);
         if (existingIndex >= 0) {
             entry.id = this.plugin.settings.serviceConfigs[existingIndex].id || entry.id;
             this.plugin.settings.serviceConfigs.splice(existingIndex, 1);
@@ -913,9 +933,11 @@ const methods = {
     getDiagnosticModelLabel(value) {
         const text = String(value || "").trim();
         if (!text) return "";
-        const normalized = text.replace(/\\/g, "/");
-        const basename = normalized.split("/").filter(Boolean).pop() || text;
-        return basename.length > 120 ? `${basename.slice(0, 120)}...` : basename;
+        const withoutQuery = text.replace(/[?#][\s\S]*$/, "");
+        const normalized = withoutQuery.replace(/\\/g, "/");
+        const basename = normalized.split("/").filter(Boolean).pop() || withoutQuery;
+        const sanitized = this.sanitizeDiagnosticValue(basename);
+        return sanitized.length > 120 ? `${sanitized.slice(0, 120)}...` : sanitized;
     },
 
     isProviderApiKeyOptional(provider) {
@@ -1009,11 +1031,24 @@ const methods = {
         ].join("|");
     },
 
-    sanitizeDiagnosticObject(value) {
+    sanitizeDiagnosticObject(value, depth = 0) {
         const result = {};
         Object.entries(value || {}).slice(0, 24).forEach(([key, item]) => {
             if (this.isSensitiveDiagnosticKey(key)) return;
-            result[key] = String(key || "").toLowerCase().includes("model")
+            if (item === undefined || typeof item === "function") return;
+            if (Array.isArray(item)) {
+                result[key] = item.slice(0, 12).map(elem => (
+                    elem && typeof elem === "object" && !Array.isArray(elem) && depth < 3
+                        ? this.sanitizeDiagnosticObject(elem, depth + 1)
+                        : this.sanitizeDiagnosticValue(elem)
+                ));
+                return;
+            }
+            if (item && typeof item === "object" && depth < 3) {
+                result[key] = this.sanitizeDiagnosticObject(item, depth + 1);
+                return;
+            }
+            result[key] = typeof item === "string" && String(key || "").toLowerCase().includes("model")
                 ? this.getDiagnosticModelLabel(item)
                 : this.sanitizeDiagnosticValue(item);
         });
@@ -1033,7 +1068,8 @@ const methods = {
         if (value === null || typeof value === "boolean") return value;
         if (typeof value === "number") return Number.isFinite(value) ? value : String(value);
         const text = String(value)
-            .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [redacted]")
+            .replace(/Bearer(?:[:=]\s*|\s+)[A-Za-z0-9._~+/=-]+/gi, "Bearer [redacted]")
+            .replace(/DeepL-Auth-Key(?:[:=]\s*|\s+)[A-Za-z0-9._~+/=:-]+/gi, "DeepL-Auth-Key [redacted]")
             .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, "[redacted-api-key]")
             .replace(/\bAIza[0-9A-Za-z_-]{10,}\b/g, "[redacted-google-key]")
             .replace(/https?:\/\/[^\s"'<>]+/gi, "[redacted-url]");
@@ -1177,17 +1213,23 @@ const methods = {
             callback();
             return;
         }
+        const deferKey = kind === "cache" ? "translationCachePersistenceDeferredSince" : "diagnosticLogsPersistenceDeferredSince";
         this.plugin[field] = window.requestIdleCallback(deadline => {
             this.plugin[field] = null;
             if (!this.plugin.isStarted && !this.plugin.lifecycleStarted) return;
-            const minRemainingMs = kind === "cache" ? 24 : 16;
+            const minRemainingMs = kind === "cache" ? 18 : 14;
+            const now = Date.now();
+            const deferredSince = Number(this.plugin[deferKey] || 0);
+            const maxDeferReached = deferredSince > 0 && now - deferredSince >= HEAVY_PERSISTENCE_MAX_DEFER_MS;
             const inputPending = Boolean(globalThis.navigator?.scheduling?.isInputPending?.());
             const remainingMs = typeof deadline?.timeRemaining === "function" ? deadline.timeRemaining() : 0;
-            if (inputPending || (!deadline?.didTimeout && remainingMs < minRemainingMs)) {
+            if (!maxDeferReached && (inputPending || (!deadline?.didTimeout && remainingMs < minRemainingMs))) {
+                if (!deferredSince) this.plugin[deferKey] = now;
                 if (kind === "cache") this.plugin.scheduleTranslationCachePersist(HEAVY_PERSISTENCE_DEFER_MS);
                 else this.plugin.scheduleDiagnosticLogsPersist(HEAVY_PERSISTENCE_DEFER_MS, { force: true });
                 return;
             }
+            this.plugin[deferKey] = 0;
             callback();
         }, { timeout: 10000 });
     },

@@ -93,8 +93,13 @@ const methods = {
                 if (options.force) this.plugin.syncSettingControls(path, this.plugin.getSetting(path));
                 return;
             }
+            const parsed = Number(raw);
+            if (!Number.isFinite(parsed)) {
+                if (options.force) this.plugin.syncSettingControls(path, this.plugin.getSetting(path), { includeActive: true });
+                return;
+            }
             if (!options.force && input.validity && input.validity.valid === false) return;
-            this.plugin.setSetting(path, Number(raw), saveOptions);
+            this.plugin.setSetting(path, parsed, saveOptions);
         };
         if (type === "number") {
             input.addEventListener("input", () => commit());
@@ -174,6 +179,9 @@ const methods = {
 
         const controls = document.createElement("div");
         controls.className = "dait-language-controls";
+        controls.dataset.daitPath = `${kind}.${field}`;
+        controls.dataset.daitControl = "language";
+        controls.dataset.daitAllowAuto = options.allowAuto ? "true" : "false";
 
         const select = document.createElement("select");
         select.className = "dait-language-select";
@@ -236,11 +244,35 @@ const methods = {
             if (value) this.plugin.setSetting(`${kind}.${field}`, value);
         });
 
+        controls.__daitLanguageSelect = select;
+        controls.__daitLanguageCustom = customInput;
         controls.appendChild(select);
         controls.appendChild(customInput);
 
         // The longer note about custom language names is the custom field's tooltip.
-        return this.createRow(labelText, controls, { description: descriptionText, labelFor: select });
+        return this.createRow(labelText, controls, { description: descriptionText, labelFor: select, ariaTarget: controls });
+    },
+
+    syncLanguageControl(control, value) {
+        const select = control?.__daitLanguageSelect || control?.querySelector?.(".dait-language-select");
+        const customInput = control?.__daitLanguageCustom || control?.querySelector?.(".dait-language-custom");
+        if (!select || !customInput) return;
+        const allowAuto = control?.dataset?.daitAllowAuto === "true";
+        const current = String(value ?? "");
+        const preset = LANGUAGE_PRESETS.find(language => language.value === current);
+        const isAuto = allowAuto && current === AUTO_LANGUAGE_VALUE;
+        const isCustom = Boolean(current) && !preset && !isAuto;
+        const wantedSelectValue = isAuto
+            ? AUTO_LANGUAGE_VALUE
+            : (preset ? preset.value : (isCustom ? CUSTOM_LANGUAGE_VALUE : (select.options?.[0]?.value || "")));
+        Array.from(select.options || []).forEach(option => {
+            option.selected = option.value === wantedSelectValue;
+        });
+        select.value = wantedSelectValue;
+        customInput.hidden = !isCustom;
+        if (customInput !== (typeof document !== "undefined" ? document.activeElement : null)) {
+            customInput.value = isCustom ? current : "";
+        }
     },
 
     createSmallButton(text, variant = "") {
@@ -275,7 +307,7 @@ const methods = {
         row.id = `${id}-row`;
 
         const labelTarget = options.labelFor || (this.isSettingsLabelableControl(control) ? control : null);
-        const ariaTarget = labelTarget ? null : options.ariaTarget || null;
+        const ariaTarget = options.ariaTarget || null;
         const text = document.createElement("div");
         text.className = "dait-row-text";
         const label = document.createElement(labelTarget ? "label" : "span");
@@ -286,7 +318,7 @@ const methods = {
             if (!labelTarget.id) labelTarget.id = id;
             label.setAttribute("for", labelTarget.id);
         }
-        else if (ariaTarget) {
+        if (ariaTarget && ariaTarget !== labelTarget) {
             ariaTarget.setAttribute("aria-labelledby", label.id);
         }
         text.appendChild(label);
@@ -468,12 +500,18 @@ const methods = {
         if (channelRule) value = this.plugin.normalizeChannelAutoTranslatePolicyMode(value);
         const syncedChannel = channelRule && typeof options.routeKey === "string" ? this.plugin.getChannelAutoTranslatePolicyStorageKey(options.routeKey) : null;
         document.querySelectorAll(`[data-dait-path='${path}']`).forEach(control => {
-            if (control === document.activeElement && options.includeActive !== true) return;
+            const containsActive = control === document.activeElement
+                || (control.dataset?.daitControl === "language" && Boolean(document.activeElement && control.contains?.(document.activeElement)));
+            if (containsActive && options.includeActive !== true) return;
             // A channel-rule control built for another channel keeps showing that channel's rule.
             if (syncedChannel !== null && typeof control.dataset?.daitRouteKey === "string"
                 && this.plugin.getChannelAutoTranslatePolicyStorageKey(control.dataset.daitRouteKey) !== syncedChannel) return;
             if (control.type === "checkbox") {
                 control.checked = Boolean(value);
+                return;
+            }
+            if (control.dataset?.daitControl === "language") {
+                this.syncLanguageControl(control, value);
                 return;
             }
             if (control.dataset?.daitControl === "segmented") {
@@ -520,7 +558,20 @@ const methods = {
             // close would copy that value onto whichever channel is current now.
             if (path === "ui.currentChannelAutoTranslatePolicy") return;
             let nextValue;
-            if (control.tagName === "TEXTAREA" || control.tagName === "SELECT") {
+            if (control.dataset?.daitControl === "language") {
+                const select = control.__daitLanguageSelect || control.querySelector?.(".dait-language-select");
+                const customInput = control.__daitLanguageCustom || control.querySelector?.(".dait-language-custom");
+                if (!select) return;
+                if (select.value === CUSTOM_LANGUAGE_VALUE) {
+                    const custom = String(customInput?.value ?? "").trim();
+                    if (!custom) return;
+                    nextValue = custom;
+                }
+                else {
+                    nextValue = select.value;
+                }
+            }
+            else if (control.tagName === "TEXTAREA" || control.tagName === "SELECT") {
                 nextValue = control.value;
             }
             else if (control.type === "checkbox") {
@@ -529,13 +580,22 @@ const methods = {
             else if (control.type === "number") {
                 const raw = String(control.value ?? "").trim();
                 if (!raw) return;
-                nextValue = Number(raw);
+                const parsed = Number(raw);
+                if (!Number.isFinite(parsed)) return;
+                nextValue = parsed;
             }
             else if (control.type) {
-                nextValue = control.value;
+                const rawValue = String(control.value ?? "");
+                nextValue = (path.endsWith(".model") || path.endsWith(".endpoint")) ? rawValue.trim() : rawValue;
+                if (nextValue !== control.value) control.value = nextValue;
             }
             else {
                 return;
+            }
+            if (/^(polish|translation)\.model$/.test(path) && nextValue) {
+                const kind = path.split(".")[0];
+                const provider = this.plugin.normalizeProviderForTask?.(kind, this.plugin.settings?.[kind]?.provider);
+                if (provider) this.plugin.rememberTaskProviderModel?.(kind, provider, nextValue);
             }
             if (Object.is(this.plugin.getSetting(path), nextValue)) return;
             this.plugin.setSetting(path, nextValue);

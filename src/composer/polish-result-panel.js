@@ -185,9 +185,12 @@ const methods = {
         const leftBase = anchor ? anchor.left : viewportWidth - width - 24;
         const left = Math.max(16, Math.min(leftBase, viewportWidth - width - 16));
         const bottom = anchor ? Math.max(16, viewportHeight - anchor.top + 10) : 96;
+        const safeBottom = Math.min(Math.max(bottom, 16), Math.max(16, viewportHeight - 120));
+        const maxHeight = Math.max(140, viewportHeight - safeBottom - 16);
         panel.style.left = `${left}px`;
         panel.style.right = "auto";
-        panel.style.bottom = `${Math.min(Math.max(bottom, 16), Math.max(16, viewportHeight - 120))}px`;
+        panel.style.bottom = `${safeBottom}px`;
+        panel.style.maxHeight = `${maxHeight}px`;
         panel.style.width = `${width}px`;
     },
 

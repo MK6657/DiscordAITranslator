@@ -1067,10 +1067,18 @@ class QuickPanel {
         const translation = this.plugin.settings?.translation;
         const polish = this.plugin.settings?.polish;
         if (!translation || !polish) return false;
+        if (typeof this.plugin.hasUsableApiConfig === "function"
+            && (!this.plugin.hasUsableApiConfig("translation") || !this.plugin.hasUsableApiConfig("polish"))) {
+            return false;
+        }
         const keyT = this.plugin.getServiceConfigIdentityKey?.(translation) || "";
         const keyP = this.plugin.getServiceConfigIdentityKey?.(polish) || "";
         if (!keyT || !keyP || keyT !== keyP) return false;
-        return String(translation.apiKey || "") === String(polish.apiKey || "");
+        if (String(translation.apiKey || "") !== String(polish.apiKey || "")) return false;
+        if (translation.provider === "deepseek" && Boolean(translation.enableThinking) !== Boolean(polish.enableThinking)) return false;
+        const customFields = this.plugin.providerLayer?.registry?.getCredentialFields?.(translation.provider) || [];
+        if (customFields.some(field => field && String(translation[field] || "") !== String(polish[field] || ""))) return false;
+        return true;
     }
 
     scheduleUpdate() {

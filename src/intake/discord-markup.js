@@ -17,7 +17,7 @@ const PLACEHOLDER_PATTERN = /\uE000(\d+)\uE001/g;
 
 // Code blocks, inline code and backslash escapes, read left to right in one pass as Discord does:
 // an escaped backtick opens no code span, and a backslash inside code is shown as written.
-const CODE_OR_ESCAPE_PATTERN = /```(?:[A-Za-z0-9_+.#-]{1,32}\n)?([\s\S]*?)```|``([\s\S]+?)``|`([^`]+?)`|\\([^A-Za-z0-9\s])/g;
+const CODE_OR_ESCAPE_PATTERN = /```(?:[A-Za-z0-9_+.#-]{1,32}\r?\n)?([\s\S]*?)```|``([\s\S]+?)``|`([^`]+?)`|\\([^A-Za-z0-9\s])/g;
 const BARE_URL_PATTERN = /(?:https?|steam|discord):\/\/[^\s<>]*[^\s<>.,:;"')\]]/g;
 
 const SPOILER_PATTERN = /\|\|[\s\S]+?\|\|/;
@@ -29,7 +29,7 @@ const USER_MENTION_PATTERN = /<@!?(\d{15,25})>/g;
 const ROLE_MENTION_PATTERN = /<@&(\d{15,25})>/g;
 const CHANNEL_MENTION_PATTERN = /<#(\d{15,25})>/g;
 const AUTOLINK_PATTERN = /<((?:https?|steam|discord):\/\/[^\s<>]+)>/g;
-const MASKED_LINK_PATTERN = /\[([^[\]\n]+?)\]\(\s*<?(?:https?:\/\/[^\s()<>]+)>?\s*\)/g;
+const MASKED_LINK_PATTERN = /\[([^[\]\n]+?)\]\(\s*(?:<(?:https?:\/\/[^\s<>]+)>|https?:\/\/(?:[^\s()<>]+|\([^\s()<>]*\))+)\s*\)/g;
 // A standard emoji written as its name (bots and webhooks send ":white_check_mark:"); Discord draws
 // the emoji itself.
 const EMOJI_SHORTCODE_PATTERN = /:([a-z0-9_+-]{1,64}):/g;
@@ -37,7 +37,7 @@ const EMOJI_SHORTCODE_PATTERN = /:([a-z0-9_+-]{1,64}):/g;
 const UNKNOWN_MARKUP_PATTERN = /<[^<>\s]*\d{15,25}[^<>\s]*>/;
 
 function convertDiscordMarkupToDisplayText(text, resolvers = {}) {
-    let value = String(text ?? "");
+    let value = String(text ?? "").replace(/\r\n?/g, "\n");
     if (!value) return "";
     if (value.includes(PLACEHOLDER_START) || value.includes(PLACEHOLDER_END)) return "";
 
@@ -95,7 +95,7 @@ function convertDiscordMarkupToDisplayText(text, resolvers = {}) {
 
     // Line markers: block quotes, headings, subtext and list bullets are drawn, not written.
     value = value.replace(/^>>> ?/m, "");
-    value = value.replace(/^> /gm, "");
+    value = value.replace(/^> ?/gm, "");
     value = value.replace(/^#{1,3} +/gm, "");
     value = value.replace(/^-# +/gm, "");
     value = value.replace(/^( *)[-*] +/gm, "$1");
