@@ -953,11 +953,14 @@ test("diagnostic summary chips show short localized labels; unknown codes stay a
     assert.deepEqual(english.map(chip => chip.textContent), ["Cache hit: 2", "Service cooling down: 3", "brand-new-code: 1", "Sakura local: 4", "Request: 1"]);
 });
 
-test("the chip label table covers every enumerated code in both languages", () => {
+test("the chip label table covers every enumerated code in all 6 UI languages", () => {
     const { DIAGNOSTIC_CODE_LABELS } = require("../../src/diagnostics/diagnostic-labels");
+    const { UI_LOCALE_CODES } = require("../../src/i18n");
     const constants = require("../../src/constants");
     const zh = Object.keys(DIAGNOSTIC_CODE_LABELS["zh-CN"]).sort();
-    assert.deepEqual(Object.keys(DIAGNOSTIC_CODE_LABELS.en).sort(), zh);
+    for (const locale of UI_LOCALE_CODES) {
+        assert.deepEqual(Object.keys(DIAGNOSTIC_CODE_LABELS[locale]).sort(), zh, `diagnostic keys for ${locale}`);
+    }
     const codes = [
         ...Object.values(constants.DIAGNOSTIC_REASON_CODES),
         ...Object.values(constants.DIAGNOSTIC_MESSAGE_STATES),
@@ -965,9 +968,9 @@ test("the chip label table covers every enumerated code in both languages", () =
         ...Object.values(constants.DIAGNOSTIC_FAILURE_LAYERS)
     ];
     assert.deepEqual([...new Set(codes)].filter(code => !zh.includes(code)), []);
-    for (const locale of ["zh-CN", "en"]) {
+    for (const locale of UI_LOCALE_CODES) {
         for (const [code, label] of Object.entries(DIAGNOSTIC_CODE_LABELS[locale])) {
-            assert.ok(label && label.length <= 24, `${locale}.${code}`);
+            assert.ok(label && [...label].length <= 24, `${locale}.${code}: ${label}`);
         }
     }
 });

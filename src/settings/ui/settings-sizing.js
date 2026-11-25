@@ -23,10 +23,22 @@ const methods = {
             : null;
         const focusPath = focusOwner ? String(focusOwner.dataset?.daitPath || "") : "";
         const focusSavedKind = !focusPath && active && panel.contains?.(active) ? String(active.dataset?.daitSavedConfigs || "") : "";
+        const focusUiId = !focusPath && !focusSavedKind && active && panel.contains?.(active) ? String(active.dataset?.daitUiFocusId || "") : "";
+        const openDetails = new Set(
+            [...(panel.querySelectorAll?.("details[data-dait-details-key]") || [])]
+                .filter(node => node?.open)
+                .map(node => `${node.closest?.(".dait-settings-tabpanel")?.dataset?.daitSettingsTabPanel || ""}:${node.dataset?.daitDetailsKey || ""}`)
+        );
         // A reset restores the default tab; the rebuilt panel still opens where the user was.
         const activeTab = panel.__daitSettingsUi?.activeTab;
         if (activeTab && this.plugin.settings?.ui) this.plugin.settings.ui.settingsActiveTab = activeTab;
         nextPanel = nextPanel || this.plugin.getSettingsPanel({ quickSettings: panel.dataset?.daitQuickSettings === "true" });
+        if (openDetails.size) {
+            [...(nextPanel.querySelectorAll?.("details[data-dait-details-key]") || [])].forEach(node => {
+                const detailsId = `${node.closest?.(".dait-settings-tabpanel")?.dataset?.daitSettingsTabPanel || ""}:${node.dataset?.daitDetailsKey || ""}`;
+                if (openDetails.has(detailsId)) node.open = true;
+            });
+        }
         ["--dait-host-chrome", "--dait-host-max"].forEach(name => {
             const value = panel.style?.getPropertyValue?.(name);
             if (value) nextPanel.style?.setProperty?.(name, value);
@@ -43,10 +55,19 @@ const methods = {
                 : control?.dataset?.daitControl === "segmented"
                     ? (control.querySelector?.("[tabindex='0']") || control)
                     : control;
+            for (let ancestor = focusTarget?.parentElement; ancestor && ancestor !== nextPanel; ancestor = ancestor.parentElement) {
+                if (String(ancestor.tagName || "").toUpperCase() === "DETAILS") ancestor.open = true;
+            }
             this.focusSettingsElement(focusTarget);
         }
         else if (focusSavedKind) {
             const control = [...(nextPanel.querySelectorAll?.(`[data-dait-saved-configs='${focusSavedKind}']`) || [])].find(node => !node.closest?.("[hidden]"));
+            this.focusSettingsElement(control);
+        }
+        else if (focusUiId) {
+            const langMatch = /^(header|overview)-lang-(.+)$/.exec(focusUiId);
+            const targetId = langMatch ? `${langMatch[1]}-lang-${this.plugin.getLocale()}` : focusUiId;
+            const control = [...(nextPanel.querySelectorAll?.(`[data-dait-ui-focus-id='${targetId}']`) || [])].find(node => !node.closest?.("[hidden]"));
             this.focusSettingsElement(control);
         }
         if (nextPanel.dataset?.daitQuickSettings === "true") this.syncSettingsPanelHeight(nextPanel);
@@ -445,6 +466,10 @@ const methods = {
                     observeChain(observer);
                 }
                 return;
+            }
+            if (this.plugin.isStarted && !panel.__daitReplacedBy) {
+                this.plugin.commitSettingsControls?.(panel);
+                this.plugin.flushSettings?.({ retryOnError: false });
             }
             this.plugin.clearHotkeyRecordingWithin(panel);
             this.cleanupSettingsPanelListeners(panel);

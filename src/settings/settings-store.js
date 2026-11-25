@@ -28,6 +28,7 @@ const {
 const { createPluginContext } = require("../core/plugin-context");
 const { normalizeSettingsTabId } = require("./settings-schema");
 const { normalizePanelTheme } = require("./panel-theme");
+const { normalizeUiLocale } = require("../i18n");
 
 // Provider fields a reset keeps: the secrets themselves, plus the region (Microsoft) and plan (DeepL) a key only works with.
 const RESET_KEPT_CREDENTIAL_FIELDS = ["apiKey", "appId", "secretKey", "region", "deeplPlan"];
@@ -600,6 +601,11 @@ class SettingsStore {
             this.plugin.settings.ui = this.plugin.clone(DEFAULT_SETTINGS.ui);
             changed = true;
         }
+        const uiLanguage = normalizeUiLocale(this.plugin.settings.ui.language, DEFAULT_SETTINGS.ui.language);
+        if (uiLanguage !== this.plugin.settings.ui.language) {
+            this.plugin.settings.ui.language = uiLanguage;
+            changed = true;
+        }
         // v0.3.0 saved one of ten scroll-spy sections; each maps onto the tab that now holds it.
         const settingsActiveTab = normalizeSettingsTabId(this.plugin.settings.ui.settingsActiveTab);
         if (settingsActiveTab !== this.plugin.settings.ui.settingsActiveTab) {
@@ -1111,13 +1117,16 @@ class SettingsStore {
         if (path === "ui.panelTheme") {
             value = normalizePanelTheme(value);
         }
+        if (path === "ui.language") {
+            value = normalizeUiLocale(value, DEFAULT_SETTINGS.ui.language);
+        }
         let cursor = this.plugin.settings;
         for (let index = 0; index < parts.length - 1; index++) {
             cursor = cursor[parts[index]];
         }
         const leaf = parts[parts.length - 1];
         if (Object.is(cursor[leaf], value)) {
-            this.plugin.syncSettingControls(path, value, { includeActive: true });
+            this.plugin.syncSettingControls(path, value, { includeActive: options.live !== true });
             if (options.save === "immediate" || options.forceSave === true) {
                 this.plugin.saveSettings({ retryOnError: options.retryOnError });
             }
@@ -1220,6 +1229,18 @@ class SettingsStore {
         }
         if (path === "polish.prompt" || path === "polish.activePromptTemplate" || path === "ui.polishHotkey") {
             this.plugin.syncPolishPresetControls?.();
+        }
+        if (typeof document !== "undefined" && path === "translation.targetLanguage") {
+            const msgTitle = this.plugin.t("translateTitleAttr", { targetLanguage: this.plugin.getDisplayLanguage(this.plugin.settings.translation?.targetLanguage) });
+            document.querySelectorAll?.(".dait-message-button")?.forEach(button => { button.title = msgTitle; });
+        }
+        if (typeof document !== "undefined" && (path === "polish.targetLanguage" || path === "translation.targetLanguage")) {
+            const bilingualLang = this.plugin.getDisplayLanguage(this.plugin.getPublicBilingualTargetLanguage?.());
+            const bilingualTitle = this.plugin.t("publicBilingualTitleAttr", { targetLanguage: bilingualLang });
+            document.querySelectorAll?.(".dait-public-bilingual-button")?.forEach(button => {
+                button.title = bilingualTitle;
+                button.setAttribute?.("aria-label", bilingualTitle);
+            });
         }
         if (typeof document !== "undefined" && path === "ui.publicBilingualInputButton" && value === false) {
             document.querySelectorAll?.(".dait-public-bilingual-button")?.forEach(node => {
@@ -1426,6 +1447,10 @@ class SettingsStore {
         if (changed("hideOriginalAfterTranslation")) this.plugin.syncAllTranslationSourceVisibility();
         if (TRANSLATION_LINE_DISPLAY_KEYS.some(changed)) this.plugin.syncAllTranslationDisplaySettings();
         if (changed("panelTheme")) this.plugin.refreshPanelThemes();
+        if (changed("language")) {
+            this.plugin.refreshLocalizedUi?.();
+            this.plugin.events?.emit("language:changed", { language: ui.language });
+        }
         this.plugin.syncPolishPresetControls?.();
         this.plugin.queueScan();
     }

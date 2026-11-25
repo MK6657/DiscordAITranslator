@@ -513,9 +513,9 @@ const methods = {
         return this.findFirstJsonPayload(value) || value;
     },
 
-    findFirstJsonPayload(source) {
+    findFirstJsonPayload(source, startIndex = 0) {
         const text = String(source || "");
-        for (let start = 0; start < text.length; start++) {
+        for (let start = Math.max(0, Number(startIndex) || 0); start < text.length; start++) {
             const open = text[start];
             if (open !== "{" && open !== "[") continue;
 
@@ -555,6 +555,21 @@ const methods = {
         }
 
         return "";
+    },
+
+    findJsonPayloads(source) {
+        const text = String(source || "");
+        const payloads = [];
+        let cursor = 0;
+        while (cursor < text.length) {
+            const found = this.findFirstJsonPayload(text, cursor);
+            if (!found) break;
+            const pos = text.indexOf(found, cursor);
+            if (pos < 0) break;
+            payloads.push(found);
+            cursor = pos + found.length;
+        }
+        return payloads;
     },
 
     getManualForceTargetTranslationOptions(sourceText, badOutput = "", invalidReason = "", options = this.getManualTranslationRequestOptions()) {
@@ -984,7 +999,7 @@ const methods = {
         const normalized = String(word || "")
             .trim()
             .toLocaleLowerCase()
-            .replace(/['鈥檚]+$/u, "");
+            .replace(/(?:['’]s|['’]+)$/u, "");
         if (!normalized) return false;
         const benign = new Set([
             "ai", "api", "app", "apps", "agent", "agents", "bot", "branch", "bug", "bugs", "build", "cache", "cdn", "cli",
@@ -1181,7 +1196,18 @@ const methods = {
         const words = normalized.match(/\p{Script=Latin}+/gu) || [];
         const joined = ` ${words.join(" ")} `;
         const dictionaries = {
-            english: [" the ", " and ", " are ", " you ", " can ", " help ", " me ", " with ", " this ", " that ", " what ", " have ", " been ", " for ", " to ", " is ", " in ", " of ", " hello ", " hi ", " bro ", " thanks ", " thank ", " okay ", " ok ", " lately ", " up "],
+            english: [
+                " the ", " and ", " are ", " you ", " can ", " help ", " me ", " with ", " this ", " that ",
+                " what ", " have ", " been ", " for ", " to ", " is ", " in ", " of ", " hello ", " hi ",
+                " hey ", " bro ", " thanks ", " thank ", " okay ", " ok ", " lately ", " up ", " i ", " we ",
+                " they ", " he ", " she ", " it ", " my ", " your ", " our ", " not ", " do ", " does ",
+                " did ", " don ", " doesn ", " didn ", " will ", " won ", " would ", " could ", " should ",
+                " ll ", " ve ", " re ", " am ", " was ", " were ", " be ", " has ", " had ", " on ", " at ",
+                " by ", " from ", " as ", " out ", " all ", " just ", " now ", " see ", " get ", " got ",
+                " good ", " great ", " no ", " yes ", " please ", " sorry ", " today ", " tomorrow ",
+                " tonight ", " morning ", " afternoon ", " evening ", " night ", " let ", " want ", " need ",
+                " there ", " here ", " right ", " problem ", " time ", " moved ", " meeting "
+            ],
             spanish: [" el ", " la ", " los ", " las ", " que ", " de ", " y ", " en ", " un ", " una ", " para ", " con ", " por ", " es ", " estoy ", " hola ", " amigo ", " canal ", " soporte ", " gratis "],
             french: [" le ", " la ", " les ", " des ", " est ", " pour ", " avec ", " que ", " une ", " vous ", " dans ", " pas ", " je ", " de ", " bonjour ", " salut ", " merci "],
             german: [" der ", " die ", " das ", " und ", " ist ", " nicht ", " mit ", " für ", " ich ", " zu ", " ein ", " eine ", " auf ", " danke ", " hallo "],
@@ -1202,15 +1228,21 @@ const methods = {
         }
         if (accentTests[language]?.test(text)) score += 2;
         let foreignScore = 0;
+        let hasForeignAccent = false;
         Object.entries(dictionaries).forEach(([name, tokens]) => {
             if (name === language) return;
             for (const token of tokens) {
                 if (joined.includes(token)) foreignScore++;
             }
+            if (accentTests[name]?.test(text)) hasForeignAccent = true;
         });
         if (foreignScore >= 2 && foreignScore >= score) return false;
+        if (language === "english") {
+            if (score >= 2) return true;
+            return score >= 1 && foreignScore === 0 && !hasForeignAccent;
+        }
 
-        return score >= (language === "english" ? 2 : 1);
+        return score >= 1;
     }
 };
 

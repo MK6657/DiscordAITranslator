@@ -596,7 +596,7 @@ const DEFAULT_SETTINGS = {
         sourceLanguage: AUTO_LANGUAGE_VALUE,
         targetLanguage: "英语",
         temperature: 0.4,
-        maxTokens: 800,
+        maxTokens: 2000,
         afterAction: "replace",
         repolishSource: POLISH_REPOLISH_SOURCE_ORIGINAL,
         activePromptTemplate: "polish-natural-chat",

@@ -32,6 +32,8 @@ function createPluginContext(plugin) {
         /** @param {string} key @param {Record<string, any>} [vars] */
         t(key, vars) { return plugin.t(key, vars); },
         getLocale() { return plugin.getLocale(); },
+        /** @param {string} [locale] */
+        isRtlLocale(locale) { return Boolean(plugin?.isRtlLocale?.(locale)); },
         getLifecycleToken() { return plugin.getLifecycleToken(); },
         /** @param {number} token */
         isLifecycleTokenCurrent(token) { return plugin.isLifecycleTokenCurrent(token); },

@@ -311,12 +311,10 @@ const methods = {
         const state = panel?.__daitSettingsUi;
         if (!state) return false;
         const tab = state.tabs.find(item => item.id === normalizeSettingsTabId(tabId)) || state.tabs[0];
+        this.showSettingsTab(state, tab.id);
         const control = [...(tab.tabpanel?.querySelectorAll?.(`[data-dait-path='${path}']`) || [])][0] || null;
         const row = control?.closest?.(".dait-settings-row") || null;
-        if (!row) {
-            this.showSettingsTab(state, tab.id);
-            return false;
-        }
+        if (!row) return false;
         return this.openSettingsSearchResult(state, { row, tabId: tab.id });
     },
 
@@ -376,6 +374,15 @@ const methods = {
         catch {}
         badges.forEach(badge => this.renderApiStatusBadge(badge, kind, status.state, this.plugin.getApiStatusText(status.state), status.message || ""));
         details.forEach(detail => this.syncApiTestDetail(detail, kind));
+        if (kind === "translation") {
+            let headerProviders = [];
+            try {
+                headerProviders = [...(document.querySelectorAll?.(".dait-settings-header-provider") || [])];
+            }
+            catch {}
+            const providerLabel = this.plugin.getProviderDisplayName(this.plugin.settings.translation?.provider);
+            headerProviders.forEach(node => { node.textContent = providerLabel; });
+        }
         this.refreshSavedServiceConfigControls();
         this.refreshOverviewStatusSection();
     },

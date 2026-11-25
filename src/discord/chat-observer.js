@@ -346,7 +346,12 @@ const methods = {
     },
 
     hasPotentialDiscordObserverRootMutation(mutations = []) {
-        const selectors = this.getDiscordChatMutationObserverSelectors().join(",");
+        const selectors = [
+            ...this.getDiscordChatMutationObserverSelectors(),
+            "[class*='searchResultsWrap']",
+            "[class*='messagesPopout']",
+            "[class*='recentMentionsPopout']"
+        ].join(",");
         return [...(mutations || [])].some(mutation => {
             if (mutation?.type !== "childList") return false;
             return [...(mutation.addedNodes || []), ...(mutation.removedNodes || [])].some(node => {
@@ -385,17 +390,25 @@ const methods = {
     getDiscordChatMutationObserverRoot() {
         if (typeof document === "undefined" || !document.querySelector) return null;
         const appMount = document.getElementById?.("app-mount") || null;
+        const secondarySurfaces = typeof document.querySelectorAll === "function"
+            ? [...(document.querySelectorAll("[class*='searchResultsWrap'], [class*='messagesPopout'], [class*='recentMentionsPopout']") || [])]
+                .filter(el => el?.nodeType === 1)
+            : [];
         for (const selector of this.getDiscordChatMutationObserverSelectors()) {
             const queriedAll = typeof document.querySelectorAll === "function"
                 ? [...(document.querySelectorAll(selector) || [])].filter(el => el?.nodeType === 1)
                 : [];
-            const matches = queriedAll.length
+            const primaryMatches = queriedAll.length
                 ? queriedAll
                 : [document.querySelector(selector)].filter(el => el?.nodeType === 1);
-            if (!matches.length) continue;
+            if (!primaryMatches.length) continue;
+            const matches = [...primaryMatches];
+            secondarySurfaces.forEach(surface => {
+                if (!matches.includes(surface)) matches.push(surface);
+            });
             if (matches.length === 1) return matches[0];
-            // Multiple chat roots (e.g. split-view Thread or Voice text chat): observe their lowest common ancestor
-            // within #app-mount so mutations in secondary panes are captured directly.
+            // Multiple chat roots (e.g. split-view Thread, Voice text chat, Search Results, Pinned/Inbox popout):
+            // observe their lowest common ancestor within #app-mount so text/attribute mutations in secondary panes are captured directly.
             let lca = matches[0];
             for (let index = 1; index < matches.length && lca; index++) {
                 const other = matches[index];

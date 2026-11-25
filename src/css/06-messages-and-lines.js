@@ -134,7 +134,7 @@ module.exports = `.dait-message-button {
 
 .dait-translation-line.dait-translation-revealed {
     background: var(--dait-line-tint);
-    border-left: 3px solid rgba(34, 122, 95, 0.72);
+    border-inline-start: 3px solid rgba(34, 122, 95, 0.72);
     border-radius: 2px;
     box-decoration-break: clone;
     -webkit-box-decoration-break: clone;
@@ -147,7 +147,7 @@ module.exports = `.dait-message-button {
 .dait-translation-line.dait-translation-revealed.dait-translation-style-muted,
 .dait-translation-line.dait-translation-revealed.dait-translation-style-tag {
     background: transparent;
-    border-left: 0;
+    border-inline-start: 0;
     padding: 0;
 }
 
@@ -158,13 +158,13 @@ module.exports = `.dait-message-button {
 /* With a note under the text, the faint background marks only the translated text. */
 .dait-translation-line.dait-translation-revealed.dait-translation-style-tint:has(> .dait-translation-note) {
     background: transparent;
-    border-left: 0;
+    border-inline-start: 0;
     padding: 0;
 }
 
 .dait-translation-line.dait-translation-revealed.dait-translation-style-tint:has(> .dait-translation-note) > .dait-translation-text {
     background: var(--dait-line-tint);
-    border-left: 3px solid rgba(34, 122, 95, 0.72);
+    border-inline-start: 3px solid rgba(34, 122, 95, 0.72);
     border-radius: 2px;
     box-decoration-break: clone;
     -webkit-box-decoration-break: clone;

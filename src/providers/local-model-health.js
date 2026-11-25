@@ -464,6 +464,13 @@ const methods = {
             if (this.plugin.localProviderHealthChecks.get(providerKey) === promise) {
                 this.plugin.localProviderHealthChecks.delete(providerKey);
                 this.plugin.localProviderHealthProbeStartedAt.delete(providerKey);
+                if (signal?.aborted
+                    && this.plugin.isLifecycleTokenCurrent(lifecycleToken)
+                    && this.plugin.isAutoTranslationProviderSnapshotCurrent(providerKey, requestOptions)
+                    && !this.plugin.isApiTestRunning?.("translation")
+                    && this.plugin.getApiStatus("translation").state === "testing") {
+                    this.plugin.setApiRuntimeStatus("translation", "untested", this.plugin.t("apiStatusUntested"));
+                }
             }
         });
         this.plugin.localProviderHealthChecks.set(providerKey, promise);

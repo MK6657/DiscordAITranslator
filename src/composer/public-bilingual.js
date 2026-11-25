@@ -156,6 +156,25 @@ const methods = {
         };
     },
 
+    restoreCustomEmojiTokensFromSource(sourceText, translatedText) {
+        const source = String(sourceText || "");
+        const output = String(translatedText || "");
+        if (!source || !output || !source.includes("<") || !output.includes(":")) return output;
+        const byName = new Map();
+        for (const match of source.matchAll(/<a?:([A-Za-z0-9_~]{1,64}):\d{15,25}>/g)) {
+            const name = match[1];
+            const full = match[0];
+            const prev = byName.get(name);
+            if (!prev) byName.set(name, full);
+            else if (prev !== full) byName.set(name, null);
+        }
+        if (!byName.size) return output;
+        return output.replace(/(?<![<A-Za-z0-9_~:/]):([A-Za-z0-9_~]{2,64}):(?![>A-Za-z0-9_~:/\d])/g, (full, name) => {
+            const token = byName.get(name);
+            return token || full;
+        });
+    },
+
     async runPublicBilingualTranslationTask(text, options = this.getPublicBilingualTranslationOptions()) {
         const requestBudget = options?.requestBudget
             || this.plugin.createAutoTranslationRequestBudget?.(MANUAL_TRANSLATION_REQUEST_BUDGET)
@@ -163,26 +182,61 @@ const methods = {
         const resetFallbackContext = ctx => {
             if (ctx && typeof ctx === "object") delete ctx.fallbackProvider;
         };
-        const runAttempt = async (mode, attemptOptions) => {
-            if (requestBudget) this.plugin.consumeAutoTranslationRequestBudget({ requestBudget });
-            resetFallbackContext(attemptOptions.requestContext);
-            const rawTranslated = await this.plugin.runModelTask("translation", text, {
-                configOverrides: attemptOptions.configOverrides,
-                timeoutMs: MODEL_REQUEST_TIMEOUT_MS,
-                mode,
-                requestContext: attemptOptions.requestContext,
-                providerProfilePinned: true,
-                isolatedConfig: true,
-                ...(requestBudget ? { requestBudget } : {})
-            });
+        const targetLangForLength = this.plugin.getAutoTranslationTargetLanguage(options);
+        const dynamicMaxTokens = String(text || "").length >= 420 && typeof this.plugin.getLongTextMaxTokensForLength === "function"
+            ? this.plugin.getLongTextMaxTokensForLength(String(text || "").length, targetLangForLength)
+            : 0;
+        const withEffectiveMaxTokens = attemptOptions => {
+            const configured = Number(attemptOptions?.configOverrides?.maxTokens || DEFAULT_SETTINGS.translation.maxTokens);
+            if (dynamicMaxTokens <= configured) return attemptOptions;
+            return {
+                ...attemptOptions,
+                configOverrides: {
+                    ...attemptOptions.configOverrides,
+                    maxTokens: dynamicMaxTokens
+                }
+            };
+        };
+        const runAttempt = async (mode, rawAttemptOptions) => {
+            const attemptOptions = withEffectiveMaxTokens(rawAttemptOptions);
+            const execute = async (overrideMaxTokens = 0, timeoutMs = MODEL_REQUEST_TIMEOUT_MS) => {
+                if (requestBudget) this.plugin.consumeAutoTranslationRequestBudget({ requestBudget });
+                resetFallbackContext(attemptOptions.requestContext);
+                const overrides = overrideMaxTokens > 0
+                    ? { ...attemptOptions.configOverrides, maxTokens: overrideMaxTokens }
+                    : attemptOptions.configOverrides;
+                return this.plugin.runModelTask("translation", text, {
+                    configOverrides: overrides,
+                    timeoutMs,
+                    mode,
+                    requestContext: attemptOptions.requestContext,
+                    providerProfilePinned: true,
+                    isolatedConfig: true,
+                    ...(requestBudget ? { requestBudget } : {})
+                });
+            };
+            let rawTranslated = "";
+            try {
+                rawTranslated = await execute(0, MODEL_REQUEST_TIMEOUT_MS);
+            }
+            catch (error) {
+                if (!error?.modelOutputTruncated) throw error;
+                const usedMax = Math.max(1, Number(attemptOptions?.configOverrides?.maxTokens || DEFAULT_SETTINGS.translation.maxTokens));
+                const minRetry = Number(error.partialOutputLength || 0) === 0 ? 4096 : 2400;
+                const raisedMax = Math.min(8192, Math.max(usedMax + 512, Math.ceil(usedMax * 2), minRetry));
+                const retryTimeout = Math.min(90000, Math.max(MODEL_REQUEST_TIMEOUT_MS, Math.round(MODEL_REQUEST_TIMEOUT_MS * Math.min(2.5, raisedMax / Math.max(256, usedMax)))));
+                rawTranslated = await execute(raisedMax, retryTimeout);
+            }
             const targetLang = this.plugin.getAutoTranslationTargetLanguage(attemptOptions);
-            return this.plugin.sanitizeAutoTranslationOutput(text, rawTranslated, targetLang);
+            const restoredEmojis = this.restoreCustomEmojiTokensFromSource(text, rawTranslated);
+            const sanitized = this.plugin.sanitizeAutoTranslationOutput(text, restoredEmojis, targetLang);
+            return this.restoreCustomEmojiTokensFromSource(text, sanitized);
         };
 
-        const translated = await runAttempt("public-bilingual", options);
-        if (!this.plugin.isInvalidAutoTranslationOutput(text, translated, this.plugin.getAutoTranslationTargetLanguage(options))) return translated;
-
         try {
+            const translated = await runAttempt("public-bilingual", options);
+            if (!this.plugin.isInvalidAutoTranslationOutput(text, translated, this.plugin.getAutoTranslationTargetLanguage(options))) return translated;
+
             const retryOptions = this.getPublicBilingualRetryOptions(text, translated, options);
             const retried = await runAttempt("public-bilingual-retry", retryOptions);
             if (!this.plugin.isInvalidAutoTranslationOutput(text, retried, this.plugin.getAutoTranslationTargetLanguage(retryOptions))) return retried;
@@ -591,7 +645,9 @@ const methods = {
         }
         finally {
             this.plugin.composerWriter.finishWriteToken(writeToken);
-            if (this.plugin.isLifecycleTokenCurrent(lifecycleToken)) this.plugin.setButtonBusy(button, false, this.plugin.t("publicBilingualButton"));
+            if (this.plugin.isLifecycleTokenCurrent(lifecycleToken) && !this.plugin.composerWriter?.hasActiveWrite?.(textbox)) {
+                this.plugin.setButtonBusy(button, false, this.plugin.t("publicBilingualButton"));
+            }
         }
     }
 };

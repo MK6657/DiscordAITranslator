@@ -37,6 +37,7 @@ const FALLBACK_TASK_PARAM_KEYS = [
     "targetLanguageCode",
     "temperature",
     "maxTokens",
+    "enableThinking",
     "prompt",
     "promptPolicyVersion",
     "localCompactPrompt",
@@ -574,7 +575,9 @@ class ProviderLayer {
                     deeplPlan: fallbackConfig.deeplPlan,
                     appId: fallbackConfig.appId,
                     secretKey: fallbackConfig.secretKey,
-                    enableThinking: fallbackConfig.enableThinking
+                    enableThinking: sanitizedOverrides.enableThinking !== undefined
+                        ? Boolean(sanitizedOverrides.enableThinking)
+                        : fallbackConfig.enableThinking
                 };
                 for (const field of this.registry.getCredentialFields(provider)) {
                     fallbackOverrides[field] = fallbackConfig[field] ?? "";
@@ -771,7 +774,7 @@ class ProviderLayer {
                 inputLength: String(input || "").length,
                 ...(!joining && {
                     promptLength: String(body?.messages?.[0]?.content || "").length,
-                    maxTokens: Number(body?.max_tokens || 0),
+                    maxTokens: Number(body?.max_tokens ?? body?.max_completion_tokens ?? 0),
                     longTextChunk: Boolean(options.longTextChunk),
                     longTextSourceLength: Number(options.longTextSourceLength || 0) || 0,
                     timeoutMs
@@ -837,7 +840,7 @@ class ProviderLayer {
                 inputHash: this.plugin.getStrongTextFingerprint(input),
                 inputLength: String(input || "").length,
                 promptLength: String(body?.messages?.[0]?.content || "").length,
-                maxTokens: Number(body?.max_tokens || 0),
+                maxTokens: Number(body?.max_tokens ?? body?.max_completion_tokens ?? 0),
                 type: this.plugin.getAutoTranslationFailureType(error),
                 status: Number(error?.status || 0),
                 retryAfterMs: Number(error?.retryAfterMs || 0),
@@ -907,13 +910,17 @@ class ProviderLayer {
     }
 
     annotateModelRequestError(error, kind, endpoint, config, options = {}) {
-        if (!error || kind !== "translation") return error;
+        if (!error) return error;
+        if (typeof error === "object" && kind && !error.taskKind) error.taskKind = kind;
+        if (kind !== "translation" && kind !== "polish") return error;
         if (this.isLocalProviderUnavailableError(error, endpoint, config, options)) {
             error.localProviderUnavailable = true;
-            error.retryAfterMs = Math.max(Number(error.retryAfterMs || 0), LOCAL_PROVIDER_UNAVAILABLE_RETRY_MS);
-            error.providerKey = error.providerKey || this.getAutoTranslationProviderKey({ configOverrides: options.configOverrides });
             // The address that did not answer, for the message: the settings may name another service by then.
             error.localProviderEndpoint = error.localProviderEndpoint || String(endpoint || config?.endpoint || "");
+            if (kind === "translation") {
+                error.retryAfterMs = Math.max(Number(error.retryAfterMs || 0), LOCAL_PROVIDER_UNAVAILABLE_RETRY_MS);
+                error.providerKey = error.providerKey || this.getAutoTranslationProviderKey({ configOverrides: options.configOverrides });
+            }
         }
         return error;
     }
@@ -1307,7 +1314,7 @@ class ProviderLayer {
             request?.responseParser || "",
             body?.model,
             body?.temperature ?? "",
-            body?.max_tokens ?? "",
+            body?.max_tokens ?? body?.max_completion_tokens ?? "",
             body?.thinking?.type ?? "",
             String(targetLanguage ?? ""),
             String(sourceLanguage ?? ""),
@@ -1430,8 +1437,8 @@ class ProviderLayer {
                 });
                 return completeSuccess();
             }
+            this.annotateModelRequestError(error, kind, endpoint || testConfig.endpoint, testConfig, { configOverrides: testConfig });
             if (kind === "translation") {
-                this.annotateModelRequestError(error, kind, endpoint || testConfig.endpoint, testConfig, { configOverrides: testConfig });
                 if (error?.googleTranslateApiKey) this.plugin.markGoogleTranslateKeyFailure(error.googleTranslateApiKey, error);
                 if (error.localProviderUnavailable) this.plugin.markAutoTranslationProviderFailure(this.plugin.getAutoTranslationOptions(), error);
             }
@@ -1447,6 +1454,9 @@ class ProviderLayer {
                 runs.set(kind, { sequence });
                 this.runningApiTests.delete(kind);
                 if (this.ctx.isLifecycleTokenCurrent(lifecycleToken)) {
+                    if (this.getApiStatus(kind).state === "testing") {
+                        this.resetApiStatus(kind, { save: "debounce" });
+                    }
                     this.plugin.setButtonBusy(button, false, this.plugin.t("apiTest"));
                     this.plugin.requestLauncherStatusUpdate?.();
                 }
@@ -1487,13 +1497,14 @@ class ProviderLayer {
         const model = this.getEffectiveChatCompletionModel(kind, safeConfig, defaultConfig);
         if (!endpoint) throw new Error(this.plugin.t("endpointMissing"));
         if (this.plugin.isChatCompletionProvider(safeConfig) && !model) throw new Error(this.plugin.t("modelMissing"));
-        const body = this.applyProviderBodyOptions(safeConfig, {
+        const isAlwaysThinkingModel = /(?:reasoner|\br1\b|qwq|qwen3|(?:^|\/)(?:o[134]|gpt-5)(?:[-_:]|$)|thinking)/i.test(String(model || ""));
+        const body = this.applyProviderBodyOptions({ ...safeConfig, enableThinking: false }, {
             model,
             messages: [
                 { role: "user", content: "Reply with OK only." }
             ],
             temperature: 0,
-            max_tokens: 32,
+            max_tokens: isAlwaysThinkingModel ? 512 : 32,
             stream: false
         });
 

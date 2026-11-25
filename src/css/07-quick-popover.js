@@ -138,6 +138,52 @@ module.exports = `
     --dait-qp-icon-image: ${PIXEL_CLOSE_ICON};
 }
 
+.dait-qp-lang-bar {
+    background: var(--dait-rail);
+    border-bottom: 1px solid var(--dait-divider);
+    display: grid;
+    flex: 0 0 auto;
+    gap: 2px;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    padding: 5px 16px;
+}
+
+.dait-qp-lang-pill {
+    align-items: center;
+    background: var(--dait-input-bg);
+    border: 1px solid var(--dait-divider);
+    border-radius: var(--dait-radius-control);
+    color: var(--dait-text);
+    cursor: pointer;
+    display: inline-flex;
+    font-family: inherit;
+    font-size: var(--dait-font-body);
+    font-weight: 500;
+    justify-content: center;
+    line-height: var(--dait-line);
+    min-height: 28px;
+    min-width: 0;
+    overflow: hidden;
+    padding: 0 3px;
+    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dait-qp-lang-pill:hover:not([aria-checked="true"]) {
+    background: var(--dait-raised);
+    border-color: var(--dait-input-border);
+    color: var(--dait-heading);
+}
+
+.dait-qp-lang-pill[aria-checked="true"] {
+    background: var(--dait-brand);
+    border-color: var(--dait-brand);
+    box-shadow: inset 0 1px 0 var(--dait-pixel-highlight);
+    color: var(--dait-on-fill);
+    font-weight: 600;
+}
+
 .dait-qp-mode-bar {
     background: var(--dait-rail);
     border-bottom: 1px solid var(--dait-divider);
@@ -247,7 +293,39 @@ module.exports = `
     overflow-y: auto;
     overscroll-behavior: contain;
     padding: 10px 16px 12px;
-    scrollbar-width: thin;
+}
+
+@supports not selector(::-webkit-scrollbar) {
+    .dait-qp-body {
+        scrollbar-color: var(--dait-scrollbar-thumb) var(--dait-scrollbar-track);
+        scrollbar-width: thin;
+    }
+}
+
+.dait-qp-body::-webkit-scrollbar {
+    height: 8px;
+    width: 8px;
+}
+
+.dait-qp-body::-webkit-scrollbar-track {
+    background: var(--dait-scrollbar-track);
+    border-radius: 0;
+}
+
+.dait-qp-body::-webkit-scrollbar-thumb {
+    background: var(--dait-scrollbar-thumb);
+    background-clip: padding-box;
+    border: 2px solid transparent;
+    border-radius: 2px;
+}
+
+.dait-qp-body::-webkit-scrollbar-thumb:hover {
+    background: var(--dait-scrollbar-thumb-hover);
+    background-clip: padding-box;
+}
+
+.dait-qp-body::-webkit-scrollbar-corner {
+    background: transparent;
 }
 
 /* Status card: the dot, the service line and Test share the first line; the test result, what is happening now
@@ -863,13 +941,76 @@ label.dait-qp-label {
 }
 
 .dait-quick-popover .dait-qp-segment:focus-visible,
-.dait-quick-popover .dait-qp-tab:focus-visible {
+.dait-quick-popover .dait-qp-tab:focus-visible,
+.dait-quick-popover .dait-qp-lang-pill:focus-visible {
     outline-offset: -2px;
+}
+
+.dait-quick-popover:not(.dait-qp-pointer-opened) :is(
+    .dait-qp-segment[aria-checked="true"],
+    .dait-qp-tab[aria-selected="true"],
+    .dait-qp-lang-pill[aria-checked="true"],
+    .dait-qp-preset[aria-pressed="true"]
+):focus-visible {
+    outline-color: var(--dait-on-fill);
+    outline-offset: -3px;
 }
 
 /* Opened with the mouse: no ring on the first control until the user presses a key. */
 .dait-quick-popover.dait-qp-pointer-opened :focus-visible {
     outline: none;
+}
+
+.dait-quick-popover[dir="rtl"] .dait-qp-header {
+    padding: 10px 16px 10px 8px;
+}
+
+.dait-quick-popover[dir="rtl"] .dait-qp-header-open-full {
+    margin-left: 0;
+    margin-right: auto;
+}
+
+.dait-quick-popover[dir="rtl"] .dait-qp-switch::before {
+    left: auto;
+    right: 3px;
+}
+
+.dait-quick-popover[dir="rtl"] .dait-qp-switch:checked::before {
+    transform: translateX(-16px);
+}
+
+.dait-quick-popover[dir="rtl"] .dait-qp-select {
+    background-position:
+        11px 50%,
+        16px 50%;
+    background-size: 5px 5px, 5px 5px;
+    padding: 0 10px 0 30px;
+}
+
+.dait-quick-popover[dir="rtl"] .dait-qp-row-sub {
+    border-left: 0;
+    border-right: 2px solid var(--dait-brand);
+    padding-left: 0;
+    padding-right: 10px;
+}
+
+.dait-quick-popover[dir="rtl"] .dait-qp-service-chip {
+    margin-left: 0;
+    margin-right: auto;
+}
+
+.dait-quick-popover[dir="rtl"] .dait-qp-link {
+    margin-left: 0;
+    margin-right: -6px;
+}
+
+.dait-quick-popover[dir="rtl"] :is(.dait-qp-chip, .dait-qp-temp-value) {
+    direction: ltr;
+    unicode-bidi: isolate;
+}
+
+.dait-quick-popover :is(.dait-qp-input, .dait-qp-try-output) {
+    unicode-bidi: plaintext;
 }
 
 /* Status shapes differ as well as colours: filled = ok, ring = busy, triangle = waiting, "!" = needs you,

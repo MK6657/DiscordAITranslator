@@ -30,6 +30,7 @@ const methods = {
             : ["deepseek", "openaiCompatible"].includes(provider) ? "sk-..." : "";
         input.autocomplete = "off";
         input.spellcheck = false;
+        input.setAttribute("dir", "ltr");
         input.value = this.plugin.getSetting(`${kind}.apiKey`) ?? "";
         input.addEventListener("change", () => this.plugin.setSetting(`${kind}.apiKey`, input.value));
         const row = this.createRow(this.plugin.t("apiKey"), input, { description: this.getProviderFieldHelp("apiKey", provider), stacked: true });
@@ -71,6 +72,9 @@ const methods = {
         input.dataset.daitPath = path;
         input.placeholder = placeholder || "";
         input.value = this.plugin.getSetting(path) ?? "";
+        if (/\.(?:endpoint|model|region|appId|secretKey|apiKey)$/.test(path)) {
+            input.setAttribute("dir", "ltr");
+        }
         Object.entries(attrs).forEach(([key, value]) => input.setAttribute(key, value));
         const commit = (options = {}) => {
             const saveOptions = options.immediate
@@ -90,7 +94,7 @@ const methods = {
             }
             const raw = String(input.value ?? "").trim();
             if (!raw) {
-                if (options.force) this.plugin.syncSettingControls(path, this.plugin.getSetting(path));
+                if (options.force) this.plugin.syncSettingControls(path, this.plugin.getSetting(path), { includeActive: true });
                 return;
             }
             const parsed = Number(raw);
@@ -102,10 +106,10 @@ const methods = {
             this.plugin.setSetting(path, parsed, saveOptions);
         };
         if (type === "number") {
-            input.addEventListener("input", () => commit());
+            input.addEventListener("input", () => commit({ live: true }));
             input.addEventListener("blur", () => commit({ force: true, immediate: true }));
-            input.addEventListener("pointerup", () => setTimeout(() => commit(), 0));
-            input.addEventListener("keyup", () => setTimeout(() => commit(), 0));
+            input.addEventListener("pointerup", () => setTimeout(() => commit({ live: true }), 0));
+            input.addEventListener("keyup", () => setTimeout(() => commit({ live: true }), 0));
         }
         else {
             input.addEventListener("input", () => commit({ live: true }));
@@ -120,6 +124,7 @@ const methods = {
         textarea.dataset.daitPath = path;
         textarea.rows = 6;
         textarea.value = this.plugin.getSetting(path) ?? "";
+        textarea.setAttribute("dir", path === "googleTranslate.keyPoolText" ? "ltr" : "auto");
         this.bindSettingsTextarea(textarea);
         textarea.addEventListener("change", () => this.plugin.preserveSettingsScroll(textarea, () => this.plugin.setSetting(path, textarea.value)));
         return this.createRow(labelText, textarea, { ...rowOptions, stacked: true });
@@ -452,7 +457,13 @@ const methods = {
         group.addEventListener("keydown", event => {
             const buttons = group.__daitSegmentedButtons.filter(button => !button.disabled);
             if (!buttons.length) return;
-            const steps = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 };
+            const rtl = Boolean(this.plugin.isRtlLocale?.());
+            const steps = {
+                ArrowRight: rtl ? -1 : 1,
+                ArrowDown: 1,
+                ArrowLeft: rtl ? 1 : -1,
+                ArrowUp: -1
+            };
             const index = Math.max(0, buttons.findIndex(button => button.getAttribute("aria-checked") === "true"));
             let next = null;
             if (steps[event?.key]) next = (index + steps[event.key] + buttons.length) % buttons.length;
@@ -487,7 +498,10 @@ const methods = {
         const count = labels.length || 1;
         const available = controlWidth - 6 - 2 * (count - 1);
         const needed = labels.reduce((total, label) => total + 12
-            + [...String(label || "")].reduce((sum, char) => sum + (/[⺀-鿿豈-﫿＀-￯]/.test(char) ? 15 : 8.3), 0), 0);
+            + [...String(label || "")].reduce((sum, char) => {
+                if (/\p{M}/u.test(char)) return sum;
+                return sum + (/[⺀-鿿豈-﫿＀-￯]/.test(char) ? 15 : 8.3);
+            }, 0), 0);
         return needed <= available;
     },
 
@@ -543,6 +557,11 @@ const methods = {
         if (/^(polish|translation)\.(provider|apiKey|endpoint|model|enableThinking|region|deeplPlan|appId|secretKey)$/.test(path)
             || path === "googleTranslate.keyPoolText") {
             this.refreshSavedServiceConfigControls();
+        }
+        if (/^(polish\.(enabled|provider|apiKey|endpoint|model|targetLanguage)|translation\.(provider|targetLanguage)|ui\.publicBilingual)/.test(path)) {
+            document.querySelectorAll?.("[data-dait-public-bilingual-summary='true']")?.forEach(node => {
+                if (typeof this.getPublicBilingualFlowText === "function") node.textContent = this.getPublicBilingualFlowText();
+            });
         }
         // The overview's checklist and service cards report on the service, auto-translate and channel settings.
         this.scheduleOverviewStatusRefresh(path);
@@ -623,7 +642,11 @@ const methods = {
         this.plugin.quickPanel?.rerender?.("language");
         this.plugin.restoreAllTranslationSourceVisibility();
         document.querySelectorAll(".dait-message-button, .dait-polish-button, .dait-polish-preset-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-menu-button, .dait-input-action-menu, .dait-polish-preset-menu, .dait-input-action-group, .dait-quick-settings-button").forEach(node => node.remove());
-        document.querySelectorAll(".dait-translation-line, .dait-translation-box").forEach(node => node.remove());
+        document.querySelectorAll(".dait-translation-line").forEach(node => {
+            if (typeof this.plugin.disposeTranslationLine === "function") this.plugin.disposeTranslationLine(node);
+            else node.remove();
+        });
+        document.querySelectorAll(".dait-translation-box").forEach(node => node.remove());
         this.plugin.unpatchContextMenus();
         this.plugin.patchMessageContextMenu();
         this.plugin.queueScan();
@@ -635,7 +658,10 @@ const methods = {
         if (typeof document === "undefined") return 0;
         const locale = this.plugin.getLocale();
         this.getQuickSettingsModalRoots().forEach(root => {
-            this.findQuickSettingsDialog(root)?.setAttribute?.("aria-label", this.plugin.t("settingsTitle"));
+            this.plugin.applyPanelTheme?.(root);
+            const dialog = this.findQuickSettingsDialog(root);
+            dialog?.setAttribute?.("aria-label", this.plugin.t("settingsTitle"));
+            if (dialog) this.plugin.applyPanelTheme?.(dialog);
         });
         let rebuilt = 0;
         [...(document.querySelectorAll?.(".dait-settings") || [])].forEach(panel => {

@@ -49,6 +49,10 @@ const methods = {
                 this.plugin.translateMessage(messageNode, currentContent, button);
             });
         }
+        else {
+            const nextTitle = this.plugin.t("translateTitleAttr", { targetLanguage: this.plugin.getDisplayLanguage(this.plugin.settings.translation.targetLanguage) });
+            if (button.title !== nextTitle) button.title = nextTitle;
+        }
         this.plugin.applyMessageButtonVisibilityToButton(button, content || messageNode);
 
         if (created || button.parentElement !== content || this.hasNonPluginSiblingAfter(button)) {
@@ -1020,6 +1024,20 @@ const methods = {
         if (type === "textMention" && typeof element.name === "string" && element.name.trim()) {
             const name = element.name.trim();
             return name.startsWith("@") ? name : `@${name}`;
+        }
+        if (/timestamp/i.test(type) || element.parsed?.full) {
+            const full = String(element.parsed?.full || element.raw || "").trim();
+            if (/^<t:-?\d{1,12}(?::[tTdDfFR])?>$/.test(full)) return full;
+            const ts = element.timestamp ?? element.parsed?.timestamp;
+            const style = String(element.style ?? element.parsed?.style ?? "").trim();
+            if (/^-?\d{1,12}$/.test(String(ts ?? "").trim())) {
+                return style && /^[tTdDfFR]$/.test(style) ? `<t:${String(ts).trim()}:${style}>` : `<t:${String(ts).trim()}>`;
+            }
+        }
+        const commandId = id(element.commandId ?? element.command?.id);
+        const commandName = String(element.commandName ?? element.command?.displayName ?? element.command?.name ?? "").trim();
+        if (commandId && commandName && !/[<>:\n]/.test(commandName)) {
+            return `</${commandName}:${commandId}>`;
         }
         return null;
     },

@@ -828,6 +828,8 @@ class AutoTranslationQueueCore {
         if (!this.makeRoomForAutoTranslationItem(item, queueLimit)) return false;
         const retryMs = Math.max(0, Number(options.delayMs) || 0);
         const retained = { ...item };
+        delete retained.daitInFlightToken;
+        delete retained.daitBatchId;
         delete retained.daitPrefetchRequest;
         delete retained.daitRequeued;
         if (options.allowActiveRequeue) retained.daitAllowActiveRequeue = true;
@@ -899,6 +901,8 @@ class AutoTranslationQueueCore {
             if (this.getAutoTranslationItemProviderKey(item) === providerKey) {
                 if (retainVisible && this.plugin.shouldRetainAutoTranslationProviderBlockedItem(item)) {
                     const retained = { ...item, daitRequeueAfter: Date.now() + retryMs };
+                    delete retained.daitInFlightToken;
+                    delete retained.daitBatchId;
                     delete retained.daitPrefetchRequest;
                     this.plugin.removeAutoTranslationLoadingForItem(retained, { force: true });
                     this.addAutoTranslationPendingTarget(retained.cacheKey, retained);
@@ -1454,8 +1458,15 @@ class AutoTranslationQueueCore {
             }
         }
         finally {
+            const batchId = item?.daitBatchId || null;
             const finishedCurrent = this.finishAutoTranslationInFlightItem(item);
-            if (finishedCurrent) {
+            if (batchId) {
+                if (finishedCurrent) {
+                    this.stateMachine.releaseInFlightItems(1);
+                    this.stateMachine.releaseBatchKey(batchId, item.cacheKey, { forceFinishBatch: true });
+                }
+            }
+            else if (finishedCurrent) {
                 this.stateMachine.finishInFlightBatch({
                     batchSize: 1,
                     isPrefetch: Boolean(item.daitPrefetchRequest)
@@ -1464,6 +1475,7 @@ class AutoTranslationQueueCore {
             if (!rendered && !item.daitRequeued && !this.hasActiveAutoTranslationKey(item.cacheKey)) {
                 this.plugin.removeAutoTranslationLoadingForItem?.(item, { force: true });
             }
+            delete item.daitBatchId;
             delete item.daitPrefetchRequest;
             if (this.plugin.isStarted && this.plugin.isAutoTranslationRequestCurrent(item.requestOptions)) {
                 this.plugin.drainAutoTranslationQueue();
@@ -1479,6 +1491,7 @@ class AutoTranslationQueueCore {
         const batchConfigVersion = Number(this.stateMachine.configVersion || 0);
         const batchResetVersion = Number(this.plugin.autoTranslationInFlightResetVersion || 0);
         const isPrefetchBatch = items.some(item => Boolean(item?.daitPrefetchRequest));
+        const batchId = items.find(item => item?.daitBatchId)?.daitBatchId || null;
         let releasedEarlyCount = 0;
         const heartbeat = (targetItems = pending) => {
             const now = Date.now();
@@ -1492,6 +1505,7 @@ class AutoTranslationQueueCore {
             if (!item || !this.finishAutoTranslationInFlightItem(item)) return false;
             releasedEarlyCount++;
             this.stateMachine.releaseInFlightItems(1);
+            if (batchId) this.stateMachine.releaseBatchKey(batchId, item.cacheKey);
             return true;
         };
         try {
@@ -1653,7 +1667,17 @@ class AutoTranslationQueueCore {
             const currentItems = items.filter(item => this.finishAutoTranslationInFlightItem(item));
             const sameConfigGeneration = Number(this.stateMachine.configVersion || 0) === batchConfigVersion;
             const sameResetVersion = Number(this.plugin.autoTranslationInFlightResetVersion || 0) === batchResetVersion;
-            if (sameConfigGeneration && (currentItems.length > 0 || (releasedEarlyCount === items.length && sameResetVersion))) {
+            if (batchId) {
+                if (currentItems.length) this.stateMachine.releaseInFlightItems(currentItems.length);
+                if (sameConfigGeneration) {
+                    currentItems.forEach(item => this.stateMachine.releaseBatchKey(batchId, item.cacheKey));
+                    this.stateMachine.releaseBatchKey(batchId, "", { forceFinishBatch: true });
+                }
+                else {
+                    this.stateMachine.inFlightBatches.delete(batchId);
+                }
+            }
+            else if (sameConfigGeneration && (currentItems.length > 0 || (releasedEarlyCount === items.length && sameResetVersion))) {
                 this.stateMachine.finishInFlightBatch({
                     batchSize: currentItems.length,
                     isPrefetch: isPrefetchBatch
@@ -1666,6 +1690,7 @@ class AutoTranslationQueueCore {
                 if (!renderedItems.has(item) && !item.daitRequeued && !this.hasActiveAutoTranslationKey(item.cacheKey)) {
                     this.plugin.removeAutoTranslationLoadingForItem?.(item, { force: true });
                 }
+                delete item.daitBatchId;
                 delete item.daitBatchRowOmitted;
                 delete item.daitRequeued;
                 delete item.daitPrefetchRequest;
@@ -1723,6 +1748,8 @@ class AutoTranslationQueueCore {
         const delayMs = Math.max(0, Number(options.delayMs) || 0);
         const next = { ...item };
         delete next.priority;
+        delete next.daitInFlightToken;
+        delete next.daitBatchId;
         delete next.daitPrefetchRequest;
         delete next.daitRequeued;
         if (options.allowActiveRequeue) next.daitAllowActiveRequeue = true;
@@ -1874,6 +1901,7 @@ class AutoTranslationQueueCore {
         if (!this.stateMachine.inFlightKeys.size) {
             this.stateMachine.inFlightStartedAt.clear();
             this.stateMachine.inFlightTokens.clear();
+            this.stateMachine.inFlightBatches.clear();
             this.stateMachine.visibleLongInFlightKeys.clear();
             if (this.stateMachine.inFlight || this.stateMachine.inFlightItems || this.stateMachine.prefetchInFlight) {
                 this.plugin.autoTranslationInFlightResetVersion = Number(this.plugin.autoTranslationInFlightResetVersion || 0) + 1;
@@ -1885,6 +1913,7 @@ class AutoTranslationQueueCore {
         }
 
         let removed = 0;
+        let freedBatches = 0;
         const staleAfterMs = Math.max(AUTO_TRANSLATE_IN_FLIGHT_STALE_MS, AUTO_TRANSLATE_REQUEST_TIMEOUT_MS * 2);
         [...this.stateMachine.inFlightKeys].forEach(key => {
             const startedAt = Number(this.stateMachine.inFlightStartedAt.get(key) || 0);
@@ -1897,6 +1926,7 @@ class AutoTranslationQueueCore {
             this.stateMachine.visibleLongInFlightKeys.delete(key);
             this.stateMachine.inFlightStartedAt.delete(key);
             this.stateMachine.inFlightTokens.delete(key);
+            freedBatches += this.stateMachine.pruneKeyFromInFlightBatches(key);
             removed++;
             this.plugin.logDiagnostic("auto.queue.active", "prune", {
                 reason: "stale-in-flight",
@@ -1909,11 +1939,15 @@ class AutoTranslationQueueCore {
         this.stateMachine.inFlightItems = Math.min(this.stateMachine.inFlightItems, this.stateMachine.inFlightKeys.size);
         if (!this.stateMachine.inFlightKeys.size) {
             this.plugin.autoTranslationInFlightResetVersion = Number(this.plugin.autoTranslationInFlightResetVersion || 0) + 1;
+            this.stateMachine.inFlightBatches.clear();
             this.stateMachine.inFlight = 0;
             this.stateMachine.inFlightItems = 0;
             this.stateMachine.prefetchInFlight = 0;
             this.stateMachine.visibleLongInFlightKeys.clear();
             return;
+        }
+        if (freedBatches > 0) {
+            this.plugin.autoTranslationInFlightResetVersion = Number(this.plugin.autoTranslationInFlightResetVersion || 0) + 1;
         }
         const nextInFlight = Math.min(this.stateMachine.inFlight, this.stateMachine.inFlightKeys.size);
         if (nextInFlight !== this.stateMachine.inFlight) {
@@ -2191,8 +2225,9 @@ class AutoTranslationQueueCore {
             });
             return;
         }
-        this.plugin.setTranslationCache(this.plugin.getServedModelTranslationCacheKey(cacheKey, requestOptions), translated);
-        this.clearAutoTranslationPartialResult(cacheKey);
+        const servedKey = this.plugin.getServedModelTranslationCacheKey(cacheKey, requestOptions);
+        this.plugin.setTranslationCache(servedKey, translated);
+        this.clearAutoTranslationPartialResult(cacheKey, servedKey !== cacheKey ? servedKey : "");
         if (this.plugin.shouldStoreAutoTextTranslationCache(text, requestOptions, translated)) {
             this.plugin.setAutoTextTranslationCache(text, requestOptions, translated);
         }
@@ -2212,6 +2247,7 @@ class AutoTranslationQueueCore {
             { valueLength: String(translated || "").length }
         );
         this.clearAutoTranslationFailure(cacheKey, requestOptions);
+        if (servedKey && servedKey !== cacheKey) this.clearAutoTranslationFailure(servedKey, requestOptions);
         this.plugin.clearAutoTextTranslationFailure(text, requestOptions);
     }
 
@@ -2735,7 +2771,7 @@ class AutoTranslationQueueCore {
             { min: 1, integer: true }
         );
         const dynamic = this.plugin.getLongTextMaxTokensForLength(sourceLength, targetLanguage);
-        return Math.max(256, Math.min(1200, Math.max(configured, dynamic)));
+        return Math.max(256, configured, Math.min(1200, dynamic));
     }
 }
 

@@ -43,7 +43,13 @@ const {
     API_ENDPOINT_ERROR_MESSAGE_KEYS,
     DEFAULT_SETTINGS
 } = require("./constants");
-const { I18N } = require("./i18n");
+const {
+    I18N,
+    UI_LOCALES,
+    normalizeUiLocale,
+    getUiLocaleMeta,
+    isRtlLocale
+} = require("./i18n");
 
 module.exports = class DiscordAITranslator {
     constructor() {
@@ -412,7 +418,19 @@ module.exports = class DiscordAITranslator {
             this.translationCache.clear();
             this.translationCacheMeta.clear();
             this.translationCacheNegativeLookup.clear();
+            this.localProviderDetectedModels.clear();
         }
+        else {
+            for (const entry of this.localProviderDetectedModels.values()) {
+                if (entry && typeof entry === "object") {
+                    entry.expiresAt = 0;
+                    entry.retryAt = 0;
+                }
+            }
+        }
+        this.localProviderModelDetections.clear();
+        this.dismissedTranslationMessages.clear();
+        this.discordMarkupDisplayTextMemo?.clear?.();
         if (this.translationCacheDirtyTimer) clearTimeout(this.translationCacheDirtyTimer);
         this.translationCacheDirtyTimer = null;
         this.translationCacheDirtyAt = 0;
@@ -483,6 +501,9 @@ module.exports = class DiscordAITranslator {
         this.autoTranslationRetryTimer = null;
         this.autoTranslationRetryAt = 0;
         this.autoTranslationViewportBusyUntil = 0;
+        this.autoTranslationViewportStableAnchor = "";
+        this.autoTranslationViewportStableScans = 0;
+        this.autoTranslationViewportRequiresStableScan = false;
         this.autoTranslationJumpCooldownUntil = 0;
         this.autoTranslationRenderPausedUntil = 0;
         this.autoTranslationLastScrollY = null;
@@ -536,12 +557,30 @@ module.exports = class DiscordAITranslator {
     }
 
     getLocale() {
-        return I18N[this.settings.ui?.language] ? this.settings.ui.language : "zh-CN";
+        const raw = this.settings.ui?.language;
+        if (raw && I18N[raw]) return raw;
+        const normalized = normalizeUiLocale(raw, "zh-CN");
+        return I18N[normalized] ? normalized : "zh-CN";
+    }
+
+    isRtlLocale(locale = this.getLocale()) {
+        return isRtlLocale(locale);
+    }
+
+    getUiLocales() {
+        return UI_LOCALES;
+    }
+
+    getUiLocaleBcp47(locale = this.getLocale()) {
+        return getUiLocaleMeta(locale).bcp47;
     }
 
     t(key, vars = {}) {
         const locale = this.getLocale();
-        const template = I18N[locale]?.[key] ?? I18N.en[key] ?? key;
+        const template = I18N[locale]?.[key]
+            ?? (locale === "zh-TW" ? I18N["zh-CN"]?.[key] : undefined)
+            ?? I18N.en[key]
+            ?? key;
         return String(template).replace(/\{(\w+)\}/g, (match, name) => vars[name] ?? match);
     }
 
@@ -591,7 +630,13 @@ module.exports = class DiscordAITranslator {
         else if (Object.hasOwn(API_ENDPOINT_ERROR_MESSAGE_KEYS, error?.code)) message = this.t(API_ENDPOINT_ERROR_MESSAGE_KEYS[error.code]);
         else if (error?.code === "CLIPBOARD_UNAVAILABLE") message = this.t("clipboardUnavailable");
         else if (error?.manualTranslationRescueFailed) message = this.t("manualTranslateRescueFailed");
-        else if (error?.modelOutputTruncated) message = this.t("errorOutputTruncated");
+        else if (error?.modelOutputTruncated) {
+            message = error?.taskKind === "polish"
+                ? this.t("errorOutputTruncatedPolish")
+                : error?.taskKind === "translation"
+                    ? this.t("errorOutputTruncatedTranslation")
+                    : this.t("errorOutputTruncated");
+        }
         else if (this.isTimeoutError(error)) message = this.t("errorTimeout");
         else if (error?.localProviderUnavailable) message = this.t("errorLocalProviderUnavailable");
         else if (providerCoded && error?.providerLanguageUnsupported) message = this.t("errorLanguageUnsupported");

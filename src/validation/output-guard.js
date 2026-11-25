@@ -69,9 +69,15 @@ class OutputGuard {
 
         const labeled = raw.match(/^((?:translation|translated text|translated_text|translated message|translated_message|translated-message|translatedMessage|result|answer|output|target|final)|(?:\u4ee5\u4e0b\u662f|\u8fd9\u662f).{0,8}(?:\u7ffb\u8bd1|\u8bd1\u6587)|(?:\u7ffb\u8bd1|\u8bd1\u6587|\u7ffb\u8bd1\u7ed3\u679c))\s*[:\uff1a]\s*([\s\S]+)$/i);
         if (labeled) {
-            const prefix = String(labeled[1] || "").trim();
-            const sourceSharesGenericPrefix = /^(?:result|answer|output|target|final)$/i.test(prefix)
-                && new RegExp(`^${prefix}\\s*[:\\uff1a]`, "i").test(source);
+            const prefix = String(labeled[1] || "").trim().toLowerCase();
+            const equivalentSourcePrefix = {
+                result: /^(?:result|\u7ed3\u679c)\s*[:\uff1a]/i,
+                answer: /^(?:answer|\u7b54\u6848|\u56de\u7b54)\s*[:\uff1a]/i,
+                output: /^(?:output|\u8f93\u51fa)\s*[:\uff1a]/i,
+                target: /^(?:target|\u76ee\u6807)\s*[:\uff1a]/i,
+                final: /^(?:final|\u6700\u7ec8)\s*[:\uff1a]/i
+            }[prefix];
+            const sourceSharesGenericPrefix = Boolean(equivalentSourcePrefix && equivalentSourcePrefix.test(source));
             if (!sourceSharesGenericPrefix) push(labeled[2]);
         }
 
@@ -79,8 +85,11 @@ class OutputGuard {
         if (wrapped) push(wrapped[2]);
 
         if (options?.includeQuoted !== false) {
-            const closingQuote = { '"': '"', "'": "'", "\u201c": "\u201d", "\u2018": "\u2019", "\u300c": "\u300d", "\u300e": "\u300f" }[raw[0]];
-            if (closingQuote && raw.endsWith(closingQuote)) {
+            const quotePairs = { '"': '"', "'": "'", "\u201c": "\u201d", "\u2018": "\u2019", "\u300c": "\u300d", "\u300e": "\u300f" };
+            const closingQuote = quotePairs[raw[0]];
+            const sourceClosingQuote = quotePairs[source[0]];
+            const sourceWrappedInOuterQuotes = Boolean(sourceClosingQuote && source.length >= 2 && source.endsWith(sourceClosingQuote) && !source.slice(1, -1).includes(sourceClosingQuote));
+            if (closingQuote && raw.endsWith(closingQuote) && !sourceWrappedInOuterQuotes) {
                 const inner = raw.slice(1, -1);
                 if (!inner.includes(closingQuote)) push(inner);
             }
@@ -240,14 +249,14 @@ class OutputGuard {
         }
         if (this.hasDiscordEmojiTokenMismatch(source, output)) return "emoji-mismatch";
         if (this.hasPromptLeakageAutoTranslationOutput(source, output, targetLanguage)) return "prompt-leakage";
-        if (this.hasRefusalAutoTranslationOutput(output)) return "refusal-output";
+        if (this.hasRefusalAutoTranslationOutput(output, source)) return "refusal-output";
         if (this.hasDictionaryStyleAutoTranslationOutput(source, output, targetLanguage)) return "dictionary-output";
         if (this.hasExplanatoryAutoTranslationOutput(source, output)) return "explanatory-output";
-        if (this.hasLabeledAutoTranslationOutput(output)) return "labeled-output";
+        if (this.hasLabeledAutoTranslationOutput(output, source)) return "labeled-output";
         if (this.isTraditionalChineseTarget(targetLanguage) && this.hasLikelySimplifiedHan(output) && !this.isAcceptableChineseVariantMix(output, targetLanguage)) return "script-mismatch";
         if (this.isSimplifiedChineseTarget(targetLanguage) && this.hasLikelyTraditionalHan(output) && !this.isAcceptableChineseVariantMix(output, targetLanguage)) return "script-mismatch";
         if (this.isAcceptableTargetShortTranslation(output, targetLanguage, source)) return "";
-        if (this.hasSuspiciousChineseAutoTranslationOutput(output, targetLanguage)) return "suspicious-chinese";
+        if (this.hasSuspiciousChineseAutoTranslationOutput(output, targetLanguage, source)) return "suspicious-chinese";
         if (this.plugin.hasSuspiciousResidualAutoTranslationForeignText(source, output, targetLanguage)) return "residual-source";
         if (!options?.partialLongText && !options?.mergedLongText && this.plugin.hasMissingAutoTranslationLines(source, output, targetLanguage, options)) return "missing-lines";
         if (!options?.partialLongText && this.plugin.hasUndertranslatedAutoTranslationOutput(source, output, targetLanguage)) return "undertranslated";
@@ -261,7 +270,15 @@ class OutputGuard {
 
         const targetScript = this.plugin.getTargetLanguageScript(targetLanguage);
         if (targetScript === "unknown") return "";
-        if (targetScript === "latin") return this.plugin.isLikelyTargetLanguage(output, targetLanguage) ? "" : "target-language";
+        if (targetScript === "latin") {
+            if (this.plugin.isLikelyTargetLanguage(output, targetLanguage)) return "";
+            const scriptCounts = this.plugin.countTextScriptsForValidation(output);
+            if (Number(scriptCounts.latin || 0) >= 2 && Number(scriptCounts.latin || 0) / Math.max(1, Number(scriptCounts.total || 0)) >= 0.65 && source) {
+                const stripped = output.replace(/[^\p{Script=Latin}\p{N}\s.,!?;:'"’“”()-]+/gu, token => (source.includes(token) ? " " : token));
+                if (stripped !== output && this.plugin.isLikelyTargetLanguage(stripped, targetLanguage)) return "";
+            }
+            return "target-language";
+        }
         if (/^\p{L}$/u.test(output) && this.plugin.getCharacterScript(output) !== targetScript && this.plugin.shouldAutoTranslateText(source, targetLanguage)) return "wrong-script";
 
         const outputCounts = this.plugin.countTextScriptsForValidation(output);
@@ -348,17 +365,30 @@ class OutputGuard {
             || (markerCount >= 4 && hasReturnOnly && hasDiscordOrTarget);
     }
 
-    hasRefusalAutoTranslationOutput(text) {
+    hasRefusalAutoTranslationOutput(text, sourceText = "") {
         const value = String(text || "").trim();
         if (!value) return false;
-        const patterns = [
-            /(抱歉|对不起|很抱歉).{0,40}(无法|不能|不可以|不能提供|无法提供|拒绝).{0,80}(翻译|译文|内容|服务|帮助)/,
-            /(无法|不能|不可以|不能提供|无法提供|拒绝).{0,40}(翻译|译文|提供|处理).{0,80}(内容|服务|帮助)?/,
+        const source = String(sourceText || "").trim();
+        const translationRefusalPatterns = [
+            /(抱歉|对不起|很抱歉).{0,40}(无法|不能|不可以|不能提供|无法提供|拒绝).{0,80}(翻译|译文)/,
+            /(无法|不能|不可以|不能提供|无法提供|拒绝).{0,40}(翻译|译文)/,
             /如果您有其他(?:问题|需要).{0,40}(请|可以)/,
-            /\b(?:sorry|apologize|apologies)\b.{0,80}\b(?:cannot|can't|unable|will not|won't|refuse)\b.{0,80}\b(?:translate|translation|provide|assist|help)\b/i,
-            /\b(?:cannot|can't|unable|will not|won't|refuse)\b.{0,80}\b(?:translate|translation|provide|assist|help)\b/i
+            /\b(?:cannot|can't|unable|will not|won't|refuse)\b.{0,80}\b(?:translate|translation)\b/i
         ];
-        return patterns.some(pattern => pattern.test(value));
+        if (translationRefusalPatterns.some(pattern => pattern.test(value))) {
+            if (!source || !/(翻译|译文|\btranslat)/i.test(source)) return true;
+        }
+        const generalRefusalPatterns = [
+            /(抱歉|对不起|很抱歉).{0,40}(无法|不能|不可以|不能提供|无法提供|拒绝).{0,80}(内容|服务|帮助)/,
+            /(无法|不能|不可以|不能提供|无法提供|拒绝).{0,40}(提供|处理).{0,80}(内容|服务|帮助)/,
+            /\b(?:sorry|apologize|apologies)\b.{0,80}\b(?:cannot|can't|unable|will not|won't|refuse)\b.{0,80}\b(?:provide|assist|help)\b/i,
+            /\b(?:cannot|can't|unable|will not|won't|refuse)\b.{0,80}\b(?:provide|assist|help)\b/i
+        ];
+        if (!generalRefusalPatterns.some(pattern => pattern.test(value))) return false;
+        if (source && (/(抱歉|对不起|无法|不能|帮不上|爱莫能助)/.test(source) || /\b(?:sorry|apologi|can't|cannot|unable|won't|help)\b/i.test(source))) {
+            return false;
+        }
+        return true;
     }
 
     hasDictionaryStyleAutoTranslationOutput(sourceText, translatedText, targetLanguage = this.plugin.settings.translation.targetLanguage) {
@@ -370,11 +400,16 @@ class OutputGuard {
         const targetScript = this.plugin.getTargetLanguageScript(targetLanguage);
         const sourceScriptCounts = this.plugin.countTextScriptsForValidation(source);
         if (targetScript !== "unknown" && Number(sourceScriptCounts[targetScript] || 0) >= Math.max(2, Number(sourceScriptCounts.total || 0) * 0.5)) return false;
+        const escapedSource = source.length <= 24 ? source.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") : "";
+        if (escapedSource && new RegExp(`${escapedSource}.{0,16}(?:意思是|意为|含义是|可译为|翻译为|\\bmeans\\b|\\btranslates to\\b)`, "i").test(output)) {
+            return true;
+        }
         const patterns = [
             /(该词|这个词|此词|该短语|这个短语|这个表达).{0,30}(意为|意思是|含义是|表示|可译为|翻译为)/,
             /在.{0,12}(俄语|英语|日语|韩语|西班牙语|法语|德语|印地语|阿拉伯语|越南语).{0,30}(中)?(意为|意思是|含义是|表示)/,
-            /(意思是|意为|含义是|可译为|翻译为)[“"']?.{1,40}[”"']?/,
-            /\b(?:means|meaning|means that|translates to|can be translated as|the word means)\b/i
+            /^(?:意思是|意为|含义是|可译为|翻译为)\s*[“"'][^”"'\n]{1,40}[”"'][。.!！]?$/,
+            /\b(?:translates to|can be translated as|the word means|this word means|this phrase means)\b/i,
+            /^(?:["'“][^"'”\n]{1,32}["'”]\s+)?means\s+["'“][^"'”\n]{1,40}["'”]\.?$/i
         ];
         return patterns.some(pattern => pattern.test(output));
     }
@@ -404,9 +439,14 @@ class OutputGuard {
         return sourceSignals < 2;
     }
 
-    hasLabeledAutoTranslationOutput(text) {
+    hasLabeledAutoTranslationOutput(text, sourceText = "") {
         const value = String(text || "").trim();
         if (!value) return false;
+        const source = String(sourceText || "").trim();
+        if (/^(?:Output)\s*[:\uff1a]/i.test(value) && /^(?:Output|\u8f93\u51fa)\s*[:\uff1a]/i.test(source)) return false;
+        if (/^(?:Note|\u6ce8\u91ca)\s*[:\uff1a]/i.test(value) && /^(?:Note|\u6ce8\u610f|\u6ce8\u91ca)\s*[:\uff1a]/i.test(source)) return false;
+        if (/^(?:Source|\u539f\u6587)\s*[:\uff1a]/i.test(value) && /^(?:Source|\u6765\u6e90|\u539f\u6587)\s*[:\uff1a]/i.test(source)) return false;
+        if (/^(?:Label|\u6807\u7b7e)\s*[:\uff1a]/i.test(value) && /^(?:Label|\u6807\u7b7e)\s*[:\uff1a]/i.test(source)) return false;
         return /^(?:\u7ffb\u8bd1|\u8bd1\u6587|\u7ffb\u8bd1\u7ed3\u679c|Translation|Translated text|Translated message|Output)\s*[:\uff1a]/i.test(value)
             || /^(?:以下是|这是).{0,8}(?:翻译|译文)\s*[:：]/.test(value)
             || /^(?:\u7f57\u9a6c\u97f3|Romaji|Romanization|\u62fc\u97f3|Pinyin|\u6807\u7b7e|Label|\u539f\u6587|Source|\u6ce8\u91ca|Note)\s*[:\uff1a]/i.test(value)
@@ -436,17 +476,30 @@ class OutputGuard {
         return signalCount >= 3 || markerCount >= 4;
     }
 
-    hasSuspiciousChineseAutoTranslationOutput(text, targetLanguage) {
+    hasSuspiciousChineseAutoTranslationOutput(text, targetLanguage, sourceText = "") {
         if (this.plugin.getTargetLanguageScript(targetLanguage) !== "han") return false;
         const value = String(text || "").trim();
         if (!value) return false;
         if (/\uFFFD/.test(value)) return true;
 
-        const counts = this.plugin.countTextScripts(value);
+        const stripCode = input => typeof this.plugin.splitDiscordCodeSegments === "function"
+            ? this.plugin.splitDiscordCodeSegments(String(input || "")).map(segment => (segment.code ? " " : segment.text)).join("")
+            : String(input || "").replace(/```[\s\S]*?```/g, " ").replace(/`[^`\n]+`/g, " ");
+        let checked = stripCode(value);
+        const sourcePlain = sourceText ? stripCode(sourceText) : "";
+        if (sourcePlain) {
+            const sourceCounts = this.plugin.countTextScripts(sourcePlain);
+            const sourceIsJapanese = Number(sourceCounts.kana || 0) >= 2 && Number(sourceCounts.kana || 0) / Math.max(1, Number(sourceCounts.total || 0)) > 0.15;
+            if (!sourceIsJapanese && Number(sourceCounts.kana || 0) > 0) {
+                checked = checked.replace(/[\u3040-\u30ff\u31f0-\u31ff]+/gu, token => (sourcePlain.includes(token) ? " " : token));
+            }
+        }
+
+        const counts = this.plugin.countTextScripts(checked);
         if (counts.kana > 0) return true;
         if (counts.han < 2) return false;
 
-        const lettersOnly = value.replace(/[^\p{L}]/gu, "");
+        const lettersOnly = checked.replace(/[^\p{L}]/gu, "");
         if (lettersOnly.length > 0 && lettersOnly.length <= 8 && /[\u3040-\u30ff\u31f0-\u31ff]/u.test(lettersOnly)) return true;
         return false;
     }
@@ -490,8 +543,13 @@ class OutputGuard {
         if (sourceLetters > 16) return false;
         const target = this.plugin.normalizeLanguageName(targetLanguage);
         if (["英语", "English"].includes(target)) {
-            const normalized = value.toLocaleLowerCase().replace(/[^a-z0-9_'+-]+/g, " ").trim();
-            const common = new Set(["ok", "okay", "yes", "no", "thanks", "thank you", "done", "sure", "nice", "good", "bad", "same"]);
+            const normalized = value.toLocaleLowerCase().replace(/[’]/g, "'").replace(/[^a-z0-9_'+-]+/g, " ").trim();
+            const common = new Set([
+                "ok", "okay", "yes", "no", "thanks", "thank you", "done", "sure", "nice", "good", "bad", "same",
+                "hi", "hello", "hey", "morning", "good morning", "good afternoon", "good evening", "good night",
+                "no problem", "see you", "got it", "on my way", "well done", "great job", "good job", "all good",
+                "sounds good", "of course", "my bad", "welcome", "you're welcome", "bye", "goodbye", "take care"
+            ]);
             return common.has(normalized);
         }
         const targetScript = this.plugin.getTargetLanguageScript(targetLanguage);
@@ -518,10 +576,13 @@ class OutputGuard {
             ? this.plugin.splitDiscordCodeSegments(value).map(segment => (segment.code ? " " : segment.text)).join("")
             : value.replace(/```[\s\S]*?```/g, " ").replace(/`[^`\n]+`/g, " ");
         return plain
-            .replace(/https?:\/\/[^\s<>"']+/gi, " ")
+            .replace(/(?:https?|steam|discord):\/\/[^\s<>"']+/gi, " ")
+            .replace(/\bwww\.[^\s<>"']+/gi, " ")
             .replace(/<a?:[A-Za-z0-9_~.-]+:\d{15,}>/g, " ")
             .replace(/<[@#][!&]?\d{15,}>/g, " ")
-            .replace(/<t:\d{1,12}(?::[tTdDfFR])?>/g, " ")
+            .replace(/<\/[^:<>\n]{1,100}:\d{15,25}>/g, " ")
+            .replace(/<t:-?\d{1,12}(?::[tTdDfFR])?>/g, " ")
+            .replace(/<id:[A-Za-z_-]+>/g, " ")
             .replace(/:[A-Za-z0-9_~.-]{2,}:/g, " ")
             .replace(/(?<![a-z0-9_@])@(?:everyone|here)(?![a-z0-9_])/gi, " ")
             .trim();
@@ -537,7 +598,11 @@ class OutputGuard {
         const traditionalTarget = this.isTraditionalChineseTarget(targetLanguage);
         const simplifiedTarget = this.isSimplifiedChineseTarget(targetLanguage);
         if (traditionalTarget && this.hasLikelySimplifiedHan(checked)) return "script-mismatch";
-        if (simplifiedTarget && !options.allowDialectScriptMix && this.hasLikelyTraditionalHan(checked)) return "script-mismatch";
+        if (simplifiedTarget && !options.allowDialectScriptMix) {
+            const sourceTextPlain = String(sourceText || "");
+            const checkedWithoutPreservedSource = checked.replace(LIKELY_TRADITIONAL_HAN_GLOBAL_RE, ch => (sourceTextPlain.includes(ch) ? "" : ch));
+            if (this.hasLikelyTraditionalHan(checkedWithoutPreservedSource)) return "script-mismatch";
+        }
         if (options.chineseScriptOnly) return "";
 
         const targetScript = this.plugin.getTargetLanguageScript(targetLanguage);

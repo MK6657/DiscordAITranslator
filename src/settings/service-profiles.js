@@ -23,6 +23,7 @@ const {
     DEFAULT_SETTINGS
 } = require("../constants");
 const { PLUGIN_VERSION } = require("../version");
+const { getLocalizedPresetLanguageLabel } = require("../i18n");
 
 const SAFE_DIAGNOSTIC_KEYS = new Set([
     "textcachehits", "autotranslatemessages", "cachehits", "cachemisses", "cachememory",
@@ -49,7 +50,7 @@ class ServiceProfilesController {
 
 const methods = {
     getLanguageLabel(language) {
-        return this.plugin.getLocale() === "en" ? language.en : `${language.zh} - ${language.en}`;
+        return getLocalizedPresetLanguageLabel(language, this.plugin.getLocale());
     },
 
     getDisplayLanguage(language) {
@@ -247,18 +248,64 @@ const methods = {
             "English": "英语",
             "英文": "英语",
             "英语": "英语",
+            "英語": "英语",
+            "Английский": "英语",
+            "الإنجليزية": "英语",
+            "Inglés": "英语",
             "Spanish": "西班牙语",
+            "西班牙語": "西班牙语",
+            "Español": "西班牙语",
+            "Испанский": "西班牙语",
+            "الإسبانية": "西班牙语",
             "Russian": "俄语",
+            "俄語": "俄语",
+            "Русский": "俄语",
+            "الروسية": "俄语",
+            "Ruso": "俄语",
             "German": "德语",
+            "德語": "德语",
+            "Немецкий": "德语",
+            "الألمانية": "德语",
+            "Alemán": "德语",
             "French": "法语",
+            "法語": "法语",
+            "Французский": "法语",
+            "الفرنسية": "法语",
+            "Francés": "法语",
             "Japanese": "日语",
+            "日語": "日语",
+            "Японский": "日语",
+            "اليابانية": "日语",
+            "Japonés": "日语",
             "Arabic": "阿拉伯语",
+            "阿拉伯語": "阿拉伯语",
+            "العربية": "阿拉伯语",
+            "Арабский": "阿拉伯语",
+            "Árabe": "阿拉伯语",
             "Vietnamese": "越南语",
+            "越南語": "越南语",
+            "Вьетнамский": "越南语",
+            "الفيتنامية": "越南语",
+            "Vietnamita": "越南语",
             "Hindi": "印地语",
+            "印地語": "印地语",
+            "Хинди": "印地语",
+            "الهندية": "印地语",
             "Korean": "朝鲜语",
             "韩语": "朝鲜语",
+            "韓語": "朝鲜语",
             "朝鲜语": "朝鲜语",
-            "Italian": "意大利语"
+            "Корейский": "朝鲜语",
+            "الكورية": "朝鲜语",
+            "Coreano": "朝鲜语",
+            "Italian": "意大利语",
+            "義大利語": "意大利语",
+            "Итальянский": "意大利语",
+            "الإيطالية": "意大利语",
+            "Italiano": "意大利语",
+            "Китайский (трад.)": "繁體中文",
+            "الصينية التقليدية": "繁體中文",
+            "Chino tradicional": "繁體中文"
         };
         return aliases[value] || value;
     },
@@ -467,9 +514,9 @@ const methods = {
         for (const raw of list) {
             const entry = this.normalizeSavedServiceConfigEntry(raw);
             if (!entry) continue;
-            const identity = this.getServiceConfigIdentityKey(entry);
-            if (!identity || seenKeys.has(identity)) continue;
-            seenKeys.add(identity);
+            const dedupeKey = this.getSavedServiceConfigDedupeKey(entry);
+            if (!dedupeKey || seenKeys.has(dedupeKey)) continue;
+            seenKeys.add(dedupeKey);
             while (seenIds.has(entry.id)) {
                 entry.id = `svc-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
             }
@@ -696,11 +743,37 @@ const methods = {
             if (!tab?.tabpanel) return;
             const renderedProvider = tab.tabpanel.querySelector?.(".dait-provider-settings-block")?.dataset?.daitProvider || "";
             if (renderedProvider && currentProvider && renderedProvider !== currentProvider && tab.tabpanel.replaceWith) {
-                const isVisible = !tab.tabpanel.hidden;
+                const active = typeof document !== "undefined" ? document.activeElement : null;
+                const focusedSavedKind = active && tab.tabpanel.contains?.(active) ? String(active.dataset?.daitSavedConfigs || "") : "";
+                const focusedPath = !focusedSavedKind && active && tab.tabpanel.contains?.(active)
+                    ? String((active.dataset?.daitPath ? active : active.closest?.("[data-dait-path]"))?.dataset?.daitPath || "")
+                    : "";
+                const isVisible = !state.searchQuery && !tab.tabpanel.hidden;
                 const fresh = this.plugin.createSettingsTabPanel(state, tab, isVisible);
                 tab.tabpanel.replaceWith(fresh);
                 tab.tabpanel = fresh;
                 this.plugin.syncSettingsDependentRows?.(fresh);
+                if (kind === "translation") {
+                    const advancedTab = state?.tabs?.find?.(item => item.id === "advanced");
+                    if (advancedTab?.tabpanel?.replaceWith) {
+                        const advVisible = !state.searchQuery && !advancedTab.tabpanel.hidden;
+                        const freshAdv = this.plugin.createSettingsTabPanel(state, advancedTab, advVisible);
+                        advancedTab.tabpanel.replaceWith(freshAdv);
+                        advancedTab.tabpanel = freshAdv;
+                        this.plugin.syncSettingsDependentRows?.(freshAdv);
+                    }
+                }
+                if (state.searchQuery) {
+                    this.plugin.runSettingsSearch?.(state, state.searchInput?.value || state.searchQuery);
+                }
+                if (focusedSavedKind) {
+                    const nextSelect = fresh.querySelector?.(`[data-dait-saved-configs='${focusedSavedKind}']`);
+                    if (nextSelect) this.plugin.focusSettingsElement?.(nextSelect);
+                }
+                else if (focusedPath) {
+                    const nextControl = fresh.querySelector?.(`[data-dait-path='${focusedPath}']`);
+                    if (nextControl) this.plugin.focusSettingsElement?.(nextControl);
+                }
             }
         });
         const task = this.plugin.settings[kind];
@@ -897,7 +970,8 @@ const methods = {
         this.plugin.settings[kind].secretKey = profile?.secretKey ?? preset.secretKey ?? "";
         if (options.restoreProfile) {
             this.plugin.settings[kind].apiKey = profile?.apiKey ?? "";
-            this.plugin.settings[kind].apiKeyOrigin = profile?.apiKeyOrigin;
+            if (typeof profile?.apiKeyOrigin === "string") this.plugin.settings[kind].apiKeyOrigin = profile.apiKeyOrigin;
+            else delete this.plugin.settings[kind].apiKeyOrigin;
             this.plugin.settings[kind].enableThinking = typeof profile?.enableThinking === "boolean" ? profile.enableThinking : false;
             const credentialFields = this.plugin.providerLayer?.registry?.getCredentialFields?.(provider) || [];
             credentialFields.forEach(field => {

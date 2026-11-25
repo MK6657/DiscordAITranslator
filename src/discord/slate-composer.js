@@ -423,7 +423,6 @@ const methods = {
             }
             catch {}
         });
-        this.selectTextboxContents(textbox);
         ["keydown", "keypress", "keyup"].forEach(type => {
             try {
                 textbox.dispatchEvent(new KeyboardEvent(type, {
@@ -630,8 +629,20 @@ const methods = {
             const first = textNodes[0];
             const last = textNodes[textNodes.length - 1];
             const range = document.createRange();
-            range.setStart(first, 0);
-            range.setEnd(last, String(last.nodeValue || "").length);
+            const voidStart = first?.parentElement?.closest?.("[data-slate-void='true']");
+            const voidEnd = last?.parentElement?.closest?.("[data-slate-void='true']");
+            if (voidStart && element.contains?.(voidStart) && typeof range.setStartBefore === "function") {
+                range.setStartBefore(voidStart);
+            }
+            else {
+                range.setStart(first, 0);
+            }
+            if (voidEnd && element.contains?.(voidEnd) && typeof range.setEndAfter === "function") {
+                range.setEndAfter(voidEnd);
+            }
+            else {
+                range.setEnd(last, String(last.nodeValue || "").length);
+            }
             selection.removeAllRanges();
             selection.addRange(range);
             return true;
@@ -755,7 +766,13 @@ const methods = {
         if (!selection || !document.createRange || !document.createTreeWalker || !textbox) return false;
         try {
             const walker = document.createTreeWalker(textbox, 4, {
-                acceptNode: node => String(node?.nodeValue || "").replace(/\u200b/g, "").length ? 1 : 2
+                acceptNode: node => {
+                    /** @type {any} */
+                    const parent = node?.parentElement || node?.parentNode;
+                    if (!parent) return 2;
+                    if (parent.closest?.(".dait-polish-result-panel, .dait-polish-restore-control, [data-slate-placeholder='true']")) return 2;
+                    return String(node?.nodeValue || "").replace(/\u200b/g, "").length ? 1 : 2;
+                }
             });
             let last = null;
             let node = walker.nextNode();
@@ -765,7 +782,13 @@ const methods = {
             }
             if (!last) return false;
             const range = document.createRange();
-            range.setStart(last, String(last.nodeValue || "").length);
+            const voidEnd = last?.parentElement?.closest?.("[data-slate-void='true']");
+            if (voidEnd && textbox.contains?.(voidEnd) && typeof range.setStartAfter === "function") {
+                range.setStartAfter(voidEnd);
+            }
+            else {
+                range.setStart(last, String(last.nodeValue || "").length);
+            }
             range.collapse(true);
             selection.removeAllRanges();
             selection.addRange(range);
@@ -909,6 +932,9 @@ const methods = {
                 which: 13
             }));
         });
+        if (this.plugin.polishSession && (this.plugin.polishSession.textbox === textbox || this.plugin.polishSession.composerKey === this.plugin.getTextboxComposerKey?.(textbox))) {
+            this.plugin.polishSession = null;
+        }
         return true;
     }
 };

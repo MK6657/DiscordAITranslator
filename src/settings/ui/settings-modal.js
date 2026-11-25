@@ -539,9 +539,13 @@ const methods = {
         if (root?.remove) root.remove();
         if (!root || root === this.plugin.quickSettingsModalRoot) this.plugin.quickSettingsModalRoot = null;
         const previousFocus = this.plugin.quickSettingsPreviousFocus;
+        const launcherWasRail = Boolean(previousFocus?.classList?.contains?.("dait-quick-settings-rail"));
+        const launcherWasButton = launcherWasRail || Boolean(previousFocus?.classList?.contains?.("dait-quick-settings-button"));
         this.plugin.quickSettingsPreviousFocus = null;
         this.setQuickSettingsLauncherButton(null, false);
+        let focusedLauncher = false;
         if (previousFocus?.focus && this.isNodeConnected(previousFocus)) {
+            focusedLauncher = true;
             try {
                 previousFocus.focus({ preventScroll: true });
             }
@@ -551,6 +555,20 @@ const methods = {
             }
         }
         this.resumeQuickSettingsDeferredWork(reason);
+        if (!focusedLauncher && launcherWasButton && typeof document !== "undefined") {
+            this.plugin.injectQuickSettingsButtons?.();
+            const selector = launcherWasRail
+                ? ".dait-quick-settings-rail, .dait-quick-settings-button"
+                : ".dait-quick-settings-panel, .dait-quick-settings-button";
+            const liveLauncher = document.querySelector?.(selector) || null;
+            if (liveLauncher?.focus && this.isNodeConnected(liveLauncher)) {
+                try { liveLauncher.focus({ preventScroll: true }); }
+                catch {
+                    try { liveLauncher.focus(); }
+                    catch {}
+                }
+            }
+        }
     }
 };
 

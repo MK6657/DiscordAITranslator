@@ -120,7 +120,7 @@ const methods = {
         if (!effectiveEndpoint) throw new Error(this.plugin.t("endpointMissing"));
         if (!effectiveModel) throw new Error(this.plugin.t("modelMissing"));
         const temperature = this.plugin.normalizeRequestNumber(effectiveConfig.temperature, defaultConfig.temperature ?? 0.2, { min: 0, max: 2 });
-        const maxTokens = this.plugin.normalizeRequestNumber(effectiveConfig.maxTokens, defaultConfig.maxTokens ?? 800, { min: 1, integer: true });
+        const maxTokens = this.plugin.normalizeRequestNumber(effectiveConfig.maxTokens, defaultConfig.maxTokens ?? (kind === "polish" ? 2000 : 1200), { min: 1, integer: true });
 
         const systemPrompt = this.plugin.buildSystemPrompt(kind, effectiveConfig);
         const body = this.plugin.applyProviderBodyOptions(effectiveConfig, {
@@ -164,9 +164,13 @@ const methods = {
         if (!key) {
             if (!this.plugin.getGoogleTranslateKeys().length) throw this.plugin.createGoogleTranslateNoKeyError();
             const coolingReadyAt = this.plugin.getGoogleTranslateCoolingKeyReadyAt(charCount, { ignoreReservations: Boolean(options.ignoreReservations) });
-            throw coolingReadyAt
-                ? this.plugin.createGoogleTranslateCooldownError({ until: coolingReadyAt, charCount })
-                : this.plugin.createGoogleTranslateQuotaError({ charCount });
+            if (coolingReadyAt) {
+                throw this.plugin.createGoogleTranslateCooldownError({ until: coolingReadyAt, charCount });
+            }
+            if (!options.ignoreReservations && this.plugin.peekGoogleTranslateAvailableKey(charCount, { ignoreReservations: true })) {
+                throw this.plugin.createGoogleTranslateCooldownError({ until: Date.now() + 2000, charCount });
+            }
+            throw this.plugin.createGoogleTranslateQuotaError({ charCount });
         }
         const reservation = options.reserve ? this.plugin.reserveGoogleTranslateKey(key, charCount) : null;
         const body = {
@@ -315,11 +319,12 @@ const methods = {
         const code = this.plugin.getGoogleLanguageCode(language, options);
         if (options.source && (!code || code === AUTO_LANGUAGE_VALUE)) return "";
         const upper = String(code || "").replace("_", "-").toUpperCase();
-        if (upper === "ZH-CN" || upper === "ZH-TW" || upper === "ZH-HANS" || upper === "ZH-HANT") {
+        if (upper === "ZH" || upper === "ZH-CN" || upper === "ZH-TW" || upper === "ZH-HANS" || upper === "ZH-HANT") {
             // source_lang only knows "ZH"; as a target, "ZH" means Simplified Chinese.
             if (options.source) return "ZH";
             return upper === "ZH-TW" || upper === "ZH-HANT" ? "ZH-HANT" : "ZH-HANS";
         }
+        if (options.source) return upper.split("-")[0];
         if (upper === "EN") return "EN";
         if (upper === "PT") return "PT";
         return upper;
@@ -329,12 +334,13 @@ const methods = {
         const code = this.plugin.getGoogleLanguageCode(language, options);
         if (options.source && (!code || code === AUTO_LANGUAGE_VALUE)) return "";
         const normalized = String(code || "").trim();
+        const lower = normalized.toLowerCase();
         const map = {
             "zh": "zh",
-            "zh-CN": "zh",
-            "zh-Hans": "zh",
-            "zh-TW": "cht",
-            "zh-Hant": "cht",
+            "zh-cn": "zh",
+            "zh-hans": "zh",
+            "zh-tw": "cht",
+            "zh-hant": "cht",
             "ja": "jp",
             "ko": "kor",
             "fr": "fra",
@@ -349,7 +355,7 @@ const methods = {
             "sv": "swe",
             "vi": "vie"
         };
-        return map[normalized] || normalized;
+        return map[lower] || (/^[A-Za-z]{2,3}$/.test(normalized) ? lower : normalized);
     },
 
     md5HexFallback(text) {
@@ -586,6 +592,7 @@ const methods = {
             : typeof content === "string" ? content : "";
         return raw
             .replace(/<(think|thought|reasoning)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, "")
+            .replace(/^[\s\S]*?<\/(?:think|thought|reasoning)\s*>/i, "")
             .replace(/<(think|thought|reasoning)\b[^>]*>[\s\S]*$/gi, "")
             .trim();
     },

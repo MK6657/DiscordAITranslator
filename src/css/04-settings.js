@@ -123,6 +123,7 @@ module.exports = `.dait-settings {
     line-height: var(--dait-line);
     margin-left: auto;
     min-width: 0;
+    order: 1;
 }
 
 .dait-settings-header-provider::before {
@@ -138,6 +139,71 @@ module.exports = `.dait-settings {
     white-space: nowrap;
 }
 
+/* Quick UI language switcher bar (header compact pills + overview full native-name pills). */
+.dait-lang-bar {
+    align-items: center;
+    background: var(--dait-input-bg);
+    border: 1px solid var(--dait-input-border);
+    border-radius: var(--dait-radius-control);
+    box-shadow: inset 1px 1px 0 var(--dait-pixel-shade);
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 2px;
+    min-width: 0;
+    padding: 2px;
+}
+
+.dait-lang-bar-header {
+    flex: 0 0 auto;
+    order: 2;
+}
+
+.dait-lang-bar-overview {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    margin: 10px 0 2px;
+    width: 100%;
+}
+
+.dait-lang-pill {
+    align-items: center;
+    background: transparent;
+    border: 0;
+    border-radius: 1px;
+    color: var(--dait-text);
+    cursor: pointer;
+    display: inline-flex;
+    font-family: inherit;
+    font-size: var(--dait-font-body);
+    font-weight: 500;
+    justify-content: center;
+    line-height: var(--dait-line);
+    min-height: 28px;
+    min-width: 32px;
+    overflow: hidden;
+    padding: 0 6px;
+    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dait-lang-bar-overview .dait-lang-pill {
+    min-height: 32px;
+    padding: 0 8px;
+}
+
+.dait-lang-pill:hover:not([aria-checked="true"]) {
+    background: var(--dait-raised);
+    color: var(--dait-heading);
+}
+
+.dait-lang-pill[aria-checked="true"] {
+    background: var(--dait-brand);
+    box-shadow: inset 0 1px 0 var(--dait-pixel-highlight);
+    color: var(--dait-on-fill);
+    font-weight: 600;
+}
+
 /* Close: a 36 px icon button with the shared close icon (01-theme-tokens), like the quick panel's. */
 .dait-settings-close {
     align-items: center;
@@ -150,6 +216,7 @@ module.exports = `.dait-settings {
     flex: 0 0 auto;
     height: var(--dait-control-h);
     justify-content: center;
+    order: 3;
     padding: 0;
     width: var(--dait-control-h);
 }
@@ -1724,5 +1791,148 @@ module.exports = `.dait-settings {
     .dait-host-health-detail {
         grid-column: 2 / -1;
     }
+
+    .dait-lang-bar-overview {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+}
+
+@container dait-settings (max-width: 760px) {
+    .dait-settings-header {
+        flex-wrap: wrap;
+    }
+
+    .dait-lang-bar-header {
+        margin-inline-start: auto;
+    }
+
+    .dait-settings-header-status {
+        display: none;
+    }
+}
+
+/* High-contrast focus ring inside brand-filled active tabs, segments, and language pills (light & dark palettes). */
+.dait-settings :is(.dait-settings-tab[aria-selected="true"], .dait-segmented-option[aria-checked="true"], .dait-lang-pill[aria-checked="true"]):focus-visible {
+    outline-color: var(--dait-on-fill);
+    outline-offset: -3px;
+}
+
+/* RTL layout mirroring for Arabic (dir="rtl") while keeping technical fields/tokens crisp LTR. */
+.dait-settings[dir="rtl"] {
+    text-align: right;
+}
+
+.dait-settings[dir="rtl"] .dait-settings-header {
+    padding: 12px 20px 12px 12px;
+}
+
+.dait-settings[dir="rtl"] .dait-settings-header-status {
+    margin-left: 0;
+    margin-right: auto;
+}
+
+.dait-settings[dir="rtl"] .dait-settings-header-provider::before {
+    margin-left: var(--dait-space-2);
+    margin-right: 0;
+}
+
+.dait-settings[dir="rtl"] .dait-settings-rail {
+    border-left: 2px solid var(--dait-divider);
+    border-right: 0;
+}
+
+@container dait-settings (max-width: 760px) {
+    .dait-settings[dir="rtl"] .dait-settings-header {
+        padding: 10px 14px 10px 10px;
+    }
+
+    .dait-settings[dir="rtl"] .dait-settings-rail {
+        border-left: 0;
+    }
+}
+
+.dait-settings[dir="rtl"] .dait-settings-search::before {
+    left: auto;
+    right: 10px;
+}
+
+.dait-settings[dir="rtl"] .dait-settings-search-input {
+    padding-left: 8px;
+    padding-right: 32px;
+}
+
+.dait-settings[dir="rtl"] .dait-settings-tab {
+    text-align: right;
+}
+
+.dait-settings[dir="rtl"] .dait-settings-tab[aria-selected="true"] {
+    box-shadow: inset -3px 0 0 var(--dait-accent-gold), var(--dait-pixel-shadow-sm);
+}
+
+.dait-settings[dir="rtl"] .dait-settings-row-dependent {
+    padding-left: 0;
+    padding-right: var(--dait-space-4);
+}
+
+.dait-settings[dir="rtl"] :where(select) {
+    background-position:
+        11px 50%,
+        16px 50%;
+    background-size: 5px 5px, 5px 5px;
+    padding-left: 30px;
+    padding-right: 10px;
+}
+
+.dait-settings[dir="rtl"] input.dait-switch::after {
+    left: auto;
+    right: 3px;
+}
+
+.dait-settings[dir="rtl"] input.dait-switch:checked::after {
+    transform: translateX(-16px);
+}
+
+.dait-settings[dir="rtl"] .dait-row-control .dait-small-button-link:last-child {
+    margin-left: -6px;
+    margin-right: 0;
+}
+
+.dait-settings[dir="rtl"] .dait-order-item {
+    padding: 6px 12px 6px 8px;
+}
+
+.dait-settings[dir="rtl"] .dait-api-test-detail::before {
+    margin-left: 6px;
+    margin-right: 0;
+}
+
+.dait-settings[dir="rtl"] .dait-try-result {
+    border-left: 0;
+    border-right: 3px solid var(--dait-divider);
+    padding: 2px 10px 2px 0;
+}
+
+.dait-settings[dir="rtl"] .dait-try-result-error {
+    border-right-color: var(--dait-danger);
+}
+
+.dait-settings[dir="rtl"] .dait-settings-search-result {
+    text-align: right;
+}
+
+.dait-settings[dir="rtl"] :is(
+    [data-dait-path$=".apiKey"],
+    [data-dait-path$=".secretKey"],
+    [data-dait-path$=".appId"],
+    [data-dait-path$=".endpoint"],
+    [data-dait-path$=".model"],
+    [data-dait-path$=".region"],
+    [data-dait-path="googleTranslate.keyPoolText"],
+    .dait-hotkey-recorder,
+    .dait-settings-version
+) {
+    direction: ltr;
+    text-align: left;
+    unicode-bidi: isolate;
 }
 `;

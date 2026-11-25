@@ -23,7 +23,7 @@ if (!text.includes("Permission is hereby granted, free of charge")) {
 }
 const metadataVersion = text.match(/@version\s+([^\s]+)/)?.[1] || "";
 if (metadataVersion !== packageJson.version) throw new Error("Plugin metadata and package versions do not match.");
-if (artifact.length > 2_500_000) throw new Error(`Plugin artifact is unexpectedly large: ${artifact.length} bytes.`);
+if (artifact.length > 3_500_000) throw new Error(`Plugin artifact is unexpectedly large: ${artifact.length} bytes.`);
 
 delete require.cache[require.resolve(artifactPath)];
 const Plugin = require(artifactPath);

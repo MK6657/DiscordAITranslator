@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.6.0 - 2026-11-26
+
+### Features
+
+- **Mainline 6-language UI (`zh-CN`, `zh-TW`, `en`, `ru`, `ar`, `es`) & zero-barrier quick language switcher bars**:
+  - Modularized `src/i18n.js` into `src/i18n/` (`locales.js`, `zh-CN.js`, `zh-TW.js`, `en.js`, `ru.js`, `ar.js`, `es.js` — 750 keys × 6 locales) and expanded `src/diagnostics/diagnostic-labels.js` (110 diagnostic codes × 6 locales), supporting Simplified Chinese, Traditional Chinese, English, Russian, Arabic, and Spanish with BCP-47 variant normalization (`zh-HK` / `zh-Hant` -> `zh-TW`, `es-419` -> `es`, `ar-SA` -> `ar`, `ru-RU` -> `ru`).
+  - Added prominent native-script quick language switcher bars (`简中 | 繁體 | EN | Рус | عربي | ES`) across three surfaces—the Quick Panel header bar, the full Settings window header bar (always visible on every tab), and the Overview tab—switching UI language in place while preserving active tabs, scroll position, focus, and quick try-polish output.
+  - Added full right-to-left (`dir="rtl"`) layout and keyboard arrow mirroring for Arabic (`ar`) across all plugin windows, modals, popovers, floating menus, and dialogs, while keeping technical inputs/tokens (`apiKey`, `endpoint`, `model`, `region`, `appId`, `secretKey`, `keyPoolText`, version/hotkey badges) LTR-isolated.
+  - Upgraded settings search in `src/settings/ui/settings-search.js` to support Cyrillic word-start matching, Spanish accent-insensitive folding (`rapido` -> `rápido`), Arabic diacritic-insensitive & prefix matching, and Traditional/Simplified Chinese matching.
+- **Configurable maximum output length (`maxTokens`) & truncation recovery**:
+  - Added user-configurable `polish.maxTokens` and `translation.maxTokens` controls (`64`–`32768`) in Settings with provider-safe request clamping and actionable truncation error guidance when model replies hit `finish_reason: "length"`.
+
+### Fixes & Hardening
+
+- **Composer, settings UI & multi-pane runtime fixes**:
+  - Fixed `ComposerWriter.activeWriteTokens` key resolution (`hasActiveWrite` / `getActiveWrite`) across `composer-buttons.js`, `polish-workflow.js`, and `public-bilingual.js` so composer busy states and restore checks track active writes accurately; fixed Polish Result Panel `apply` button staying disabled after a channel/composer mismatch; rebound live `textbox` targets on reused Restore buttons and prevented `InputActionMenu` Escape from stealing focus out of active editors.
+  - Guarded settings search `Enter` / `Escape` handlers against IME composition (`isComposing` / `keyCode === 229`), rebuilt stale provider/local-mode tabpanels before `openSettingsControl()` jumps, preserved search visibility during `syncTaskControlsInOpenPanels()`, restored focus to re-injected launcher buttons after closing Quick Settings following a locale switch, disposed `.dait-translation-line` wait timers during `refreshLocalizedUi()`, annotated local-provider errors in `testApiConnection("polish")`, and synced target-language button tooltips and public-bilingual flow summaries live.
+  - Hardened provider adapters, Google key-pool rotation, auto-translation queue/pipeline state transitions, cache store persistence, scroll-anchor stabilization, and Discord markup/output validation (covered by `tests/core/post-v053-holistic-audit.test.js` and `tests/core/multilang-ui-and-rtl.test.js`).
+
 ## 0.5.3 - 2026-11-25
 
 ### Fixes & Hardening

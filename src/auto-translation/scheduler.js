@@ -206,10 +206,12 @@ class TranslationScheduler {
     makeRoomForItem(item, queueLimit) {
         const plugin = this.plugin;
         const limit = Math.max(1, Number(queueLimit) || plugin.getAutoTranslateQueueLimit());
-        if (plugin.autoTranslationQueue.length + plugin.autoTranslationInFlightItems < limit) return true;
+        const isAlreadyInFlight = Boolean(item?.cacheKey && plugin.autoTranslationInFlightKeys?.has?.(item.cacheKey));
+        const effectiveInFlightItems = Math.max(0, plugin.autoTranslationInFlightItems - (isAlreadyInFlight ? 1 : 0));
+        if (plugin.autoTranslationQueue.length + effectiveInFlightItems < limit) return true;
 
         const incoming = plugin.withAutoTranslationPriority(item);
-        if (!plugin.autoTranslationQueue.length && !this.isPrefetchItem(incoming)) return true;
+        if (!plugin.autoTranslationQueue.length && (isAlreadyInFlight || !this.isPrefetchItem(incoming))) return true;
         const incomingPriority = incoming.priority ?? Number.MAX_SAFE_INTEGER;
         let worstIndex = -1;
         let worstPriority = incomingPriority;

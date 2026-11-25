@@ -386,7 +386,8 @@ const methods = {
                     || active === anchorNode;
                 if (!allowTabNavigation) return;
                 const currentIdx = Math.max(0, POLISH_PROMPT_TEMPLATE_CATEGORIES.indexOf(this.plugin.polishPresetMenuCategory));
-                const delta = event.key === "ArrowRight" ? 1 : -1;
+                const rtl = Boolean(this.plugin.isRtlLocale?.());
+                const delta = event.key === "ArrowRight" ? (rtl ? -1 : 1) : (rtl ? 1 : -1);
                 const nextCategory = POLISH_PROMPT_TEMPLATE_CATEGORIES[(currentIdx + delta + POLISH_PROMPT_TEMPLATE_CATEGORIES.length) % POLISH_PROMPT_TEMPLATE_CATEGORIES.length];
                 event.preventDefault();
                 event.stopPropagation();

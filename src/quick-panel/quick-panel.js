@@ -11,6 +11,11 @@ const {
     POLISH_REPOLISH_SOURCE_ORIGINAL,
     POLISH_REPOLISH_SOURCE_LAST_RESULT
 } = require("../constants");
+const {
+    UI_LOCALES,
+    getUiLocaleButtonTooltip,
+    getLocalizedPresetLanguageName
+} = require("../i18n");
 const { PLUGIN_VERSION } = require("../version");
 const { getChannelRouteParts, getChannelRuleKey } = require("../auto-translation/channel-rule");
 const { SETTINGS_TAB_COMPOSE } = require("../settings/settings-schema");
@@ -98,6 +103,7 @@ class QuickPanel {
         this.tryRunToken = null;
         this.tryHistory = { text: "", results: [] };
         this.tryContextSignature = "";
+        this.pendingLangFocusCode = "";
     }
 
     // --- Active tab ---
@@ -234,8 +240,19 @@ class QuickPanel {
         const previous = this.root;
         const previousFocusables = this.controls?.focusables || [];
         const previousTryInput = String(this.controls?.tryInput?.value || "");
+        const previousTryResult = this.controls?.tryResult;
+        const trySnapshot = previousTryResult && !previousTryResult.hidden
+            ? {
+                error: Boolean(previousTryResult.classList?.contains?.("dait-try-result-error")),
+                output: String(this.controls?.tryOutput?.textContent || ""),
+                time: String(this.controls?.tryTime?.textContent || ""),
+                timeHidden: Boolean(this.controls?.tryTime?.hidden)
+            }
+            : null;
         const active = typeof document !== "undefined" ? document.activeElement : null;
         const focusInside = Boolean(active && (active === previous || previous.contains?.(active)));
+        const focusedLangCode = this.pendingLangFocusCode || (focusInside && active?.dataset?.daitUiLang ? String(active.dataset.daitUiLang) : "");
+        this.pendingLangFocusCode = "";
         const focusIndex = focusInside ? previousFocusables.indexOf(active) : -1;
         let root = null;
         try {
@@ -253,6 +270,15 @@ class QuickPanel {
         if (previous.classList?.contains?.(POINTER_OPENED_CLASS)) root.classList.add(POINTER_OPENED_CLASS);
         root.dataset.daitRerendered = "true";
         if (this.controls?.tryInput && previousTryInput) this.controls.tryInput.value = previousTryInput;
+        if (trySnapshot && this.controls?.tryResult) {
+            this.controls.tryResult.hidden = false;
+            this.controls.tryResult.classList?.toggle?.("dait-try-result-error", trySnapshot.error);
+            if (this.controls.tryOutput) this.controls.tryOutput.textContent = trySnapshot.output;
+            if (this.controls.tryTime) {
+                this.controls.tryTime.hidden = trySnapshot.timeHidden;
+                this.controls.tryTime.textContent = trySnapshot.time;
+            }
+        }
         this.plugin.applyPanelTheme(root);
         // Start where the old panel was; position() then only moves it if the new text changes its height.
         if (root.style && previous.style) {
@@ -266,7 +292,12 @@ class QuickPanel {
         this.root = root;
         this.bindListeners();
         this.update();
-        if (focusInside) {
+        if (focusedLangCode) {
+            const langButton = this.controls?.langButtons?.find(item => item.dataset?.daitUiLang === focusedLangCode)
+                || this.controls?.langButtons?.find(item => item.getAttribute("aria-checked") === "true");
+            if (langButton) this.focusElement(langButton);
+        }
+        else if (focusInside) {
             const focusables = this.controls?.focusables || [];
             this.focusElement(focusables[focusIndex] || this.getFocusableElements()[0] || root);
         }
@@ -394,7 +425,8 @@ class QuickPanel {
             return button;
         });
         group.addEventListener("keydown", event => {
-            const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[event?.key];
+            const rtl = Boolean(this.plugin.isRtlLocale?.());
+            const step = { ArrowRight: rtl ? -1 : 1, ArrowDown: 1, ArrowLeft: rtl ? 1 : -1, ArrowUp: -1 }[event?.key];
             const edge = { Home: 0, End: buttons.length - 1 }[event?.key];
             if (step === undefined && edge === undefined) return;
             const enabled = buttons.filter(button => !button.disabled);
@@ -496,7 +528,8 @@ class QuickPanel {
             return button;
         });
         list.addEventListener("keydown", event => {
-            const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[event?.key];
+            const rtl = Boolean(this.plugin.isRtlLocale?.());
+            const step = { ArrowRight: rtl ? -1 : 1, ArrowDown: 1, ArrowLeft: rtl ? 1 : -1, ArrowUp: -1 }[event?.key];
             const edge = { Home: 0, End: tabs.length - 1 }[event?.key];
             if (step === undefined && edge === undefined) return;
             event.preventDefault?.();
@@ -511,6 +544,68 @@ class QuickPanel {
         controls.modeTabs = tabs;
         controls.modeTabMeta = tabMeta;
         return bar;
+    }
+
+    buildLanguageBar(controls) {
+        const t = (key, vars) => this.plugin.t(key, vars);
+        const bar = this.createElement("div", "dait-qp-lang-bar");
+        bar.setAttribute("role", "radiogroup");
+        bar.setAttribute("aria-label", t("quickLanguageBarLabel"));
+        const currentLocale = String(this.plugin.getLocale?.() || "zh-CN");
+        const selectLocale = code => {
+            if (!code || code === this.plugin.getLocale?.()) return;
+            this.pendingLangFocusCode = code;
+            if (typeof this.plugin.setSetting === "function") {
+                this.plugin.setSetting("ui.language", code);
+            }
+            else if (this.plugin.settings?.ui) {
+                this.plugin.settings.ui.language = code;
+                this.rerender("language");
+            }
+        };
+        const buttons = UI_LOCALES.map(item => {
+            const active = item.code === currentLocale;
+            const button = this.createButton("dait-qp-lang-pill", item.shortLabel, () => selectLocale(item.code));
+            button.dataset.daitUiLang = item.code;
+            button.setAttribute("role", "radio");
+            button.setAttribute("aria-checked", active ? "true" : "false");
+            button.setAttribute("tabindex", active ? "0" : "-1");
+            button.setAttribute("lang", item.code);
+            button.setAttribute("dir", item.dir);
+            const tooltip = getUiLocaleButtonTooltip(item);
+            button.title = tooltip;
+            button.setAttribute("aria-label", tooltip);
+            bar.appendChild(button);
+            return button;
+        });
+        bar.addEventListener("keydown", event => {
+            const rtl = Boolean(this.plugin.isRtlLocale?.());
+            const step = { ArrowRight: rtl ? -1 : 1, ArrowDown: 1, ArrowLeft: rtl ? 1 : -1, ArrowUp: -1 }[event?.key];
+            const edge = { Home: 0, End: buttons.length - 1 }[event?.key];
+            if (step === undefined && edge === undefined) return;
+            event.preventDefault?.();
+            event.stopPropagation?.();
+            const current = buttons.findIndex(button => button.getAttribute("aria-checked") === "true");
+            const next = edge !== undefined
+                ? buttons[edge]
+                : buttons[(Math.max(0, current) + step + buttons.length) % buttons.length];
+            if (!next) return;
+            selectLocale(next.dataset.daitUiLang);
+        });
+        controls.langBar = bar;
+        controls.langButtons = buttons;
+        return bar;
+    }
+
+    syncLanguageBar() {
+        const buttons = this.controls?.langButtons;
+        if (!Array.isArray(buttons) || !buttons.length) return;
+        const currentLocale = String(this.plugin.getLocale?.() || "zh-CN");
+        buttons.forEach(button => {
+            const active = button.dataset?.daitUiLang === currentLocale;
+            button.setAttribute("aria-checked", active ? "true" : "false");
+            button.setAttribute("tabindex", active ? "0" : "-1");
+        });
     }
 
     buildTranslationPanel(controls) {
@@ -840,6 +935,7 @@ class QuickPanel {
         header.appendChild(controls.close);
         root.appendChild(header);
 
+        root.appendChild(this.buildLanguageBar(controls));
         root.appendChild(this.buildModeTabs(controls));
 
         const body = this.createElement("div", "dait-qp-body");
@@ -857,6 +953,7 @@ class QuickPanel {
         controls.focusables = [
             controls.headerOpenFull,
             controls.close,
+            ...controls.langButtons,
             ...controls.modeTabs,
             controls.test,
             controls.translationService,
@@ -898,6 +995,7 @@ class QuickPanel {
         const polish = settings.polish || {};
         const activeTab = this.getActiveTab();
 
+        this.syncLanguageBar();
         this.root.dataset.daitTab = activeTab;
         controls.modeTabs.forEach(button => {
             const selected = button.dataset.daitTab === activeTab;
@@ -964,12 +1062,17 @@ class QuickPanel {
         controls.publicBilingualAfter.checked = Boolean(ui.publicBilingualAfterPolish);
         controls.publicBilingualAfter.disabled = !polishOn;
 
-        // Clear quick try-polish history whenever language/template/model/creativity changes so "try again" stays accurate.
+        // Clear quick try-polish history whenever language/template/model/creativity/thinking/prompt changes so "try again" stays accurate.
         const trySignature = [
             String(polish.provider || ""),
+            String(polish.endpoint || ""),
             String(polish.model || ""),
+            String(polish.sourceLanguage || ""),
             String(polish.targetLanguage || ""),
             String(polish.activePromptTemplate || ""),
+            String(polish.prompt || ""),
+            String(Boolean(polish.enableThinking)),
+            String(polish.maxTokens || ""),
             tempText
         ].join("\n");
         if (this.tryContextSignature && this.tryContextSignature !== trySignature) {
@@ -1032,10 +1135,9 @@ class QuickPanel {
 
     getLanguageDisplayName(value) {
         if (!value) return "";
-        const english = this.plugin.getLocale?.() === "en";
         const found = LANGUAGE_PRESETS.find(language => language.value === value);
         if (!found) return value;
-        return english ? found.en : found.zh;
+        return getLocalizedPresetLanguageName(found, this.plugin.getLocale?.());
     }
 
     syncPolishTemperatureUi(temperature, options = {}) {
@@ -1125,8 +1227,8 @@ class QuickPanel {
 
     syncLanguageOptions(select, current) {
         if (!select) return;
-        const english = this.plugin.getLocale() === "en";
-        const options = LANGUAGE_PRESETS.map(language => [language.value, english ? language.en : language.zh]);
+        const locale = this.plugin.getLocale?.();
+        const options = LANGUAGE_PRESETS.map(language => [language.value, getLocalizedPresetLanguageName(language, locale)]);
         // A custom target language (typed in the full settings) stays selectable.
         if (current && !options.some(([value]) => value === current)) options.unshift([current, current]);
         this.syncSelectOptions(select, options, current);
@@ -1166,7 +1268,8 @@ class QuickPanel {
         const task = this.plugin.settings?.[kind] || {};
         const activeId = String(task.activePromptTemplate || "");
         const activeTemplate = templates.find(item => item && item.id === activeId) || null;
-        const matchesActive = Boolean(activeTemplate && String(activeTemplate.prompt || "") === String(task.prompt || ""));
+        const normalizePrompt = value => String(value ?? "").replace(/\r\n?/g, "\n").trim();
+        const matchesActive = Boolean(activeTemplate && normalizePrompt(activeTemplate.prompt) === normalizePrompt(task.prompt));
         const options = templates.map(template => {
             const name = this.plugin.getPromptTemplateDisplayName?.(template) || template.name || "";
             const code = String(template.serial || "").trim();
@@ -1206,6 +1309,15 @@ class QuickPanel {
                         this.position();
                     }
                     else {
+                        if (this.controls?.tryResult && controls.tryResult && !controls.tryResult.hidden) {
+                            this.controls.tryResult.hidden = false;
+                            this.controls.tryResult.classList?.toggle?.("dait-try-result-error", Boolean(controls.tryResult.classList?.contains?.("dait-try-result-error")));
+                            if (this.controls.tryOutput && controls.tryOutput) this.setText(this.controls.tryOutput, String(controls.tryOutput.textContent || ""));
+                            if (this.controls.tryTime && controls.tryTime) {
+                                this.controls.tryTime.hidden = Boolean(controls.tryTime.hidden);
+                                this.setText(this.controls.tryTime, String(controls.tryTime.textContent || ""));
+                            }
+                        }
                         this.update();
                     }
                 }
@@ -1714,7 +1826,11 @@ class QuickPanel {
         let state = "ok";
         let detail = t("quickStatusPolishActive");
         let note = "";
-        if (polish.enabled === false) {
+        if (testing) {
+            state = "busy";
+            detail = t("quickStatusTesting");
+        }
+        else if (polish.enabled === false) {
             state = "off";
             detail = t("quickStatusPolishOff");
         }
@@ -1722,14 +1838,10 @@ class QuickPanel {
             state = "needs-you";
             detail = t("quickStatusNeedsYou", { reason: t("quickStatusReasonConfig") });
         }
-        else if (api.state === "failed" && !testing) {
+        else if (api.state === "failed") {
             state = "needs-you";
             detail = t("quickStatusNeedsYou", { reason: t("quickStatusReasonFailed") });
             note = String(api.message || "").trim();
-        }
-        else if (testing) {
-            state = "busy";
-            detail = t("quickStatusTesting");
         }
         else {
             const btnHint = t(ui.injectInputButton !== false ? "quickStatusPolishBtnOn" : "quickStatusPolishBtnOff");

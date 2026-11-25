@@ -17,16 +17,20 @@ const {
 const { SETTINGS_TAB_DATA, MESSAGE_BUTTON_MODE_OFF } = require("../settings-schema");
 const { buildHostHealthCard } = require("../../ui/host-health-card");
 const { getDiagnosticCodeLabel } = require("../../diagnostics/diagnostic-labels");
+const { UI_LOCALES } = require("../../i18n");
 
 const methods = {
     createGeneralSection() {
         const group = this.createSettingsGroup(this.plugin.t("settingsGroupCommon"), "general");
         group.appendChild(this.plugin.createCheckboxRow("ui.autoTranslateMessages", this.plugin.t("autoTranslateMessages"), { description: this.plugin.t("autoTranslateMessagesDesc") }));
         group.appendChild(this.createCurrentChannelPolicyRow());
-        group.appendChild(this.plugin.createSelectRow("ui.language", this.plugin.t("interfaceLanguage"), [
-            ["zh-CN", this.plugin.t("languageZh")],
-            ["en", this.plugin.t("languageEn")]
-        ], { description: this.plugin.t("interfaceLanguageDesc") }));
+        group.appendChild(this.createQuickLanguageBar({ surface: "overview", fullLabels: true }));
+        group.appendChild(this.plugin.createSelectRow(
+            "ui.language",
+            this.plugin.t("interfaceLanguage"),
+            UI_LOCALES.map(item => [item.code, item.label]),
+            { description: this.plugin.t("interfaceLanguageDesc") }
+        ));
         return group;
     },
 
@@ -340,6 +344,7 @@ const methods = {
     createPublicBilingualDependencyRow() {
         const summary = document.createElement("div");
         summary.className = "dait-provider-summary";
+        summary.dataset.daitPublicBilingualSummary = "true";
         summary.textContent = this.getPublicBilingualFlowText();
         // Follow the switches on the same panel (auto-polish options, polish on/off) without a rebuild.
         if (typeof setTimeout === "function") {
@@ -667,7 +672,9 @@ const methods = {
         if (!iso) return "-";
         const date = new Date(iso);
         if (!Number.isFinite(date.getTime())) return String(iso);
-        const locale = this.plugin.getLocale() === "en" ? "en-US" : "zh-CN";
+        const locale = typeof this.plugin.getUiLocaleBcp47 === "function"
+            ? this.plugin.getUiLocaleBcp47()
+            : (this.plugin.getLocale() === "en" ? "en-US" : this.plugin.getLocale());
         try {
             return date.toLocaleString(locale, { hour12: false });
         }

@@ -7,7 +7,8 @@ const {
     POLISH_REPOLISH_SOURCE_ORIGINAL,
     POLISH_REPOLISH_SOURCE_LAST_RESULT,
     GOOGLE_TRANSLATE_DEFAULT_MONTHLY_LIMIT,
-    GOOGLE_TRANSLATE_MAX_MONTHLY_LIMIT
+    GOOGLE_TRANSLATE_MAX_MONTHLY_LIMIT,
+    DEFAULT_SETTINGS
 } = require("../../constants");
 
 const methods = {
@@ -86,8 +87,13 @@ const methods = {
         select.addEventListener("change", () => {
             const configId = String(select.value || "").trim();
             if (!configId) return;
+            const panel = select.closest?.(".dait-settings");
             if (this.plugin.applySavedServiceConfig(kind, configId)) {
-                this.replaceSettingsPanelFrom(select);
+                if (panel && panel.isConnected !== false) {
+                    const rebuilt = this.plugin.replaceSettingsPanelElement(panel);
+                    const nextSelect = [...(rebuilt?.querySelectorAll?.(`[data-dait-saved-configs='${kind}']`) || [])].find(node => !node.closest?.("[hidden]"));
+                    if (nextSelect) this.focusSettingsElement(nextSelect);
+                }
             }
         });
         syncButton.addEventListener("click", event => {
@@ -271,9 +277,18 @@ const methods = {
 
         if (ui.enableThinking || ui.temperature || ui.maxTokens) {
             const details = this.createSettingsDetails(this.plugin.t("settingsMoreModelParams"), "model-params");
+            const taskState = this.plugin.settings[kind] || {};
+            const taskDefaults = DEFAULT_SETTINGS[kind] || {};
+            details.open = Boolean(taskState.enableThinking)
+                || (Boolean(ui.temperature) && taskState.temperature !== undefined && Number(taskState.temperature) !== Number(taskDefaults.temperature))
+                || (Boolean(ui.maxTokens) && taskState.maxTokens !== undefined && Number(taskState.maxTokens) !== Number(taskDefaults.maxTokens));
             if (ui.enableThinking) append(this.plugin.createCheckboxRow(`${kind}.enableThinking`, this.plugin.t("thinkingMode"), { description: this.plugin.t("thinkingModeDesc") }), details);
-            if (ui.temperature) append(this.createInputRow(`${kind}.temperature`, this.plugin.t("temperature"), "number", "0.4", { min: "0", max: "2", step: "0.1" }, { description: this.plugin.t("temperatureDesc") }), details);
-            if (ui.maxTokens) append(this.createInputRow(`${kind}.maxTokens`, this.plugin.t("maxTokens"), "number", "800", { min: "1", step: "1" }, { description: this.plugin.t("maxTokensDesc") }), details);
+            if (ui.temperature) append(this.createInputRow(`${kind}.temperature`, this.plugin.t("temperature"), "number", String(taskDefaults.temperature ?? 0.4), { min: "0", max: "2", step: "0.1" }, { description: this.plugin.t("temperatureDesc") }), details);
+            if (ui.maxTokens) {
+                const maxTokensPlaceholder = String(taskDefaults.maxTokens ?? (kind === "polish" ? 2000 : 1200));
+                const maxTokensDescKey = kind === "polish" ? "maxTokensPolishDesc" : "maxTokensDesc";
+                append(this.createInputRow(`${kind}.maxTokens`, this.plugin.t("maxTokens"), "number", maxTokensPlaceholder, { min: "1", max: "65536", step: "1" }, { description: this.plugin.t(maxTokensDescKey) }), details);
+            }
             block.appendChild(details);
         }
         if (apiKeyOptional) {
@@ -612,6 +627,23 @@ const methods = {
         try {
             let translated;
             if (kind === "polish") {
+                const polish = this.plugin.settings?.polish || {};
+                const contextSignature = [
+                    String(polish.provider || ""),
+                    String(polish.endpoint || ""),
+                    String(polish.model || ""),
+                    String(polish.sourceLanguage || ""),
+                    String(polish.targetLanguage || ""),
+                    String(polish.activePromptTemplate || ""),
+                    String(polish.prompt || ""),
+                    String(Boolean(polish.enableThinking)),
+                    String(polish.maxTokens || ""),
+                    String(polish.temperature ?? "")
+                ].join("\n");
+                if (tryHistory && tryHistory.contextSignature && tryHistory.contextSignature !== contextSignature) {
+                    tryHistory.results = [];
+                }
+                if (tryHistory) tryHistory.contextSignature = contextSignature;
                 const sameSample = tryHistory && tryHistory.text === sample;
                 const previousResults = sameSample ? tryHistory.results.slice(-5) : [];
                 translated = await this.plugin.runPolishWithGuards(sample, {
@@ -652,6 +684,8 @@ const methods = {
     createSettingsDetails(summaryText, key) {
         const details = document.createElement("details");
         details.className = `dait-settings-details dait-settings-details-${key}`;
+        details.dataset.daitDetailsKey = key;
+        details.dataset.daitSearchGroup = summaryText;
         const summary = document.createElement("summary");
         summary.className = "dait-settings-details-summary";
         summary.textContent = summaryText;

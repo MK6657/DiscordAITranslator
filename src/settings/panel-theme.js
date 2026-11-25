@@ -205,7 +205,7 @@ class PanelTheme {
         return "dark";
     }
 
-    // Marks one window root with the palette to use. Returns the theme applied.
+    // Marks one window root with the palette and active UI locale direction to use. Returns the theme applied.
     apply(node, theme = this.resolve()) {
         if (!node) return theme;
         if (node.dataset) {
@@ -214,7 +214,22 @@ class PanelTheme {
         else if (typeof node.setAttribute === "function" && node.getAttribute?.(PANEL_THEME_ATTRIBUTE) !== theme) {
             node.setAttribute(PANEL_THEME_ATTRIBUTE, theme);
         }
+        this.applyLocaleDirection(node);
         return theme;
+    }
+
+    applyLocaleDirection(node) {
+        if (!node) return;
+        const locale = typeof this.plugin?.getLocale === "function" ? this.plugin.getLocale() : "zh-CN";
+        const dir = typeof this.plugin?.isRtlLocale === "function" && this.plugin.isRtlLocale(locale) ? "rtl" : "ltr";
+        if (typeof node.setAttribute === "function") {
+            if (node.getAttribute?.("dir") !== dir) node.setAttribute("dir", dir);
+            if (node.getAttribute?.("lang") !== locale) node.setAttribute("lang", locale);
+        }
+        else {
+            if ("dir" in node && node.dir !== dir) node.dir = dir;
+            if ("lang" in node && node.lang !== locale) node.lang = locale;
+        }
     }
 
     // The palette that reads on the first opaque background behind node (Discord's modal around dialog content):

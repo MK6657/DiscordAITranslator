@@ -99,7 +99,9 @@ const methods = {
 
     buildPromptEditorBlock(kind, idBase) {
         const promptBlock = document.createElement("div");
-        promptBlock.className = "dait-prompt-editor";
+        promptBlock.className = "dait-prompt-editor dait-settings-search-target";
+        promptBlock.dataset.daitSearchLabel = this.plugin.t("prompt");
+        promptBlock.dataset.daitSearchDescription = this.plugin.t("promptDesc");
 
         const promptLabel = document.createElement("span");
         promptLabel.id = `${idBase}-label`;

@@ -234,4 +234,24 @@ module.exports = `
 .dait-prompt-tools.dait-prompt-save .dait-small-button {
     flex: none;
 }
+
+.dait-dialog[dir="rtl"] .dait-dialog-list {
+    padding-left: 0;
+    padding-right: 20px;
+}
+
+.dait-dialog[dir="rtl"] .dait-dialog-preview {
+    border-left: 1px solid var(--dait-divider);
+    border-right: 3px solid var(--dait-accent-gold);
+}
+
+.dait-dialog .dait-dialog-preview,
+.dait-prompt-preview {
+    unicode-bidi: plaintext;
+}
+
+.dait-settings[dir="rtl"] .dait-prompt-manager .dait-prompt-tools select {
+    padding-left: 34px;
+    padding-right: 10px;
+}
 `;

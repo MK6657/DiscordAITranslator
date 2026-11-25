@@ -667,7 +667,7 @@ class TranslationCacheStore {
         const snapshot = {
             provider,
             endpoint: String(config.endpoint || customDefaults?.endpoint || defaults.endpoint || "").trim(),
-            model: String(config.model || customDefaults?.model || defaults.model || "").trim(),
+            model: String(config.model || adapter?.defaultProfile?.model || PROVIDER_DEFAULTS[provider]?.model || defaults.model || "").trim(),
             sourceLanguage: String(config.sourceLanguage || defaults.sourceLanguage || "").trim(),
             targetLanguage: String(config.targetLanguage || defaults.targetLanguage || "").trim(),
             temperature: this.plugin.normalizeRequestNumber(config.temperature, defaults.temperature ?? 0.2, { min: 0, max: 2 }),

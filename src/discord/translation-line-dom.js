@@ -930,20 +930,29 @@ const methods = {
         if (typeof document === "undefined") return;
         const selector = "[data-dait-source-hidden='true']";
         const messageNodes = [...new Set(context?.messageNodes || [])].filter(node => node?.querySelectorAll);
+        const roots = !messageNodes.length && context?.dirtyOnly && Array.isArray(context.roots)
+            ? context.roots.filter(node => node?.querySelectorAll)
+            : [];
         const hiddenNodes = [];
         const seen = new Set();
-        if (messageNodes.length) {
-            messageNodes.forEach(messageNode => {
-                if (messageNode.dataset?.daitSourceHidden === "true" && !seen.has(messageNode)) {
-                    seen.add(messageNode);
-                    hiddenNodes.push(messageNode);
+        const collectWithin = containers => {
+            containers.forEach(container => {
+                if (container.dataset?.daitSourceHidden === "true" && !seen.has(container)) {
+                    seen.add(container);
+                    hiddenNodes.push(container);
                 }
-                for (const node of messageNode.querySelectorAll?.(selector) || []) {
+                for (const node of container.querySelectorAll?.(selector) || []) {
                     if (!node || seen.has(node)) continue;
                     seen.add(node);
                     hiddenNodes.push(node);
                 }
             });
+        };
+        if (messageNodes.length) {
+            collectWithin(messageNodes);
+        }
+        else if (context?.dirtyOnly) {
+            if (roots.length) collectWithin(roots);
         }
         else {
             for (const node of document.querySelectorAll?.(selector) || []) {
@@ -962,7 +971,23 @@ const methods = {
     getTranslationLinesForReconcile(context = null) {
         const selector = ".dait-translation-line[data-dait-owner]";
         const messageNodes = [...new Set(context?.messageNodes || [])].filter(node => node?.querySelectorAll);
-        if (!messageNodes.length) return [...(document.querySelectorAll?.(selector) || [])];
+        if (!messageNodes.length) {
+            if (context?.dirtyOnly) {
+                const roots = Array.isArray(context.roots) ? context.roots.filter(node => node?.querySelectorAll) : [];
+                if (!roots.length) return [];
+                const scoped = [];
+                const seenScoped = new Set();
+                roots.forEach(root => {
+                    for (const line of root.querySelectorAll?.(selector) || []) {
+                        if (!line || seenScoped.has(line)) continue;
+                        seenScoped.add(line);
+                        scoped.push(line);
+                    }
+                });
+                return scoped;
+            }
+            return [...(document.querySelectorAll?.(selector) || [])];
+        }
         const lines = [];
         const seen = new Set();
         messageNodes.forEach(messageNode => {
@@ -1480,7 +1505,8 @@ const methods = {
         const codes = [Number(error?.status || 0) || "", String(error?.baiduErrorCode || "")].filter(Boolean);
         if (!codes.length) return "";
         const text = codes.join(", ");
-        return this.plugin.getLocale() === "en" ? ` (${text})` : `（${text}）`;
+        const locale = this.plugin.getLocale();
+        return (locale === "zh-CN" || locale === "zh-TW") ? `（${text}）` : ` (${text})`;
     },
 
     getTranslationRejectionMessageKey(error) {
@@ -1953,9 +1979,17 @@ const methods = {
 
     formatTranslationPartList(parts) {
         const values = parts.map(String);
-        if (this.plugin.getLocale() !== "en") return values.join("、");
+        const locale = this.plugin.getLocale();
+        if (locale === "zh-CN" || locale === "zh-TW") return values.join("、");
         if (values.length < 2) return values.join("");
-        return `${values.slice(0, -1).join(", ")} and ${values[values.length - 1]}`;
+        const conjunctions = {
+            en: [", ", " and "],
+            es: [", ", " y "],
+            ru: [", ", " и "],
+            ar: ["، ", " و"]
+        };
+        const [sep, joiner] = conjunctions[locale] || conjunctions.en;
+        return `${values.slice(0, -1).join(sep)}${joiner}${values[values.length - 1]}`;
     },
 
     retranslateMessage(messageNode, content, textOptions = null) {

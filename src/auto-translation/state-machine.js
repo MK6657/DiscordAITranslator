@@ -27,6 +27,8 @@ class AutoTranslationStateMachine {
         this.inFlightStartedAt = new Map();
         /** @type {Map<string, string | number>} */
         this.inFlightTokens = new Map();
+        /** @type {Map<symbol, { keys: Set<string>, isPrefetch: boolean, configVersion: number }>} */
+        this.inFlightBatches = new Map();
         /** @type {number} */
         this.inFlightTokenCounter = 0;
         /** @type {number} */
@@ -126,6 +128,8 @@ class AutoTranslationStateMachine {
         if (!Array.isArray(batch) || !batch.length) return [];
         const isPrefetch = Boolean(options.isPrefetch);
         const startedAt = Number(options.startedAt || Date.now());
+        const batchId = Symbol("dait-in-flight-batch");
+        const batchKeys = new Set();
         this.inFlight++;
         this.inFlightItems += batch.length;
         if (isPrefetch) this.prefetchInFlight++;
@@ -138,10 +142,14 @@ class AutoTranslationStateMachine {
                 ? options.createToken(key)
                 : ++this.inFlightTokenCounter;
             tokens.push(token);
+            if (item && typeof item === "object") {
+                item.daitBatchId = batchId;
+            }
             if (!key) {
                 if (item && typeof item === "object") item.daitPrefetchRequest = isPrefetch;
                 continue;
             }
+            batchKeys.add(key);
             const isVisibleLong = typeof options.isVisibleLong === "function"
                 ? Boolean(options.isVisibleLong(item))
                 : false;
@@ -150,7 +158,55 @@ class AutoTranslationStateMachine {
                 options.onItemMarked(item, startedAt, token);
             }
         }
+        this.inFlightBatches.set(batchId, {
+            keys: batchKeys,
+            isPrefetch,
+            configVersion: this.configVersion
+        });
         return tokens;
+    }
+
+    /**
+     * Releases a single key from a tracked batch, decrementing batch concurrency counters
+     * once and only once when the batch has no remaining keys.
+     * @param {symbol | null | undefined} batchId
+     * @param {string} [cacheKey]
+     * @param {{ forceFinishBatch?: boolean }} [options]
+     * @returns {boolean} True when the batch slot itself was freed
+     */
+    releaseBatchKey(batchId, cacheKey = "", options = {}) {
+        if (!batchId || !this.inFlightBatches.has(batchId)) return false;
+        const entry = this.inFlightBatches.get(batchId);
+        if (!entry) return false;
+        const key = String(cacheKey || "");
+        if (key) entry.keys.delete(key);
+        if (!options.forceFinishBatch && entry.keys.size > 0) return false;
+        this.inFlightBatches.delete(batchId);
+        this.inFlight = Math.max(0, this.inFlight - 1);
+        if (entry.isPrefetch) {
+            this.prefetchInFlight = Math.max(0, this.prefetchInFlight - 1);
+        }
+        if (this.prefetchInFlight > this.inFlight) {
+            this.prefetchInFlight = this.inFlight;
+        }
+        return true;
+    }
+
+    /**
+     * Prunes a key across all tracked batches (e.g. stale in-flight timeout) and returns
+     * how many batch concurrency slots were reclaimed.
+     * @param {string} cacheKey
+     * @returns {number}
+     */
+    pruneKeyFromInFlightBatches(cacheKey) {
+        const key = String(cacheKey || "");
+        if (!key || !this.inFlightBatches.size) return 0;
+        let freedBatches = 0;
+        for (const [batchId, entry] of [...this.inFlightBatches.entries()]) {
+            if (!entry.keys.has(key)) continue;
+            if (this.releaseBatchKey(batchId, key)) freedBatches++;
+        }
+        return freedBatches;
     }
 
     /**
@@ -252,6 +308,7 @@ class AutoTranslationStateMachine {
         this.visibleLongInFlightKeys.clear();
         this.inFlightStartedAt.clear();
         this.inFlightTokens.clear();
+        this.inFlightBatches.clear();
         this.inFlightItems = 0;
         this.prefetchInFlight = 0;
     }

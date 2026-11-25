@@ -269,11 +269,42 @@ class AutoTranslationRequestPipeline {
         }
     }
 
+    isCandidateChannelPolicyDisabled(target) {
+        if (!target?.messageNode) return false;
+        const policies = this.plugin.settings?.ui?.channelAutoTranslatePolicies;
+        if (!policies || typeof policies !== "object" || Array.isArray(policies)) return false;
+        const nodeIds = this.plugin.messageTracker?.getNodeMessageIds?.(target.messageNode);
+        const channelId = String(nodeIds?.channelId || "").trim();
+        if (!channelId) return false;
+        const routeIds = this.plugin.messageTracker?.getRouteIds?.() || {};
+        const directKey = `${nodeIds?.guildId || routeIds.guildId || ""}:${channelId}`;
+        if (policies[directKey]?.mode === "disabled") return true;
+        if (policies[directKey]?.mode === "enabled") return false;
+        const suffix = `:${channelId}`;
+        for (const [key, policy] of Object.entries(policies)) {
+            if (key.endsWith(suffix) && policy && typeof policy === "object") {
+                if (policy.mode === "disabled") return true;
+                if (policy.mode === "enabled") return false;
+            }
+        }
+        return false;
+    }
+
     evaluateAutoTranslationCandidate(candidate, scanState = {}) {
         const target = candidate || {};
         const text = String(target.text || "");
         const requestOptions = scanState.requestOptions || this.getAutoTranslationOptions();
         const now = Number(scanState.now || Date.now());
+        if (this.isCandidateChannelPolicyDisabled(target)) {
+            return {
+                action: "skip",
+                status: "skipped",
+                state: DIAGNOSTIC_MESSAGE_STATES.SKIPPED,
+                reasonCode: DIAGNOSTIC_REASON_CODES.AUTO_DISABLED,
+                counts: { blocked: 1 },
+                extra: { channelPolicyDisabled: true }
+            };
+        }
         const precheckSkipReason = this.plugin.getAutoTranslationPrecheckSkipReason(text, requestOptions);
         if (precheckSkipReason) {
             return {
@@ -1517,7 +1548,10 @@ class AutoTranslationRequestPipeline {
         for (let attemptIndex = 0; attemptIndex < attempts.length; attemptIndex++) {
             const attempt = attempts[attemptIndex];
             const attemptContext = parentRequestContext ? {} : null;
-            const attemptOptions = attemptContext ? { ...attempt.options, requestContext: attemptContext } : attempt.options;
+            let attemptOptions = attemptContext ? { ...attempt.options, requestContext: attemptContext } : attempt.options;
+            if (lastError?.modelOutputTruncated) {
+                attemptOptions = this.buildTruncationRetryOptions(attemptOptions, chunkOptions, chunkText, attemptIndex === 0 ? 1.8 : 2.2, lastError);
+            }
             try {
                 const translated = await this.plugin.runAutoTranslationTaskWithOptions(chunkText, attemptOptions, {
                     ...taskOptions,
@@ -1988,24 +2022,44 @@ class AutoTranslationRequestPipeline {
         return Number(meta.targetLetters || 0) >= 2 && Number(meta.targetLanguageRatio || 0) >= 0.25;
     }
 
-    getRaisedAutoTranslationMaxTokens(options = this.getAutoTranslationOptions(), text = "", multiplier = 1.6) {
+    getRaisedAutoTranslationMaxTokens(options = this.getAutoTranslationOptions(), text = "", multiplier = 1.6, truncatedError = null) {
         const config = this.plugin.getEffectiveTaskConfig("translation", options?.configOverrides);
         const current = this.plugin.normalizeRequestNumber(config.maxTokens, DEFAULT_SETTINGS.translation.maxTokens, { min: 1, integer: true });
         const sourceLength = Math.max(String(text || "").length, Number(options?.longTextSourceLength || 0) || 0);
         const dynamic = this.getLongTextMaxTokensForLength(sourceLength, this.getAutoTranslationTargetLanguage(options));
-        const target = Math.ceil(Math.max(current, dynamic, 256) * Math.max(1, Number(multiplier) || 1));
-        const cap = this.plugin.isLocalTranslationProvider(config) ? 2400 : 6000;
+        const rawTarget = Math.ceil(Math.max(current, dynamic, 256) * Math.max(1, Number(multiplier) || 1));
+        const cap = this.plugin.isLocalTranslationProvider(config) ? Math.max(2400, current + 256) : Math.max(6000, current + 256);
+        const target = truncatedError && Number(truncatedError.partialOutputLength || 0) === 0
+            ? Math.max(rawTarget, Math.min(cap, 4096))
+            : rawTarget;
         return Math.max(current + 128, Math.min(cap, target));
     }
 
-    withRaisedAutoTranslationMaxTokens(options = this.getAutoTranslationOptions(), text = "", multiplier = 1.6) {
+    withRaisedAutoTranslationMaxTokens(options = this.getAutoTranslationOptions(), text = "", multiplier = 1.6, truncatedError = null) {
         return {
             ...options,
             configOverrides: {
                 ...options.configOverrides,
-                maxTokens: this.getRaisedAutoTranslationMaxTokens(options, text, multiplier)
+                maxTokens: this.getRaisedAutoTranslationMaxTokens(options, text, multiplier, truncatedError)
             }
         };
+    }
+
+    buildTruncationRetryOptions(targetOptions, baseOptions, text = "", multiplier = 1.8, truncatedError = null) {
+        const raised = {
+            ...this.withRaisedAutoTranslationMaxTokens(targetOptions, text, multiplier, truncatedError),
+            truncationRetry: true
+        };
+        raised.requestTimeoutMs = this.getTruncatedAutoTranslationRetryTimeoutMs(baseOptions || targetOptions, raised, text);
+        return raised;
+    }
+
+    rethrowTruncationRetryTimeout(error, truncatedError) {
+        if (truncatedError && !this.isAbandonedTranslationError(error) && this.plugin.isTimeoutError(error)) {
+            truncatedError.truncationRetryTimedOut = true;
+            throw truncatedError;
+        }
+        throw error;
     }
 
     async runAutoTranslationTask(text, options = this.getAutoTranslationOptions(), taskOptions = {}) {
@@ -2019,6 +2073,7 @@ class AutoTranslationRequestPipeline {
         let translated = "";
         let firstInvalidReason = "";
         let firstValidation = null;
+        let lastTruncatedError = null;
         try {
             this.consumeAutoTranslationRequestBudget(taskOptions);
             translated = await this.plugin.runAutoTranslationModelAttempt(text, options, taskOptions);
@@ -2030,6 +2085,7 @@ class AutoTranslationRequestPipeline {
             if (!error?.modelOutputTruncated || taskOptions.retryInvalidOutput === false) throw error;
             if (!this.isAutoTranslationStrictRetryEnabled()) return this.runTruncatedAutoTranslationRetry(text, options, taskOptions, error);
             firstInvalidReason = "truncated";
+            lastTruncatedError = error;
         }
         if (firstValidation?.renderable) {
             if (firstValidation.quality !== TRANSLATION_VALIDATION_QUALITIES.GOOD) {
@@ -2046,9 +2102,15 @@ class AutoTranslationRequestPipeline {
         if (!firstInvalidReason) return translated;
         if (this.shouldRunLocalAutoTranslationRepairRetry(firstInvalidReason, text, translated, options, taskOptions)) {
             let repairOptions = this.getAutoTranslationFinalFallbackOptions(text, options);
-            if (firstInvalidReason === "truncated") repairOptions = this.withRaisedAutoTranslationMaxTokens(repairOptions, text, 1.8);
+            if (firstInvalidReason === "truncated") repairOptions = this.buildTruncationRetryOptions(repairOptions, options, text, 1.8, lastTruncatedError);
             this.consumeAutoTranslationRequestBudget(taskOptions);
-            const repaired = await this.plugin.runAutoTranslationModelAttempt(text, repairOptions, taskOptions);
+            let repaired = "";
+            try {
+                repaired = await this.plugin.runAutoTranslationModelAttempt(text, repairOptions, taskOptions);
+            }
+            catch (error) {
+                this.rethrowTruncationRetryTimeout(error, lastTruncatedError);
+            }
             const repairValidationOptions = this.getAutoTranslationOutputValidationOptions(text, repaired, repairOptions);
             const repairValidation = this.plugin.getAutoTranslationOutputValidationResult(text, repaired, this.getAutoTranslationTargetLanguage(repairOptions), repairValidationOptions, repairOptions);
             const repairInvalidReason = repairValidation.reasonCode || "";
@@ -2058,7 +2120,7 @@ class AutoTranslationRequestPipeline {
         if (taskOptions.retryInvalidOutput === false || !this.isAutoTranslationStrictRetryEnabled()) throw this.createFinalInvalidAutoTranslationError(firstInvalidReason);
 
         let retryOptions = this.plugin.getAutoTranslationRetryOptions(text, translated, options);
-        if (firstInvalidReason === "truncated") retryOptions = this.withRaisedAutoTranslationMaxTokens(retryOptions, text, 1.8);
+        if (firstInvalidReason === "truncated") retryOptions = this.buildTruncationRetryOptions(retryOptions, options, text, 1.8, lastTruncatedError);
         let retried = "";
         let retryInvalidReason = "";
         try {
@@ -2070,14 +2132,25 @@ class AutoTranslationRequestPipeline {
             if (retryValidation.renderable) return retried;
         }
         catch (error) {
-            if (!error?.modelOutputTruncated) throw error;
+            if (!error?.modelOutputTruncated) {
+                this.rethrowTruncationRetryTimeout(error, lastTruncatedError);
+            }
             retryInvalidReason = "truncated";
+            lastTruncatedError = error;
         }
 
         let lastChanceOptions = this.getAutoTranslationFinalFallbackOptions(text, options);
-        if (retryInvalidReason === "truncated" || firstInvalidReason === "truncated") lastChanceOptions = this.withRaisedAutoTranslationMaxTokens(lastChanceOptions, text, 2.2);
+        if (retryInvalidReason === "truncated" || firstInvalidReason === "truncated") {
+            lastChanceOptions = this.buildTruncationRetryOptions(lastChanceOptions, options, text, 2.2, lastTruncatedError);
+        }
         this.consumeAutoTranslationRequestBudget(taskOptions);
-        const finalText = await this.plugin.runAutoTranslationModelAttempt(text, lastChanceOptions, taskOptions);
+        let finalText = "";
+        try {
+            finalText = await this.plugin.runAutoTranslationModelAttempt(text, lastChanceOptions, taskOptions);
+        }
+        catch (error) {
+            this.rethrowTruncationRetryTimeout(error, lastTruncatedError);
+        }
         const finalValidationOptions = this.getAutoTranslationOutputValidationOptions(text, finalText, lastChanceOptions);
         const finalValidation = this.plugin.getAutoTranslationOutputValidationResult(text, finalText, this.getAutoTranslationTargetLanguage(lastChanceOptions), finalValidationOptions, lastChanceOptions);
         const finalInvalidReason = finalValidation.reasonCode || "";
@@ -2092,11 +2165,7 @@ class AutoTranslationRequestPipeline {
     // looping model that is still too slow for it ends as the first truncation, never as a
     // timeout that would mark a healthy local service unavailable.
     async runTruncatedAutoTranslationRetry(text, options = this.getAutoTranslationOptions(), taskOptions = {}, truncatedError = null) {
-        const raisedOptions = {
-            ...this.withRaisedAutoTranslationMaxTokens(options, text, 1.8),
-            truncationRetry: true
-        };
-        raisedOptions.requestTimeoutMs = this.getTruncatedAutoTranslationRetryTimeoutMs(options, raisedOptions, text);
+        const raisedOptions = this.buildTruncationRetryOptions(options, options, text, 1.8, truncatedError);
         this.plugin.logDiagnostic("auto.truncated", "retry", {
             sourceHash: this.plugin.getStrongTextFingerprint(text),
             mode: options?.mode || "auto",
@@ -2270,10 +2339,17 @@ class AutoTranslationRequestPipeline {
         catch (error) {
             if (!error?.autoTranslationFinalInvalidOutput && !error?.modelOutputTruncated) throw error;
             const lastChanceOptions = error?.modelOutputTruncated
-                ? this.withRaisedAutoTranslationMaxTokens(this.getAutoTranslationFinalFallbackOptions(text, options), text, 2)
+                ? this.buildTruncationRetryOptions(this.getAutoTranslationFinalFallbackOptions(text, options), options, text, 2, error)
                 : this.getAutoTranslationFinalFallbackOptions(text, options);
             const targetLanguage = this.getAutoTranslationTargetLanguage(lastChanceOptions);
-            const rawTranslated = await this.plugin.runAutoTranslationModelAttempt(text, lastChanceOptions, signalOptions);
+            let rawTranslated = "";
+            try {
+                rawTranslated = await this.plugin.runAutoTranslationModelAttempt(text, lastChanceOptions, signalOptions);
+            }
+            catch (lastChanceError) {
+                if (error?.modelOutputTruncated) this.rethrowTruncationRetryTimeout(lastChanceError, error);
+                throw lastChanceError;
+            }
             const outputOptions = this.getAutoTranslationOutputValidationOptions(text, rawTranslated, lastChanceOptions);
             const translated = this.plugin.sanitizeAutoTranslationOutput(text, rawTranslated, targetLanguage, outputOptions);
             const validation = this.plugin.getAutoTranslationOutputValidationResult(
@@ -2444,17 +2520,44 @@ class AutoTranslationRequestPipeline {
         const value = String(output || "").trim();
         if (!value) throw this.plugin.createAutoBatchParseError(this.plugin.t("emptyResult"));
 
-        const jsonText = this.plugin.extractJsonPayload(value);
-        let parsed = null;
-        try {
-            parsed = JSON.parse(jsonText);
+        const primaryJsonText = this.plugin.extractJsonPayload(value);
+        const candidates = [primaryJsonText];
+        if (typeof this.plugin.findJsonPayloads === "function") {
+            for (const candidate of this.plugin.findJsonPayloads(value)) {
+                if (candidate && !candidates.includes(candidate)) candidates.push(candidate);
+            }
         }
-        catch {
+        const isUsableBatchRowsShape = rows => Array.isArray(rows)
+            && rows.length > 0
+            && rows.every(item => typeof item === "string" || (item && typeof item === "object" && !Array.isArray(item)));
+
+        let chosenJsonText = primaryJsonText;
+        let parsed = null;
+        let parsedOk = false;
+        for (let idx = 0; idx < candidates.length; idx++) {
+            const candidateText = candidates[idx];
+            try {
+                const candidateParsed = JSON.parse(candidateText);
+                const candidateRows = this.normalizeAutoTranslationBatchRows(candidateParsed);
+                if (!parsedOk) {
+                    chosenJsonText = candidateText;
+                    parsed = candidateParsed;
+                    parsedOk = true;
+                }
+                if (isUsableBatchRowsShape(candidateRows)) {
+                    chosenJsonText = candidateText;
+                    parsed = candidateParsed;
+                    break;
+                }
+            }
+            catch {}
+        }
+        if (!parsedOk) {
             throw this.plugin.createAutoBatchParseError(this.plugin.t("invalidJson"));
         }
 
         const objectKeys = [];
-        for (const [token, quotedKey, separator] of jsonText.matchAll(/("(?:[^"\\]|\\.)*")(\s*:)?|[{}\[\]]/g)) {
+        for (const [token, quotedKey, separator] of chosenJsonText.matchAll(/("(?:[^"\\]|\\.)*")(\s*:)?|[{}\[\]]/g)) {
             if (token === "{") objectKeys.push(new Set());
             else if (token === "[") objectKeys.push(null);
             else if (token === "}" || token === "]") objectKeys.pop();
@@ -2855,10 +2958,17 @@ class AutoTranslationRequestPipeline {
     hasResidualAutoTranslationSourceText(translatedText, targetLanguage, sourceText = "") {
         const targetScript = this.plugin.getTargetLanguageScript(targetLanguage);
         if (targetScript === "latin" || targetScript === "unknown") return false;
+        const source = String(sourceText || "");
+        const stripPreservedKaomojiKana = line => {
+            if (!source || targetScript === "kana") return line;
+            const sourceKana = Number(this.plugin.countTextScripts(source)?.kana || 0);
+            if (sourceKana <= 0 || sourceKana > 2) return line;
+            return line.replace(/[\u3040-\u30ff\u31f0-\u31ff]{1,2}/gu, token => (source.includes(token) ? " " : token));
+        };
 
         return String(translatedText || "")
             .split(/\n+/)
-            .map(line => line.trim())
+            .map(line => stripPreservedKaomojiKana(line).trim())
             .filter(Boolean)
             .some(line => this.plugin.hasLetters(line)
                 && !this.plugin.isLikelyPreservedTokenLine(line)
@@ -2882,6 +2992,11 @@ class AutoTranslationRequestPipeline {
 
         return segments.some(segment => {
             if (segment.script !== "latin") {
+                const segmentLetters = segment.text.replace(/[^\p{L}]/gu, "");
+                if (segmentLetters.length > 0 && segmentLetters.length <= 2 && source.includes(segmentLetters)) {
+                    const sourceScriptTotal = Number(this.plugin.countTextScripts(source)?.[segment.script] || 0);
+                    if (sourceScriptTotal <= 2) return false;
+                }
                 return this.plugin.shouldAutoTranslateText(segment.text, targetLanguage)
                     && !this.plugin.isTargetLanguageLineWithPreservedSourceTerms(segment.text, targetLanguage, source);
             }

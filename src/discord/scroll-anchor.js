@@ -295,9 +295,34 @@ const methods = {
         let high = messages.length;
         while (low < high) {
             const middle = (low + high) >> 1;
-            const rect = this.plugin.getCachedElementRect(messages[middle], context);
-            if (rect && Number(rect.bottom) <= band.top) low = middle + 1;
-            else high = middle;
+            let probe = middle;
+            let rect = this.plugin.getCachedElementRect(messages[probe], context);
+            if (!rect || !(Number(rect.height) > 0)) {
+                let offset = 1;
+                probe = -1;
+                while (middle - offset >= low || middle + offset < high) {
+                    if (middle - offset >= low) {
+                        const leftRect = this.plugin.getCachedElementRect(messages[middle - offset], context);
+                        if (leftRect && Number(leftRect.height) > 0) {
+                            probe = middle - offset;
+                            rect = leftRect;
+                            break;
+                        }
+                    }
+                    if (middle + offset < high) {
+                        const rightRect = this.plugin.getCachedElementRect(messages[middle + offset], context);
+                        if (rightRect && Number(rightRect.height) > 0) {
+                            probe = middle + offset;
+                            rect = rightRect;
+                            break;
+                        }
+                    }
+                    offset++;
+                }
+            }
+            if (probe < 0) break;
+            if (Number(rect.bottom) <= band.top) low = Math.max(middle, probe) + 1;
+            else high = Math.min(middle, probe);
         }
         const nearby = [];
         let below = 0;
@@ -328,6 +353,7 @@ const methods = {
         const content = candidate?.content;
         const text = String(candidate?.text || "");
         if (!text || !messageNode?.isConnected || !content?.isConnected) return { status: "nothing" };
+        if (this.plugin.autoRequestPipeline?.isCandidateChannelPolicyDisabled?.(candidate)) return { status: "nothing" };
         const domText = candidate.domText || text;
         if (this.hasFinishedTranslationLine(content, messageNode, domText)) return { status: "drawn" };
         if (this.plugin.isManualTranslationInFlight(content, domText, messageNode)) return { status: "pending" };

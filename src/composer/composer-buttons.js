@@ -145,6 +145,9 @@ const methods = {
             }
             else {
                 this.bindInputActionButtonTarget(bilingualButton, textbox, composerKey);
+                const bilingualTitle = this.plugin.t("publicBilingualTitleAttr", { targetLanguage: this.plugin.getDisplayLanguage(this.getPublicBilingualTargetLanguage()) });
+                bilingualButton.title = bilingualTitle;
+                bilingualButton.setAttribute("aria-label", bilingualTitle);
             }
         }
         this.syncInputRestoreButtonState(group, textbox, options);
@@ -299,6 +302,13 @@ const methods = {
     syncInputRestoreButtonState(group, textbox, options = {}) {
         if (!group) return;
         const existing = group.querySelector?.(".dait-polish-restore-button");
+        if (!options.restoreSession && this.plugin.polishSession && textbox && textbox.isConnected !== false) {
+            if (!this.plugin.composerWriter?.hasActiveWrite?.(textbox)
+                && this.plugin.polishSession.composerKey === this.getTextboxComposerKey(textbox)
+                && !this.plugin.normalizeExtractedText(this.plugin.getTextboxDraftText(textbox))) {
+                this.plugin.polishSession = null;
+            }
+        }
         const session = options.restoreSession || this.plugin.polishSession;
         const canRestore = Boolean(session && this.canRestorePolishOriginal(textbox, session));
         if (!canRestore) {
@@ -306,14 +316,20 @@ const methods = {
             return;
         }
         if (existing) {
-            if (existing.__daitRestoreSession === session && existing.dataset?.daitComposerKey === session.composerKey) return;
+            if (existing.__daitRestoreSession === session && existing.dataset?.daitComposerKey === session.composerKey) {
+                this.bindInputActionButtonTarget(existing, textbox, session.composerKey);
+                return;
+            }
             existing.remove?.();
         }
         const button = this.createInputActionButton(
             "dait-polish-restore-button",
             this.plugin.t("restoreOriginal"),
             this.plugin.t("restoreOriginal"),
-            () => this.restorePolishOriginal(textbox, session, button),
+            () => {
+                const live = this.resolveLiveComposerForButton(button, group.__daitTextbox);
+                this.restorePolishOriginal(live.textbox || textbox, session, button);
+            },
             { shortText: this.plugin.t("restoreOriginalShort"), textbox, composerKey: session.composerKey }
         );
         button.__daitRestoreSession = session;
@@ -409,9 +425,11 @@ const methods = {
     },
 
     toggleInputActionMenu(group, textbox = null, container = null, button = null) {
+        const anchorNode = button || group;
         if (this.plugin.inputActionMenu?.isConnected) {
+            const sameAnchor = !anchorNode || this.plugin.inputActionMenuAnchor === anchorNode;
             this.removeInputActionMenu();
-            return;
+            if (sameAnchor) return;
         }
         this.openInputActionMenu(group, textbox, container, button);
     },
@@ -442,13 +460,21 @@ const methods = {
             menu.appendChild(item);
         }
 
-        ["pointerdown", "mousedown", "click"].forEach(type => {
-            menu.addEventListener(type, event => event.stopPropagation());
+        ["pointerdown", "mousedown"].forEach(type => {
+            menu.addEventListener(type, event => {
+                if (event?.target?.closest?.("button")) event.preventDefault?.();
+                event.stopPropagation?.();
+            });
+        });
+        menu.addEventListener("click", event => event.stopPropagation?.());
+        menu.addEventListener("keydown", event => {
+            if (event?.key !== "Escape") event.stopPropagation?.();
         });
         document.body.appendChild(menu);
         this.plugin.inputActionMenu = menu;
         button?.setAttribute?.("aria-expanded", "true");
         const anchorNode = button || group;
+        this.plugin.inputActionMenuAnchor = anchorNode;
         let repositionRaf = null;
         const isAnchorHidden = () => {
             if (!anchorNode) return false;
@@ -493,15 +519,18 @@ const methods = {
         };
         const escapeKeydown = event => {
             if (event.isComposing || event.keyCode === 229) return;
+            const activeEl = typeof document !== "undefined" ? document.activeElement : null;
             if (event.key === "Escape") {
+                const typingInTextbox = Boolean(activeEl && activeEl !== button && !menu.contains?.(activeEl)
+                    && (activeEl.getAttribute?.("role") === "textbox" || activeEl.isContentEditable === true || activeEl.tagName === "TEXTAREA" || activeEl.tagName === "INPUT"));
                 event.preventDefault?.();
                 event.stopPropagation?.();
                 this.removeInputActionMenu();
-                button?.focus?.();
+                if (!typingInTextbox) button?.focus?.();
                 return;
             }
             if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
-            if (!menu.contains?.(event.target) && event.target !== button) return;
+            if (!menu.contains?.(event.target) && event.target !== button && !menu.contains?.(activeEl) && activeEl !== button) return;
             const items = [...(menu.querySelectorAll?.(".dait-input-action-menu-item") || [])].filter(item => !item.disabled);
             if (!items.length) return;
             event.preventDefault?.();
@@ -560,6 +589,7 @@ const methods = {
         this.plugin.inputActionMenuCleanup = null;
         this.plugin.inputActionMenu?.remove?.();
         this.plugin.inputActionMenu = null;
+        this.plugin.inputActionMenuAnchor = null;
     },
 
     getPolishButtonContainer(textbox) {

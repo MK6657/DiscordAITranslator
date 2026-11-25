@@ -11,6 +11,7 @@ const {
     normalizeSettingsTabId
 } = require("../settings-schema");
 const { PLUGIN_VERSION } = require("../../version");
+const { UI_LOCALES, getUiLocaleButtonTooltip } = require("../../i18n");
 
 const methods = {
     getSettingsPanel(options = {}) {
@@ -122,6 +123,9 @@ const methods = {
         tabpanel.dataset.daitSettingsTabPanel = tab.id;
         // Quick settings counts and locates pages by this attribute.
         tabpanel.dataset.daitSettingsSection = tab.id;
+        if (tab.id === SETTINGS_TAB_ADVANCED) {
+            tabpanel.dataset.daitTranslationLocal = String(Boolean(this.plugin.isLocalTranslationProvider?.(this.plugin.settings?.translation)));
+        }
         tabpanel.hidden = !active;
 
         const heading = document.createElement("h2");
@@ -174,6 +178,15 @@ const methods = {
             }
             this.refreshSavedServiceConfigControls?.(target.tabpanel);
         }
+        if (target.id === SETTINGS_TAB_ADVANCED && target.tabpanel?.replaceWith) {
+            const currentLocal = String(Boolean(this.plugin.isLocalTranslationProvider?.(this.plugin.settings?.translation)));
+            if (target.tabpanel.dataset?.daitTranslationLocal && target.tabpanel.dataset.daitTranslationLocal !== currentLocal) {
+                const fresh = this.createSettingsTabPanel(state, target, !state.searchQuery);
+                target.tabpanel.replaceWith(fresh);
+                target.tabpanel = fresh;
+                this.syncSettingsDependentRows?.(fresh);
+            }
+        }
         if (options.focusTab) this.focusSettingsElement(target.button);
         if (options.save !== false && this.plugin.settings?.ui && this.plugin.settings.ui.settingsActiveTab !== target.id) {
             this.plugin.settings.ui.settingsActiveTab = target.id;
@@ -186,7 +199,13 @@ const methods = {
     handleSettingsTabKeydown(state, event) {
         const count = state?.tabs?.length || 0;
         if (!count) return;
-        const steps = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 };
+        const horizontalRtl = state?.tablist?.getAttribute?.("aria-orientation") === "horizontal" && Boolean(this.plugin.isRtlLocale?.());
+        const steps = {
+            ArrowDown: 1,
+            ArrowRight: horizontalRtl ? -1 : 1,
+            ArrowUp: -1,
+            ArrowLeft: horizontalRtl ? 1 : -1
+        };
         const current = Math.max(0, state.tabs.findIndex(tab => tab.id === state.activeTab));
         let next = null;
         if (steps[event?.key]) next = (current + steps[event.key] + count) % count;
@@ -255,7 +274,69 @@ const methods = {
             this.closeSettingsWindow(close);
         });
         header.appendChild(close);
+        // Appended after .dait-settings-close so close remains the first DOM focusable (CSS order places the bar visually before close).
+        header.appendChild(this.createQuickLanguageBar({ surface: "header", fullLabels: false }));
         return header;
+    },
+
+    // Zero-barrier quick UI language switcher: native-script pills so users who do not read the active language can switch in 1 click.
+    createQuickLanguageBar({ surface = "header", fullLabels = false } = {}) {
+        const bar = document.createElement("div");
+        bar.className = `dait-lang-bar dait-lang-bar-${surface}`;
+        bar.setAttribute("role", "radiogroup");
+        bar.setAttribute("aria-label", this.plugin.t("quickLanguageBarLabel"));
+        const currentLocale = this.plugin.getLocale();
+        const selectLocale = code => {
+            if (!code || code === this.plugin.getLocale()) return;
+            this.plugin.setSetting("ui.language", code);
+            const panel = bar.closest?.(".dait-settings");
+            if (panel) this.plugin.replaceSettingsPanelElement(panel);
+        };
+        const buttons = UI_LOCALES.map(item => {
+            const active = item.code === currentLocale;
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "dait-lang-pill";
+            button.setAttribute("role", "radio");
+            button.setAttribute("aria-checked", active ? "true" : "false");
+            button.setAttribute("tabindex", active ? "0" : "-1");
+            button.setAttribute("lang", item.code);
+            button.setAttribute("dir", item.dir);
+            button.dataset.daitUiLang = item.code;
+            button.dataset.daitUiFocusId = `${surface}-lang-${item.code}`;
+            button.textContent = fullLabels ? item.label : item.shortLabel;
+            const tooltip = getUiLocaleButtonTooltip(item);
+            button.title = tooltip;
+            button.setAttribute("aria-label", tooltip);
+            button.addEventListener("click", event => {
+                event?.preventDefault?.();
+                selectLocale(item.code);
+            });
+            bar.appendChild(button);
+            return button;
+        });
+        bar.addEventListener("keydown", event => {
+            const rtl = Boolean(this.plugin.isRtlLocale?.());
+            const stepMap = {
+                ArrowRight: rtl ? -1 : 1,
+                ArrowDown: 1,
+                ArrowLeft: rtl ? 1 : -1,
+                ArrowUp: -1
+            };
+            const currentIdx = Math.max(0, buttons.findIndex(btn => btn.getAttribute("aria-checked") === "true"));
+            let nextIdx = null;
+            if (stepMap[event?.key] !== undefined) nextIdx = (currentIdx + stepMap[event.key] + buttons.length) % buttons.length;
+            else if (event?.key === "Home") nextIdx = 0;
+            else if (event?.key === "End") nextIdx = buttons.length - 1;
+            if (nextIdx === null) return;
+            event.preventDefault?.();
+            event.stopPropagation?.();
+            const target = buttons[nextIdx];
+            if (!target) return;
+            this.focusSettingsElement(target);
+            selectLocale(target.dataset.daitUiLang);
+        });
+        return bar;
     },
 
     // An icon for an icon button in a plugin window (css/01-theme-tokens .dait-icon); the button carries the label.

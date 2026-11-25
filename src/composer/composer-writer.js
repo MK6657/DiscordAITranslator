@@ -48,8 +48,24 @@ class ComposerWriter {
         return token;
     }
 
-    cancelActiveWrite(composerKey, reason = "cancelled") {
-        const token = this.activeWriteTokens.get(composerKey);
+    resolveComposerKey(textboxOrKey) {
+        if (typeof textboxOrKey === "string") return textboxOrKey;
+        if (!textboxOrKey) return "";
+        return String(this.plugin.getTextboxComposerKey?.(textboxOrKey) || "");
+    }
+
+    getActiveWrite(textboxOrKey) {
+        const key = this.resolveComposerKey(textboxOrKey);
+        return key ? (this.activeWriteTokens.get(key) || null) : null;
+    }
+
+    hasActiveWrite(textboxOrKey) {
+        return Boolean(this.getActiveWrite(textboxOrKey));
+    }
+
+    cancelActiveWrite(textboxOrKey, reason = "cancelled") {
+        const key = this.resolveComposerKey(textboxOrKey);
+        const token = key ? this.activeWriteTokens.get(key) : null;
         if (token) this.cancelWriteToken(token, reason);
     }
 

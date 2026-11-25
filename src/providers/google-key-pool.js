@@ -45,13 +45,15 @@ const methods = {
 
     selectGoogleTranslateKey(charCount = 1, options = {}) {
         const now = Date.now();
+        const storedKeys = Array.isArray(this.plugin.settings?.googleTranslate?.keys) ? this.plugin.settings.googleTranslate.keys : [];
         const keys = this.plugin.getGoogleTranslateKeys();
         const needed = Math.max(1, Math.round(Number(charCount) || 1));
         const available = keys.find(key => key.enabled !== false
             && (options.ignoreCooldown || Number(key.cooldownUntil || 0) <= now)
             && Number(key.usedChars || 0) + (options.ignoreReservations ? 0 : this.plugin.getGoogleTranslateReservedChars(key)) + needed <= Number(key.monthlyLimit || GOOGLE_TRANSLATE_DEFAULT_MONTHLY_LIMIT));
         if (available || options.persist === false) return available || null;
-        this.plugin.saveGoogleTranslateRuntimeState();
+        const monthRolledOver = keys.some((key, index) => storedKeys[index]?.monthKey && storedKeys[index].monthKey !== key.monthKey);
+        if (monthRolledOver) this.plugin.saveGoogleTranslateRuntimeState();
         return null;
     },
 
@@ -304,7 +306,9 @@ const methods = {
     markGoogleTranslateKeyFailure(apiKey, error, options = {}) {
         const keyHash = this.plugin.getTextFingerprint(String(apiKey || "").trim());
         const type = this.plugin.getAutoTranslationFailureType(error);
-        const retryAfterMs = Math.max(Number(error?.retryAfterMs || 0) || 0, options.retryAfterMs || (type === "rate-limit" ? 60000 : type === "auth" ? 30 * 60 * 1000 : 15000));
+        const maxCooldownMs = this.plugin.getGoogleTranslateQuotaRetryAfterMs();
+        const rawRetryAfterMs = Math.max(Number(error?.retryAfterMs || 0) || 0, options.retryAfterMs || (type === "rate-limit" ? 60000 : type === "auth" ? 30 * 60 * 1000 : 15000));
+        const retryAfterMs = Math.min(maxCooldownMs, rawRetryAfterMs);
         const cooldownUntil = Date.now() + retryAfterMs;
         this.plugin.settings.googleTranslate.keys = this.plugin.getGoogleTranslateKeys().map(key => {
             if (this.plugin.getTextFingerprint(key.apiKey) !== keyHash) return key;
@@ -331,6 +335,24 @@ const methods = {
         if (options.source && (!language || language === AUTO_LANGUAGE_VALUE)) return "";
         const normalized = this.plugin.normalizeLanguageName(language);
         const legacyCodes = {
+            "汉语": "zh-CN",
+            "中文": "zh-CN",
+            "简体中文": "zh-CN",
+            "繁体中文": "zh-TW",
+            "繁體中文": "zh-TW",
+            "英语": "en",
+            "西班牙语": "es",
+            "法语": "fr",
+            "印地语": "hi",
+            "俄语": "ru",
+            "德语": "de",
+            "日语": "ja",
+            "阿拉伯语": "ar",
+            "越南语": "vi",
+            "朝鲜语": "ko",
+            "韩语": "ko",
+            "意大利语": "it",
+            // Legacy GBK-decoded config values migrated from early pre-release settings
             "姹夎": "zh-CN",
             "鑻辫": "en",
             "瑗跨彮鐗欒": "es",
@@ -348,7 +370,13 @@ const methods = {
         const preset = LANGUAGE_PRESETS.find(item => item.value === normalized || item.en.toLowerCase() === String(language || "").toLowerCase());
         if (preset?.code) return preset.code === "zh" ? "zh-CN" : preset.code;
         const value = String(language || "").trim();
-        if (/^[a-z]{2,3}(-[A-Za-z0-9]+)?$/.test(value)) return value;
+        const bcpMatch = value.match(/^([A-Za-z]{2,3})([-_][A-Za-z0-9]+)?$/);
+        if (bcpMatch) {
+            const primary = bcpMatch[1].toLowerCase();
+            const subtag = bcpMatch[2] ? bcpMatch[2].replace("_", "-") : "";
+            if (primary === "zh" && !subtag) return "zh-CN";
+            return `${primary}${subtag}`;
+        }
         // LLM instruction labels end with the code, e.g. "Spanish (Español, es)". Prefer that
         // explicit code; \b alone treats ñ/ç/ế as boundaries and finds "ol" in "Español".
         const explicit = value.match(/[(,]\s*([a-z]{2,3}(?:-[A-Za-z0-9]+)?)\s*\)/);

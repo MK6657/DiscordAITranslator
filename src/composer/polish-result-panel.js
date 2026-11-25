@@ -67,7 +67,7 @@ const methods = {
                     });
                 }
                 finally {
-                    apply.disabled = false;
+                    if (apply.dataset?.daitChannelMismatch !== "true") apply.disabled = false;
                 }
             });
             actions.appendChild(apply);
@@ -205,9 +205,17 @@ const methods = {
     // composer holds now (Discord's undo brings the previous draft back). `options.onApplied(target)`
     // runs after a verified write so the run that produced the text can record it.
     async applyPolishResultPanelText(textbox, text, options = {}) {
+        const disableApplyButton = () => {
+            const applyBtn = this.plugin.polishResultPanel?.querySelector?.(".dait-polish-result-apply, [data-dait-action='applyPolishResult']");
+            if (applyBtn) {
+                applyBtn.dataset.daitChannelMismatch = "true";
+                applyBtn.disabled = true;
+            }
+        };
         const originRouteKey = String(options.originRouteKey || "");
         const currentRouteKey = this.plugin.getCurrentRouteKey();
         if (originRouteKey && currentRouteKey && originRouteKey !== currentRouteKey) {
+            disableApplyButton();
             this.plugin.showToast(this.plugin.t("composerChannelChanged"), "info");
             return false;
         }
@@ -219,6 +227,7 @@ const methods = {
         const originComposerKey = String(options.originComposerKey || "");
         const targetComposerKey = this.getTextboxComposerKey(target);
         if (originComposerKey && targetComposerKey && originComposerKey !== targetComposerKey) {
+            disableApplyButton();
             this.plugin.showToast(this.plugin.t("composerChannelChanged"), "info");
             return false;
         }
@@ -360,8 +369,14 @@ const methods = {
             if (result?.ok && (writeCurrent ? this.isCurrentDraftText(textbox, originalText) : result.userEditedAfter)) {
                 // The draft is the original again: nothing is left to restore, and the original must not
                 // count as already polished for the next bilingual-with-polish run.
+                session.lastResult = "";
+                session.lastResultRawText = "";
                 session.lastWrittenText = "";
                 session.lastWrittenRawText = "";
+                session.lastBilingualText = "";
+                session.lastBilingualRawText = "";
+                session.lastBilingualSourceText = "";
+                session.lastBilingualSourceRawText = "";
                 session.updatedAt = Date.now();
                 this.plugin.polishSession = session;
                 this.removePolishRestoreControl();

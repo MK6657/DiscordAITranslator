@@ -1,7 +1,7 @@
 /**
  * @name DiscordAITranslator
  * @author /insert 始皇
- * @version 0.5.3
+ * @version 0.6.0
  * @description Discord AI 翻译/润色插件，支持输入润色和频道消息翻译。
  * @license MIT
  */
@@ -140,8 +140,21 @@ var require_composer_writer = __commonJS({
         this.activeWriteTokens.set(composerKey, token);
         return token;
       }
-      cancelActiveWrite(composerKey, reason = "cancelled") {
-        const token = this.activeWriteTokens.get(composerKey);
+      resolveComposerKey(textboxOrKey) {
+        if (typeof textboxOrKey === "string") return textboxOrKey;
+        if (!textboxOrKey) return "";
+        return String(this.plugin.getTextboxComposerKey?.(textboxOrKey) || "");
+      }
+      getActiveWrite(textboxOrKey) {
+        const key = this.resolveComposerKey(textboxOrKey);
+        return key ? this.activeWriteTokens.get(key) || null : null;
+      }
+      hasActiveWrite(textboxOrKey) {
+        return Boolean(this.getActiveWrite(textboxOrKey));
+      }
+      cancelActiveWrite(textboxOrKey, reason = "cancelled") {
+        const key = this.resolveComposerKey(textboxOrKey);
+        const token = key ? this.activeWriteTokens.get(key) : null;
         if (token) this.cancelWriteToken(token, reason);
       }
       cancelWriteToken(token, reason = "cancelled") {
@@ -2104,7 +2117,7 @@ var require_constants = __commonJS({
         sourceLanguage: AUTO_LANGUAGE_VALUE,
         targetLanguage: "英语",
         temperature: 0.4,
-        maxTokens: 800,
+        maxTokens: 2e3,
         afterAction: "replace",
         repolishSource: POLISH_REPOLISH_SOURCE_ORIGINAL,
         activePromptTemplate: "polish-natural-chat",
@@ -2502,6 +2515,9 @@ var require_composer_buttons = __commonJS({
             else group.appendChild(bilingualButton);
           } else {
             this.bindInputActionButtonTarget(bilingualButton, textbox, composerKey);
+            const bilingualTitle = this.plugin.t("publicBilingualTitleAttr", { targetLanguage: this.plugin.getDisplayLanguage(this.getPublicBilingualTargetLanguage()) });
+            bilingualButton.title = bilingualTitle;
+            bilingualButton.setAttribute("aria-label", bilingualTitle);
           }
         }
         this.syncInputRestoreButtonState(group, textbox, options);
@@ -2638,6 +2654,11 @@ var require_composer_buttons = __commonJS({
       syncInputRestoreButtonState(group, textbox, options = {}) {
         if (!group) return;
         const existing = group.querySelector?.(".dait-polish-restore-button");
+        if (!options.restoreSession && this.plugin.polishSession && textbox && textbox.isConnected !== false) {
+          if (!this.plugin.composerWriter?.hasActiveWrite?.(textbox) && this.plugin.polishSession.composerKey === this.getTextboxComposerKey(textbox) && !this.plugin.normalizeExtractedText(this.plugin.getTextboxDraftText(textbox))) {
+            this.plugin.polishSession = null;
+          }
+        }
         const session = options.restoreSession || this.plugin.polishSession;
         const canRestore = Boolean(session && this.canRestorePolishOriginal(textbox, session));
         if (!canRestore) {
@@ -2645,14 +2666,20 @@ var require_composer_buttons = __commonJS({
           return;
         }
         if (existing) {
-          if (existing.__daitRestoreSession === session && existing.dataset?.daitComposerKey === session.composerKey) return;
+          if (existing.__daitRestoreSession === session && existing.dataset?.daitComposerKey === session.composerKey) {
+            this.bindInputActionButtonTarget(existing, textbox, session.composerKey);
+            return;
+          }
           existing.remove?.();
         }
         const button = this.createInputActionButton(
           "dait-polish-restore-button",
           this.plugin.t("restoreOriginal"),
           this.plugin.t("restoreOriginal"),
-          () => this.restorePolishOriginal(textbox, session, button),
+          () => {
+            const live = this.resolveLiveComposerForButton(button, group.__daitTextbox);
+            this.restorePolishOriginal(live.textbox || textbox, session, button);
+          },
           { shortText: this.plugin.t("restoreOriginalShort"), textbox, composerKey: session.composerKey }
         );
         button.__daitRestoreSession = session;
@@ -2741,9 +2768,11 @@ var require_composer_buttons = __commonJS({
         if (button.textContent !== next) button.textContent = next;
       },
       toggleInputActionMenu(group, textbox = null, container = null, button = null) {
+        const anchorNode = button || group;
         if (this.plugin.inputActionMenu?.isConnected) {
+          const sameAnchor = !anchorNode || this.plugin.inputActionMenuAnchor === anchorNode;
           this.removeInputActionMenu();
-          return;
+          if (sameAnchor) return;
         }
         this.openInputActionMenu(group, textbox, container, button);
       },
@@ -2771,13 +2800,21 @@ var require_composer_buttons = __commonJS({
           });
           menu.appendChild(item);
         }
-        ["pointerdown", "mousedown", "click"].forEach((type) => {
-          menu.addEventListener(type, (event) => event.stopPropagation());
+        ["pointerdown", "mousedown"].forEach((type) => {
+          menu.addEventListener(type, (event) => {
+            if (event?.target?.closest?.("button")) event.preventDefault?.();
+            event.stopPropagation?.();
+          });
+        });
+        menu.addEventListener("click", (event) => event.stopPropagation?.());
+        menu.addEventListener("keydown", (event) => {
+          if (event?.key !== "Escape") event.stopPropagation?.();
         });
         document.body.appendChild(menu);
         this.plugin.inputActionMenu = menu;
         button?.setAttribute?.("aria-expanded", "true");
         const anchorNode = button || group;
+        this.plugin.inputActionMenuAnchor = anchorNode;
         let repositionRaf = null;
         const isAnchorHidden = () => {
           if (!anchorNode) return false;
@@ -2823,15 +2860,17 @@ var require_composer_buttons = __commonJS({
         };
         const escapeKeydown = (event) => {
           if (event.isComposing || event.keyCode === 229) return;
+          const activeEl = typeof document !== "undefined" ? document.activeElement : null;
           if (event.key === "Escape") {
+            const typingInTextbox = Boolean(activeEl && activeEl !== button && !menu.contains?.(activeEl) && (activeEl.getAttribute?.("role") === "textbox" || activeEl.isContentEditable === true || activeEl.tagName === "TEXTAREA" || activeEl.tagName === "INPUT"));
             event.preventDefault?.();
             event.stopPropagation?.();
             this.removeInputActionMenu();
-            button?.focus?.();
+            if (!typingInTextbox) button?.focus?.();
             return;
           }
           if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
-          if (!menu.contains?.(event.target) && event.target !== button) return;
+          if (!menu.contains?.(event.target) && event.target !== button && !menu.contains?.(activeEl) && activeEl !== button) return;
           const items = [...menu.querySelectorAll?.(".dait-input-action-menu-item") || []].filter((item) => !item.disabled);
           if (!items.length) return;
           event.preventDefault?.();
@@ -2888,6 +2927,7 @@ var require_composer_buttons = __commonJS({
         this.plugin.inputActionMenuCleanup = null;
         this.plugin.inputActionMenu?.remove?.();
         this.plugin.inputActionMenu = null;
+        this.plugin.inputActionMenuAnchor = null;
       },
       getPolishButtonContainer(textbox) {
         return this.plugin.getInputButtonContainer(textbox);
@@ -3492,7 +3532,8 @@ var require_polish_preset_menu = __commonJS({
             const allowTabNavigation = !active2 || active2 === document.body || active2 === document.documentElement || menu.contains?.(active2) || active2 === anchorNode;
             if (!allowTabNavigation) return;
             const currentIdx = Math.max(0, POLISH_PROMPT_TEMPLATE_CATEGORIES.indexOf(this.plugin.polishPresetMenuCategory));
-            const delta = event.key === "ArrowRight" ? 1 : -1;
+            const rtl = Boolean(this.plugin.isRtlLocale?.());
+            const delta = event.key === "ArrowRight" ? rtl ? -1 : 1 : rtl ? 1 : -1;
             const nextCategory = POLISH_PROMPT_TEMPLATE_CATEGORIES[(currentIdx + delta + POLISH_PROMPT_TEMPLATE_CATEGORIES.length) % POLISH_PROMPT_TEMPLATE_CATEGORIES.length];
             event.preventDefault();
             event.stopPropagation();
@@ -3660,7 +3701,7 @@ var require_polish_result_panel = __commonJS({
                 sourceText: options.sourceText
               });
             } finally {
-              apply.disabled = false;
+              if (apply.dataset?.daitChannelMismatch !== "true") apply.disabled = false;
             }
           });
           actions.appendChild(apply);
@@ -3794,9 +3835,17 @@ var require_polish_result_panel = __commonJS({
       // composer holds now (Discord's undo brings the previous draft back). `options.onApplied(target)`
       // runs after a verified write so the run that produced the text can record it.
       async applyPolishResultPanelText(textbox, text, options = {}) {
+        const disableApplyButton = () => {
+          const applyBtn = this.plugin.polishResultPanel?.querySelector?.(".dait-polish-result-apply, [data-dait-action='applyPolishResult']");
+          if (applyBtn) {
+            applyBtn.dataset.daitChannelMismatch = "true";
+            applyBtn.disabled = true;
+          }
+        };
         const originRouteKey = String(options.originRouteKey || "");
         const currentRouteKey = this.plugin.getCurrentRouteKey();
         if (originRouteKey && currentRouteKey && originRouteKey !== currentRouteKey) {
+          disableApplyButton();
           this.plugin.showToast(this.plugin.t("composerChannelChanged"), "info");
           return false;
         }
@@ -3808,6 +3857,7 @@ var require_polish_result_panel = __commonJS({
         const originComposerKey = String(options.originComposerKey || "");
         const targetComposerKey = this.getTextboxComposerKey(target);
         if (originComposerKey && targetComposerKey && originComposerKey !== targetComposerKey) {
+          disableApplyButton();
           this.plugin.showToast(this.plugin.t("composerChannelChanged"), "info");
           return false;
         }
@@ -3937,8 +3987,14 @@ var require_polish_result_panel = __commonJS({
           const writeCurrent = this.plugin.composerWriter.isWriteTokenCurrent(writeToken);
           if (!writeCurrent && !this.plugin.isComposerWriteTakenOverByUser(textbox, { writeToken })) return false;
           if (result?.ok && (writeCurrent ? this.isCurrentDraftText(textbox, originalText) : result.userEditedAfter)) {
+            session.lastResult = "";
+            session.lastResultRawText = "";
             session.lastWrittenText = "";
             session.lastWrittenRawText = "";
+            session.lastBilingualText = "";
+            session.lastBilingualRawText = "";
+            session.lastBilingualSourceText = "";
+            session.lastBilingualSourceRawText = "";
             session.updatedAt = Date.now();
             this.plugin.polishSession = session;
             this.removePolishRestoreControl();
@@ -4139,29 +4195,77 @@ var require_public_bilingual = __commonJS({
           }
         };
       },
+      restoreCustomEmojiTokensFromSource(sourceText, translatedText) {
+        const source = String(sourceText || "");
+        const output = String(translatedText || "");
+        if (!source || !output || !source.includes("<") || !output.includes(":")) return output;
+        const byName = /* @__PURE__ */ new Map();
+        for (const match of source.matchAll(/<a?:([A-Za-z0-9_~]{1,64}):\d{15,25}>/g)) {
+          const name = match[1];
+          const full = match[0];
+          const prev = byName.get(name);
+          if (!prev) byName.set(name, full);
+          else if (prev !== full) byName.set(name, null);
+        }
+        if (!byName.size) return output;
+        return output.replace(/(?<![<A-Za-z0-9_~:/]):([A-Za-z0-9_~]{2,64}):(?![>A-Za-z0-9_~:/\d])/g, (full, name) => {
+          const token = byName.get(name);
+          return token || full;
+        });
+      },
       async runPublicBilingualTranslationTask(text, options = this.getPublicBilingualTranslationOptions()) {
         const requestBudget = options?.requestBudget || this.plugin.createAutoTranslationRequestBudget?.(MANUAL_TRANSLATION_REQUEST_BUDGET) || null;
         const resetFallbackContext = (ctx) => {
           if (ctx && typeof ctx === "object") delete ctx.fallbackProvider;
         };
-        const runAttempt = async (mode, attemptOptions) => {
-          if (requestBudget) this.plugin.consumeAutoTranslationRequestBudget({ requestBudget });
-          resetFallbackContext(attemptOptions.requestContext);
-          const rawTranslated = await this.plugin.runModelTask("translation", text, {
-            configOverrides: attemptOptions.configOverrides,
-            timeoutMs: MODEL_REQUEST_TIMEOUT_MS,
-            mode,
-            requestContext: attemptOptions.requestContext,
-            providerProfilePinned: true,
-            isolatedConfig: true,
-            ...requestBudget ? { requestBudget } : {}
-          });
-          const targetLang = this.plugin.getAutoTranslationTargetLanguage(attemptOptions);
-          return this.plugin.sanitizeAutoTranslationOutput(text, rawTranslated, targetLang);
+        const targetLangForLength = this.plugin.getAutoTranslationTargetLanguage(options);
+        const dynamicMaxTokens = String(text || "").length >= 420 && typeof this.plugin.getLongTextMaxTokensForLength === "function" ? this.plugin.getLongTextMaxTokensForLength(String(text || "").length, targetLangForLength) : 0;
+        const withEffectiveMaxTokens = (attemptOptions) => {
+          const configured = Number(attemptOptions?.configOverrides?.maxTokens || DEFAULT_SETTINGS.translation.maxTokens);
+          if (dynamicMaxTokens <= configured) return attemptOptions;
+          return {
+            ...attemptOptions,
+            configOverrides: {
+              ...attemptOptions.configOverrides,
+              maxTokens: dynamicMaxTokens
+            }
+          };
         };
-        const translated = await runAttempt("public-bilingual", options);
-        if (!this.plugin.isInvalidAutoTranslationOutput(text, translated, this.plugin.getAutoTranslationTargetLanguage(options))) return translated;
+        const runAttempt = async (mode, rawAttemptOptions) => {
+          const attemptOptions = withEffectiveMaxTokens(rawAttemptOptions);
+          const execute = async (overrideMaxTokens = 0, timeoutMs = MODEL_REQUEST_TIMEOUT_MS) => {
+            if (requestBudget) this.plugin.consumeAutoTranslationRequestBudget({ requestBudget });
+            resetFallbackContext(attemptOptions.requestContext);
+            const overrides = overrideMaxTokens > 0 ? { ...attemptOptions.configOverrides, maxTokens: overrideMaxTokens } : attemptOptions.configOverrides;
+            return this.plugin.runModelTask("translation", text, {
+              configOverrides: overrides,
+              timeoutMs,
+              mode,
+              requestContext: attemptOptions.requestContext,
+              providerProfilePinned: true,
+              isolatedConfig: true,
+              ...requestBudget ? { requestBudget } : {}
+            });
+          };
+          let rawTranslated = "";
+          try {
+            rawTranslated = await execute(0, MODEL_REQUEST_TIMEOUT_MS);
+          } catch (error) {
+            if (!error?.modelOutputTruncated) throw error;
+            const usedMax = Math.max(1, Number(attemptOptions?.configOverrides?.maxTokens || DEFAULT_SETTINGS.translation.maxTokens));
+            const minRetry = Number(error.partialOutputLength || 0) === 0 ? 4096 : 2400;
+            const raisedMax = Math.min(8192, Math.max(usedMax + 512, Math.ceil(usedMax * 2), minRetry));
+            const retryTimeout = Math.min(9e4, Math.max(MODEL_REQUEST_TIMEOUT_MS, Math.round(MODEL_REQUEST_TIMEOUT_MS * Math.min(2.5, raisedMax / Math.max(256, usedMax)))));
+            rawTranslated = await execute(raisedMax, retryTimeout);
+          }
+          const targetLang = this.plugin.getAutoTranslationTargetLanguage(attemptOptions);
+          const restoredEmojis = this.restoreCustomEmojiTokensFromSource(text, rawTranslated);
+          const sanitized = this.plugin.sanitizeAutoTranslationOutput(text, restoredEmojis, targetLang);
+          return this.restoreCustomEmojiTokensFromSource(text, sanitized);
+        };
         try {
+          const translated = await runAttempt("public-bilingual", options);
+          if (!this.plugin.isInvalidAutoTranslationOutput(text, translated, this.plugin.getAutoTranslationTargetLanguage(options))) return translated;
           const retryOptions = this.getPublicBilingualRetryOptions(text, translated, options);
           const retried = await runAttempt("public-bilingual-retry", retryOptions);
           if (!this.plugin.isInvalidAutoTranslationOutput(text, retried, this.plugin.getAutoTranslationTargetLanguage(retryOptions))) return retried;
@@ -4527,7 +4631,9 @@ var require_public_bilingual = __commonJS({
           return { ok: false, wrote: false, error };
         } finally {
           this.plugin.composerWriter.finishWriteToken(writeToken);
-          if (this.plugin.isLifecycleTokenCurrent(lifecycleToken)) this.plugin.setButtonBusy(button, false, this.plugin.t("publicBilingualButton"));
+          if (this.plugin.isLifecycleTokenCurrent(lifecycleToken) && !this.plugin.composerWriter?.hasActiveWrite?.(textbox)) {
+            this.plugin.setButtonBusy(button, false, this.plugin.t("publicBilingualButton"));
+          }
         }
       }
     };
@@ -4545,6 +4651,7 @@ var require_polish_workflow = __commonJS({
       PROMPT_TEMPLATE_CATEGORY_DIALECT,
       DIAGNOSTIC_MESSAGE_STATES,
       DIAGNOSTIC_REASON_CODES,
+      MODEL_REQUEST_TIMEOUT_MS,
       DEFAULT_SETTINGS
     } = require_constants();
     var methods = {
@@ -4609,20 +4716,28 @@ var require_polish_workflow = __commonJS({
         if (session.textbox === textbox) return true;
         return session.textbox?.isConnected !== false && textbox.isConnected !== false;
       },
-      getPolishSourceText(session) {
+      getPolishSourceText(session, currentDraft) {
         if (!session) return "";
-        if (this.getPolishRepolishSource() === POLISH_REPOLISH_SOURCE_LAST_RESULT && session.lastResult) {
+        if (currentDraft !== void 0) {
+          const normalizedCurrent = this.normalizeDraftRawText(currentDraft);
+          if (this.areDraftTextsEqualStrict(normalizedCurrent, session.originalRawText ?? session.originalText)) {
+            return session.originalRawText || session.originalText;
+          }
+        }
+        if (this.getPolishRepolishSource() === POLISH_REPOLISH_SOURCE_LAST_RESULT && session.lastResult && (currentDraft === void 0 || Boolean(session.lastWrittenRawText || session.lastWrittenText))) {
           return session.lastResultRawText || session.lastResult;
         }
         return session.originalRawText || session.originalText;
       },
-      updatePolishSessionAfterResult(session, textbox, polished, written) {
+      updatePolishSessionAfterResult(session, textbox, polished, written, options = {}) {
         if (!session) return;
         session.textbox = textbox;
         const normalized = this.plugin.normalizeExtractedText(polished);
         const raw = this.normalizeDraftRawText(polished);
-        session.lastResult = normalized;
-        session.lastResultRawText = raw;
+        if (written || options.updateLastResult !== false) {
+          session.lastResult = normalized;
+          session.lastResultRawText = raw;
+        }
         if (raw.trim()) {
           const history = Array.isArray(session.previousResults) ? session.previousResults : [];
           if (!history.some((item) => this.areComparableTextsEqual(item, raw))) {
@@ -4764,7 +4879,7 @@ var require_polish_workflow = __commonJS({
         let pendingSend = null;
         try {
           const session = this.getPolishSession(textbox, draft);
-          const sourceText = this.getPolishSourceText(session);
+          const sourceText = this.getPolishSourceText(session, draft);
           if (!sourceText) {
             this.plugin.showToast(this.plugin.t("inputEmpty"), "info");
             return;
@@ -4863,11 +4978,24 @@ var require_polish_workflow = __commonJS({
               polishRequestId: writeToken.id,
               skipAutoPolish: true
             });
-            if (bilingualResult?.wrote || bilingualResult?.stale || !this.isPolishedSendStillCurrent(writtenDraft, lifecycleToken)) return;
-          }
-          this.plugin.showRestoreOriginalControl(textbox, session, button);
-          if (action === "confirmSend") {
-            pendingSend = writtenDraft;
+            if (bilingualResult?.stale || !this.plugin.isLifecycleTokenCurrent(lifecycleToken)) return;
+            if (bilingualResult?.wrote) {
+              const bilingualDraft = {
+                ...writtenDraft,
+                text: session.lastBilingualRawText || this.plugin.getTextboxDraftText(textbox)
+              };
+              if (action === "confirmSend" && this.isPolishedSendStillCurrent(bilingualDraft, lifecycleToken)) {
+                pendingSend = bilingualDraft;
+              }
+            } else if (this.isPolishedSendStillCurrent(writtenDraft, lifecycleToken)) {
+              this.plugin.showRestoreOriginalControl(textbox, session, button);
+              if (action === "confirmSend") pendingSend = writtenDraft;
+            }
+          } else {
+            this.plugin.showRestoreOriginalControl(textbox, session, button);
+            if (action === "confirmSend") {
+              pendingSend = writtenDraft;
+            }
           }
         } catch (error) {
           if (!isLatestRequest()) return;
@@ -4885,7 +5013,9 @@ var require_polish_workflow = __commonJS({
           this.plugin.showToast(this.plugin.formatError(error), "error");
         } finally {
           this.plugin.composerWriter.finishWriteToken(writeToken);
-          if (this.plugin.isLifecycleTokenCurrent(lifecycleToken)) this.plugin.setButtonBusy(button, false, this.plugin.t("polishButton"));
+          if (this.plugin.isLifecycleTokenCurrent(lifecycleToken) && !this.plugin.composerWriter?.hasActiveWrite?.(textbox)) {
+            this.plugin.setButtonBusy(button, false, this.plugin.t("polishButton"));
+          }
         }
         if (pendingSend) await this.confirmPolishedSend(pendingSend, lifecycleToken);
       },
@@ -4907,7 +5037,9 @@ var require_polish_workflow = __commonJS({
         this.clearPolishSubmitTimer();
         this.plugin.polishSubmitTimer = setTimeout(() => {
           this.plugin.polishSubmitTimer = null;
-          if (this.isPolishedSendStillCurrent(pending, lifecycleToken)) this.plugin.composerWriter.submit(pending.textbox);
+          if (!this.isComposerFocusElsewhere(pending.textbox) && this.isPolishedSendStillCurrent(pending, lifecycleToken)) {
+            this.plugin.composerWriter.submit(pending.textbox);
+          }
         }, 80);
         return true;
       },
@@ -4915,9 +5047,12 @@ var require_polish_workflow = __commonJS({
         const textbox = pending?.textbox;
         if (!this.plugin.isLifecycleTokenCurrent(lifecycleToken)) return false;
         if (!textbox || textbox.isConnected === false) return false;
+        const composerRoot = this.getTextboxComposerRoot(textbox);
+        const activeToken = this.plugin.composerWriter?.getActiveWrite?.(textbox);
+        if (activeToken && activeToken.id !== pending.requestId) return false;
         if (pending.composerKey && this.getTextboxComposerKey(textbox) !== pending.composerKey) return false;
         if (pending.routeKey !== void 0 && this.plugin.getCurrentRouteKey() !== pending.routeKey) return false;
-        if (pending.requestId !== void 0 && this.plugin.latestPolishRequestIds.get(this.getTextboxComposerRoot(textbox)) !== pending.requestId) return false;
+        if (pending.requestId !== void 0 && this.plugin.latestPolishRequestIds.get(composerRoot) !== pending.requestId) return false;
         return this.isCurrentDraftText(textbox, pending.text);
       },
       clearPolishSubmitTimer() {
@@ -4928,20 +5063,59 @@ var require_polish_workflow = __commonJS({
       async runPolishWithGuards(sourceText, options = {}) {
         const polishConfig = this.plugin.getTaskConfig("polish") || {};
         const activeTemplate = this.plugin.getActivePolishTemplate(polishConfig);
-        const isDialectTemplate = Boolean(activeTemplate && this.plugin.getPolishTemplateCategory(activeTemplate) === PROMPT_TEMPLATE_CATEGORY_DIALECT);
+        const templateCategory = activeTemplate ? this.plugin.getPolishTemplateCategory(activeTemplate) : "";
+        const isDialectOrPersonaTemplate = templateCategory === PROMPT_TEMPLATE_CATEGORY_DIALECT || templateCategory === "persona";
         const targetLanguage = this.plugin.getEffectivePolishTargetLanguage(polishConfig);
-        const allowDialectScriptMix = Boolean(isDialectTemplate && !this.plugin.isTraditionalChineseTarget(targetLanguage));
+        const allowDialectScriptMix = Boolean(isDialectOrPersonaTemplate && !this.plugin.isTraditionalChineseTarget(targetLanguage));
         const previousResults = Array.isArray(options.previousResults) ? options.previousResults.map((item) => String(item || "").trim()).filter(Boolean).slice(-5) : [];
-        const firstOptions = previousResults.length || options.mode ? {
-          ...options.mode ? { mode: options.mode } : {},
+        const configuredMaxTokens = this.plugin.normalizeRequestNumber(
+          polishConfig.maxTokens,
+          DEFAULT_SETTINGS.polish.maxTokens,
+          { min: 1, integer: true }
+        );
+        const isReasoning = Boolean(polishConfig.enableThinking) || /(?:reasoner|\br1\b|qwq|qwen3|(?:^|\/)(?:o[134]|gpt-5)(?:[-_:]|$)|gemini-2\.5|glm-z1|thinking)/i.test(String(polishConfig.model || ""));
+        const lengthFloor = String(sourceText || "").length >= 300 ? Math.min(4096, Math.ceil(String(sourceText || "").length * 1.8) + 256) : 0;
+        const effectiveMaxTokens = Math.max(configuredMaxTokens, lengthFloor, isReasoning ? 4096 : 0);
+        const needsMaxTokensOverride = effectiveMaxTokens > configuredMaxTokens;
+        const firstOverrides = {
+          ...needsMaxTokensOverride ? { maxTokens: effectiveMaxTokens } : {},
           ...previousResults.length ? {
-            configOverrides: {
-              previousPolishResults: previousResults,
-              repolishAttempt: previousResults.length + 1
-            }
+            previousPolishResults: previousResults,
+            repolishAttempt: previousResults.length + 1
           } : {}
+        };
+        const hasFirstOverrides = Object.keys(firstOverrides).length > 0;
+        const firstOptions = hasFirstOverrides || options.mode ? {
+          ...options.mode ? { mode: options.mode } : {},
+          ...hasFirstOverrides ? { configOverrides: firstOverrides } : {}
         } : void 0;
-        const first = firstOptions !== void 0 ? await this.plugin.runModelTask("polish", sourceText, firstOptions) : await this.plugin.runModelTask("polish", sourceText);
+        const runPolishAttemptWithTruncationRetry = async (attemptOptions, baseMaxTokens) => {
+          try {
+            return attemptOptions !== void 0 ? await this.plugin.runModelTask("polish", sourceText, attemptOptions) : await this.plugin.runModelTask("polish", sourceText);
+          } catch (error) {
+            if (!error?.modelOutputTruncated || options.isStillCurrent && !options.isStillCurrent()) throw error;
+            const usedMax = Math.max(1, Number(attemptOptions?.configOverrides?.maxTokens || baseMaxTokens || configuredMaxTokens));
+            const minRetry = Number(error.partialOutputLength || 0) === 0 ? 4096 : 2400;
+            const raisedMaxTokens = Math.min(8192, Math.max(usedMax + 512, Math.ceil(usedMax * 2), minRetry));
+            if (raisedMaxTokens <= usedMax) throw error;
+            const baseTimeout = Number(attemptOptions?.timeoutMs || MODEL_REQUEST_TIMEOUT_MS);
+            const retryTimeoutMs = Math.min(9e4, Math.max(baseTimeout, Math.round(baseTimeout * Math.min(2.5, raisedMaxTokens / Math.max(256, usedMax)))));
+            this.plugin.logDiagnostic("polish.truncated", "retry", {
+              sourceHash: this.plugin.getStrongTextFingerprint(sourceText),
+              maxTokens: raisedMaxTokens,
+              timeoutMs: retryTimeoutMs
+            });
+            return this.plugin.runModelTask("polish", sourceText, {
+              ...attemptOptions || {},
+              timeoutMs: retryTimeoutMs,
+              configOverrides: {
+                ...attemptOptions?.configOverrides || {},
+                maxTokens: raisedMaxTokens
+              }
+            });
+          }
+        };
+        const first = await runPolishAttemptWithTruncationRetry(firstOptions, effectiveMaxTokens);
         if (options.isStillCurrent && !options.isStillCurrent()) return first;
         let violation = this.plugin.getPolishOutputLanguageViolation(sourceText, first, targetLanguage, {
           chineseScriptOnly: Boolean(options.chineseScriptOnly),
@@ -4954,16 +5128,17 @@ var require_polish_workflow = __commonJS({
         const configuredTemp = this.plugin.normalizeRequestNumber(polishConfig.temperature, DEFAULT_SETTINGS.polish.temperature, { min: 0, max: 2 });
         const repairTemp = violation === "duplicate-repolish" ? Math.min(2, Math.max(configuredTemp, 0.95)) : Math.min(configuredTemp, 0.35);
         try {
-          const repaired = await this.plugin.runModelTask("polish", sourceText, {
+          const repaired = await runPolishAttemptWithTruncationRetry({
             ...options.mode ? { mode: options.mode } : {},
             configOverrides: {
+              ...needsMaxTokensOverride ? { maxTokens: effectiveMaxTokens } : {},
               temperature: repairTemp,
               previousPolishResults: previousResults,
               repolishAttempt: previousResults.length + 1,
               polishRepairReason: violation,
               polishPreviousInvalidOutput: String(first || "")
             }
-          });
+          }, effectiveMaxTokens);
           if (options.isStillCurrent && !options.isStillCurrent()) return repaired;
           const cleaned = String(repaired || "").trim();
           if (!cleaned) return first;
@@ -4976,7 +5151,7 @@ var require_polish_workflow = __commonJS({
             repairViolation,
             targetLanguage
           });
-          if (!repairViolation || violation === "duplicate-repolish") return repaired;
+          if (!repairViolation) return repaired;
           return first;
         } catch (error) {
           if (this.plugin.isRequestCancelled(error)) throw error;
@@ -5452,6 +5627,10 @@ var require_plugin_context = __commonJS({
         },
         getLocale() {
           return plugin.getLocale();
+        },
+        /** @param {string} [locale] */
+        isRtlLocale(locale) {
+          return Boolean(plugin?.isRtlLocale?.(locale));
         },
         getLifecycleToken() {
           return plugin.getLifecycleToken();
@@ -6404,6 +6583,7 @@ var require_settings = __commonJS({
     line-height: var(--dait-line);
     margin-left: auto;
     min-width: 0;
+    order: 1;
 }
 
 .dait-settings-header-provider::before {
@@ -6419,6 +6599,71 @@ var require_settings = __commonJS({
     white-space: nowrap;
 }
 
+/* Quick UI language switcher bar (header compact pills + overview full native-name pills). */
+.dait-lang-bar {
+    align-items: center;
+    background: var(--dait-input-bg);
+    border: 1px solid var(--dait-input-border);
+    border-radius: var(--dait-radius-control);
+    box-shadow: inset 1px 1px 0 var(--dait-pixel-shade);
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 2px;
+    min-width: 0;
+    padding: 2px;
+}
+
+.dait-lang-bar-header {
+    flex: 0 0 auto;
+    order: 2;
+}
+
+.dait-lang-bar-overview {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    margin: 10px 0 2px;
+    width: 100%;
+}
+
+.dait-lang-pill {
+    align-items: center;
+    background: transparent;
+    border: 0;
+    border-radius: 1px;
+    color: var(--dait-text);
+    cursor: pointer;
+    display: inline-flex;
+    font-family: inherit;
+    font-size: var(--dait-font-body);
+    font-weight: 500;
+    justify-content: center;
+    line-height: var(--dait-line);
+    min-height: 28px;
+    min-width: 32px;
+    overflow: hidden;
+    padding: 0 6px;
+    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dait-lang-bar-overview .dait-lang-pill {
+    min-height: 32px;
+    padding: 0 8px;
+}
+
+.dait-lang-pill:hover:not([aria-checked="true"]) {
+    background: var(--dait-raised);
+    color: var(--dait-heading);
+}
+
+.dait-lang-pill[aria-checked="true"] {
+    background: var(--dait-brand);
+    box-shadow: inset 0 1px 0 var(--dait-pixel-highlight);
+    color: var(--dait-on-fill);
+    font-weight: 600;
+}
+
 /* Close: a 36 px icon button with the shared close icon (01-theme-tokens), like the quick panel's. */
 .dait-settings-close {
     align-items: center;
@@ -6431,6 +6676,7 @@ var require_settings = __commonJS({
     flex: 0 0 auto;
     height: var(--dait-control-h);
     justify-content: center;
+    order: 3;
     padding: 0;
     width: var(--dait-control-h);
 }
@@ -8005,6 +8251,149 @@ var require_settings = __commonJS({
     .dait-host-health-detail {
         grid-column: 2 / -1;
     }
+
+    .dait-lang-bar-overview {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+}
+
+@container dait-settings (max-width: 760px) {
+    .dait-settings-header {
+        flex-wrap: wrap;
+    }
+
+    .dait-lang-bar-header {
+        margin-inline-start: auto;
+    }
+
+    .dait-settings-header-status {
+        display: none;
+    }
+}
+
+/* High-contrast focus ring inside brand-filled active tabs, segments, and language pills (light & dark palettes). */
+.dait-settings :is(.dait-settings-tab[aria-selected="true"], .dait-segmented-option[aria-checked="true"], .dait-lang-pill[aria-checked="true"]):focus-visible {
+    outline-color: var(--dait-on-fill);
+    outline-offset: -3px;
+}
+
+/* RTL layout mirroring for Arabic (dir="rtl") while keeping technical fields/tokens crisp LTR. */
+.dait-settings[dir="rtl"] {
+    text-align: right;
+}
+
+.dait-settings[dir="rtl"] .dait-settings-header {
+    padding: 12px 20px 12px 12px;
+}
+
+.dait-settings[dir="rtl"] .dait-settings-header-status {
+    margin-left: 0;
+    margin-right: auto;
+}
+
+.dait-settings[dir="rtl"] .dait-settings-header-provider::before {
+    margin-left: var(--dait-space-2);
+    margin-right: 0;
+}
+
+.dait-settings[dir="rtl"] .dait-settings-rail {
+    border-left: 2px solid var(--dait-divider);
+    border-right: 0;
+}
+
+@container dait-settings (max-width: 760px) {
+    .dait-settings[dir="rtl"] .dait-settings-header {
+        padding: 10px 14px 10px 10px;
+    }
+
+    .dait-settings[dir="rtl"] .dait-settings-rail {
+        border-left: 0;
+    }
+}
+
+.dait-settings[dir="rtl"] .dait-settings-search::before {
+    left: auto;
+    right: 10px;
+}
+
+.dait-settings[dir="rtl"] .dait-settings-search-input {
+    padding-left: 8px;
+    padding-right: 32px;
+}
+
+.dait-settings[dir="rtl"] .dait-settings-tab {
+    text-align: right;
+}
+
+.dait-settings[dir="rtl"] .dait-settings-tab[aria-selected="true"] {
+    box-shadow: inset -3px 0 0 var(--dait-accent-gold), var(--dait-pixel-shadow-sm);
+}
+
+.dait-settings[dir="rtl"] .dait-settings-row-dependent {
+    padding-left: 0;
+    padding-right: var(--dait-space-4);
+}
+
+.dait-settings[dir="rtl"] :where(select) {
+    background-position:
+        11px 50%,
+        16px 50%;
+    background-size: 5px 5px, 5px 5px;
+    padding-left: 30px;
+    padding-right: 10px;
+}
+
+.dait-settings[dir="rtl"] input.dait-switch::after {
+    left: auto;
+    right: 3px;
+}
+
+.dait-settings[dir="rtl"] input.dait-switch:checked::after {
+    transform: translateX(-16px);
+}
+
+.dait-settings[dir="rtl"] .dait-row-control .dait-small-button-link:last-child {
+    margin-left: -6px;
+    margin-right: 0;
+}
+
+.dait-settings[dir="rtl"] .dait-order-item {
+    padding: 6px 12px 6px 8px;
+}
+
+.dait-settings[dir="rtl"] .dait-api-test-detail::before {
+    margin-left: 6px;
+    margin-right: 0;
+}
+
+.dait-settings[dir="rtl"] .dait-try-result {
+    border-left: 0;
+    border-right: 3px solid var(--dait-divider);
+    padding: 2px 10px 2px 0;
+}
+
+.dait-settings[dir="rtl"] .dait-try-result-error {
+    border-right-color: var(--dait-danger);
+}
+
+.dait-settings[dir="rtl"] .dait-settings-search-result {
+    text-align: right;
+}
+
+.dait-settings[dir="rtl"] :is(
+    [data-dait-path$=".apiKey"],
+    [data-dait-path$=".secretKey"],
+    [data-dait-path$=".appId"],
+    [data-dait-path$=".endpoint"],
+    [data-dait-path$=".model"],
+    [data-dait-path$=".region"],
+    [data-dait-path="googleTranslate.keyPoolText"],
+    .dait-hotkey-recorder,
+    .dait-settings-version
+) {
+    direction: ltr;
+    text-align: left;
+    unicode-bidi: isolate;
 }
 `;
   }
@@ -8179,15 +8568,22 @@ var require_composer2 = __commonJS({
 .theme-light.dait-polish-button,
 .theme-light.dait-polish-preset-button,
 .theme-light.dait-public-bilingual-button,
+.theme-light.dait-polish-restore-button,
 .theme-light .dait-polish-button,
 .theme-light .dait-polish-preset-button,
 .theme-light .dait-public-bilingual-button,
+.theme-light .dait-polish-restore-button,
+.theme-light .dait-input-action-group .dait-input-action-menu-button,
 .dait-polish-button[data-dait-discord-theme="light"],
 .dait-polish-preset-button[data-dait-discord-theme="light"],
 .dait-public-bilingual-button[data-dait-discord-theme="light"],
+.dait-polish-restore-button[data-dait-discord-theme="light"],
+.dait-input-action-menu-button[data-dait-discord-theme="light"],
 [data-dait-discord-theme="light"] .dait-polish-button,
 [data-dait-discord-theme="light"] .dait-polish-preset-button,
-[data-dait-discord-theme="light"] .dait-public-bilingual-button {
+[data-dait-discord-theme="light"] .dait-public-bilingual-button,
+[data-dait-discord-theme="light"] .dait-polish-restore-button,
+[data-dait-discord-theme="light"] .dait-input-action-menu-button {
     background: rgba(247, 243, 233, 0.88);
     border-color: rgba(113, 107, 93, 0.42);
     box-shadow: 1px 1px 0 rgba(36, 33, 27, 0.16);
@@ -8209,6 +8605,8 @@ var require_composer2 = __commonJS({
 .theme-light.dait-polish-preset-button[aria-expanded="true"],
 .theme-light.dait-public-bilingual-button:hover,
 .theme-light.dait-public-bilingual-button:focus-visible,
+.theme-light.dait-polish-restore-button:hover,
+.theme-light.dait-polish-restore-button:focus-visible,
 .theme-light .dait-polish-button:hover,
 .theme-light .dait-polish-button:focus-visible,
 .theme-light .dait-polish-preset-button:hover,
@@ -8216,6 +8614,11 @@ var require_composer2 = __commonJS({
 .theme-light .dait-polish-preset-button[aria-expanded="true"],
 .theme-light .dait-public-bilingual-button:hover,
 .theme-light .dait-public-bilingual-button:focus-visible,
+.theme-light .dait-polish-restore-button:hover,
+.theme-light .dait-polish-restore-button:focus-visible,
+.theme-light .dait-input-action-group .dait-input-action-menu-button:hover,
+.theme-light .dait-input-action-group .dait-input-action-menu-button:focus-visible,
+.theme-light .dait-input-action-group .dait-input-action-menu-button[aria-expanded="true"],
 .dait-polish-button[data-dait-discord-theme="light"]:hover,
 .dait-polish-button[data-dait-discord-theme="light"]:focus-visible,
 .dait-polish-preset-button[data-dait-discord-theme="light"]:hover,
@@ -8223,13 +8626,23 @@ var require_composer2 = __commonJS({
 .dait-polish-preset-button[data-dait-discord-theme="light"][aria-expanded="true"],
 .dait-public-bilingual-button[data-dait-discord-theme="light"]:hover,
 .dait-public-bilingual-button[data-dait-discord-theme="light"]:focus-visible,
+.dait-polish-restore-button[data-dait-discord-theme="light"]:hover,
+.dait-polish-restore-button[data-dait-discord-theme="light"]:focus-visible,
+.dait-input-action-menu-button[data-dait-discord-theme="light"]:hover,
+.dait-input-action-menu-button[data-dait-discord-theme="light"]:focus-visible,
+.dait-input-action-menu-button[data-dait-discord-theme="light"][aria-expanded="true"],
 [data-dait-discord-theme="light"] .dait-polish-button:hover,
 [data-dait-discord-theme="light"] .dait-polish-button:focus-visible,
 [data-dait-discord-theme="light"] .dait-polish-preset-button:hover,
 [data-dait-discord-theme="light"] .dait-polish-preset-button:focus-visible,
 [data-dait-discord-theme="light"] .dait-polish-preset-button[aria-expanded="true"],
 [data-dait-discord-theme="light"] .dait-public-bilingual-button:hover,
-[data-dait-discord-theme="light"] .dait-public-bilingual-button:focus-visible {
+[data-dait-discord-theme="light"] .dait-public-bilingual-button:focus-visible,
+[data-dait-discord-theme="light"] .dait-polish-restore-button:hover,
+[data-dait-discord-theme="light"] .dait-polish-restore-button:focus-visible,
+[data-dait-discord-theme="light"] .dait-input-action-menu-button:hover,
+[data-dait-discord-theme="light"] .dait-input-action-menu-button:focus-visible,
+[data-dait-discord-theme="light"] .dait-input-action-menu-button[aria-expanded="true"] {
     background: rgba(29, 110, 84, 0.18);
     border-color: rgba(29, 110, 84, 0.65);
     box-shadow: 2px 2px 0 rgba(29, 110, 84, 0.22);
@@ -8239,39 +8652,63 @@ var require_composer2 = __commonJS({
 .theme-dark.dait-polish-button,
 .theme-dark.dait-polish-preset-button,
 .theme-dark.dait-public-bilingual-button,
+.theme-dark.dait-polish-restore-button,
+.theme-dark.dait-input-action-menu-button,
 .theme-darker.dait-polish-button,
 .theme-darker.dait-polish-preset-button,
 .theme-darker.dait-public-bilingual-button,
+.theme-darker.dait-polish-restore-button,
+.theme-darker.dait-input-action-menu-button,
 .theme-midnight.dait-polish-button,
 .theme-midnight.dait-polish-preset-button,
 .theme-midnight.dait-public-bilingual-button,
+.theme-midnight.dait-polish-restore-button,
+.theme-midnight.dait-input-action-menu-button,
 .theme-dark .dait-polish-button,
 .theme-dark .dait-polish-preset-button,
 .theme-dark .dait-public-bilingual-button,
+.theme-dark .dait-polish-restore-button,
+.theme-dark .dait-input-action-menu-button,
 .theme-darker .dait-polish-button,
 .theme-darker .dait-polish-preset-button,
 .theme-darker .dait-public-bilingual-button,
+.theme-darker .dait-polish-restore-button,
+.theme-darker .dait-input-action-menu-button,
 .theme-midnight .dait-polish-button,
 .theme-midnight .dait-polish-preset-button,
 .theme-midnight .dait-public-bilingual-button,
+.theme-midnight .dait-polish-restore-button,
+.theme-midnight .dait-input-action-menu-button,
 .dait-polish-button[data-dait-discord-theme="dark"],
 .dait-polish-preset-button[data-dait-discord-theme="dark"],
 .dait-public-bilingual-button[data-dait-discord-theme="dark"],
+.dait-polish-restore-button[data-dait-discord-theme="dark"],
+.dait-input-action-menu-button[data-dait-discord-theme="dark"],
 .dait-polish-button[data-dait-discord-theme="darker"],
 .dait-polish-preset-button[data-dait-discord-theme="darker"],
 .dait-public-bilingual-button[data-dait-discord-theme="darker"],
+.dait-polish-restore-button[data-dait-discord-theme="darker"],
+.dait-input-action-menu-button[data-dait-discord-theme="darker"],
 .dait-polish-button[data-dait-discord-theme="midnight"],
 .dait-polish-preset-button[data-dait-discord-theme="midnight"],
 .dait-public-bilingual-button[data-dait-discord-theme="midnight"],
+.dait-polish-restore-button[data-dait-discord-theme="midnight"],
+.dait-input-action-menu-button[data-dait-discord-theme="midnight"],
 [data-dait-discord-theme="dark"] .dait-polish-button,
 [data-dait-discord-theme="dark"] .dait-polish-preset-button,
 [data-dait-discord-theme="dark"] .dait-public-bilingual-button,
+[data-dait-discord-theme="dark"] .dait-polish-restore-button,
+[data-dait-discord-theme="dark"] .dait-input-action-menu-button,
 [data-dait-discord-theme="darker"] .dait-polish-button,
 [data-dait-discord-theme="darker"] .dait-polish-preset-button,
 [data-dait-discord-theme="darker"] .dait-public-bilingual-button,
+[data-dait-discord-theme="darker"] .dait-polish-restore-button,
+[data-dait-discord-theme="darker"] .dait-input-action-menu-button,
 [data-dait-discord-theme="midnight"] .dait-polish-button,
 [data-dait-discord-theme="midnight"] .dait-polish-preset-button,
-[data-dait-discord-theme="midnight"] .dait-public-bilingual-button {
+[data-dait-discord-theme="midnight"] .dait-public-bilingual-button,
+[data-dait-discord-theme="midnight"] .dait-polish-restore-button,
+[data-dait-discord-theme="midnight"] .dait-input-action-menu-button {
     background: rgba(255, 255, 255, 0.075);
     border-color: rgba(255, 255, 255, 0.14);
     color: var(--interactive-normal, var(--text-secondary, #b5bac1));
@@ -8280,27 +8717,43 @@ var require_composer2 = __commonJS({
 .theme-darker.dait-polish-button,
 .theme-darker.dait-polish-preset-button,
 .theme-darker.dait-public-bilingual-button,
+.theme-darker.dait-polish-restore-button,
+.theme-darker.dait-input-action-menu-button,
 .theme-midnight.dait-polish-button,
 .theme-midnight.dait-polish-preset-button,
 .theme-midnight.dait-public-bilingual-button,
+.theme-midnight.dait-polish-restore-button,
+.theme-midnight.dait-input-action-menu-button,
 .theme-darker .dait-polish-button,
 .theme-darker .dait-polish-preset-button,
 .theme-darker .dait-public-bilingual-button,
+.theme-darker .dait-polish-restore-button,
+.theme-darker .dait-input-action-menu-button,
 .theme-midnight .dait-polish-button,
 .theme-midnight .dait-polish-preset-button,
 .theme-midnight .dait-public-bilingual-button,
+.theme-midnight .dait-polish-restore-button,
+.theme-midnight .dait-input-action-menu-button,
 .dait-polish-button[data-dait-discord-theme="darker"],
 .dait-polish-preset-button[data-dait-discord-theme="darker"],
 .dait-public-bilingual-button[data-dait-discord-theme="darker"],
+.dait-polish-restore-button[data-dait-discord-theme="darker"],
+.dait-input-action-menu-button[data-dait-discord-theme="darker"],
 .dait-polish-button[data-dait-discord-theme="midnight"],
 .dait-polish-preset-button[data-dait-discord-theme="midnight"],
 .dait-public-bilingual-button[data-dait-discord-theme="midnight"],
+.dait-polish-restore-button[data-dait-discord-theme="midnight"],
+.dait-input-action-menu-button[data-dait-discord-theme="midnight"],
 [data-dait-discord-theme="darker"] .dait-polish-button,
 [data-dait-discord-theme="darker"] .dait-polish-preset-button,
 [data-dait-discord-theme="darker"] .dait-public-bilingual-button,
+[data-dait-discord-theme="darker"] .dait-polish-restore-button,
+[data-dait-discord-theme="darker"] .dait-input-action-menu-button,
 [data-dait-discord-theme="midnight"] .dait-polish-button,
 [data-dait-discord-theme="midnight"] .dait-polish-preset-button,
-[data-dait-discord-theme="midnight"] .dait-public-bilingual-button {
+[data-dait-discord-theme="midnight"] .dait-public-bilingual-button,
+[data-dait-discord-theme="midnight"] .dait-polish-restore-button,
+[data-dait-discord-theme="midnight"] .dait-input-action-menu-button {
     background: rgba(255, 255, 255, 0.065);
     border-color: rgba(255, 255, 255, 0.12);
 }
@@ -8312,6 +8765,11 @@ var require_composer2 = __commonJS({
 .theme-dark.dait-polish-preset-button[aria-expanded="true"],
 .theme-dark.dait-public-bilingual-button:hover,
 .theme-dark.dait-public-bilingual-button:focus-visible,
+.theme-dark.dait-polish-restore-button:hover,
+.theme-dark.dait-polish-restore-button:focus-visible,
+.theme-dark.dait-input-action-menu-button:hover,
+.theme-dark.dait-input-action-menu-button:focus-visible,
+.theme-dark.dait-input-action-menu-button[aria-expanded="true"],
 .theme-darker.dait-polish-button:hover,
 .theme-darker.dait-polish-button:focus-visible,
 .theme-darker.dait-polish-preset-button:hover,
@@ -8319,6 +8777,11 @@ var require_composer2 = __commonJS({
 .theme-darker.dait-polish-preset-button[aria-expanded="true"],
 .theme-darker.dait-public-bilingual-button:hover,
 .theme-darker.dait-public-bilingual-button:focus-visible,
+.theme-darker.dait-polish-restore-button:hover,
+.theme-darker.dait-polish-restore-button:focus-visible,
+.theme-darker.dait-input-action-menu-button:hover,
+.theme-darker.dait-input-action-menu-button:focus-visible,
+.theme-darker.dait-input-action-menu-button[aria-expanded="true"],
 .theme-midnight.dait-polish-button:hover,
 .theme-midnight.dait-polish-button:focus-visible,
 .theme-midnight.dait-polish-preset-button:hover,
@@ -8326,6 +8789,11 @@ var require_composer2 = __commonJS({
 .theme-midnight.dait-polish-preset-button[aria-expanded="true"],
 .theme-midnight.dait-public-bilingual-button:hover,
 .theme-midnight.dait-public-bilingual-button:focus-visible,
+.theme-midnight.dait-polish-restore-button:hover,
+.theme-midnight.dait-polish-restore-button:focus-visible,
+.theme-midnight.dait-input-action-menu-button:hover,
+.theme-midnight.dait-input-action-menu-button:focus-visible,
+.theme-midnight.dait-input-action-menu-button[aria-expanded="true"],
 .theme-dark .dait-polish-button:hover,
 .theme-dark .dait-polish-button:focus-visible,
 .theme-dark .dait-polish-preset-button:hover,
@@ -8333,6 +8801,11 @@ var require_composer2 = __commonJS({
 .theme-dark .dait-polish-preset-button[aria-expanded="true"],
 .theme-dark .dait-public-bilingual-button:hover,
 .theme-dark .dait-public-bilingual-button:focus-visible,
+.theme-dark .dait-polish-restore-button:hover,
+.theme-dark .dait-polish-restore-button:focus-visible,
+.theme-dark .dait-input-action-menu-button:hover,
+.theme-dark .dait-input-action-menu-button:focus-visible,
+.theme-dark .dait-input-action-menu-button[aria-expanded="true"],
 .theme-darker .dait-polish-button:hover,
 .theme-darker .dait-polish-button:focus-visible,
 .theme-darker .dait-polish-preset-button:hover,
@@ -8340,6 +8813,11 @@ var require_composer2 = __commonJS({
 .theme-darker .dait-polish-preset-button[aria-expanded="true"],
 .theme-darker .dait-public-bilingual-button:hover,
 .theme-darker .dait-public-bilingual-button:focus-visible,
+.theme-darker .dait-polish-restore-button:hover,
+.theme-darker .dait-polish-restore-button:focus-visible,
+.theme-darker .dait-input-action-menu-button:hover,
+.theme-darker .dait-input-action-menu-button:focus-visible,
+.theme-darker .dait-input-action-menu-button[aria-expanded="true"],
 .theme-midnight .dait-polish-button:hover,
 .theme-midnight .dait-polish-button:focus-visible,
 .theme-midnight .dait-polish-preset-button:hover,
@@ -8347,6 +8825,11 @@ var require_composer2 = __commonJS({
 .theme-midnight .dait-polish-preset-button[aria-expanded="true"],
 .theme-midnight .dait-public-bilingual-button:hover,
 .theme-midnight .dait-public-bilingual-button:focus-visible,
+.theme-midnight .dait-polish-restore-button:hover,
+.theme-midnight .dait-polish-restore-button:focus-visible,
+.theme-midnight .dait-input-action-menu-button:hover,
+.theme-midnight .dait-input-action-menu-button:focus-visible,
+.theme-midnight .dait-input-action-menu-button[aria-expanded="true"],
 .dait-polish-button[data-dait-discord-theme="dark"]:hover,
 .dait-polish-button[data-dait-discord-theme="dark"]:focus-visible,
 .dait-polish-preset-button[data-dait-discord-theme="dark"]:hover,
@@ -8354,6 +8837,11 @@ var require_composer2 = __commonJS({
 .dait-polish-preset-button[data-dait-discord-theme="dark"][aria-expanded="true"],
 .dait-public-bilingual-button[data-dait-discord-theme="dark"]:hover,
 .dait-public-bilingual-button[data-dait-discord-theme="dark"]:focus-visible,
+.dait-polish-restore-button[data-dait-discord-theme="dark"]:hover,
+.dait-polish-restore-button[data-dait-discord-theme="dark"]:focus-visible,
+.dait-input-action-menu-button[data-dait-discord-theme="dark"]:hover,
+.dait-input-action-menu-button[data-dait-discord-theme="dark"]:focus-visible,
+.dait-input-action-menu-button[data-dait-discord-theme="dark"][aria-expanded="true"],
 .dait-polish-button[data-dait-discord-theme="darker"]:hover,
 .dait-polish-button[data-dait-discord-theme="darker"]:focus-visible,
 .dait-polish-preset-button[data-dait-discord-theme="darker"]:hover,
@@ -8361,6 +8849,11 @@ var require_composer2 = __commonJS({
 .dait-polish-preset-button[data-dait-discord-theme="darker"][aria-expanded="true"],
 .dait-public-bilingual-button[data-dait-discord-theme="darker"]:hover,
 .dait-public-bilingual-button[data-dait-discord-theme="darker"]:focus-visible,
+.dait-polish-restore-button[data-dait-discord-theme="darker"]:hover,
+.dait-polish-restore-button[data-dait-discord-theme="darker"]:focus-visible,
+.dait-input-action-menu-button[data-dait-discord-theme="darker"]:hover,
+.dait-input-action-menu-button[data-dait-discord-theme="darker"]:focus-visible,
+.dait-input-action-menu-button[data-dait-discord-theme="darker"][aria-expanded="true"],
 .dait-polish-button[data-dait-discord-theme="midnight"]:hover,
 .dait-polish-button[data-dait-discord-theme="midnight"]:focus-visible,
 .dait-polish-preset-button[data-dait-discord-theme="midnight"]:hover,
@@ -8368,6 +8861,11 @@ var require_composer2 = __commonJS({
 .dait-polish-preset-button[data-dait-discord-theme="midnight"][aria-expanded="true"],
 .dait-public-bilingual-button[data-dait-discord-theme="midnight"]:hover,
 .dait-public-bilingual-button[data-dait-discord-theme="midnight"]:focus-visible,
+.dait-polish-restore-button[data-dait-discord-theme="midnight"]:hover,
+.dait-polish-restore-button[data-dait-discord-theme="midnight"]:focus-visible,
+.dait-input-action-menu-button[data-dait-discord-theme="midnight"]:hover,
+.dait-input-action-menu-button[data-dait-discord-theme="midnight"]:focus-visible,
+.dait-input-action-menu-button[data-dait-discord-theme="midnight"][aria-expanded="true"],
 [data-dait-discord-theme="dark"] .dait-polish-button:hover,
 [data-dait-discord-theme="dark"] .dait-polish-button:focus-visible,
 [data-dait-discord-theme="dark"] .dait-polish-preset-button:hover,
@@ -8375,6 +8873,11 @@ var require_composer2 = __commonJS({
 [data-dait-discord-theme="dark"] .dait-polish-preset-button[aria-expanded="true"],
 [data-dait-discord-theme="dark"] .dait-public-bilingual-button:hover,
 [data-dait-discord-theme="dark"] .dait-public-bilingual-button:focus-visible,
+[data-dait-discord-theme="dark"] .dait-polish-restore-button:hover,
+[data-dait-discord-theme="dark"] .dait-polish-restore-button:focus-visible,
+[data-dait-discord-theme="dark"] .dait-input-action-menu-button:hover,
+[data-dait-discord-theme="dark"] .dait-input-action-menu-button:focus-visible,
+[data-dait-discord-theme="dark"] .dait-input-action-menu-button[aria-expanded="true"],
 [data-dait-discord-theme="darker"] .dait-polish-button:hover,
 [data-dait-discord-theme="darker"] .dait-polish-button:focus-visible,
 [data-dait-discord-theme="darker"] .dait-polish-preset-button:hover,
@@ -8382,13 +8885,23 @@ var require_composer2 = __commonJS({
 [data-dait-discord-theme="darker"] .dait-polish-preset-button[aria-expanded="true"],
 [data-dait-discord-theme="darker"] .dait-public-bilingual-button:hover,
 [data-dait-discord-theme="darker"] .dait-public-bilingual-button:focus-visible,
+[data-dait-discord-theme="darker"] .dait-polish-restore-button:hover,
+[data-dait-discord-theme="darker"] .dait-polish-restore-button:focus-visible,
+[data-dait-discord-theme="darker"] .dait-input-action-menu-button:hover,
+[data-dait-discord-theme="darker"] .dait-input-action-menu-button:focus-visible,
+[data-dait-discord-theme="darker"] .dait-input-action-menu-button[aria-expanded="true"],
 [data-dait-discord-theme="midnight"] .dait-polish-button:hover,
 [data-dait-discord-theme="midnight"] .dait-polish-button:focus-visible,
 [data-dait-discord-theme="midnight"] .dait-polish-preset-button:hover,
 [data-dait-discord-theme="midnight"] .dait-polish-preset-button:focus-visible,
 [data-dait-discord-theme="midnight"] .dait-polish-preset-button[aria-expanded="true"],
 [data-dait-discord-theme="midnight"] .dait-public-bilingual-button:hover,
-[data-dait-discord-theme="midnight"] .dait-public-bilingual-button:focus-visible {
+[data-dait-discord-theme="midnight"] .dait-public-bilingual-button:focus-visible,
+[data-dait-discord-theme="midnight"] .dait-polish-restore-button:hover,
+[data-dait-discord-theme="midnight"] .dait-polish-restore-button:focus-visible,
+[data-dait-discord-theme="midnight"] .dait-input-action-menu-button:hover,
+[data-dait-discord-theme="midnight"] .dait-input-action-menu-button:focus-visible,
+[data-dait-discord-theme="midnight"] .dait-input-action-menu-button[aria-expanded="true"] {
     background: color-mix(in srgb, #227a5f 24%, rgba(255, 255, 255, 0.08));
     border-color: color-mix(in srgb, #d8a84e 42%, #227a5f);
     box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.34);
@@ -8917,6 +9430,40 @@ var require_composer2 = __commonJS({
     opacity: 0.55;
 }
 
+.dait-input-action-menu-item:focus-visible,
+.dait-polish-preset-item:focus-visible,
+.dait-polish-preset-manage:focus-visible {
+    outline-offset: -2px;
+}
+
+.dait-polish-preset-tab[aria-selected="true"]:focus-visible {
+    outline-color: var(--dait-on-fill);
+    outline-offset: -3px;
+}
+
+.dait-polish-result-output {
+    unicode-bidi: plaintext;
+}
+
+.dait-input-action-menu[dir="rtl"] .dait-input-action-menu-item,
+.dait-polish-preset-menu[dir="rtl"] .dait-polish-preset-item,
+.dait-polish-preset-menu[dir="rtl"] .dait-polish-preset-manage {
+    text-align: right;
+}
+
+.dait-polish-preset-menu[dir="rtl"] .dait-polish-preset-item[aria-checked="true"] {
+    box-shadow: inset -3px 0 0 var(--dait-brand), inset 0 0 0 1px var(--dait-brand);
+}
+
+.dait-polish-preset-menu[dir="rtl"] .dait-polish-preset-code {
+    direction: ltr;
+    unicode-bidi: isolate;
+}
+
+.dait-polish-result-panel[dir="rtl"] .dait-polish-result-icon {
+    margin: -4px 0 -4px -6px;
+}
+
 `;
   }
 });
@@ -9056,7 +9603,7 @@ var require_messages_and_lines = __commonJS({
 
 .dait-translation-line.dait-translation-revealed {
     background: var(--dait-line-tint);
-    border-left: 3px solid rgba(34, 122, 95, 0.72);
+    border-inline-start: 3px solid rgba(34, 122, 95, 0.72);
     border-radius: 2px;
     box-decoration-break: clone;
     -webkit-box-decoration-break: clone;
@@ -9069,7 +9616,7 @@ var require_messages_and_lines = __commonJS({
 .dait-translation-line.dait-translation-revealed.dait-translation-style-muted,
 .dait-translation-line.dait-translation-revealed.dait-translation-style-tag {
     background: transparent;
-    border-left: 0;
+    border-inline-start: 0;
     padding: 0;
 }
 
@@ -9080,13 +9627,13 @@ var require_messages_and_lines = __commonJS({
 /* With a note under the text, the faint background marks only the translated text. */
 .dait-translation-line.dait-translation-revealed.dait-translation-style-tint:has(> .dait-translation-note) {
     background: transparent;
-    border-left: 0;
+    border-inline-start: 0;
     padding: 0;
 }
 
 .dait-translation-line.dait-translation-revealed.dait-translation-style-tint:has(> .dait-translation-note) > .dait-translation-text {
     background: var(--dait-line-tint);
-    border-left: 3px solid rgba(34, 122, 95, 0.72);
+    border-inline-start: 3px solid rgba(34, 122, 95, 0.72);
     border-radius: 2px;
     box-decoration-break: clone;
     -webkit-box-decoration-break: clone;
@@ -9615,6 +10162,52 @@ var require_quick_popover = __commonJS({
     --dait-qp-icon-image: ${PIXEL_CLOSE_ICON};
 }
 
+.dait-qp-lang-bar {
+    background: var(--dait-rail);
+    border-bottom: 1px solid var(--dait-divider);
+    display: grid;
+    flex: 0 0 auto;
+    gap: 2px;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    padding: 5px 16px;
+}
+
+.dait-qp-lang-pill {
+    align-items: center;
+    background: var(--dait-input-bg);
+    border: 1px solid var(--dait-divider);
+    border-radius: var(--dait-radius-control);
+    color: var(--dait-text);
+    cursor: pointer;
+    display: inline-flex;
+    font-family: inherit;
+    font-size: var(--dait-font-body);
+    font-weight: 500;
+    justify-content: center;
+    line-height: var(--dait-line);
+    min-height: 28px;
+    min-width: 0;
+    overflow: hidden;
+    padding: 0 3px;
+    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dait-qp-lang-pill:hover:not([aria-checked="true"]) {
+    background: var(--dait-raised);
+    border-color: var(--dait-input-border);
+    color: var(--dait-heading);
+}
+
+.dait-qp-lang-pill[aria-checked="true"] {
+    background: var(--dait-brand);
+    border-color: var(--dait-brand);
+    box-shadow: inset 0 1px 0 var(--dait-pixel-highlight);
+    color: var(--dait-on-fill);
+    font-weight: 600;
+}
+
 .dait-qp-mode-bar {
     background: var(--dait-rail);
     border-bottom: 1px solid var(--dait-divider);
@@ -9724,7 +10317,39 @@ var require_quick_popover = __commonJS({
     overflow-y: auto;
     overscroll-behavior: contain;
     padding: 10px 16px 12px;
-    scrollbar-width: thin;
+}
+
+@supports not selector(::-webkit-scrollbar) {
+    .dait-qp-body {
+        scrollbar-color: var(--dait-scrollbar-thumb) var(--dait-scrollbar-track);
+        scrollbar-width: thin;
+    }
+}
+
+.dait-qp-body::-webkit-scrollbar {
+    height: 8px;
+    width: 8px;
+}
+
+.dait-qp-body::-webkit-scrollbar-track {
+    background: var(--dait-scrollbar-track);
+    border-radius: 0;
+}
+
+.dait-qp-body::-webkit-scrollbar-thumb {
+    background: var(--dait-scrollbar-thumb);
+    background-clip: padding-box;
+    border: 2px solid transparent;
+    border-radius: 2px;
+}
+
+.dait-qp-body::-webkit-scrollbar-thumb:hover {
+    background: var(--dait-scrollbar-thumb-hover);
+    background-clip: padding-box;
+}
+
+.dait-qp-body::-webkit-scrollbar-corner {
+    background: transparent;
 }
 
 /* Status card: the dot, the service line and Test share the first line; the test result, what is happening now
@@ -10340,13 +10965,76 @@ label.dait-qp-label {
 }
 
 .dait-quick-popover .dait-qp-segment:focus-visible,
-.dait-quick-popover .dait-qp-tab:focus-visible {
+.dait-quick-popover .dait-qp-tab:focus-visible,
+.dait-quick-popover .dait-qp-lang-pill:focus-visible {
     outline-offset: -2px;
+}
+
+.dait-quick-popover:not(.dait-qp-pointer-opened) :is(
+    .dait-qp-segment[aria-checked="true"],
+    .dait-qp-tab[aria-selected="true"],
+    .dait-qp-lang-pill[aria-checked="true"],
+    .dait-qp-preset[aria-pressed="true"]
+):focus-visible {
+    outline-color: var(--dait-on-fill);
+    outline-offset: -3px;
 }
 
 /* Opened with the mouse: no ring on the first control until the user presses a key. */
 .dait-quick-popover.dait-qp-pointer-opened :focus-visible {
     outline: none;
+}
+
+.dait-quick-popover[dir="rtl"] .dait-qp-header {
+    padding: 10px 16px 10px 8px;
+}
+
+.dait-quick-popover[dir="rtl"] .dait-qp-header-open-full {
+    margin-left: 0;
+    margin-right: auto;
+}
+
+.dait-quick-popover[dir="rtl"] .dait-qp-switch::before {
+    left: auto;
+    right: 3px;
+}
+
+.dait-quick-popover[dir="rtl"] .dait-qp-switch:checked::before {
+    transform: translateX(-16px);
+}
+
+.dait-quick-popover[dir="rtl"] .dait-qp-select {
+    background-position:
+        11px 50%,
+        16px 50%;
+    background-size: 5px 5px, 5px 5px;
+    padding: 0 10px 0 30px;
+}
+
+.dait-quick-popover[dir="rtl"] .dait-qp-row-sub {
+    border-left: 0;
+    border-right: 2px solid var(--dait-brand);
+    padding-left: 0;
+    padding-right: 10px;
+}
+
+.dait-quick-popover[dir="rtl"] .dait-qp-service-chip {
+    margin-left: 0;
+    margin-right: auto;
+}
+
+.dait-quick-popover[dir="rtl"] .dait-qp-link {
+    margin-left: 0;
+    margin-right: -6px;
+}
+
+.dait-quick-popover[dir="rtl"] :is(.dait-qp-chip, .dait-qp-temp-value) {
+    direction: ltr;
+    unicode-bidi: isolate;
+}
+
+.dait-quick-popover :is(.dait-qp-input, .dait-qp-try-output) {
+    unicode-bidi: plaintext;
 }
 
 /* Status shapes differ as well as colours: filled = ok, ring = busy, triangle = waiting, "!" = needs you,
@@ -10730,6 +11418,26 @@ var require_dialogs = __commonJS({
 .dait-prompt-tools.dait-prompt-save .dait-small-button {
     flex: none;
 }
+
+.dait-dialog[dir="rtl"] .dait-dialog-list {
+    padding-left: 0;
+    padding-right: 20px;
+}
+
+.dait-dialog[dir="rtl"] .dait-dialog-preview {
+    border-left: 1px solid var(--dait-divider);
+    border-right: 3px solid var(--dait-accent-gold);
+}
+
+.dait-dialog .dait-dialog-preview,
+.dait-prompt-preview {
+    unicode-bidi: plaintext;
+}
+
+.dait-settings[dir="rtl"] .dait-prompt-manager .dait-prompt-tools select {
+    padding-left: 34px;
+    padding-right: 10px;
+}
 `;
   }
 });
@@ -10790,6 +11498,7 @@ var require_state_machine = __commonJS({
         this.visibleLongInFlightKeys = /* @__PURE__ */ new Set();
         this.inFlightStartedAt = /* @__PURE__ */ new Map();
         this.inFlightTokens = /* @__PURE__ */ new Map();
+        this.inFlightBatches = /* @__PURE__ */ new Map();
         this.inFlightTokenCounter = 0;
         this.inFlightItems = 0;
         this.prefetchInFlight = 0;
@@ -10869,6 +11578,8 @@ var require_state_machine = __commonJS({
         if (!Array.isArray(batch) || !batch.length) return [];
         const isPrefetch = Boolean(options.isPrefetch);
         const startedAt = Number(options.startedAt || Date.now());
+        const batchId = /* @__PURE__ */ Symbol("dait-in-flight-batch");
+        const batchKeys = /* @__PURE__ */ new Set();
         this.inFlight++;
         this.inFlightItems += batch.length;
         if (isPrefetch) this.prefetchInFlight++;
@@ -10877,17 +11588,67 @@ var require_state_machine = __commonJS({
           const key = String(item?.cacheKey || "");
           const token = typeof options.createToken === "function" ? options.createToken(key) : ++this.inFlightTokenCounter;
           tokens.push(token);
+          if (item && typeof item === "object") {
+            item.daitBatchId = batchId;
+          }
           if (!key) {
             if (item && typeof item === "object") item.daitPrefetchRequest = isPrefetch;
             continue;
           }
+          batchKeys.add(key);
           const isVisibleLong = typeof options.isVisibleLong === "function" ? Boolean(options.isVisibleLong(item)) : false;
           this.markInFlightItem(item, { token, startedAt, isVisibleLong, isPrefetch });
           if (typeof options.onItemMarked === "function") {
             options.onItemMarked(item, startedAt, token);
           }
         }
+        this.inFlightBatches.set(batchId, {
+          keys: batchKeys,
+          isPrefetch,
+          configVersion: this.configVersion
+        });
         return tokens;
+      }
+      /**
+       * Releases a single key from a tracked batch, decrementing batch concurrency counters
+       * once and only once when the batch has no remaining keys.
+       * @param {symbol | null | undefined} batchId
+       * @param {string} [cacheKey]
+       * @param {{ forceFinishBatch?: boolean }} [options]
+       * @returns {boolean} True when the batch slot itself was freed
+       */
+      releaseBatchKey(batchId, cacheKey = "", options = {}) {
+        if (!batchId || !this.inFlightBatches.has(batchId)) return false;
+        const entry = this.inFlightBatches.get(batchId);
+        if (!entry) return false;
+        const key = String(cacheKey || "");
+        if (key) entry.keys.delete(key);
+        if (!options.forceFinishBatch && entry.keys.size > 0) return false;
+        this.inFlightBatches.delete(batchId);
+        this.inFlight = Math.max(0, this.inFlight - 1);
+        if (entry.isPrefetch) {
+          this.prefetchInFlight = Math.max(0, this.prefetchInFlight - 1);
+        }
+        if (this.prefetchInFlight > this.inFlight) {
+          this.prefetchInFlight = this.inFlight;
+        }
+        return true;
+      }
+      /**
+       * Prunes a key across all tracked batches (e.g. stale in-flight timeout) and returns
+       * how many batch concurrency slots were reclaimed.
+       * @param {string} cacheKey
+       * @returns {number}
+       */
+      pruneKeyFromInFlightBatches(cacheKey) {
+        const key = String(cacheKey || "");
+        if (!key || !this.inFlightBatches.size) return 0;
+        let freedBatches = 0;
+        for (const [batchId, entry] of [...this.inFlightBatches.entries()]) {
+          if (!entry.keys.has(key)) continue;
+          if (this.releaseBatchKey(batchId, key)) freedBatches++;
+        }
+        return freedBatches;
       }
       /**
        * Atomically clears in-flight tracking for a single item when its token matches.
@@ -10982,6 +11743,7 @@ var require_state_machine = __commonJS({
         this.visibleLongInFlightKeys.clear();
         this.inFlightStartedAt.clear();
         this.inFlightTokens.clear();
+        this.inFlightBatches.clear();
         this.inFlightItems = 0;
         this.prefetchInFlight = 0;
       }
@@ -11425,11 +12187,41 @@ var require_request_pipeline = __commonJS({
           this.plugin.scheduleAutoTranslationRetryScan(AUTO_TRANSLATE_VISIBLE_BACKFILL_SCAN_MS, { minDelayMs: AUTO_TRANSLATE_VISIBLE_BACKFILL_SCAN_MS });
         }
       }
+      isCandidateChannelPolicyDisabled(target) {
+        if (!target?.messageNode) return false;
+        const policies = this.plugin.settings?.ui?.channelAutoTranslatePolicies;
+        if (!policies || typeof policies !== "object" || Array.isArray(policies)) return false;
+        const nodeIds = this.plugin.messageTracker?.getNodeMessageIds?.(target.messageNode);
+        const channelId = String(nodeIds?.channelId || "").trim();
+        if (!channelId) return false;
+        const routeIds = this.plugin.messageTracker?.getRouteIds?.() || {};
+        const directKey = `${nodeIds?.guildId || routeIds.guildId || ""}:${channelId}`;
+        if (policies[directKey]?.mode === "disabled") return true;
+        if (policies[directKey]?.mode === "enabled") return false;
+        const suffix = `:${channelId}`;
+        for (const [key, policy] of Object.entries(policies)) {
+          if (key.endsWith(suffix) && policy && typeof policy === "object") {
+            if (policy.mode === "disabled") return true;
+            if (policy.mode === "enabled") return false;
+          }
+        }
+        return false;
+      }
       evaluateAutoTranslationCandidate(candidate, scanState = {}) {
         const target = candidate || {};
         const text = String(target.text || "");
         const requestOptions = scanState.requestOptions || this.getAutoTranslationOptions();
         const now = Number(scanState.now || Date.now());
+        if (this.isCandidateChannelPolicyDisabled(target)) {
+          return {
+            action: "skip",
+            status: "skipped",
+            state: DIAGNOSTIC_MESSAGE_STATES.SKIPPED,
+            reasonCode: DIAGNOSTIC_REASON_CODES.AUTO_DISABLED,
+            counts: { blocked: 1 },
+            extra: { channelPolicyDisabled: true }
+          };
+        }
         const precheckSkipReason = this.plugin.getAutoTranslationPrecheckSkipReason(text, requestOptions);
         if (precheckSkipReason) {
           return {
@@ -12552,7 +13344,10 @@ var require_request_pipeline = __commonJS({
         for (let attemptIndex = 0; attemptIndex < attempts.length; attemptIndex++) {
           const attempt = attempts[attemptIndex];
           const attemptContext = parentRequestContext ? {} : null;
-          const attemptOptions = attemptContext ? { ...attempt.options, requestContext: attemptContext } : attempt.options;
+          let attemptOptions = attemptContext ? { ...attempt.options, requestContext: attemptContext } : attempt.options;
+          if (lastError?.modelOutputTruncated) {
+            attemptOptions = this.buildTruncationRetryOptions(attemptOptions, chunkOptions, chunkText, attemptIndex === 0 ? 1.8 : 2.2, lastError);
+          }
           try {
             const translated = await this.plugin.runAutoTranslationTaskWithOptions(chunkText, attemptOptions, {
               ...taskOptions,
@@ -12973,23 +13768,39 @@ var require_request_pipeline = __commonJS({
         if (this.plugin.hasRefusalAutoTranslationOutput(translatedText)) return false;
         return Number(meta.targetLetters || 0) >= 2 && Number(meta.targetLanguageRatio || 0) >= 0.25;
       }
-      getRaisedAutoTranslationMaxTokens(options = this.getAutoTranslationOptions(), text = "", multiplier = 1.6) {
+      getRaisedAutoTranslationMaxTokens(options = this.getAutoTranslationOptions(), text = "", multiplier = 1.6, truncatedError = null) {
         const config = this.plugin.getEffectiveTaskConfig("translation", options?.configOverrides);
         const current = this.plugin.normalizeRequestNumber(config.maxTokens, DEFAULT_SETTINGS.translation.maxTokens, { min: 1, integer: true });
         const sourceLength = Math.max(String(text || "").length, Number(options?.longTextSourceLength || 0) || 0);
         const dynamic = this.getLongTextMaxTokensForLength(sourceLength, this.getAutoTranslationTargetLanguage(options));
-        const target = Math.ceil(Math.max(current, dynamic, 256) * Math.max(1, Number(multiplier) || 1));
-        const cap = this.plugin.isLocalTranslationProvider(config) ? 2400 : 6e3;
+        const rawTarget = Math.ceil(Math.max(current, dynamic, 256) * Math.max(1, Number(multiplier) || 1));
+        const cap = this.plugin.isLocalTranslationProvider(config) ? Math.max(2400, current + 256) : Math.max(6e3, current + 256);
+        const target = truncatedError && Number(truncatedError.partialOutputLength || 0) === 0 ? Math.max(rawTarget, Math.min(cap, 4096)) : rawTarget;
         return Math.max(current + 128, Math.min(cap, target));
       }
-      withRaisedAutoTranslationMaxTokens(options = this.getAutoTranslationOptions(), text = "", multiplier = 1.6) {
+      withRaisedAutoTranslationMaxTokens(options = this.getAutoTranslationOptions(), text = "", multiplier = 1.6, truncatedError = null) {
         return {
           ...options,
           configOverrides: {
             ...options.configOverrides,
-            maxTokens: this.getRaisedAutoTranslationMaxTokens(options, text, multiplier)
+            maxTokens: this.getRaisedAutoTranslationMaxTokens(options, text, multiplier, truncatedError)
           }
         };
+      }
+      buildTruncationRetryOptions(targetOptions, baseOptions, text = "", multiplier = 1.8, truncatedError = null) {
+        const raised = {
+          ...this.withRaisedAutoTranslationMaxTokens(targetOptions, text, multiplier, truncatedError),
+          truncationRetry: true
+        };
+        raised.requestTimeoutMs = this.getTruncatedAutoTranslationRetryTimeoutMs(baseOptions || targetOptions, raised, text);
+        return raised;
+      }
+      rethrowTruncationRetryTimeout(error, truncatedError) {
+        if (truncatedError && !this.isAbandonedTranslationError(error) && this.plugin.isTimeoutError(error)) {
+          truncatedError.truncationRetryTimedOut = true;
+          throw truncatedError;
+        }
+        throw error;
       }
       async runAutoTranslationTask(text, options = this.getAutoTranslationOptions(), taskOptions = {}) {
         if (this.isLongAutoTranslationText(text) && taskOptions.longTextStrategy !== false) {
@@ -13001,6 +13812,7 @@ var require_request_pipeline = __commonJS({
         let translated = "";
         let firstInvalidReason = "";
         let firstValidation = null;
+        let lastTruncatedError = null;
         try {
           this.consumeAutoTranslationRequestBudget(taskOptions);
           translated = await this.plugin.runAutoTranslationModelAttempt(text, options, taskOptions);
@@ -13011,6 +13823,7 @@ var require_request_pipeline = __commonJS({
           if (!error?.modelOutputTruncated || taskOptions.retryInvalidOutput === false) throw error;
           if (!this.isAutoTranslationStrictRetryEnabled()) return this.runTruncatedAutoTranslationRetry(text, options, taskOptions, error);
           firstInvalidReason = "truncated";
+          lastTruncatedError = error;
         }
         if (firstValidation?.renderable) {
           if (firstValidation.quality !== TRANSLATION_VALIDATION_QUALITIES.GOOD) {
@@ -13027,9 +13840,14 @@ var require_request_pipeline = __commonJS({
         if (!firstInvalidReason) return translated;
         if (this.shouldRunLocalAutoTranslationRepairRetry(firstInvalidReason, text, translated, options, taskOptions)) {
           let repairOptions = this.getAutoTranslationFinalFallbackOptions(text, options);
-          if (firstInvalidReason === "truncated") repairOptions = this.withRaisedAutoTranslationMaxTokens(repairOptions, text, 1.8);
+          if (firstInvalidReason === "truncated") repairOptions = this.buildTruncationRetryOptions(repairOptions, options, text, 1.8, lastTruncatedError);
           this.consumeAutoTranslationRequestBudget(taskOptions);
-          const repaired = await this.plugin.runAutoTranslationModelAttempt(text, repairOptions, taskOptions);
+          let repaired = "";
+          try {
+            repaired = await this.plugin.runAutoTranslationModelAttempt(text, repairOptions, taskOptions);
+          } catch (error) {
+            this.rethrowTruncationRetryTimeout(error, lastTruncatedError);
+          }
           const repairValidationOptions = this.getAutoTranslationOutputValidationOptions(text, repaired, repairOptions);
           const repairValidation = this.plugin.getAutoTranslationOutputValidationResult(text, repaired, this.getAutoTranslationTargetLanguage(repairOptions), repairValidationOptions, repairOptions);
           const repairInvalidReason = repairValidation.reasonCode || "";
@@ -13038,7 +13856,7 @@ var require_request_pipeline = __commonJS({
         }
         if (taskOptions.retryInvalidOutput === false || !this.isAutoTranslationStrictRetryEnabled()) throw this.createFinalInvalidAutoTranslationError(firstInvalidReason);
         let retryOptions = this.plugin.getAutoTranslationRetryOptions(text, translated, options);
-        if (firstInvalidReason === "truncated") retryOptions = this.withRaisedAutoTranslationMaxTokens(retryOptions, text, 1.8);
+        if (firstInvalidReason === "truncated") retryOptions = this.buildTruncationRetryOptions(retryOptions, options, text, 1.8, lastTruncatedError);
         let retried = "";
         let retryInvalidReason = "";
         try {
@@ -13049,13 +13867,23 @@ var require_request_pipeline = __commonJS({
           retryInvalidReason = retryValidation.reasonCode || "";
           if (retryValidation.renderable) return retried;
         } catch (error) {
-          if (!error?.modelOutputTruncated) throw error;
+          if (!error?.modelOutputTruncated) {
+            this.rethrowTruncationRetryTimeout(error, lastTruncatedError);
+          }
           retryInvalidReason = "truncated";
+          lastTruncatedError = error;
         }
         let lastChanceOptions = this.getAutoTranslationFinalFallbackOptions(text, options);
-        if (retryInvalidReason === "truncated" || firstInvalidReason === "truncated") lastChanceOptions = this.withRaisedAutoTranslationMaxTokens(lastChanceOptions, text, 2.2);
+        if (retryInvalidReason === "truncated" || firstInvalidReason === "truncated") {
+          lastChanceOptions = this.buildTruncationRetryOptions(lastChanceOptions, options, text, 2.2, lastTruncatedError);
+        }
         this.consumeAutoTranslationRequestBudget(taskOptions);
-        const finalText = await this.plugin.runAutoTranslationModelAttempt(text, lastChanceOptions, taskOptions);
+        let finalText = "";
+        try {
+          finalText = await this.plugin.runAutoTranslationModelAttempt(text, lastChanceOptions, taskOptions);
+        } catch (error) {
+          this.rethrowTruncationRetryTimeout(error, lastTruncatedError);
+        }
         const finalValidationOptions = this.getAutoTranslationOutputValidationOptions(text, finalText, lastChanceOptions);
         const finalValidation = this.plugin.getAutoTranslationOutputValidationResult(text, finalText, this.getAutoTranslationTargetLanguage(lastChanceOptions), finalValidationOptions, lastChanceOptions);
         const finalInvalidReason = finalValidation.reasonCode || "";
@@ -13068,11 +13896,7 @@ var require_request_pipeline = __commonJS({
       // looping model that is still too slow for it ends as the first truncation, never as a
       // timeout that would mark a healthy local service unavailable.
       async runTruncatedAutoTranslationRetry(text, options = this.getAutoTranslationOptions(), taskOptions = {}, truncatedError = null) {
-        const raisedOptions = {
-          ...this.withRaisedAutoTranslationMaxTokens(options, text, 1.8),
-          truncationRetry: true
-        };
-        raisedOptions.requestTimeoutMs = this.getTruncatedAutoTranslationRetryTimeoutMs(options, raisedOptions, text);
+        const raisedOptions = this.buildTruncationRetryOptions(options, options, text, 1.8, truncatedError);
         this.plugin.logDiagnostic("auto.truncated", "retry", {
           sourceHash: this.plugin.getStrongTextFingerprint(text),
           mode: options?.mode || "auto",
@@ -13227,9 +14051,15 @@ var require_request_pipeline = __commonJS({
           return await this.plugin.runAutoTranslationTask(text, strictOptions, { retryInvalidOutput: false, ...signalOptions });
         } catch (error) {
           if (!error?.autoTranslationFinalInvalidOutput && !error?.modelOutputTruncated) throw error;
-          const lastChanceOptions = error?.modelOutputTruncated ? this.withRaisedAutoTranslationMaxTokens(this.getAutoTranslationFinalFallbackOptions(text, options), text, 2) : this.getAutoTranslationFinalFallbackOptions(text, options);
+          const lastChanceOptions = error?.modelOutputTruncated ? this.buildTruncationRetryOptions(this.getAutoTranslationFinalFallbackOptions(text, options), options, text, 2, error) : this.getAutoTranslationFinalFallbackOptions(text, options);
           const targetLanguage = this.getAutoTranslationTargetLanguage(lastChanceOptions);
-          const rawTranslated = await this.plugin.runAutoTranslationModelAttempt(text, lastChanceOptions, signalOptions);
+          let rawTranslated = "";
+          try {
+            rawTranslated = await this.plugin.runAutoTranslationModelAttempt(text, lastChanceOptions, signalOptions);
+          } catch (lastChanceError) {
+            if (error?.modelOutputTruncated) this.rethrowTruncationRetryTimeout(lastChanceError, error);
+            throw lastChanceError;
+          }
           const outputOptions = this.getAutoTranslationOutputValidationOptions(text, rawTranslated, lastChanceOptions);
           const translated = this.plugin.sanitizeAutoTranslationOutput(text, rawTranslated, targetLanguage, outputOptions);
           const validation = this.plugin.getAutoTranslationOutputValidationResult(
@@ -13385,15 +14215,40 @@ var require_request_pipeline = __commonJS({
       parseAutoTranslationBatchOutput(output) {
         const value = String(output || "").trim();
         if (!value) throw this.plugin.createAutoBatchParseError(this.plugin.t("emptyResult"));
-        const jsonText = this.plugin.extractJsonPayload(value);
+        const primaryJsonText = this.plugin.extractJsonPayload(value);
+        const candidates = [primaryJsonText];
+        if (typeof this.plugin.findJsonPayloads === "function") {
+          for (const candidate of this.plugin.findJsonPayloads(value)) {
+            if (candidate && !candidates.includes(candidate)) candidates.push(candidate);
+          }
+        }
+        const isUsableBatchRowsShape = (rows2) => Array.isArray(rows2) && rows2.length > 0 && rows2.every((item) => typeof item === "string" || item && typeof item === "object" && !Array.isArray(item));
+        let chosenJsonText = primaryJsonText;
         let parsed = null;
-        try {
-          parsed = JSON.parse(jsonText);
-        } catch {
+        let parsedOk = false;
+        for (let idx = 0; idx < candidates.length; idx++) {
+          const candidateText = candidates[idx];
+          try {
+            const candidateParsed = JSON.parse(candidateText);
+            const candidateRows = this.normalizeAutoTranslationBatchRows(candidateParsed);
+            if (!parsedOk) {
+              chosenJsonText = candidateText;
+              parsed = candidateParsed;
+              parsedOk = true;
+            }
+            if (isUsableBatchRowsShape(candidateRows)) {
+              chosenJsonText = candidateText;
+              parsed = candidateParsed;
+              break;
+            }
+          } catch {
+          }
+        }
+        if (!parsedOk) {
           throw this.plugin.createAutoBatchParseError(this.plugin.t("invalidJson"));
         }
         const objectKeys = [];
-        for (const [token, quotedKey, separator] of jsonText.matchAll(/("(?:[^"\\]|\\.)*")(\s*:)?|[{}\[\]]/g)) {
+        for (const [token, quotedKey, separator] of chosenJsonText.matchAll(/("(?:[^"\\]|\\.)*")(\s*:)?|[{}\[\]]/g)) {
           if (token === "{") objectKeys.push(/* @__PURE__ */ new Set());
           else if (token === "[") objectKeys.push(null);
           else if (token === "}" || token === "]") objectKeys.pop();
@@ -13728,7 +14583,14 @@ var require_request_pipeline = __commonJS({
       hasResidualAutoTranslationSourceText(translatedText, targetLanguage, sourceText = "") {
         const targetScript = this.plugin.getTargetLanguageScript(targetLanguage);
         if (targetScript === "latin" || targetScript === "unknown") return false;
-        return String(translatedText || "").split(/\n+/).map((line) => line.trim()).filter(Boolean).some((line) => this.plugin.hasLetters(line) && !this.plugin.isLikelyPreservedTokenLine(line) && !this.plugin.isTargetLanguageDominantBySentence(line, targetLanguage) && !this.plugin.isTargetLanguageLineWithPreservedSourceTerms(line, targetLanguage, sourceText) && this.plugin.shouldAutoTranslateText(line, targetLanguage));
+        const source = String(sourceText || "");
+        const stripPreservedKaomojiKana = (line) => {
+          if (!source || targetScript === "kana") return line;
+          const sourceKana = Number(this.plugin.countTextScripts(source)?.kana || 0);
+          if (sourceKana <= 0 || sourceKana > 2) return line;
+          return line.replace(/[\u3040-\u30ff\u31f0-\u31ff]{1,2}/gu, (token) => source.includes(token) ? " " : token);
+        };
+        return String(translatedText || "").split(/\n+/).map((line) => stripPreservedKaomojiKana(line).trim()).filter(Boolean).some((line) => this.plugin.hasLetters(line) && !this.plugin.isLikelyPreservedTokenLine(line) && !this.plugin.isTargetLanguageDominantBySentence(line, targetLanguage) && !this.plugin.isTargetLanguageLineWithPreservedSourceTerms(line, targetLanguage, sourceText) && this.plugin.shouldAutoTranslateText(line, targetLanguage));
       }
       hasSuspiciousResidualAutoTranslationForeignText(sourceText, translatedText, targetLanguage) {
         const targetScript = this.plugin.getTargetLanguageScript(targetLanguage);
@@ -13741,6 +14603,11 @@ var require_request_pipeline = __commonJS({
         if (!segments.length) return false;
         return segments.some((segment) => {
           if (segment.script !== "latin") {
+            const segmentLetters = segment.text.replace(/[^\p{L}]/gu, "");
+            if (segmentLetters.length > 0 && segmentLetters.length <= 2 && source.includes(segmentLetters)) {
+              const sourceScriptTotal = Number(this.plugin.countTextScripts(source)?.[segment.script] || 0);
+              if (sourceScriptTotal <= 2) return false;
+            }
             return this.plugin.shouldAutoTranslateText(segment.text, targetLanguage) && !this.plugin.isTargetLanguageLineWithPreservedSourceTerms(segment.text, targetLanguage, source);
           }
           if (this.plugin.isPreservableSourceLatinSegment(segment.text, source)) return false;
@@ -14779,6 +15646,8 @@ var require_queue_core = __commonJS({
         if (!this.makeRoomForAutoTranslationItem(item, queueLimit)) return false;
         const retryMs = Math.max(0, Number(options.delayMs) || 0);
         const retained = { ...item };
+        delete retained.daitInFlightToken;
+        delete retained.daitBatchId;
         delete retained.daitPrefetchRequest;
         delete retained.daitRequeued;
         if (options.allowActiveRequeue) retained.daitAllowActiveRequeue = true;
@@ -14838,6 +15707,8 @@ var require_queue_core = __commonJS({
           if (this.getAutoTranslationItemProviderKey(item) === providerKey) {
             if (retainVisible && this.plugin.shouldRetainAutoTranslationProviderBlockedItem(item)) {
               const retained = { ...item, daitRequeueAfter: Date.now() + retryMs };
+              delete retained.daitInFlightToken;
+              delete retained.daitBatchId;
               delete retained.daitPrefetchRequest;
               this.plugin.removeAutoTranslationLoadingForItem(retained, { force: true });
               this.addAutoTranslationPendingTarget(retained.cacheKey, retained);
@@ -15325,8 +16196,14 @@ var require_queue_core = __commonJS({
             this.markAutoTranslationFailureSafely(item, error);
           }
         } finally {
+          const batchId = item?.daitBatchId || null;
           const finishedCurrent = this.finishAutoTranslationInFlightItem(item);
-          if (finishedCurrent) {
+          if (batchId) {
+            if (finishedCurrent) {
+              this.stateMachine.releaseInFlightItems(1);
+              this.stateMachine.releaseBatchKey(batchId, item.cacheKey, { forceFinishBatch: true });
+            }
+          } else if (finishedCurrent) {
             this.stateMachine.finishInFlightBatch({
               batchSize: 1,
               isPrefetch: Boolean(item.daitPrefetchRequest)
@@ -15335,6 +16212,7 @@ var require_queue_core = __commonJS({
           if (!rendered && !item.daitRequeued && !this.hasActiveAutoTranslationKey(item.cacheKey)) {
             this.plugin.removeAutoTranslationLoadingForItem?.(item, { force: true });
           }
+          delete item.daitBatchId;
           delete item.daitPrefetchRequest;
           if (this.plugin.isStarted && this.plugin.isAutoTranslationRequestCurrent(item.requestOptions)) {
             this.plugin.drainAutoTranslationQueue();
@@ -15349,6 +16227,7 @@ var require_queue_core = __commonJS({
         const batchConfigVersion = Number(this.stateMachine.configVersion || 0);
         const batchResetVersion = Number(this.plugin.autoTranslationInFlightResetVersion || 0);
         const isPrefetchBatch = items.some((item) => Boolean(item?.daitPrefetchRequest));
+        const batchId = items.find((item) => item?.daitBatchId)?.daitBatchId || null;
         let releasedEarlyCount = 0;
         const heartbeat = (targetItems = pending) => {
           const now = Date.now();
@@ -15362,6 +16241,7 @@ var require_queue_core = __commonJS({
           if (!item || !this.finishAutoTranslationInFlightItem(item)) return false;
           releasedEarlyCount++;
           this.stateMachine.releaseInFlightItems(1);
+          if (batchId) this.stateMachine.releaseBatchKey(batchId, item.cacheKey);
           return true;
         };
         try {
@@ -15510,7 +16390,15 @@ var require_queue_core = __commonJS({
           const currentItems = items.filter((item) => this.finishAutoTranslationInFlightItem(item));
           const sameConfigGeneration = Number(this.stateMachine.configVersion || 0) === batchConfigVersion;
           const sameResetVersion = Number(this.plugin.autoTranslationInFlightResetVersion || 0) === batchResetVersion;
-          if (sameConfigGeneration && (currentItems.length > 0 || releasedEarlyCount === items.length && sameResetVersion)) {
+          if (batchId) {
+            if (currentItems.length) this.stateMachine.releaseInFlightItems(currentItems.length);
+            if (sameConfigGeneration) {
+              currentItems.forEach((item) => this.stateMachine.releaseBatchKey(batchId, item.cacheKey));
+              this.stateMachine.releaseBatchKey(batchId, "", { forceFinishBatch: true });
+            } else {
+              this.stateMachine.inFlightBatches.delete(batchId);
+            }
+          } else if (sameConfigGeneration && (currentItems.length > 0 || releasedEarlyCount === items.length && sameResetVersion)) {
             this.stateMachine.finishInFlightBatch({
               batchSize: currentItems.length,
               isPrefetch: isPrefetchBatch
@@ -15522,6 +16410,7 @@ var require_queue_core = __commonJS({
             if (!renderedItems.has(item) && !item.daitRequeued && !this.hasActiveAutoTranslationKey(item.cacheKey)) {
               this.plugin.removeAutoTranslationLoadingForItem?.(item, { force: true });
             }
+            delete item.daitBatchId;
             delete item.daitBatchRowOmitted;
             delete item.daitRequeued;
             delete item.daitPrefetchRequest;
@@ -15575,6 +16464,8 @@ var require_queue_core = __commonJS({
         const delayMs = Math.max(0, Number(options.delayMs) || 0);
         const next = { ...item };
         delete next.priority;
+        delete next.daitInFlightToken;
+        delete next.daitBatchId;
         delete next.daitPrefetchRequest;
         delete next.daitRequeued;
         if (options.allowActiveRequeue) next.daitAllowActiveRequeue = true;
@@ -15711,6 +16602,7 @@ var require_queue_core = __commonJS({
         if (!this.stateMachine.inFlightKeys.size) {
           this.stateMachine.inFlightStartedAt.clear();
           this.stateMachine.inFlightTokens.clear();
+          this.stateMachine.inFlightBatches.clear();
           this.stateMachine.visibleLongInFlightKeys.clear();
           if (this.stateMachine.inFlight || this.stateMachine.inFlightItems || this.stateMachine.prefetchInFlight) {
             this.plugin.autoTranslationInFlightResetVersion = Number(this.plugin.autoTranslationInFlightResetVersion || 0) + 1;
@@ -15721,6 +16613,7 @@ var require_queue_core = __commonJS({
           return;
         }
         let removed = 0;
+        let freedBatches = 0;
         const staleAfterMs = Math.max(AUTO_TRANSLATE_IN_FLIGHT_STALE_MS, AUTO_TRANSLATE_REQUEST_TIMEOUT_MS * 2);
         [...this.stateMachine.inFlightKeys].forEach((key) => {
           const startedAt = Number(this.stateMachine.inFlightStartedAt.get(key) || 0);
@@ -15733,6 +16626,7 @@ var require_queue_core = __commonJS({
           this.stateMachine.visibleLongInFlightKeys.delete(key);
           this.stateMachine.inFlightStartedAt.delete(key);
           this.stateMachine.inFlightTokens.delete(key);
+          freedBatches += this.stateMachine.pruneKeyFromInFlightBatches(key);
           removed++;
           this.plugin.logDiagnostic("auto.queue.active", "prune", {
             reason: "stale-in-flight",
@@ -15744,11 +16638,15 @@ var require_queue_core = __commonJS({
         this.stateMachine.inFlightItems = Math.min(this.stateMachine.inFlightItems, this.stateMachine.inFlightKeys.size);
         if (!this.stateMachine.inFlightKeys.size) {
           this.plugin.autoTranslationInFlightResetVersion = Number(this.plugin.autoTranslationInFlightResetVersion || 0) + 1;
+          this.stateMachine.inFlightBatches.clear();
           this.stateMachine.inFlight = 0;
           this.stateMachine.inFlightItems = 0;
           this.stateMachine.prefetchInFlight = 0;
           this.stateMachine.visibleLongInFlightKeys.clear();
           return;
+        }
+        if (freedBatches > 0) {
+          this.plugin.autoTranslationInFlightResetVersion = Number(this.plugin.autoTranslationInFlightResetVersion || 0) + 1;
         }
         const nextInFlight = Math.min(this.stateMachine.inFlight, this.stateMachine.inFlightKeys.size);
         if (nextInFlight !== this.stateMachine.inFlight) {
@@ -15995,8 +16893,9 @@ var require_queue_core = __commonJS({
           });
           return;
         }
-        this.plugin.setTranslationCache(this.plugin.getServedModelTranslationCacheKey(cacheKey, requestOptions), translated);
-        this.clearAutoTranslationPartialResult(cacheKey);
+        const servedKey = this.plugin.getServedModelTranslationCacheKey(cacheKey, requestOptions);
+        this.plugin.setTranslationCache(servedKey, translated);
+        this.clearAutoTranslationPartialResult(cacheKey, servedKey !== cacheKey ? servedKey : "");
         if (this.plugin.shouldStoreAutoTextTranslationCache(text, requestOptions, translated)) {
           this.plugin.setAutoTextTranslationCache(text, requestOptions, translated);
         } else {
@@ -16015,6 +16914,7 @@ var require_queue_core = __commonJS({
           { valueLength: String(translated || "").length }
         );
         this.clearAutoTranslationFailure(cacheKey, requestOptions);
+        if (servedKey && servedKey !== cacheKey) this.clearAutoTranslationFailure(servedKey, requestOptions);
         this.plugin.clearAutoTextTranslationFailure(text, requestOptions);
       }
       hasCacheableAutoTranslationTarget(item) {
@@ -16469,7 +17369,7 @@ var require_queue_core = __commonJS({
           { min: 1, integer: true }
         );
         const dynamic = this.plugin.getLongTextMaxTokensForLength(sourceLength, targetLanguage);
-        return Math.max(256, Math.min(1200, Math.max(configured, dynamic)));
+        return Math.max(256, configured, Math.min(1200, dynamic));
       }
     };
     module2.exports = { AutoTranslationQueueCore };
@@ -16479,7 +17379,7 @@ var require_queue_core = __commonJS({
 // package.json
 var require_package = __commonJS({
   "package.json"(exports2, module2) {
-    module2.exports = { version: "0.5.3" };
+    module2.exports = { version: "0.6.0" };
   }
 });
 
@@ -17124,15 +18024,25 @@ var require_output_guard = __commonJS({
         if (fenced && !fenced[1].includes("```") && !source.startsWith("```")) push(fenced[1]);
         const labeled = raw.match(/^((?:translation|translated text|translated_text|translated message|translated_message|translated-message|translatedMessage|result|answer|output|target|final)|(?:\u4ee5\u4e0b\u662f|\u8fd9\u662f).{0,8}(?:\u7ffb\u8bd1|\u8bd1\u6587)|(?:\u7ffb\u8bd1|\u8bd1\u6587|\u7ffb\u8bd1\u7ed3\u679c))\s*[:\uff1a]\s*([\s\S]+)$/i);
         if (labeled) {
-          const prefix = String(labeled[1] || "").trim();
-          const sourceSharesGenericPrefix = /^(?:result|answer|output|target|final)$/i.test(prefix) && new RegExp(`^${prefix}\\s*[:\\uff1a]`, "i").test(source);
+          const prefix = String(labeled[1] || "").trim().toLowerCase();
+          const equivalentSourcePrefix = {
+            result: /^(?:result|\u7ed3\u679c)\s*[:\uff1a]/i,
+            answer: /^(?:answer|\u7b54\u6848|\u56de\u7b54)\s*[:\uff1a]/i,
+            output: /^(?:output|\u8f93\u51fa)\s*[:\uff1a]/i,
+            target: /^(?:target|\u76ee\u6807)\s*[:\uff1a]/i,
+            final: /^(?:final|\u6700\u7ec8)\s*[:\uff1a]/i
+          }[prefix];
+          const sourceSharesGenericPrefix = Boolean(equivalentSourcePrefix && equivalentSourcePrefix.test(source));
           if (!sourceSharesGenericPrefix) push(labeled[2]);
         }
         const wrapped = raw.match(/^<\s*(translation|translatedText|translated_text|translatedMessage|targetMessage|target_message|answer|output|result|response)\b[^>]*>([\s\S]*?)<\/\s*\1\s*>$/i);
         if (wrapped) push(wrapped[2]);
         if (options?.includeQuoted !== false) {
-          const closingQuote = { '"': '"', "'": "'", "“": "”", "‘": "’", "「": "」", "『": "』" }[raw[0]];
-          if (closingQuote && raw.endsWith(closingQuote)) {
+          const quotePairs = { '"': '"', "'": "'", "“": "”", "‘": "’", "「": "」", "『": "』" };
+          const closingQuote = quotePairs[raw[0]];
+          const sourceClosingQuote = quotePairs[source[0]];
+          const sourceWrappedInOuterQuotes = Boolean(sourceClosingQuote && source.length >= 2 && source.endsWith(sourceClosingQuote) && !source.slice(1, -1).includes(sourceClosingQuote));
+          if (closingQuote && raw.endsWith(closingQuote) && !sourceWrappedInOuterQuotes) {
             const inner = raw.slice(1, -1);
             if (!inner.includes(closingQuote)) push(inner);
           }
@@ -17265,14 +18175,14 @@ var require_output_guard = __commonJS({
         }
         if (this.hasDiscordEmojiTokenMismatch(source, output)) return "emoji-mismatch";
         if (this.hasPromptLeakageAutoTranslationOutput(source, output, targetLanguage)) return "prompt-leakage";
-        if (this.hasRefusalAutoTranslationOutput(output)) return "refusal-output";
+        if (this.hasRefusalAutoTranslationOutput(output, source)) return "refusal-output";
         if (this.hasDictionaryStyleAutoTranslationOutput(source, output, targetLanguage)) return "dictionary-output";
         if (this.hasExplanatoryAutoTranslationOutput(source, output)) return "explanatory-output";
-        if (this.hasLabeledAutoTranslationOutput(output)) return "labeled-output";
+        if (this.hasLabeledAutoTranslationOutput(output, source)) return "labeled-output";
         if (this.isTraditionalChineseTarget(targetLanguage) && this.hasLikelySimplifiedHan(output) && !this.isAcceptableChineseVariantMix(output, targetLanguage)) return "script-mismatch";
         if (this.isSimplifiedChineseTarget(targetLanguage) && this.hasLikelyTraditionalHan(output) && !this.isAcceptableChineseVariantMix(output, targetLanguage)) return "script-mismatch";
         if (this.isAcceptableTargetShortTranslation(output, targetLanguage, source)) return "";
-        if (this.hasSuspiciousChineseAutoTranslationOutput(output, targetLanguage)) return "suspicious-chinese";
+        if (this.hasSuspiciousChineseAutoTranslationOutput(output, targetLanguage, source)) return "suspicious-chinese";
         if (this.plugin.hasSuspiciousResidualAutoTranslationForeignText(source, output, targetLanguage)) return "residual-source";
         if (!options?.partialLongText && !options?.mergedLongText && this.plugin.hasMissingAutoTranslationLines(source, output, targetLanguage, options)) return "missing-lines";
         if (!options?.partialLongText && this.plugin.hasUndertranslatedAutoTranslationOutput(source, output, targetLanguage)) return "undertranslated";
@@ -17284,7 +18194,15 @@ var require_output_guard = __commonJS({
         if (!this.plugin.hasLetters(output)) return this.plugin.hasLetters(source) ? "no-letters" : "";
         const targetScript = this.plugin.getTargetLanguageScript(targetLanguage);
         if (targetScript === "unknown") return "";
-        if (targetScript === "latin") return this.plugin.isLikelyTargetLanguage(output, targetLanguage) ? "" : "target-language";
+        if (targetScript === "latin") {
+          if (this.plugin.isLikelyTargetLanguage(output, targetLanguage)) return "";
+          const scriptCounts = this.plugin.countTextScriptsForValidation(output);
+          if (Number(scriptCounts.latin || 0) >= 2 && Number(scriptCounts.latin || 0) / Math.max(1, Number(scriptCounts.total || 0)) >= 0.65 && source) {
+            const stripped = output.replace(/[^\p{Script=Latin}\p{N}\s.,!?;:'"’“”()-]+/gu, (token) => source.includes(token) ? " " : token);
+            if (stripped !== output && this.plugin.isLikelyTargetLanguage(stripped, targetLanguage)) return "";
+          }
+          return "target-language";
+        }
         if (new RegExp("^\\p{L}$", "u").test(output) && this.plugin.getCharacterScript(output) !== targetScript && this.plugin.shouldAutoTranslateText(source, targetLanguage)) return "wrong-script";
         const outputCounts = this.plugin.countTextScriptsForValidation(output);
         const foreignScripts = ["han", "latin", "cyrillic", "arabic", "devanagari", "kana", "hangul"].filter((script) => script !== targetScript);
@@ -17359,17 +18277,30 @@ var require_output_guard = __commonJS({
         const hasDiscordOrTarget = /discord|target language|目标语言|简体中文|繁体中文|source_message|用户消息|人类语言内容/i.test(output);
         return hasInstructionFrame && hasReturnOnly && hasPreserveList || markerCount >= 4 && hasReturnOnly && hasDiscordOrTarget;
       }
-      hasRefusalAutoTranslationOutput(text) {
+      hasRefusalAutoTranslationOutput(text, sourceText = "") {
         const value = String(text || "").trim();
         if (!value) return false;
-        const patterns = [
-          /(抱歉|对不起|很抱歉).{0,40}(无法|不能|不可以|不能提供|无法提供|拒绝).{0,80}(翻译|译文|内容|服务|帮助)/,
-          /(无法|不能|不可以|不能提供|无法提供|拒绝).{0,40}(翻译|译文|提供|处理).{0,80}(内容|服务|帮助)?/,
+        const source = String(sourceText || "").trim();
+        const translationRefusalPatterns = [
+          /(抱歉|对不起|很抱歉).{0,40}(无法|不能|不可以|不能提供|无法提供|拒绝).{0,80}(翻译|译文)/,
+          /(无法|不能|不可以|不能提供|无法提供|拒绝).{0,40}(翻译|译文)/,
           /如果您有其他(?:问题|需要).{0,40}(请|可以)/,
-          /\b(?:sorry|apologize|apologies)\b.{0,80}\b(?:cannot|can't|unable|will not|won't|refuse)\b.{0,80}\b(?:translate|translation|provide|assist|help)\b/i,
-          /\b(?:cannot|can't|unable|will not|won't|refuse)\b.{0,80}\b(?:translate|translation|provide|assist|help)\b/i
+          /\b(?:cannot|can't|unable|will not|won't|refuse)\b.{0,80}\b(?:translate|translation)\b/i
         ];
-        return patterns.some((pattern) => pattern.test(value));
+        if (translationRefusalPatterns.some((pattern) => pattern.test(value))) {
+          if (!source || !/(翻译|译文|\btranslat)/i.test(source)) return true;
+        }
+        const generalRefusalPatterns = [
+          /(抱歉|对不起|很抱歉).{0,40}(无法|不能|不可以|不能提供|无法提供|拒绝).{0,80}(内容|服务|帮助)/,
+          /(无法|不能|不可以|不能提供|无法提供|拒绝).{0,40}(提供|处理).{0,80}(内容|服务|帮助)/,
+          /\b(?:sorry|apologize|apologies)\b.{0,80}\b(?:cannot|can't|unable|will not|won't|refuse)\b.{0,80}\b(?:provide|assist|help)\b/i,
+          /\b(?:cannot|can't|unable|will not|won't|refuse)\b.{0,80}\b(?:provide|assist|help)\b/i
+        ];
+        if (!generalRefusalPatterns.some((pattern) => pattern.test(value))) return false;
+        if (source && (/(抱歉|对不起|无法|不能|帮不上|爱莫能助)/.test(source) || /\b(?:sorry|apologi|can't|cannot|unable|won't|help)\b/i.test(source))) {
+          return false;
+        }
+        return true;
       }
       hasDictionaryStyleAutoTranslationOutput(sourceText, translatedText, targetLanguage = this.plugin.settings.translation.targetLanguage) {
         const source = String(sourceText || "").trim();
@@ -17380,11 +18311,16 @@ var require_output_guard = __commonJS({
         const targetScript = this.plugin.getTargetLanguageScript(targetLanguage);
         const sourceScriptCounts = this.plugin.countTextScriptsForValidation(source);
         if (targetScript !== "unknown" && Number(sourceScriptCounts[targetScript] || 0) >= Math.max(2, Number(sourceScriptCounts.total || 0) * 0.5)) return false;
+        const escapedSource = source.length <= 24 ? source.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") : "";
+        if (escapedSource && new RegExp(`${escapedSource}.{0,16}(?:意思是|意为|含义是|可译为|翻译为|\\bmeans\\b|\\btranslates to\\b)`, "i").test(output)) {
+          return true;
+        }
         const patterns = [
           /(该词|这个词|此词|该短语|这个短语|这个表达).{0,30}(意为|意思是|含义是|表示|可译为|翻译为)/,
           /在.{0,12}(俄语|英语|日语|韩语|西班牙语|法语|德语|印地语|阿拉伯语|越南语).{0,30}(中)?(意为|意思是|含义是|表示)/,
-          /(意思是|意为|含义是|可译为|翻译为)[“"']?.{1,40}[”"']?/,
-          /\b(?:means|meaning|means that|translates to|can be translated as|the word means)\b/i
+          /^(?:意思是|意为|含义是|可译为|翻译为)\s*[“"'][^”"'\n]{1,40}[”"'][。.!！]?$/,
+          /\b(?:translates to|can be translated as|the word means|this word means|this phrase means)\b/i,
+          /^(?:["'“][^"'”\n]{1,32}["'”]\s+)?means\s+["'“][^"'”\n]{1,40}["'”]\.?$/i
         ];
         return patterns.some((pattern) => pattern.test(output));
       }
@@ -17412,9 +18348,14 @@ var require_output_guard = __commonJS({
         const sourceSignals = signals.reduce((count, pattern) => count + (pattern.test(source) ? 1 : 0), 0);
         return sourceSignals < 2;
       }
-      hasLabeledAutoTranslationOutput(text) {
+      hasLabeledAutoTranslationOutput(text, sourceText = "") {
         const value = String(text || "").trim();
         if (!value) return false;
+        const source = String(sourceText || "").trim();
+        if (/^(?:Output)\s*[:\uff1a]/i.test(value) && /^(?:Output|\u8f93\u51fa)\s*[:\uff1a]/i.test(source)) return false;
+        if (/^(?:Note|\u6ce8\u91ca)\s*[:\uff1a]/i.test(value) && /^(?:Note|\u6ce8\u610f|\u6ce8\u91ca)\s*[:\uff1a]/i.test(source)) return false;
+        if (/^(?:Source|\u539f\u6587)\s*[:\uff1a]/i.test(value) && /^(?:Source|\u6765\u6e90|\u539f\u6587)\s*[:\uff1a]/i.test(source)) return false;
+        if (/^(?:Label|\u6807\u7b7e)\s*[:\uff1a]/i.test(value) && /^(?:Label|\u6807\u7b7e)\s*[:\uff1a]/i.test(source)) return false;
         return /^(?:\u7ffb\u8bd1|\u8bd1\u6587|\u7ffb\u8bd1\u7ed3\u679c|Translation|Translated text|Translated message|Output)\s*[:\uff1a]/i.test(value) || /^(?:以下是|这是).{0,8}(?:翻译|译文)\s*[:：]/.test(value) || /^(?:\u7f57\u9a6c\u97f3|Romaji|Romanization|\u62fc\u97f3|Pinyin|\u6807\u7b7e|Label|\u539f\u6587|Source|\u6ce8\u91ca|Note)\s*[:\uff1a]/i.test(value) || /^<\s*(?:translation|translatedText|translated_text|translatedMessage|targetMessage|target_message|answer|output|result|response)\b[^>]*>[\s\S]*<\/\s*(?:translation|translatedText|translated_text|translatedMessage|targetMessage|target_message|answer|output|result|response)\s*>$/i.test(value);
       }
       isShortSourcePromptLeakageShape(sourceText, translatedText, markerCount = 0) {
@@ -17438,15 +18379,25 @@ var require_output_guard = __commonJS({
         const signalCount = instructionSignals.reduce((count, pattern) => count + (pattern.test(output) ? 1 : 0), 0);
         return signalCount >= 3 || markerCount >= 4;
       }
-      hasSuspiciousChineseAutoTranslationOutput(text, targetLanguage) {
+      hasSuspiciousChineseAutoTranslationOutput(text, targetLanguage, sourceText = "") {
         if (this.plugin.getTargetLanguageScript(targetLanguage) !== "han") return false;
         const value = String(text || "").trim();
         if (!value) return false;
         if (/\uFFFD/.test(value)) return true;
-        const counts = this.plugin.countTextScripts(value);
+        const stripCode = (input) => typeof this.plugin.splitDiscordCodeSegments === "function" ? this.plugin.splitDiscordCodeSegments(String(input || "")).map((segment) => segment.code ? " " : segment.text).join("") : String(input || "").replace(/```[\s\S]*?```/g, " ").replace(/`[^`\n]+`/g, " ");
+        let checked = stripCode(value);
+        const sourcePlain = sourceText ? stripCode(sourceText) : "";
+        if (sourcePlain) {
+          const sourceCounts = this.plugin.countTextScripts(sourcePlain);
+          const sourceIsJapanese = Number(sourceCounts.kana || 0) >= 2 && Number(sourceCounts.kana || 0) / Math.max(1, Number(sourceCounts.total || 0)) > 0.15;
+          if (!sourceIsJapanese && Number(sourceCounts.kana || 0) > 0) {
+            checked = checked.replace(/[\u3040-\u30ff\u31f0-\u31ff]+/gu, (token) => sourcePlain.includes(token) ? " " : token);
+          }
+        }
+        const counts = this.plugin.countTextScripts(checked);
         if (counts.kana > 0) return true;
         if (counts.han < 2) return false;
-        const lettersOnly = value.replace(/[^\p{L}]/gu, "");
+        const lettersOnly = checked.replace(/[^\p{L}]/gu, "");
         if (lettersOnly.length > 0 && lettersOnly.length <= 8 && /[\u3040-\u30ff\u31f0-\u31ff]/u.test(lettersOnly)) return true;
         return false;
       }
@@ -17497,8 +18448,45 @@ var require_output_guard = __commonJS({
         if (sourceLetters > 16) return false;
         const target = this.plugin.normalizeLanguageName(targetLanguage);
         if (["英语", "English"].includes(target)) {
-          const normalized = value.toLocaleLowerCase().replace(/[^a-z0-9_'+-]+/g, " ").trim();
-          const common = /* @__PURE__ */ new Set(["ok", "okay", "yes", "no", "thanks", "thank you", "done", "sure", "nice", "good", "bad", "same"]);
+          const normalized = value.toLocaleLowerCase().replace(/[’]/g, "'").replace(/[^a-z0-9_'+-]+/g, " ").trim();
+          const common = /* @__PURE__ */ new Set([
+            "ok",
+            "okay",
+            "yes",
+            "no",
+            "thanks",
+            "thank you",
+            "done",
+            "sure",
+            "nice",
+            "good",
+            "bad",
+            "same",
+            "hi",
+            "hello",
+            "hey",
+            "morning",
+            "good morning",
+            "good afternoon",
+            "good evening",
+            "good night",
+            "no problem",
+            "see you",
+            "got it",
+            "on my way",
+            "well done",
+            "great job",
+            "good job",
+            "all good",
+            "sounds good",
+            "of course",
+            "my bad",
+            "welcome",
+            "you're welcome",
+            "bye",
+            "goodbye",
+            "take care"
+          ]);
           return common.has(normalized);
         }
         const targetScript = this.plugin.getTargetLanguageScript(targetLanguage);
@@ -17519,7 +18507,7 @@ var require_output_guard = __commonJS({
       stripProtectedTokensForPolishValidation(text) {
         const value = String(text || "");
         const plain = typeof this.plugin.splitDiscordCodeSegments === "function" ? this.plugin.splitDiscordCodeSegments(value).map((segment) => segment.code ? " " : segment.text).join("") : value.replace(/```[\s\S]*?```/g, " ").replace(/`[^`\n]+`/g, " ");
-        return plain.replace(/https?:\/\/[^\s<>"']+/gi, " ").replace(/<a?:[A-Za-z0-9_~.-]+:\d{15,}>/g, " ").replace(/<[@#][!&]?\d{15,}>/g, " ").replace(/<t:\d{1,12}(?::[tTdDfFR])?>/g, " ").replace(/:[A-Za-z0-9_~.-]{2,}:/g, " ").replace(/(?<![a-z0-9_@])@(?:everyone|here)(?![a-z0-9_])/gi, " ").trim();
+        return plain.replace(/(?:https?|steam|discord):\/\/[^\s<>"']+/gi, " ").replace(/\bwww\.[^\s<>"']+/gi, " ").replace(/<a?:[A-Za-z0-9_~.-]+:\d{15,}>/g, " ").replace(/<[@#][!&]?\d{15,}>/g, " ").replace(/<\/[^:<>\n]{1,100}:\d{15,25}>/g, " ").replace(/<t:-?\d{1,12}(?::[tTdDfFR])?>/g, " ").replace(/<id:[A-Za-z_-]+>/g, " ").replace(/:[A-Za-z0-9_~.-]{2,}:/g, " ").replace(/(?<![a-z0-9_@])@(?:everyone|here)(?![a-z0-9_])/gi, " ").trim();
       }
       // Checks whether a polished draft drifted away from the configured output language or Chinese script.
       getPolishOutputLanguageViolation(sourceText, outputText, targetLanguage = this.plugin.settings.polish?.targetLanguage, options = {}) {
@@ -17530,7 +18518,11 @@ var require_output_guard = __commonJS({
         const traditionalTarget = this.isTraditionalChineseTarget(targetLanguage);
         const simplifiedTarget = this.isSimplifiedChineseTarget(targetLanguage);
         if (traditionalTarget && this.hasLikelySimplifiedHan(checked)) return "script-mismatch";
-        if (simplifiedTarget && !options.allowDialectScriptMix && this.hasLikelyTraditionalHan(checked)) return "script-mismatch";
+        if (simplifiedTarget && !options.allowDialectScriptMix) {
+          const sourceTextPlain = String(sourceText || "");
+          const checkedWithoutPreservedSource = checked.replace(LIKELY_TRADITIONAL_HAN_GLOBAL_RE, (ch) => sourceTextPlain.includes(ch) ? "" : ch);
+          if (this.hasLikelyTraditionalHan(checkedWithoutPreservedSource)) return "script-mismatch";
+        }
         if (options.chineseScriptOnly) return "";
         const targetScript = this.plugin.getTargetLanguageScript(targetLanguage);
         if (targetScript === "unknown") return "";
@@ -18220,7 +19212,7 @@ ${hash}`;
         const snapshot = {
           provider,
           endpoint: String(config.endpoint || customDefaults?.endpoint || defaults.endpoint || "").trim(),
-          model: String(config.model || customDefaults?.model || defaults.model || "").trim(),
+          model: String(config.model || adapter?.defaultProfile?.model || PROVIDER_DEFAULTS[provider]?.model || defaults.model || "").trim(),
           sourceLanguage: String(config.sourceLanguage || defaults.sourceLanguage || "").trim(),
           targetLanguage: String(config.targetLanguage || defaults.targetLanguage || "").trim(),
           temperature: this.plugin.normalizeRequestNumber(config.temperature, defaults.temperature ?? 0.2, { min: 0, max: 2 }),
@@ -19088,9 +20080,14 @@ var require_deepseek = __commonJS({
       label: PROVIDER_DEFAULTS.deepseek.label,
       defaultProfile: PROVIDER_DEFAULTS.deepseek,
       applyBodyOptions(config, body) {
+        const model = String(body?.model || config?.model || "").trim();
+        const isReasoner = /(?:^|\/)(?:deepseek-reasoner|deepseek-r1)(?:[-_:]|$)/i.test(model);
         if (config?.enableThinking) {
           body.thinking = { type: "enabled" };
           delete body.temperature;
+        } else if (isReasoner) {
+          delete body.temperature;
+          delete body.thinking;
         } else {
           body.thinking = { type: "disabled" };
         }
@@ -19111,7 +20108,20 @@ var require_openai_compatible = __commonJS({
       id: "openaiCompatible",
       label: PROVIDER_DEFAULTS.openaiCompatible.label,
       defaultProfile: PROVIDER_DEFAULTS.openaiCompatible,
-      supportsModelDetection: true
+      supportsModelDetection: true,
+      applyBodyOptions(config, body) {
+        const model = String(body?.model || config?.model || "").trim();
+        if (/(?:^|\/)(?:o1|o3|o4|gpt-5)(?:[-_:]|$)/i.test(model)) {
+          if (body.max_tokens !== void 0 && body.max_completion_tokens === void 0) {
+            body.max_completion_tokens = body.max_tokens;
+            delete body.max_tokens;
+          }
+          if (body.temperature !== void 0 && body.temperature !== 1) {
+            delete body.temperature;
+          }
+        }
+        return body;
+      }
     });
     module2.exports = { openaiCompatibleAdapter };
   }
@@ -19749,6 +20759,9 @@ var require_local_model_health = __commonJS({
           if (this.plugin.localProviderHealthChecks.get(providerKey) === promise) {
             this.plugin.localProviderHealthChecks.delete(providerKey);
             this.plugin.localProviderHealthProbeStartedAt.delete(providerKey);
+            if (signal?.aborted && this.plugin.isLifecycleTokenCurrent(lifecycleToken) && this.plugin.isAutoTranslationProviderSnapshotCurrent(providerKey, requestOptions) && !this.plugin.isApiTestRunning?.("translation") && this.plugin.getApiStatus("translation").state === "testing") {
+              this.plugin.setApiRuntimeStatus("translation", "untested", this.plugin.t("apiStatusUntested"));
+            }
           }
         });
         this.plugin.localProviderHealthChecks.set(providerKey, promise);
@@ -19801,11 +20814,13 @@ var require_google_key_pool = __commonJS({
       },
       selectGoogleTranslateKey(charCount = 1, options = {}) {
         const now = Date.now();
+        const storedKeys = Array.isArray(this.plugin.settings?.googleTranslate?.keys) ? this.plugin.settings.googleTranslate.keys : [];
         const keys = this.plugin.getGoogleTranslateKeys();
         const needed = Math.max(1, Math.round(Number(charCount) || 1));
         const available = keys.find((key) => key.enabled !== false && (options.ignoreCooldown || Number(key.cooldownUntil || 0) <= now) && Number(key.usedChars || 0) + (options.ignoreReservations ? 0 : this.plugin.getGoogleTranslateReservedChars(key)) + needed <= Number(key.monthlyLimit || GOOGLE_TRANSLATE_DEFAULT_MONTHLY_LIMIT));
         if (available || options.persist === false) return available || null;
-        this.plugin.saveGoogleTranslateRuntimeState();
+        const monthRolledOver = keys.some((key, index) => storedKeys[index]?.monthKey && storedKeys[index].monthKey !== key.monthKey);
+        if (monthRolledOver) this.plugin.saveGoogleTranslateRuntimeState();
         return null;
       },
       getGoogleTranslateReservedChars(keyOrId) {
@@ -20029,7 +21044,9 @@ var require_google_key_pool = __commonJS({
       markGoogleTranslateKeyFailure(apiKey, error, options = {}) {
         const keyHash = this.plugin.getTextFingerprint(String(apiKey || "").trim());
         const type = this.plugin.getAutoTranslationFailureType(error);
-        const retryAfterMs = Math.max(Number(error?.retryAfterMs || 0) || 0, options.retryAfterMs || (type === "rate-limit" ? 6e4 : type === "auth" ? 30 * 60 * 1e3 : 15e3));
+        const maxCooldownMs = this.plugin.getGoogleTranslateQuotaRetryAfterMs();
+        const rawRetryAfterMs = Math.max(Number(error?.retryAfterMs || 0) || 0, options.retryAfterMs || (type === "rate-limit" ? 6e4 : type === "auth" ? 30 * 60 * 1e3 : 15e3));
+        const retryAfterMs = Math.min(maxCooldownMs, rawRetryAfterMs);
         const cooldownUntil = Date.now() + retryAfterMs;
         this.plugin.settings.googleTranslate.keys = this.plugin.getGoogleTranslateKeys().map((key) => {
           if (this.plugin.getTextFingerprint(key.apiKey) !== keyHash) return key;
@@ -20054,6 +21071,24 @@ var require_google_key_pool = __commonJS({
         if (options.source && (!language || language === AUTO_LANGUAGE_VALUE)) return "";
         const normalized = this.plugin.normalizeLanguageName(language);
         const legacyCodes = {
+          "汉语": "zh-CN",
+          "中文": "zh-CN",
+          "简体中文": "zh-CN",
+          "繁体中文": "zh-TW",
+          "繁體中文": "zh-TW",
+          "英语": "en",
+          "西班牙语": "es",
+          "法语": "fr",
+          "印地语": "hi",
+          "俄语": "ru",
+          "德语": "de",
+          "日语": "ja",
+          "阿拉伯语": "ar",
+          "越南语": "vi",
+          "朝鲜语": "ko",
+          "韩语": "ko",
+          "意大利语": "it",
+          // Legacy GBK-decoded config values migrated from early pre-release settings
           "姹夎": "zh-CN",
           "鑻辫": "en",
           "瑗跨彮鐗欒": "es",
@@ -20071,7 +21106,13 @@ var require_google_key_pool = __commonJS({
         const preset = LANGUAGE_PRESETS.find((item) => item.value === normalized || item.en.toLowerCase() === String(language || "").toLowerCase());
         if (preset?.code) return preset.code === "zh" ? "zh-CN" : preset.code;
         const value = String(language || "").trim();
-        if (/^[a-z]{2,3}(-[A-Za-z0-9]+)?$/.test(value)) return value;
+        const bcpMatch = value.match(/^([A-Za-z]{2,3})([-_][A-Za-z0-9]+)?$/);
+        if (bcpMatch) {
+          const primary = bcpMatch[1].toLowerCase();
+          const subtag = bcpMatch[2] ? bcpMatch[2].replace("_", "-") : "";
+          if (primary === "zh" && !subtag) return "zh-CN";
+          return `${primary}${subtag}`;
+        }
         const explicit = value.match(/[(,]\s*([a-z]{2,3}(?:-[A-Za-z0-9]+)?)\s*\)/);
         const embedded = explicit || value.match(/(?<![\p{L}\p{N}_-])([a-z]{2,3}(?:-[A-Za-z0-9]+)?)(?![\p{L}\p{N}_-])/u);
         if (embedded?.[1]) return embedded[1] === "zh" ? "zh-CN" : embedded[1];
@@ -20469,7 +21510,7 @@ var require_provider_codecs = __commonJS({
         if (!effectiveEndpoint) throw new Error(this.plugin.t("endpointMissing"));
         if (!effectiveModel) throw new Error(this.plugin.t("modelMissing"));
         const temperature = this.plugin.normalizeRequestNumber(effectiveConfig.temperature, defaultConfig.temperature ?? 0.2, { min: 0, max: 2 });
-        const maxTokens = this.plugin.normalizeRequestNumber(effectiveConfig.maxTokens, defaultConfig.maxTokens ?? 800, { min: 1, integer: true });
+        const maxTokens = this.plugin.normalizeRequestNumber(effectiveConfig.maxTokens, defaultConfig.maxTokens ?? (kind === "polish" ? 2e3 : 1200), { min: 1, integer: true });
         const systemPrompt = this.plugin.buildSystemPrompt(kind, effectiveConfig);
         const body = this.plugin.applyProviderBodyOptions(effectiveConfig, {
           model: effectiveModel,
@@ -20505,7 +21546,13 @@ var require_provider_codecs = __commonJS({
         if (!key) {
           if (!this.plugin.getGoogleTranslateKeys().length) throw this.plugin.createGoogleTranslateNoKeyError();
           const coolingReadyAt = this.plugin.getGoogleTranslateCoolingKeyReadyAt(charCount, { ignoreReservations: Boolean(options.ignoreReservations) });
-          throw coolingReadyAt ? this.plugin.createGoogleTranslateCooldownError({ until: coolingReadyAt, charCount }) : this.plugin.createGoogleTranslateQuotaError({ charCount });
+          if (coolingReadyAt) {
+            throw this.plugin.createGoogleTranslateCooldownError({ until: coolingReadyAt, charCount });
+          }
+          if (!options.ignoreReservations && this.plugin.peekGoogleTranslateAvailableKey(charCount, { ignoreReservations: true })) {
+            throw this.plugin.createGoogleTranslateCooldownError({ until: Date.now() + 2e3, charCount });
+          }
+          throw this.plugin.createGoogleTranslateQuotaError({ charCount });
         }
         const reservation = options.reserve ? this.plugin.reserveGoogleTranslateKey(key, charCount) : null;
         const body = {
@@ -20645,10 +21692,11 @@ var require_provider_codecs = __commonJS({
         const code = this.plugin.getGoogleLanguageCode(language, options);
         if (options.source && (!code || code === AUTO_LANGUAGE_VALUE)) return "";
         const upper = String(code || "").replace("_", "-").toUpperCase();
-        if (upper === "ZH-CN" || upper === "ZH-TW" || upper === "ZH-HANS" || upper === "ZH-HANT") {
+        if (upper === "ZH" || upper === "ZH-CN" || upper === "ZH-TW" || upper === "ZH-HANS" || upper === "ZH-HANT") {
           if (options.source) return "ZH";
           return upper === "ZH-TW" || upper === "ZH-HANT" ? "ZH-HANT" : "ZH-HANS";
         }
+        if (options.source) return upper.split("-")[0];
         if (upper === "EN") return "EN";
         if (upper === "PT") return "PT";
         return upper;
@@ -20657,12 +21705,13 @@ var require_provider_codecs = __commonJS({
         const code = this.plugin.getGoogleLanguageCode(language, options);
         if (options.source && (!code || code === AUTO_LANGUAGE_VALUE)) return "";
         const normalized = String(code || "").trim();
+        const lower = normalized.toLowerCase();
         const map = {
           "zh": "zh",
-          "zh-CN": "zh",
-          "zh-Hans": "zh",
-          "zh-TW": "cht",
-          "zh-Hant": "cht",
+          "zh-cn": "zh",
+          "zh-hans": "zh",
+          "zh-tw": "cht",
+          "zh-hant": "cht",
           "ja": "jp",
           "ko": "kor",
           "fr": "fra",
@@ -20677,7 +21726,7 @@ var require_provider_codecs = __commonJS({
           "sv": "swe",
           "vi": "vie"
         };
-        return map[normalized] || normalized;
+        return map[lower] || (/^[A-Za-z]{2,3}$/.test(normalized) ? lower : normalized);
       },
       md5HexFallback(text) {
         return md5HexFallback(text);
@@ -20879,7 +21928,7 @@ var require_provider_codecs = __commonJS({
           const text = part?.text ?? part?.content;
           return typeof text === "string" ? text : "";
         }).join("") : typeof content === "string" ? content : "";
-        return raw.replace(/<(think|thought|reasoning)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, "").replace(/<(think|thought|reasoning)\b[^>]*>[\s\S]*$/gi, "").trim();
+        return raw.replace(/<(think|thought|reasoning)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, "").replace(/^[\s\S]*?<\/(?:think|thought|reasoning)\s*>/i, "").replace(/<(think|thought|reasoning)\b[^>]*>[\s\S]*$/gi, "").trim();
       },
       parseApiJson(raw) {
         try {
@@ -20929,6 +21978,7 @@ var require_provider_layer = __commonJS({
       "targetLanguageCode",
       "temperature",
       "maxTokens",
+      "enableThinking",
       "prompt",
       "promptPolicyVersion",
       "localCompactPrompt",
@@ -21401,7 +22451,7 @@ var require_provider_layer = __commonJS({
               deeplPlan: fallbackConfig.deeplPlan,
               appId: fallbackConfig.appId,
               secretKey: fallbackConfig.secretKey,
-              enableThinking: fallbackConfig.enableThinking
+              enableThinking: sanitizedOverrides.enableThinking !== void 0 ? Boolean(sanitizedOverrides.enableThinking) : fallbackConfig.enableThinking
             };
             for (const field of this.registry.getCredentialFields(provider)) {
               fallbackOverrides[field] = fallbackConfig[field] ?? "";
@@ -21575,7 +22625,7 @@ var require_provider_layer = __commonJS({
             inputLength: String(input || "").length,
             ...!joining && {
               promptLength: String(body?.messages?.[0]?.content || "").length,
-              maxTokens: Number(body?.max_tokens || 0),
+              maxTokens: Number(body?.max_tokens ?? body?.max_completion_tokens ?? 0),
               longTextChunk: Boolean(options.longTextChunk),
               longTextSourceLength: Number(options.longTextSourceLength || 0) || 0,
               timeoutMs
@@ -21634,7 +22684,7 @@ var require_provider_layer = __commonJS({
             inputHash: this.plugin.getStrongTextFingerprint(input),
             inputLength: String(input || "").length,
             promptLength: String(body?.messages?.[0]?.content || "").length,
-            maxTokens: Number(body?.max_tokens || 0),
+            maxTokens: Number(body?.max_tokens ?? body?.max_completion_tokens ?? 0),
             type: this.plugin.getAutoTranslationFailureType(error),
             status: Number(error?.status || 0),
             retryAfterMs: Number(error?.retryAfterMs || 0),
@@ -21696,12 +22746,16 @@ var require_provider_layer = __commonJS({
         }
       }
       annotateModelRequestError(error, kind, endpoint, config, options = {}) {
-        if (!error || kind !== "translation") return error;
+        if (!error) return error;
+        if (typeof error === "object" && kind && !error.taskKind) error.taskKind = kind;
+        if (kind !== "translation" && kind !== "polish") return error;
         if (this.isLocalProviderUnavailableError(error, endpoint, config, options)) {
           error.localProviderUnavailable = true;
-          error.retryAfterMs = Math.max(Number(error.retryAfterMs || 0), LOCAL_PROVIDER_UNAVAILABLE_RETRY_MS);
-          error.providerKey = error.providerKey || this.getAutoTranslationProviderKey({ configOverrides: options.configOverrides });
           error.localProviderEndpoint = error.localProviderEndpoint || String(endpoint || config?.endpoint || "");
+          if (kind === "translation") {
+            error.retryAfterMs = Math.max(Number(error.retryAfterMs || 0), LOCAL_PROVIDER_UNAVAILABLE_RETRY_MS);
+            error.providerKey = error.providerKey || this.getAutoTranslationProviderKey({ configOverrides: options.configOverrides });
+          }
         }
         return error;
       }
@@ -22023,7 +23077,7 @@ var require_provider_layer = __commonJS({
           request?.responseParser || "",
           body?.model,
           body?.temperature ?? "",
-          body?.max_tokens ?? "",
+          body?.max_tokens ?? body?.max_completion_tokens ?? "",
           body?.thinking?.type ?? "",
           String(targetLanguage ?? ""),
           String(sourceLanguage ?? ""),
@@ -22146,8 +23200,8 @@ var require_provider_layer = __commonJS({
             });
             return completeSuccess();
           }
+          this.annotateModelRequestError(error, kind, endpoint || testConfig.endpoint, testConfig, { configOverrides: testConfig });
           if (kind === "translation") {
-            this.annotateModelRequestError(error, kind, endpoint || testConfig.endpoint, testConfig, { configOverrides: testConfig });
             if (error?.googleTranslateApiKey) this.plugin.markGoogleTranslateKeyFailure(error.googleTranslateApiKey, error);
             if (error.localProviderUnavailable) this.plugin.markAutoTranslationProviderFailure(this.plugin.getAutoTranslationOptions(), error);
           }
@@ -22162,6 +23216,9 @@ var require_provider_layer = __commonJS({
             runs.set(kind, { sequence });
             this.runningApiTests.delete(kind);
             if (this.ctx.isLifecycleTokenCurrent(lifecycleToken)) {
+              if (this.getApiStatus(kind).state === "testing") {
+                this.resetApiStatus(kind, { save: "debounce" });
+              }
               this.plugin.setButtonBusy(button, false, this.plugin.t("apiTest"));
               this.plugin.requestLauncherStatusUpdate?.();
             }
@@ -22198,13 +23255,14 @@ var require_provider_layer = __commonJS({
         const model = this.getEffectiveChatCompletionModel(kind, safeConfig, defaultConfig);
         if (!endpoint) throw new Error(this.plugin.t("endpointMissing"));
         if (this.plugin.isChatCompletionProvider(safeConfig) && !model) throw new Error(this.plugin.t("modelMissing"));
-        const body = this.applyProviderBodyOptions(safeConfig, {
+        const isAlwaysThinkingModel = /(?:reasoner|\br1\b|qwq|qwen3|(?:^|\/)(?:o[134]|gpt-5)(?:[-_:]|$)|thinking)/i.test(String(model || ""));
+        const body = this.applyProviderBodyOptions({ ...safeConfig, enableThinking: false }, {
           model,
           messages: [
             { role: "user", content: "Reply with OK only." }
           ],
           temperature: 0,
-          max_tokens: 32,
+          max_tokens: isAlwaysThinkingModel ? 512 : 32,
           stream: false
         });
         return {
@@ -22405,7 +23463,7 @@ var require_panel_theme = __commonJS({
         }
         return "dark";
       }
-      // Marks one window root with the palette to use. Returns the theme applied.
+      // Marks one window root with the palette and active UI locale direction to use. Returns the theme applied.
       apply(node, theme = this.resolve()) {
         if (!node) return theme;
         if (node.dataset) {
@@ -22413,7 +23471,20 @@ var require_panel_theme = __commonJS({
         } else if (typeof node.setAttribute === "function" && node.getAttribute?.(PANEL_THEME_ATTRIBUTE) !== theme) {
           node.setAttribute(PANEL_THEME_ATTRIBUTE, theme);
         }
+        this.applyLocaleDirection(node);
         return theme;
+      }
+      applyLocaleDirection(node) {
+        if (!node) return;
+        const locale = typeof this.plugin?.getLocale === "function" ? this.plugin.getLocale() : "zh-CN";
+        const dir = typeof this.plugin?.isRtlLocale === "function" && this.plugin.isRtlLocale(locale) ? "rtl" : "ltr";
+        if (typeof node.setAttribute === "function") {
+          if (node.getAttribute?.("dir") !== dir) node.setAttribute("dir", dir);
+          if (node.getAttribute?.("lang") !== locale) node.setAttribute("lang", locale);
+        } else {
+          if ("dir" in node && node.dir !== dir) node.dir = dir;
+          if ("lang" in node && node.lang !== locale) node.lang = locale;
+        }
       }
       // The palette that reads on the first opaque background behind node (Discord's modal around dialog content):
       // { theme: "light" | "dark", readable: body text reaches 4.5:1 }, or null when no background can be read.
@@ -22558,6 +23629,4816 @@ var require_panel_theme = __commonJS({
   }
 });
 
+// src/i18n/zh-CN.js
+var require_zh_CN = __commonJS({
+  "src/i18n/zh-CN.js"(exports2, module2) {
+    "use strict";
+    module2.exports = {
+      "settingsTitle": "Discord AI 翻译助手",
+      "settingsNote": "润色和翻译分别设置；API Key 只保存在本机。",
+      "generalTitle": "基础设置",
+      "interfaceLanguage": "界面语言",
+      "interfaceLanguageDesc": "只影响插件界面文案，不影响润色或翻译的目标语言。",
+      "languageZh": "中文",
+      "languageEn": "English",
+      "polishTitle": "输入润色",
+      "polishDescription": "读取当前输入框草稿，根据提示词改写后回填输入框。",
+      "translationTitle": "频道消息翻译",
+      "translationDescription": "将频道里的已有消息翻译到指定目标语言。",
+      "enabled": "启用",
+      "enabledDesc": "关闭后不显示这项功能的按钮，也不发送请求。",
+      "provider": "服务商",
+      "providerDesc": "大语言模型可与润色共用配置；专业翻译引擎仅支持翻译。",
+      "providerPolishDesc": "润色需按提示词改写，仅支持大语言模型；可直接选用已保存配置。",
+      "providerGroupAi": "大语言模型（支持翻译 + 润色）",
+      "providerGroupMachine": "专业翻译引擎（仅支持翻译）",
+      "savedServiceConfigs": "已保存配置",
+      "savedServiceConfigsDesc": "测试通过后自动保存，翻译和润色都能直接选用。",
+      "savedServiceConfigsPlaceholder": "选择已保存配置（共 {count} 个）",
+      "savedServiceConfigsEmpty": "暂无已保存配置（测试通过后自动保存）",
+      "savedServiceConfigApplied": "已应用配置：{name}",
+      "savedServiceConfigDeleted": "已删除该保存配置。",
+      "savedServiceConfigDelete": "删除",
+      "syncConfigToPolish": "同步到润色",
+      "syncConfigToTranslation": "同步到翻译",
+      "syncConfigUnsupportedPolish": "专业翻译引擎仅支持翻译，无法同步到输入润色。",
+      "syncConfigMissing": "请先填完当前服务商的必要配置。",
+      "syncConfigDonePolish": "已同步配置到输入润色。",
+      "syncConfigDoneTranslation": "已同步配置到频道消息翻译。",
+      "providerOpenAI": "OpenAI 兼容",
+      "providerSakuraLocal": "Sakura 本地",
+      "providerGoogleCloud": "Google Cloud 翻译",
+      "googleTranslateTitle": "Google Cloud 翻译 Key 池",
+      "googleTranslateKeys": "Google API Key 池",
+      "googleTranslateKeysDesc": "每行一个 Key，也可写成 名称|Key|月上限。",
+      "googleTranslateDefaultLimit": "Google 单 Key 默认月上限",
+      "googleTranslateDefaultLimitDesc": "Key 行没写上限时使用；建议 420000-450000，留出余量。",
+      "googleTranslateAllowPrefetch": "允许预翻译使用 Google",
+      "googleTranslateAllowPrefetchDesc": "关闭后只翻译屏幕上的消息，预翻译不消耗 Google 额度。",
+      "googleTranslateStats": "Google 用量",
+      "googleTranslateStatsDesc": "本月 {used}/{limit} 字符；可用 Key {available}/{total}；当前月份 {month}。",
+      "googleTranslateStatsCooldown": "冷却中的 Key {count} 个，最早 {time} 恢复。",
+      "googleTranslateResetStats": "重置本月 Google 统计",
+      "googleTranslateResetConfirm": "只清零本机记录的本月字符数，Google Cloud 后台的实际用量不变。",
+      "googleTranslateStatsReset": "Google 本月统计已重置。",
+      "googleTranslateNoKey": "Google Cloud 翻译没有可用 API Key。",
+      "googleTranslateQuotaExceeded": "Google Cloud 翻译 Key 池本月额度已用完。",
+      "googleTranslateKeysCooling": "Google Cloud 翻译的 Key 都在冷却中，{time} 恢复。",
+      "googleTranslateKeyError": "Key「{label}」：{error}",
+      "apiKey": "API Key",
+      "apiKeyDesc": "只保存在本机，不会写进消息；Sakura 本地可以留空。",
+      "apiKeyDeepSeekDesc": "DeepSeek 开放平台的 API Key，只保存在本机。",
+      "apiKeyOpenAIDesc": "服务给你的 API Key，只保存在本机，不会写进消息。",
+      "apiKeyLocalDesc": "可选，本机服务通常不需要。",
+      "apiKeyMicrosoftDesc": "Azure Translator 资源的密钥，只保存在本机。",
+      "apiKeyDeepLDesc": "DeepL API 的认证密钥，只保存在本机。",
+      "apiKeyOptionalPlaceholder": "可留空",
+      "apiTest": "测试",
+      "apiTestBusy": "检测中",
+      "apiStatusUntested": "未检测",
+      "apiStatusTesting": "检测中",
+      "apiStatusSuccess": "连接正常",
+      "apiStatusFailed": "连接失败",
+      "apiTestSuccess": "{name} API 连接正常。",
+      "apiTestSuccessSaved": "{name} API 连接正常，已保存为可用配置。",
+      "apiTestSuccessSynced": "{name} API 连接正常，已保存配置并同步到{target}。",
+      "apiTestFailed": "{name} API 连接失败：{error}",
+      "apiTestJustNow": "刚刚",
+      "apiTestMinutesAgo": "{count} 分钟前",
+      "apiTestHoursAgo": "{count} 小时前",
+      "apiTestNotYet": "还没测试",
+      "thinkingMode": "DeepSeek 思考模式",
+      "thinkingModeDesc": "模型先推理再回答，可能更准，但更慢、用量更多。",
+      "endpoint": "接口地址",
+      "endpointDesc": "服务的 API 地址，一般保持默认即可。",
+      "endpointDeepSeekDesc": "DeepSeek 的接口地址，一般保持默认即可。",
+      "endpointOpenAIDesc": "可填 /v1 基础地址或完整 chat/completions 地址，远程需 https。",
+      "endpointLocalDesc": "本机服务的地址，只有本机地址可以用 http。",
+      "endpointMicrosoftDesc": "Azure Translator 的接口地址，一般保持默认即可。",
+      "endpointBaiduDesc": "百度翻译的接口地址，一般保持默认即可。",
+      "deepseekPreset": "DeepSeek V4 预设",
+      "deepseekPresetDesc": "在 DeepSeek V4 Flash 和 Pro 之间快速切换。",
+      "customModel": "自定义（填写下方模型名）",
+      "model": "模型",
+      "modelDesc": "直接填写任意模型名，自动记住上次使用的模型。",
+      "modelOpenAIDesc": "服务提供的模型名，可点“检测模型”列出。",
+      "modelLocalDesc": "local-model 表示使用服务端已加载的模型。",
+      "modelLocalLoadedDesc": "local-model 使用服务端已加载的模型，现在是 {model}。",
+      "modelDetect": "检测模型",
+      "modelDetectBusy": "检测中",
+      "modelDetectFound": "检测到 {count} 个模型，可在列表中选择。",
+      "modelDetectFoundLoaded": "检测到 {count} 个模型，已加载：{model}。",
+      "modelDetectNone": "服务端没有列出模型。",
+      "modelDetectFailed": "检测失败：{error}",
+      "modelDetectUnsupported": "这个服务不支持检测模型。",
+      "modelDetectConfirmOrigin": "确认 API Key 的使用地址",
+      "modelDetectConfirmOriginDesc": "允许将当前 API Key 发送到 {origin}，并将密钥绑定到此来源？",
+      "apiKeyOriginMismatch": "当前 API Key 绑定到其他来源。请为此地址更换密钥，或点击「检测模型」确认当前来源。",
+      "modelPicker": "可选的模型",
+      "modelPickerOther": "其他（填写上方的模型名）",
+      "modelPickerServerLoaded": "使用服务端已加载的模型（local-model）",
+      "modelPickerDetected": "服务端列出的模型",
+      "modelPickerPresets": "常用模型",
+      "modelPickerLoadedTag": "{model}（已加载）",
+      "outputLanguage": "输出语言",
+      "outputLanguageDesc": "润色结果使用的语言。",
+      "inputLanguage": "输入语言",
+      "inputLanguageDesc": "草稿原来的语言；一般保持自动检测，识别错了再指定。",
+      "messageLanguage": "原文语言",
+      "messageLanguageDesc": "频道消息原来的语言；一般保持自动检测，识别错了再指定。",
+      "autoDetectLanguage": "自动检测",
+      "targetLanguage": "目标语言",
+      "targetLanguageDesc": "频道消息翻译成哪种语言。",
+      "languagePreset": "常用语言",
+      "customLanguage": "自定义语言",
+      "customLanguagePlaceholder": "例如：繁体中文、韩语、Brazilian Portuguese",
+      "customLanguageDesc": "自定义语言名会原样交给模型。",
+      "temperature": "创造性",
+      "temperatureDesc": "越低越稳定；翻译建议 0.1-⁠0.3，润色建议 0.3-⁠0.7。",
+      "maxTokens": "最大输出长度",
+      "maxTokensDesc": "单次回复的长度上限；长消息被截断时调高。",
+      "maxTokensPolishDesc": "单次润色回复上限；长草稿或开启思考时调高。",
+      "afterPolishing": "润色后动作",
+      "afterPolishingDesc": "润色结果写入输入框后，是否再询问发送。",
+      "afterReplace": "覆盖输入框",
+      "afterDirectReplace": "覆盖输入框",
+      "afterConfirmSend": "发送前询问",
+      "repolishSource": "再次润色输入源",
+      "repolishSourceDesc": "再次润色时，基于最初草稿还是上一次的结果。",
+      "repolishSourceOriginal": "使用原文",
+      "repolishSourceLastResult": "使用上一次润色结果",
+      "restoreOriginal": "还原原文",
+      "restoreOriginalChanged": "草稿已有改动，无法还原原文。",
+      "polishResultTitle": "润色结果",
+      "polishResultCopy": "复制",
+      "polishResultCopied": "已复制",
+      "polishResultReplace": "写入输入框",
+      "polishResultApplyFailed": "没能写入输入框，请点“复制”后手动粘贴。",
+      "polishResultClose": "关闭",
+      "prompt": "提示词",
+      "promptDesc": "告诉模型怎么润色或翻译，可以用中文写。",
+      "promptUsingTemplate": "正在使用模板：{code} · {name}",
+      "promptTemplateNameNaturalChat": "自然聊天润色",
+      "promptTemplateNamePolite": "礼貌清晰",
+      "promptTemplateNameShort": "简短直接",
+      "promptTemplateNameNativeCasual": "地道口语（去翻译腔）",
+      "promptTemplateNameTechBug": "技术 / Bug 反馈",
+      "promptTemplateNameGamingChat": "游戏 / 开黑社区",
+      "promptTemplateNameTactful": "高情商 / 委婉沟通",
+      "promptTemplateNameFormalNotice": "正式 / 公告与合作",
+      "promptTemplateNameDialectCantoneseGuangfu": "广府白话（两广日常口语）",
+      "promptTemplateNameDialectCantoneseHk": "港式粤语（地道港味）",
+      "promptTemplateNameDialectHakka": "客家话（客话口语）",
+      "promptTemplateNameDialectChaoshan": "潮汕话（胶己人风味）",
+      "promptTemplateNameDialectGuangxi": "广西老表（南普风味）",
+      "promptTemplateNameDialectMinnan": "闽南话（泉漳厦腔）",
+      "promptTemplateNameDialectTaiwan": "台湾腔（台式口语）",
+      "promptTemplateNameDialectSichuan": "川渝话（巴适摆龙门阵）",
+      "promptTemplateNameDialectYunnan": "云南话（滇味口语）",
+      "promptTemplateNameDialectGuizhou": "贵州话（黔味西南话）",
+      "promptTemplateNameDialectDongbei": "东北话（豪爽唠嗑）",
+      "promptTemplateNameDialectBeijing": "京味儿（地道北京话）",
+      "promptTemplateNameDialectTianjin": "天津话（哏儿都相声味）",
+      "promptTemplateNameDialectShaanxi": "陕西话（关中老陕）",
+      "promptTemplateNameDialectHenan": "河南话（中州口语）",
+      "promptTemplateNameDialectShandong": "山东话（齐鲁胶东味）",
+      "promptTemplateNameDialectXinjiang": "新疆话（疆味普通话）",
+      "promptTemplateNameDialectShanghai": "上海话（沪语腔）",
+      "promptTemplateNameDialectJiangzhe": "江浙软语（苏杭吴语味）",
+      "promptTemplateNameDialectNanjing": "南京话（蓝鲸腔）",
+      "promptTemplateNameDialectWuhan": "武汉话（汉味直爽）",
+      "promptTemplateNameDialectHunan": "湖南话（湘味霸蛮）",
+      "promptTemplateCategoryLabel": "预设分类",
+      "promptTemplateCategoryGeneral": "一般",
+      "promptTemplateCategoryDialect": "方言",
+      "promptTemplateCategoryPersona": "大能",
+      "promptTemplateRegionSouthChina": "两广 · 闽台",
+      "promptTemplateRegionSouthwest": "西南",
+      "promptTemplateRegionNorth": "北方",
+      "promptTemplateRegionEastCentral": "华东 · 华中",
+      "promptTemplateRegionCustom": "自定义方言",
+      "promptTemplateNamePersonaQinShihuang": "秦始皇 · 嬴政（千古一帝诏令）",
+      "promptTemplateNamePersonaHanWudi": "汉武帝 · 刘彻（大汉雄风诏书）",
+      "promptTemplateNamePersonaZhuYuanzhang": "朱元璋 · 洪武大帝（大明大白话圣旨）",
+      "promptTemplateNamePersonaChiangKaiShek": "蒋介石 · 委员长（民国电报微操）",
+      "promptTemplateNamePersonaCaoCao": "曹操 · 魏武帝（枭雄豪迈坦荡）",
+      "promptTemplateNamePersonaLiShimin": "唐太宗 · 李世民（贞观明君风度）",
+      "promptTemplateNamePersonaYongzheng": "雍正 · 四爷（毒舌朱批体）",
+      "promptTemplateNamePersonaZhugeLiang": "诸葛亮 · 武侯（出师表恳切风）",
+      "promptTemplateNamePersonaSimaYi": "司马懿 · 冢虎（隐忍老谋深算）",
+      "promptTemplateNamePersonaSunTzu": "孙子 · 孙武（兵法冷静箴言）",
+      "promptTemplateNamePersonaXiangYu": "项羽 · 西楚霸王（悲壮狂傲气魄）",
+      "promptTemplateNamePersonaLuXun": "鲁迅 · 周树人（犀利冷幽默杂文）",
+      "promptTemplateNamePersonaLinDaiyu": "林黛玉 · 潇湘妃子（傲娇柔中带刺）",
+      "promptTemplateNamePersonaWangYangming": "王阳明 · 阳明先生（知行合一心学）",
+      "promptTemplateNamePersonaLiBai": "李白 · 诗仙（豪放飘逸诗意）",
+      "promptTemplateNamePersonaSuShi": "苏轼 · 东坡居士（豁达自嘲烟火气）",
+      "promptTemplateNamePersonaConfucius": "孔子 · 圣人（论语温润格言）",
+      "promptTemplateNamePersonaZhuangzi": "庄子 · 逍遥游（奇谲佛系寓言）",
+      "promptTemplateNamePersonaEileenChang": "张爱玲（冷艳民国都市金句）",
+      "promptTemplateNamePersonaQianZhongshu": "钱钟书（围城毒舌妙喻）",
+      "promptTemplateNamePersonaWangXiaobo": "王小波（黑色幽默反讽）",
+      "promptTemplateNamePersonaGuoDegang": "郭德纲（德云社单口相声）",
+      "promptTemplateNamePersonaShakespeare": "莎士比亚（戏剧咏叹独白）",
+      "promptTemplateNamePersonaTrump": "特朗普 · 懂王（美式夸张感叹）",
+      "promptTemplateNamePersonaNietzsche": "尼采（深渊超人警句）",
+      "promptTemplateNamePersonaMarx": "马克思（辩证批判理论风）",
+      "promptTemplateNamePersonaNapoleon": "拿破仑（铁血统帅战报）",
+      "promptTemplateNamePersonaChurchill": "丘吉尔（英式铁血演说与冷幽默）",
+      "promptTemplateNamePersonaMusk": "马斯克（第一性原理极客短句）",
+      "promptTemplatePersonaGroupMonarchs": "帝王将相",
+      "promptTemplatePersonaGroupStrategists": "谋圣兵家",
+      "promptTemplatePersonaGroupLiterati": "文豪名士",
+      "promptTemplatePersonaGroupGlobal": "海外大能",
+      "promptTemplatePersonaGroupCustom": "自定义大能",
+      "promptTemplateNameNatural": "自然翻译",
+      "promptTemplateNameLiteral": "准确直译",
+      "promptTemplateNameSlangCasual": "社区梗与口语（接地气）",
+      "promptTemplateNameTechDev": "技术 / AI / 开发频道",
+      "promptTemplateNameGamingAcg": "游戏 / 二次元社区",
+      "promptTemplateNameFormalChangelog": "官方公告 / 更新日志",
+      "promptTemplates": "提示词模板",
+      "promptTemplatesDesc": "选中模板只预览；点“使用这个模板”才会替换提示词。",
+      "promptSearch": "搜索模板名称或编号",
+      "promptTemplateSelect": "选择模板",
+      "promptTemplateCustom": "当前提示词未保存为模板",
+      "promptTemplateEdited": "基于 {code} · {name}，修改尚未存入模板",
+      "promptPreview": "模板预览",
+      "promptPreviewActive": "正在使用",
+      "promptApply": "使用这个模板",
+      "promptSave": "保存为模板",
+      "promptUpdate": "更新当前模板",
+      "promptUpdateTitle": "用编辑后的提示词覆盖 {code} · {name}",
+      "promptDelete": "删除模板",
+      "promptRestorePresets": "补充内置预设",
+      "promptPresetsRestored": "已补充 {count} 个内置模板。",
+      "promptPresetsComplete": "已包含全部内置模板。",
+      "promptCopy": "复制提示词",
+      "promptCopied": "提示词已复制。",
+      "copiedToClipboard": "已复制。",
+      "promptCopyFailed": "复制失败：{error}",
+      "clipboardUnavailable": "无法访问剪贴板，请手动选中文字复制。",
+      "promptNamePlaceholder": "给这个模板起个名字",
+      "promptSaveNameLabel": "新模板名称",
+      "promptNameRequired": "请先填写模板名称。",
+      "promptSaved": "模板已保存：{code} · {name}",
+      "promptUpdated": "模板已更新：{code} · {name}",
+      "promptDeleted": "模板已删除。",
+      "promptApplied": "已使用模板：{code} · {name}",
+      "promptApplyUnsavedTitle": "替换当前提示词？",
+      "promptApplyUnsavedConfirm": "当前提示词有未保存的修改，使用 {code} · {name} 后会被替换。",
+      "promptDeleteConfirm": "删除这个提示词模板？",
+      "promptDeleteActiveNote": "这是正在使用的模板，删除后提示词会换成 {code} · {name}。",
+      "promptNoTemplate": "没有可用模板。",
+      "uiTitle": "界面",
+      "showPolishButton": "在输入框附近显示润色按钮",
+      "showPolishButtonDesc": "在 Discord 输入框旁添加“润色”快捷按钮。",
+      "publicBilingualInputButton": "在输入框附近显示公开双语按钮",
+      "publicBilingualInputButtonDesc": "把草稿写成“译文 + 隐藏原文”，由你检查后发送。",
+      "publicBilingualUseInitialOriginal": "双语隐藏原文使用最初草稿",
+      "publicBilingualUseInitialOriginalDesc": "先润色再做双语时，隐藏原文保留润色前的草稿。",
+      "publicBilingualAfterPolish": "润色后自动生成公开双语",
+      "publicBilingualAfterPolishDesc": "点“润色”后接着把结果写成公开双语，不会自动发送。",
+      "publicBilingualPolishBeforeTranslate": "双语前自动润色",
+      "publicBilingualPolishBeforeTranslateDesc": "点“双语”时先润色草稿，再翻译润色结果。",
+      "showMessageButtons": "在消息旁显示翻译按钮",
+      "showMessageButtonsDesc": "在频道消息旁添加“翻译”按钮。",
+      "messageButtonVisibility": "翻译按钮显示方式",
+      "messageButtonVisibilityDesc": "一直显示消息旁的翻译按钮，或只在悬停时显示。",
+      "messageButtonVisibilityAlways": "一直显示",
+      "messageButtonVisibilityHover": "悬停时显示",
+      "messageButtonMode": "消息旁的翻译按钮",
+      "messageButtonModeDesc": "在每条消息旁显示“翻译”按钮的方式。",
+      "messageButtonModeHover": "悬停时显示",
+      "messageButtonModeAlways": "一直显示",
+      "messageButtonModeOff": "不显示",
+      "autoTranslateMessages": "自动翻译可见外语消息",
+      "autoTranslateMessagesDesc": "自动翻译屏幕上不是目标语言的消息。",
+      "autoTranslatePrefetch": "预翻译附近消息",
+      "autoTranslatePrefetchDesc": "空闲时提前翻译屏幕上下的消息，并发数需至少为 2。",
+      "autoTranslatePrefetchRange": "预翻译范围",
+      "autoTranslatePrefetchRangeDesc": "屏幕上方和下方各提前翻译多少条消息。",
+      "autoTranslateConcurrency": "自动翻译并发数",
+      "autoTranslateConcurrencyDesc": "同时进行的翻译请求数，默认 {default}，范围 {min}-{max}。",
+      "autoTranslateStrictRetry": "译文语言不对时严格重试",
+      "autoTranslateStrictRetryDesc": "先重试失败的部分，再逐条严格翻译，仍失败才显示重试按钮。",
+      "showAutoTranslateWarnings": "失败时在消息下提示",
+      "showAutoTranslateWarningsDesc": "超时、网络波动等一般失败也会提示；需要你处理的错误总会显示。",
+      "showAutoTranslateToasts": "自动翻译失败时弹出提示",
+      "showAutoTranslateToastsDesc": "需要你处理的问题（如 Key 无效）总会提示一次。",
+      "diagnosticLogs": "诊断日志",
+      "diagnosticLogsDesc": "记录自动翻译的请求、缓存和失败原因，最多 500 条，可导出排查。",
+      "diagnosticLogsStats": "日志 {entries} 条，已压缩 {compressed} 条重复事件。",
+      "diagnosticSummary": "诊断摘要",
+      "diagnosticSummaryEmpty": "开启诊断并复现问题后，这里会显示诊断摘要。",
+      "diagnosticSummaryEvents": "共 {events} 个事件，按状态、原因和服务商汇总，最近一次 {latest}。",
+      "diagnosticSummaryStates": "状态",
+      "diagnosticSummaryReasons": "原因",
+      "diagnosticSummaryFlows": "流程",
+      "diagnosticSummaryQueues": "队列",
+      "diagnosticSummaryProviders": "服务商",
+      "diagnosticSummaryFailures": "失败",
+      "diagnosticSummaryFailureLayers": "失败环节",
+      "diagnosticSummaryFlowStages": "流程阶段",
+      "clearDiagnosticLogs": "清空日志",
+      "clearDiagnosticLogsConfirm": "所有诊断日志都会删除；需要的话请先导出。",
+      "clearDiagnosticLogsDesc": "删除全部诊断日志；需要的话请先导出。",
+      "exportDiagnosticLogs": "导出日志",
+      "copyDiagnosticLogs": "复制日志",
+      "exportDiagnosticJson": "导出 JSON",
+      "exportDiagnosticTxt": "导出 TXT",
+      "diagnosticLogsCleared": "诊断日志已清空。",
+      "diagnosticLogsCopied": "诊断日志已复制。",
+      "diagnosticLogsEmpty": "暂无诊断日志。",
+      "diagnosticLogsExported": "诊断日志已导出。",
+      "settingsSnapshot": "设置快照",
+      "settingsSnapshotDesc": "下载当前设置（JSON），API Key 等已隐藏，可放心发给别人排查。",
+      "exportSettingsSnapshot": "下载设置",
+      "settingsSnapshotExported": "设置快照已下载，密钥已隐藏。",
+      "settingsSnapshotCopied": "设置快照已复制，密钥已隐藏。",
+      "translationCacheTtl": "缓存时间",
+      "translationCacheTtlDesc": "重启 Discord 后仍可用，过期后重新翻译。",
+      "translationCacheMaxEntries": "最多缓存消息数",
+      "translationCacheMaxEntriesDesc": "超出后先删除最久没用的译文，最多 15000 条。",
+      "translationCacheStats": "缓存命中统计",
+      "translationCacheStatsDesc": "本次会话命中 {hits} 次，未命中 {misses} 次；内存 {memory} 条消息，已保存 {persistent} 条消息。",
+      "clearTranslationCacheStats": "清空统计",
+      "clearTranslationCache": "清空翻译缓存",
+      "clearTranslationCacheConfirm": "所有已保存的译文都会删除，之后相同内容需要重新翻译。",
+      "clearTranslationCacheDesc": "删除所有已保存的译文，相同内容以后要重新翻译。",
+      "translationCacheStatsCleared": "缓存命中统计已清空，已保存译文未删除。",
+      "translationCacheCleared": "翻译缓存已清空。",
+      "cacheTtl3h": "3 小时",
+      "cacheTtl6h": "6 小时",
+      "cacheTtl12h": "12 小时",
+      "cacheTtl1d": "1 天",
+      "cacheTtl2d": "2 天",
+      "cacheTtl7d": "7 天",
+      "translationPosition": "译文位置",
+      "translationPositionDesc": "译文显示在原消息上方还是下方。",
+      "translationBeforeOriginal": "译文在前，原文在后",
+      "translationAfterOriginal": "原文在前，译文在后",
+      "translationPositionAbove": "在原文上方",
+      "translationPositionBelow": "在原文下方",
+      "maskTranslations": "默认遮蔽译文",
+      "maskTranslationsDesc": "译文先显示为灰条，点击或按 Enter 再展开。",
+      "translationStyle": "译文样式",
+      "translationStyleDesc": "三种样式都跟随 Discord 主题颜色。",
+      "translationStyleTint": "淡底色",
+      "translationStyleMuted": "弱化文字",
+      "translationStyleTag": "带“译”标记",
+      "translationTextScale": "译文字号",
+      "translationTextScaleDesc": "相对聊天正文的大小。",
+      "panelTheme": "窗口主题",
+      "panelThemeDesc": "设置窗口、快捷面板和菜单的配色；确认对话框跟随 Discord。",
+      "panelThemeAuto": "跟随 Discord",
+      "panelThemeLight": "浅色",
+      "panelThemeDark": "深色",
+      "translationTag": "译",
+      "hideOriginalAfterTranslation": "翻译后遮挡原文",
+      "hideOriginalAfterTranslationDesc": "原文变成灰条，悬停或聚焦时显示，只影响你自己。",
+      "showContextMenu": "在消息右键菜单显示翻译入口",
+      "showContextMenuDesc": "右键消息时显示“翻译”菜单项。",
+      "enableHotkey": "启用输入润色快捷键",
+      "enableHotkeyDesc": "输入框聚焦时，按已设置的快捷键直接润色当前草稿。",
+      "polishHotkey": "润色快捷键",
+      "polishHotkeyDesc": "点快捷键按钮，再按下新的组合键；需包含 Ctrl、Alt 或 Win。",
+      "hotkeyRecord": "录制快捷键",
+      "hotkeyRecording": "请按组合键...",
+      "hotkeyReset": "恢复默认",
+      "hotkeyNotSet": "未设置",
+      "hotkeySaved": "快捷键已保存：{shortcut}",
+      "hotkeyInvalid": "快捷键无效：请用 Ctrl、Alt 或 Win 加一个按键（可再加 Shift），且不能占用复制、粘贴等编辑快捷键。",
+      "tryTranslate": "试译一句",
+      "tryTranslateDesc": "用当前设置翻译一句话，不会发到 Discord。",
+      "tryTranslatePlaceholder": "例如：See you tomorrow, same time?",
+      "tryTranslateRun": "试译",
+      "tryPolish": "试润色",
+      "tryPolishDesc": "用当前设置润色一句话，不会发到 Discord。",
+      "tryPolishPlaceholder": "例如：明天老时间见？",
+      "tryPolishRun": "试润色",
+      "tryBusy": "处理中",
+      "tryInputRequired": "先输入一句话。",
+      "tryResultTime": "用时 {time}",
+      "reset": "恢复默认设置",
+      "resetConfirm": "设置、频道规则和显示选项会恢复默认；API Key、Google Key 池和提示词模板会保留。",
+      "resetDialogTitle": "恢复默认设置？",
+      "resetDialogLead": "以下内容会恢复默认，不能撤销：",
+      "resetDialogItemSettings": "翻译和润色的服务设置、开关与数值",
+      "resetDialogItemChannelRules": "各频道的自动翻译规则",
+      "resetDialogItemDisplay": "显示和界面选项（界面语言不变）",
+      "resetDialogItemCredentials": "API Key、Google Key 池和自定义提示词模板",
+      "resetDialogItemCredentialsNote": "仅在取消勾选下方选项时清除",
+      "resetKeepCredentials": "保留 API Key、Google Key 池和提示词模板",
+      "dialogConfirm": "确定",
+      "dialogCancel": "取消",
+      "settingsLoadBlocked": "无法读取已保存的设置，本次修改不会保存。请检查插件文件夹中的 DiscordAITranslator.config.json，修复后重新启用插件。",
+      "pluginStarted": "Discord AI 翻译助手 v{version} 已启动。",
+      "polishButton": "润色",
+      "polishBusy": "润色中",
+      "polishRunning": "正在润色当前草稿...",
+      "composerChanged": "输入框已切换，请再试一次。",
+      "composerResultHeld": "结果没有自动写入：草稿已改变，或你正在别处输入。可在弹出的面板里复制或写入。",
+      "polishTitleAttr": "用 AI 润色当前草稿。快捷键：{shortcut}。",
+      "publicBilingualButton": "双语",
+      "publicBilingualBusy": "翻译中",
+      "publicBilingualTitleAttr": "写入面向所有人可见的双语消息，目标语言：{targetLanguage}",
+      "publicBilingualReady": "双语消息已写入，检查后再发送。",
+      "publicBilingualFailed": "无法写入双语消息：{error}",
+      "publicBilingualInputChanged": "翻译期间输入已改变，未覆盖当前草稿。",
+      "errorComposerWriteFailed": "输入框没有接受写入，结果已显示在面板中，可手动复制。",
+      "publicBilingualTooLong": "双语消息超过 Discord 单条长度（{length}/{limit}）。",
+      "publicBilingualPolishSkipped": "润色功能已关闭，本次双语直接使用当前草稿。",
+      "translateButton": "翻译",
+      "translateBusy": "翻译中...",
+      "translateTitleAttr": "翻译为 {targetLanguage}",
+      "translateMenu": "翻译为 {targetLanguage}",
+      "translateRetry": "重试",
+      "translateRetryTitle": "重新翻译这条消息",
+      "translationFailedInline": "翻译失败：{error}",
+      "translationLoading": "翻译中…",
+      "translationRevealLabel": "显示被遮蔽的译文",
+      "translationActionsLabel": "译文操作",
+      "translationActionCopy": "复制译文",
+      "translationActionRetranslate": "重新翻译（不用缓存）",
+      "translationActionHide": "隐藏译文",
+      "translationCopied": "已复制译文。",
+      "translationPartialOne": "第 {parts} 段（共 {total} 段）没有翻译出来",
+      "translationPartialMany": "第 {parts} 段（共 {total} 段）没有翻译出来",
+      "translationPartialUnknown": "有一部分没有翻译出来",
+      "translationRetranslate": "重新翻译",
+      "translationRetranslateTitle": "不用缓存，重新翻译整条消息",
+      "translationErrorAuth": "翻译服务拒绝了 API Key",
+      "translationErrorMissingKey": "还没有填写翻译用的 API Key",
+      "translationErrorMissingEndpoint": "还没有填写翻译接口地址",
+      "translationErrorMissingModel": "还没有选择翻译模型",
+      "translationErrorQuota": "翻译服务的额度用完了",
+      "translationErrorLocal": "本地翻译服务没有响应",
+      "translationErrorLocalAt": "本地翻译服务没有响应（{host}）",
+      "translationErrorRateLimit": "请求太多，请稍后再试",
+      "translationErrorRateLimitWait": "请求太多，请 {seconds} 秒后再试",
+      "translationOpenSettings": "打开设置",
+      "translationOpenSettingsTitle": "打开翻译设置",
+      "translationTestConnection": "测试连接",
+      "translationTestConnectionTitle": "测试翻译服务能不能连上",
+      "autoTranslateFailed": "自动翻译失败：{error}",
+      "autoTranslateNeedsAttention": "自动翻译需要你处理：{error}",
+      "autoTranslateTargetFailed": "模型输出不是目标语言，已跳过这条译文。",
+      "manualTranslateRescueFailed": "多次尝试后仍没有得到可用的译文，可以再试一次。",
+      "contextPatchFailed": "无法注入消息右键菜单：{error}",
+      "polishDisabled": "输入润色已禁用。",
+      "textboxMissing": "找不到 Discord 输入框。",
+      "inputEmpty": "输入框是空的。",
+      "confirmSend": "发送润色后的消息？",
+      "confirmSendAction": "发送",
+      "confirmSendDraftChanged": "草稿已有改动，没有发送。",
+      "translationDisabled": "频道消息翻译已禁用。",
+      "noTranslatableText": "这条消息没有可翻译文本。",
+      "messageMissing": "找不到要翻译的消息。",
+      "modelSet": "模型已设置为 {model}。",
+      "hideTranslation": "隐藏翻译",
+      "translationLabel": "AI 翻译为 {targetLanguage}",
+      "polishedReady": "润色结果已写入输入框。",
+      "apiKeyMissingPolish": "输入润色 API Key 未配置。",
+      "apiKeyMissingTranslation": "频道翻译 API Key 未配置。",
+      "endpointMissing": "API 接口地址未配置。",
+      "modelMissing": "模型未配置。",
+      "invalidJson": "API 返回了无效 JSON。",
+      "emptyResult": "API 返回了空结果。",
+      "errorUnauthorized": "API Key 无效或没有权限。",
+      "errorRateLimited": "API 请求过快，已进入冷却。",
+      "errorQuotaExceeded": "API 额度或账户余额已用完。",
+      "errorLanguageUnsupported": "当前服务商不支持所选目标语言，请换一个目标语言或服务商。",
+      "errorIpNotAllowed": "服务商拒绝了当前 IP 地址，请检查服务商后台的 IP 白名单。",
+      "errorProviderRequestRejected": "服务商拒绝了请求，请检查账号权限、目标语言和服务设置。",
+      "errorOutputTruncated": "模型回复被截断，请在设置的“更多模型参数”里调高“最大输出长度”后重试。",
+      "errorOutputTruncatedPolish": "润色回复被截断，请在“输入框工具 → 更多模型参数”里调高“最大输出长度”后重试。",
+      "errorOutputTruncatedTranslation": "译文回复被截断，请在“翻译消息 → 更多模型参数”里调高“最大输出长度”后重试。",
+      "errorSaveFailed": "无法保存到本地，请稍后重试。",
+      "errorServer": "API 服务暂时不可用。",
+      "errorCancelled": "请求已取消。",
+      "errorInvalidEndpoint": "接口地址无效，请填写完整的 API 地址。",
+      "errorEndpointNotFound": "找不到接口地址或模型，请检查接口地址和模型名称。",
+      "errorUnsafeEndpoint": "接口地址不安全：远程服务须使用 HTTPS，本机服务可用 HTTP，地址中不能包含用户名或密码。",
+      "localIntakeFixed": "本地服务固定扫描页面发现消息，无需修改。",
+      "localConcurrencyDesc": "可设为 {min}-{max}；按本地服务的并行槽位和显存设置。",
+      "localFallbackUnavailable": "本地服务不会转到云端服务，此项不可用。",
+      "errorTimeout": "API 请求超时。",
+      "errorNetwork": "网络连接失败。",
+      "errorLocalProviderUnavailable": "Sakura 本地服务无法连接，自动翻译已暂停；启动 Sakura 后等待自动恢复，或在设置里点击测试连接立即恢复。",
+      "unknownError": "未知错误",
+      "providerMicrosoft": "Microsoft 翻译",
+      "providerDeepL": "DeepL",
+      "providerBaidu": "百度翻译",
+      "providerRegion": "区域",
+      "providerRegionDesc": "Azure Translator 的资源区域；全局资源可留空。",
+      "deeplPlan": "DeepL 方案",
+      "deeplPlanDesc": "Free 使用 api-free.deepl.com，Pro 使用 api.deepl.com。",
+      "deeplPlanFree": "Free",
+      "deeplPlanPro": "Pro",
+      "baiduAppId": "百度 App ID",
+      "baiduAppIdDesc": "百度翻译开放平台的 App ID，只保存在本机。",
+      "baiduSecretKey": "百度密钥",
+      "baiduSecretKeyDesc": "百度翻译开放平台的密钥，只保存在本机，不写入日志。",
+      "autoTranslateIntakeMode": "消息发现方式",
+      "autoTranslateIntakeModeDesc": "“自动”在装有 BDFDB 插件库时用它识别消息，否则扫描页面。",
+      "autoTranslateIntakeAuto": "自动",
+      "autoTranslateIntakeDom": "只扫描页面",
+      "autoTranslateIntakeBdfdb": "优先用 BDFDB",
+      "settingsTabPolish": "输入润色",
+      "settingsTabTranslation": "频道翻译",
+      "settingsTabPublicBilingual": "公开双语",
+      "settingsTabDisplay": "显示・缓存・诊断",
+      "settingsTabOverview": "概览",
+      "settingsTabTranslate": "翻译消息",
+      "settingsTabCompose": "输入框工具",
+      "settingsTabAppearance": "显示",
+      "settingsTabAdvanced": "高级",
+      "settingsTabData": "数据与诊断",
+      "settingsTabsLabel": "设置分类",
+      "settingsSearchPlaceholder": "搜索设置",
+      "settingsSearchResults": "找到 {count} 项设置",
+      "settingsSearchEmpty": "没有找到与“{query}”相关的设置",
+      "settingsClose": "关闭设置",
+      "settingsGroupCommon": "常用",
+      "overviewSetupTitle": "开始使用：还差 {count} 步",
+      "overviewSetupProgress": "{done} / {total} · 全部完成后这张卡片会自动收起",
+      "overviewSetupService": "选择翻译服务",
+      "overviewSetupServiceOff": "消息翻译已关闭",
+      "overviewSetupServiceMissing": "{provider} 还没填完",
+      "overviewSetupTest": "测试连接",
+      "overviewSetupTestBlocked": "先选好翻译服务",
+      "overviewSetupTarget": "目标语言",
+      "overviewSetupAuto": "开启自动翻译",
+      "overviewSetupAutoOn": "已开启",
+      "overviewSetupAutoOff": "目前关闭，只能手动点“翻译”",
+      "overviewSetupAutoChannel": "总开关关闭，本频道总是翻译",
+      "overviewSetupChannel": "本频道",
+      "overviewSetupChannelNone": "现在不在频道里",
+      "overviewSetupChannelNever": "本频道设为不翻译",
+      "overviewStateDone": "已完成",
+      "overviewStateTodo": "未完成",
+      "overviewSetUp": "去设置",
+      "overviewTurnOn": "开启",
+      "overviewChange": "更改",
+      "overviewServicesTitle": "服务状态",
+      "overviewCardTranslation": "翻译消息",
+      "overviewCardPolish": "输入框润色",
+      "overviewServiceOff": "已关闭",
+      "overviewServiceMissing": "未配置：缺少 {field}",
+      "settingsGroupAutoTranslate": "自动翻译",
+      "settingsGroupHistoryBackfill": "历史补翻",
+      "settingsGroupFallback": "手动翻译备用服务",
+      "settingsGroupTranslatedText": "译文显示",
+      "settingsGroupNotices": "提示与入口",
+      "settingsGroupWindows": "窗口外观",
+      "settingsMoreModelParams": "更多模型参数",
+      "settingsApiKeyOptional": "API Key（可选）",
+      "settingsRequiresParent": "先开启“{parent}”",
+      "settingsDangerZone": "危险操作",
+      "settingsResetDesc": "恢复默认设置，可选择保留 API Key 和提示词模板，操作前会先确认。",
+      "providerSettingsTitle": "服务商配置",
+      "providerSettingsDesc": "只显示当前服务商用到的选项，切换回来时其他配置仍在。",
+      "polishControlsTitle": "输入体验",
+      "translationControlsTitle": "消息翻译入口",
+      "autoTranslateSettingsTitle": "自动翻译调度",
+      "publicBilingualTitle": "公开双语输入",
+      "publicBilingualDependencyTitle": "当前链路",
+      "publicBilingualDependencyDesc": "双语消息是普通 Discord 文本，发送后所有人都能看到。",
+      "publicBilingualDependencyStatus": "双语前润色：{polishProvider}；翻译：{translationProvider}；目标语言：{targetLanguage}。",
+      "publicBilingualDependencyFlowDesc": "润色服务已配置时由它翻译，目标语言跟随润色输出语言。",
+      "publicBilingualDependencyPolishOff": "不润色",
+      "displaySettingsTitle": "显示行为",
+      "cacheSettingsTitle": "翻译缓存",
+      "diagnosticsSettingsTitle": "诊断",
+      "providerStatus": "服务状态",
+      "providerStatusDesc": "用当前设置测试一次连接。",
+      "quickSettingsOpen": "打开 Discord AI Translator 设置",
+      "quickSettingsDone": "完成",
+      "quickSettingsOpenFailed": "快捷设置打开失败：{error}",
+      "quickSettingsFallbackTitle": "快捷设置未能完整渲染",
+      "quickSettingsFallbackHint": "已记录打开链路诊断；关闭此窗口后可导出诊断 JSON 继续排查。",
+      "quickPanelTitle": "AI 翻译助手",
+      "quickPanelLauncherLabel": "AI 翻译助手：{status}",
+      "quickPanelOpenFull": "打开完整设置",
+      "quickPanelClose": "关闭",
+      "quickPanelEscHint": "Esc 关闭",
+      "quickPanelAutoTranslate": "自动翻译",
+      "quickPanelAutoTranslateDesc": "翻译屏幕上的外语消息",
+      "quickPanelChannel": "本频道",
+      "quickPanelChannelNone": "未打开频道",
+      "quickPanelChannelDm": "私信",
+      "quickPanelRuleInherit": "跟随总开关",
+      "quickPanelRuleEnabled": "总是翻译",
+      "quickPanelRuleDisabled": "不翻译",
+      "quickPanelRuleInheritFull": "跟随总开关",
+      "quickPanelRuleEnabledFull": "总是翻译",
+      "quickPanelRuleDisabledFull": "不翻译",
+      "quickPanelRuleCaptionInheritOn": "现在：会自动翻译（跟随总开关）",
+      "quickPanelRuleCaptionInheritOff": "现在：不自动翻译（跟随总开关）",
+      "quickPanelRuleCaptionEnabled": "总开关关闭时，这个频道也会自动翻译",
+      "quickPanelRuleCaptionDisabled": "这个频道不自动翻译；手动翻译不受影响",
+      "quickPanelRuleCaptionNoChannel": "打开一个频道后可以单独设置",
+      "quickPanelRuleCaptionTranslationOff": "频道翻译已关闭，这里的规则暂不生效",
+      "quickPanelTargetLanguage": "翻译成",
+      "quickPanelDisplay": "显示",
+      "quickPanelMask": "遮蔽译文",
+      "quickPanelMaskDesc": "先显示灰条，点一下再看",
+      "quickPanelHideOriginal": "翻译后遮挡原文",
+      "quickPanelHideOriginalDesc": "悬停在消息上可看原文",
+      "quickPanelPosition": "译文位置",
+      "quickPanelPositionAbove": "原文上方",
+      "quickPanelPositionBelow": "原文下方",
+      "quickStatusActive": "本频道自动翻译中",
+      "quickStatusBusy": "正在翻译 {inFlight} 条，排队 {queued} 条",
+      "quickStatusTesting": "正在测试连接…",
+      "quickStatusLatency": "{ms} ms",
+      "quickStatusWaiting": "{reason}，稍后自动继续",
+      "quickStatusWaitingSeconds": "{reason}，约 {seconds} 秒后自动继续",
+      "quickStatusReasonRateLimit": "服务繁忙",
+      "quickStatusReasonServer": "服务出错",
+      "quickStatusReasonNetwork": "连接不稳定",
+      "quickStatusReasonParse": "返回内容异常",
+      "quickStatusNeedsYou": "需要处理：{reason}",
+      "quickStatusReasonConfig": "缺少 API Key 等配置",
+      "quickStatusReasonAuth": "API Key 无效或没有权限",
+      "quickStatusReasonQuota": "额度用完或余额不足",
+      "quickStatusReasonLocal": "本地服务没有响应",
+      "quickStatusReasonFailed": "连接测试没有通过",
+      "quickStatusReasonEndpoint": "接口地址不可用",
+      "quickStatusReasonNotFound": "找不到接口或模型",
+      "quickStatusNotConfigured": "未配置",
+      "quickStatusOffChannel": "本频道不自动翻译",
+      "quickStatusOffDisabled": "频道翻译已关闭",
+      "quickStatusManualHint": "手动翻译仍可用",
+      "quickPanelTabsLabel": "快捷面板功能切换",
+      "quickPanelTabTranslation": "频道翻译",
+      "quickPanelTabPolish": "输入润色",
+      "quickPanelTabTransAutoOn": "自动开 · {language}",
+      "quickPanelTabTransManual": "手动 · {language}",
+      "quickPanelTabTransOff": "已关闭",
+      "quickPanelTabPolishOn": "开 · {language}",
+      "quickPanelTabPolishOff": "已关闭",
+      "quickPanelTranslationService": "翻译服务",
+      "quickPanelPolishService": "润色服务",
+      "quickPanelSavedServiceCurrent": "当前：{label}",
+      "quickPanelSavedServiceEmpty": "暂无已保存服务（测试通过后自动保存）",
+      "quickPanelServiceShared": "与翻译共用",
+      "quickPanelServiceIndependent": "独立服务",
+      "quickPanelTranslationTemplate": "翻译模板",
+      "quickPanelTemplateCustom": "自定义提示词",
+      "quickStatusPolishActive": "输入润色可用",
+      "quickStatusPolishOff": "输入润色已关闭",
+      "quickStatusPolishBtnOn": "输入框按钮已显示",
+      "quickStatusPolishBtnOff": "输入框按钮已隐藏",
+      "quickStatusPolishHotkeyOff": "快捷键已关",
+      "quickPanelPolishTestTitle": "测试输入润色服务能不能连上",
+      "quickPanelPolishEnabled": "启用输入润色",
+      "quickPanelPolishEnabledDesc": "改写输入框草稿并回填",
+      "quickPanelPolishOutputLanguage": "输出语言",
+      "quickPanelPolishTemplate": "润色模板",
+      "quickPanelPolishCreativity": "创造性",
+      "quickPanelPolishCreativitySteady": "稳妥 0.3",
+      "quickPanelPolishCreativityBalanced": "自然 0.7",
+      "quickPanelPolishCreativityCreative": "发散 1.2",
+      "quickPanelPolishCreativityDescSteady": "稳妥忠实，贴近原句结构",
+      "quickPanelPolishCreativityDescBalanced": "自然均衡，适合日常聊天",
+      "quickPanelPolishCreativityDescCreative": "高发散，再次润色会明显换说法",
+      "quickPanelPolishBehavior": "润色行为",
+      "quickPanelPolishAfterAction": "润色后",
+      "quickPanelPolishRepolishSource": "再次润色",
+      "quickPanelPolishRepolishOriginal": "最初原文",
+      "quickPanelPolishRepolishLast": "上次结果",
+      "quickPanelPublicBilingual": "公开双语按钮",
+      "quickPanelPublicBilingualDesc": "在输入框旁显示“双语”按钮",
+      "quickPanelPublicBilingualAfterPolish": "润色后自动生成双语",
+      "quickPanelPublicBilingualAfterPolishDesc": "润色完顺带附带折叠原文",
+      "quickPanelTryPolishToggle": "快速试润色",
+      "quickPanelTryPolishPlaceholder": "输入一句试试当前模板和语言…",
+      "quickPanelTryPolishRun": "试润色",
+      "quickPanelTryPolishAgain": "再润一次",
+      "quickPanelOpenFullPolish": "编辑模板与完整设置",
+      "inputActionMenu": "AI 操作",
+      "inputActionOpenSettings": "设置",
+      "restoreOriginalShort": "↶",
+      "polishButtonShort": "润",
+      "polishTitleAttrWithTone": "用 AI 润色当前草稿（当前语气：{tone}）。快捷键：{shortcut}。",
+      "polishPresetPicker": "切换润色语气",
+      "polishPresetPickerTitle": "切换润色语气（当前：{tone}）",
+      "polishPresetMenuTitle": "润色语气",
+      "polishPresetMenuTabsLabel": "润色语气分类",
+      "polishPresetMenuCustomNote": "当前为自定义提示词，选择下方预设可切换",
+      "polishPresetMenuEmpty": "暂无可用预设，可前往设置新增",
+      "polishPresetMenuEmptyPersona": "大能风味即将上线（历史人物等），也可先前往设置自定义添加",
+      "polishPresetMenuManage": "管理 / 自定义语气…",
+      "polishPresetMenuItemAction": "切换润色语气…",
+      "publicBilingualButtonShort": "双",
+      "showQuickSettingsPanelButton": "显示用户栏快捷设置",
+      "showQuickSettingsPanelButtonDesc": "在左下角用户控制栏的 Discord 设置齿轮附近显示 AI 入口。",
+      "currentChannelAutoTranslatePolicy": "本频道自动翻译",
+      "currentChannelAutoTranslatePolicyDesc": "只影响本频道的自动翻译，手动翻译不受影响。",
+      "channelPolicyInherit": "跟随总开关",
+      "channelPolicyEnabled": "总是翻译",
+      "channelPolicyDisabled": "不翻译",
+      "channelRuleFollow": "跟随总开关",
+      "channelRuleAlways": "总是翻译",
+      "channelRuleNever": "不翻译",
+      "historyBackfillEnabled": "允许补翻已加载的历史消息",
+      "historyBackfillEnabledDesc": "开启后可以手动补翻已加载的消息，不会自己运行。",
+      "historyBackfillLimit": "每次历史补翻上限",
+      "historyBackfillLimitDesc": "每次最多补翻多少条已加载的消息（1-100）。",
+      "historyBackfillRun": "补翻已加载消息",
+      "historyBackfillRunning": "补翻中...",
+      "historyBackfillRunDesc": "把已加载但还没翻译的消息排进低优先级队列。",
+      "historyBackfillQueued": "已加入历史补翻队列：{count} 条。",
+      "historyBackfillNoWork": "没有可补翻的已加载消息。",
+      "historyBackfillContextMenu": "补翻已加载消息",
+      "providerFallbackEnabled": "手动翻译失败时换用备用服务",
+      "providerFallbackEnabledDesc": "只用于手动翻译和公开双语；本地服务不会转到云端。",
+      "providerFallbackOrder": "备用服务顺序",
+      "providerFallbackOrderListDesc": "勾选要用的备用服务，用箭头调整先后顺序。",
+      "providerFallbackMoveUp": "把 {provider} 上移",
+      "providerFallbackMoveDown": "把 {provider} 下移",
+      "providerFallbackCurrent": "（当前服务）",
+      "providerFallbackOrderDesc": "用逗号或换行分隔，可用：{providers}。",
+      "composerMassMentionBlocked": "已拦截模型新增的全体/身份组提及（{mentions}），避免误触发通知。",
+      "composerChannelChanged": "当前已切换频道，未自动写入刚才的润色/双语结果；请手动复制或切回原频道。",
+      "hostHealthTitle": "Discord 宿主兼容自检",
+      "hostHealthDesc": "检测当前 Discord 关键挂载点，客户端更新后可一键定位失效项。",
+      "hostHealthRecheck": "重新检测",
+      "hostHealthCopyReport": "复制自检报告",
+      "hostHealthCopied": "宿主自检报告已复制。",
+      "hostHealthSummaryOk": "全部正常（{ok}/{total}）",
+      "hostHealthSummaryWarn": "部分待注意（正常 {ok} · 警告 {warn} · 异常 {error}）",
+      "hostHealthSummaryError": "发现兼容异常（正常 {ok} · 警告 {warn} · 异常 {error}）",
+      "hostHealthItemBdApi": "BetterDiscord API",
+      "hostHealthItemStores": "Discord 内部 Store（MessageStore / ChannelStore）",
+      "hostHealthItemChatRoot": "聊天容器挂载点",
+      "hostHealthItemMessages": "聊天消息节点与正文提取",
+      "hostHealthItemComposer": "输入框与工具栏锚点",
+      "hostHealthItemUserPanel": "左下角用户面板与 AI 入口",
+      "hostHealthItemContextMenu": "右键菜单补丁",
+      "hostHealthItemTheme": "当前检测主题",
+      "hostHealthStateOk": "正常",
+      "hostHealthStateWarn": "待观察",
+      "hostHealthStateError": "异常",
+      "quickLanguageBarLabel": "快速切换界面语言",
+      "quickLanguageSwitchTitle": "切换界面语言：{language}"
+    };
+  }
+});
+
+// src/i18n/zh-TW.js
+var require_zh_TW = __commonJS({
+  "src/i18n/zh-TW.js"(exports2, module2) {
+    "use strict";
+    module2.exports = {
+      "settingsTitle": "Discord AI 翻譯助手",
+      "settingsNote": "潤色和翻譯分別設定；API Key 只保存在本機。",
+      "generalTitle": "基礎設定",
+      "interfaceLanguage": "介面語言",
+      "interfaceLanguageDesc": "只影響外掛介面文字，不影響潤色或翻譯的目標語言。",
+      "languageZh": "中文",
+      "languageEn": "English",
+      "polishTitle": "輸入潤色",
+      "polishDescription": "讀取目前輸入框草稿，根據提示詞改寫後回填輸入框。",
+      "translationTitle": "頻道訊息翻譯",
+      "translationDescription": "將頻道裡的現有訊息翻譯成指定目標語言。",
+      "enabled": "啟用",
+      "enabledDesc": "關閉後不顯示這項功能的按鈕，也不發送請求。",
+      "provider": "服務商",
+      "providerDesc": "大型語言模型可與潤色共用設定；專業翻譯引擎僅支援翻譯。",
+      "providerPolishDesc": "潤色需依提示詞改寫，僅支援大型語言模型；可直接選用已儲存設定。",
+      "providerGroupAi": "大型語言模型（支援翻譯 + 潤色）",
+      "providerGroupMachine": "專業翻譯引擎（僅支援翻譯）",
+      "savedServiceConfigs": "已儲存設定",
+      "savedServiceConfigsDesc": "測試通過後自動儲存，翻譯與潤色都能直接選用。",
+      "savedServiceConfigsPlaceholder": "選擇已儲存設定（共 {count} 個）",
+      "savedServiceConfigsEmpty": "尚無已儲存設定（測試通過後自動儲存）",
+      "savedServiceConfigApplied": "已套用設定：{name}",
+      "savedServiceConfigDeleted": "已刪除該儲存設定。",
+      "savedServiceConfigDelete": "刪除",
+      "syncConfigToPolish": "同步到潤色",
+      "syncConfigToTranslation": "同步到翻譯",
+      "syncConfigUnsupportedPolish": "專業翻譯引擎僅支援翻譯，無法同步到輸入潤色。",
+      "syncConfigMissing": "請先填完目前服務商的必要設定。",
+      "syncConfigDonePolish": "已同步設定到輸入潤色。",
+      "syncConfigDoneTranslation": "已同步設定到頻道訊息翻譯。",
+      "providerOpenAI": "OpenAI 相容",
+      "providerSakuraLocal": "Sakura 本機",
+      "providerGoogleCloud": "Google Cloud 翻譯",
+      "googleTranslateTitle": "Google Cloud 翻譯 Key 池",
+      "googleTranslateKeys": "Google API Key 池",
+      "googleTranslateKeysDesc": "每行一個 Key，也可寫成 名稱|Key|月上限。",
+      "googleTranslateDefaultLimit": "Google 單 Key 預設月上限",
+      "googleTranslateDefaultLimitDesc": "Key 行未填上限時使用；建議 420000-450000，保留餘裕。",
+      "googleTranslateAllowPrefetch": "允許預先翻譯使用 Google",
+      "googleTranslateAllowPrefetchDesc": "關閉後只翻譯畫面上的訊息，預先翻譯不消耗 Google 額度。",
+      "googleTranslateStats": "Google 用量",
+      "googleTranslateStatsDesc": "本月 {used}/{limit} 字元；可用 Key {available}/{total}；目前月份 {month}。",
+      "googleTranslateStatsCooldown": "冷卻中的 Key {count} 個，最早 {time} 恢復。",
+      "googleTranslateResetStats": "重設本月 Google 統計",
+      "googleTranslateResetConfirm": "只清零本機記錄的本月字元數，Google Cloud 後台的實際用量不變。",
+      "googleTranslateStatsReset": "Google 本月統計已重設。",
+      "googleTranslateNoKey": "Google Cloud 翻譯沒有可用的 API Key。",
+      "googleTranslateQuotaExceeded": "Google Cloud 翻譯 Key 池本月額度已用完。",
+      "googleTranslateKeysCooling": "Google Cloud 翻譯的 Key 都在冷卻中，{time} 恢復。",
+      "googleTranslateKeyError": "Key「{label}」：{error}",
+      "apiKey": "API Key",
+      "apiKeyDesc": "只保存在本機，不會寫進訊息；Sakura 本機可留空。",
+      "apiKeyDeepSeekDesc": "DeepSeek 開放平台的 API Key，只保存在本機。",
+      "apiKeyOpenAIDesc": "服務提供的 API Key，只保存在本機，不會寫進訊息。",
+      "apiKeyLocalDesc": "選填，本機服務通常不需要。",
+      "apiKeyMicrosoftDesc": "Azure Translator 資源的金鑰，只保存在本機。",
+      "apiKeyDeepLDesc": "DeepL API 的驗證金鑰，只保存在本機。",
+      "apiKeyOptionalPlaceholder": "可留空",
+      "apiTest": "測試",
+      "apiTestBusy": "檢測中",
+      "apiStatusUntested": "未檢測",
+      "apiStatusTesting": "檢測中",
+      "apiStatusSuccess": "連線正常",
+      "apiStatusFailed": "連線失敗",
+      "apiTestSuccess": "{name} API 連線正常。",
+      "apiTestSuccessSaved": "{name} API 連線正常，已儲存為可用設定。",
+      "apiTestSuccessSynced": "{name} API 連線正常，已儲存設定並同步到{target}。",
+      "apiTestFailed": "{name} API 連線失敗：{error}",
+      "apiTestJustNow": "剛剛",
+      "apiTestMinutesAgo": "{count} 分鐘前",
+      "apiTestHoursAgo": "{count} 小時前",
+      "apiTestNotYet": "尚未測試",
+      "thinkingMode": "DeepSeek 思考模式",
+      "thinkingModeDesc": "模型先推理再回答，可能更準，但較慢、用量較多。",
+      "endpoint": "API 位址",
+      "endpointDesc": "服務的 API 位址，一般保持預設即可。",
+      "endpointDeepSeekDesc": "DeepSeek 的 API 位址，一般保持預設即可。",
+      "endpointOpenAIDesc": "可填 /v1 基礎位址或完整 chat/completions 位址，遠端需 https。",
+      "endpointLocalDesc": "本機服務的位址，只有本機位址可使用 http。",
+      "endpointMicrosoftDesc": "Azure Translator 的 API 位址，一般保持預設即可。",
+      "endpointBaiduDesc": "百度翻譯的 API 位址，一般保持預設即可。",
+      "deepseekPreset": "DeepSeek V4 預設",
+      "deepseekPresetDesc": "在 DeepSeek V4 Flash 與 Pro 之間快速切換。",
+      "customModel": "自訂（填寫下方模型名稱）",
+      "model": "模型",
+      "modelDesc": "直接填寫任意模型名稱，自動記住上次使用的模型。",
+      "modelOpenAIDesc": "服務提供的模型名稱，可點「偵測模型」列出。",
+      "modelLocalDesc": "local-model 表示使用伺服端已載入的模型。",
+      "modelLocalLoadedDesc": "local-model 使用伺服端已載入的模型，目前為 {model}。",
+      "modelDetect": "偵測模型",
+      "modelDetectBusy": "偵測中",
+      "modelDetectFound": "偵測到 {count} 個模型，可在清單中選擇。",
+      "modelDetectFoundLoaded": "偵測到 {count} 個模型，已載入：{model}。",
+      "modelDetectNone": "伺服端未列出模型。",
+      "modelDetectFailed": "偵測失敗：{error}",
+      "modelDetectUnsupported": "此服務不支援偵測模型。",
+      "modelDetectConfirmOrigin": "確認 API Key 的使用位址",
+      "modelDetectConfirmOriginDesc": "允許將目前 API Key 發送到 {origin}，並將金鑰綁定至此來源？",
+      "apiKeyOriginMismatch": "目前 API Key 已綁定至其他來源。請為此位址更換金鑰，或點擊「偵測模型」確認目前來源。",
+      "modelPicker": "可選的模型",
+      "modelPickerOther": "其他（填寫上方的模型名稱）",
+      "modelPickerServerLoaded": "使用伺服端已載入的模型（local-model）",
+      "modelPickerDetected": "伺服端列出的模型",
+      "modelPickerPresets": "常用模型",
+      "modelPickerLoadedTag": "{model}（已載入）",
+      "outputLanguage": "輸出語言",
+      "outputLanguageDesc": "潤色結果使用的語言。",
+      "inputLanguage": "輸入語言",
+      "inputLanguageDesc": "草稿原本的語言；一般保持自動偵測，辨識錯誤再指定。",
+      "messageLanguage": "原文語言",
+      "messageLanguageDesc": "頻道訊息原本的語言；一般保持自動偵測，辨識錯誤再指定。",
+      "autoDetectLanguage": "自動偵測",
+      "targetLanguage": "目標語言",
+      "targetLanguageDesc": "頻道訊息要翻譯成哪種語言。",
+      "languagePreset": "常用語言",
+      "customLanguage": "自訂語言",
+      "customLanguagePlaceholder": "例如：繁體中文、韓語、Brazilian Portuguese",
+      "customLanguageDesc": "自訂語言名稱會原樣交給模型。",
+      "temperature": "創造性",
+      "temperatureDesc": "越低越穩定；翻譯建議 0.1-⁠0.3，潤色建議 0.3-⁠0.7。",
+      "maxTokens": "最大輸出長度",
+      "maxTokensDesc": "單次回覆的長度上限；長訊息被截斷時調高。",
+      "maxTokensPolishDesc": "單次潤色回覆上限；長草稿或開啟思考時調高。",
+      "afterPolishing": "潤色後動作",
+      "afterPolishingDesc": "潤色結果寫入輸入框後，是否再詢問發送。",
+      "afterReplace": "覆蓋輸入框",
+      "afterDirectReplace": "覆蓋輸入框",
+      "afterConfirmSend": "發送前詢問",
+      "repolishSource": "再次潤色輸入源",
+      "repolishSourceDesc": "再次潤色時，基於最初草稿還是上一次的結果。",
+      "repolishSourceOriginal": "使用原文",
+      "repolishSourceLastResult": "使用上一次潤色結果",
+      "restoreOriginal": "還原原文",
+      "restoreOriginalChanged": "草稿已有改動，無法還原原文。",
+      "polishResultTitle": "潤色結果",
+      "polishResultCopy": "複製",
+      "polishResultCopied": "已複製",
+      "polishResultReplace": "寫入輸入框",
+      "polishResultApplyFailed": "未能寫入輸入框，請點「複製」後手動貼上。",
+      "polishResultClose": "關閉",
+      "prompt": "提示詞",
+      "promptDesc": "告訴模型怎麼潤色或翻譯，任何語言皆可。",
+      "promptUsingTemplate": "正在使用範本：{code} · {name}",
+      "promptTemplateNameNaturalChat": "自然聊天潤色",
+      "promptTemplateNamePolite": "禮貌清晰",
+      "promptTemplateNameShort": "簡短直接",
+      "promptTemplateNameNativeCasual": "道地口語（去翻譯腔）",
+      "promptTemplateNameTechBug": "技術 / Bug 回報",
+      "promptTemplateNameGamingChat": "遊戲 / 組隊社群",
+      "promptTemplateNameTactful": "高情商 / 委婉溝通",
+      "promptTemplateNameFormalNotice": "正式 / 公告與合作",
+      "promptTemplateNameDialectCantoneseGuangfu": "廣府白話（兩廣日常口語）",
+      "promptTemplateNameDialectCantoneseHk": "港式粵語（道地港味）",
+      "promptTemplateNameDialectHakka": "客家話（客話口語）",
+      "promptTemplateNameDialectChaoshan": "潮汕話（膠己人風味）",
+      "promptTemplateNameDialectGuangxi": "廣西老表（南普風味）",
+      "promptTemplateNameDialectMinnan": "閩南語（泉漳廈腔）",
+      "promptTemplateNameDialectTaiwan": "台灣腔（台式日常口語）",
+      "promptTemplateNameDialectSichuan": "川渝話（巴適擺龍門陣）",
+      "promptTemplateNameDialectYunnan": "雲南話（滇味口語）",
+      "promptTemplateNameDialectGuizhou": "貴州話（黔味西南話）",
+      "promptTemplateNameDialectDongbei": "東北話（豪爽嘮嗑）",
+      "promptTemplateNameDialectBeijing": "京味兒（道地北京話）",
+      "promptTemplateNameDialectTianjin": "天津話（哏兒都相聲味）",
+      "promptTemplateNameDialectShaanxi": "陝西話（關中老陝）",
+      "promptTemplateNameDialectHenan": "河南話（中州口語）",
+      "promptTemplateNameDialectShandong": "山東話（齊魯膠東味）",
+      "promptTemplateNameDialectXinjiang": "新疆話（疆味口語）",
+      "promptTemplateNameDialectShanghai": "上海話（滬語腔）",
+      "promptTemplateNameDialectJiangzhe": "江浙軟語（蘇杭吳語味）",
+      "promptTemplateNameDialectNanjing": "南京話（藍鯨腔）",
+      "promptTemplateNameDialectWuhan": "武漢話（漢味直爽）",
+      "promptTemplateNameDialectHunan": "湖南話（湘味霸蠻）",
+      "promptTemplateCategoryLabel": "預設分類",
+      "promptTemplateCategoryGeneral": "一般",
+      "promptTemplateCategoryDialect": "方言",
+      "promptTemplateCategoryPersona": "人物風格",
+      "promptTemplateRegionSouthChina": "兩廣 · 閩台",
+      "promptTemplateRegionSouthwest": "西南",
+      "promptTemplateRegionNorth": "北方",
+      "promptTemplateRegionEastCentral": "華東 · 華中",
+      "promptTemplateRegionCustom": "自訂方言",
+      "promptTemplateNamePersonaQinShihuang": "秦始皇 · 嬴政（千古一帝詔令）",
+      "promptTemplateNamePersonaHanWudi": "漢武帝 · 劉徹（大漢雄風詔書）",
+      "promptTemplateNamePersonaZhuYuanzhang": "朱元璋 · 洪武大帝（大明大白話聖旨）",
+      "promptTemplateNamePersonaChiangKaiShek": "蔣介石 · 委員長（民國電報微操）",
+      "promptTemplateNamePersonaCaoCao": "曹操 · 魏武帝（梟雄豪邁坦蕩）",
+      "promptTemplateNamePersonaLiShimin": "唐太宗 · 李世民（貞觀明君風度）",
+      "promptTemplateNamePersonaYongzheng": "雍正 · 四爺（犀利硃批體）",
+      "promptTemplateNamePersonaZhugeLiang": "諸葛亮 · 武侯（出師表懇切風）",
+      "promptTemplateNamePersonaSimaYi": "司馬懿 · 冢虎（隱忍老謀深算）",
+      "promptTemplateNamePersonaSunTzu": "孫子 · 孫武（兵法冷靜箴言）",
+      "promptTemplateNamePersonaXiangYu": "項羽 · 西楚霸王（悲壯狂傲氣魄）",
+      "promptTemplateNamePersonaLuXun": "魯迅 · 周樹人（犀利冷幽默雜文）",
+      "promptTemplateNamePersonaLinDaiyu": "林黛玉 · 瀟湘妃子（傲嬌柔中帶刺）",
+      "promptTemplateNamePersonaWangYangming": "王陽明 · 陽明先生（知行合一心學）",
+      "promptTemplateNamePersonaLiBai": "李白 · 詩仙（豪放飄逸詩意）",
+      "promptTemplateNamePersonaSuShi": "蘇軾 · 東坡居士（豁達自嘲煙火氣）",
+      "promptTemplateNamePersonaConfucius": "孔子 · 聖人（論語溫潤格言）",
+      "promptTemplateNamePersonaZhuangzi": "莊子 · 逍遙遊（奇譎寓言風）",
+      "promptTemplateNamePersonaEileenChang": "張愛玲（冷豔民國都市金句）",
+      "promptTemplateNamePersonaQianZhongshu": "錢鍾書（圍城妙喻反諷）",
+      "promptTemplateNamePersonaWangXiaobo": "王小波（黑色幽默反諷）",
+      "promptTemplateNamePersonaGuoDegang": "郭德綱（單口相聲包袱）",
+      "promptTemplateNamePersonaShakespeare": "莎士比亞（戲劇詠嘆獨白）",
+      "promptTemplateNamePersonaTrump": "川普（美式誇張感嘆）",
+      "promptTemplateNamePersonaNietzsche": "尼采（深淵超人警句）",
+      "promptTemplateNamePersonaMarx": "馬克思（辯證批判理論風）",
+      "promptTemplateNamePersonaNapoleon": "拿破崙（鐵血統帥戰報）",
+      "promptTemplateNamePersonaChurchill": "邱吉爾（英式鐵血演說與冷幽默）",
+      "promptTemplateNamePersonaMusk": "馬斯克（第一性原理極客短句）",
+      "promptTemplatePersonaGroupMonarchs": "帝王將相",
+      "promptTemplatePersonaGroupStrategists": "謀聖兵家",
+      "promptTemplatePersonaGroupLiterati": "文豪名士",
+      "promptTemplatePersonaGroupGlobal": "海外名家",
+      "promptTemplatePersonaGroupCustom": "自訂人物",
+      "promptTemplateNameNatural": "自然翻譯",
+      "promptTemplateNameLiteral": "準確直譯",
+      "promptTemplateNameSlangCasual": "社群梗與口語（接地氣）",
+      "promptTemplateNameTechDev": "技術 / AI / 開發頻道",
+      "promptTemplateNameGamingAcg": "遊戲 / ACGN 社群",
+      "promptTemplateNameFormalChangelog": "官方公告 / 更新日誌",
+      "promptTemplates": "提示詞範本",
+      "promptTemplatesDesc": "選取範本僅預覽；點「使用這個範本」才會替換提示詞。",
+      "promptSearch": "搜尋範本名稱或編號",
+      "promptTemplateSelect": "選擇範本",
+      "promptTemplateCustom": "目前提示詞尚未存為範本",
+      "promptTemplateEdited": "基於 {code} · {name}，修改尚未存入範本",
+      "promptPreview": "範本預覽",
+      "promptPreviewActive": "使用中",
+      "promptApply": "使用這個範本",
+      "promptSave": "存為範本",
+      "promptUpdate": "更新目前範本",
+      "promptUpdateTitle": "用編輯後的提示詞覆蓋 {code} · {name}",
+      "promptDelete": "刪除範本",
+      "promptRestorePresets": "補充內建預設",
+      "promptPresetsRestored": "已補充 {count} 個內建範本。",
+      "promptPresetsComplete": "已包含全部內建範本。",
+      "promptCopy": "複製提示詞",
+      "promptCopied": "提示詞已複製。",
+      "copiedToClipboard": "已複製。",
+      "promptCopyFailed": "複製失敗：{error}",
+      "clipboardUnavailable": "無法存取剪貼簿，請手動選取文字複製。",
+      "promptNamePlaceholder": "為這個範本取個名稱",
+      "promptSaveNameLabel": "新範本名稱",
+      "promptNameRequired": "請先填寫範本名稱。",
+      "promptSaved": "範本已儲存：{code} · {name}",
+      "promptUpdated": "範本已更新：{code} · {name}",
+      "promptDeleted": "範本已刪除。",
+      "promptApplied": "已套用範本：{code} · {name}",
+      "promptApplyUnsavedTitle": "替換目前提示詞？",
+      "promptApplyUnsavedConfirm": "目前提示詞有未儲存的修改，套用 {code} · {name} 後將被替換。",
+      "promptDeleteConfirm": "刪除這個提示詞範本？",
+      "promptDeleteActiveNote": "這是使用中的範本，刪除後提示詞會換成 {code} · {name}。",
+      "promptNoTemplate": "沒有可用範本。",
+      "uiTitle": "介面",
+      "showPolishButton": "在輸入框附近顯示潤色按鈕",
+      "showPolishButtonDesc": "在 Discord 輸入框旁新增「潤色」快捷按鈕。",
+      "publicBilingualInputButton": "在輸入框附近顯示公開雙語按鈕",
+      "publicBilingualInputButtonDesc": "把草稿寫成「譯文 + 隱藏原文」，由你檢查後發送。",
+      "publicBilingualUseInitialOriginal": "雙語隱藏原文使用最初草稿",
+      "publicBilingualUseInitialOriginalDesc": "先潤色再做雙語時，隱藏原文保留潤色前的草稿。",
+      "publicBilingualAfterPolish": "潤色後自動產生公開雙語",
+      "publicBilingualAfterPolishDesc": "點「潤色」後接著把結果寫成公開雙語，不會自動發送。",
+      "publicBilingualPolishBeforeTranslate": "雙語前自動潤色",
+      "publicBilingualPolishBeforeTranslateDesc": "點「雙語」時先潤色草稿，再翻譯潤色結果。",
+      "showMessageButtons": "在訊息旁顯示翻譯按鈕",
+      "showMessageButtonsDesc": "在頻道訊息旁新增「翻譯」按鈕。",
+      "messageButtonVisibility": "翻譯按鈕顯示方式",
+      "messageButtonVisibilityDesc": "一直顯示訊息旁的翻譯按鈕，或只在游標停留在訊息時顯示。",
+      "messageButtonVisibilityAlways": "一直顯示",
+      "messageButtonVisibilityHover": "懸停時顯示",
+      "messageButtonMode": "訊息旁的翻譯按鈕",
+      "messageButtonModeDesc": "在每則訊息旁顯示「翻譯」按鈕的方式。",
+      "messageButtonModeHover": "懸停時顯示",
+      "messageButtonModeAlways": "一直顯示",
+      "messageButtonModeOff": "不顯示",
+      "autoTranslateMessages": "自動翻譯可見外語訊息",
+      "autoTranslateMessagesDesc": "自動翻譯畫面上不是目標語言的訊息。",
+      "autoTranslatePrefetch": "預先翻譯附近訊息",
+      "autoTranslatePrefetchDesc": "閒置時提前翻譯畫面上下方的訊息，並行數需至少為 2。",
+      "autoTranslatePrefetchRange": "預先翻譯範圍",
+      "autoTranslatePrefetchRangeDesc": "畫面上方與下方各提前翻譯多少則訊息。",
+      "autoTranslateConcurrency": "自動翻譯並行數",
+      "autoTranslateConcurrencyDesc": "同時進行的翻譯請求數，預設 {default}，範圍 {min}-{max}。",
+      "autoTranslateStrictRetry": "譯文語言不符時嚴格重試",
+      "autoTranslateStrictRetryDesc": "先重試失敗的部分，再逐則嚴格翻譯，仍失敗才顯示重試按鈕。",
+      "showAutoTranslateWarnings": "失敗時在訊息下方提示",
+      "showAutoTranslateWarningsDesc": "逾時、網路波動等一般失敗也會提示；需要你處理的錯誤總會顯示。",
+      "showAutoTranslateToasts": "自動翻譯失敗時彈出通知",
+      "showAutoTranslateToastsDesc": "需要你處理的問題（如 Key 無效）總會提示一次。",
+      "diagnosticLogs": "診斷日誌",
+      "diagnosticLogsDesc": "記錄自動翻譯的請求、快取與失敗原因，最多 500 筆，可匯出排查。",
+      "diagnosticLogsStats": "日誌 {entries} 筆，已壓縮 {compressed} 筆重複事件。",
+      "diagnosticSummary": "診斷摘要",
+      "diagnosticSummaryEmpty": "開啟診斷並重現問題後，這裡會顯示診斷摘要。",
+      "diagnosticSummaryEvents": "共 {events} 個事件，依狀態、原因與服務商彙整，最近一次 {latest}。",
+      "diagnosticSummaryStates": "狀態",
+      "diagnosticSummaryReasons": "原因",
+      "diagnosticSummaryFlows": "流程",
+      "diagnosticSummaryQueues": "佇列",
+      "diagnosticSummaryProviders": "服務商",
+      "diagnosticSummaryFailures": "失敗",
+      "diagnosticSummaryFailureLayers": "失敗環節",
+      "diagnosticSummaryFlowStages": "流程階段",
+      "clearDiagnosticLogs": "清空日誌",
+      "clearDiagnosticLogsConfirm": "所有診斷日誌都會刪除；需要的話請先匯出。",
+      "clearDiagnosticLogsDesc": "刪除全部診斷日誌；需要的話請先匯出。",
+      "exportDiagnosticLogs": "匯出日誌",
+      "copyDiagnosticLogs": "複製日誌",
+      "exportDiagnosticJson": "匯出 JSON",
+      "exportDiagnosticTxt": "匯出 TXT",
+      "diagnosticLogsCleared": "診斷日誌已清空。",
+      "diagnosticLogsCopied": "診斷日誌已複製。",
+      "diagnosticLogsEmpty": "尚無診斷日誌。",
+      "diagnosticLogsExported": "診斷日誌已匯出。",
+      "settingsSnapshot": "設定快照",
+      "settingsSnapshotDesc": "下載目前設定（JSON），API Key 等已隱藏，可放心提供給他人排查。",
+      "exportSettingsSnapshot": "下載設定",
+      "settingsSnapshotExported": "設定快照已下載，金鑰已隱藏。",
+      "settingsSnapshotCopied": "設定快照已複製，金鑰已隱藏。",
+      "translationCacheTtl": "快取時間",
+      "translationCacheTtlDesc": "重啟 Discord 後仍可用，過期後重新翻譯。",
+      "translationCacheMaxEntries": "最多快取訊息數",
+      "translationCacheMaxEntriesDesc": "超出後先刪除最久未用的譯文，最多 15000 則。",
+      "translationCacheStats": "快取命中統計",
+      "translationCacheStatsDesc": "本次工作階段命中 {hits} 次，未命中 {misses} 次；記憶體 {memory} 則訊息，已儲存 {persistent} 則訊息。",
+      "clearTranslationCacheStats": "清空統計",
+      "clearTranslationCache": "清空翻譯快取",
+      "clearTranslationCacheConfirm": "所有已儲存的譯文都會刪除，之後相同內容需要重新翻譯。",
+      "clearTranslationCacheDesc": "刪除所有已儲存的譯文，相同內容之後要重新翻譯。",
+      "translationCacheStatsCleared": "快取命中統計已清空，已儲存譯文未刪除。",
+      "translationCacheCleared": "翻譯快取已清空。",
+      "cacheTtl3h": "3 小時",
+      "cacheTtl6h": "6 小時",
+      "cacheTtl12h": "12 小時",
+      "cacheTtl1d": "1 天",
+      "cacheTtl2d": "2 天",
+      "cacheTtl7d": "7 天",
+      "translationPosition": "譯文位置",
+      "translationPositionDesc": "譯文顯示在原訊息上方還是下方。",
+      "translationBeforeOriginal": "譯文在前，原文在後",
+      "translationAfterOriginal": "原文在前，譯文在後",
+      "translationPositionAbove": "在原文上方",
+      "translationPositionBelow": "在原文下方",
+      "maskTranslations": "預設遮蔽譯文",
+      "maskTranslationsDesc": "譯文先顯示為灰條，點擊或按 Enter 再展開。",
+      "translationStyle": "譯文樣式",
+      "translationStyleDesc": "三種樣式皆跟隨 Discord 主題色彩。",
+      "translationStyleTint": "淡底色",
+      "translationStyleMuted": "弱化文字",
+      "translationStyleTag": "帶「譯」標記",
+      "translationTextScale": "譯文字級",
+      "translationTextScaleDesc": "相對於聊天內文的大小。",
+      "panelTheme": "視窗主題",
+      "panelThemeDesc": "設定視窗、快捷面板與選單的配色；確認對話框跟隨 Discord。",
+      "panelThemeAuto": "跟隨 Discord",
+      "panelThemeLight": "淺色",
+      "panelThemeDark": "深色",
+      "translationTag": "譯",
+      "hideOriginalAfterTranslation": "翻譯後遮擋原文",
+      "hideOriginalAfterTranslationDesc": "原文變成灰條，懸停或聚焦時顯示，只影響你自己。",
+      "showContextMenu": "在訊息右鍵選單顯示翻譯入口",
+      "showContextMenuDesc": "對訊息按右鍵時顯示「翻譯」選單項目。",
+      "enableHotkey": "啟用輸入潤色快捷鍵",
+      "enableHotkeyDesc": "輸入框聚焦時，按已設定的快捷鍵直接潤色目前草稿。",
+      "polishHotkey": "潤色快捷鍵",
+      "polishHotkeyDesc": "點快捷鍵按鈕，再按下新的組合鍵；需包含 Ctrl、Alt 或 Win。",
+      "hotkeyRecord": "錄製快捷鍵",
+      "hotkeyRecording": "請按組合鍵...",
+      "hotkeyReset": "恢復預設",
+      "hotkeyNotSet": "未設定",
+      "hotkeySaved": "快捷鍵已儲存：{shortcut}",
+      "hotkeyInvalid": "快捷鍵無效：請用 Ctrl、Alt 或 Win 加一個按鍵（可再加 Shift），且不能佔用複製、貼上等編輯快捷鍵。",
+      "tryTranslate": "試譯一句",
+      "tryTranslateDesc": "用目前設定翻譯一句話，不會發送到 Discord。",
+      "tryTranslatePlaceholder": "例如：See you tomorrow, same time?",
+      "tryTranslateRun": "試譯",
+      "tryPolish": "試潤色",
+      "tryPolishDesc": "用目前設定潤色一句話，不會發送到 Discord。",
+      "tryPolishPlaceholder": "例如：明天老時間見？",
+      "tryPolishRun": "試潤色",
+      "tryBusy": "處理中",
+      "tryInputRequired": "請先輸入一句話。",
+      "tryResultTime": "耗時 {time}",
+      "reset": "恢復預設設定",
+      "resetConfirm": "設定、頻道規則與顯示選項會恢復預設；API Key、Google Key 池與提示詞範本會保留。",
+      "resetDialogTitle": "恢復預設設定？",
+      "resetDialogLead": "以下內容會恢復預設，無法復原：",
+      "resetDialogItemSettings": "翻譯與潤色的服務設定、開關與數值",
+      "resetDialogItemChannelRules": "各頻道的自動翻譯規則",
+      "resetDialogItemDisplay": "顯示與介面選項（介面語言不變）",
+      "resetDialogItemCredentials": "API Key、Google Key 池與自訂提示詞範本",
+      "resetDialogItemCredentialsNote": "僅在取消勾選下方選項時清除",
+      "resetKeepCredentials": "保留 API Key、Google Key 池與提示詞範本",
+      "dialogConfirm": "確定",
+      "dialogCancel": "取消",
+      "settingsLoadBlocked": "無法讀取已儲存的設定，本次修改不會儲存。請檢查外掛資料夾中的 DiscordAITranslator.config.json，修復後重新啟用外掛。",
+      "pluginStarted": "Discord AI 翻譯助手 v{version} 已啟動。",
+      "polishButton": "潤色",
+      "polishBusy": "潤色中",
+      "polishRunning": "正在潤色目前草稿...",
+      "composerChanged": "輸入框已切換，請再試一次。",
+      "composerResultHeld": "結果未自動寫入：草稿已改變，或你正在他處輸入。可在彈出的面板裡複製或寫入。",
+      "polishTitleAttr": "用 AI 潤色目前草稿。快捷鍵：{shortcut}。",
+      "publicBilingualButton": "雙語",
+      "publicBilingualBusy": "翻譯中",
+      "publicBilingualTitleAttr": "寫入面向所有人可見的雙語訊息，目標語言：{targetLanguage}",
+      "publicBilingualReady": "雙語訊息已寫入，檢查後再發送。",
+      "publicBilingualFailed": "無法寫入雙語訊息：{error}",
+      "publicBilingualInputChanged": "翻譯期間輸入已改變，未覆蓋目前草稿。",
+      "errorComposerWriteFailed": "輸入框未接受寫入，結果已顯示在面板中，可手動複製。",
+      "publicBilingualTooLong": "雙語訊息超過 Discord 單則長度上限（{length}/{limit}）。",
+      "publicBilingualPolishSkipped": "潤色功能已關閉，本次雙語直接使用目前草稿。",
+      "translateButton": "翻譯",
+      "translateBusy": "翻譯中...",
+      "translateTitleAttr": "翻譯為 {targetLanguage}",
+      "translateMenu": "翻譯為 {targetLanguage}",
+      "translateRetry": "重試",
+      "translateRetryTitle": "重新翻譯這則訊息",
+      "translationFailedInline": "翻譯失敗：{error}",
+      "translationLoading": "翻譯中…",
+      "translationRevealLabel": "顯示被遮蔽的譯文",
+      "translationActionsLabel": "譯文操作",
+      "translationActionCopy": "複製譯文",
+      "translationActionRetranslate": "重新翻譯（不用快取）",
+      "translationActionHide": "隱藏譯文",
+      "translationCopied": "已複製譯文。",
+      "translationPartialOne": "第 {parts} 段（共 {total} 段）未能翻譯出來",
+      "translationPartialMany": "第 {parts} 段（共 {total} 段）未能翻譯出來",
+      "translationPartialUnknown": "有一部分未能翻譯出來",
+      "translationRetranslate": "重新翻譯",
+      "translationRetranslateTitle": "不用快取，重新翻譯整則訊息",
+      "translationErrorAuth": "翻譯服務拒絕了 API Key",
+      "translationErrorMissingKey": "尚未填寫翻譯用的 API Key",
+      "translationErrorMissingEndpoint": "尚未填寫翻譯 API 位址",
+      "translationErrorMissingModel": "尚未選擇翻譯模型",
+      "translationErrorQuota": "翻譯服務的額度已用完",
+      "translationErrorLocal": "本機翻譯服務沒有回應",
+      "translationErrorLocalAt": "本機翻譯服務沒有回應（{host}）",
+      "translationErrorRateLimit": "請求過多，請稍後再試",
+      "translationErrorRateLimitWait": "請求過多，請 {seconds} 秒後再試",
+      "translationOpenSettings": "開啟設定",
+      "translationOpenSettingsTitle": "開啟翻譯設定",
+      "translationTestConnection": "測試連線",
+      "translationTestConnectionTitle": "測試翻譯服務能否連上",
+      "autoTranslateFailed": "自動翻譯失敗：{error}",
+      "autoTranslateNeedsAttention": "自動翻譯需要你處理：{error}",
+      "autoTranslateTargetFailed": "模型輸出不是目標語言，已略過這則譯文。",
+      "manualTranslateRescueFailed": "多次嘗試後仍未取得可用的譯文，可以再試一次。",
+      "contextPatchFailed": "無法注入訊息右鍵選單：{error}",
+      "polishDisabled": "輸入潤色已停用。",
+      "textboxMissing": "找不到 Discord 輸入框。",
+      "inputEmpty": "輸入框是空的。",
+      "confirmSend": "發送潤色後的訊息？",
+      "confirmSendAction": "發送",
+      "confirmSendDraftChanged": "草稿已有改動，未發送。",
+      "translationDisabled": "頻道訊息翻譯已停用。",
+      "noTranslatableText": "這則訊息沒有可翻譯文字。",
+      "messageMissing": "找不到要翻譯的訊息。",
+      "modelSet": "模型已設定為 {model}。",
+      "hideTranslation": "隱藏翻譯",
+      "translationLabel": "AI 翻譯為 {targetLanguage}",
+      "polishedReady": "潤色結果已寫入輸入框。",
+      "apiKeyMissingPolish": "輸入潤色 API Key 尚未設定。",
+      "apiKeyMissingTranslation": "頻道翻譯 API Key 尚未設定。",
+      "endpointMissing": "API 位址尚未設定。",
+      "modelMissing": "模型尚未設定。",
+      "invalidJson": "API 回傳了無效的 JSON。",
+      "emptyResult": "API 回傳了空結果。",
+      "errorUnauthorized": "API Key 無效或沒有權限。",
+      "errorRateLimited": "API 請求過快，已進入冷卻。",
+      "errorQuotaExceeded": "API 額度或帳戶餘額已用完。",
+      "errorLanguageUnsupported": "目前服務商不支援所選目標語言，請換一個目標語言或服務商。",
+      "errorIpNotAllowed": "服務商拒絕了目前 IP 位址，請檢查服務商後台的 IP 白名單。",
+      "errorProviderRequestRejected": "服務商拒絕了請求，請檢查帳號權限、目標語言與服務設定。",
+      "errorOutputTruncated": "模型回覆被截斷，請在設定的「更多模型參數」裡調高「最大輸出長度」後重試。",
+      "errorOutputTruncatedPolish": "潤色回覆被截斷，請在「輸入框工具 → 更多模型參數」裡調高「最大輸出長度」後重試。",
+      "errorOutputTruncatedTranslation": "譯文回覆被截斷，請在「翻譯訊息 → 更多模型參數」裡調高「最大輸出長度」後重試。",
+      "errorSaveFailed": "無法儲存到本機，請稍後重試。",
+      "errorServer": "API 服務暫時無法使用。",
+      "errorCancelled": "請求已取消。",
+      "errorInvalidEndpoint": "API 位址無效，請填寫完整的 API 位址。",
+      "errorEndpointNotFound": "找不到 API 位址或模型，請檢查位址與模型名稱。",
+      "errorUnsafeEndpoint": "API 位址不安全：遠端服務須使用 HTTPS，本機服務可用 HTTP，位址中不可包含使用者名稱或密碼。",
+      "localIntakeFixed": "本機服務固定掃描頁面發現訊息，無需修改。",
+      "localConcurrencyDesc": "可設為 {min}-{max}；依本機服務的並行槽位與顯示記憶體設定。",
+      "localFallbackUnavailable": "本機服務不會轉到雲端服務，此項不可用。",
+      "errorTimeout": "API 請求逾時。",
+      "errorNetwork": "網路連線失敗。",
+      "errorLocalProviderUnavailable": "Sakura 本機服務無法連線，自動翻譯已暫停；啟動 Sakura 後等待自動恢復，或在設定裡點擊測試連線立即恢復。",
+      "unknownError": "未知錯誤",
+      "providerMicrosoft": "Microsoft 翻譯",
+      "providerDeepL": "DeepL",
+      "providerBaidu": "百度翻譯",
+      "providerRegion": "區域",
+      "providerRegionDesc": "Azure Translator 的資源區域；全域資源可留空。",
+      "deeplPlan": "DeepL 方案",
+      "deeplPlanDesc": "Free 使用 api-free.deepl.com，Pro 使用 api.deepl.com。",
+      "deeplPlanFree": "Free",
+      "deeplPlanPro": "Pro",
+      "baiduAppId": "百度 App ID",
+      "baiduAppIdDesc": "百度翻譯開放平台的 App ID，只保存在本機。",
+      "baiduSecretKey": "百度金鑰",
+      "baiduSecretKeyDesc": "百度翻譯開放平台的金鑰，只保存在本機，不寫入日誌。",
+      "autoTranslateIntakeMode": "訊息發現方式",
+      "autoTranslateIntakeModeDesc": "「自動」在裝有 BDFDB 外掛庫時用它識別訊息，否則掃描頁面。",
+      "autoTranslateIntakeAuto": "自動",
+      "autoTranslateIntakeDom": "只掃描頁面",
+      "autoTranslateIntakeBdfdb": "優先使用 BDFDB",
+      "settingsTabPolish": "輸入潤色",
+      "settingsTabTranslation": "頻道翻譯",
+      "settingsTabPublicBilingual": "公開雙語",
+      "settingsTabDisplay": "顯示・快取・診斷",
+      "settingsTabOverview": "概覽",
+      "settingsTabTranslate": "翻譯訊息",
+      "settingsTabCompose": "輸入框工具",
+      "settingsTabAppearance": "顯示",
+      "settingsTabAdvanced": "進階",
+      "settingsTabData": "資料與診斷",
+      "settingsTabsLabel": "設定分類",
+      "settingsSearchPlaceholder": "搜尋設定",
+      "settingsSearchResults": "找到 {count} 項設定",
+      "settingsSearchEmpty": "找不到與「{query}」相關的設定",
+      "settingsClose": "關閉設定",
+      "settingsGroupCommon": "常用",
+      "overviewSetupTitle": "開始使用：還差 {count} 步",
+      "overviewSetupProgress": "{done} / {total} · 全部完成後這張卡片會自動收起",
+      "overviewSetupService": "選擇翻譯服務",
+      "overviewSetupServiceOff": "訊息翻譯已關閉",
+      "overviewSetupServiceMissing": "{provider} 尚未填完",
+      "overviewSetupTest": "測試連線",
+      "overviewSetupTestBlocked": "先選好翻譯服務",
+      "overviewSetupTarget": "目標語言",
+      "overviewSetupAuto": "開啟自動翻譯",
+      "overviewSetupAutoOn": "已開啟",
+      "overviewSetupAutoOff": "目前關閉，只能手動點「翻譯」",
+      "overviewSetupAutoChannel": "總開關關閉，本頻道總是翻譯",
+      "overviewSetupChannel": "本頻道",
+      "overviewSetupChannelNone": "目前不在頻道裡",
+      "overviewSetupChannelNever": "本頻道設為不翻譯",
+      "overviewStateDone": "已完成",
+      "overviewStateTodo": "未完成",
+      "overviewSetUp": "前往設定",
+      "overviewTurnOn": "開啟",
+      "overviewChange": "變更",
+      "overviewServicesTitle": "服務狀態",
+      "overviewCardTranslation": "翻譯訊息",
+      "overviewCardPolish": "輸入框潤色",
+      "overviewServiceOff": "已關閉",
+      "overviewServiceMissing": "未設定：缺少 {field}",
+      "settingsGroupAutoTranslate": "自動翻譯",
+      "settingsGroupHistoryBackfill": "歷史補翻",
+      "settingsGroupFallback": "手動翻譯備用服務",
+      "settingsGroupTranslatedText": "譯文顯示",
+      "settingsGroupNotices": "提示與入口",
+      "settingsGroupWindows": "視窗外觀",
+      "settingsMoreModelParams": "更多模型參數",
+      "settingsApiKeyOptional": "API Key（選填）",
+      "settingsRequiresParent": "請先開啟「{parent}」",
+      "settingsDangerZone": "危險操作",
+      "settingsResetDesc": "恢復預設設定，可選擇保留 API Key 與提示詞範本，操作前會先確認。",
+      "providerSettingsTitle": "服務商設定",
+      "providerSettingsDesc": "只顯示目前服務商用到的選項，切換回來時其他設定仍在。",
+      "polishControlsTitle": "輸入體驗",
+      "translationControlsTitle": "訊息翻譯入口",
+      "autoTranslateSettingsTitle": "自動翻譯排程",
+      "publicBilingualTitle": "公開雙語輸入",
+      "publicBilingualDependencyTitle": "目前鏈路",
+      "publicBilingualDependencyDesc": "雙語訊息是一般 Discord 文字，發送後所有人都能看到。",
+      "publicBilingualDependencyStatus": "雙語前潤色：{polishProvider}；翻譯：{translationProvider}；目標語言：{targetLanguage}。",
+      "publicBilingualDependencyFlowDesc": "潤色服務已設定時由它翻譯，目標語言跟隨潤色輸出語言。",
+      "publicBilingualDependencyPolishOff": "不潤色",
+      "displaySettingsTitle": "顯示行為",
+      "cacheSettingsTitle": "翻譯快取",
+      "diagnosticsSettingsTitle": "診斷",
+      "providerStatus": "服務狀態",
+      "providerStatusDesc": "用目前設定測試一次連線。",
+      "quickSettingsOpen": "開啟 Discord AI Translator 設定",
+      "quickSettingsDone": "完成",
+      "quickSettingsOpenFailed": "快捷設定開啟失敗：{error}",
+      "quickSettingsFallbackTitle": "快捷設定未能完整渲染",
+      "quickSettingsFallbackHint": "已記錄開啟鏈路診斷；關閉此視窗後可匯出診斷 JSON 繼續排查。",
+      "quickPanelTitle": "AI 翻譯助手",
+      "quickPanelLauncherLabel": "AI 翻譯助手：{status}",
+      "quickPanelOpenFull": "開啟完整設定",
+      "quickPanelClose": "關閉",
+      "quickPanelEscHint": "Esc 關閉",
+      "quickPanelAutoTranslate": "自動翻譯",
+      "quickPanelAutoTranslateDesc": "翻譯畫面上的外語訊息",
+      "quickPanelChannel": "本頻道",
+      "quickPanelChannelNone": "未開啟頻道",
+      "quickPanelChannelDm": "私訊",
+      "quickPanelRuleInherit": "跟隨總開關",
+      "quickPanelRuleEnabled": "總是翻譯",
+      "quickPanelRuleDisabled": "不翻譯",
+      "quickPanelRuleInheritFull": "跟隨總開關",
+      "quickPanelRuleEnabledFull": "總是翻譯",
+      "quickPanelRuleDisabledFull": "不翻譯",
+      "quickPanelRuleCaptionInheritOn": "目前：會自動翻譯（跟隨總開關）",
+      "quickPanelRuleCaptionInheritOff": "目前：不自動翻譯（跟隨總開關）",
+      "quickPanelRuleCaptionEnabled": "總開關關閉時，這個頻道也會自動翻譯",
+      "quickPanelRuleCaptionDisabled": "這個頻道不自動翻譯；手動翻譯不受影響",
+      "quickPanelRuleCaptionNoChannel": "開啟一個頻道後可單獨設定",
+      "quickPanelRuleCaptionTranslationOff": "頻道翻譯已關閉，這裡的規則暫不生效",
+      "quickPanelTargetLanguage": "翻譯成",
+      "quickPanelDisplay": "顯示",
+      "quickPanelMask": "遮蔽譯文",
+      "quickPanelMaskDesc": "先顯示灰條，點一下再看",
+      "quickPanelHideOriginal": "翻譯後遮擋原文",
+      "quickPanelHideOriginalDesc": "游標停留在訊息上可看原文",
+      "quickPanelPosition": "譯文位置",
+      "quickPanelPositionAbove": "原文上方",
+      "quickPanelPositionBelow": "原文下方",
+      "quickStatusActive": "本頻道自動翻譯中",
+      "quickStatusBusy": "正在翻譯 {inFlight} 則，排隊 {queued} 則",
+      "quickStatusTesting": "正在測試連線…",
+      "quickStatusLatency": "{ms} ms",
+      "quickStatusWaiting": "{reason}，稍後自動繼續",
+      "quickStatusWaitingSeconds": "{reason}，約 {seconds} 秒後自動繼續",
+      "quickStatusReasonRateLimit": "服務繁忙",
+      "quickStatusReasonServer": "服務出錯",
+      "quickStatusReasonNetwork": "連線不穩定",
+      "quickStatusReasonParse": "回傳內容異常",
+      "quickStatusNeedsYou": "需要處理：{reason}",
+      "quickStatusReasonConfig": "缺少 API Key 等設定",
+      "quickStatusReasonAuth": "API Key 無效或沒有權限",
+      "quickStatusReasonQuota": "額度用完或餘額不足",
+      "quickStatusReasonLocal": "本機服務沒有回應",
+      "quickStatusReasonFailed": "連線測試未通過",
+      "quickStatusReasonEndpoint": "API 位址不可用",
+      "quickStatusReasonNotFound": "找不到位址或模型",
+      "quickStatusNotConfigured": "未設定",
+      "quickStatusOffChannel": "本頻道不自動翻譯",
+      "quickStatusOffDisabled": "頻道翻譯已關閉",
+      "quickStatusManualHint": "手動翻譯仍可用",
+      "quickPanelTabsLabel": "快捷面板功能切換",
+      "quickPanelTabTranslation": "頻道翻譯",
+      "quickPanelTabPolish": "輸入潤色",
+      "quickPanelTabTransAutoOn": "自動開 · {language}",
+      "quickPanelTabTransManual": "手動 · {language}",
+      "quickPanelTabTransOff": "已關閉",
+      "quickPanelTabPolishOn": "開 · {language}",
+      "quickPanelTabPolishOff": "已關閉",
+      "quickPanelTranslationService": "翻譯服務",
+      "quickPanelPolishService": "潤色服務",
+      "quickPanelSavedServiceCurrent": "目前：{label}",
+      "quickPanelSavedServiceEmpty": "尚無已儲存服務（測試通過後自動儲存）",
+      "quickPanelServiceShared": "與翻譯共用",
+      "quickPanelServiceIndependent": "獨立服務",
+      "quickPanelTranslationTemplate": "翻譯範本",
+      "quickPanelTemplateCustom": "自訂提示詞",
+      "quickStatusPolishActive": "輸入潤色可用",
+      "quickStatusPolishOff": "輸入潤色已關閉",
+      "quickStatusPolishBtnOn": "輸入框按鈕已顯示",
+      "quickStatusPolishBtnOff": "輸入框按鈕已隱藏",
+      "quickStatusPolishHotkeyOff": "快捷鍵已關",
+      "quickPanelPolishTestTitle": "測試輸入潤色服務能否連上",
+      "quickPanelPolishEnabled": "啟用輸入潤色",
+      "quickPanelPolishEnabledDesc": "改寫輸入框草稿並回填",
+      "quickPanelPolishOutputLanguage": "輸出語言",
+      "quickPanelPolishTemplate": "潤色範本",
+      "quickPanelPolishCreativity": "創造性",
+      "quickPanelPolishCreativitySteady": "穩妥 0.3",
+      "quickPanelPolishCreativityBalanced": "自然 0.7",
+      "quickPanelPolishCreativityCreative": "發散 1.2",
+      "quickPanelPolishCreativityDescSteady": "穩妥忠實，貼近原句結構",
+      "quickPanelPolishCreativityDescBalanced": "自然均衡，適合日常聊天",
+      "quickPanelPolishCreativityDescCreative": "高發散，再次潤色會明顯換說法",
+      "quickPanelPolishBehavior": "潤色行為",
+      "quickPanelPolishAfterAction": "潤色後",
+      "quickPanelPolishRepolishSource": "再次潤色",
+      "quickPanelPolishRepolishOriginal": "最初原文",
+      "quickPanelPolishRepolishLast": "上次結果",
+      "quickPanelPublicBilingual": "公開雙語按鈕",
+      "quickPanelPublicBilingualDesc": "在輸入框旁顯示「雙語」按鈕",
+      "quickPanelPublicBilingualAfterPolish": "潤色後自動產生雙語",
+      "quickPanelPublicBilingualAfterPolishDesc": "潤色完順帶附上摺疊原文",
+      "quickPanelTryPolishToggle": "快速試潤色",
+      "quickPanelTryPolishPlaceholder": "輸入一句試試目前範本與語言…",
+      "quickPanelTryPolishRun": "試潤色",
+      "quickPanelTryPolishAgain": "再潤一次",
+      "quickPanelOpenFullPolish": "編輯範本與完整設定",
+      "inputActionMenu": "AI 操作",
+      "inputActionOpenSettings": "設定",
+      "restoreOriginalShort": "↶",
+      "polishButtonShort": "潤",
+      "polishTitleAttrWithTone": "用 AI 潤色目前草稿（目前語氣：{tone}）。快捷鍵：{shortcut}。",
+      "polishPresetPicker": "切換潤色語氣",
+      "polishPresetPickerTitle": "切換潤色語氣（目前：{tone}）",
+      "polishPresetMenuTitle": "潤色語氣",
+      "polishPresetMenuTabsLabel": "潤色語氣分類",
+      "polishPresetMenuCustomNote": "目前為自訂提示詞，選擇下方預設可切換",
+      "polishPresetMenuEmpty": "尚無可用預設，可前往設定新增",
+      "polishPresetMenuEmptyPersona": "人物風格即將上線（歷史人物等），也可先前往設定自訂新增",
+      "polishPresetMenuManage": "管理 / 自訂語氣…",
+      "polishPresetMenuItemAction": "切換潤色語氣…",
+      "publicBilingualButtonShort": "雙",
+      "showQuickSettingsPanelButton": "顯示使用者列快捷設定",
+      "showQuickSettingsPanelButtonDesc": "在左下角使用者控制列的 Discord 設定齒輪附近顯示 AI 入口。",
+      "currentChannelAutoTranslatePolicy": "本頻道自動翻譯",
+      "currentChannelAutoTranslatePolicyDesc": "只影響本頻道的自動翻譯，手動翻譯不受影響。",
+      "channelPolicyInherit": "跟隨總開關",
+      "channelPolicyEnabled": "總是翻譯",
+      "channelPolicyDisabled": "不翻譯",
+      "channelRuleFollow": "跟隨總開關",
+      "channelRuleAlways": "總是翻譯",
+      "channelRuleNever": "不翻譯",
+      "historyBackfillEnabled": "允許補翻已載入的歷史訊息",
+      "historyBackfillEnabledDesc": "開啟後可手動補翻已載入的訊息，不會自動執行。",
+      "historyBackfillLimit": "每次歷史補翻上限",
+      "historyBackfillLimitDesc": "每次最多補翻多少則已載入的訊息（1-100）。",
+      "historyBackfillRun": "補翻已載入訊息",
+      "historyBackfillRunning": "補翻中...",
+      "historyBackfillRunDesc": "把已載入但尚未翻譯的訊息排進低優先級佇列。",
+      "historyBackfillQueued": "已加入歷史補翻佇列：{count} 則。",
+      "historyBackfillNoWork": "沒有可補翻的已載入訊息。",
+      "historyBackfillContextMenu": "補翻已載入訊息",
+      "providerFallbackEnabled": "手動翻譯失敗時改用備用服務",
+      "providerFallbackEnabledDesc": "只用於手動翻譯與公開雙語；本機服務不會轉到雲端。",
+      "providerFallbackOrder": "備用服務順序",
+      "providerFallbackOrderListDesc": "勾選要用的備用服務，用箭頭調整先後順序。",
+      "providerFallbackMoveUp": "把 {provider} 上移",
+      "providerFallbackMoveDown": "把 {provider} 下移",
+      "providerFallbackCurrent": "（目前服務）",
+      "providerFallbackOrderDesc": "用逗號或換行分隔，可用：{providers}。",
+      "composerMassMentionBlocked": "已攔截模型新增的全體/身分組提及（{mentions}），避免誤觸發通知。",
+      "composerChannelChanged": "目前已切換頻道，未自動寫入剛才的潤色/雙語結果；請手動複製或切回原頻道。",
+      "hostHealthTitle": "Discord 宿主相容自檢",
+      "hostHealthDesc": "檢測目前 Discord 關鍵掛載點，客戶端更新後可一鍵定位失效項。",
+      "hostHealthRecheck": "重新檢測",
+      "hostHealthCopyReport": "複製自檢報告",
+      "hostHealthCopied": "宿主自檢報告已複製。",
+      "hostHealthSummaryOk": "全部正常（{ok}/{total}）",
+      "hostHealthSummaryWarn": "部分待注意（正常 {ok} · 警告 {warn} · 異常 {error}）",
+      "hostHealthSummaryError": "發現相容異常（正常 {ok} · 警告 {warn} · 異常 {error}）",
+      "hostHealthItemBdApi": "BetterDiscord API",
+      "hostHealthItemStores": "Discord 內部 Store（MessageStore / ChannelStore）",
+      "hostHealthItemChatRoot": "聊天容器掛載點",
+      "hostHealthItemMessages": "聊天訊息節點與內文擷取",
+      "hostHealthItemComposer": "輸入框與工具列錨點",
+      "hostHealthItemUserPanel": "左下角使用者面板與 AI 入口",
+      "hostHealthItemContextMenu": "右鍵選單修補",
+      "hostHealthItemTheme": "目前偵測主題",
+      "hostHealthStateOk": "正常",
+      "hostHealthStateWarn": "待觀察",
+      "hostHealthStateError": "異常",
+      "quickLanguageBarLabel": "快速切換介面語言",
+      "quickLanguageSwitchTitle": "切換介面語言：{language}"
+    };
+  }
+});
+
+// src/i18n/en.js
+var require_en = __commonJS({
+  "src/i18n/en.js"(exports2, module2) {
+    "use strict";
+    module2.exports = {
+      "settingsTitle": "Discord AI Translator",
+      "settingsNote": "Polishing and translation are set up separately. API keys stay on this computer.",
+      "generalTitle": "General",
+      "interfaceLanguage": "Interface language",
+      "interfaceLanguageDesc": "Changes the plugin's own text only, not the polish or translation language.",
+      "languageZh": "中文",
+      "languageEn": "English",
+      "polishTitle": "Input polishing",
+      "polishDescription": "Rewrites the current draft and returns the result to the input box.",
+      "translationTitle": "Channel translation",
+      "translationDescription": "Translates existing channel messages into the selected target language.",
+      "enabled": "Enabled",
+      "enabledDesc": "When off, its buttons are hidden and no requests are sent.",
+      "provider": "Service",
+      "providerDesc": "LLMs work for both translation and polishing; translation engines translate only.",
+      "providerPolishDesc": "Polishing needs prompt-capable LLMs; pick any saved LLM config above.",
+      "providerGroupAi": "LLMs (translate & polish)",
+      "providerGroupMachine": "Translation engines (translate only)",
+      "savedServiceConfigs": "Saved configurations",
+      "savedServiceConfigsDesc": "Tested services save automatically for reuse across translation and polishing.",
+      "savedServiceConfigsPlaceholder": "Choose a saved config ({count})",
+      "savedServiceConfigsEmpty": "No saved configs yet (saved automatically after Test)",
+      "savedServiceConfigApplied": "Applied configuration: {name}",
+      "savedServiceConfigDeleted": "Saved configuration removed.",
+      "savedServiceConfigDelete": "Remove",
+      "syncConfigToPolish": "Sync to polish",
+      "syncConfigToTranslation": "Sync to translate",
+      "syncConfigUnsupportedPolish": "Translation engines cannot rewrite drafts for input polishing.",
+      "syncConfigMissing": "Finish configuring the current service first.",
+      "syncConfigDonePolish": "Synced configuration to input polishing.",
+      "syncConfigDoneTranslation": "Synced configuration to channel translation.",
+      "providerOpenAI": "OpenAI-compatible",
+      "providerSakuraLocal": "Sakura local",
+      "providerGoogleCloud": "Google Cloud Translation",
+      "googleTranslateTitle": "Google Cloud Translation key pool",
+      "googleTranslateKeys": "Google API key pool",
+      "googleTranslateKeysDesc": "One key per line, or Label|KEY|monthly limit.",
+      "googleTranslateDefaultLimit": "Default monthly limit per Google key",
+      "googleTranslateDefaultLimitDesc": "Used when a key line has no limit; 420000-450000 leaves a safety margin.",
+      "googleTranslateAllowPrefetch": "Allow Google for prefetch",
+      "googleTranslateAllowPrefetchDesc": "When off, only on-screen messages use Google; prefetch spends no Google characters.",
+      "googleTranslateStats": "Google usage",
+      "googleTranslateStatsDesc": "This month {used}/{limit} chars; available keys {available}/{total}; month {month}.",
+      "googleTranslateStatsCooldown": "{count} key(s) cooling down; the first comes back at {time}.",
+      "googleTranslateResetStats": "Reset Google monthly stats",
+      "googleTranslateResetConfirm": "Only the count kept on this computer is cleared; real Google Cloud usage is unchanged.",
+      "googleTranslateStatsReset": "Google monthly stats reset.",
+      "googleTranslateNoKey": "Google Cloud Translation has no available API key.",
+      "googleTranslateQuotaExceeded": "Google Cloud Translation key pool monthly quota is exhausted.",
+      "googleTranslateKeysCooling": "All Google Cloud Translation keys are cooling down until {time}.",
+      "googleTranslateKeyError": 'Key "{label}": {error}',
+      "apiKey": "API key",
+      "apiKeyDesc": "Stored only on this computer, never in messages; Sakura local can leave it empty.",
+      "apiKeyDeepSeekDesc": "Your DeepSeek platform API key, stored only on this computer.",
+      "apiKeyOpenAIDesc": "The API key your service gave you, stored only on this computer.",
+      "apiKeyLocalDesc": "Optional; local servers usually don't need one.",
+      "apiKeyMicrosoftDesc": "Your Azure Translator resource key, stored only on this computer.",
+      "apiKeyDeepLDesc": "Your DeepL API authentication key, stored only on this computer.",
+      "apiKeyOptionalPlaceholder": "Optional",
+      "apiTest": "Test",
+      "apiTestBusy": "Testing",
+      "apiStatusUntested": "Untested",
+      "apiStatusTesting": "Testing",
+      "apiStatusSuccess": "Connected",
+      "apiStatusFailed": "Failed",
+      "apiTestSuccess": "{name} API connection succeeded.",
+      "apiTestSuccessSaved": "{name} API connected and saved as a reusable configuration.",
+      "apiTestSuccessSynced": "{name} API connected, saved, and synced to {target}.",
+      "apiTestFailed": "{name} API connection failed: {error}",
+      "apiTestJustNow": "just now",
+      "apiTestMinutesAgo": "{count} min ago",
+      "apiTestHoursAgo": "{count} h ago",
+      "apiTestNotYet": "Not tested yet",
+      "thinkingMode": "DeepSeek thinking mode",
+      "thinkingModeDesc": "The model reasons before answering: maybe better, but slower and uses more tokens.",
+      "endpoint": "Endpoint",
+      "endpointDesc": "The service's API address; the default usually works.",
+      "endpointDeepSeekDesc": "DeepSeek's API address; the default usually works.",
+      "endpointOpenAIDesc": "Accepts a /v1 base URL or full chat/completions URL; remote needs https.",
+      "endpointLocalDesc": "Your local server's address; only local addresses may use http.",
+      "endpointMicrosoftDesc": "Azure Translator's API address; the default usually works.",
+      "endpointBaiduDesc": "Baidu Translate's API address; the default usually works.",
+      "deepseekPreset": "DeepSeek V4 preset",
+      "deepseekPresetDesc": "Switch quickly between DeepSeek V4 Flash and Pro.",
+      "customModel": "Custom (type it below)",
+      "model": "Model",
+      "modelDesc": "Type any model name; your last entry is remembered automatically.",
+      "modelOpenAIDesc": "The model name your service offers; Detect models lists them.",
+      "modelLocalDesc": "local-model uses whichever model the server has loaded.",
+      "modelLocalLoadedDesc": "local-model uses the server's loaded model, now {model}.",
+      "modelDetect": "Detect models",
+      "modelDetectBusy": "Detecting",
+      "modelDetectFound": "Found {count} models; pick one from the list.",
+      "modelDetectFoundLoaded": "Found {count} models; loaded: {model}.",
+      "modelDetectNone": "The server listed no models.",
+      "modelDetectFailed": "Detection failed: {error}",
+      "modelDetectUnsupported": "This service can't list its models.",
+      "modelDetectConfirmOrigin": "Confirm where to use this API key",
+      "modelDetectConfirmOriginDesc": "Allow the current API key to be sent to {origin} and bind it to this origin?",
+      "apiKeyOriginMismatch": "This API key is bound to a different origin. Enter a key for this address or use Detect models to confirm the current origin.",
+      "modelPicker": "Available models",
+      "modelPickerOther": "Other (type it above)",
+      "modelPickerServerLoaded": "Use the server's loaded model (local-model)",
+      "modelPickerDetected": "Listed by the server",
+      "modelPickerPresets": "Common models",
+      "modelPickerLoadedTag": "{model} (loaded)",
+      "outputLanguage": "Output language",
+      "outputLanguageDesc": "The language of the polished text.",
+      "inputLanguage": "Input language",
+      "inputLanguageDesc": "The language of your draft; keep auto-detect unless it guesses wrong.",
+      "messageLanguage": "Message language",
+      "messageLanguageDesc": "The language of channel messages; keep auto-detect unless it guesses wrong.",
+      "autoDetectLanguage": "Auto-detect",
+      "targetLanguage": "Target language",
+      "targetLanguageDesc": "The language channel messages are translated into.",
+      "languagePreset": "Common language",
+      "customLanguage": "Custom language",
+      "customLanguagePlaceholder": "Examples: Traditional Chinese, Korean, Brazilian Portuguese",
+      "customLanguageDesc": "Custom names go to the model as typed.",
+      "temperature": "Creativity",
+      "temperatureDesc": "Lower is steadier: 0.1-⁠0.3 for translation, 0.3-⁠0.7 for polishing.",
+      "maxTokens": "Max output length",
+      "maxTokensDesc": "Longest reply the model may write; raise it if long messages get cut off.",
+      "maxTokensPolishDesc": "Longest reply for polishing; raise if long drafts or thinking get cut off.",
+      "afterPolishing": "After polishing",
+      "afterPolishingDesc": "Whether to ask before sending once the polished text is in the input box.",
+      "afterReplace": "Replace input",
+      "afterDirectReplace": "Replace input",
+      "afterConfirmSend": "Ask before sending",
+      "repolishSource": "Re-polish source",
+      "repolishSourceDesc": "When you polish again, start from the original draft or the last result.",
+      "repolishSourceOriginal": "Use original draft",
+      "repolishSourceLastResult": "Use previous result",
+      "restoreOriginal": "Restore original",
+      "restoreOriginalChanged": "The draft has changed, so the original can't be restored.",
+      "polishResultTitle": "Polished result",
+      "polishResultCopy": "Copy",
+      "polishResultCopied": "Copied",
+      "polishResultReplace": "Insert into input",
+      "polishResultApplyFailed": "Could not insert into the input box. Use Copy and paste it instead.",
+      "polishResultClose": "Close",
+      "prompt": "Prompt",
+      "promptDesc": "Tells the model how to polish or translate; any language works.",
+      "promptUsingTemplate": "Using template: {code} · {name}",
+      "promptTemplateNameNaturalChat": "Natural chat",
+      "promptTemplateNamePolite": "Polite and clear",
+      "promptTemplateNameShort": "Short and direct",
+      "promptTemplateNameNativeCasual": "Native casual",
+      "promptTemplateNameTechBug": "Tech & bug report",
+      "promptTemplateNameGamingChat": "Gaming & squad chat",
+      "promptTemplateNameTactful": "Tactful & diplomatic",
+      "promptTemplateNameFormalNotice": "Formal & announcement",
+      "promptTemplateNameDialectCantoneseGuangfu": "Guangfu Cantonese (Everyday)",
+      "promptTemplateNameDialectCantoneseHk": "Hong Kong Cantonese",
+      "promptTemplateNameDialectHakka": "Hakka (Casual)",
+      "promptTemplateNameDialectChaoshan": "Chaoshan / Teochew",
+      "promptTemplateNameDialectGuangxi": "Guangxi Nanpu",
+      "promptTemplateNameDialectMinnan": "Minnan / Hokkien",
+      "promptTemplateNameDialectTaiwan": "Taiwanese Mandarin",
+      "promptTemplateNameDialectSichuan": "Sichuan & Chongqing",
+      "promptTemplateNameDialectYunnan": "Yunnan Dialect",
+      "promptTemplateNameDialectGuizhou": "Guizhou Dialect",
+      "promptTemplateNameDialectDongbei": "Northeastern (Dongbei)",
+      "promptTemplateNameDialectBeijing": "Beijing Mandarin",
+      "promptTemplateNameDialectTianjin": "Tianjin Dialect",
+      "promptTemplateNameDialectShaanxi": "Shaanxi (Guanzhong)",
+      "promptTemplateNameDialectHenan": "Henan Dialect",
+      "promptTemplateNameDialectShandong": "Shandong Dialect",
+      "promptTemplateNameDialectXinjiang": "Xinjiang Style",
+      "promptTemplateNameDialectShanghai": "Shanghainese",
+      "promptTemplateNameDialectJiangzhe": "Suzhou & Hangzhou Wu",
+      "promptTemplateNameDialectNanjing": "Nanjing Dialect",
+      "promptTemplateNameDialectWuhan": "Wuhan Dialect",
+      "promptTemplateNameDialectHunan": "Hunan Dialect",
+      "promptTemplateCategoryLabel": "Preset category",
+      "promptTemplateCategoryGeneral": "General",
+      "promptTemplateCategoryDialect": "Dialect",
+      "promptTemplateCategoryPersona": "Persona",
+      "promptTemplateRegionSouthChina": "South China & Min-Tai",
+      "promptTemplateRegionSouthwest": "Southwest",
+      "promptTemplateRegionNorth": "North",
+      "promptTemplateRegionEastCentral": "East & Central",
+      "promptTemplateRegionCustom": "Custom dialects",
+      "promptTemplateNamePersonaQinShihuang": "Qin Shi Huang (Imperial Decree)",
+      "promptTemplateNamePersonaHanWudi": "Emperor Wu of Han (Grand Edict)",
+      "promptTemplateNamePersonaZhuYuanzhang": "Zhu Yuanzhang (Plain-Speech Edict)",
+      "promptTemplateNamePersonaChiangKaiShek": "Chiang Kai-shek (Republic Telegram)",
+      "promptTemplateNamePersonaCaoCao": "Cao Cao (Bold Warlord)",
+      "promptTemplateNamePersonaLiShimin": "Emperor Taizong (Tang Statesman)",
+      "promptTemplateNamePersonaYongzheng": "Yongzheng (Sharp Imperial Notes)",
+      "promptTemplateNamePersonaZhugeLiang": "Zhuge Liang (Earnest Memorial)",
+      "promptTemplateNamePersonaSimaYi": "Sima Yi (Patient Strategist)",
+      "promptTemplateNamePersonaSunTzu": "Sun Tzu (Art of War Maxim)",
+      "promptTemplateNamePersonaXiangYu": "Xiang Yu (Fierce Hegemon)",
+      "promptTemplateNamePersonaLuXun": "Lu Xun (Dry Satirical Essay)",
+      "promptTemplateNamePersonaLinDaiyu": "Lin Daiyu (Witty & Playful Barb)",
+      "promptTemplateNamePersonaWangYangming": "Wang Yangming (Mind Philosophy)",
+      "promptTemplateNamePersonaLiBai": "Li Bai (Free-Spirited Poet)",
+      "promptTemplateNamePersonaSuShi": "Su Shi (Warm & Witty Scholar)",
+      "promptTemplateNamePersonaConfucius": "Confucius (Analects Aphorism)",
+      "promptTemplateNamePersonaZhuangzi": "Zhuangzi (Daoist Parable)",
+      "promptTemplateNamePersonaEileenChang": "Eileen Chang (Cool Urban Wit)",
+      "promptTemplateNamePersonaQianZhongshu": "Qian Zhongshu (Sharp Metaphor)",
+      "promptTemplateNamePersonaWangXiaobo": "Wang Xiaobo (Deadpan Irony)",
+      "promptTemplateNamePersonaGuoDegang": "Guo Degang (Crosstalk Banter)",
+      "promptTemplateNamePersonaShakespeare": "Shakespeare (Stage Monologue)",
+      "promptTemplateNamePersonaTrump": "Donald Trump (Bold Hyperbole)",
+      "promptTemplateNamePersonaNietzsche": "Nietzsche (Abyss Aphorism)",
+      "promptTemplateNamePersonaMarx": "Karl Marx (Dialectical Critique)",
+      "promptTemplateNamePersonaNapoleon": "Napoleon (Battlefield Dispatch)",
+      "promptTemplateNamePersonaChurchill": "Churchill (Resolute Wit)",
+      "promptTemplateNamePersonaMusk": "Elon Musk (First-Principles Terse)",
+      "promptTemplatePersonaGroupMonarchs": "Monarchs & Rulers",
+      "promptTemplatePersonaGroupStrategists": "Strategists & Generals",
+      "promptTemplatePersonaGroupLiterati": "Writers & Thinkers",
+      "promptTemplatePersonaGroupGlobal": "Global Icons",
+      "promptTemplatePersonaGroupCustom": "Custom personas",
+      "promptTemplateNameNatural": "Natural",
+      "promptTemplateNameLiteral": "Literal",
+      "promptTemplateNameSlangCasual": "Slang & casual chat",
+      "promptTemplateNameTechDev": "Tech, AI & dev",
+      "promptTemplateNameGamingAcg": "Gaming & ACG",
+      "promptTemplateNameFormalChangelog": "Formal & changelog",
+      "promptTemplates": "Prompt templates",
+      "promptTemplatesDesc": "Choosing a template only previews it; “Use template” replaces the prompt.",
+      "promptSearch": "Search template name or code",
+      "promptTemplateSelect": "Select template",
+      "promptTemplateCustom": "Current prompt is not saved as a template",
+      "promptTemplateEdited": "Based on {code} · {name}; edits not saved to the template",
+      "promptPreview": "Template preview",
+      "promptPreviewActive": "In use",
+      "promptApply": "Use template",
+      "promptSave": "Save as template",
+      "promptUpdate": "Update current template",
+      "promptUpdateTitle": "Overwrite {code} · {name} with the edited prompt",
+      "promptDelete": "Delete template",
+      "promptRestorePresets": "Restore built-in presets",
+      "promptPresetsRestored": "Restored {count} built-in template(s).",
+      "promptPresetsComplete": "All built-in templates are already present.",
+      "promptCopy": "Copy prompt",
+      "promptCopied": "Prompt copied.",
+      "copiedToClipboard": "Copied.",
+      "promptCopyFailed": "Copy failed: {error}",
+      "clipboardUnavailable": "The clipboard is not available. Select the text and copy it manually.",
+      "promptNamePlaceholder": "Name this template",
+      "promptSaveNameLabel": "New template name",
+      "promptNameRequired": "Enter a template name first.",
+      "promptSaved": "Template saved: {code} · {name}",
+      "promptUpdated": "Template updated: {code} · {name}",
+      "promptDeleted": "Template deleted.",
+      "promptApplied": "Template applied: {code} · {name}",
+      "promptApplyUnsavedTitle": "Replace the current prompt?",
+      "promptApplyUnsavedConfirm": "Your prompt has unsaved edits; using {code} · {name} replaces them.",
+      "promptDeleteConfirm": "Delete this prompt template?",
+      "promptDeleteActiveNote": "This template is in use; deleting it switches the prompt to {code} · {name}.",
+      "promptNoTemplate": "No templates available.",
+      "uiTitle": "UI",
+      "showPolishButton": "Show Polish button near the input box",
+      "showPolishButtonDesc": "Adds a Polish shortcut button near the Discord input box.",
+      "publicBilingualInputButton": "Show public bilingual button near the input box",
+      "publicBilingualInputButtonDesc": "Writes your draft as translation plus hidden original, for you to check and send.",
+      "publicBilingualUseInitialOriginal": "Use initial draft as hidden original",
+      "publicBilingualUseInitialOriginalDesc": "If you polished first, the hidden original keeps your unpolished draft.",
+      "publicBilingualAfterPolish": "Auto-create public bilingual message after polishing",
+      "publicBilingualAfterPolishDesc": "After Polish, also turns the result into a bilingual message; nothing is sent.",
+      "publicBilingualPolishBeforeTranslate": "Auto-polish before public bilingual",
+      "publicBilingualPolishBeforeTranslateDesc": "Clicking Bilingual polishes the draft first, then translates the result.",
+      "showMessageButtons": "Show Translate buttons on messages",
+      "showMessageButtonsDesc": "Adds a Translate button beside channel messages.",
+      "messageButtonVisibility": "Translate button visibility",
+      "messageButtonVisibilityDesc": "Show the Translate button all the time, or only when you hover a message.",
+      "messageButtonVisibilityAlways": "Always shown",
+      "messageButtonVisibilityHover": "Shown on hover",
+      "messageButtonMode": "Translate button on messages",
+      "messageButtonModeDesc": "How the Translate button appears next to each message.",
+      "messageButtonModeHover": "Show on hover",
+      "messageButtonModeAlways": "Always show",
+      "messageButtonModeOff": "Don't show",
+      "autoTranslateMessages": "Auto-translate visible foreign messages",
+      "autoTranslateMessagesDesc": "Translates on-screen messages that aren't in your target language.",
+      "autoTranslatePrefetch": "Prefetch nearby messages",
+      "autoTranslatePrefetchDesc": "Translates nearby off-screen messages when idle; needs a concurrency of 2 or more.",
+      "autoTranslatePrefetchRange": "Prefetch range",
+      "autoTranslatePrefetchRangeDesc": "How many messages above and below the screen to prefetch.",
+      "autoTranslateConcurrency": "Auto-translation concurrency",
+      "autoTranslateConcurrencyDesc": "How many translation requests run at once: default {default}, range {min}-{max}.",
+      "autoTranslateStrictRetry": "Retry strictly when the output language is wrong",
+      "autoTranslateStrictRetryDesc": "Retries failed parts, then one message at a time, before showing Retry.",
+      "showAutoTranslateWarnings": "Show failures under messages",
+      "showAutoTranslateWarningsDesc": "Includes timeouts and network hiccups; errors you must fix always show.",
+      "showAutoTranslateToasts": "Show a pop-up when auto-translation fails",
+      "showAutoTranslateToastsDesc": "Problems you must fix, like an invalid key, are always shown once.",
+      "diagnosticLogs": "Diagnostic logs",
+      "diagnosticLogsDesc": "Records requests, cache use and failure reasons (up to 500 entries) for export.",
+      "diagnosticLogsStats": "Logs: {entries}; compressed repeated events: {compressed}.",
+      "diagnosticSummary": "Diagnostic summary",
+      "diagnosticSummaryEmpty": "Turn on diagnostics and reproduce the issue to see a summary here.",
+      "diagnosticSummaryEvents": "Events: {events}, grouped by state, reason and service; latest {latest}.",
+      "diagnosticSummaryStates": "States",
+      "diagnosticSummaryReasons": "Reasons",
+      "diagnosticSummaryFlows": "Flows",
+      "diagnosticSummaryQueues": "Queues",
+      "diagnosticSummaryProviders": "Services",
+      "diagnosticSummaryFailures": "Failures",
+      "diagnosticSummaryFailureLayers": "Failure stages",
+      "diagnosticSummaryFlowStages": "Flow stages",
+      "clearDiagnosticLogs": "Clear logs",
+      "clearDiagnosticLogsConfirm": "All diagnostic logs will be deleted. Export them first if you need them.",
+      "clearDiagnosticLogsDesc": "Deletes every diagnostic log; export them first if you need them.",
+      "exportDiagnosticLogs": "Export logs",
+      "copyDiagnosticLogs": "Copy logs",
+      "exportDiagnosticJson": "Export JSON",
+      "exportDiagnosticTxt": "Export TXT",
+      "diagnosticLogsCleared": "Diagnostic logs cleared.",
+      "diagnosticLogsCopied": "Diagnostic logs copied.",
+      "diagnosticLogsEmpty": "No diagnostic logs yet.",
+      "diagnosticLogsExported": "Diagnostic logs exported.",
+      "settingsSnapshot": "Settings snapshot",
+      "settingsSnapshotDesc": "Downloads your settings as JSON with keys hidden, safe to share for troubleshooting.",
+      "exportSettingsSnapshot": "Download settings",
+      "settingsSnapshotExported": "Settings snapshot downloaded; secrets are hidden.",
+      "settingsSnapshotCopied": "Settings snapshot copied; secrets are hidden.",
+      "translationCacheTtl": "Cache lifetime",
+      "translationCacheTtlDesc": "Kept across Discord restarts; expired translations are fetched again.",
+      "translationCacheMaxEntries": "Max cached messages",
+      "translationCacheMaxEntriesDesc": "When full, the least recently used translations go first; up to 15000.",
+      "translationCacheStats": "Cache hit stats",
+      "translationCacheStatsDesc": "This session: {hits} hits, {misses} misses; {memory} in memory, {persistent} saved.",
+      "clearTranslationCacheStats": "Clear stats",
+      "clearTranslationCache": "Clear translation cache",
+      "clearTranslationCacheConfirm": "All saved translations will be deleted and fetched again when needed.",
+      "clearTranslationCacheDesc": "Deletes every saved translation; the same text is translated again when needed.",
+      "translationCacheStatsCleared": "Cache hit stats cleared. Saved translations were kept.",
+      "translationCacheCleared": "Translation cache cleared.",
+      "cacheTtl3h": "3 hours",
+      "cacheTtl6h": "6 hours",
+      "cacheTtl12h": "12 hours",
+      "cacheTtl1d": "1 day",
+      "cacheTtl2d": "2 days",
+      "cacheTtl7d": "7 days",
+      "translationPosition": "Translation position",
+      "translationPositionDesc": "Show the translation above or below the original message.",
+      "translationBeforeOriginal": "Translation first, original below",
+      "translationAfterOriginal": "Original first, translation below",
+      "translationPositionAbove": "Above original",
+      "translationPositionBelow": "Below original",
+      "maskTranslations": "Mask translations by default",
+      "maskTranslationsDesc": "Translations show as a gray bar until you click it or press Enter.",
+      "translationStyle": "Translation style",
+      "translationStyleDesc": "All styles follow Discord's theme colors.",
+      "translationStyleTint": "Faint background",
+      "translationStyleMuted": "Dimmer text",
+      "translationStyleTag": '"TR" tag',
+      "translationTextScale": "Translation text size",
+      "translationTextScaleDesc": "Relative to the chat text size.",
+      "panelTheme": "Window theme",
+      "panelThemeDesc": "Colors of the settings window, quick panel and menus; confirmation dialogs follow Discord.",
+      "panelThemeAuto": "Follow Discord",
+      "panelThemeLight": "Light",
+      "panelThemeDark": "Dark",
+      "translationTag": "TR",
+      "hideOriginalAfterTranslation": "Hide original after translation",
+      "hideOriginalAfterTranslationDesc": "Shows the original as a gray bar until you hover or focus it; only you see this.",
+      "showContextMenu": "Show Translate action in message right-click menus",
+      "showContextMenuDesc": "Adds Translate to the message right-click menu.",
+      "enableHotkey": "Enable input polishing hotkey",
+      "enableHotkeyDesc": "When the input box is focused, the configured shortcut polishes the current draft.",
+      "polishHotkey": "Polishing hotkey",
+      "polishHotkeyDesc": "Click the shortcut button, then press a new combination with Ctrl, Alt or Win.",
+      "hotkeyRecord": "Record shortcut",
+      "hotkeyRecording": "Press shortcut...",
+      "hotkeyReset": "Reset default",
+      "hotkeyNotSet": "Not set",
+      "hotkeySaved": "Shortcut saved: {shortcut}",
+      "hotkeyInvalid": "Invalid shortcut. Use Ctrl, Alt, or Win plus a key (Shift is optional); editing shortcuts such as copy and paste are not allowed.",
+      "tryTranslate": "Try a sentence",
+      "tryTranslateDesc": "Translates one sentence with these settings; nothing goes to Discord.",
+      "tryTranslatePlaceholder": "e.g. Bis morgen, gleiche Zeit?",
+      "tryTranslateRun": "Translate",
+      "tryPolish": "Try polishing",
+      "tryPolishDesc": "Polishes one sentence with these settings; nothing goes to Discord.",
+      "tryPolishPlaceholder": "e.g. see u tmrw same time?",
+      "tryPolishRun": "Polish",
+      "tryBusy": "Working",
+      "tryInputRequired": "Type a sentence first.",
+      "tryResultTime": "took {time}",
+      "reset": "Reset to defaults",
+      "resetConfirm": "Settings, channel rules and display options return to defaults; API keys, the Google key pool and prompt templates are kept.",
+      "resetDialogTitle": "Reset to defaults?",
+      "resetDialogLead": "These return to their defaults. This can't be undone:",
+      "resetDialogItemSettings": "Service settings, switches and numbers for translation and polishing",
+      "resetDialogItemChannelRules": "Auto-translation rules for each channel",
+      "resetDialogItemDisplay": "Display and interface options (the interface language stays)",
+      "resetDialogItemCredentials": "API keys, the Google key pool and custom prompt templates",
+      "resetDialogItemCredentialsNote": "Only if you untick the box below",
+      "resetKeepCredentials": "Keep API keys, the Google key pool and prompt templates",
+      "dialogConfirm": "OK",
+      "dialogCancel": "Cancel",
+      "settingsLoadBlocked": "Saved settings could not be read, so changes will not be saved. Check DiscordAITranslator.config.json in the plugins folder, then re-enable the plugin.",
+      "pluginStarted": "Discord AI Translator v{version} started.",
+      "polishButton": "Polish",
+      "polishBusy": "Polishing",
+      "polishRunning": "Polishing the current draft...",
+      "composerChanged": "The input box changed. Please try again.",
+      "composerResultHeld": "The result was not inserted because the draft changed or you were typing elsewhere. Copy or insert it from the panel.",
+      "polishTitleAttr": "Polish current draft with AI. Shortcut: {shortcut}.",
+      "publicBilingualButton": "Bilingual",
+      "publicBilingualBusy": "Translating",
+      "publicBilingualTitleAttr": "Write a public bilingual message using {targetLanguage}; everyone can see it after you send.",
+      "publicBilingualReady": "Bilingual message is ready. Review it, then send.",
+      "publicBilingualFailed": "Could not write the bilingual message: {error}",
+      "publicBilingualInputChanged": "Input changed while translating, so the bilingual result was not written.",
+      "errorComposerWriteFailed": "The input box did not accept the text. The result is shown in the panel so you can copy it.",
+      "publicBilingualTooLong": "Bilingual message is too long for one Discord message ({length}/{limit}).",
+      "publicBilingualPolishSkipped": "Polishing is disabled, so the bilingual message used the current draft.",
+      "translateButton": "Translate",
+      "translateBusy": "Translating...",
+      "translateTitleAttr": "Translate to {targetLanguage}",
+      "translateMenu": "Translate to {targetLanguage}",
+      "translateRetry": "Retry",
+      "translateRetryTitle": "Retry translating this message",
+      "translationFailedInline": "Translation failed: {error}",
+      "translationLoading": "Translating…",
+      "translationRevealLabel": "Show hidden translation",
+      "translationActionsLabel": "Translation actions",
+      "translationActionCopy": "Copy translation",
+      "translationActionRetranslate": "Translate again (skip cache)",
+      "translationActionHide": "Hide translation",
+      "translationCopied": "Translation copied.",
+      "translationPartialOne": "Part {parts} of {total} could not be translated",
+      "translationPartialMany": "Parts {parts} of {total} could not be translated",
+      "translationPartialUnknown": "Part of this message could not be translated",
+      "translationRetranslate": "Retranslate",
+      "translationRetranslateTitle": "Translate the whole message again without the cache",
+      "translationErrorAuth": "The translation service rejected the API key",
+      "translationErrorMissingKey": "No API key is set for translation",
+      "translationErrorMissingEndpoint": "No endpoint is set for translation",
+      "translationErrorMissingModel": "No model is chosen for translation",
+      "translationErrorQuota": "The translation service quota is used up",
+      "translationErrorLocal": "The local translation service is not responding",
+      "translationErrorLocalAt": "The local translation service is not responding ({host})",
+      "translationErrorRateLimit": "Too many requests. Try again shortly",
+      "translationErrorRateLimitWait": "Too many requests. Try again in {seconds} s",
+      "translationOpenSettings": "Open settings",
+      "translationOpenSettingsTitle": "Open translation settings",
+      "translationTestConnection": "Test connection",
+      "translationTestConnectionTitle": "Check whether the translation service can be reached",
+      "autoTranslateFailed": "Auto-translation failed: {error}",
+      "autoTranslateNeedsAttention": "Auto-translation needs your attention: {error}",
+      "autoTranslateTargetFailed": "Model output was not in the target language, so this translation was skipped.",
+      "manualTranslateRescueFailed": "No usable translation after several attempts. You can try again.",
+      "contextPatchFailed": "Could not patch message context menu: {error}",
+      "polishDisabled": "Input polishing is disabled.",
+      "textboxMissing": "Could not find the Discord input box.",
+      "inputEmpty": "Input box is empty.",
+      "confirmSend": "Send the polished message?",
+      "confirmSendAction": "Send",
+      "confirmSendDraftChanged": "The draft changed, so nothing was sent.",
+      "translationDisabled": "Channel translation is disabled.",
+      "noTranslatableText": "Message has no translatable text.",
+      "messageMissing": "Could not find a message to translate.",
+      "modelSet": "Model set to {model}.",
+      "hideTranslation": "Hide translation",
+      "translationLabel": "AI translation to {targetLanguage}",
+      "polishedReady": "Polished text is ready.",
+      "apiKeyMissingPolish": "Polishing API key is not configured.",
+      "apiKeyMissingTranslation": "Translation API key is not configured.",
+      "endpointMissing": "API endpoint is not configured.",
+      "modelMissing": "Model is not configured.",
+      "invalidJson": "API returned invalid JSON.",
+      "emptyResult": "API returned an empty result.",
+      "errorUnauthorized": "API key is invalid or does not have permission.",
+      "errorRateLimited": "API rate limit reached; automatic retries are cooling down.",
+      "errorQuotaExceeded": "API quota or account balance is used up.",
+      "errorLanguageUnsupported": "This service does not support the selected target language. Choose another language or service.",
+      "errorIpNotAllowed": "The service rejected your IP address. Check the IP allowlist in the service console.",
+      "errorProviderRequestRejected": "The service rejected the request. Check account permissions, target language and service settings.",
+      "errorOutputTruncated": "The model's reply was cut off. Raise “Max output length” under “More model parameters” in settings and try again.",
+      "errorOutputTruncatedPolish": "The polished reply was cut off. Raise “Max output length” under “Composer tools → More model parameters” in settings.",
+      "errorOutputTruncatedTranslation": "The translation was cut off. Raise “Max output length” under “Translate messages → More model parameters” in settings.",
+      "errorSaveFailed": "Could not save locally. Try again later.",
+      "errorServer": "API service is temporarily unavailable.",
+      "errorCancelled": "Request cancelled.",
+      "errorInvalidEndpoint": "Invalid endpoint. Enter a complete API URL.",
+      "errorEndpointNotFound": "Endpoint or model not found. Check the API URL and the model name.",
+      "errorUnsafeEndpoint": "Unsafe endpoint: remote services require HTTPS; loopback services may use HTTP. Do not embed a username or password in the URL.",
+      "localIntakeFixed": "Local services always scan the page for messages; nothing to change.",
+      "localConcurrencyDesc": "Can be set from {min} to {max}; match your local server's parallel slots and VRAM.",
+      "localFallbackUnavailable": "Local services never fall back to the cloud, so this is unavailable.",
+      "errorTimeout": "API request timed out.",
+      "errorNetwork": "Network request failed.",
+      "errorLocalProviderUnavailable": "Sakura local service is not reachable. Auto-translation is paused; start Sakura or test the connection to resume.",
+      "unknownError": "Unknown error",
+      "providerMicrosoft": "Microsoft Translator",
+      "providerDeepL": "DeepL",
+      "providerBaidu": "Baidu Translate",
+      "providerRegion": "Region",
+      "providerRegionDesc": "Azure Translator resource region; leave empty for global resources.",
+      "deeplPlan": "DeepL plan",
+      "deeplPlanDesc": "Free uses api-free.deepl.com; Pro uses api.deepl.com.",
+      "deeplPlanFree": "Free",
+      "deeplPlanPro": "Pro",
+      "baiduAppId": "Baidu App ID",
+      "baiduAppIdDesc": "Your Baidu Translate App ID, stored only on this computer.",
+      "baiduSecretKey": "Baidu secret key",
+      "baiduSecretKeyDesc": "Your Baidu Translate secret key; stored locally and never logged.",
+      "autoTranslateIntakeMode": "Message intake",
+      "autoTranslateIntakeModeDesc": "Auto uses the BDFDB plugin library to identify messages if present, else scans the page.",
+      "autoTranslateIntakeAuto": "Auto",
+      "autoTranslateIntakeDom": "Page scan only",
+      "autoTranslateIntakeBdfdb": "Prefer BDFDB",
+      "settingsTabPolish": "Input polish",
+      "settingsTabTranslation": "Channel translation",
+      "settingsTabPublicBilingual": "Public bilingual",
+      "settingsTabDisplay": "Display, cache, diagnostics",
+      "settingsTabOverview": "Overview",
+      "settingsTabTranslate": "Translate messages",
+      "settingsTabCompose": "Composer tools",
+      "settingsTabAppearance": "Display",
+      "settingsTabAdvanced": "Advanced",
+      "settingsTabData": "Data & diagnostics",
+      "settingsTabsLabel": "Settings sections",
+      "settingsSearchPlaceholder": "Search settings",
+      "settingsSearchResults": "{count} matching settings",
+      "settingsSearchEmpty": 'No settings match "{query}"',
+      "settingsClose": "Close settings",
+      "settingsGroupCommon": "Everyday",
+      "overviewSetupTitle": "Get started: {count} to go",
+      "overviewSetupProgress": "{done} of {total} done · this card hides when all are done",
+      "overviewSetupService": "Choose a service",
+      "overviewSetupServiceOff": "Message translation is off",
+      "overviewSetupServiceMissing": "{provider} is not set up yet",
+      "overviewSetupTest": "Test the connection",
+      "overviewSetupTestBlocked": "Set up the service first",
+      "overviewSetupTarget": "Target language",
+      "overviewSetupAuto": "Turn on auto-⁠translate",
+      "overviewSetupAutoOn": "On",
+      "overviewSetupAutoOff": "Off: only the Translate button works",
+      "overviewSetupAutoChannel": "Main switch off; this channel always translates",
+      "overviewSetupChannel": "This channel",
+      "overviewSetupChannelNone": "Not in a channel right now",
+      "overviewSetupChannelNever": "Set to never translate",
+      "overviewStateDone": "Done",
+      "overviewStateTodo": "To do",
+      "overviewSetUp": "Set up",
+      "overviewTurnOn": "Turn on",
+      "overviewChange": "Change",
+      "overviewServicesTitle": "Service status",
+      "overviewCardTranslation": "Translate messages",
+      "overviewCardPolish": "Composer polishing",
+      "overviewServiceOff": "Off",
+      "overviewServiceMissing": "Not set up: {field} missing",
+      "settingsGroupAutoTranslate": "Auto-translate",
+      "settingsGroupHistoryBackfill": "History backfill",
+      "settingsGroupFallback": "Manual translation fallback",
+      "settingsGroupTranslatedText": "Translated text",
+      "settingsGroupNotices": "Notices and shortcuts",
+      "settingsGroupWindows": "Window appearance",
+      "settingsMoreModelParams": "More model parameters",
+      "settingsApiKeyOptional": "API key (optional)",
+      "settingsRequiresParent": 'Turn on "{parent}" first',
+      "settingsDangerZone": "Danger zone",
+      "settingsResetDesc": "Restores the defaults after you confirm; you can keep API keys and prompt templates.",
+      "providerSettingsTitle": "Service settings",
+      "providerSettingsDesc": "Shows only this service's options; the others are kept for when you switch back.",
+      "polishControlsTitle": "Input experience",
+      "translationControlsTitle": "Message translation entry points",
+      "autoTranslateSettingsTitle": "Auto-translation scheduling",
+      "publicBilingualTitle": "Public bilingual input",
+      "publicBilingualDependencyTitle": "Current flow",
+      "publicBilingualDependencyDesc": "A bilingual message is plain Discord text that everyone can see once sent.",
+      "publicBilingualDependencyStatus": "Polish before bilingual: {polishProvider}; translation: {translationProvider}; target: {targetLanguage}.",
+      "publicBilingualDependencyFlowDesc": "Uses the polish service to translate when it is set up, into the polish output language.",
+      "publicBilingualDependencyPolishOff": "no",
+      "displaySettingsTitle": "Display behavior",
+      "cacheSettingsTitle": "Translation cache",
+      "diagnosticsSettingsTitle": "Diagnostics",
+      "providerStatus": "Service status",
+      "providerStatusDesc": "Runs a quick connection test with the current settings.",
+      "quickSettingsOpen": "Open Discord AI Translator settings",
+      "quickSettingsDone": "Done",
+      "quickSettingsOpenFailed": "Quick settings failed to open: {error}",
+      "quickSettingsFallbackTitle": "Quick settings did not render completely",
+      "quickSettingsFallbackHint": "The opening path has been logged. Close this window, then export diagnostics JSON if more debugging is needed.",
+      "quickPanelTitle": "AI Translator",
+      "quickPanelLauncherLabel": "AI Translator: {status}",
+      "quickPanelOpenFull": "Open full settings",
+      "quickPanelClose": "Close",
+      "quickPanelEscHint": "Esc to close",
+      "quickPanelAutoTranslate": "Auto-translate",
+      "quickPanelAutoTranslateDesc": "Translate foreign messages on screen",
+      "quickPanelChannel": "This channel",
+      "quickPanelChannelNone": "no channel open",
+      "quickPanelChannelDm": "Direct message",
+      "quickPanelRuleInherit": "Follow main",
+      "quickPanelRuleEnabled": "Always",
+      "quickPanelRuleDisabled": "Never",
+      "quickPanelRuleInheritFull": "Follow main switch",
+      "quickPanelRuleEnabledFull": "Always translate",
+      "quickPanelRuleDisabledFull": "Never translate",
+      "quickPanelRuleCaptionInheritOn": "Now: auto-translating (follows the main switch)",
+      "quickPanelRuleCaptionInheritOff": "Now: not auto-translating (follows the main switch)",
+      "quickPanelRuleCaptionEnabled": "Auto-translates here even when the main switch is off",
+      "quickPanelRuleCaptionDisabled": "No auto-translation here; manual translation still works",
+      "quickPanelRuleCaptionNoChannel": "Open a channel to set a rule for it",
+      "quickPanelRuleCaptionTranslationOff": "Channel translation is off; this rule applies once it is on",
+      "quickPanelTargetLanguage": "Translate to",
+      "quickPanelDisplay": "Display",
+      "quickPanelMask": "Mask translations",
+      "quickPanelMaskDesc": "Show a bar first; click it to read",
+      "quickPanelHideOriginal": "Hide original after translation",
+      "quickPanelHideOriginalDesc": "Hover a message to see the original",
+      "quickPanelPosition": "Show translation",
+      "quickPanelPositionAbove": "Above",
+      "quickPanelPositionBelow": "Below",
+      "quickStatusActive": "Auto-translating in this channel",
+      "quickStatusBusy": "Translating {inFlight}, {queued} queued",
+      "quickStatusTesting": "Testing the connection…",
+      "quickStatusLatency": "{ms} ms",
+      "quickStatusWaiting": "{reason}; resumes automatically",
+      "quickStatusWaitingSeconds": "{reason}; resumes in about {seconds} s",
+      "quickStatusReasonRateLimit": "Service busy",
+      "quickStatusReasonServer": "Service error",
+      "quickStatusReasonNetwork": "Connection unstable",
+      "quickStatusReasonParse": "Unexpected response",
+      "quickStatusNeedsYou": "Needs attention: {reason}",
+      "quickStatusReasonConfig": "API key or other settings missing",
+      "quickStatusReasonAuth": "API key rejected",
+      "quickStatusReasonQuota": "quota or balance used up",
+      "quickStatusReasonLocal": "local service not responding",
+      "quickStatusReasonFailed": "connection test failed",
+      "quickStatusReasonEndpoint": "API URL not usable",
+      "quickStatusReasonNotFound": "API URL or model not found",
+      "quickStatusNotConfigured": "Not set up",
+      "quickStatusOffChannel": "Not auto-translating in this channel",
+      "quickStatusOffDisabled": "Channel translation is off",
+      "quickStatusManualHint": "Manual translation still works",
+      "quickPanelTabsLabel": "Quick panel modes",
+      "quickPanelTabTranslation": "Translate",
+      "quickPanelTabPolish": "Polish",
+      "quickPanelTabTransAutoOn": "Auto · {language}",
+      "quickPanelTabTransManual": "Manual · {language}",
+      "quickPanelTabTransOff": "Off",
+      "quickPanelTabPolishOn": "On · {language}",
+      "quickPanelTabPolishOff": "Off",
+      "quickPanelTranslationService": "Translation service",
+      "quickPanelPolishService": "Polish service",
+      "quickPanelSavedServiceCurrent": "Current: {label}",
+      "quickPanelSavedServiceEmpty": "No saved services yet (saved after Test)",
+      "quickPanelServiceShared": "Shared",
+      "quickPanelServiceIndependent": "Separate",
+      "quickPanelTranslationTemplate": "Translation template",
+      "quickPanelTemplateCustom": "Custom prompt",
+      "quickStatusPolishActive": "Input polish ready",
+      "quickStatusPolishOff": "Input polish is off",
+      "quickStatusPolishBtnOn": "Input button shown",
+      "quickStatusPolishBtnOff": "Input button hidden",
+      "quickStatusPolishHotkeyOff": "Hotkey off",
+      "quickPanelPolishTestTitle": "Test the input polish service connection",
+      "quickPanelPolishEnabled": "Enable input polish",
+      "quickPanelPolishEnabledDesc": "Rewrites your draft and returns it to the input box",
+      "quickPanelPolishOutputLanguage": "Output language",
+      "quickPanelPolishTemplate": "Polish template",
+      "quickPanelPolishCreativity": "Creativity",
+      "quickPanelPolishCreativitySteady": "Steady 0.3",
+      "quickPanelPolishCreativityBalanced": "Natural 0.7",
+      "quickPanelPolishCreativityCreative": "Creative 1.2",
+      "quickPanelPolishCreativityDescSteady": "Closer to your original wording",
+      "quickPanelPolishCreativityDescBalanced": "Balanced for everyday chat",
+      "quickPanelPolishCreativityDescCreative": "More varied phrasing when re-polishing",
+      "quickPanelPolishBehavior": "Behavior",
+      "quickPanelPolishAfterAction": "After polish",
+      "quickPanelPolishRepolishSource": "Re-polish",
+      "quickPanelPolishRepolishOriginal": "Original",
+      "quickPanelPolishRepolishLast": "Last result",
+      "quickPanelPublicBilingual": "Public bilingual button",
+      "quickPanelPublicBilingualDesc": "Show the Bilingual button near the input box",
+      "quickPanelPublicBilingualAfterPolish": "Auto-bilingual after polish",
+      "quickPanelPublicBilingualAfterPolishDesc": "Also add hidden original after polishing",
+      "quickPanelTryPolishToggle": "Quick try polish",
+      "quickPanelTryPolishPlaceholder": "Type a line to test template & language...",
+      "quickPanelTryPolishRun": "Try",
+      "quickPanelTryPolishAgain": "Try again",
+      "quickPanelOpenFullPolish": "Templates & full settings",
+      "inputActionMenu": "AI actions",
+      "inputActionOpenSettings": "Settings",
+      "restoreOriginalShort": "↶",
+      "polishButtonShort": "P",
+      "polishTitleAttrWithTone": "Polish current draft with AI (Tone: {tone}). Shortcut: {shortcut}.",
+      "polishPresetPicker": "Switch polish tone",
+      "polishPresetPickerTitle": "Switch polish tone (Current: {tone})",
+      "polishPresetMenuTitle": "Polish tone",
+      "polishPresetMenuTabsLabel": "Polish tone categories",
+      "polishPresetMenuCustomNote": "Using a custom prompt; pick a preset below to switch",
+      "polishPresetMenuEmpty": "No presets yet. Add one in Settings.",
+      "polishPresetMenuEmptyPersona": "Persona presets (historical figures, etc.) coming soon — or add custom ones in Settings.",
+      "polishPresetMenuManage": "Manage / custom tones...",
+      "polishPresetMenuItemAction": "Switch polish tone...",
+      "publicBilingualButtonShort": "Bi",
+      "showQuickSettingsPanelButton": "Show user panel quick settings",
+      "showQuickSettingsPanelButtonDesc": "Adds an AI entry near Discord's lower-left user controls and settings gear.",
+      "currentChannelAutoTranslatePolicy": "Auto-translate in this channel",
+      "currentChannelAutoTranslatePolicyDesc": "Affects auto-translation in this channel only; manual translation is unchanged.",
+      "channelPolicyInherit": "Follow main switch",
+      "channelPolicyEnabled": "Always translate",
+      "channelPolicyDisabled": "Never translate",
+      "channelRuleFollow": "Follow main switch",
+      "channelRuleAlways": "Always translate",
+      "channelRuleNever": "Never translate",
+      "historyBackfillEnabled": "Allow backfilling loaded history",
+      "historyBackfillEnabledDesc": "Lets you translate already-loaded messages on demand; it never runs by itself.",
+      "historyBackfillLimit": "History backfill limit",
+      "historyBackfillLimitDesc": "Most loaded messages to backfill per run (1-100).",
+      "historyBackfillRun": "Backfill loaded messages",
+      "historyBackfillRunning": "Backfilling...",
+      "historyBackfillRunDesc": "Queues loaded, untranslated messages at low priority.",
+      "historyBackfillQueued": "Queued history backfill: {count} messages.",
+      "historyBackfillNoWork": "No loaded messages need backfill.",
+      "historyBackfillContextMenu": "Backfill loaded messages",
+      "providerFallbackEnabled": "Use backup services when manual translation fails",
+      "providerFallbackEnabledDesc": "Only for manual translation and public bilingual; local services never use the cloud.",
+      "providerFallbackOrder": "Backup service order",
+      "providerFallbackOrderListDesc": "Tick the fallback services to use; the arrows set their order.",
+      "providerFallbackMoveUp": "Move {provider} up",
+      "providerFallbackMoveDown": "Move {provider} down",
+      "providerFallbackCurrent": " (current service)",
+      "providerFallbackOrderDesc": "Separate with commas or new lines; available: {providers}.",
+      "composerMassMentionBlocked": "Defanged mass/role mention(s) added by the model ({mentions}) to prevent accidental pings.",
+      "composerChannelChanged": "Channel changed before applying; result was not inserted into another channel. Copy it or switch back.",
+      "hostHealthTitle": "Discord host health check",
+      "hostHealthDesc": "Checks live Discord and BetterDiscord anchors to spot breaking updates.",
+      "hostHealthRecheck": "Recheck",
+      "hostHealthCopyReport": "Copy report",
+      "hostHealthCopied": "Host health report copied.",
+      "hostHealthSummaryOk": "All healthy ({ok}/{total})",
+      "hostHealthSummaryWarn": "Needs attention ({ok} ok · {warn} warn · {error} error)",
+      "hostHealthSummaryError": "Compatibility issue ({ok} ok · {warn} warn · {error} error)",
+      "hostHealthItemBdApi": "BetterDiscord API",
+      "hostHealthItemStores": "Discord stores (MessageStore / ChannelStore)",
+      "hostHealthItemChatRoot": "Chat container root",
+      "hostHealthItemMessages": "Message nodes & content anchor",
+      "hostHealthItemComposer": "Composer textbox & toolbar",
+      "hostHealthItemUserPanel": "User panel & AI launcher",
+      "hostHealthItemContextMenu": "Message context menu patch",
+      "hostHealthItemTheme": "Detected Discord theme",
+      "hostHealthStateOk": "OK",
+      "hostHealthStateWarn": "Check",
+      "hostHealthStateError": "Broken",
+      "quickLanguageBarLabel": "Quick interface language switcher",
+      "quickLanguageSwitchTitle": "Switch interface language: {language}"
+    };
+  }
+});
+
+// src/i18n/ru.js
+var require_ru = __commonJS({
+  "src/i18n/ru.js"(exports2, module2) {
+    "use strict";
+    module2.exports = {
+      "settingsTitle": "Discord AI Переводчик",
+      "settingsNote": "Улучшение и перевод настраиваются отдельно. API-ключи хранятся только на этом ПК.",
+      "generalTitle": "Основные",
+      "interfaceLanguage": "Язык интерфейса",
+      "interfaceLanguageDesc": "Меняет только язык меню плагина, не влияя на языки перевода и улучшения.",
+      "languageZh": "中文",
+      "languageEn": "English",
+      "polishTitle": "Улучшение ввода",
+      "polishDescription": "Переписывает текущий черновик по промпту и возвращает результат в поле ввода.",
+      "translationTitle": "Перевод сообщений канала",
+      "translationDescription": "Переводит сообщения в каналах на выбранный целевой язык.",
+      "enabled": "Включено",
+      "enabledDesc": "Когда выключено, кнопки скрыты и запросы не отправляются.",
+      "provider": "Сервис",
+      "providerDesc": "Языковые модели подходят для перевода и улучшения; движки перевода — только для перевода.",
+      "providerPolishDesc": "Для улучшения текста нужны LLM с поддержкой промптов; можно выбрать сохранённый профиль.",
+      "providerGroupAi": "Языковые модели (перевод и улучшение)",
+      "providerGroupMachine": "Переводчики (только перевод)",
+      "savedServiceConfigs": "Сохранённые профили",
+      "savedServiceConfigsDesc": "Проверенные сервисы сохраняются автоматически для перевода и улучшения.",
+      "savedServiceConfigsPlaceholder": "Выберите сохранённый профиль ({count})",
+      "savedServiceConfigsEmpty": "Нет сохранённых профилей (сохраняются после теста)",
+      "savedServiceConfigApplied": "Применён профиль: {name}",
+      "savedServiceConfigDeleted": "Сохранённый профиль удалён.",
+      "savedServiceConfigDelete": "Удалить",
+      "syncConfigToPolish": "Синхр. с улучшением",
+      "syncConfigToTranslation": "Синхр. с переводом",
+      "syncConfigUnsupportedPolish": "Переводчики не поддерживают переписывание текста по промпту.",
+      "syncConfigMissing": "Сначала заполните обязательные поля текущего сервиса.",
+      "syncConfigDonePolish": "Настройки скопированы в улучшение ввода.",
+      "syncConfigDoneTranslation": "Настройки скопированы в перевод канала.",
+      "providerOpenAI": "OpenAI-совместимый",
+      "providerSakuraLocal": "Sakura локальный",
+      "providerGoogleCloud": "Google Cloud Translation",
+      "googleTranslateTitle": "Пул ключей Google Cloud Translation",
+      "googleTranslateKeys": "Пул API-ключей Google",
+      "googleTranslateKeysDesc": "Один ключ на строку или формат Имя|КЛЮЧ|лимит_в_месяц.",
+      "googleTranslateDefaultLimit": "Месячный лимит ключа Google по умолчанию",
+      "googleTranslateDefaultLimitDesc": "Используется, если лимит не указан в строке; 420000-450000 оставляет запас.",
+      "googleTranslateAllowPrefetch": "Разрешить Google для предперевода",
+      "googleTranslateAllowPrefetchDesc": "Если выключено, Google переводит только видимые сообщения без расхода на предперевод.",
+      "googleTranslateStats": "Расход Google",
+      "googleTranslateStatsDesc": "За месяц: {used}/{limit} симв.; доступно ключей: {available}/{total}; месяц: {month}.",
+      "googleTranslateStatsCooldown": "Ключей на паузе: {count}; ближайший восстановится в {time}.",
+      "googleTranslateResetStats": "Сбросить месячную статистику Google",
+      "googleTranslateResetConfirm": "Сбрасывается только локальный счётчик на этом ПК; реальный расход в Google Cloud не меняется.",
+      "googleTranslateStatsReset": "Месячная статистика Google сброшена.",
+      "googleTranslateNoKey": "Для Google Cloud Translation нет доступного API-ключа.",
+      "googleTranslateQuotaExceeded": "Месячная квота пула ключей Google Cloud Translation исчерпана.",
+      "googleTranslateKeysCooling": "Все ключи Google Cloud Translation на паузе до {time}.",
+      "googleTranslateKeyError": "Ключ «{label}»: {error}",
+      "apiKey": "API-ключ",
+      "apiKeyDesc": "Хранится только на этом ПК и не попадает в сообщения; для Sakura можно оставить пустым.",
+      "apiKeyDeepSeekDesc": "API-ключ платформы DeepSeek; хранится только на этом ПК.",
+      "apiKeyOpenAIDesc": "API-ключ вашего сервиса; хранится только на этом ПК.",
+      "apiKeyLocalDesc": "Необязательно; локальным серверам обычно не требуется.",
+      "apiKeyMicrosoftDesc": "Ключ ресурса Azure Translator; хранится только на этом ПК.",
+      "apiKeyDeepLDesc": "Ключ авторизации DeepL API; хранится только на этом ПК.",
+      "apiKeyOptionalPlaceholder": "Необязательно",
+      "apiTest": "Тест",
+      "apiTestBusy": "Проверка",
+      "apiStatusUntested": "Не проверено",
+      "apiStatusTesting": "Проверка",
+      "apiStatusSuccess": "Подключено",
+      "apiStatusFailed": "Ошибка",
+      "apiTestSuccess": "Соединение с API {name} установлено.",
+      "apiTestSuccessSaved": "API {name} подключён и сохранён в профили.",
+      "apiTestSuccessSynced": "API {name} подключён, сохранён и синхронизирован с разделом «{target}».",
+      "apiTestFailed": "Ошибка подключения к API {name}: {error}",
+      "apiTestJustNow": "только что",
+      "apiTestMinutesAgo": "{count} мин назад",
+      "apiTestHoursAgo": "{count} ч назад",
+      "apiTestNotYet": "Ещё не проверялось",
+      "thinkingMode": "Режим размышления DeepSeek",
+      "thinkingModeDesc": "Модель рассуждает перед ответом: точнее, но медленнее и расходует больше токенов.",
+      "endpoint": "Адрес API",
+      "endpointDesc": "URL сервиса API; обычно подходит значение по умолчанию.",
+      "endpointDeepSeekDesc": "URL API DeepSeek; обычно подходит значение по умолчанию.",
+      "endpointOpenAIDesc": "Базовый /v1 URL или полный chat/completions URL; для удалённых сервисов нужен https.",
+      "endpointLocalDesc": "Адрес вашего локального сервера; http разрешён только для локальных адресов.",
+      "endpointMicrosoftDesc": "URL API Azure Translator; обычно подходит значение по умолчанию.",
+      "endpointBaiduDesc": "URL API Baidu Translate; обычно подходит значение по умолчанию.",
+      "deepseekPreset": "Пресет DeepSeek V4",
+      "deepseekPresetDesc": "Быстрое переключение между DeepSeek V4 Flash и Pro.",
+      "customModel": "Другая (укажите ниже)",
+      "model": "Модель",
+      "modelDesc": "Введите любое имя модели; последний выбор запоминается автоматически.",
+      "modelOpenAIDesc": "Имя модели сервиса; кнопка «Найти модели» загрузит список.",
+      "modelLocalDesc": "local-model использует модель, загруженную на сервере.",
+      "modelLocalLoadedDesc": "local-model использует загруженную модель сервера (сейчас: {model}).",
+      "modelDetect": "Найти модели",
+      "modelDetectBusy": "Поиск",
+      "modelDetectFound": "Найдено моделей: {count}; выберите нужную в списке.",
+      "modelDetectFoundLoaded": "Найдено моделей: {count}; загружена: {model}.",
+      "modelDetectNone": "Сервер не вернул список моделей.",
+      "modelDetectFailed": "Не удалось получить модели: {error}",
+      "modelDetectUnsupported": "Этот сервис не поддерживает получение списка моделей.",
+      "modelDetectConfirmOrigin": "Подтвердите адрес для API-ключа",
+      "modelDetectConfirmOriginDesc": "Разрешить отправку текущего API-ключа на {origin} и привязать ключ к этому адресу?",
+      "apiKeyOriginMismatch": "Этот API-ключ привязан к другому адресу. Введите ключ для этого URL или нажмите «Найти модели» для подтверждения.",
+      "modelPicker": "Доступные модели",
+      "modelPickerOther": "Другая (укажите выше)",
+      "modelPickerServerLoaded": "Модель, загруженная на сервере (local-model)",
+      "modelPickerDetected": "Список от сервера",
+      "modelPickerPresets": "Популярные модели",
+      "modelPickerLoadedTag": "{model} (загружена)",
+      "outputLanguage": "Язык результата",
+      "outputLanguageDesc": "Язык улучшенного текста.",
+      "inputLanguage": "Язык черновика",
+      "inputLanguageDesc": "Исходный язык черновика; оставьте автоопределение, если нет ошибок.",
+      "messageLanguage": "Язык сообщений",
+      "messageLanguageDesc": "Исходный язык сообщений канала; обычно лучше оставить автоопределение.",
+      "autoDetectLanguage": "Автоопределение",
+      "targetLanguage": "Целевой язык",
+      "targetLanguageDesc": "На какой язык переводить сообщения в каналах.",
+      "languagePreset": "Основные языки",
+      "customLanguage": "Свой язык",
+      "customLanguagePlaceholder": "Например: Украинский, Казахский, Brazilian Portuguese",
+      "customLanguageDesc": "Название передаётся модели без изменений.",
+      "temperature": "Креативность",
+      "temperatureDesc": "Ниже — точнее: 0.1-⁠0.3 для перевода, 0.3-⁠0.7 для улучшения.",
+      "maxTokens": "Макс. длина ответа",
+      "maxTokensDesc": "Лимит длины ответа модели; увеличьте, если длинные сообщения обрезаются.",
+      "maxTokensPolishDesc": "Лимит длины ответа при улучшении; увеличьте для длинных черновиков или режима размышления.",
+      "afterPolishing": "После улучшения",
+      "afterPolishingDesc": "Спрашивать ли подтверждение отправки после подстановки текста в поле ввода.",
+      "afterReplace": "Заменить",
+      "afterDirectReplace": "Заменить",
+      "afterConfirmSend": "Спросить",
+      "repolishSource": "Источник при повторе",
+      "repolishSourceDesc": "Брать за основу исходный черновик или прошлый результат при повторном улучшении.",
+      "repolishSourceOriginal": "Исходный черновик",
+      "repolishSourceLastResult": "Прошлый результат",
+      "restoreOriginal": "Вернуть оригинал",
+      "restoreOriginalChanged": "Черновик был изменён, поэтому оригинал нельзя восстановить.",
+      "polishResultTitle": "Результат улучшения",
+      "polishResultCopy": "Копировать",
+      "polishResultCopied": "Скопировано",
+      "polishResultReplace": "Вставить в поле",
+      "polishResultApplyFailed": "Не удалось вставить текст в поле ввода. Нажмите «Копировать» и вставьте вручную.",
+      "polishResultClose": "Закрыть",
+      "prompt": "Промпт",
+      "promptDesc": "Инструкция для модели по переводу или улучшению на любом языке.",
+      "promptUsingTemplate": "Используется шаблон: {code} · {name}",
+      "promptTemplateNameNaturalChat": "Естественный чат",
+      "promptTemplateNamePolite": "Вежливо и чётко",
+      "promptTemplateNameShort": "Коротко и по делу",
+      "promptTemplateNameNativeCasual": "Живая разговорная речь",
+      "promptTemplateNameTechBug": "Техподдержка и баг-репорт",
+      "promptTemplateNameGamingChat": "Игровой чат и пати",
+      "promptTemplateNameTactful": "Тактично и мягко",
+      "promptTemplateNameFormalNotice": "Официально и объявления",
+      "promptTemplateNameDialectCantoneseGuangfu": "Гуанчжоуский кантонский (разговорный)",
+      "promptTemplateNameDialectCantoneseHk": "Гонконгский кантонский",
+      "promptTemplateNameDialectHakka": "Хакка (разговорный)",
+      "promptTemplateNameDialectChaoshan": "Чаошань / Теочью",
+      "promptTemplateNameDialectGuangxi": "Гуанси (южный акцент)",
+      "promptTemplateNameDialectMinnan": "Миньнань / Хоккиен",
+      "promptTemplateNameDialectTaiwan": "Тайваньский мандарин",
+      "promptTemplateNameDialectSichuan": "Сычуань и Чунцин",
+      "promptTemplateNameDialectYunnan": "Юньнаньский диалект",
+      "promptTemplateNameDialectGuizhou": "Гуйчжоуский диалект",
+      "promptTemplateNameDialectDongbei": "Северо-восточный (Дунбэй)",
+      "promptTemplateNameDialectBeijing": "Пекинский говор",
+      "promptTemplateNameDialectTianjin": "Тяньцзиньский диалект",
+      "promptTemplateNameDialectShaanxi": "Шэньси (Гуаньчжун)",
+      "promptTemplateNameDialectHenan": "Хэнаньский диалект",
+      "promptTemplateNameDialectShandong": "Шаньдунский диалект",
+      "promptTemplateNameDialectXinjiang": "Синьцзянский колорит",
+      "promptTemplateNameDialectShanghai": "Шанхайский говор",
+      "promptTemplateNameDialectJiangzhe": "Сучжоу и Ханчжоу (У)",
+      "promptTemplateNameDialectNanjing": "Нанкинский диалект",
+      "promptTemplateNameDialectWuhan": "Уханьский диалект",
+      "promptTemplateNameDialectHunan": "Хунаньский диалект",
+      "promptTemplateCategoryLabel": "Категория шаблона",
+      "promptTemplateCategoryGeneral": "Общие",
+      "promptTemplateCategoryDialect": "Диалекты",
+      "promptTemplateCategoryPersona": "Персоны",
+      "promptTemplateRegionSouthChina": "Южный Китай и Тайвань",
+      "promptTemplateRegionSouthwest": "Юго-Запад",
+      "promptTemplateRegionNorth": "Север",
+      "promptTemplateRegionEastCentral": "Восток и Центр",
+      "promptTemplateRegionCustom": "Свои диалекты",
+      "promptTemplateNamePersonaQinShihuang": "Цинь Шихуанди (Императорский указ)",
+      "promptTemplateNamePersonaHanWudi": "Император У-ди (Величие Хань)",
+      "promptTemplateNamePersonaZhuYuanzhang": "Чжу Юаньчжан (Народный указ Мин)",
+      "promptTemplateNamePersonaChiangKaiShek": "Чан Кайши (Военная телеграмма)",
+      "promptTemplateNamePersonaCaoCao": "Цао Цао (Смелый полководец)",
+      "promptTemplateNamePersonaLiShimin": "Император Тай-цзун (Мудрый правитель)",
+      "promptTemplateNamePersonaYongzheng": "Юнчжэн (Острые пометки императора)",
+      "promptTemplateNamePersonaZhugeLiang": "Чжугэ Лян (Искренний доклад)",
+      "promptTemplateNamePersonaSimaYi": "Сыма И (Терпеливый стратег)",
+      "promptTemplateNamePersonaSunTzu": "Сунь-цзы (Афоризмы Искусства войны)",
+      "promptTemplateNamePersonaXiangYu": "Сян Юй (Гордый гегемон Чу)",
+      "promptTemplateNamePersonaLuXun": "Лу Синь (Острая сатира)",
+      "promptTemplateNamePersonaLinDaiyu": "Линь Дайюй (Изящная ирония)",
+      "promptTemplateNamePersonaWangYangming": "Ван Янмин (Единство знания и действия)",
+      "promptTemplateNamePersonaLiBai": "Ли Бо (Вольный поэт)",
+      "promptTemplateNamePersonaSuShi": "Су Ши (Тёплая самоирония)",
+      "promptTemplateNamePersonaConfucius": "Конфуций (Мудрые изречения)",
+      "promptTemplateNamePersonaZhuangzi": "Чжуан-цзы (Даосская притча)",
+      "promptTemplateNamePersonaEileenChang": "Чжан Айлин (Городской шик и афоризм)",
+      "promptTemplateNamePersonaQianZhongshu": "Цянь Чжуншу (Остроумная метафора)",
+      "promptTemplateNamePersonaWangXiaobo": "Ван Сяобо (Чёрный юмор и ирония)",
+      "promptTemplateNamePersonaGuoDegang": "Го Дэган (Стендап сяншэн)",
+      "promptTemplateNamePersonaShakespeare": "Шекспир (Театральный монолог)",
+      "promptTemplateNamePersonaTrump": "Дональд Трамп (Яркая гипербола)",
+      "promptTemplateNamePersonaNietzsche": "Ницше (Философский афоризм)",
+      "promptTemplateNamePersonaMarx": "Карл Маркс (Диалектическая критика)",
+      "promptTemplateNamePersonaNapoleon": "Наполеон (Военная сводка)",
+      "promptTemplateNamePersonaChurchill": "Черчилль (Стойкость и английский юмор)",
+      "promptTemplateNamePersonaMusk": "Илон Маск (Инженерный минимализм)",
+      "promptTemplatePersonaGroupMonarchs": "Правители и монархи",
+      "promptTemplatePersonaGroupStrategists": "Стратеги и полководцы",
+      "promptTemplatePersonaGroupLiterati": "Писатели и мыслители",
+      "promptTemplatePersonaGroupGlobal": "Мировые фигуры",
+      "promptTemplatePersonaGroupCustom": "Свои персоны",
+      "promptTemplateNameNatural": "Естественный перевод",
+      "promptTemplateNameLiteral": "Точный дословный",
+      "promptTemplateNameSlangCasual": "Сленг и живой чат",
+      "promptTemplateNameTechDev": "IT, ИИ и разработка",
+      "promptTemplateNameGamingAcg": "Игры и аниме-сообщества",
+      "promptTemplateNameFormalChangelog": "Анонсы и списки изменений",
+      "promptTemplates": "Шаблоны промптов",
+      "promptTemplatesDesc": "Выбор шаблона только показывает превью; нажмите «Применить шаблон» для замены.",
+      "promptSearch": "Поиск по имени или коду шаблона",
+      "promptTemplateSelect": "Выберите шаблон",
+      "promptTemplateCustom": "Текущий промпт не сохранён как шаблон",
+      "promptTemplateEdited": "На основе {code} · {name}; правки ещё не сохранены в шаблон",
+      "promptPreview": "Предпросмотр шаблона",
+      "promptPreviewActive": "Активен",
+      "promptApply": "Применить шаблон",
+      "promptSave": "Сохранить как шаблон",
+      "promptUpdate": "Обновить текущий шаблон",
+      "promptUpdateTitle": "Перезаписать {code} · {name} изменённым промптом",
+      "promptDelete": "Удалить шаблон",
+      "promptRestorePresets": "Восстановить встроенные шаблоны",
+      "promptPresetsRestored": "Восстановлено встроенных шаблонов: {count}.",
+      "promptPresetsComplete": "Все встроенные шаблоны уже на месте.",
+      "promptCopy": "Копировать промпт",
+      "promptCopied": "Промпт скопирован.",
+      "copiedToClipboard": "Скопировано.",
+      "promptCopyFailed": "Не удалось скопировать: {error}",
+      "clipboardUnavailable": "Буфер обмена недоступен. Выделите текст и скопируйте вручную.",
+      "promptNamePlaceholder": "Введите название шаблона",
+      "promptSaveNameLabel": "Название нового шаблона",
+      "promptNameRequired": "Сначала введите название шаблона.",
+      "promptSaved": "Шаблон сохранён: {code} · {name}",
+      "promptUpdated": "Шаблон обновлён: {code} · {name}",
+      "promptDeleted": "Шаблон удалён.",
+      "promptApplied": "Применён шаблон: {code} · {name}",
+      "promptApplyUnsavedTitle": "Заменить текущий промпт?",
+      "promptApplyUnsavedConfirm": "В текущем промпте есть несохранённые правки; применение {code} · {name} заменит их.",
+      "promptDeleteConfirm": "Удалить этот шаблон промпта?",
+      "promptDeleteActiveNote": "Этот шаблон сейчас используется; после удаления промпт переключится на {code} · {name}.",
+      "promptNoTemplate": "Нет доступных шаблонов.",
+      "uiTitle": "Интерфейс",
+      "showPolishButton": "Кнопка улучшения рядом с полем ввода",
+      "showPolishButtonDesc": "Добавляет кнопку быстрого улучшения текста возле поля ввода Discord.",
+      "publicBilingualInputButton": "Кнопка публичного двуязычного сообщения",
+      "publicBilingualInputButtonDesc": "Формирует «перевод + скрытый оригинал» в поле ввода для проверки перед отправкой.",
+      "publicBilingualUseInitialOriginal": "Использовать исходный черновик как скрытый оригинал",
+      "publicBilingualUseInitialOriginalDesc": "Если черновик сначала улучшался, в скрытом оригинале останется исходный текст.",
+      "publicBilingualAfterPolish": "Автоматически делать двуязычным после улучшения",
+      "publicBilingualAfterPolishDesc": "После нажатия «Улучш.» сразу добавляет перевод со скрытым оригиналом без автоотправки.",
+      "publicBilingualPolishBeforeTranslate": "Автоулучшение перед двуязычным переводом",
+      "publicBilingualPolishBeforeTranslateDesc": "При нажатии «Двуяз.» сначала улучшает черновик, а затем переводит результат.",
+      "showMessageButtons": "Кнопки перевода на сообщениях",
+      "showMessageButtonsDesc": "Добавляет кнопку «Перевод» рядом с сообщениями канала.",
+      "messageButtonVisibility": "Видимость кнопки перевода",
+      "messageButtonVisibilityDesc": "Показывать кнопку «Перевод» всегда или только при наведении на сообщение.",
+      "messageButtonVisibilityAlways": "Всегда",
+      "messageButtonVisibilityHover": "При наведении",
+      "messageButtonMode": "Кнопка перевода у сообщений",
+      "messageButtonModeDesc": "Как отображается кнопка «Перевод» рядом с каждым сообщением.",
+      "messageButtonModeHover": "При наведении",
+      "messageButtonModeAlways": "Всегда показывать",
+      "messageButtonModeOff": "Не показывать",
+      "autoTranslateMessages": "Автоперевод видимых иностранных сообщений",
+      "autoTranslateMessagesDesc": "Автоматически переводит сообщения на экране не на целевом языке.",
+      "autoTranslatePrefetch": "Предперевод соседних сообщений",
+      "autoTranslatePrefetchDesc": "В простое переводит сообщения выше и ниже экрана (нужна параллельность от 2).",
+      "autoTranslatePrefetchRange": "Диапазон предперевода",
+      "autoTranslatePrefetchRangeDesc": "Сколько сообщений сверху и снизу экрана переводить заранее.",
+      "autoTranslateConcurrency": "Параллельность автоперевода",
+      "autoTranslateConcurrencyDesc": "Число одновременных запросов перевода: по умолч. {default}, от {min} до {max}.",
+      "autoTranslateStrictRetry": "Строгий повтор при неверном языке ответа",
+      "autoTranslateStrictRetryDesc": "Повторяет неудачные части, затем переводит по одному сообщению перед показом кнопки повтора.",
+      "showAutoTranslateWarnings": "Показывать ошибки под сообщениями",
+      "showAutoTranslateWarningsDesc": "Показывает таймауты и сбои сети; ошибки, требующие ваших действий, видны всегда.",
+      "showAutoTranslateToasts": "Всплывающие уведомления при сбое автоперевода",
+      "showAutoTranslateToastsDesc": "Проблемы, требующие вмешательства (например, неверный ключ), показываются всегда один раз.",
+      "diagnosticLogs": "Журнал диагностики",
+      "diagnosticLogsDesc": "Записывает запросы, работу кэша и причины сбоев (до 500 записей) для экспорта.",
+      "diagnosticLogsStats": "Записей: {entries}; сжато повторов: {compressed}.",
+      "diagnosticSummary": "Сводка диагностики",
+      "diagnosticSummaryEmpty": "Включите диагностику и воспроизведите проблему, чтобы увидеть сводку.",
+      "diagnosticSummaryEvents": "Событий: {events} по статусам, причинам и сервисам; последнее: {latest}.",
+      "diagnosticSummaryStates": "Статусы",
+      "diagnosticSummaryReasons": "Причины",
+      "diagnosticSummaryFlows": "Потоки",
+      "diagnosticSummaryQueues": "Очереди",
+      "diagnosticSummaryProviders": "Сервисы",
+      "diagnosticSummaryFailures": "Сбои",
+      "diagnosticSummaryFailureLayers": "Этапы сбоев",
+      "diagnosticSummaryFlowStages": "Этапы потока",
+      "clearDiagnosticLogs": "Очистить журнал",
+      "clearDiagnosticLogsConfirm": "Весь журнал диагностики будет удалён. Экспортируйте его заранее, если он нужен.",
+      "clearDiagnosticLogsDesc": "Удаляет все записи журнала диагностики; при необходимости сначала экспортируйте их.",
+      "exportDiagnosticLogs": "Экспорт журнала",
+      "copyDiagnosticLogs": "Копировать журнал",
+      "exportDiagnosticJson": "Экспорт JSON",
+      "exportDiagnosticTxt": "Экспорт TXT",
+      "diagnosticLogsCleared": "Журнал диагностики очищен.",
+      "diagnosticLogsCopied": "Журнал диагностики скопирован.",
+      "diagnosticLogsEmpty": "Журнал диагностики пуст.",
+      "diagnosticLogsExported": "Журнал диагностики экспортирован.",
+      "settingsSnapshot": "Снимок настроек",
+      "settingsSnapshotDesc": "Скачивает настройки в JSON со скрытыми ключами — безопасно для отправки при отладке.",
+      "exportSettingsSnapshot": "Скачать настройки",
+      "settingsSnapshotExported": "Снимок настроек скачан; секретные ключи скрыты.",
+      "settingsSnapshotCopied": "Снимок настроек скопирован; секретные ключи скрыты.",
+      "translationCacheTtl": "Время хранения кэша",
+      "translationCacheTtlDesc": "Сохраняется после перезапуска Discord; устаревшие переводы запрашиваются заново.",
+      "translationCacheMaxEntries": "Максимум сообщений в кэше",
+      "translationCacheMaxEntriesDesc": "При переполнении удаляются самые старые переводы; максимум 15000.",
+      "translationCacheStats": "Статистика кэша",
+      "translationCacheStatsDesc": "За сессию: попаданий {hits}, промахов {misses}; в памяти {memory}, сохранено {persistent}.",
+      "clearTranslationCacheStats": "Сбросить счётчик",
+      "clearTranslationCache": "Очистить кэш переводов",
+      "clearTranslationCacheConfirm": "Все сохранённые переводы будут удалены и при необходимости запрошены заново.",
+      "clearTranslationCacheDesc": "Удаляет все сохранённые переводы; повторный текст будет переводиться заново.",
+      "translationCacheStatsCleared": "Статистика кэша сброшена. Сохранённые переводы оставлены.",
+      "translationCacheCleared": "Кэш переводов очищен.",
+      "cacheTtl3h": "3 часа",
+      "cacheTtl6h": "6 часов",
+      "cacheTtl12h": "12 часов",
+      "cacheTtl1d": "1 день",
+      "cacheTtl2d": "2 дня",
+      "cacheTtl7d": "7 дней",
+      "translationPosition": "Позиция перевода",
+      "translationPositionDesc": "Показывать перевод над оригиналом или под ним.",
+      "translationBeforeOriginal": "Сначала перевод, ниже оригинал",
+      "translationAfterOriginal": "Сначала оригинал, ниже перевод",
+      "translationPositionAbove": "Над оригиналом",
+      "translationPositionBelow": "Под оригиналом",
+      "maskTranslations": "Скрывать перевод под спойлер по умолчанию",
+      "maskTranslationsDesc": "Перевод отображается серой плашкой до клика или нажатия Enter.",
+      "translationStyle": "Стиль перевода",
+      "translationStyleDesc": "Все варианты подстраиваются под тему Discord.",
+      "translationStyleTint": "Лёгкий фон",
+      "translationStyleMuted": "Приглушённый текст",
+      "translationStyleTag": "Метка «ПЕР»",
+      "translationTextScale": "Размер шрифта перевода",
+      "translationTextScaleDesc": "Относительно основного текста чата.",
+      "panelTheme": "Тема окон плагина",
+      "panelThemeDesc": "Цвета окна настроек, быстрой панели и меню; диалоги подтверждения следуют теме Discord.",
+      "panelThemeAuto": "Как в Discord",
+      "panelThemeLight": "Светлая",
+      "panelThemeDark": "Тёмная",
+      "translationTag": "ПЕР",
+      "hideOriginalAfterTranslation": "Скрывать оригинал после перевода",
+      "hideOriginalAfterTranslationDesc": "Оригинал заменяется серой полоской и виден при наведении или фокусе (только у вас).",
+      "showContextMenu": "Пункт «Перевод» в контекстном меню сообщений",
+      "showContextMenuDesc": "Добавляет перевод в меню правого клика по сообщению.",
+      "enableHotkey": "Горячая клавиша улучшения ввода",
+      "enableHotkeyDesc": "Когда курсор в поле ввода, сочетание клавиш запускает улучшение черновика.",
+      "polishHotkey": "Сочетание клавиш улучшения",
+      "polishHotkeyDesc": "Нажмите на кнопку и введите комбинацию с Ctrl, Alt или Win.",
+      "hotkeyRecord": "Записать сочетание",
+      "hotkeyRecording": "Нажмите клавиши...",
+      "hotkeyReset": "Сбросить",
+      "hotkeyNotSet": "Не задано",
+      "hotkeySaved": "Сочетание сохранено: {shortcut}",
+      "hotkeyInvalid": "Недопустимое сочетание: используйте Ctrl, Alt или Win + клавишу (можно с Shift), кроме стандартных команд копирования и вставки.",
+      "tryTranslate": "Пробный перевод",
+      "tryTranslateDesc": "Переводит одну фразу с текущими настройками без отправки в Discord.",
+      "tryTranslatePlaceholder": "Например: See you tomorrow, same time?",
+      "tryTranslateRun": "Перевести",
+      "tryPolish": "Пробное улучшение",
+      "tryPolishDesc": "Улучшает одну фразу с текущими настройками без отправки в Discord.",
+      "tryPolishPlaceholder": "Например: го завтра в то же время?",
+      "tryPolishRun": "Улучшить",
+      "tryBusy": "Обработка",
+      "tryInputRequired": "Сначала введите фразу.",
+      "tryResultTime": "за {time}",
+      "reset": "Сбросить настройки",
+      "resetConfirm": "Настройки, правила каналов и вид вернутся к стандартным; API-ключи, пул Google и шаблоны промптов сохранятся.",
+      "resetDialogTitle": "Сбросить настройки по умолчанию?",
+      "resetDialogLead": "Следующие параметры вернутся к стандартным (действие необратимо):",
+      "resetDialogItemSettings": "Сервисы, переключатели и лимиты перевода и улучшения",
+      "resetDialogItemChannelRules": "Правила автоперевода для отдельных каналов",
+      "resetDialogItemDisplay": "Параметры отображения и интерфейса (язык интерфейса сохранится)",
+      "resetDialogItemCredentials": "API-ключи, пул ключей Google и пользовательские шаблоны промптов",
+      "resetDialogItemCredentialsNote": "Удаляются только при снятии галочки ниже",
+      "resetKeepCredentials": "Сохранить API-ключи, пул Google и шаблоны промптов",
+      "dialogConfirm": "ОК",
+      "dialogCancel": "Отмена",
+      "settingsLoadBlocked": "Не удалось прочитать сохранённые настройки — изменения не будут записаны. Проверьте файл DiscordAITranslator.config.json в папке плагинов и перезапустите плагин.",
+      "pluginStarted": "Discord AI Переводчик v{version} запущен.",
+      "polishButton": "Улучш.",
+      "polishBusy": "Улучшение",
+      "polishRunning": "Улучшаем текущий черновик...",
+      "composerChanged": "Поле ввода переключилось. Повторите попытку.",
+      "composerResultHeld": "Текст не вставлен автоматически: черновик изменился или вы печатаете в другом месте. Скопируйте или вставьте его из панели.",
+      "polishTitleAttr": "Улучшить черновик с помощью ИИ. Клавиши: {shortcut}.",
+      "publicBilingualButton": "Двуяз.",
+      "publicBilingualBusy": "Перевод",
+      "publicBilingualTitleAttr": "Сформировать публичное двуязычное сообщение ({targetLanguage}); после отправки его увидят все.",
+      "publicBilingualReady": "Двуязычное сообщение готово. Проверьте и отправьте.",
+      "publicBilingualFailed": "Не удалось создать двуязычное сообщение: {error}",
+      "publicBilingualInputChanged": "Черновик изменился во время перевода, текст не был заменён.",
+      "errorComposerWriteFailed": "Поле ввода не приняло текст. Результат открыт в панели для ручного копирования.",
+      "publicBilingualTooLong": "Двуязычное сообщение превышает лимит Discord ({length}/{limit}).",
+      "publicBilingualPolishSkipped": "Улучшение отключено — использован исходный черновик.",
+      "translateButton": "Перевод",
+      "translateBusy": "Перевод...",
+      "translateTitleAttr": "Перевести на {targetLanguage}",
+      "translateMenu": "Перевести на {targetLanguage}",
+      "translateRetry": "Повторить",
+      "translateRetryTitle": "Повторить перевод сообщения",
+      "translationFailedInline": "Ошибка перевода: {error}",
+      "translationLoading": "Перевод…",
+      "translationRevealLabel": "Показать скрытый перевод",
+      "translationActionsLabel": "Действия с переводом",
+      "translationActionCopy": "Копировать перевод",
+      "translationActionRetranslate": "Перевести заново (без кэша)",
+      "translationActionHide": "Скрыть перевод",
+      "translationCopied": "Перевод скопирован.",
+      "translationPartialOne": "Не удалось перевести часть {parts} из {total}",
+      "translationPartialMany": "Не удалось перевести части {parts} из {total}",
+      "translationPartialUnknown": "Часть сообщения не удалось перевести",
+      "translationRetranslate": "Перевести заново",
+      "translationRetranslateTitle": "Перевести всё сообщение заново в обход кэша",
+      "translationErrorAuth": "Сервис перевода отклонил API-ключ",
+      "translationErrorMissingKey": "Не указан API-ключ для перевода",
+      "translationErrorMissingEndpoint": "Не указан адрес API для перевода",
+      "translationErrorMissingModel": "Не выбрана модель для перевода",
+      "translationErrorQuota": "Квота сервиса перевода исчерпана",
+      "translationErrorLocal": "Локальный сервис перевода не отвечает",
+      "translationErrorLocalAt": "Локальный сервис перевода не отвечает ({host})",
+      "translationErrorRateLimit": "Слишком много запросов. Повторите чуть позже",
+      "translationErrorRateLimitWait": "Слишком много запросов. Повторите через {seconds} с",
+      "translationOpenSettings": "Открыть настройки",
+      "translationOpenSettingsTitle": "Открыть настройки перевода",
+      "translationTestConnection": "Проверить связь",
+      "translationTestConnectionTitle": "Проверить доступность сервиса перевода",
+      "autoTranslateFailed": "Сбой автоперевода: {error}",
+      "autoTranslateNeedsAttention": "Автоперевод требует внимания: {error}",
+      "autoTranslateTargetFailed": "Ответ модели не на целевом языке — перевод пропущен.",
+      "manualTranslateRescueFailed": "Не удалось получить корректный перевод после нескольких попыток. Попробуйте ещё раз.",
+      "contextPatchFailed": "Не удалось добавить пункт в контекстное меню: {error}",
+      "polishDisabled": "Улучшение ввода отключено.",
+      "textboxMissing": "Поле ввода Discord не найдено.",
+      "inputEmpty": "Поле ввода пусто.",
+      "confirmSend": "Отправить улучшенное сообщение?",
+      "confirmSendAction": "Отправить",
+      "confirmSendDraftChanged": "Черновик изменился, отправка отменена.",
+      "translationDisabled": "Перевод сообщений канала отключён.",
+      "noTranslatableText": "В этом сообщении нет текста для перевода.",
+      "messageMissing": "Сообщение для перевода не найдено.",
+      "modelSet": "Установлена модель: {model}.",
+      "hideTranslation": "Скрыть перевод",
+      "translationLabel": "ИИ-перевод на {targetLanguage}",
+      "polishedReady": "Улучшенный текст вставлен в поле ввода.",
+      "apiKeyMissingPolish": "Не указан API-ключ для улучшения ввода.",
+      "apiKeyMissingTranslation": "Не указан API-ключ для перевода канала.",
+      "endpointMissing": "Не указан адрес API.",
+      "modelMissing": "Модель не указана.",
+      "invalidJson": "API вернул некорректный JSON.",
+      "emptyResult": "API вернул пустой ответ.",
+      "errorUnauthorized": "API-ключ недействителен или нет доступа.",
+      "errorRateLimited": "Превышен лимит частоты запросов API; включена пауза.",
+      "errorQuotaExceeded": "Квота API или баланс аккаунта исчерпаны.",
+      "errorLanguageUnsupported": "Текущий сервис не поддерживает выбранный целевой язык. Выберите другой язык или сервис.",
+      "errorIpNotAllowed": "Сервис отклонил ваш IP-адрес. Проверьте белый список IP в панели сервиса.",
+      "errorProviderRequestRejected": "Сервис отклонил запрос. Проверьте права аккаунта, целевой язык и настройки.",
+      "errorOutputTruncated": "Ответ модели оборвался. Увеличьте «Макс. длина ответа» в разделе «Дополнительные параметры модели» и повторите.",
+      "errorOutputTruncatedPolish": "Улучшенный текст оборвался. Увеличьте «Макс. длина ответа» в разделе «Поле ввода → Дополнительные параметры модели».",
+      "errorOutputTruncatedTranslation": "Перевод оборвался. Увеличьте «Макс. длина ответа» в разделе «Перевод сообщений → Дополнительные параметры модели».",
+      "errorSaveFailed": "Не удалось сохранить данные локально. Повторите позже.",
+      "errorServer": "Сервис API временно недоступен.",
+      "errorCancelled": "Запрос отменён.",
+      "errorInvalidEndpoint": "Некорректный адрес API. Укажите полный URL.",
+      "errorEndpointNotFound": "Адрес API или модель не найдены. Проверьте URL и название модели.",
+      "errorUnsafeEndpoint": "Небезопасный адрес API: удалённым сервисам нужен HTTPS, HTTP разрешён только для локального ПК без логина и пароля в URL.",
+      "localIntakeFixed": "Локальные сервисы всегда сканируют страницу напрямую.",
+      "localConcurrencyDesc": "От {min} до {max}; укажите по числу слотов и объёму видеопамяти локального сервера.",
+      "localFallbackUnavailable": "Локальные сервисы не переключаются на облачные.",
+      "errorTimeout": "Время ожидания ответа API истекло.",
+      "errorNetwork": "Ошибка сетевого соединения.",
+      "errorLocalProviderUnavailable": "Локальный сервер Sakura недоступен, автоперевод приостановлен; запустите Sakura или нажмите «Тест» в настройках.",
+      "unknownError": "Неизвестная ошибка",
+      "providerMicrosoft": "Microsoft Translator",
+      "providerDeepL": "DeepL",
+      "providerBaidu": "Baidu Translate",
+      "providerRegion": "Регион",
+      "providerRegionDesc": "Регион ресурса Azure Translator; оставьте пустым для глобального ресурса.",
+      "deeplPlan": "Тариф DeepL",
+      "deeplPlanDesc": "Free использует api-free.deepl.com, Pro — api.deepl.com.",
+      "deeplPlanFree": "Free",
+      "deeplPlanPro": "Pro",
+      "baiduAppId": "Baidu App ID",
+      "baiduAppIdDesc": "Ваш App ID Baidu Translate; хранится только на этом ПК.",
+      "baiduSecretKey": "Секретный ключ Baidu",
+      "baiduSecretKeyDesc": "Секретный ключ Baidu Translate; хранится локально и не попадает в логи.",
+      "autoTranslateIntakeMode": "Способ обнаружения сообщений",
+      "autoTranslateIntakeModeDesc": "«Авто» использует библиотеку BDFDB при наличии, иначе сканирует страницу.",
+      "autoTranslateIntakeAuto": "Авто",
+      "autoTranslateIntakeDom": "Только сканирование",
+      "autoTranslateIntakeBdfdb": "Предпочитать BDFDB",
+      "settingsTabPolish": "Улучшение ввода",
+      "settingsTabTranslation": "Перевод канала",
+      "settingsTabPublicBilingual": "Двуязычный ввод",
+      "settingsTabDisplay": "Вид, кэш, диагностика",
+      "settingsTabOverview": "Обзор",
+      "settingsTabTranslate": "Перевод сообщений",
+      "settingsTabCompose": "Поле ввода",
+      "settingsTabAppearance": "Отображение",
+      "settingsTabAdvanced": "Дополнительно",
+      "settingsTabData": "Данные и диагностика",
+      "settingsTabsLabel": "Разделы настроек",
+      "settingsSearchPlaceholder": "Поиск настроек",
+      "settingsSearchResults": "Найдено настроек: {count}",
+      "settingsSearchEmpty": "Ничего не найдено по запросу «{query}»",
+      "settingsClose": "Закрыть настройки",
+      "settingsGroupCommon": "Основное",
+      "overviewSetupTitle": "Начало работы: осталось шагов — {count}",
+      "overviewSetupProgress": "Готово {done} из {total} · карточка скроется после настройки",
+      "overviewSetupService": "Выберите сервис перевода",
+      "overviewSetupServiceOff": "Перевод сообщений выключен",
+      "overviewSetupServiceMissing": "{provider}: не заполнены поля",
+      "overviewSetupTest": "Проверьте соединение",
+      "overviewSetupTestBlocked": "Сначала настройте сервис",
+      "overviewSetupTarget": "Целевой язык",
+      "overviewSetupAuto": "Включите автоперевод",
+      "overviewSetupAutoOn": "Включён",
+      "overviewSetupAutoOff": "Выкл.: работает только кнопка «Перевод»",
+      "overviewSetupAutoChannel": "Общий выкл.; этот канал переводится всегда",
+      "overviewSetupChannel": "Этот канал",
+      "overviewSetupChannelNone": "Сейчас канал не открыт",
+      "overviewSetupChannelNever": "Для канала задано «Не переводить»",
+      "overviewStateDone": "Готово",
+      "overviewStateTodo": "Нужно настроить",
+      "overviewSetUp": "Настроить",
+      "overviewTurnOn": "Включить",
+      "overviewChange": "Изменить",
+      "overviewServicesTitle": "Статус сервисов",
+      "overviewCardTranslation": "Перевод сообщений",
+      "overviewCardPolish": "Улучшение ввода",
+      "overviewServiceOff": "Выкл.",
+      "overviewServiceMissing": "Не настроено: укажите {field}",
+      "settingsGroupAutoTranslate": "Автоперевод",
+      "settingsGroupHistoryBackfill": "Доперевод истории",
+      "settingsGroupFallback": "Резервные сервисы ручного перевода",
+      "settingsGroupTranslatedText": "Вид переведённого текста",
+      "settingsGroupNotices": "Уведомления и кнопки",
+      "settingsGroupWindows": "Оформление окон",
+      "settingsMoreModelParams": "Дополнительные параметры модели",
+      "settingsApiKeyOptional": "API-ключ (необязательно)",
+      "settingsRequiresParent": "Сначала включите «{parent}»",
+      "settingsDangerZone": "Опасная зона",
+      "settingsResetDesc": "Возвращает стандартные настройки после подтверждения; ключи API и шаблоны можно сохранить.",
+      "providerSettingsTitle": "Параметры сервиса",
+      "providerSettingsDesc": "Показаны только поля выбранного сервиса; остальные сохраняются при переключении.",
+      "polishControlsTitle": "Работа в поле ввода",
+      "translationControlsTitle": "Кнопки и меню перевода",
+      "autoTranslateSettingsTitle": "Планировщик автоперевода",
+      "publicBilingualTitle": "Публичный двуязычный ввод",
+      "publicBilingualDependencyTitle": "Текущая цепочка",
+      "publicBilingualDependencyDesc": "Двуязычное сообщение отправляется обычным текстом Discord и видно всем участникам.",
+      "publicBilingualDependencyStatus": "Улучшение до перевода: {polishProvider}; перевод: {translationProvider}; язык: {targetLanguage}.",
+      "publicBilingualDependencyFlowDesc": "Если сервис улучшения настроен, он же выполняет перевод на язык результата улучшения.",
+      "publicBilingualDependencyPolishOff": "нет",
+      "displaySettingsTitle": "Поведение отображения",
+      "cacheSettingsTitle": "Кэш переводов",
+      "diagnosticsSettingsTitle": "Диагностика",
+      "providerStatus": "Статус сервиса",
+      "providerStatusDesc": "Выполняет быструю проверку связи с текущими настройками.",
+      "quickSettingsOpen": "Открыть настройки Discord AI Translator",
+      "quickSettingsDone": "Готово",
+      "quickSettingsOpenFailed": "Не удалось открыть быстрые настройки: {error}",
+      "quickSettingsFallbackTitle": "Окно быстрых настроек загрузилось не полностью",
+      "quickSettingsFallbackHint": "Диагностика открытия записана. Закройте окно и экспортируйте JSON диагностики для проверки.",
+      "quickPanelTitle": "ИИ-переводчик",
+      "quickPanelLauncherLabel": "ИИ-переводчик: {status}",
+      "quickPanelOpenFull": "Все настройки",
+      "quickPanelClose": "Закрыть",
+      "quickPanelEscHint": "Esc — закрыть",
+      "quickPanelAutoTranslate": "Автоперевод",
+      "quickPanelAutoTranslateDesc": "Переводить иностранные сообщения на экране",
+      "quickPanelChannel": "Этот канал",
+      "quickPanelChannelNone": "канал не открыт",
+      "quickPanelChannelDm": "Личные сообщения",
+      "quickPanelRuleInherit": "По общему",
+      "quickPanelRuleEnabled": "Всегда",
+      "quickPanelRuleDisabled": "Никогда",
+      "quickPanelRuleInheritFull": "Как общий переключатель",
+      "quickPanelRuleEnabledFull": "Всегда переводить",
+      "quickPanelRuleDisabledFull": "Не переводить",
+      "quickPanelRuleCaptionInheritOn": "Сейчас: автоперевод включён (по общему переключателю)",
+      "quickPanelRuleCaptionInheritOff": "Сейчас: автоперевод выключен (по общему переключателю)",
+      "quickPanelRuleCaptionEnabled": "Переводит этот канал даже при выключенном общем переключателе",
+      "quickPanelRuleCaptionDisabled": "Автоперевод здесь выключен; ручной перевод работает",
+      "quickPanelRuleCaptionNoChannel": "Откройте канал, чтобы задать для него правило",
+      "quickPanelRuleCaptionTranslationOff": "Перевод каналов выключен; правило заработает после включения",
+      "quickPanelTargetLanguage": "Переводить на",
+      "quickPanelDisplay": "Отображение",
+      "quickPanelMask": "Скрывать перевод",
+      "quickPanelMaskDesc": "Показывать плашку; клик открывает текст",
+      "quickPanelHideOriginal": "Скрывать оригинал после перевода",
+      "quickPanelHideOriginalDesc": "Наведите курсор, чтобы увидеть оригинал",
+      "quickPanelPosition": "Позиция перевода",
+      "quickPanelPositionAbove": "Сверху",
+      "quickPanelPositionBelow": "Снизу",
+      "quickStatusActive": "Автоперевод активен в этом канале",
+      "quickStatusBusy": "Переводится: {inFlight}, в очереди: {queued}",
+      "quickStatusTesting": "Проверка соединения…",
+      "quickStatusLatency": "{ms} мс",
+      "quickStatusWaiting": "{reason}; продолжит автоматически",
+      "quickStatusWaitingSeconds": "{reason}; продолжит примерно через {seconds} с",
+      "quickStatusReasonRateLimit": "Сервис перегружен",
+      "quickStatusReasonServer": "Ошибка сервиса",
+      "quickStatusReasonNetwork": "Нестабильная сеть",
+      "quickStatusReasonParse": "Неожиданный ответ",
+      "quickStatusNeedsYou": "Требуется действие: {reason}",
+      "quickStatusReasonConfig": "не заполнены API-ключ или настройки",
+      "quickStatusReasonAuth": "API-ключ отклонён",
+      "quickStatusReasonQuota": "исчерпана квота или баланс",
+      "quickStatusReasonLocal": "локальный сервис не отвечает",
+      "quickStatusReasonFailed": "проверка связи не прошла",
+      "quickStatusReasonEndpoint": "некорректный URL API",
+      "quickStatusReasonNotFound": "URL API или модель не найдены",
+      "quickStatusNotConfigured": "Не настроено",
+      "quickStatusOffChannel": "Автоперевод в этом канале выключен",
+      "quickStatusOffDisabled": "Перевод каналов выключен",
+      "quickStatusManualHint": "Ручной перевод по-прежнему доступен",
+      "quickPanelTabsLabel": "Режимы быстрой панели",
+      "quickPanelTabTranslation": "Перевод",
+      "quickPanelTabPolish": "Улучшение",
+      "quickPanelTabTransAutoOn": "Авто · {language}",
+      "quickPanelTabTransManual": "Вручную · {language}",
+      "quickPanelTabTransOff": "Выкл.",
+      "quickPanelTabPolishOn": "Вкл. · {language}",
+      "quickPanelTabPolishOff": "Выкл.",
+      "quickPanelTranslationService": "Сервис перевода",
+      "quickPanelPolishService": "Сервис улучшения",
+      "quickPanelSavedServiceCurrent": "Текущий: {label}",
+      "quickPanelSavedServiceEmpty": "Нет сохранённых сервисов (сохраняются после теста)",
+      "quickPanelServiceShared": "Общий",
+      "quickPanelServiceIndependent": "Отдельный",
+      "quickPanelTranslationTemplate": "Шаблон перевода",
+      "quickPanelTemplateCustom": "Свой промпт",
+      "quickStatusPolishActive": "Улучшение ввода готово",
+      "quickStatusPolishOff": "Улучшение ввода выключено",
+      "quickStatusPolishBtnOn": "Кнопка у поля видна",
+      "quickStatusPolishBtnOff": "Кнопка у поля скрыта",
+      "quickStatusPolishHotkeyOff": "Хоткей выкл.",
+      "quickPanelPolishTestTitle": "Проверить соединение сервиса улучшения ввода",
+      "quickPanelPolishEnabled": "Включить улучшение ввода",
+      "quickPanelPolishEnabledDesc": "Переписывает черновик и вставляет обратно в поле ввода",
+      "quickPanelPolishOutputLanguage": "Язык результата",
+      "quickPanelPolishTemplate": "Шаблон улучшения",
+      "quickPanelPolishCreativity": "Креативность",
+      "quickPanelPolishCreativitySteady": "Точно 0.3",
+      "quickPanelPolishCreativityBalanced": "Естеств. 0.7",
+      "quickPanelPolishCreativityCreative": "Свободно 1.2",
+      "quickPanelPolishCreativityDescSteady": "Ближе к исходной структуре фразы",
+      "quickPanelPolishCreativityDescBalanced": "Сбалансированно для обычного общения",
+      "quickPanelPolishCreativityDescCreative": "Заметно меняет формулировку при повторе",
+      "quickPanelPolishBehavior": "Поведение",
+      "quickPanelPolishAfterAction": "После улучшения",
+      "quickPanelPolishRepolishSource": "Повтор",
+      "quickPanelPolishRepolishOriginal": "Оригинал",
+      "quickPanelPolishRepolishLast": "Прошлый",
+      "quickPanelPublicBilingual": "Кнопка двуязычного сообщения",
+      "quickPanelPublicBilingualDesc": "Показывать кнопку «Двуяз.» у поля ввода",
+      "quickPanelPublicBilingualAfterPolish": "Автодвуязычность после улучшения",
+      "quickPanelPublicBilingualAfterPolishDesc": "Добавлять скрытый оригинал после улучшения",
+      "quickPanelTryPolishToggle": "Быстрая проба улучшения",
+      "quickPanelTryPolishPlaceholder": "Введите фразу для проверки шаблона и языка…",
+      "quickPanelTryPolishRun": "Проба",
+      "quickPanelTryPolishAgain": "Ещё раз",
+      "quickPanelOpenFullPolish": "Шаблоны и все настройки",
+      "inputActionMenu": "Действия ИИ",
+      "inputActionOpenSettings": "Настройки",
+      "restoreOriginalShort": "↶",
+      "polishButtonShort": "Ул",
+      "polishTitleAttrWithTone": "Улучшить черновик с ИИ (стиль: {tone}). Клавиши: {shortcut}.",
+      "polishPresetPicker": "Сменить стиль улучшения",
+      "polishPresetPickerTitle": "Сменить стиль улучшения (сейчас: {tone})",
+      "polishPresetMenuTitle": "Стиль улучшения",
+      "polishPresetMenuTabsLabel": "Категории стилей улучшения",
+      "polishPresetMenuCustomNote": "Используется свой промпт; выберите шаблон ниже для переключения",
+      "polishPresetMenuEmpty": "Шаблонов пока нет — добавьте их в настройках",
+      "polishPresetMenuEmptyPersona": "Образы исторических личностей скоро появятся; вы можете добавить свои в настройках",
+      "polishPresetMenuManage": "Управление и свои стили…",
+      "polishPresetMenuItemAction": "Сменить стиль улучшения…",
+      "publicBilingualButtonShort": "2яз",
+      "showQuickSettingsPanelButton": "Кнопка быстрых настроек в панели пользователя",
+      "showQuickSettingsPanelButtonDesc": "Добавляет кнопку AI рядом с шестерёнкой настроек Discord слева внизу.",
+      "currentChannelAutoTranslatePolicy": "Автоперевод в этом канале",
+      "currentChannelAutoTranslatePolicyDesc": "Влияет только на автоперевод этого канала; ручной перевод работает всегда.",
+      "channelPolicyInherit": "Как общий переключатель",
+      "channelPolicyEnabled": "Всегда переводить",
+      "channelPolicyDisabled": "Не переводить",
+      "channelRuleFollow": "Как общий переключатель",
+      "channelRuleAlways": "Всегда переводить",
+      "channelRuleNever": "Не переводить",
+      "historyBackfillEnabled": "Разрешить доперевод загруженной истории",
+      "historyBackfillEnabledDesc": "Позволяет вручную перевести уже загруженные сообщения в канале.",
+      "historyBackfillLimit": "Лимит доперевода за раз",
+      "historyBackfillLimitDesc": "Максимум загруженных сообщений за один запуск (1-100).",
+      "historyBackfillRun": "Доперевести загруженные",
+      "historyBackfillRunning": "Доперевод...",
+      "historyBackfillRunDesc": "Ставит загруженные непереведённые сообщения в очередь с низким приоритетом.",
+      "historyBackfillQueued": "Добавлено в очередь доперевода: {count}.",
+      "historyBackfillNoWork": "Нет загруженных сообщений, требующих перевода.",
+      "historyBackfillContextMenu": "Доперевести загруженные сообщения",
+      "providerFallbackEnabled": "Резервные сервисы при сбое ручного перевода",
+      "providerFallbackEnabledDesc": "Только для ручного перевода и двуязычного ввода; локальные сервисы не уходят в облако.",
+      "providerFallbackOrder": "Порядок резервных сервисов",
+      "providerFallbackOrderListDesc": "Отметьте резервные сервисы и задайте их порядок стрелками.",
+      "providerFallbackMoveUp": "Поднять {provider} выше",
+      "providerFallbackMoveDown": "Опустить {provider} ниже",
+      "providerFallbackCurrent": " (текущий сервис)",
+      "providerFallbackOrderDesc": "Через запятую или с новой строки; доступно: {providers}.",
+      "composerMassMentionBlocked": "Заблокированы добавленные моделью массовые упоминания ({mentions}) для защиты от случайных пингов.",
+      "composerChannelChanged": "Вы переключили канал — результат не вставлен в другой чат. Скопируйте его или вернитесь в исходный канал.",
+      "hostHealthTitle": "Проверка совместимости с Discord",
+      "hostHealthDesc": "Проверяет точки интеграции с Discord и BetterDiscord для выявления сбоев после обновлений.",
+      "hostHealthRecheck": "Проверить снова",
+      "hostHealthCopyReport": "Копировать отчёт",
+      "hostHealthCopied": "Отчёт совместимости скопирован.",
+      "hostHealthSummaryOk": "Всё в норме ({ok}/{total})",
+      "hostHealthSummaryWarn": "Требует внимания (ок: {ok} · пред.: {warn} · ошибки: {error})",
+      "hostHealthSummaryError": "Проблема совместимости (ок: {ok} · пред.: {warn} · ошибки: {error})",
+      "hostHealthItemBdApi": "BetterDiscord API",
+      "hostHealthItemStores": "Хранилища Discord (MessageStore / ChannelStore)",
+      "hostHealthItemChatRoot": "Контейнер чата",
+      "hostHealthItemMessages": "Узлы сообщений и извлечение текста",
+      "hostHealthItemComposer": "Поле ввода и панель кнопок",
+      "hostHealthItemUserPanel": "Панель пользователя и кнопка AI",
+      "hostHealthItemContextMenu": "Патч контекстного меню",
+      "hostHealthItemTheme": "Определённая тема Discord",
+      "hostHealthStateOk": "ОК",
+      "hostHealthStateWarn": "Внимание",
+      "hostHealthStateError": "Сбой",
+      "quickLanguageBarLabel": "Быстрое переключение языка интерфейса",
+      "quickLanguageSwitchTitle": "Язык интерфейса: {language}"
+    };
+  }
+});
+
+// src/i18n/ar.js
+var require_ar = __commonJS({
+  "src/i18n/ar.js"(exports2, module2) {
+    "use strict";
+    module2.exports = {
+      "settingsTitle": "مترجم Discord بالذكاء الاصطناعي",
+      "settingsNote": "يُضبط التحسين والترجمة بشكل منفصل، وتُحفظ مفاتيح API على هذا الجهاز فقط.",
+      "generalTitle": "الإعدادات العامة",
+      "interfaceLanguage": "لغة الواجهة",
+      "interfaceLanguageDesc": "تغيّر لغة نصوص الإضافة فقط ولا تؤثر على لغة الترجمة أو التحسين.",
+      "languageZh": "中文",
+      "languageEn": "English",
+      "polishTitle": "تحسين الصياغة",
+      "polishDescription": "يعيد صياغة المسودة الحالية وفق التوجيه ويعيد النص إلى مربع الكتابة.",
+      "translationTitle": "ترجمة رسائل القناة",
+      "translationDescription": "يترجم الرسائل الموجودة في القناة إلى اللغة المستهدفة المحددة.",
+      "enabled": "مفعّل",
+      "enabledDesc": "عند الإيقاف، تُخفى أزرار الميزة ولا تُرسل أي طلبات.",
+      "provider": "مزود الخدمة",
+      "providerDesc": "تعمل النماذج اللغوية للترجمة والتحسين معاً؛ بينما تقتصر محركات الترجمة على الترجمة فقط.",
+      "providerPolishDesc": "يتطلب التحسين نموذجاً لغوياً يدعم التوجيهات؛ يمكنك اختيار إعداد محفوظ أعلاه.",
+      "providerGroupAi": "النماذج اللغوية الكبيرة (ترجمة + تحسين)",
+      "providerGroupMachine": "محركات الترجمة المتخصصة (ترجمة فقط)",
+      "savedServiceConfigs": "الإعدادات المحفوظة",
+      "savedServiceConfigsDesc": "تُحفظ الخدمات تلقائياً بعد نجاح الاختبار لاستخدامها في الترجمة والتحسين.",
+      "savedServiceConfigsPlaceholder": "اختر إعداداً محفوظاً ({count})",
+      "savedServiceConfigsEmpty": "لا توجد إعدادات محفوظة بعد (تُحفظ تلقائياً بعد الاختبار)",
+      "savedServiceConfigApplied": "تم تطبيق الإعداد: {name}",
+      "savedServiceConfigDeleted": "تم حذف الإعداد المحفوظ.",
+      "savedServiceConfigDelete": "حذف",
+      "syncConfigToPolish": "مزامنة مع التحسين",
+      "syncConfigToTranslation": "مزامنة مع الترجمة",
+      "syncConfigUnsupportedPolish": "محركات الترجمة تدعم الترجمة فقط ولا يمكن مزامنتها مع تحسين الصياغة.",
+      "syncConfigMissing": "يرجى إكمال الإعدادات المطلوبة لمزود الخدمة الحالي أولاً.",
+      "syncConfigDonePolish": "تمت مزامنة الإعدادات مع تحسين الصياغة.",
+      "syncConfigDoneTranslation": "تمت مزامنة الإعدادات مع ترجمة رسائل القناة.",
+      "providerOpenAI": "متوافق مع OpenAI",
+      "providerSakuraLocal": "Sakura محلي",
+      "providerGoogleCloud": "ترجمة Google Cloud",
+      "googleTranslateTitle": "مجموعة مفاتيح Google Cloud",
+      "googleTranslateKeys": "مجموعة مفاتيح Google API",
+      "googleTranslateKeysDesc": "مفتاح واحد في كل سطر، أو بالصيغة الاسم|المفتاح|الحد_الشهري.",
+      "googleTranslateDefaultLimit": "الحد الشهري الافتراضي لمفتاح Google",
+      "googleTranslateDefaultLimitDesc": "يُستخدم عند عدم تحديد حد في السطر؛ يُنصح بـ 420000-450000 لترك هامش أمان.",
+      "googleTranslateAllowPrefetch": "السماح لـ Google بالترجمة المسبقة",
+      "googleTranslateAllowPrefetchDesc": "عند الإيقاف، تُترجم الرسائل الظاهرة فقط دون استهلاك حصة Google للترجمة المسبقة.",
+      "googleTranslateStats": "استهلاك Google",
+      "googleTranslateStatsDesc": "هذا الشهر {used}/{limit} حرفاً؛ المفاتيح المتاحة {available}/{total}؛ الشهر {month}.",
+      "googleTranslateStatsCooldown": "مفاتيح قيد التهدئة: {count}؛ يعود أقربها عند {time}.",
+      "googleTranslateResetStats": "إعادة تعيين إحصائيات Google الشهرية",
+      "googleTranslateResetConfirm": "يُصفّر العداد المحفوظ على هذا الجهاز فقط؛ ولا يتغير الاستهلاك الفعلي في Google Cloud.",
+      "googleTranslateStatsReset": "تمت إعادة تعيين إحصائيات Google الشهرية.",
+      "googleTranslateNoKey": "لا يوجد مفتاح API متاح لترجمة Google Cloud.",
+      "googleTranslateQuotaExceeded": "نفدت الحصة الشهرية لمجموعة مفاتيح ترجمة Google Cloud.",
+      "googleTranslateKeysCooling": "جميع مفاتيح ترجمة Google Cloud قيد التهدئة حتى {time}.",
+      "googleTranslateKeyError": 'المفتاح "{label}": {error}',
+      "apiKey": "مفتاح API",
+      "apiKeyDesc": "يُحفظ على هذا الجهاز فقط ولا يُرسل في الرسائل؛ يمكن تركه فارغاً لخادم Sakura المحلي.",
+      "apiKeyDeepSeekDesc": "مفتاح API الخاص بمنصة DeepSeek، يُحفظ على هذا الجهاز فقط.",
+      "apiKeyOpenAIDesc": "مفتاح API المقدم من الخدمة، يُحفظ على هذا الجهاز فقط.",
+      "apiKeyLocalDesc": "اختياري؛ الخوادم المحلية لا تحتاجه غالباً.",
+      "apiKeyMicrosoftDesc": "مفتاح مورد Azure Translator، يُحفظ على هذا الجهاز فقط.",
+      "apiKeyDeepLDesc": "مفتاح مصادقة DeepL API، يُحفظ على هذا الجهاز فقط.",
+      "apiKeyOptionalPlaceholder": "اختياري",
+      "apiTest": "اختبار",
+      "apiTestBusy": "جارٍ الفحص",
+      "apiStatusUntested": "غير مختبر",
+      "apiStatusTesting": "جارٍ الفحص",
+      "apiStatusSuccess": "متصل",
+      "apiStatusFailed": "فشل الاتصال",
+      "apiTestSuccess": "نجح الاتصال بواجهة {name} API.",
+      "apiTestSuccessSaved": "تم الاتصال بـ {name} API وحفظه كإعداد جاهز.",
+      "apiTestSuccessSynced": "تم الاتصال بـ {name} API وحفظه ومزامنته مع {target}.",
+      "apiTestFailed": "فشل الاتصال بـ {name} API: {error}",
+      "apiTestJustNow": "الآن",
+      "apiTestMinutesAgo": "منذ {count} د",
+      "apiTestHoursAgo": "منذ {count} س",
+      "apiTestNotYet": "لم يُختبر بعد",
+      "thinkingMode": "وضع التفكير في DeepSeek",
+      "thinkingModeDesc": "يفكر النموذج قبل الإجابة: قد يكون أدق لكنه أبطأ ويستهلك رموزاً أكثر.",
+      "endpoint": "عنوان الواجهة",
+      "endpointDesc": "عنوان API للخدمة؛ الإعداد الافتراضي يعمل غالباً.",
+      "endpointDeepSeekDesc": "عنوان API لـ DeepSeek؛ الإعداد الافتراضي يعمل غالباً.",
+      "endpointOpenAIDesc": "يقبل عنوان /v1 الأساسي أو رابط chat/completions الكامل؛ يشترط https للخوادم البعيدة.",
+      "endpointLocalDesc": "عنوان خادمك المحلي؛ يُسمح بـ http للعناوين المحلية فقط.",
+      "endpointMicrosoftDesc": "عنوان API لـ Azure Translator؛ الإعداد الافتراضي يعمل غالباً.",
+      "endpointBaiduDesc": "عنوان API لترجمة Baidu؛ الإعداد الافتراضي يعمل غالباً.",
+      "deepseekPreset": "إعداد DeepSeek V4 المسبق",
+      "deepseekPresetDesc": "التبديل السريع بين DeepSeek V4 Flash وPro.",
+      "customModel": "مخصص (اكتب الاسم أدناه)",
+      "model": "النموذج",
+      "modelDesc": "اكتب أي اسم نموذج؛ يتم تذكر آخر اختيار تلقائياً.",
+      "modelOpenAIDesc": "اسم النموذج الذي توفره الخدمة؛ اضغط «اكتشاف النماذج» لعرض القائمة.",
+      "modelLocalDesc": "القيمة local-model تستخدم النموذج المحمّل حالياً على الخادم.",
+      "modelLocalLoadedDesc": "القيمة local-model تستخدم نموذج الخادم المحمّل، وهو الآن {model}.",
+      "modelDetect": "اكتشاف النماذج",
+      "modelDetectBusy": "جارٍ الاكتشاف",
+      "modelDetectFound": "تم العثور على {count} نموذجاً؛ اختر واحداً من القائمة.",
+      "modelDetectFoundLoaded": "تم العثور على {count} نموذجاً؛ المحمّل حالياً: {model}.",
+      "modelDetectNone": "لم يعرض الخادم أي نماذج.",
+      "modelDetectFailed": "فشل الاكتشاف: {error}",
+      "modelDetectUnsupported": "هذه الخدمة لا تدعم عرض قائمة النماذج.",
+      "modelDetectConfirmOrigin": "تأكيد عنوان استخدام مفتاح API",
+      "modelDetectConfirmOriginDesc": "هل تسمح بإرسال مفتاح API الحالي إلى {origin} وربطه بهذا المصدر؟",
+      "apiKeyOriginMismatch": "مفتاح API الحالي مرتبط بمصدر آخر. أدخل مفتاحاً لهذا العنوان أو اضغط «اكتشاف النماذج» لتأكيد المصدر الحالي.",
+      "modelPicker": "النماذج المتاحة",
+      "modelPickerOther": "أخرى (اكتب الاسم أعلاه)",
+      "modelPickerServerLoaded": "استخدام نموذج الخادم المحمّل (local-model)",
+      "modelPickerDetected": "النماذج المعروضة من الخادم",
+      "modelPickerPresets": "النماذج الشائعة",
+      "modelPickerLoadedTag": "{model} (محمّل)",
+      "outputLanguage": "لغة الإخراج",
+      "outputLanguageDesc": "اللغة التي سيُكتب بها النص بعد التحسين.",
+      "inputLanguage": "لغة الإدخال",
+      "inputLanguageDesc": "اللغة الأصلية لمسودتك؛ اتركها على الكشف التلقائي إلا إذا أخطأ.",
+      "messageLanguage": "لغة الرسائل",
+      "messageLanguageDesc": "اللغة الأصلية لرسائل القناة؛ اتركها على الكشف التلقائي عادةً.",
+      "autoDetectLanguage": "كشف تلقائي",
+      "targetLanguage": "اللغة المستهدفة",
+      "targetLanguageDesc": "اللغة التي ستُترجم إليها رسائل القناة.",
+      "languagePreset": "اللغات الشائعة",
+      "customLanguage": "لغة مخصصة",
+      "customLanguagePlaceholder": "مثال: الصينية التقليدية، الكورية، البرتغالية البرازيلية",
+      "customLanguageDesc": "يُرسل اسم اللغة المخصصة إلى النموذج كما كتبته.",
+      "temperature": "الإبداع",
+      "temperatureDesc": "القيمة الأقل أكثر ثباتاً: 0.1-⁠0.3 للترجمة، و0.3-⁠0.7 للتحسين.",
+      "maxTokens": "أقصى طول للإخراج",
+      "maxTokensDesc": "الحد الأقصى لطول رد النموذج؛ ارفعه إذا انقطعت الرسائل الطويلة.",
+      "maxTokensPolishDesc": "الحد الأقصى لرد التحسين؛ ارفعه للمسودات الطويلة أو عند تفعيل التفكير.",
+      "afterPolishing": "الإجراء بعد التحسين",
+      "afterPolishingDesc": "تحديد ما إذا كان سيتم السؤال قبل الإرسال بعد وضع النص في مربع الكتابة.",
+      "afterReplace": "استبدال",
+      "afterDirectReplace": "استبدال",
+      "afterConfirmSend": "سؤال أولاً",
+      "repolishSource": "مصدر إعادة التحسين",
+      "repolishSourceDesc": "عند التحسين مرة أخرى، البدء من المسودة الأصلية أو من آخر نتيجة.",
+      "repolishSourceOriginal": "استخدام المسودة الأصلية",
+      "repolishSourceLastResult": "استخدام النتيجة السابقة",
+      "restoreOriginal": "استعادة الأصل",
+      "restoreOriginalChanged": "تغيرت المسودة، لذا تعذر استعادة النص الأصلي.",
+      "polishResultTitle": "نتيجة التحسين",
+      "polishResultCopy": "نسخ",
+      "polishResultCopied": "تم النسخ",
+      "polishResultReplace": "إدراج في المربع",
+      "polishResultApplyFailed": "تعذر الإدراج في مربع الكتابة. اضغط «نسخ» ثم الصقه يدوياً.",
+      "polishResultClose": "إغلاق",
+      "prompt": "التوجيه (Prompt)",
+      "promptDesc": "يخبر النموذج بكيفية الترجمة أو التحسين؛ يعمل بأي لغة.",
+      "promptUsingTemplate": "القالب المستخدم: {code} · {name}",
+      "promptTemplateNameNaturalChat": "دردشة طبيعية",
+      "promptTemplateNamePolite": "مهذب وواضح",
+      "promptTemplateNameShort": "قصير ومباشر",
+      "promptTemplateNameNativeCasual": "عامية طبيعية سلسة",
+      "promptTemplateNameTechBug": "تقني / بلاغ خطأ",
+      "promptTemplateNameGamingChat": "دردشة الألعاب والفرق",
+      "promptTemplateNameTactful": "لبق ودبلوماسي",
+      "promptTemplateNameFormalNotice": "رسمي وإعلانات",
+      "promptTemplateNameDialectCantoneseGuangfu": "الكانتونية الغوانغفوية (يومية)",
+      "promptTemplateNameDialectCantoneseHk": "الكانتونية الهونغ كونغية",
+      "promptTemplateNameDialectHakka": "لهجة الهاكا",
+      "promptTemplateNameDialectChaoshan": "لهجة تشاوشان",
+      "promptTemplateNameDialectGuangxi": "لهجة غوانغشي",
+      "promptTemplateNameDialectMinnan": "لهجة مينان / هوكين",
+      "promptTemplateNameDialectTaiwan": "الماندرين التايوانية",
+      "promptTemplateNameDialectSichuan": "لهجة سيتشوان وتشونغتشينغ",
+      "promptTemplateNameDialectYunnan": "لهجة يونان",
+      "promptTemplateNameDialectGuizhou": "لهجة غويتشو",
+      "promptTemplateNameDialectDongbei": "لهجة شمال شرق الصين",
+      "promptTemplateNameDialectBeijing": "لهجة بكين",
+      "promptTemplateNameDialectTianjin": "لهجة تيانجين",
+      "promptTemplateNameDialectShaanxi": "لهجة شنشي",
+      "promptTemplateNameDialectHenan": "لهجة خنان",
+      "promptTemplateNameDialectShandong": "لهجة شاندونغ",
+      "promptTemplateNameDialectXinjiang": "أسلوب شينجيانغ",
+      "promptTemplateNameDialectShanghai": "لهجة شنغهاي",
+      "promptTemplateNameDialectJiangzhe": "لهجة سوتشو وهانغتشو",
+      "promptTemplateNameDialectNanjing": "لهجة نانجينغ",
+      "promptTemplateNameDialectWuhan": "لهجة ووهان",
+      "promptTemplateNameDialectHunan": "لهجة هونان",
+      "promptTemplateCategoryLabel": "فئة القالب",
+      "promptTemplateCategoryGeneral": "عام",
+      "promptTemplateCategoryDialect": "لهجات",
+      "promptTemplateCategoryPersona": "شخصيات",
+      "promptTemplateRegionSouthChina": "جنوب الصين وتايوان",
+      "promptTemplateRegionSouthwest": "الجنوب الغربي",
+      "promptTemplateRegionNorth": "الشمال",
+      "promptTemplateRegionEastCentral": "الشرق والوسط",
+      "promptTemplateRegionCustom": "لهجات مخصصة",
+      "promptTemplateNamePersonaQinShihuang": "تشين شي هوانغ (مرسوم إمبراطوري)",
+      "promptTemplateNamePersonaHanWudi": "الإمبراطور وو من هان (بيان مهيب)",
+      "promptTemplateNamePersonaZhuYuanzhang": "تشو يوان تشانغ (مرسوم صريح)",
+      "promptTemplateNamePersonaChiangKaiShek": "تشيانغ كاي شيك (برقية رسمية)",
+      "promptTemplateNamePersonaCaoCao": "تساو تساو (قائد جريء)",
+      "promptTemplateNamePersonaLiShimin": "الإمبراطور تايزونغ (حكمة تانغ)",
+      "promptTemplateNamePersonaYongzheng": "يونغ تشنغ (تعليقات حادة)",
+      "promptTemplateNamePersonaZhugeLiang": "تشوغه ليانغ (رسالة مخلصة)",
+      "promptTemplateNamePersonaSimaYi": "سيما يي (استراتيجي صبور)",
+      "promptTemplateNamePersonaSunTzu": "سون تزو (حكم فن الحرب)",
+      "promptTemplateNamePersonaXiangYu": "شيانغ يو (بطل مهيب)",
+      "promptTemplateNamePersonaLuXun": "لو شون (مقال ساخر لاذع)",
+      "promptTemplateNamePersonaLinDaiyu": "لين داي يو (ظرف رقيق ساخر)",
+      "promptTemplateNamePersonaWangYangming": "وانغ يانغ مينغ (فلسفة المعرفة والعمل)",
+      "promptTemplateNamePersonaLiBai": "لي باي (شاعر حر منطلق)",
+      "promptTemplateNamePersonaSuShi": "سو شي (أديب واسع الصدر)",
+      "promptTemplateNamePersonaConfucius": "كونفوشيوس (حكمة مأثورة)",
+      "promptTemplateNamePersonaZhuangzi": "تشوانغ تزو (رمزية فلسفية)",
+      "promptTemplateNamePersonaEileenChang": "إيلين تشانغ (أناقة أدبية حادة)",
+      "promptTemplateNamePersonaQianZhongshu": "تشيان تشونغ شو (استعارة ذكية)",
+      "promptTemplateNamePersonaWangXiaobo": "وانغ شياو بو (سخرية سوداء)",
+      "promptTemplateNamePersonaGuoDegang": "غوو ديغانغ (فكاهة مسرحية)",
+      "promptTemplateNamePersonaShakespeare": "شكسبير (مناجاة مسرحية)",
+      "promptTemplateNamePersonaTrump": "دونالد ترامب (مبالغة حماسية)",
+      "promptTemplateNamePersonaNietzsche": "نيتشه (شذرات فلسفية)",
+      "promptTemplateNamePersonaMarx": "كارل ماركس (نقد جدلي)",
+      "promptTemplateNamePersonaNapoleon": "نابليون (بلاغ ميداني حاسم)",
+      "promptTemplateNamePersonaChurchill": "تشرشل (خطابة حازمة وظرف)",
+      "promptTemplateNamePersonaMusk": "إيلون ماسك (إيجاز المبادئ الأولى)",
+      "promptTemplatePersonaGroupMonarchs": "ملوك وحكام",
+      "promptTemplatePersonaGroupStrategists": "استراتيجيون وقادة",
+      "promptTemplatePersonaGroupLiterati": "أدباء ومفكرون",
+      "promptTemplatePersonaGroupGlobal": "شخصيات عالمية",
+      "promptTemplatePersonaGroupCustom": "شخصيات مخصصة",
+      "promptTemplateNameNatural": "ترجمة طبيعية",
+      "promptTemplateNameLiteral": "ترجمة حرفية دقيقة",
+      "promptTemplateNameSlangCasual": "عامية ومصطلحات المجتمع",
+      "promptTemplateNameTechDev": "قنوات التقنية والذكاء الاصطناعي والبرمجة",
+      "promptTemplateNameGamingAcg": "مجتمعات الألعاب والأنمي",
+      "promptTemplateNameFormalChangelog": "الإعلانات الرسمية وسجل التحديثات",
+      "promptTemplates": "قوالب التوجيهات",
+      "promptTemplatesDesc": "اختيار القالب يعرضه للمعاينة فقط؛ اضغط «استخدام القالب» لاستبدال التوجيه.",
+      "promptSearch": "ابحث باسم القالب أو رقمه",
+      "promptTemplateSelect": "اختر قالباً",
+      "promptTemplateCustom": "التوجيه الحالي غير محفوظ كقالب",
+      "promptTemplateEdited": "مبني على {code} · {name}؛ التعديلات غير محفوظة في القالب",
+      "promptPreview": "معاينة القالب",
+      "promptPreviewActive": "قيد الاستخدام",
+      "promptApply": "استخدام القالب",
+      "promptSave": "حفظ كقالب",
+      "promptUpdate": "تحديث القالب الحالي",
+      "promptUpdateTitle": "استبدال {code} · {name} بالتوجيه المعدّل",
+      "promptDelete": "حذف القالب",
+      "promptRestorePresets": "استعادة القوالب المدمجة",
+      "promptPresetsRestored": "تمت استعادة {count} من القوالب المدمجة.",
+      "promptPresetsComplete": "جميع القوالب المدمجة موجودة بالفعل.",
+      "promptCopy": "نسخ التوجيه",
+      "promptCopied": "تم نسخ التوجيه.",
+      "copiedToClipboard": "تم النسخ.",
+      "promptCopyFailed": "فشل النسخ: {error}",
+      "clipboardUnavailable": "الحافظة غير متاحة، يرجى تحديد النص ونسخه يدوياً.",
+      "promptNamePlaceholder": "اكتب اسماً لهذا القالب",
+      "promptSaveNameLabel": "اسم القالب الجديد",
+      "promptNameRequired": "أدخل اسم القالب أولاً.",
+      "promptSaved": "تم حفظ القالب: {code} · {name}",
+      "promptUpdated": "تم تحديث القالب: {code} · {name}",
+      "promptDeleted": "تم حذف القالب.",
+      "promptApplied": "تم تطبيق القالب: {code} · {name}",
+      "promptApplyUnsavedTitle": "استبدال التوجيه الحالي؟",
+      "promptApplyUnsavedConfirm": "يحتوي التوجيه الحالي على تعديلات غير محفوظة؛ استخدام {code} · {name} سيستبدلها.",
+      "promptDeleteConfirm": "حذف قالب التوجيه هذا؟",
+      "promptDeleteActiveNote": "هذا القالب قيد الاستخدام حالياً؛ سيؤدي حذفه إلى التبديل إلى {code} · {name}.",
+      "promptNoTemplate": "لا توجد قوالب متاحة.",
+      "uiTitle": "الواجهة",
+      "showPolishButton": "إظهار زر التحسين قرب مربع الكتابة",
+      "showPolishButtonDesc": "يضيف زر اختصار «تحسين» بجانب مربع كتابة Discord.",
+      "publicBilingualInputButton": "إظهار زر الرسالة ثنائية اللغة قرب مربع الكتابة",
+      "publicBilingualInputButtonDesc": "يكتب مسودتك كترجمة مع إخفاء الأصل لتراجعها قبل الإرسال.",
+      "publicBilingualUseInitialOriginal": "استخدام المسودة الأولية كنص أصلي مخفي",
+      "publicBilingualUseInitialOriginalDesc": "إذا حسّنت النص أولاً، يحتفظ النص المخفي بمسودتك الأصلية قبل التحسين.",
+      "publicBilingualAfterPolish": "إنشاء رسالة ثنائية اللغة تلقائياً بعد التحسين",
+      "publicBilingualAfterPolishDesc": "بعد التحسين يحول النتيجة أيضاً إلى رسالة ثنائية اللغة دون إرسال تلقائي.",
+      "publicBilingualPolishBeforeTranslate": "تحسين تلقائي قبل الرسالة ثنائية اللغة",
+      "publicBilingualPolishBeforeTranslateDesc": "عند الضغط على «ثنائي» يحسّن المسودة أولاً ثم يترجم النتيجة.",
+      "showMessageButtons": "إظهار أزرار الترجمة على الرسائل",
+      "showMessageButtonsDesc": "يضيف زر «ترجمة» بجانب رسائل القناة.",
+      "messageButtonVisibility": "ظهور زر الترجمة",
+      "messageButtonVisibilityDesc": "إظهار زر الترجمة دائماً أو عند تمرير المؤشر فوق الرسالة فقط.",
+      "messageButtonVisibilityAlways": "دائماً",
+      "messageButtonVisibilityHover": "عند التمرير",
+      "messageButtonMode": "زر الترجمة بجانب الرسائل",
+      "messageButtonModeDesc": "طريقة ظهور زر «ترجمة» بجانب كل رسالة.",
+      "messageButtonModeHover": "إظهار عند التمرير",
+      "messageButtonModeAlways": "إظهار دائماً",
+      "messageButtonModeOff": "عدم الإظهار",
+      "autoTranslateMessages": "ترجمة الرسائل الأجنبية المرئية تلقائياً",
+      "autoTranslateMessagesDesc": "يترجم الرسائل الظاهرة على الشاشة إذا لم تكن باللغة المستهدفة.",
+      "autoTranslatePrefetch": "ترجمة مسبقة للرسائل القريبة",
+      "autoTranslatePrefetchDesc": "يترجم الرسائل أعلى الشاشة وأسفلها عند الخمول؛ يتطلب تزامناً قدره 2 أو أكثر.",
+      "autoTranslatePrefetchRange": "نطاق الترجمة المسبقة",
+      "autoTranslatePrefetchRangeDesc": "عدد الرسائل التي تُترجم مسبقاً أعلى الشاشة وأسفلها.",
+      "autoTranslateConcurrency": "تزامن الترجمة التلقائية",
+      "autoTranslateConcurrencyDesc": "عدد طلبات الترجمة المتزامنة: الافتراضي {default}، النطاق {min}-{max}.",
+      "autoTranslateStrictRetry": "إعادة المحاولة بصرامة عند خطأ لغة الإخراج",
+      "autoTranslateStrictRetryDesc": "يعيد محاولة الأجزاء الفاشلة ثم يترجم كل رسالة على حدة قبل إظهار زر الإعادة.",
+      "showAutoTranslateWarnings": "إظهار الإخفاقات أسفل الرسائل",
+      "showAutoTranslateWarningsDesc": "يشمل انتهاء المهلة واضطراب الشبكة؛ أما الأخطاء التي تتطلب تدخلك فتظهر دائماً.",
+      "showAutoTranslateToasts": "إظهار إشعار منبثق عند فشل الترجمة التلقائية",
+      "showAutoTranslateToastsDesc": "المشكلات التي تتطلب تدخلك (مثل مفتاح غير صالح) تُعرض دائماً مرة واحدة.",
+      "diagnosticLogs": "سجلات التشخيص",
+      "diagnosticLogsDesc": "يسجل الطلبات والتخزين المؤقت وأسباب الفشل (حتى 500 سجل) لتصديرها عند الفحص.",
+      "diagnosticLogsStats": "السجلات: {entries}؛ الأحداث المتكررة المضغوطة: {compressed}.",
+      "diagnosticSummary": "ملخص التشخيص",
+      "diagnosticSummaryEmpty": "فعّل التشخيص وأعد تمثيل المشكلة لعرض الملخص هنا.",
+      "diagnosticSummaryEvents": "الأحداث: {events}، مصنفة حسب الحالة والسبب والخدمة؛ آخر حدث {latest}.",
+      "diagnosticSummaryStates": "الحالات",
+      "diagnosticSummaryReasons": "الأسباب",
+      "diagnosticSummaryFlows": "المسارات",
+      "diagnosticSummaryQueues": "الطوابير",
+      "diagnosticSummaryProviders": "الخدمات",
+      "diagnosticSummaryFailures": "الإخفاقات",
+      "diagnosticSummaryFailureLayers": "مراحل الإخفاق",
+      "diagnosticSummaryFlowStages": "مراحل المسار",
+      "clearDiagnosticLogs": "مسح السجلات",
+      "clearDiagnosticLogsConfirm": "سيتم حذف جميع سجلات التشخيص؛ صدّرها أولاً إذا كنت بحاجة إليها.",
+      "clearDiagnosticLogsDesc": "يحذف كافة سجلات التشخيص؛ صدّرها أولاً إذا كنت بحاجة إليها.",
+      "exportDiagnosticLogs": "تصدير السجلات",
+      "copyDiagnosticLogs": "نسخ السجلات",
+      "exportDiagnosticJson": "تصدير JSON",
+      "exportDiagnosticTxt": "تصدير TXT",
+      "diagnosticLogsCleared": "تم مسح سجلات التشخيص.",
+      "diagnosticLogsCopied": "تم نسخ سجلات التشخيص.",
+      "diagnosticLogsEmpty": "لا توجد سجلات تشخيص بعد.",
+      "diagnosticLogsExported": "تم تصدير سجلات التشخيص.",
+      "settingsSnapshot": "لقطة الإعدادات",
+      "settingsSnapshotDesc": "تنزيل إعداداتك بصيغة JSON مع إخفاء المفاتيح السرية لمشاركتها بأمان.",
+      "exportSettingsSnapshot": "تنزيل الإعدادات",
+      "settingsSnapshotExported": "تم تنزيل لقطة الإعدادات مع إخفاء المفاتيح.",
+      "settingsSnapshotCopied": "تم نسخ لقطة الإعدادات مع إخفاء المفاتيح.",
+      "translationCacheTtl": "مدة بقاء التخزين المؤقت",
+      "translationCacheTtlDesc": "يبقى متاحاً بعد إعادة تشغيل Discord؛ وتُعاد ترجمة العناصر المنتهية.",
+      "translationCacheMaxEntries": "أقصى عدد للرسائل المخزنة",
+      "translationCacheMaxEntriesDesc": "عند الامتلاء تُحذف الأقدم استخداماً أولاً؛ حتى 15000 رسالة.",
+      "translationCacheStats": "إحصائيات التخزين المؤقت",
+      "translationCacheStatsDesc": "في هذه الجلسة: {hits} إصابة، {misses} فقدان؛ في الذاكرة {memory}، المحفوظ {persistent}.",
+      "clearTranslationCacheStats": "مسح الإحصائيات",
+      "clearTranslationCache": "مسح ذاكرة الترجمة المؤقتة",
+      "clearTranslationCacheConfirm": "سيتم حذف جميع الترجمات المحفوظة وإعادة ترجمتها عند الحاجة.",
+      "clearTranslationCacheDesc": "يحذف كل الترجمات المحفوظة لتُترجم النصوص مجدداً عند الحاجة.",
+      "translationCacheStatsCleared": "تم مسح إحصائيات الإصابة مع الإبقاء على الترجمات المحفوظة.",
+      "translationCacheCleared": "تم مسح ذاكرة الترجمة المؤقتة.",
+      "cacheTtl3h": "3 ساعات",
+      "cacheTtl6h": "6 ساعات",
+      "cacheTtl12h": "12 ساعة",
+      "cacheTtl1d": "يوم واحد",
+      "cacheTtl2d": "يومان",
+      "cacheTtl7d": "7 أيام",
+      "translationPosition": "موضع الترجمة",
+      "translationPositionDesc": "عرض الترجمة أعلى الرسالة الأصلية أو أسفلها.",
+      "translationBeforeOriginal": "الترجمة أولاً ثم الأصل",
+      "translationAfterOriginal": "الأصل أولاً ثم الترجمة",
+      "translationPositionAbove": "أعلى الأصل",
+      "translationPositionBelow": "أسفل الأصل",
+      "maskTranslations": "إخفاء الترجمات افتراضياً",
+      "maskTranslationsDesc": "تظهر الترجمة كشريط رمادي حتى تنقر عليه أو تضغط Enter.",
+      "translationStyle": "نمط عرض الترجمة",
+      "translationStyleDesc": "تتبع جميع الأنماط ألوان مظهر Discord.",
+      "translationStyleTint": "خلفية خفيفة",
+      "translationStyleMuted": "نص هادئ",
+      "translationStyleTag": "وسم «مترجم»",
+      "translationTextScale": "حجم خط الترجمة",
+      "translationTextScaleDesc": "نسبةً إلى حجم نص الدردشة الأساسي.",
+      "panelTheme": "مظهر النوافذ",
+      "panelThemeDesc": "ألوان نافذة الإعدادات واللوحة السريعة والقوائم؛ نوافذ التأكيد تتبع Discord.",
+      "panelThemeAuto": "يتبع Discord",
+      "panelThemeLight": "فاتح",
+      "panelThemeDark": "داكن",
+      "translationTag": "مترجم",
+      "hideOriginalAfterTranslation": "إخفاء النص الأصلي بعد الترجمة",
+      "hideOriginalAfterTranslationDesc": "يظهر الأصل كشريط رمادي ويُكشف عند التمرير أو التركيز (يظهر لك وحدك).",
+      "showContextMenu": "إظهار خيار الترجمة في قائمة النقر الأيمن للرسائل",
+      "showContextMenuDesc": "يضيف «ترجمة» إلى قائمة النقر بزر الفأرة الأيمن على الرسالة.",
+      "enableHotkey": "تفعيل اختصار لوحة المفاتيح للتحسين",
+      "enableHotkeyDesc": "عند التركيز في مربع الكتابة، يبدأ الاختصار المحدد بتحسين المسودة الحالية.",
+      "polishHotkey": "اختصار التحسين",
+      "polishHotkeyDesc": "انقر زر الاختصار ثم اضغط مجموعة مفاتيح تشمل Ctrl أو Alt أو Win.",
+      "hotkeyRecord": "تسجيل اختصار",
+      "hotkeyRecording": "اضغط المفاتيح...",
+      "hotkeyReset": "استعادة الافتراضي",
+      "hotkeyNotSet": "غير محدد",
+      "hotkeySaved": "تم حفظ الاختصار: {shortcut}",
+      "hotkeyInvalid": "اختصار غير صالح: استخدم Ctrl أو Alt أو Win مع مفتاح (وShift اختياري)، دون استخدام اختصارات النسخ واللصق.",
+      "tryTranslate": "جرّب ترجمة جملة",
+      "tryTranslateDesc": "يترجم جملة واحدة بالإعدادات الحالية دون إرسال أي شيء إلى Discord.",
+      "tryTranslatePlaceholder": "مثال: See you tomorrow, same time?",
+      "tryTranslateRun": "ترجمة",
+      "tryPolish": "جرّب التحسين",
+      "tryPolishDesc": "يحسّن جملة واحدة بالإعدادات الحالية دون إرسالها إلى Discord.",
+      "tryPolishPlaceholder": "مثال: نلتقي غداً في نفس الموعد؟",
+      "tryPolishRun": "تحسين",
+      "tryBusy": "جارٍ المعالجة",
+      "tryInputRequired": "اكتب جملة أولاً.",
+      "tryResultTime": "استغرق {time}",
+      "reset": "استعادة الإعدادات الافتراضية",
+      "resetConfirm": "ستعود الإعدادات وقواعد القنوات وخيارات العرض إلى الافتراضية، مع الاحتفاظ بمفاتيح API ومجموعة Google وقوالب التوجيهات.",
+      "resetDialogTitle": "استعادة الإعدادات الافتراضية؟",
+      "resetDialogLead": "ستعود العناصر التالية إلى الوضع الافتراضي ولا يمكن التراجع:",
+      "resetDialogItemSettings": "إعدادات الخدمات والمفاتيح والقيم للترجمة والتحسين",
+      "resetDialogItemChannelRules": "قواعد الترجمة التلقائية لكل قناة",
+      "resetDialogItemDisplay": "خيارات العرض والواجهة (تبقى لغة الواجهة كما هي)",
+      "resetDialogItemCredentials": "مفاتيح API ومجموعة مفاتيح Google وقوالب التوجيهات المخصصة",
+      "resetDialogItemCredentialsNote": "تُمسح فقط عند إلغاء تحديد المربع أدناه",
+      "resetKeepCredentials": "الاحتفاظ بمفاتيح API ومجموعة Google وقوالب التوجيهات",
+      "dialogConfirm": "موافق",
+      "dialogCancel": "إلغاء",
+      "settingsLoadBlocked": "تعذرت قراءة الإعدادات المحفوظة، لذا لن تُحفظ التغييرات. تحقق من ملف DiscordAITranslator.config.json في مجلد الإضافات ثم أعد تفعيل الإضافة.",
+      "pluginStarted": "بدأ تشغيل مترجم Discord بالذكاء الاصطناعي v{version}.",
+      "polishButton": "تحسين",
+      "polishBusy": "جارٍ التحسين",
+      "polishRunning": "جارٍ تحسين المسودة الحالية...",
+      "composerChanged": "تغير مربع الكتابة، يرجى المحاولة مرة أخرى.",
+      "composerResultHeld": "لم يُدرج النص تلقائياً لأن المسودة تغيرت أو أنك تكتب في مكان آخر. انسخه أو أدرجه من اللوحة.",
+      "polishTitleAttr": "تحسين المسودة الحالية بالذكاء الاصطناعي. الاختصار: {shortcut}.",
+      "publicBilingualButton": "ثنائي",
+      "publicBilingualBusy": "جارٍ الترجمة",
+      "publicBilingualTitleAttr": "كتابة رسالة ثنائية اللغة عامة باللغة {targetLanguage} يراها الجميع بعد الإرسال.",
+      "publicBilingualReady": "الرسالة ثنائية اللغة جاهزة؛ راجعها ثم أرسل.",
+      "publicBilingualFailed": "تعذر إنشاء الرسالة ثنائية اللغة: {error}",
+      "publicBilingualInputChanged": "تغير النص أثناء الترجمة، فلم تتم الكتابة فوق المسودة.",
+      "errorComposerWriteFailed": "لم يقبل مربع الكتابة النص؛ النتيجة معروضة في اللوحة لنسخها يدوياً.",
+      "publicBilingualTooLong": "الرسالة ثنائية اللغة تتجاوز حد الرسالة الواحدة في Discord ({length}/{limit}).",
+      "publicBilingualPolishSkipped": "التحسين متوقف، لذا استُخدمت المسودة الحالية مباشرة.",
+      "translateButton": "ترجمة",
+      "translateBusy": "جارٍ الترجمة...",
+      "translateTitleAttr": "ترجمة إلى {targetLanguage}",
+      "translateMenu": "ترجمة إلى {targetLanguage}",
+      "translateRetry": "إعادة",
+      "translateRetryTitle": "إعادة ترجمة هذه الرسالة",
+      "translationFailedInline": "فشلت الترجمة: {error}",
+      "translationLoading": "جارٍ الترجمة…",
+      "translationRevealLabel": "إظهار الترجمة المخفية",
+      "translationActionsLabel": "إجراءات الترجمة",
+      "translationActionCopy": "نسخ الترجمة",
+      "translationActionRetranslate": "إعادة الترجمة (تجاوز المؤقت)",
+      "translationActionHide": "إخفاء الترجمة",
+      "translationCopied": "تم نسخ الترجمة.",
+      "translationPartialOne": "تعذرت ترجمة الجزء {parts} من أصل {total}",
+      "translationPartialMany": "تعذرت ترجمة الأجزاء {parts} من أصل {total}",
+      "translationPartialUnknown": "تعذرت ترجمة جزء من هذه الرسالة",
+      "translationRetranslate": "إعادة الترجمة",
+      "translationRetranslateTitle": "إعادة ترجمة الرسالة كاملة دون استخدام الذاكرة المؤقتة",
+      "translationErrorAuth": "رفضت خدمة الترجمة مفتاح API",
+      "translationErrorMissingKey": "لم يتم إدخال مفتاح API للترجمة",
+      "translationErrorMissingEndpoint": "لم يتم إدخال عنوان الواجهة للترجمة",
+      "translationErrorMissingModel": "لم يتم اختيار نموذج للترجمة",
+      "translationErrorQuota": "نفدت حصة خدمة الترجمة",
+      "translationErrorLocal": "خدمة الترجمة المحلية لا تستجيب",
+      "translationErrorLocalAt": "خدمة الترجمة المحلية لا تستجيب ({host})",
+      "translationErrorRateLimit": "طلبات كثيرة جداً، حاول بعد قليل",
+      "translationErrorRateLimitWait": "طلبات كثيرة جداً، حاول بعد {seconds} ث",
+      "translationOpenSettings": "فتح الإعدادات",
+      "translationOpenSettingsTitle": "فتح إعدادات الترجمة",
+      "translationTestConnection": "اختبار الاتصال",
+      "translationTestConnectionTitle": "التحقق من إمكانية الوصول إلى خدمة الترجمة",
+      "autoTranslateFailed": "فشلت الترجمة التلقائية: {error}",
+      "autoTranslateNeedsAttention": "الترجمة التلقائية تحتاج لتدخلك: {error}",
+      "autoTranslateTargetFailed": "لم تكن استجابة النموذج باللغة المستهدفة، لذا تم تخطي هذه الترجمة.",
+      "manualTranslateRescueFailed": "تعذر الحصول على ترجمة صالحة بعد عدة محاولات؛ يمكنك المحاولة مجدداً.",
+      "contextPatchFailed": "تعذر تعديل قائمة النقر الأيمن للرسائل: {error}",
+      "polishDisabled": "تحسين الصياغة معطل.",
+      "textboxMissing": "تعذر العثور على مربع كتابة Discord.",
+      "inputEmpty": "مربع الكتابة فارغ.",
+      "confirmSend": "إرسال الرسالة المحسّنة؟",
+      "confirmSendAction": "إرسال",
+      "confirmSendDraftChanged": "تغيرت المسودة، لذا لم يُرسل شيء.",
+      "translationDisabled": "ترجمة رسائل القناة معطلة.",
+      "noTranslatableText": "لا تحتوي هذه الرسالة على نص قابل للترجمة.",
+      "messageMissing": "تعذر العثور على الرسالة المراد ترجمتها.",
+      "modelSet": "تم ضبط النموذج على {model}.",
+      "hideTranslation": "إخفاء الترجمة",
+      "translationLabel": "ترجمة بالذكاء الاصطناعي إلى {targetLanguage}",
+      "polishedReady": "تم إدراج النص المحسّن في مربع الكتابة.",
+      "apiKeyMissingPolish": "مفتاح API لتحسين الصياغة غير مضبوط.",
+      "apiKeyMissingTranslation": "مفتاح API لترجمة القناة غير مضبوط.",
+      "endpointMissing": "عنوان واجهة API غير مضبوط.",
+      "modelMissing": "النموذج غير مضبوط.",
+      "invalidJson": "أعادت واجهة API بيانات JSON غير صالحة.",
+      "emptyResult": "أعادت واجهة API نتيجة فارغة.",
+      "errorUnauthorized": "مفتاح API غير صالح أو يفتقر إلى الصلاحية.",
+      "errorRateLimited": "تم تجاوز حد طلبات API؛ دخلت المحاولات في فترة تهدئة.",
+      "errorQuotaExceeded": "نفدت حصة API أو رصيد الحساب.",
+      "errorLanguageUnsupported": "لا يدعم المزود الحالي اللغة المستهدفة المحددة؛ اختر لغة أو خدمة أخرى.",
+      "errorIpNotAllowed": "رفض المزود عنوان IP الخاص بك؛ تحقق من القائمة البيضاء لعناوين IP.",
+      "errorProviderRequestRejected": "رفض المزود الطلب؛ تحقق من صلاحيات الحساب واللغة المستهدفة وإعدادات الخدمة.",
+      "errorOutputTruncated": "انقطع رد النموذج. ارفع «أقصى طول للإخراج» ضمن «معلمات إضافية للنموذج» في الإعدادات ثم أعد المحاولة.",
+      "errorOutputTruncatedPolish": "انقطع رد التحسين. ارفع «أقصى طول للإخراج» ضمن «أدوات الكتابة ← معلمات إضافية للنموذج» في الإعدادات.",
+      "errorOutputTruncatedTranslation": "انقطعت الترجمة. ارفع «أقصى طول للإخراج» ضمن «ترجمة الرسائل ← معلمات إضافية للنموذج» في الإعدادات.",
+      "errorSaveFailed": "تعذر الحفظ محلياً، حاول لاحقاً.",
+      "errorServer": "خدمة API غير متاحة مؤقتاً.",
+      "errorCancelled": "تم إلغاء الطلب.",
+      "errorInvalidEndpoint": "عنوان الواجهة غير صالح؛ أدخل رابط API كاملاً.",
+      "errorEndpointNotFound": "تعذر العثور على عنوان الواجهة أو النموذج؛ تحقق من الرابط واسم النموذج.",
+      "errorUnsafeEndpoint": "عنوان غير آمن: تتطلب الخدمات البعيدة HTTPS، ويُسمح بـ HTTP للخادم المحلي فقط دون تضمين اسم مستخدم أو كلمة مرور.",
+      "localIntakeFixed": "تفحص الخدمات المحلية الصفحة دائماً لرصد الرسائل دون حاجة للتغيير.",
+      "localConcurrencyDesc": "يمكن ضبطه بين {min} و{max} وفق قنوات المعالجة المتوازية وذاكرة البطاقة الرسومية.",
+      "localFallbackUnavailable": "لا تنتقل الخدمات المحلية إلى السحابة أبداً، لذا هذا الخيار غير متاح.",
+      "errorTimeout": "انتهت مهلة طلب API.",
+      "errorNetwork": "فشل الاتصال بالشبكة.",
+      "errorLocalProviderUnavailable": "خدمة Sakura المحلية غير متاحة وتوقفت الترجمة التلقائية مؤقتاً؛ شغّل Sakura أو اختبر الاتصال للاستئناف.",
+      "unknownError": "خطأ غير معروف",
+      "providerMicrosoft": "مترجم Microsoft",
+      "providerDeepL": "DeepL",
+      "providerBaidu": "ترجمة Baidu",
+      "providerRegion": "المنطقة",
+      "providerRegionDesc": "منطقة مورد Azure Translator؛ اتركها فارغة للموارد العالمية.",
+      "deeplPlan": "خطة DeepL",
+      "deeplPlanDesc": "تستخدم Free النطاق api-free.deepl.com وتستخدم Pro النطاق api.deepl.com.",
+      "deeplPlanFree": "Free",
+      "deeplPlanPro": "Pro",
+      "baiduAppId": "معرّف تطبيق Baidu",
+      "baiduAppIdDesc": "معرّف App ID الخاص بترجمة Baidu، يُحفظ على هذا الجهاز فقط.",
+      "baiduSecretKey": "المفتاح السري لـ Baidu",
+      "baiduSecretKeyDesc": "المفتاح السري لترجمة Baidu؛ يُحفظ محلياً ولا يُسجل في السجلات.",
+      "autoTranslateIntakeMode": "طريقة رصد الرسائل",
+      "autoTranslateIntakeModeDesc": "يستخدم الوضع التلقائي مكتبة BDFDB إن توفرت، وإلا يفحص الصفحة مباشرة.",
+      "autoTranslateIntakeAuto": "تلقائي",
+      "autoTranslateIntakeDom": "فحص الصفحة فقط",
+      "autoTranslateIntakeBdfdb": "تفضيل BDFDB",
+      "settingsTabPolish": "تحسين الصياغة",
+      "settingsTabTranslation": "ترجمة القناة",
+      "settingsTabPublicBilingual": "رسالة ثنائية اللغة",
+      "settingsTabDisplay": "العرض · المؤقت · التشخيص",
+      "settingsTabOverview": "نظرة عامة",
+      "settingsTabTranslate": "ترجمة الرسائل",
+      "settingsTabCompose": "أدوات الكتابة",
+      "settingsTabAppearance": "العرض",
+      "settingsTabAdvanced": "متقدم",
+      "settingsTabData": "البيانات والتشخيص",
+      "settingsTabsLabel": "أقسام الإعدادات",
+      "settingsSearchPlaceholder": "البحث في الإعدادات",
+      "settingsSearchResults": "{count} إعدادات مطابقة",
+      "settingsSearchEmpty": 'لا توجد إعدادات تطابق "{query}"',
+      "settingsClose": "إغلاق الإعدادات",
+      "settingsGroupCommon": "الأساسيات",
+      "overviewSetupTitle": "البدء السريع: متبقي {count} خطوات",
+      "overviewSetupProgress": "اكتمل {done} من {total} · تختفي هذه البطاقة تلقائياً عند الاكتمال",
+      "overviewSetupService": "اختيار خدمة الترجمة",
+      "overviewSetupServiceOff": "ترجمة الرسائل متوقفة",
+      "overviewSetupServiceMissing": "لم يكتمل إعداد {provider} بعد",
+      "overviewSetupTest": "اختبار الاتصال",
+      "overviewSetupTestBlocked": "اضبط الخدمة أولاً",
+      "overviewSetupTarget": "اللغة المستهدفة",
+      "overviewSetupAuto": "تفعيل الترجمة التلقائية",
+      "overviewSetupAutoOn": "مفعّلة",
+      "overviewSetupAutoOff": "متوقفة: يعمل زر الترجمة اليدوي فقط",
+      "overviewSetupAutoChannel": "المفتاح العام متوقف؛ هذه القناة تُترجم دائماً",
+      "overviewSetupChannel": "هذه القناة",
+      "overviewSetupChannelNone": "لست داخل قناة حالياً",
+      "overviewSetupChannelNever": "مضبوطة على عدم الترجمة",
+      "overviewStateDone": "مكتمل",
+      "overviewStateTodo": "متبقي",
+      "overviewSetUp": "إعداد",
+      "overviewTurnOn": "تفعيل",
+      "overviewChange": "تغيير",
+      "overviewServicesTitle": "حالة الخدمات",
+      "overviewCardTranslation": "ترجمة الرسائل",
+      "overviewCardPolish": "تحسين الصياغة",
+      "overviewServiceOff": "متوقف",
+      "overviewServiceMissing": "غير مضبوط: ينقص {field}",
+      "settingsGroupAutoTranslate": "الترجمة التلقائية",
+      "settingsGroupHistoryBackfill": "ترجمة الرسائل السابقة",
+      "settingsGroupFallback": "الخدمات الاحتياطية للترجمة اليدوية",
+      "settingsGroupTranslatedText": "عرض النص المترجم",
+      "settingsGroupNotices": "التنبيهات والاختصارات",
+      "settingsGroupWindows": "مظهر النوافذ",
+      "settingsMoreModelParams": "معلمات إضافية للنموذج",
+      "settingsApiKeyOptional": "مفتاح API (اختياري)",
+      "settingsRequiresParent": 'فعّل "{parent}" أولاً',
+      "settingsDangerZone": "منطقة الخطر",
+      "settingsResetDesc": "يستعيد الإعدادات الافتراضية بعد التأكيد؛ ويمكنك الاحتفاظ بمفاتيح API وقوالب التوجيهات.",
+      "providerSettingsTitle": "إعدادات مزود الخدمة",
+      "providerSettingsDesc": "يعرض خيارات الخدمة الحالية فقط، مع حفظ إعدادات الخدمات الأخرى عند العودة إليها.",
+      "polishControlsTitle": "تجربة الكتابة",
+      "translationControlsTitle": "مداخل ترجمة الرسائل",
+      "autoTranslateSettingsTitle": "جدولة الترجمة التلقائية",
+      "publicBilingualTitle": "الإدخال العام ثنائي اللغة",
+      "publicBilingualDependencyTitle": "المسار الحالي",
+      "publicBilingualDependencyDesc": "الرسالة ثنائية اللغة هي نص Discord عادي يراه الجميع بعد إرساله.",
+      "publicBilingualDependencyStatus": "التحسين قبل الثنائي: {polishProvider}؛ الترجمة: {translationProvider}؛ الهدف: {targetLanguage}.",
+      "publicBilingualDependencyFlowDesc": "تتولى خدمة التحسين الترجمة عند إعدادها، وتستخدم لغة إخراج التحسين.",
+      "publicBilingualDependencyPolishOff": "لا",
+      "displaySettingsTitle": "سلوك العرض",
+      "cacheSettingsTitle": "ذاكرة الترجمة المؤقتة",
+      "diagnosticsSettingsTitle": "التشخيص",
+      "providerStatus": "حالة الخدمة",
+      "providerStatusDesc": "يجري اختبار اتصال سريعاً بالإعدادات الحالية.",
+      "quickSettingsOpen": "فتح إعدادات Discord AI Translator",
+      "quickSettingsDone": "تم",
+      "quickSettingsOpenFailed": "تعذر فتح الإعدادات السريعة: {error}",
+      "quickSettingsFallbackTitle": "لم تكتمل واجهة الإعدادات السريعة",
+      "quickSettingsFallbackHint": "تم تسجيل مسار الفتح في التشخيص؛ أغلق النافذة وصدّر ملف JSON عند الحاجة.",
+      "quickPanelTitle": "مترجم الذكاء الاصطناعي",
+      "quickPanelLauncherLabel": "مترجم الذكاء الاصطناعي: {status}",
+      "quickPanelOpenFull": "الإعدادات الكاملة",
+      "quickPanelClose": "إغلاق",
+      "quickPanelEscHint": "Esc للإغلاق",
+      "quickPanelAutoTranslate": "ترجمة تلقائية",
+      "quickPanelAutoTranslateDesc": "ترجمة الرسائل الأجنبية على الشاشة",
+      "quickPanelChannel": "هذه القناة",
+      "quickPanelChannelNone": "لا توجد قناة مفتوحة",
+      "quickPanelChannelDm": "رسالة خاصة",
+      "quickPanelRuleInherit": "حسب العام",
+      "quickPanelRuleEnabled": "دائماً",
+      "quickPanelRuleDisabled": "أبداً",
+      "quickPanelRuleInheritFull": "اتباع المفتاح العام",
+      "quickPanelRuleEnabledFull": "ترجمة دائماً",
+      "quickPanelRuleDisabledFull": "عدم الترجمة",
+      "quickPanelRuleCaptionInheritOn": "الآن: تترجم تلقائياً (تتبع المفتاح العام)",
+      "quickPanelRuleCaptionInheritOff": "الآن: لا تترجم تلقائياً (تتبع المفتاح العام)",
+      "quickPanelRuleCaptionEnabled": "تترجم هذه القناة تلقائياً حتى عند إيقاف المفتاح العام",
+      "quickPanelRuleCaptionDisabled": "لا ترجمة تلقائية هنا؛ الترجمة اليدوية تظل متاحة",
+      "quickPanelRuleCaptionNoChannel": "افتح قناة لضبط قاعدة خاصة بها",
+      "quickPanelRuleCaptionTranslationOff": "ترجمة القنوات متوقفة؛ ستُطبق القاعدة فور تفعيلها",
+      "quickPanelTargetLanguage": "الترجمة إلى",
+      "quickPanelDisplay": "العرض",
+      "quickPanelMask": "إخفاء الترجمة",
+      "quickPanelMaskDesc": "عرض شريط أولاً والنقر للقراءة",
+      "quickPanelHideOriginal": "إخفاء الأصل بعد الترجمة",
+      "quickPanelHideOriginalDesc": "مرّر المؤشر على الرسالة لرؤية الأصل",
+      "quickPanelPosition": "موضع الترجمة",
+      "quickPanelPositionAbove": "أعلى",
+      "quickPanelPositionBelow": "أسفل",
+      "quickStatusActive": "الترجمة التلقائية نشطة في هذه القناة",
+      "quickStatusBusy": "تُترجم {inFlight}، وفي الطابور {queued}",
+      "quickStatusTesting": "جارٍ اختبار الاتصال…",
+      "quickStatusLatency": "{ms} مللي ثانية",
+      "quickStatusWaiting": "{reason}؛ تستأنف تلقائياً",
+      "quickStatusWaitingSeconds": "{reason}؛ تستأنف خلال {seconds} ث تقريباً",
+      "quickStatusReasonRateLimit": "الخدمة مشغولة",
+      "quickStatusReasonServer": "خطأ في الخدمة",
+      "quickStatusReasonNetwork": "اتصال غير مستقر",
+      "quickStatusReasonParse": "استجابة غير متوقعة",
+      "quickStatusNeedsYou": "يحتاج لتدخلك: {reason}",
+      "quickStatusReasonConfig": "مفتاح API أو إعدادات أخرى ناقصة",
+      "quickStatusReasonAuth": "تم رفض مفتاح API",
+      "quickStatusReasonQuota": "نفدت الحصة أو الرصيد",
+      "quickStatusReasonLocal": "الخدمة المحلية لا تستجيب",
+      "quickStatusReasonFailed": "فشل اختبار الاتصال",
+      "quickStatusReasonEndpoint": "رابط API غير صالح",
+      "quickStatusReasonNotFound": "تعذر العثور على الرابط أو النموذج",
+      "quickStatusNotConfigured": "غير مضبوط",
+      "quickStatusOffChannel": "الترجمة التلقائية متوقفة في هذه القناة",
+      "quickStatusOffDisabled": "ترجمة القنوات متوقفة",
+      "quickStatusManualHint": "الترجمة اليدوية لا تزال متاحة",
+      "quickPanelTabsLabel": "أوضاع اللوحة السريعة",
+      "quickPanelTabTranslation": "ترجمة",
+      "quickPanelTabPolish": "تحسين",
+      "quickPanelTabTransAutoOn": "تلقائي · {language}",
+      "quickPanelTabTransManual": "يدوي · {language}",
+      "quickPanelTabTransOff": "متوقف",
+      "quickPanelTabPolishOn": "مفعّل · {language}",
+      "quickPanelTabPolishOff": "متوقف",
+      "quickPanelTranslationService": "خدمة الترجمة",
+      "quickPanelPolishService": "خدمة التحسين",
+      "quickPanelSavedServiceCurrent": "الحالي: {label}",
+      "quickPanelSavedServiceEmpty": "لا توجد خدمات محفوظة (تُحفظ بعد الاختبار)",
+      "quickPanelServiceShared": "مشتركة",
+      "quickPanelServiceIndependent": "مستقلة",
+      "quickPanelTranslationTemplate": "قالب الترجمة",
+      "quickPanelTemplateCustom": "توجيه مخصص",
+      "quickStatusPolishActive": "تحسين الصياغة جاهز",
+      "quickStatusPolishOff": "تحسين الصياغة متوقف",
+      "quickStatusPolishBtnOn": "زر المربع ظاهر",
+      "quickStatusPolishBtnOff": "زر المربع مخفي",
+      "quickStatusPolishHotkeyOff": "الاختصار متوقف",
+      "quickPanelPolishTestTitle": "اختبار اتصال خدمة تحسين الصياغة",
+      "quickPanelPolishEnabled": "تفعيل تحسين الصياغة",
+      "quickPanelPolishEnabledDesc": "يعيد صياغة مسودتك ويعيدها إلى مربع الكتابة",
+      "quickPanelPolishOutputLanguage": "لغة الإخراج",
+      "quickPanelPolishTemplate": "قالب التحسين",
+      "quickPanelPolishCreativity": "الإبداع",
+      "quickPanelPolishCreativitySteady": "متزن 0.3",
+      "quickPanelPolishCreativityBalanced": "طبيعي 0.7",
+      "quickPanelPolishCreativityCreative": "إبداعي 1.2",
+      "quickPanelPolishCreativityDescSteady": "أقرب إلى صياغتك الأصلية",
+      "quickPanelPolishCreativityDescBalanced": "متوازن للدردشة اليومية",
+      "quickPanelPolishCreativityDescCreative": "صياغات متجددة عند إعادة التحسين",
+      "quickPanelPolishBehavior": "السلوك",
+      "quickPanelPolishAfterAction": "بعد التحسين",
+      "quickPanelPolishRepolishSource": "إعادة التحسين",
+      "quickPanelPolishRepolishOriginal": "الأصل",
+      "quickPanelPolishRepolishLast": "السابق",
+      "quickPanelPublicBilingual": "زر الرسالة ثنائية اللغة",
+      "quickPanelPublicBilingualDesc": "إظهار زر «ثنائي» قرب مربع الكتابة",
+      "quickPanelPublicBilingualAfterPolish": "ثنائي تلقائي بعد التحسين",
+      "quickPanelPublicBilingualAfterPolishDesc": "إرفاق النص الأصلي مخفياً بعد التحسين",
+      "quickPanelTryPolishToggle": "تجربة تحسين سريعة",
+      "quickPanelTryPolishPlaceholder": "اكتب جملة لتجربة القالب واللغة…",
+      "quickPanelTryPolishRun": "جرّب",
+      "quickPanelTryPolishAgain": "جرّب مجدداً",
+      "quickPanelOpenFullPolish": "القوالب والإعدادات الكاملة",
+      "inputActionMenu": "إجراءات الذكاء الاصطناعي",
+      "inputActionOpenSettings": "الإعدادات",
+      "restoreOriginalShort": "↶",
+      "polishButtonShort": "تح",
+      "polishTitleAttrWithTone": "تحسين المسودة بالذكاء الاصطناعي (النبرة: {tone}). الاختصار: {shortcut}.",
+      "polishPresetPicker": "تغيير نبرة التحسين",
+      "polishPresetPickerTitle": "تغيير نبرة التحسين (الحالية: {tone})",
+      "polishPresetMenuTitle": "نبرة التحسين",
+      "polishPresetMenuTabsLabel": "فئات نبرة التحسين",
+      "polishPresetMenuCustomNote": "تستخدم توجيهاً مخصصاً؛ اختر قالباً أدناه للتبديل",
+      "polishPresetMenuEmpty": "لا توجد قوالب جاهزة بعد؛ أضفها من الإعدادات",
+      "polishPresetMenuEmptyPersona": "قوالب الشخصيات قادمة قريباً، أو أضف قوالبك المخصصة من الإعدادات",
+      "polishPresetMenuManage": "إدارة / نبرات مخصصة…",
+      "polishPresetMenuItemAction": "تغيير نبرة التحسين…",
+      "publicBilingualButtonShort": "2ل",
+      "showQuickSettingsPanelButton": "إظهار زر الإعدادات السريعة في لوحة المستخدم",
+      "showQuickSettingsPanelButtonDesc": "يضيف مدخل AI قرب ترس إعدادات Discord أسفل اليسار.",
+      "currentChannelAutoTranslatePolicy": "الترجمة التلقائية في هذه القناة",
+      "currentChannelAutoTranslatePolicyDesc": "يؤثر على الترجمة التلقائية لهذه القناة فقط؛ ولا يغير الترجمة اليدوية.",
+      "channelPolicyInherit": "اتباع المفتاح العام",
+      "channelPolicyEnabled": "ترجمة دائماً",
+      "channelPolicyDisabled": "عدم الترجمة",
+      "channelRuleFollow": "اتباع المفتاح العام",
+      "channelRuleAlways": "ترجمة دائماً",
+      "channelRuleNever": "عدم الترجمة",
+      "historyBackfillEnabled": "السماح بترجمة الرسائل المحمّلة مسبقاً",
+      "historyBackfillEnabledDesc": "يتيح ترجمة الرسائل المحمّلة في القناة يدوياً عند الطلب فقط.",
+      "historyBackfillLimit": "حد ترجمة الرسائل السابقة",
+      "historyBackfillLimitDesc": "أقصى عدد للرسائل المحمّلة في كل دفعة (1-100).",
+      "historyBackfillRun": "ترجمة الرسائل المحمّلة",
+      "historyBackfillRunning": "جارٍ الترجمة...",
+      "historyBackfillRunDesc": "يضيف الرسائل المحمّلة غير المترجمة إلى طابور منخفض الأولوية.",
+      "historyBackfillQueued": "أُضيفت إلى طابور ترجمة السجل: {count} رسالة.",
+      "historyBackfillNoWork": "لا توجد رسائل محمّلة تحتاج إلى ترجمة.",
+      "historyBackfillContextMenu": "ترجمة الرسائل المحمّلة",
+      "providerFallbackEnabled": "استخدام خدمات احتياطية عند فشل الترجمة اليدوية",
+      "providerFallbackEnabledDesc": "للترجمة اليدوية والرسالة ثنائية اللغة فقط؛ الخدمات المحلية لا تتحول إلى السحابة.",
+      "providerFallbackOrder": "ترتيب الخدمات الاحتياطية",
+      "providerFallbackOrderListDesc": "حدّد الخدمات الاحتياطية المطلوبة ورتّب أولويتها بالأسهم.",
+      "providerFallbackMoveUp": "تحريك {provider} لأعلى",
+      "providerFallbackMoveDown": "تحريك {provider} لأسفل",
+      "providerFallbackCurrent": " (الخدمة الحالية)",
+      "providerFallbackOrderDesc": "افصل بينها بفواصل أو أسطر جديدة؛ المتاح: {providers}.",
+      "composerMassMentionBlocked": "تم تحييد الإشارات الجماعية التي أضافها النموذج ({mentions}) لمنع التنبيهات غير المقصودة.",
+      "composerChannelChanged": "تم تغيير القناة قبل الإدراج؛ لم يُكتب النص في قناة أخرى. انسخه أو عد للقناة الأصلية.",
+      "hostHealthTitle": "فحص توافق مضيف Discord",
+      "hostHealthDesc": "يفحص نقاط الربط الحية في Discord وBetterDiscord لاكتشاف أعطال التحديثات فوراً.",
+      "hostHealthRecheck": "إعادة الفحص",
+      "hostHealthCopyReport": "نسخ التقرير",
+      "hostHealthCopied": "تم نسخ تقرير فحص المضيف.",
+      "hostHealthSummaryOk": "سليم بالكامل ({ok}/{total})",
+      "hostHealthSummaryWarn": "يتطلب انتباهاً (سليم {ok} · تنبيه {warn} · خطأ {error})",
+      "hostHealthSummaryError": "مشكلة توافق (سليم {ok} · تنبيه {warn} · خطأ {error})",
+      "hostHealthItemBdApi": "واجهة BetterDiscord API",
+      "hostHealthItemStores": "مخازن Discord الداخلية (MessageStore / ChannelStore)",
+      "hostHealthItemChatRoot": "جذر حاوية الدردشة",
+      "hostHealthItemMessages": "عقد الرسائل واستخراج المحتوى",
+      "hostHealthItemComposer": "مربع الكتابة وشريط الأدوات",
+      "hostHealthItemUserPanel": "لوحة المستخدم وزر AI",
+      "hostHealthItemContextMenu": "رقعة قائمة النقر الأيمن",
+      "hostHealthItemTheme": "مظهر Discord المكتشف",
+      "hostHealthStateOk": "سليم",
+      "hostHealthStateWarn": "تحقق",
+      "hostHealthStateError": "معطل",
+      "quickLanguageBarLabel": "تبديل سريع للغة الواجهة",
+      "quickLanguageSwitchTitle": "لغة الواجهة: {language}"
+    };
+  }
+});
+
+// src/i18n/es.js
+var require_es = __commonJS({
+  "src/i18n/es.js"(exports2, module2) {
+    "use strict";
+    module2.exports = {
+      "settingsTitle": "Traductor IA para Discord",
+      "settingsNote": "El pulido y la traducción se configuran por separado. Las claves API se guardan solo en este equipo.",
+      "generalTitle": "General",
+      "interfaceLanguage": "Idioma de la interfaz",
+      "interfaceLanguageDesc": "Cambia solo los textos del complemento, no el idioma de traducción ni de pulido.",
+      "languageZh": "中文",
+      "languageEn": "English",
+      "polishTitle": "Pulido de escritura",
+      "polishDescription": "Reescribe el borrador actual según el prompt y devuelve el resultado al cuadro de texto.",
+      "translationTitle": "Traducción de canales",
+      "translationDescription": "Traduce los mensajes del canal al idioma de destino seleccionado.",
+      "enabled": "Activado",
+      "enabledDesc": "Al desactivarlo, se ocultan sus botones y no se envían solicitudes.",
+      "provider": "Servicio",
+      "providerDesc": "Los modelos LLM sirven para traducir y pulir; los motores de traducción solo traducen.",
+      "providerPolishDesc": "El pulido requiere modelos LLM con soporte de prompt; puedes elegir un perfil guardado.",
+      "providerGroupAi": "Modelos LLM (traducir y pulir)",
+      "providerGroupMachine": "Motores de traducción (solo traducir)",
+      "savedServiceConfigs": "Perfiles guardados",
+      "savedServiceConfigsDesc": "Los servicios verificados se guardan automáticamente para reutilizarlos al traducir o pulir.",
+      "savedServiceConfigsPlaceholder": "Elegir perfil guardado ({count})",
+      "savedServiceConfigsEmpty": "Aún no hay perfiles guardados (se guardan tras probar la conexión)",
+      "savedServiceConfigApplied": "Perfil aplicado: {name}",
+      "savedServiceConfigDeleted": "Perfil guardado eliminado.",
+      "savedServiceConfigDelete": "Eliminar",
+      "syncConfigToPolish": "Sincronizar con pulido",
+      "syncConfigToTranslation": "Sincronizar con traducción",
+      "syncConfigUnsupportedPolish": "Los motores de traducción no admiten reescritura de borradores para pulido.",
+      "syncConfigMissing": "Completa primero la configuración obligatoria del servicio actual.",
+      "syncConfigDonePolish": "Configuración sincronizada con el pulido de escritura.",
+      "syncConfigDoneTranslation": "Configuración sincronizada con la traducción de canales.",
+      "providerOpenAI": "Compatible con OpenAI",
+      "providerSakuraLocal": "Sakura local",
+      "providerGoogleCloud": "Google Cloud Translation",
+      "googleTranslateTitle": "Grupo de claves de Google Cloud Translation",
+      "googleTranslateKeys": "Grupo de claves API de Google",
+      "googleTranslateKeysDesc": "Una clave por línea, o Etiqueta|CLAVE|límite_mensual.",
+      "googleTranslateDefaultLimit": "Límite mensual predeterminado por clave de Google",
+      "googleTranslateDefaultLimitDesc": "Se usa cuando la línea no indica límite; 420000-450000 deja un margen seguro.",
+      "googleTranslateAllowPrefetch": "Permitir Google en pretraducción",
+      "googleTranslateAllowPrefetchDesc": "Si se apaga, Google solo traduce mensajes visibles sin gastar cuota en precarga.",
+      "googleTranslateStats": "Uso de Google",
+      "googleTranslateStatsDesc": "Este mes {used}/{limit} caract.; claves activas {available}/{total}; mes {month}.",
+      "googleTranslateStatsCooldown": "{count} clave(s) en espera; la primera vuelve a las {time}.",
+      "googleTranslateResetStats": "Restablecer estadísticas mensuales de Google",
+      "googleTranslateResetConfirm": "Solo se borra el contador local de este equipo; el consumo real en Google Cloud no cambia.",
+      "googleTranslateStatsReset": "Estadísticas mensuales de Google restablecidas.",
+      "googleTranslateNoKey": "Google Cloud Translation no tiene ninguna clave API disponible.",
+      "googleTranslateQuotaExceeded": "Se agotó la cuota mensual del grupo de claves de Google Cloud Translation.",
+      "googleTranslateKeysCooling": "Todas las claves de Google Cloud Translation están en espera hasta las {time}.",
+      "googleTranslateKeyError": 'Clave "{label}": {error}',
+      "apiKey": "Clave API",
+      "apiKeyDesc": "Se guarda solo en este equipo y nunca en mensajes; en Sakura local puede quedar vacía.",
+      "apiKeyDeepSeekDesc": "Tu clave API de la plataforma DeepSeek, guardada solo en este equipo.",
+      "apiKeyOpenAIDesc": "La clave API proporcionada por tu servicio, guardada solo en este equipo.",
+      "apiKeyLocalDesc": "Opcional; los servidores locales normalmente no la necesitan.",
+      "apiKeyMicrosoftDesc": "Tu clave de recurso de Azure Translator, guardada solo en este equipo.",
+      "apiKeyDeepLDesc": "Tu clave de autenticación de DeepL API, guardada solo en este equipo.",
+      "apiKeyOptionalPlaceholder": "Opcional",
+      "apiTest": "Probar",
+      "apiTestBusy": "Probando",
+      "apiStatusUntested": "Sin probar",
+      "apiStatusTesting": "Probando",
+      "apiStatusSuccess": "Conectado",
+      "apiStatusFailed": "Error",
+      "apiTestSuccess": "Conexión correcta con la API de {name}.",
+      "apiTestSuccessSaved": "API de {name} conectada y guardada como perfil reutilizable.",
+      "apiTestSuccessSynced": "API de {name} conectada, guardada y sincronizada con {target}.",
+      "apiTestFailed": "Error al conectar con la API de {name}: {error}",
+      "apiTestJustNow": "ahora mismo",
+      "apiTestMinutesAgo": "hace {count} min",
+      "apiTestHoursAgo": "hace {count} h",
+      "apiTestNotYet": "Aún sin probar",
+      "thinkingMode": "Modo de razonamiento DeepSeek",
+      "thinkingModeDesc": "El modelo razona antes de responder: puede ser más preciso, pero tarda más y usa más tokens.",
+      "endpoint": "URL del endpoint",
+      "endpointDesc": "Dirección API del servicio; el valor predeterminado suele funcionar.",
+      "endpointDeepSeekDesc": "Dirección API de DeepSeek; el valor predeterminado suele funcionar.",
+      "endpointOpenAIDesc": "Acepta una URL base /v1 o chat/completions completa; los servicios remotos requieren https.",
+      "endpointLocalDesc": "Dirección de tu servidor local; solo las direcciones locales pueden usar http.",
+      "endpointMicrosoftDesc": "Dirección API de Azure Translator; el valor predeterminado suele funcionar.",
+      "endpointBaiduDesc": "Dirección API de Baidu Translate; el valor predeterminado suele funcionar.",
+      "deepseekPreset": "Preajuste DeepSeek V4",
+      "deepseekPresetDesc": "Cambia rápidamente entre DeepSeek V4 Flash y Pro.",
+      "customModel": "Personalizado (escríbelo abajo)",
+      "model": "Modelo",
+      "modelDesc": "Escribe cualquier nombre de modelo; el último usado se recuerda automáticamente.",
+      "modelOpenAIDesc": "Nombre del modelo del servicio; pulsa «Detectar modelos» para listarlos.",
+      "modelLocalDesc": "local-model utiliza el modelo que el servidor tenga cargado.",
+      "modelLocalLoadedDesc": "local-model usa el modelo cargado en el servidor, actualmente {model}.",
+      "modelDetect": "Detectar modelos",
+      "modelDetectBusy": "Detectando",
+      "modelDetectFound": "Se encontraron {count} modelos; elige uno en la lista.",
+      "modelDetectFoundLoaded": "Se encontraron {count} modelos; cargado: {model}.",
+      "modelDetectNone": "El servidor no devolvió ningún modelo.",
+      "modelDetectFailed": "Error al detectar modelos: {error}",
+      "modelDetectUnsupported": "Este servicio no permite listar sus modelos.",
+      "modelDetectConfirmOrigin": "Confirmar origen para esta clave API",
+      "modelDetectConfirmOriginDesc": "¿Permitir enviar la clave API actual a {origin} y vincularla a este origen?",
+      "apiKeyOriginMismatch": "Esta clave API está vinculada a otro origen. Usa una clave para esta dirección o pulsa «Detectar modelos» para confirmar el origen.",
+      "modelPicker": "Modelos disponibles",
+      "modelPickerOther": "Otro (escríbelo arriba)",
+      "modelPickerServerLoaded": "Usar el modelo cargado en el servidor (local-model)",
+      "modelPickerDetected": "Listados por el servidor",
+      "modelPickerPresets": "Modelos habituales",
+      "modelPickerLoadedTag": "{model} (cargado)",
+      "outputLanguage": "Idioma de salida",
+      "outputLanguageDesc": "El idioma en que se escribirá el texto pulido.",
+      "inputLanguage": "Idioma de entrada",
+      "inputLanguageDesc": "El idioma original de tu borrador; deja detección automática salvo que falle.",
+      "messageLanguage": "Idioma de los mensajes",
+      "messageLanguageDesc": "El idioma original de los mensajes del canal; deja detección automática habitualmente.",
+      "autoDetectLanguage": "Detección automática",
+      "targetLanguage": "Idioma de destino",
+      "targetLanguageDesc": "El idioma al que se traducen los mensajes del canal.",
+      "languagePreset": "Idiomas comunes",
+      "customLanguage": "Idioma personalizado",
+      "customLanguagePlaceholder": "Ej.: Chino tradicional, Coreano, Portugués de Brasil",
+      "customLanguageDesc": "El nombre personalizado se envía al modelo tal como lo escribas.",
+      "temperature": "Creatividad",
+      "temperatureDesc": "Más bajo es más estable: 0.1-⁠0.3 para traducir, 0.3-⁠0.7 para pulir.",
+      "maxTokens": "Longitud máxima de salida",
+      "maxTokensDesc": "Límite de longitud de respuesta; súbelo si los mensajes largos se cortan.",
+      "maxTokensPolishDesc": "Límite de respuesta al pulir; súbelo en borradores largos o con modo razonamiento.",
+      "afterPolishing": "Después de pulir",
+      "afterPolishingDesc": "Si debe pedir confirmación para enviar tras insertar el texto pulido.",
+      "afterReplace": "Reemplazar",
+      "afterDirectReplace": "Reemplazar",
+      "afterConfirmSend": "Preguntar",
+      "repolishSource": "Origen al volver a pulir",
+      "repolishSourceDesc": "Al pulir de nuevo, partir del borrador original o del último resultado.",
+      "repolishSourceOriginal": "Usar borrador original",
+      "repolishSourceLastResult": "Usar resultado anterior",
+      "restoreOriginal": "Restaurar original",
+      "restoreOriginalChanged": "El borrador cambió, por lo que no se puede restaurar el original.",
+      "polishResultTitle": "Resultado pulido",
+      "polishResultCopy": "Copiar",
+      "polishResultCopied": "Copiado",
+      "polishResultReplace": "Insertar en cuadro",
+      "polishResultApplyFailed": "No se pudo insertar en el cuadro de texto. Pulsa «Copiar» y pégalo manualmente.",
+      "polishResultClose": "Cerrar",
+      "prompt": "Prompt",
+      "promptDesc": "Indica al modelo cómo pulir o traducir; puedes escribirlo en cualquier idioma.",
+      "promptUsingTemplate": "Usando plantilla: {code} · {name}",
+      "promptTemplateNameNaturalChat": "Chat natural",
+      "promptTemplateNamePolite": "Cortés y claro",
+      "promptTemplateNameShort": "Breve y directo",
+      "promptTemplateNameNativeCasual": "Coloquial natural",
+      "promptTemplateNameTechBug": "Técnico y reporte de errores",
+      "promptTemplateNameGamingChat": "Gaming y chat de equipo",
+      "promptTemplateNameTactful": "Tacto y diplomacia",
+      "promptTemplateNameFormalNotice": "Formal y anuncios",
+      "promptTemplateNameDialectCantoneseGuangfu": "Cantonés de Guangfu (cotidiano)",
+      "promptTemplateNameDialectCantoneseHk": "Cantonés de Hong Kong",
+      "promptTemplateNameDialectHakka": "Hakka (coloquial)",
+      "promptTemplateNameDialectChaoshan": "Chaoshan / Teochew",
+      "promptTemplateNameDialectGuangxi": "Guangxi sureño",
+      "promptTemplateNameDialectMinnan": "Minnan / Hokkien",
+      "promptTemplateNameDialectTaiwan": "Mandarín taiwanés",
+      "promptTemplateNameDialectSichuan": "Sichuan y Chongqing",
+      "promptTemplateNameDialectYunnan": "Dialecto de Yunnan",
+      "promptTemplateNameDialectGuizhou": "Dialecto de Guizhou",
+      "promptTemplateNameDialectDongbei": "Noreste (Dongbei)",
+      "promptTemplateNameDialectBeijing": "Mandarín pekinés",
+      "promptTemplateNameDialectTianjin": "Dialecto de Tianjin",
+      "promptTemplateNameDialectShaanxi": "Shaanxi (Guanzhong)",
+      "promptTemplateNameDialectHenan": "Dialecto de Henan",
+      "promptTemplateNameDialectShandong": "Dialecto de Shandong",
+      "promptTemplateNameDialectXinjiang": "Estilo de Xinjiang",
+      "promptTemplateNameDialectShanghai": "Shanghainés",
+      "promptTemplateNameDialectJiangzhe": "Wu de Suzhou y Hangzhou",
+      "promptTemplateNameDialectNanjing": "Dialecto de Nankín",
+      "promptTemplateNameDialectWuhan": "Dialecto de Wuhan",
+      "promptTemplateNameDialectHunan": "Dialecto de Hunan",
+      "promptTemplateCategoryLabel": "Categoría de plantilla",
+      "promptTemplateCategoryGeneral": "General",
+      "promptTemplateCategoryDialect": "Dialectos",
+      "promptTemplateCategoryPersona": "Personajes",
+      "promptTemplateRegionSouthChina": "Sur de China y Taiwán",
+      "promptTemplateRegionSouthwest": "Suroeste",
+      "promptTemplateRegionNorth": "Norte",
+      "promptTemplateRegionEastCentral": "Este y Centro",
+      "promptTemplateRegionCustom": "Dialectos personalizados",
+      "promptTemplateNamePersonaQinShihuang": "Qin Shi Huang (Decreto imperial)",
+      "promptTemplateNamePersonaHanWudi": "Emperador Wu de Han (Gran edicto)",
+      "promptTemplateNamePersonaZhuYuanzhang": "Zhu Yuanzhang (Edicto directo Ming)",
+      "promptTemplateNamePersonaChiangKaiShek": "Chiang Kai-shek (Telegrama oficial)",
+      "promptTemplateNamePersonaCaoCao": "Cao Cao (Caudillo audaz)",
+      "promptTemplateNamePersonaLiShimin": "Emperador Taizong (Estadista Tang)",
+      "promptTemplateNamePersonaYongzheng": "Yongzheng (Notas imperiales agudas)",
+      "promptTemplateNamePersonaZhugeLiang": "Zhuge Liang (Memorial sincero)",
+      "promptTemplateNamePersonaSimaYi": "Sima Yi (Estratega paciente)",
+      "promptTemplateNamePersonaSunTzu": "Sun Tzu (Máximas del Arte de la guerra)",
+      "promptTemplateNamePersonaXiangYu": "Xiang Yu (Hegemón indómito)",
+      "promptTemplateNamePersonaLuXun": "Lu Xun (Ensayo satírico mordaz)",
+      "promptTemplateNamePersonaLinDaiyu": "Lin Daiyu (Ingenio sutil e irónico)",
+      "promptTemplateNamePersonaWangYangming": "Wang Yangming (Unidad de saber y acción)",
+      "promptTemplateNamePersonaLiBai": "Li Bai (Poeta libre y romántico)",
+      "promptTemplateNamePersonaSuShi": "Su Shi (Erudito cálido e ingenioso)",
+      "promptTemplateNamePersonaConfucius": "Confucio (Aforismos de las Analectas)",
+      "promptTemplateNamePersonaZhuangzi": "Zhuangzi (Parábola taoísta)",
+      "promptTemplateNamePersonaEileenChang": "Eileen Chang (Elegancia urbana fría)",
+      "promptTemplateNamePersonaQianZhongshu": "Qian Zhongshu (Metáfora aguda)",
+      "promptTemplateNamePersonaWangXiaobo": "Wang Xiaobo (Humor negro e ironía)",
+      "promptTemplateNamePersonaGuoDegang": "Guo Degang (Monólogo humorístico)",
+      "promptTemplateNamePersonaShakespeare": "Shakespeare (Monólogo teatral)",
+      "promptTemplateNamePersonaTrump": "Donald Trump (Hipérbole enfática)",
+      "promptTemplateNamePersonaNietzsche": "Nietzsche (Aforismo filosófico)",
+      "promptTemplateNamePersonaMarx": "Karl Marx (Crítica dialéctica)",
+      "promptTemplateNamePersonaNapoleon": "Napoleón (Parte de campaña)",
+      "promptTemplateNamePersonaChurchill": "Churchill (Oratoria firme e ingenio)",
+      "promptTemplateNamePersonaMusk": "Elon Musk (Primeros principios conciso)",
+      "promptTemplatePersonaGroupMonarchs": "Monarcas y gobernantes",
+      "promptTemplatePersonaGroupStrategists": "Estrategas y generales",
+      "promptTemplatePersonaGroupLiterati": "Escritores y pensadores",
+      "promptTemplatePersonaGroupGlobal": "Figuras globales",
+      "promptTemplatePersonaGroupCustom": "Personajes personalizados",
+      "promptTemplateNameNatural": "Traducción natural",
+      "promptTemplateNameLiteral": "Traducción literal fiel",
+      "promptTemplateNameSlangCasual": "Jerga y chat informal",
+      "promptTemplateNameTechDev": "Tecnología, IA y desarrollo",
+      "promptTemplateNameGamingAcg": "Gaming y anime",
+      "promptTemplateNameFormalChangelog": "Anuncios oficiales y notas de versión",
+      "promptTemplates": "Plantillas de prompt",
+      "promptTemplatesDesc": "Elegir una plantilla solo muestra su vista previa; «Usar plantilla» reemplaza el prompt.",
+      "promptSearch": "Buscar plantilla por nombre o código",
+      "promptTemplateSelect": "Seleccionar plantilla",
+      "promptTemplateCustom": "El prompt actual no está guardado como plantilla",
+      "promptTemplateEdited": "Basado en {code} · {name}; cambios sin guardar en la plantilla",
+      "promptPreview": "Vista previa de la plantilla",
+      "promptPreviewActive": "En uso",
+      "promptApply": "Usar plantilla",
+      "promptSave": "Guardar como plantilla",
+      "promptUpdate": "Actualizar plantilla actual",
+      "promptUpdateTitle": "Sobrescribir {code} · {name} con el prompt editado",
+      "promptDelete": "Eliminar plantilla",
+      "promptRestorePresets": "Restaurar preajustes integrados",
+      "promptPresetsRestored": "Se restauraron {count} plantilla(s) integrada(s).",
+      "promptPresetsComplete": "Todas las plantillas integradas ya están presentes.",
+      "promptCopy": "Copiar prompt",
+      "promptCopied": "Prompt copiado.",
+      "copiedToClipboard": "Copiado.",
+      "promptCopyFailed": "Error al copiar: {error}",
+      "clipboardUnavailable": "El portapapeles no está disponible. Selecciona el texto y cópialo manualmente.",
+      "promptNamePlaceholder": "Ponle un nombre a esta plantilla",
+      "promptSaveNameLabel": "Nombre de la nueva plantilla",
+      "promptNameRequired": "Escribe primero un nombre para la plantilla.",
+      "promptSaved": "Plantilla guardada: {code} · {name}",
+      "promptUpdated": "Plantilla actualizada: {code} · {name}",
+      "promptDeleted": "Plantilla eliminada.",
+      "promptApplied": "Plantilla aplicada: {code} · {name}",
+      "promptApplyUnsavedTitle": "¿Reemplazar el prompt actual?",
+      "promptApplyUnsavedConfirm": "Tu prompt tiene cambios sin guardar; usar {code} · {name} los reemplazará.",
+      "promptDeleteConfirm": "¿Eliminar esta plantilla de prompt?",
+      "promptDeleteActiveNote": "Esta plantilla está en uso; al eliminarla se cambiará a {code} · {name}.",
+      "promptNoTemplate": "No hay plantillas disponibles.",
+      "uiTitle": "Interfaz",
+      "showPolishButton": "Mostrar botón Pulir junto al cuadro de texto",
+      "showPolishButtonDesc": "Añade un botón rápido «Pulir» junto al cuadro de mensajes de Discord.",
+      "publicBilingualInputButton": "Mostrar botón bilingüe público junto al cuadro de texto",
+      "publicBilingualInputButtonDesc": "Escribe tu borrador como traducción más original oculto para revisarlo antes de enviar.",
+      "publicBilingualUseInitialOriginal": "Usar borrador inicial como original oculto",
+      "publicBilingualUseInitialOriginalDesc": "Si puliste primero, el texto oculto conserva tu borrador original sin pulir.",
+      "publicBilingualAfterPolish": "Generar mensaje bilingüe automáticamente tras pulir",
+      "publicBilingualAfterPolishDesc": "Después de pulir, convierte el resultado en mensaje bilingüe sin enviarlo solo.",
+      "publicBilingualPolishBeforeTranslate": "Pulir automáticamente antes del mensaje bilingüe",
+      "publicBilingualPolishBeforeTranslateDesc": "Al pulsar «Bilingüe», primero pule el borrador y luego traduce el resultado.",
+      "showMessageButtons": "Mostrar botones Traducir en los mensajes",
+      "showMessageButtonsDesc": "Añade un botón «Traducir» junto a los mensajes del canal.",
+      "messageButtonVisibility": "Visibilidad del botón Traducir",
+      "messageButtonVisibilityDesc": "Mostrar siempre el botón Traducir o solo al pasar el cursor sobre el mensaje.",
+      "messageButtonVisibilityAlways": "Mostrar siempre",
+      "messageButtonVisibilityHover": "Al pasar el cursor",
+      "messageButtonMode": "Botón Traducir en los mensajes",
+      "messageButtonModeDesc": "Cómo aparece el botón «Traducir» junto a cada mensaje.",
+      "messageButtonModeHover": "Mostrar al pasar el cursor",
+      "messageButtonModeAlways": "Mostrar siempre",
+      "messageButtonModeOff": "No mostrar",
+      "autoTranslateMessages": "Traducir automáticamente mensajes visibles en otro idioma",
+      "autoTranslateMessagesDesc": "Traduce los mensajes en pantalla que no estén en tu idioma de destino.",
+      "autoTranslatePrefetch": "Pretraducir mensajes cercanos",
+      "autoTranslatePrefetchDesc": "Traduce mensajes cercanos fuera de pantalla en reposo; requiere concurrencia de 2 o más.",
+      "autoTranslatePrefetchRange": "Rango de pretraducción",
+      "autoTranslatePrefetchRangeDesc": "Cuántos mensajes arriba y abajo de la pantalla se pretraducen.",
+      "autoTranslateConcurrency": "Concurrencia de autotraducción",
+      "autoTranslateConcurrencyDesc": "Solicitudes simultáneas de traducción: predeterminado {default}, rango {min}-{max}.",
+      "autoTranslateStrictRetry": "Reintento estricto si el idioma de salida es incorrecto",
+      "autoTranslateStrictRetryDesc": "Reintenta las partes fallidas y luego mensaje por mensaje antes de mostrar Reintentar.",
+      "showAutoTranslateWarnings": "Mostrar fallos debajo de los mensajes",
+      "showAutoTranslateWarningsDesc": "Incluye tiempos agotados y fallos de red; los errores que debes corregir siempre se muestran.",
+      "showAutoTranslateToasts": "Mostrar aviso emergente si falla la autotraducción",
+      "showAutoTranslateToastsDesc": "Los problemas que requieren tu atención, como una clave no válida, siempre se avisan una vez.",
+      "diagnosticLogs": "Registros de diagnóstico",
+      "diagnosticLogsDesc": "Guarda solicitudes, uso de caché y motivos de fallo (hasta 500 entradas) para exportar.",
+      "diagnosticLogsStats": "Registros: {entries}; eventos repetidos comprimidos: {compressed}.",
+      "diagnosticSummary": "Resumen de diagnóstico",
+      "diagnosticSummaryEmpty": "Activa el diagnóstico y reproduce el problema para ver aquí un resumen.",
+      "diagnosticSummaryEvents": "Eventos: {events}, agrupados por estado, motivo y servicio; último {latest}.",
+      "diagnosticSummaryStates": "Estados",
+      "diagnosticSummaryReasons": "Motivos",
+      "diagnosticSummaryFlows": "Flujos",
+      "diagnosticSummaryQueues": "Colas",
+      "diagnosticSummaryProviders": "Servicios",
+      "diagnosticSummaryFailures": "Fallos",
+      "diagnosticSummaryFailureLayers": "Etapas de fallo",
+      "diagnosticSummaryFlowStages": "Etapas del flujo",
+      "clearDiagnosticLogs": "Borrar registros",
+      "clearDiagnosticLogsConfirm": "Se eliminarán todos los registros de diagnóstico. Expórtalos antes si los necesitas.",
+      "clearDiagnosticLogsDesc": "Elimina todos los registros de diagnóstico; expórtalos antes si los necesitas.",
+      "exportDiagnosticLogs": "Exportar registros",
+      "copyDiagnosticLogs": "Copiar registros",
+      "exportDiagnosticJson": "Exportar JSON",
+      "exportDiagnosticTxt": "Exportar TXT",
+      "diagnosticLogsCleared": "Registros de diagnóstico borrados.",
+      "diagnosticLogsCopied": "Registros de diagnóstico copiados.",
+      "diagnosticLogsEmpty": "Aún no hay registros de diagnóstico.",
+      "diagnosticLogsExported": "Registros de diagnóstico exportados.",
+      "settingsSnapshot": "Instantánea de ajustes",
+      "settingsSnapshotDesc": "Descarga tus ajustes en JSON ocultando las claves para compartirlos de forma segura.",
+      "exportSettingsSnapshot": "Descargar ajustes",
+      "settingsSnapshotExported": "Instantánea de ajustes descargada; las claves están ocultas.",
+      "settingsSnapshotCopied": "Instantánea de ajustes copiada; las claves están ocultas.",
+      "translationCacheTtl": "Duración de la caché",
+      "translationCacheTtlDesc": "Se conserva al reiniciar Discord; las traducciones caducadas se solicitan de nuevo.",
+      "translationCacheMaxEntries": "Máximo de mensajes en caché",
+      "translationCacheMaxEntriesDesc": "Al llenarse se borran primero las traducciones menos recientes; hasta 15000.",
+      "translationCacheStats": "Estadísticas de caché",
+      "translationCacheStatsDesc": "Esta sesión: {hits} aciertos, {misses} fallos; {memory} en memoria, {persistent} guardados.",
+      "clearTranslationCacheStats": "Borrar estadísticas",
+      "clearTranslationCache": "Vaciar caché de traducciones",
+      "clearTranslationCacheConfirm": "Se borrarán todas las traducciones guardadas y volverán a solicitarse cuando hagan falta.",
+      "clearTranslationCacheDesc": "Elimina todas las traducciones guardadas; el mismo texto volverá a traducirse.",
+      "translationCacheStatsCleared": "Estadísticas de caché borradas. Se conservaron las traducciones guardadas.",
+      "translationCacheCleared": "Caché de traducciones vaciada.",
+      "cacheTtl3h": "3 horas",
+      "cacheTtl6h": "6 horas",
+      "cacheTtl12h": "12 horas",
+      "cacheTtl1d": "1 día",
+      "cacheTtl2d": "2 días",
+      "cacheTtl7d": "7 días",
+      "translationPosition": "Posición de la traducción",
+      "translationPositionDesc": "Mostrar la traducción encima o debajo del mensaje original.",
+      "translationBeforeOriginal": "Traducción arriba, original abajo",
+      "translationAfterOriginal": "Original arriba, traducción abajo",
+      "translationPositionAbove": "Encima del original",
+      "translationPositionBelow": "Debajo del original",
+      "maskTranslations": "Ocultar traducciones de forma predeterminada",
+      "maskTranslationsDesc": "La traducción aparece como una barra gris hasta hacer clic o pulsar Enter.",
+      "translationStyle": "Estilo de traducción",
+      "translationStyleDesc": "Todos los estilos siguen los colores del tema de Discord.",
+      "translationStyleTint": "Fondo suave",
+      "translationStyleMuted": "Texto atenuado",
+      "translationStyleTag": 'Etiqueta "TR"',
+      "translationTextScale": "Tamaño del texto traducido",
+      "translationTextScaleDesc": "En relación con el tamaño normal del chat.",
+      "panelTheme": "Tema de ventanas",
+      "panelThemeDesc": "Colores de ajustes, panel rápido y menús; los diálogos de confirmación siguen a Discord.",
+      "panelThemeAuto": "Seguir a Discord",
+      "panelThemeLight": "Claro",
+      "panelThemeDark": "Oscuro",
+      "translationTag": "TR",
+      "hideOriginalAfterTranslation": "Ocultar original tras traducir",
+      "hideOriginalAfterTranslationDesc": "Muestra el original como barra gris hasta pasar el cursor o enfocar (solo tú lo ves).",
+      "showContextMenu": "Mostrar Traducir en el menú contextual de mensajes",
+      "showContextMenuDesc": "Añade «Traducir» al hacer clic derecho sobre un mensaje.",
+      "enableHotkey": "Activar atajo de teclado para pulir",
+      "enableHotkeyDesc": "Con el cuadro de texto enfocado, el atajo configurado pule el borrador actual.",
+      "polishHotkey": "Atajo para pulir",
+      "polishHotkeyDesc": "Haz clic en el botón del atajo y pulsa una combinación con Ctrl, Alt o Win.",
+      "hotkeyRecord": "Grabar atajo",
+      "hotkeyRecording": "Pulsa el atajo...",
+      "hotkeyReset": "Restablecer",
+      "hotkeyNotSet": "Sin definir",
+      "hotkeySaved": "Atajo guardado: {shortcut}",
+      "hotkeyInvalid": "Atajo no válido: usa Ctrl, Alt o Win más una tecla (Shift opcional); no se permiten atajos de edición como copiar o pegar.",
+      "tryTranslate": "Probar una frase",
+      "tryTranslateDesc": "Traduce una frase con estos ajustes sin enviar nada a Discord.",
+      "tryTranslatePlaceholder": "p. ej., See you tomorrow, same time?",
+      "tryTranslateRun": "Traducir",
+      "tryPolish": "Probar pulido",
+      "tryPolishDesc": "Pule una frase con estos ajustes sin enviar nada a Discord.",
+      "tryPolishPlaceholder": "p. ej., nos vemos mañana a la misma hora?",
+      "tryPolishRun": "Pulir",
+      "tryBusy": "Procesando",
+      "tryInputRequired": "Escribe primero una frase.",
+      "tryResultTime": "tardó {time}",
+      "reset": "Restablecer valores predeterminados",
+      "resetConfirm": "Los ajustes, reglas de canales y opciones visuales volverán a sus valores predeterminados; se conservan las claves API, el grupo de Google y las plantillas.",
+      "resetDialogTitle": "¿Restablecer valores predeterminados?",
+      "resetDialogLead": "Estos elementos volverán a sus valores predeterminados y no se puede deshacer:",
+      "resetDialogItemSettings": "Ajustes de servicios, interruptores y valores de traducción y pulido",
+      "resetDialogItemChannelRules": "Reglas de autotraducción de cada canal",
+      "resetDialogItemDisplay": "Opciones de apariencia e interfaz (el idioma de la interfaz se mantiene)",
+      "resetDialogItemCredentials": "Claves API, grupo de claves de Google y plantillas de prompt personalizadas",
+      "resetDialogItemCredentialsNote": "Solo se borran si desmarcas la casilla inferior",
+      "resetKeepCredentials": "Conservar claves API, grupo de Google y plantillas de prompt",
+      "dialogConfirm": "Aceptar",
+      "dialogCancel": "Cancelar",
+      "settingsLoadBlocked": "No se pudieron leer los ajustes guardados, así que los cambios no se guardarán. Revisa DiscordAITranslator.config.json en la carpeta de plugins y reactiva el complemento.",
+      "pluginStarted": "Traductor IA para Discord v{version} iniciado.",
+      "polishButton": "Pulir",
+      "polishBusy": "Puliendo",
+      "polishRunning": "Puliendo el borrador actual...",
+      "composerChanged": "El cuadro de texto cambió. Inténtalo de nuevo.",
+      "composerResultHeld": "El resultado no se insertó porque el borrador cambió o estabas escribiendo en otro sitio. Cópialo o insértalo desde el panel.",
+      "polishTitleAttr": "Pulir borrador actual con IA. Atajo: {shortcut}.",
+      "publicBilingualButton": "Bilingüe",
+      "publicBilingualBusy": "Traduciendo",
+      "publicBilingualTitleAttr": "Escribir un mensaje público bilingüe en {targetLanguage}; todos podrán verlo al enviarlo.",
+      "publicBilingualReady": "Mensaje bilingüe listo. Revísalo y envíalo.",
+      "publicBilingualFailed": "No se pudo crear el mensaje bilingüe: {error}",
+      "publicBilingualInputChanged": "El texto cambió durante la traducción, así que no se sobrescribió el borrador.",
+      "errorComposerWriteFailed": "El cuadro de texto no aceptó el texto. El resultado se muestra en el panel para copiarlo.",
+      "publicBilingualTooLong": "El mensaje bilingüe supera el límite de un mensaje de Discord ({length}/{limit}).",
+      "publicBilingualPolishSkipped": "El pulido está desactivado, así que se usó el borrador actual.",
+      "translateButton": "Traducir",
+      "translateBusy": "Traduciendo...",
+      "translateTitleAttr": "Traducir a {targetLanguage}",
+      "translateMenu": "Traducir a {targetLanguage}",
+      "translateRetry": "Reintentar",
+      "translateRetryTitle": "Volver a traducir este mensaje",
+      "translationFailedInline": "Error al traducir: {error}",
+      "translationLoading": "Traduciendo…",
+      "translationRevealLabel": "Mostrar traducción oculta",
+      "translationActionsLabel": "Acciones de traducción",
+      "translationActionCopy": "Copiar traducción",
+      "translationActionRetranslate": "Traducir de nuevo (sin caché)",
+      "translationActionHide": "Ocultar traducción",
+      "translationCopied": "Traducción copiada.",
+      "translationPartialOne": "No se pudo traducir la parte {parts} de {total}",
+      "translationPartialMany": "No se pudieron traducir las partes {parts} de {total}",
+      "translationPartialUnknown": "Una parte de este mensaje no se pudo traducir",
+      "translationRetranslate": "Retraducir",
+      "translationRetranslateTitle": "Volver a traducir todo el mensaje sin usar la caché",
+      "translationErrorAuth": "El servicio de traducción rechazó la clave API",
+      "translationErrorMissingKey": "Falta configurar la clave API para traducir",
+      "translationErrorMissingEndpoint": "Falta configurar el endpoint para traducir",
+      "translationErrorMissingModel": "No se ha elegido modelo para traducir",
+      "translationErrorQuota": "Se agotó la cuota del servicio de traducción",
+      "translationErrorLocal": "El servicio local de traducción no responde",
+      "translationErrorLocalAt": "El servicio local de traducción no responde ({host})",
+      "translationErrorRateLimit": "Demasiadas solicitudes. Inténtalo en breve",
+      "translationErrorRateLimitWait": "Demasiadas solicitudes. Inténtalo en {seconds} s",
+      "translationOpenSettings": "Abrir ajustes",
+      "translationOpenSettingsTitle": "Abrir ajustes de traducción",
+      "translationTestConnection": "Probar conexión",
+      "translationTestConnectionTitle": "Comprobar si el servicio de traducción responde",
+      "autoTranslateFailed": "Falló la autotraducción: {error}",
+      "autoTranslateNeedsAttention": "La autotraducción requiere tu atención: {error}",
+      "autoTranslateTargetFailed": "La respuesta del modelo no estaba en el idioma de destino, así que se omitió.",
+      "manualTranslateRescueFailed": "No se obtuvo una traducción válida tras varios intentos. Puedes probar otra vez.",
+      "contextPatchFailed": "No se pudo integrar el menú contextual de mensajes: {error}",
+      "polishDisabled": "El pulido de escritura está desactivado.",
+      "textboxMissing": "No se encontró el cuadro de texto de Discord.",
+      "inputEmpty": "El cuadro de texto está vacío.",
+      "confirmSend": "¿Enviar el mensaje pulido?",
+      "confirmSendAction": "Enviar",
+      "confirmSendDraftChanged": "El borrador cambió, así que no se envió nada.",
+      "translationDisabled": "La traducción de canales está desactivada.",
+      "noTranslatableText": "Este mensaje no contiene texto traducible.",
+      "messageMissing": "No se encontró el mensaje para traducir.",
+      "modelSet": "Modelo establecido en {model}.",
+      "hideTranslation": "Ocultar traducción",
+      "translationLabel": "Traducción IA al {targetLanguage}",
+      "polishedReady": "Texto pulido listo en el cuadro de entrada.",
+      "apiKeyMissingPolish": "La clave API de pulido no está configurada.",
+      "apiKeyMissingTranslation": "La clave API de traducción no está configurada.",
+      "endpointMissing": "El endpoint de la API no está configurado.",
+      "modelMissing": "El modelo no está configurado.",
+      "invalidJson": "La API devolvió un JSON no válido.",
+      "emptyResult": "La API devolvió un resultado vacío.",
+      "errorUnauthorized": "La clave API no es válida o no tiene permisos.",
+      "errorRateLimited": "Límite de frecuencia de la API alcanzado; esperando enfriamiento automático.",
+      "errorQuotaExceeded": "Se agotó la cuota de la API o el saldo de la cuenta.",
+      "errorLanguageUnsupported": "Este servicio no admite el idioma de destino elegido. Prueba otro idioma o servicio.",
+      "errorIpNotAllowed": "El servicio rechazó tu dirección IP. Revisa la lista blanca de IP en la consola del proveedor.",
+      "errorProviderRequestRejected": "El servicio rechazó la solicitud. Verifica permisos de cuenta, idioma de destino y ajustes.",
+      "errorOutputTruncated": "La respuesta del modelo se cortó. Sube «Longitud máxima de salida» en «Más parámetros del modelo» y vuelve a intentarlo.",
+      "errorOutputTruncatedPolish": "El texto pulido se cortó. Sube «Longitud máxima de salida» en «Herramientas de escritura → Más parámetros del modelo».",
+      "errorOutputTruncatedTranslation": "La traducción se cortó. Sube «Longitud máxima de salida» en «Traducir mensajes → Más parámetros del modelo».",
+      "errorSaveFailed": "No se pudo guardar localmente. Inténtalo más tarde.",
+      "errorServer": "El servicio API no está disponible temporalmente.",
+      "errorCancelled": "Solicitud cancelada.",
+      "errorInvalidEndpoint": "Endpoint no válido. Introduce una URL de API completa.",
+      "errorEndpointNotFound": "No se encontró el endpoint o el modelo. Revisa la URL de la API y el nombre del modelo.",
+      "errorUnsafeEndpoint": "Endpoint inseguro: los servicios remotos requieren HTTPS; HTTP solo se permite en servidor local y sin usuario ni contraseña en la URL.",
+      "localIntakeFixed": "Los servicios locales siempre escanean la página en busca de mensajes.",
+      "localConcurrencyDesc": "Ajustable entre {min} y {max}; adáptalo a las ranuras paralelas y VRAM de tu servidor local.",
+      "localFallbackUnavailable": "Los servicios locales nunca recurren a la nube, así que esta opción no aplica.",
+      "errorTimeout": "Se agotó el tiempo de espera de la solicitud API.",
+      "errorNetwork": "Falló la conexión de red.",
+      "errorLocalProviderUnavailable": "El servidor local Sakura no responde y la autotraducción está en pausa; inicia Sakura o prueba la conexión para reanudar.",
+      "unknownError": "Error desconocido",
+      "providerMicrosoft": "Microsoft Translator",
+      "providerDeepL": "DeepL",
+      "providerBaidu": "Baidu Translate",
+      "providerRegion": "Región",
+      "providerRegionDesc": "Región del recurso de Azure Translator; déjalo vacío en recursos globales.",
+      "deeplPlan": "Plan de DeepL",
+      "deeplPlanDesc": "Free usa api-free.deepl.com; Pro usa api.deepl.com.",
+      "deeplPlanFree": "Free",
+      "deeplPlanPro": "Pro",
+      "baiduAppId": "App ID de Baidu",
+      "baiduAppIdDesc": "Tu App ID de Baidu Translate, guardado solo en este equipo.",
+      "baiduSecretKey": "Clave secreta de Baidu",
+      "baiduSecretKeyDesc": "Tu clave secreta de Baidu Translate; se guarda localmente y nunca en registros.",
+      "autoTranslateIntakeMode": "Detección de mensajes",
+      "autoTranslateIntakeModeDesc": "Automático usa la librería BDFDB si está instalada; si no, escanea la página.",
+      "autoTranslateIntakeAuto": "Automático",
+      "autoTranslateIntakeDom": "Solo escanear página",
+      "autoTranslateIntakeBdfdb": "Preferir BDFDB",
+      "settingsTabPolish": "Pulido de escritura",
+      "settingsTabTranslation": "Traducción de canales",
+      "settingsTabPublicBilingual": "Bilingüe público",
+      "settingsTabDisplay": "Apariencia, caché y diagnóstico",
+      "settingsTabOverview": "Resumen",
+      "settingsTabTranslate": "Traducir mensajes",
+      "settingsTabCompose": "Herramientas de escritura",
+      "settingsTabAppearance": "Apariencia",
+      "settingsTabAdvanced": "Avanzado",
+      "settingsTabData": "Datos y diagnóstico",
+      "settingsTabsLabel": "Secciones de ajustes",
+      "settingsSearchPlaceholder": "Buscar ajustes",
+      "settingsSearchResults": "{count} ajustes encontrados",
+      "settingsSearchEmpty": 'Ningún ajuste coincide con "{query}"',
+      "settingsClose": "Cerrar ajustes",
+      "settingsGroupCommon": "Uso diario",
+      "overviewSetupTitle": "Primeros pasos: faltan {count}",
+      "overviewSetupProgress": "{done} de {total} listos · esta tarjeta se oculta al completar todo",
+      "overviewSetupService": "Elegir un servicio",
+      "overviewSetupServiceOff": "La traducción de mensajes está desactivada",
+      "overviewSetupServiceMissing": "{provider} aún no está configurado",
+      "overviewSetupTest": "Probar la conexión",
+      "overviewSetupTestBlocked": "Configura primero el servicio",
+      "overviewSetupTarget": "Idioma de destino",
+      "overviewSetupAuto": "Activar autotraducción",
+      "overviewSetupAutoOn": "Activada",
+      "overviewSetupAutoOff": "Desactivada: solo funciona el botón Traducir",
+      "overviewSetupAutoChannel": "Interruptor general apagado; este canal siempre traduce",
+      "overviewSetupChannel": "Este canal",
+      "overviewSetupChannelNone": "Ahora no estás en un canal",
+      "overviewSetupChannelNever": "Configurado para no traducir nunca",
+      "overviewStateDone": "Listo",
+      "overviewStateTodo": "Pendiente",
+      "overviewSetUp": "Configurar",
+      "overviewTurnOn": "Activar",
+      "overviewChange": "Cambiar",
+      "overviewServicesTitle": "Estado de los servicios",
+      "overviewCardTranslation": "Traducir mensajes",
+      "overviewCardPolish": "Pulido de escritura",
+      "overviewServiceOff": "Desactivado",
+      "overviewServiceMissing": "Sin configurar: falta {field}",
+      "settingsGroupAutoTranslate": "Autotraducción",
+      "settingsGroupHistoryBackfill": "Traducción de historial",
+      "settingsGroupFallback": "Servicios de respaldo en traducción manual",
+      "settingsGroupTranslatedText": "Texto traducido",
+      "settingsGroupNotices": "Avisos y accesos rápidos",
+      "settingsGroupWindows": "Apariencia de ventanas",
+      "settingsMoreModelParams": "Más parámetros del modelo",
+      "settingsApiKeyOptional": "Clave API (opcional)",
+      "settingsRequiresParent": 'Activa primero "{parent}"',
+      "settingsDangerZone": "Zona de peligro",
+      "settingsResetDesc": "Restaura los valores predeterminados tras confirmar; puedes conservar claves API y plantillas.",
+      "providerSettingsTitle": "Ajustes del servicio",
+      "providerSettingsDesc": "Muestra solo las opciones del servicio actual; las demás se conservan para cuando vuelvas.",
+      "polishControlsTitle": "Experiencia de escritura",
+      "translationControlsTitle": "Puntos de entrada de traducción",
+      "autoTranslateSettingsTitle": "Programación de autotraducción",
+      "publicBilingualTitle": "Entrada pública bilingüe",
+      "publicBilingualDependencyTitle": "Flujo actual",
+      "publicBilingualDependencyDesc": "Un mensaje bilingüe es texto normal de Discord que todos pueden ver al enviarlo.",
+      "publicBilingualDependencyStatus": "Pulir antes de bilingüe: {polishProvider}; traducción: {translationProvider}; destino: {targetLanguage}.",
+      "publicBilingualDependencyFlowDesc": "Usa el servicio de pulido para traducir cuando está configurado, hacia el idioma de salida del pulido.",
+      "publicBilingualDependencyPolishOff": "no",
+      "displaySettingsTitle": "Comportamiento visual",
+      "cacheSettingsTitle": "Caché de traducciones",
+      "diagnosticsSettingsTitle": "Diagnóstico",
+      "providerStatus": "Estado del servicio",
+      "providerStatusDesc": "Ejecuta una prueba rápida de conexión con los ajustes actuales.",
+      "quickSettingsOpen": "Abrir ajustes de Discord AI Translator",
+      "quickSettingsDone": "Listo",
+      "quickSettingsOpenFailed": "No se pudieron abrir los ajustes rápidos: {error}",
+      "quickSettingsFallbackTitle": "Los ajustes rápidos no se cargaron por completo",
+      "quickSettingsFallbackHint": "Se registró el diagnóstico de apertura. Cierra esta ventana y exporta el JSON si necesitas depurar.",
+      "quickPanelTitle": "Traductor IA",
+      "quickPanelLauncherLabel": "Traductor IA: {status}",
+      "quickPanelOpenFull": "Abrir todos los ajustes",
+      "quickPanelClose": "Cerrar",
+      "quickPanelEscHint": "Esc para cerrar",
+      "quickPanelAutoTranslate": "Autotraducción",
+      "quickPanelAutoTranslateDesc": "Traducir mensajes en otros idiomas en pantalla",
+      "quickPanelChannel": "Este canal",
+      "quickPanelChannelNone": "ningún canal abierto",
+      "quickPanelChannelDm": "Mensaje directo",
+      "quickPanelRuleInherit": "Según gral.",
+      "quickPanelRuleEnabled": "Siempre",
+      "quickPanelRuleDisabled": "Nunca",
+      "quickPanelRuleInheritFull": "Seguir interruptor general",
+      "quickPanelRuleEnabledFull": "Traducir siempre",
+      "quickPanelRuleDisabledFull": "No traducir nunca",
+      "quickPanelRuleCaptionInheritOn": "Ahora: autotraduciendo (sigue al interruptor general)",
+      "quickPanelRuleCaptionInheritOff": "Ahora: sin autotraducir (sigue al interruptor general)",
+      "quickPanelRuleCaptionEnabled": "Autotraduce aquí incluso con el interruptor general apagado",
+      "quickPanelRuleCaptionDisabled": "Sin autotraducción aquí; la traducción manual sigue funcionando",
+      "quickPanelRuleCaptionNoChannel": "Abre un canal para asignarle una regla propia",
+      "quickPanelRuleCaptionTranslationOff": "La traducción de canales está apagada; esta regla se aplicará al activarla",
+      "quickPanelTargetLanguage": "Traducir a",
+      "quickPanelDisplay": "Visualización",
+      "quickPanelMask": "Ocultar traducciones",
+      "quickPanelMaskDesc": "Mostrar barra gris y hacer clic para leer",
+      "quickPanelHideOriginal": "Ocultar original tras traducir",
+      "quickPanelHideOriginalDesc": "Pasa el cursor sobre el mensaje para ver el original",
+      "quickPanelPosition": "Posición de traducción",
+      "quickPanelPositionAbove": "Arriba",
+      "quickPanelPositionBelow": "Abajo",
+      "quickStatusActive": "Autotraduciendo en este canal",
+      "quickStatusBusy": "Traduciendo {inFlight}, {queued} en cola",
+      "quickStatusTesting": "Probando la conexión…",
+      "quickStatusLatency": "{ms} ms",
+      "quickStatusWaiting": "{reason}; se reanuda automáticamente",
+      "quickStatusWaitingSeconds": "{reason}; se reanuda en unos {seconds} s",
+      "quickStatusReasonRateLimit": "Servicio ocupado",
+      "quickStatusReasonServer": "Error del servicio",
+      "quickStatusReasonNetwork": "Conexión inestable",
+      "quickStatusReasonParse": "Respuesta inesperada",
+      "quickStatusNeedsYou": "Requiere atención: {reason}",
+      "quickStatusReasonConfig": "falta clave API u otros ajustes",
+      "quickStatusReasonAuth": "clave API rechazada",
+      "quickStatusReasonQuota": "cuota o saldo agotado",
+      "quickStatusReasonLocal": "el servicio local no responde",
+      "quickStatusReasonFailed": "falló la prueba de conexión",
+      "quickStatusReasonEndpoint": "URL de API no válida",
+      "quickStatusReasonNotFound": "no se encontró la URL de API o el modelo",
+      "quickStatusNotConfigured": "Sin configurar",
+      "quickStatusOffChannel": "Sin autotraducción en este canal",
+      "quickStatusOffDisabled": "La traducción de canales está apagada",
+      "quickStatusManualHint": "La traducción manual sigue disponible",
+      "quickPanelTabsLabel": "Modos del panel rápido",
+      "quickPanelTabTranslation": "Traducir",
+      "quickPanelTabPolish": "Pulir",
+      "quickPanelTabTransAutoOn": "Auto · {language}",
+      "quickPanelTabTransManual": "Manual · {language}",
+      "quickPanelTabTransOff": "Apagado",
+      "quickPanelTabPolishOn": "Activo · {language}",
+      "quickPanelTabPolishOff": "Apagado",
+      "quickPanelTranslationService": "Servicio de traducción",
+      "quickPanelPolishService": "Servicio de pulido",
+      "quickPanelSavedServiceCurrent": "Actual: {label}",
+      "quickPanelSavedServiceEmpty": "Sin servicios guardados (se guardan tras Probar)",
+      "quickPanelServiceShared": "Compartido",
+      "quickPanelServiceIndependent": "Separado",
+      "quickPanelTranslationTemplate": "Plantilla de traducción",
+      "quickPanelTemplateCustom": "Prompt personalizado",
+      "quickStatusPolishActive": "Pulido de escritura listo",
+      "quickStatusPolishOff": "El pulido de escritura está apagado",
+      "quickStatusPolishBtnOn": "Botón visible en cuadro",
+      "quickStatusPolishBtnOff": "Botón oculto en cuadro",
+      "quickStatusPolishHotkeyOff": "Atajo apagado",
+      "quickPanelPolishTestTitle": "Probar la conexión del servicio de pulido",
+      "quickPanelPolishEnabled": "Activar pulido de escritura",
+      "quickPanelPolishEnabledDesc": "Reescribe tu borrador y lo devuelve al cuadro de texto",
+      "quickPanelPolishOutputLanguage": "Idioma de salida",
+      "quickPanelPolishTemplate": "Plantilla de pulido",
+      "quickPanelPolishCreativity": "Creatividad",
+      "quickPanelPolishCreativitySteady": "Fiel 0.3",
+      "quickPanelPolishCreativityBalanced": "Natural 0.7",
+      "quickPanelPolishCreativityCreative": "Creativo 1.2",
+      "quickPanelPolishCreativityDescSteady": "Más fiel a tu redacción original",
+      "quickPanelPolishCreativityDescBalanced": "Equilibrado para conversar a diario",
+      "quickPanelPolishCreativityDescCreative": "Frases más variadas al volver a pulir",
+      "quickPanelPolishBehavior": "Comportamiento",
+      "quickPanelPolishAfterAction": "Tras pulir",
+      "quickPanelPolishRepolishSource": "Repulir",
+      "quickPanelPolishRepolishOriginal": "Original",
+      "quickPanelPolishRepolishLast": "Último",
+      "quickPanelPublicBilingual": "Botón público bilingüe",
+      "quickPanelPublicBilingualDesc": "Mostrar el botón «Bilingüe» junto al cuadro de texto",
+      "quickPanelPublicBilingualAfterPolish": "Bilingüe automático tras pulir",
+      "quickPanelPublicBilingualAfterPolishDesc": "Añadir también el original oculto después de pulir",
+      "quickPanelTryPolishToggle": "Prueba rápida de pulido",
+      "quickPanelTryPolishPlaceholder": "Escribe una frase para probar plantilla e idioma…",
+      "quickPanelTryPolishRun": "Probar",
+      "quickPanelTryPolishAgain": "Otra vez",
+      "quickPanelOpenFullPolish": "Plantillas y ajustes completos",
+      "inputActionMenu": "Acciones IA",
+      "inputActionOpenSettings": "Ajustes",
+      "restoreOriginalShort": "↶",
+      "polishButtonShort": "P",
+      "polishTitleAttrWithTone": "Pulir borrador actual con IA (Tono: {tone}). Atajo: {shortcut}.",
+      "polishPresetPicker": "Cambiar tono de pulido",
+      "polishPresetPickerTitle": "Cambiar tono de pulido (Actual: {tone})",
+      "polishPresetMenuTitle": "Tono de pulido",
+      "polishPresetMenuTabsLabel": "Categorías de tono de pulido",
+      "polishPresetMenuCustomNote": "Usando prompt personalizado; elige un preajuste abajo para cambiar",
+      "polishPresetMenuEmpty": "Aún no hay preajustes. Añade uno en Ajustes.",
+      "polishPresetMenuEmptyPersona": "Los tonos de personajes llegarán pronto, o añade los tuyos en Ajustes.",
+      "polishPresetMenuManage": "Gestionar / tonos personalizados…",
+      "polishPresetMenuItemAction": "Cambiar tono de pulido…",
+      "publicBilingualButtonShort": "Bi",
+      "showQuickSettingsPanelButton": "Mostrar acceso rápido en el panel de usuario",
+      "showQuickSettingsPanelButtonDesc": "Añade un botón AI junto al engranaje de ajustes de Discord abajo a la izquierda.",
+      "currentChannelAutoTranslatePolicy": "Autotraducción en este canal",
+      "currentChannelAutoTranslatePolicyDesc": "Solo afecta a la autotraducción de este canal; la traducción manual no cambia.",
+      "channelPolicyInherit": "Seguir interruptor general",
+      "channelPolicyEnabled": "Traducir siempre",
+      "channelPolicyDisabled": "No traducir nunca",
+      "channelRuleFollow": "Seguir interruptor general",
+      "channelRuleAlways": "Traducir siempre",
+      "channelRuleNever": "No traducir nunca",
+      "historyBackfillEnabled": "Permitir traducir historial ya cargado",
+      "historyBackfillEnabledDesc": "Permite traducir bajo demanda mensajes ya cargados; nunca se ejecuta solo.",
+      "historyBackfillLimit": "Límite de historial por ejecución",
+      "historyBackfillLimitDesc": "Máximo de mensajes cargados a traducir por vez (1-100).",
+      "historyBackfillRun": "Traducir mensajes cargados",
+      "historyBackfillRunning": "Traduciendo...",
+      "historyBackfillRunDesc": "Pone en cola de baja prioridad los mensajes cargados aún sin traducir.",
+      "historyBackfillQueued": "En cola de historial: {count} mensajes.",
+      "historyBackfillNoWork": "No hay mensajes cargados pendientes de traducir.",
+      "historyBackfillContextMenu": "Traducir mensajes cargados",
+      "providerFallbackEnabled": "Usar servicios de respaldo si falla la traducción manual",
+      "providerFallbackEnabledDesc": "Solo para traducción manual y bilingüe público; los servicios locales nunca usan la nube.",
+      "providerFallbackOrder": "Orden de servicios de respaldo",
+      "providerFallbackOrderListDesc": "Marca los servicios de respaldo y ajusta su orden con las flechas.",
+      "providerFallbackMoveUp": "Subir {provider}",
+      "providerFallbackMoveDown": "Bajar {provider}",
+      "providerFallbackCurrent": " (servicio actual)",
+      "providerFallbackOrderDesc": "Separa con comas o saltos de línea; disponibles: {providers}.",
+      "composerMassMentionBlocked": "Se neutralizaron menciones masivas o de rol añadidas por el modelo ({mentions}) para evitar avisos accidentales.",
+      "composerChannelChanged": "Cambiaste de canal antes de aplicar el texto; no se insertó en otro canal. Cópialo o vuelve al canal original.",
+      "hostHealthTitle": "Comprobación de compatibilidad con Discord",
+      "hostHealthDesc": "Verifica los anclajes activos de Discord y BetterDiscord para detectar fallos tras actualizaciones.",
+      "hostHealthRecheck": "Volver a comprobar",
+      "hostHealthCopyReport": "Copiar informe",
+      "hostHealthCopied": "Informe de compatibilidad copiado.",
+      "hostHealthSummaryOk": "Todo correcto ({ok}/{total})",
+      "hostHealthSummaryWarn": "Requiere revisión ({ok} bien · {warn} aviso · {error} error)",
+      "hostHealthSummaryError": "Problema de compatibilidad ({ok} bien · {warn} aviso · {error} error)",
+      "hostHealthItemBdApi": "API de BetterDiscord",
+      "hostHealthItemStores": "Stores internos de Discord (MessageStore / ChannelStore)",
+      "hostHealthItemChatRoot": "Contenedor raíz del chat",
+      "hostHealthItemMessages": "Nodos de mensajes y extracción de texto",
+      "hostHealthItemComposer": "Cuadro de escritura y barra de herramientas",
+      "hostHealthItemUserPanel": "Panel de usuario y botón AI",
+      "hostHealthItemContextMenu": "Parche de menú contextual",
+      "hostHealthItemTheme": "Tema de Discord detectado",
+      "hostHealthStateOk": "Bien",
+      "hostHealthStateWarn": "Revisar",
+      "hostHealthStateError": "Fallo",
+      "quickLanguageBarLabel": "Cambio rápido de idioma de la interfaz",
+      "quickLanguageSwitchTitle": "Idioma de la interfaz: {language}"
+    };
+  }
+});
+
+// src/i18n/locales.js
+var require_locales = __commonJS({
+  "src/i18n/locales.js"(exports2, module2) {
+    "use strict";
+    var UI_LOCALES = Object.freeze([
+      Object.freeze({
+        code: "zh-CN",
+        label: "简体中文",
+        shortLabel: "简中",
+        englishLabel: "Simplified Chinese",
+        bcp47: "zh-CN",
+        dir: "ltr"
+      }),
+      Object.freeze({
+        code: "zh-TW",
+        label: "繁體中文",
+        shortLabel: "繁體",
+        englishLabel: "Traditional Chinese",
+        bcp47: "zh-TW",
+        dir: "ltr"
+      }),
+      Object.freeze({
+        code: "en",
+        label: "English",
+        shortLabel: "EN",
+        englishLabel: "English",
+        bcp47: "en-US",
+        dir: "ltr"
+      }),
+      Object.freeze({
+        code: "ru",
+        label: "Русский",
+        shortLabel: "Рус",
+        englishLabel: "Russian",
+        bcp47: "ru-RU",
+        dir: "ltr"
+      }),
+      Object.freeze({
+        code: "ar",
+        label: "العربية",
+        shortLabel: "عربي",
+        englishLabel: "Arabic",
+        bcp47: "ar",
+        dir: "rtl"
+      }),
+      Object.freeze({
+        code: "es",
+        label: "Español",
+        shortLabel: "ES",
+        englishLabel: "Spanish",
+        bcp47: "es",
+        dir: "ltr"
+      })
+    ]);
+    var UI_LOCALE_CODES = Object.freeze(UI_LOCALES.map((item) => item.code));
+    var UI_LOCALE_MAP = new Map(UI_LOCALES.map((item) => [item.code, item]));
+    var LOCALE_ALIASES = Object.freeze({
+      "zh": "zh-CN",
+      "zh-cn": "zh-CN",
+      "zh_cn": "zh-CN",
+      "zh-hans": "zh-CN",
+      "zh-sg": "zh-CN",
+      "zh-tw": "zh-TW",
+      "zh_tw": "zh-TW",
+      "zh-hant": "zh-TW",
+      "zh-hk": "zh-TW",
+      "zh-mo": "zh-TW",
+      "en": "en",
+      "en-us": "en",
+      "en_us": "en",
+      "en-gb": "en",
+      "ru": "ru",
+      "ru-ru": "ru",
+      "ru_ru": "ru",
+      "ar": "ar",
+      "ar-sa": "ar",
+      "ar-eg": "ar",
+      "ar-ae": "ar",
+      "es": "es",
+      "es-es": "es",
+      "es-419": "es",
+      "es-mx": "es",
+      "es-ar": "es"
+    });
+    var LANGUAGE_PRESET_LOCALIZED_NAMES = Object.freeze({
+      "zh-TW": Object.freeze({
+        "汉语": "漢語",
+        "繁體中文": "繁體中文",
+        "英语": "英語",
+        "西班牙语": "西班牙語",
+        "法语": "法語",
+        "印地语": "印地語",
+        "俄语": "俄語",
+        "德语": "德語",
+        "日语": "日語",
+        "阿拉伯语": "阿拉伯語",
+        "越南语": "越南語",
+        "朝鲜语": "韓語",
+        "意大利语": "義大利語"
+      }),
+      ru: Object.freeze({
+        "汉语": "Китайский",
+        "繁體中文": "Китайский (трад.)",
+        "英语": "Английский",
+        "西班牙语": "Испанский",
+        "法语": "Французский",
+        "印地语": "Хинди",
+        "俄语": "Русский",
+        "德语": "Немецкий",
+        "日语": "Японский",
+        "阿拉伯语": "Арабский",
+        "越南语": "Вьетнамский",
+        "朝鲜语": "Корейский",
+        "意大利语": "Итальянский"
+      }),
+      ar: Object.freeze({
+        "汉语": "الصينية",
+        "繁體中文": "الصينية التقليدية",
+        "英语": "الإنجليزية",
+        "西班牙语": "الإسبانية",
+        "法语": "الفرنسية",
+        "印地语": "الهندية",
+        "俄语": "الروسية",
+        "德语": "الألمانية",
+        "日语": "اليابانية",
+        "阿拉伯语": "العربية",
+        "越南语": "الفيتنامية",
+        "朝鲜语": "الكورية",
+        "意大利语": "الإيطالية"
+      }),
+      es: Object.freeze({
+        "汉语": "Chino",
+        "繁體中文": "Chino tradicional",
+        "英语": "Inglés",
+        "西班牙语": "Español",
+        "法语": "Francés",
+        "印地语": "Hindi",
+        "俄语": "Ruso",
+        "德语": "Alemán",
+        "日语": "Japonés",
+        "阿拉伯语": "Árabe",
+        "越南语": "Vietnamita",
+        "朝鲜语": "Coreano",
+        "意大利语": "Italiano"
+      })
+    });
+    function normalizeUiLocale(value, fallback = "zh-CN") {
+      const raw = String(value || "").trim();
+      if (!raw) return fallback;
+      if (UI_LOCALE_MAP.has(
+        /** @type {any} */
+        raw
+      )) return raw;
+      const lower = raw.toLowerCase();
+      if (Object.prototype.hasOwnProperty.call(LOCALE_ALIASES, lower)) return LOCALE_ALIASES[lower];
+      const primary = lower.split(/[-_]/)[0];
+      if (primary === "zh") {
+        return /(?:tw|hk|mo|hant)/.test(lower) ? "zh-TW" : "zh-CN";
+      }
+      if (Object.prototype.hasOwnProperty.call(LOCALE_ALIASES, primary)) return LOCALE_ALIASES[primary];
+      return fallback;
+    }
+    function getUiLocaleMeta(locale) {
+      const normalized = normalizeUiLocale(locale);
+      return UI_LOCALE_MAP.get(
+        /** @type {any} */
+        normalized
+      ) || UI_LOCALES[0];
+    }
+    function isRtlLocale(locale) {
+      return getUiLocaleMeta(locale).dir === "rtl";
+    }
+    function getUiLocaleButtonTooltip(localeOrMeta) {
+      const meta = typeof localeOrMeta === "string" ? getUiLocaleMeta(localeOrMeta) : localeOrMeta;
+      if (!meta) return "";
+      return meta.code === "en" ? meta.label : `${meta.label} · ${meta.englishLabel}`;
+    }
+    function getLocalizedPresetLanguageName(language, locale = "zh-CN") {
+      if (!language || typeof language !== "object") return String(language || "");
+      const normalizedLocale = normalizeUiLocale(locale);
+      if (normalizedLocale === "en") return String(language.en || language.value || "");
+      if (normalizedLocale === "zh-CN") return String(language.zh || language.value || "");
+      const table = LANGUAGE_PRESET_LOCALIZED_NAMES[normalizedLocale];
+      const lookupKey = String(language.value || language.zh || "").trim();
+      if (table && lookupKey && Object.prototype.hasOwnProperty.call(table, lookupKey)) {
+        return table[lookupKey];
+      }
+      return String(language.en || language.zh || language.value || "");
+    }
+    function getLocalizedPresetLanguageLabel(language, locale = "zh-CN") {
+      if (!language || typeof language !== "object") return String(language || "");
+      const normalizedLocale = normalizeUiLocale(locale);
+      if (normalizedLocale === "en") return String(language.en || language.value || "");
+      const localized = getLocalizedPresetLanguageName(language, normalizedLocale);
+      const english = String(language.en || "").trim();
+      if (!english || localized.toLowerCase() === english.toLowerCase()) return localized;
+      return `${localized} - ${english}`;
+    }
+    module2.exports = {
+      UI_LOCALES,
+      UI_LOCALE_CODES,
+      LANGUAGE_PRESET_LOCALIZED_NAMES,
+      normalizeUiLocale,
+      getUiLocaleMeta,
+      isRtlLocale,
+      getUiLocaleButtonTooltip,
+      getLocalizedPresetLanguageName,
+      getLocalizedPresetLanguageLabel
+    };
+  }
+});
+
+// src/i18n.js
+var require_i18n = __commonJS({
+  "src/i18n.js"(exports2, module2) {
+    "use strict";
+    var zhCN = require_zh_CN();
+    var zhTW = require_zh_TW();
+    var en = require_en();
+    var ru = require_ru();
+    var ar = require_ar();
+    var es = require_es();
+    var {
+      UI_LOCALES,
+      UI_LOCALE_CODES,
+      LANGUAGE_PRESET_LOCALIZED_NAMES,
+      normalizeUiLocale,
+      getUiLocaleMeta,
+      isRtlLocale,
+      getUiLocaleButtonTooltip,
+      getLocalizedPresetLanguageName,
+      getLocalizedPresetLanguageLabel
+    } = require_locales();
+    var I18N = {
+      "zh-CN": zhCN,
+      "zh-TW": zhTW,
+      en,
+      ru,
+      ar,
+      es
+    };
+    module2.exports = {
+      I18N,
+      UI_LOCALES,
+      UI_LOCALE_CODES,
+      LANGUAGE_PRESET_LOCALIZED_NAMES,
+      normalizeUiLocale,
+      getUiLocaleMeta,
+      isRtlLocale,
+      getUiLocaleButtonTooltip,
+      getLocalizedPresetLanguageName,
+      getLocalizedPresetLanguageLabel
+    };
+  }
+});
+
 // src/settings/settings-store.js
 var require_settings_store = __commonJS({
   "src/settings/settings-store.js"(exports2, module2) {
@@ -22587,6 +28468,7 @@ var require_settings_store = __commonJS({
     var { createPluginContext } = require_plugin_context();
     var { normalizeSettingsTabId } = require_settings_schema();
     var { normalizePanelTheme } = require_panel_theme();
+    var { normalizeUiLocale } = require_i18n();
     var RESET_KEPT_CREDENTIAL_FIELDS = ["apiKey", "appId", "secretKey", "region", "deeplPlan"];
     var RESET_SECRET_FIELDS = ["apiKey", "appId", "secretKey"];
     var RESET_KEPT_CONNECTION_FIELDS = ["endpoint", "model"];
@@ -23079,6 +28961,11 @@ var require_settings_store = __commonJS({
           this.plugin.settings.ui = this.plugin.clone(DEFAULT_SETTINGS.ui);
           changed = true;
         }
+        const uiLanguage = normalizeUiLocale(this.plugin.settings.ui.language, DEFAULT_SETTINGS.ui.language);
+        if (uiLanguage !== this.plugin.settings.ui.language) {
+          this.plugin.settings.ui.language = uiLanguage;
+          changed = true;
+        }
         const settingsActiveTab = normalizeSettingsTabId(this.plugin.settings.ui.settingsActiveTab);
         if (settingsActiveTab !== this.plugin.settings.ui.settingsActiveTab) {
           this.plugin.settings.ui.settingsActiveTab = settingsActiveTab;
@@ -23556,13 +29443,16 @@ var require_settings_store = __commonJS({
         if (path === "ui.panelTheme") {
           value = normalizePanelTheme(value);
         }
+        if (path === "ui.language") {
+          value = normalizeUiLocale(value, DEFAULT_SETTINGS.ui.language);
+        }
         let cursor = this.plugin.settings;
         for (let index = 0; index < parts.length - 1; index++) {
           cursor = cursor[parts[index]];
         }
         const leaf = parts[parts.length - 1];
         if (Object.is(cursor[leaf], value)) {
-          this.plugin.syncSettingControls(path, value, { includeActive: true });
+          this.plugin.syncSettingControls(path, value, { includeActive: options.live !== true });
           if (options.save === "immediate" || options.forceSave === true) {
             this.plugin.saveSettings({ retryOnError: options.retryOnError });
           } else if (options.save === "debounce") {
@@ -23658,6 +29548,20 @@ var require_settings_store = __commonJS({
         }
         if (path === "polish.prompt" || path === "polish.activePromptTemplate" || path === "ui.polishHotkey") {
           this.plugin.syncPolishPresetControls?.();
+        }
+        if (typeof document !== "undefined" && path === "translation.targetLanguage") {
+          const msgTitle = this.plugin.t("translateTitleAttr", { targetLanguage: this.plugin.getDisplayLanguage(this.plugin.settings.translation?.targetLanguage) });
+          document.querySelectorAll?.(".dait-message-button")?.forEach((button) => {
+            button.title = msgTitle;
+          });
+        }
+        if (typeof document !== "undefined" && (path === "polish.targetLanguage" || path === "translation.targetLanguage")) {
+          const bilingualLang = this.plugin.getDisplayLanguage(this.plugin.getPublicBilingualTargetLanguage?.());
+          const bilingualTitle = this.plugin.t("publicBilingualTitleAttr", { targetLanguage: bilingualLang });
+          document.querySelectorAll?.(".dait-public-bilingual-button")?.forEach((button) => {
+            button.title = bilingualTitle;
+            button.setAttribute?.("aria-label", bilingualTitle);
+          });
         }
         if (typeof document !== "undefined" && path === "ui.publicBilingualInputButton" && value === false) {
           document.querySelectorAll?.(".dait-public-bilingual-button")?.forEach((node) => {
@@ -23843,6 +29747,10 @@ var require_settings_store = __commonJS({
         if (changed("hideOriginalAfterTranslation")) this.plugin.syncAllTranslationSourceVisibility();
         if (TRANSLATION_LINE_DISPLAY_KEYS.some(changed)) this.plugin.syncAllTranslationDisplaySettings();
         if (changed("panelTheme")) this.plugin.refreshPanelThemes();
+        if (changed("language")) {
+          this.plugin.refreshLocalizedUi?.();
+          this.plugin.events?.emit("language:changed", { language: ui.language });
+        }
         this.plugin.syncPolishPresetControls?.();
         this.plugin.queueScan();
       }
@@ -23942,6 +29850,7 @@ var require_settings_shell = __commonJS({
       normalizeSettingsTabId
     } = require_settings_schema();
     var { PLUGIN_VERSION } = require_version();
+    var { UI_LOCALES, getUiLocaleButtonTooltip } = require_i18n();
     var methods = {
       getSettingsPanel(options = {}) {
         const startedAt = this.plugin.getDiagnosticTime();
@@ -24038,6 +29947,9 @@ var require_settings_shell = __commonJS({
         tabpanel.setAttribute("aria-labelledby", tab.tabId);
         tabpanel.dataset.daitSettingsTabPanel = tab.id;
         tabpanel.dataset.daitSettingsSection = tab.id;
+        if (tab.id === SETTINGS_TAB_ADVANCED) {
+          tabpanel.dataset.daitTranslationLocal = String(Boolean(this.plugin.isLocalTranslationProvider?.(this.plugin.settings?.translation)));
+        }
         tabpanel.hidden = !active;
         const heading = document.createElement("h2");
         heading.className = "dait-settings-page-title";
@@ -24086,6 +29998,15 @@ var require_settings_shell = __commonJS({
           }
           this.refreshSavedServiceConfigControls?.(target.tabpanel);
         }
+        if (target.id === SETTINGS_TAB_ADVANCED && target.tabpanel?.replaceWith) {
+          const currentLocal = String(Boolean(this.plugin.isLocalTranslationProvider?.(this.plugin.settings?.translation)));
+          if (target.tabpanel.dataset?.daitTranslationLocal && target.tabpanel.dataset.daitTranslationLocal !== currentLocal) {
+            const fresh = this.createSettingsTabPanel(state, target, !state.searchQuery);
+            target.tabpanel.replaceWith(fresh);
+            target.tabpanel = fresh;
+            this.syncSettingsDependentRows?.(fresh);
+          }
+        }
         if (options.focusTab) this.focusSettingsElement(target.button);
         if (options.save !== false && this.plugin.settings?.ui && this.plugin.settings.ui.settingsActiveTab !== target.id) {
           this.plugin.settings.ui.settingsActiveTab = target.id;
@@ -24097,7 +30018,13 @@ var require_settings_shell = __commonJS({
       handleSettingsTabKeydown(state, event) {
         const count = state?.tabs?.length || 0;
         if (!count) return;
-        const steps = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 };
+        const horizontalRtl = state?.tablist?.getAttribute?.("aria-orientation") === "horizontal" && Boolean(this.plugin.isRtlLocale?.());
+        const steps = {
+          ArrowDown: 1,
+          ArrowRight: horizontalRtl ? -1 : 1,
+          ArrowUp: -1,
+          ArrowLeft: horizontalRtl ? 1 : -1
+        };
         const current = Math.max(0, state.tabs.findIndex((tab) => tab.id === state.activeTab));
         let next = null;
         if (steps[event?.key]) next = (current + steps[event.key] + count) % count;
@@ -24160,7 +30087,67 @@ var require_settings_shell = __commonJS({
           this.closeSettingsWindow(close);
         });
         header.appendChild(close);
+        header.appendChild(this.createQuickLanguageBar({ surface: "header", fullLabels: false }));
         return header;
+      },
+      // Zero-barrier quick UI language switcher: native-script pills so users who do not read the active language can switch in 1 click.
+      createQuickLanguageBar({ surface = "header", fullLabels = false } = {}) {
+        const bar = document.createElement("div");
+        bar.className = `dait-lang-bar dait-lang-bar-${surface}`;
+        bar.setAttribute("role", "radiogroup");
+        bar.setAttribute("aria-label", this.plugin.t("quickLanguageBarLabel"));
+        const currentLocale = this.plugin.getLocale();
+        const selectLocale = (code) => {
+          if (!code || code === this.plugin.getLocale()) return;
+          this.plugin.setSetting("ui.language", code);
+          const panel = bar.closest?.(".dait-settings");
+          if (panel) this.plugin.replaceSettingsPanelElement(panel);
+        };
+        const buttons = UI_LOCALES.map((item) => {
+          const active = item.code === currentLocale;
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "dait-lang-pill";
+          button.setAttribute("role", "radio");
+          button.setAttribute("aria-checked", active ? "true" : "false");
+          button.setAttribute("tabindex", active ? "0" : "-1");
+          button.setAttribute("lang", item.code);
+          button.setAttribute("dir", item.dir);
+          button.dataset.daitUiLang = item.code;
+          button.dataset.daitUiFocusId = `${surface}-lang-${item.code}`;
+          button.textContent = fullLabels ? item.label : item.shortLabel;
+          const tooltip = getUiLocaleButtonTooltip(item);
+          button.title = tooltip;
+          button.setAttribute("aria-label", tooltip);
+          button.addEventListener("click", (event) => {
+            event?.preventDefault?.();
+            selectLocale(item.code);
+          });
+          bar.appendChild(button);
+          return button;
+        });
+        bar.addEventListener("keydown", (event) => {
+          const rtl = Boolean(this.plugin.isRtlLocale?.());
+          const stepMap = {
+            ArrowRight: rtl ? -1 : 1,
+            ArrowDown: 1,
+            ArrowLeft: rtl ? 1 : -1,
+            ArrowUp: -1
+          };
+          const currentIdx = Math.max(0, buttons.findIndex((btn) => btn.getAttribute("aria-checked") === "true"));
+          let nextIdx = null;
+          if (stepMap[event?.key] !== void 0) nextIdx = (currentIdx + stepMap[event.key] + buttons.length) % buttons.length;
+          else if (event?.key === "Home") nextIdx = 0;
+          else if (event?.key === "End") nextIdx = buttons.length - 1;
+          if (nextIdx === null) return;
+          event.preventDefault?.();
+          event.stopPropagation?.();
+          const target = buttons[nextIdx];
+          if (!target) return;
+          this.focusSettingsElement(target);
+          selectLocale(target.dataset.daitUiLang);
+        });
+        return bar;
       },
       // An icon for an icon button in a plugin window (css/01-theme-tokens .dait-icon); the button carries the label.
       createWindowIcon(name) {
@@ -24311,12 +30298,27 @@ var require_settings_search = __commonJS({
       getSettingsSearchButtonText(row) {
         return [...row?.querySelectorAll?.("button") || []].filter((button) => button.closest?.(".dait-settings-row, .dait-settings-search-target") === row).map((button) => String(button.textContent || "").trim()).filter(Boolean).join(" ");
       },
-      // A Latin or numeric term matches at the start of a word ("reset" is not found in "preset"); other scripts,
-      // which do not separate words with spaces, match anywhere.
+      // A Latin, Cyrillic or numeric term matches at the start of a word ("reset" is not found in "preset", "digo" is
+      // not found in "código"); unaccented Latin also matches accented Spanish words ("rapido" -> "rápido"). Scripts
+      // without space word boundaries (CJK) or with attached prefixes (Arabic "ال") match anywhere.
       matchesSettingsSearchTerm(haystack, term) {
-        if (!/^[a-z0-9]/.test(term)) return haystack.includes(term);
-        for (let index = haystack.indexOf(term); index >= 0; index = haystack.indexOf(term, index + 1)) {
-          if (index === 0 || !/[a-z0-9]/.test(haystack[index - 1])) return true;
+        const stripArabicMarks = (text) => String(text || "").replace(/[\u0640\u064B-\u065F\u0670]/g, "");
+        if (/[\u0600-\u06FF]/.test(term)) {
+          return stripArabicMarks(haystack).includes(stripArabicMarks(term));
+        }
+        if (!/^[\p{Script=Latin}\p{Script=Cyrillic}\p{N}]/u.test(term)) {
+          return haystack.includes(term);
+        }
+        const matchWordStart = (target, needle) => {
+          for (let index = target.indexOf(needle); index >= 0; index = target.indexOf(needle, index + 1)) {
+            if (index === 0 || !/[\p{L}\p{M}\p{N}]/u.test(target[index - 1])) return true;
+          }
+          return false;
+        };
+        if (matchWordStart(haystack, term)) return true;
+        if (/^[\p{Script=Latin}\p{N}]+$/u.test(term) && !/[\u0300-\u036f]/.test(term.normalize("NFD"))) {
+          const foldedHaystack = haystack.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+          if (foldedHaystack !== haystack && matchWordStart(foldedHaystack, term)) return true;
         }
         return false;
       },
@@ -24329,7 +30331,11 @@ var require_settings_search = __commonJS({
           return [];
         }
         const terms = query.split(/\s+/).filter(Boolean);
-        const entries = this.getSettingsSearchEntries(state).filter((entry) => terms.every((term) => this.matchesSettingsSearchTerm(entry.haystack, term)));
+        const matchedEntries = this.getSettingsSearchEntries(state).filter((entry) => terms.every((term) => this.matchesSettingsSearchTerm(entry.haystack, term)));
+        const entries = state.activeTab ? [
+          ...matchedEntries.filter((entry) => entry.tabId === state.activeTab),
+          ...matchedEntries.filter((entry) => entry.tabId !== state.activeTab)
+        ] : matchedEntries;
         state.searchEntries = entries;
         state.tabs.forEach((tab) => {
           if (tab.tabpanel) tab.tabpanel.hidden = true;
@@ -24388,6 +30394,7 @@ var require_settings_search = __commonJS({
         if (options.focus) this.focusSettingsElement(state.searchInput);
       },
       handleSettingsSearchKeydown(state, event) {
+        if (event?.isComposing || event?.keyCode === 229) return;
         const entries = state?.searchEntries || [];
         if (event?.key === "Enter") {
           event.preventDefault?.();
@@ -24406,6 +30413,7 @@ var require_settings_search = __commonJS({
         }
       },
       handleSettingsSearchResultKeydown(state, event, index) {
+        if (event?.isComposing || event?.keyCode === 229) return;
         const entries = state?.searchEntries || [];
         if (event?.key === "ArrowDown" || event?.key === "ArrowUp") {
           event.preventDefault?.();
@@ -24432,6 +30440,7 @@ var require_settings_search = __commonJS({
             this.cleanupSettingsPanelListeners(state.panel);
             return;
           }
+          if (event?.isComposing || event?.keyCode === 229) return;
           if (event?.key !== "Escape" || !(state.searchQuery || state.searchInput?.value)) return;
           const active = typeof document !== "undefined" ? document.activeElement : null;
           if (!active || !(active === state.searchInput || state.results?.contains?.(active))) return;
@@ -24484,9 +30493,19 @@ var require_settings_sizing = __commonJS({
         const focusOwner = active && panel.contains?.(active) ? active.dataset?.daitPath ? active : active.closest?.("[data-dait-path]") : null;
         const focusPath = focusOwner ? String(focusOwner.dataset?.daitPath || "") : "";
         const focusSavedKind = !focusPath && active && panel.contains?.(active) ? String(active.dataset?.daitSavedConfigs || "") : "";
+        const focusUiId = !focusPath && !focusSavedKind && active && panel.contains?.(active) ? String(active.dataset?.daitUiFocusId || "") : "";
+        const openDetails = new Set(
+          [...panel.querySelectorAll?.("details[data-dait-details-key]") || []].filter((node) => node?.open).map((node) => `${node.closest?.(".dait-settings-tabpanel")?.dataset?.daitSettingsTabPanel || ""}:${node.dataset?.daitDetailsKey || ""}`)
+        );
         const activeTab = panel.__daitSettingsUi?.activeTab;
         if (activeTab && this.plugin.settings?.ui) this.plugin.settings.ui.settingsActiveTab = activeTab;
         nextPanel = nextPanel || this.plugin.getSettingsPanel({ quickSettings: panel.dataset?.daitQuickSettings === "true" });
+        if (openDetails.size) {
+          [...nextPanel.querySelectorAll?.("details[data-dait-details-key]") || []].forEach((node) => {
+            const detailsId = `${node.closest?.(".dait-settings-tabpanel")?.dataset?.daitSettingsTabPanel || ""}:${node.dataset?.daitDetailsKey || ""}`;
+            if (openDetails.has(detailsId)) node.open = true;
+          });
+        }
         ["--dait-host-chrome", "--dait-host-max"].forEach((name) => {
           const value = panel.style?.getPropertyValue?.(name);
           if (value) nextPanel.style?.setProperty?.(name, value);
@@ -24499,9 +30518,17 @@ var require_settings_sizing = __commonJS({
         if (focusPath) {
           const control = [...nextPanel.querySelectorAll?.(`[data-dait-path='${focusPath}']`) || []].find((node) => !node.closest?.("[hidden]"));
           const focusTarget = control?.dataset?.daitControl === "language" ? control.querySelector?.("input:not([hidden]), select") || control : control?.dataset?.daitControl === "segmented" ? control.querySelector?.("[tabindex='0']") || control : control;
+          for (let ancestor = focusTarget?.parentElement; ancestor && ancestor !== nextPanel; ancestor = ancestor.parentElement) {
+            if (String(ancestor.tagName || "").toUpperCase() === "DETAILS") ancestor.open = true;
+          }
           this.focusSettingsElement(focusTarget);
         } else if (focusSavedKind) {
           const control = [...nextPanel.querySelectorAll?.(`[data-dait-saved-configs='${focusSavedKind}']`) || []].find((node) => !node.closest?.("[hidden]"));
+          this.focusSettingsElement(control);
+        } else if (focusUiId) {
+          const langMatch = /^(header|overview)-lang-(.+)$/.exec(focusUiId);
+          const targetId = langMatch ? `${langMatch[1]}-lang-${this.plugin.getLocale()}` : focusUiId;
+          const control = [...nextPanel.querySelectorAll?.(`[data-dait-ui-focus-id='${targetId}']`) || []].find((node) => !node.closest?.("[hidden]"));
           this.focusSettingsElement(control);
         }
         if (nextPanel.dataset?.daitQuickSettings === "true") this.syncSettingsPanelHeight(nextPanel);
@@ -24856,6 +30883,10 @@ var require_settings_sizing = __commonJS({
             }
             return;
           }
+          if (this.plugin.isStarted && !panel.__daitReplacedBy) {
+            this.plugin.commitSettingsControls?.(panel);
+            this.plugin.flushSettings?.({ retryOnError: false });
+          }
           this.plugin.clearHotkeyRecordingWithin(panel);
           this.cleanupSettingsPanelListeners(panel);
           this.clearSettingsModalSizingSchedule(panel);
@@ -25193,12 +31224,10 @@ var require_tab_overview = __commonJS({
         const state = panel?.__daitSettingsUi;
         if (!state) return false;
         const tab = state.tabs.find((item) => item.id === normalizeSettingsTabId(tabId)) || state.tabs[0];
+        this.showSettingsTab(state, tab.id);
         const control = [...tab.tabpanel?.querySelectorAll?.(`[data-dait-path='${path}']`) || []][0] || null;
         const row = control?.closest?.(".dait-settings-row") || null;
-        if (!row) {
-          this.showSettingsTab(state, tab.id);
-          return false;
-        }
+        if (!row) return false;
         return this.openSettingsSearchResult(state, { row, tabId: tab.id });
       },
       // Rebuilds the overview status sections under root (a panel, a tab page, or the whole document), keeping the
@@ -25251,6 +31280,17 @@ var require_tab_overview = __commonJS({
         }
         badges.forEach((badge) => this.renderApiStatusBadge(badge, kind, status.state, this.plugin.getApiStatusText(status.state), status.message || ""));
         details.forEach((detail) => this.syncApiTestDetail(detail, kind));
+        if (kind === "translation") {
+          let headerProviders = [];
+          try {
+            headerProviders = [...document.querySelectorAll?.(".dait-settings-header-provider") || []];
+          } catch {
+          }
+          const providerLabel = this.plugin.getProviderDisplayName(this.plugin.settings.translation?.provider);
+          headerProviders.forEach((node) => {
+            node.textContent = providerLabel;
+          });
+        }
         this.refreshSavedServiceConfigControls();
         this.refreshOverviewStatusSection();
       },
@@ -25327,7 +31367,8 @@ var require_tab_services = __commonJS({
       POLISH_REPOLISH_SOURCE_ORIGINAL,
       POLISH_REPOLISH_SOURCE_LAST_RESULT,
       GOOGLE_TRANSLATE_DEFAULT_MONTHLY_LIMIT,
-      GOOGLE_TRANSLATE_MAX_MONTHLY_LIMIT
+      GOOGLE_TRANSLATE_MAX_MONTHLY_LIMIT,
+      DEFAULT_SETTINGS
     } = require_constants();
     var methods = {
       createTaskSection(kind, titleText, descriptionText) {
@@ -25395,8 +31436,13 @@ var require_tab_services = __commonJS({
         select.addEventListener("change", () => {
           const configId = String(select.value || "").trim();
           if (!configId) return;
+          const panel = select.closest?.(".dait-settings");
           if (this.plugin.applySavedServiceConfig(kind, configId)) {
-            this.replaceSettingsPanelFrom(select);
+            if (panel && panel.isConnected !== false) {
+              const rebuilt = this.plugin.replaceSettingsPanelElement(panel);
+              const nextSelect = [...rebuilt?.querySelectorAll?.(`[data-dait-saved-configs='${kind}']`) || []].find((node) => !node.closest?.("[hidden]"));
+              if (nextSelect) this.focusSettingsElement(nextSelect);
+            }
           }
         });
         syncButton.addEventListener("click", (event) => {
@@ -25556,9 +31602,16 @@ var require_tab_services = __commonJS({
         if (kind === "translation" && ui.googleTranslateSettings) append(this.createGoogleTranslateSettings());
         if (ui.enableThinking || ui.temperature || ui.maxTokens) {
           const details = this.createSettingsDetails(this.plugin.t("settingsMoreModelParams"), "model-params");
+          const taskState = this.plugin.settings[kind] || {};
+          const taskDefaults = DEFAULT_SETTINGS[kind] || {};
+          details.open = Boolean(taskState.enableThinking) || Boolean(ui.temperature) && taskState.temperature !== void 0 && Number(taskState.temperature) !== Number(taskDefaults.temperature) || Boolean(ui.maxTokens) && taskState.maxTokens !== void 0 && Number(taskState.maxTokens) !== Number(taskDefaults.maxTokens);
           if (ui.enableThinking) append(this.plugin.createCheckboxRow(`${kind}.enableThinking`, this.plugin.t("thinkingMode"), { description: this.plugin.t("thinkingModeDesc") }), details);
-          if (ui.temperature) append(this.createInputRow(`${kind}.temperature`, this.plugin.t("temperature"), "number", "0.4", { min: "0", max: "2", step: "0.1" }, { description: this.plugin.t("temperatureDesc") }), details);
-          if (ui.maxTokens) append(this.createInputRow(`${kind}.maxTokens`, this.plugin.t("maxTokens"), "number", "800", { min: "1", step: "1" }, { description: this.plugin.t("maxTokensDesc") }), details);
+          if (ui.temperature) append(this.createInputRow(`${kind}.temperature`, this.plugin.t("temperature"), "number", String(taskDefaults.temperature ?? 0.4), { min: "0", max: "2", step: "0.1" }, { description: this.plugin.t("temperatureDesc") }), details);
+          if (ui.maxTokens) {
+            const maxTokensPlaceholder = String(taskDefaults.maxTokens ?? (kind === "polish" ? 2e3 : 1200));
+            const maxTokensDescKey = kind === "polish" ? "maxTokensPolishDesc" : "maxTokensDesc";
+            append(this.createInputRow(`${kind}.maxTokens`, this.plugin.t("maxTokens"), "number", maxTokensPlaceholder, { min: "1", max: "65536", step: "1" }, { description: this.plugin.t(maxTokensDescKey) }), details);
+          }
           block.appendChild(details);
         }
         if (apiKeyOptional) {
@@ -25863,6 +31916,23 @@ var require_tab_services = __commonJS({
         try {
           let translated;
           if (kind === "polish") {
+            const polish = this.plugin.settings?.polish || {};
+            const contextSignature = [
+              String(polish.provider || ""),
+              String(polish.endpoint || ""),
+              String(polish.model || ""),
+              String(polish.sourceLanguage || ""),
+              String(polish.targetLanguage || ""),
+              String(polish.activePromptTemplate || ""),
+              String(polish.prompt || ""),
+              String(Boolean(polish.enableThinking)),
+              String(polish.maxTokens || ""),
+              String(polish.temperature ?? "")
+            ].join("\n");
+            if (tryHistory && tryHistory.contextSignature && tryHistory.contextSignature !== contextSignature) {
+              tryHistory.results = [];
+            }
+            if (tryHistory) tryHistory.contextSignature = contextSignature;
             const sameSample = tryHistory && tryHistory.text === sample;
             const previousResults = sameSample ? tryHistory.results.slice(-5) : [];
             translated = await this.plugin.runPolishWithGuards(sample, {
@@ -25899,6 +31969,8 @@ var require_tab_services = __commonJS({
       createSettingsDetails(summaryText, key) {
         const details = document.createElement("details");
         details.className = `dait-settings-details dait-settings-details-${key}`;
+        details.dataset.daitDetailsKey = key;
+        details.dataset.daitSearchGroup = summaryText;
         const summary = document.createElement("summary");
         summary.className = "dait-settings-details-summary";
         summary.textContent = summaryText;
@@ -26268,6 +32340,15 @@ var require_diagnostic_labels = __commonJS({
         "render-blocked": "无法显示",
         "cache-identity-mismatch": "缓存对不上",
         "provider-output-bad": "服务返回异常",
+        "auth": "鉴权失败",
+        "quota": "额度不足",
+        "rate-limit": "请求限流",
+        "timeout": "请求超时",
+        "network": "网络错误",
+        "server": "服务端异常",
+        "client": "请求被拒",
+        "invalid-output": "输出异常",
+        "truncated": "回复被截断",
         // Failure layers and flow stages
         "source": "读取原文",
         "plan": "拆分",
@@ -26275,7 +32356,123 @@ var require_diagnostic_labels = __commonJS({
         "request": "请求",
         "output": "结果",
         "validation": "检查",
-        "render": "显示"
+        "render": "显示",
+        "intake": "消息发现",
+        "persist": "本地存储",
+        "settings": "设置更新",
+        "mixed": "综合阶段"
+      },
+      "zh-TW": {
+        "discovered": "發現訊息",
+        "not-eligible-language": "不需翻譯的語言",
+        "prefetch-disabled": "預先翻譯已關閉",
+        "layout-unstable-prefetch": "頁面未穩定，暫緩預譯",
+        "google-prefetch-disabled": "Google 不用於預先翻譯",
+        "current-translation-present": "已有譯文",
+        "recent-render-present": "剛剛繪製過",
+        "cache-hit": "快取命中",
+        "text-cache-hit": "文字快取命中",
+        "invalid-cache": "快取無效",
+        "dedupe-active": "同一則正在翻譯",
+        "terminal-failure": "多次失敗後停止",
+        "retry-cooldown": "等待重試",
+        "api-work-blocked": "請求已暫停",
+        "config-missing": "缺少設定",
+        "batch-limit": "批次已滿",
+        "queue-limit": "佇列已滿",
+        "enqueued": "進入佇列",
+        "requeued": "重新排隊",
+        "provider-cooldown": "服務冷卻中",
+        "local-provider-health": "檢查本機服務",
+        "prefetch-slot": "預先翻譯名額已滿",
+        "request-started": "請求開始",
+        "output-received": "收到結果",
+        "output-invalid": "結果不合格",
+        "retrying": "重試中",
+        "rendered": "已顯示",
+        "render-deferred": "稍後顯示",
+        "render-disconnected": "訊息已離開頁面",
+        "render-text-changed": "原文已改變",
+        "render-identity-changed": "訊息已變化",
+        "render-request-stale": "請求已過時",
+        "render-outside-viewport": "不在畫面內",
+        "manual-line-present": "已有手動譯文",
+        "failure": "失敗",
+        "stale-dom": "頁面已變化",
+        "local-unavailable": "本機服務不可用",
+        "request-success": "請求成功",
+        "request-error": "請求出錯",
+        "request-dedupe": "合併相同請求",
+        "missing-api": "缺少 API 設定",
+        "missing-config": "缺少設定",
+        "cache-set": "寫入快取",
+        "cache-miss": "快取未命中",
+        "cache-expired": "快取過期",
+        "cache-delete": "刪除快取",
+        "cache-persist": "儲存快取",
+        "cache-persist-error": "儲存快取出錯",
+        "auto-disabled": "自動翻譯已關閉",
+        "route-change": "切換了頻道",
+        "cooldown-expired": "冷卻結束",
+        "viewport-settling": "等待頁面穩定",
+        "write-cancelled": "寫入已取消",
+        "write-failed": "寫入失敗",
+        "disabled": "已關閉",
+        "empty": "空內容",
+        "skipped": "略過",
+        "cacheHit": "快取命中",
+        "queuedVisible": "排隊（畫面內）",
+        "queuedPrefetch": "排隊（預先翻譯）",
+        "queuedLongText": "排隊（長訊息）",
+        "inFlight": "翻譯中",
+        "validating": "檢查結果",
+        "cached": "已快取",
+        "failed": "失敗",
+        "stale": "已過時",
+        "cancelled": "已取消",
+        "manual": "手動",
+        "visible": "畫面內",
+        "longText": "長訊息",
+        "prefetch": "預先翻譯",
+        "history": "歷史補翻",
+        "queueLength": "排隊",
+        "inFlightItems": "進行中的訊息",
+        "prefetchInFlight": "預先翻譯進行中",
+        "pendingTargets": "等待顯示",
+        "auto": "自動翻譯",
+        "cache": "快取",
+        "model": "模型請求",
+        "polish": "潤色",
+        "public-bilingual": "公開雙語",
+        "quick-settings": "快捷設定",
+        "source-incomplete": "原文不完整",
+        "whole-pass-failed": "整段翻譯失敗",
+        "chunk-failed": "分段失敗",
+        "subchunk-failed": "小段失敗",
+        "validator-rejected": "結果被拒絕",
+        "render-blocked": "無法顯示",
+        "cache-identity-mismatch": "快取不一致",
+        "provider-output-bad": "服務回傳異常",
+        "auth": "驗證失敗",
+        "quota": "額度不足",
+        "rate-limit": "請求限流",
+        "timeout": "請求逾時",
+        "network": "網路錯誤",
+        "server": "伺服端異常",
+        "client": "請求被拒",
+        "invalid-output": "輸出異常",
+        "truncated": "回覆被截斷",
+        "source": "讀取原文",
+        "plan": "拆分",
+        "queue": "排隊",
+        "request": "請求",
+        "output": "結果",
+        "validation": "檢查",
+        "render": "顯示",
+        "intake": "訊息發現",
+        "persist": "本機儲存",
+        "settings": "設定更新",
+        "mixed": "綜合階段"
       },
       en: {
         // Reason codes
@@ -26373,6 +32570,15 @@ var require_diagnostic_labels = __commonJS({
         "render-blocked": "Could not show",
         "cache-identity-mismatch": "Cache mismatch",
         "provider-output-bad": "Bad service output",
+        "auth": "Auth failed",
+        "quota": "Quota exceeded",
+        "rate-limit": "Rate limited",
+        "timeout": "Timed out",
+        "network": "Network error",
+        "server": "Server error",
+        "client": "Request rejected",
+        "invalid-output": "Invalid output",
+        "truncated": "Reply cut off",
         // Failure layers and flow stages
         "source": "Reading original",
         "plan": "Splitting",
@@ -26380,7 +32586,347 @@ var require_diagnostic_labels = __commonJS({
         "request": "Request",
         "output": "Result",
         "validation": "Checking",
-        "render": "Showing"
+        "render": "Showing",
+        "intake": "Message intake",
+        "persist": "Saving data",
+        "settings": "Settings update",
+        "mixed": "Multiple stages"
+      },
+      ru: {
+        "discovered": "Найдено",
+        "not-eligible-language": "Язык не требует перевода",
+        "prefetch-disabled": "Предперевод выкл.",
+        "layout-unstable-prefetch": "Ожидание страницы",
+        "google-prefetch-disabled": "Google без предперевода",
+        "current-translation-present": "Уже переведено",
+        "recent-render-present": "Недавно показано",
+        "cache-hit": "Из кэша",
+        "text-cache-hit": "Текстовый кэш",
+        "invalid-cache": "Кэш недействителен",
+        "dedupe-active": "Уже переводится",
+        "terminal-failure": "Остановлено после сбоев",
+        "retry-cooldown": "Ожидание повтора",
+        "api-work-blocked": "Запросы приостановлены",
+        "config-missing": "Нет настроек",
+        "batch-limit": "Пакет заполнен",
+        "queue-limit": "Очередь полна",
+        "enqueued": "В очереди",
+        "requeued": "Повторно в очереди",
+        "provider-cooldown": "Пауза сервиса",
+        "local-provider-health": "Проверка локал. сервера",
+        "prefetch-slot": "Нет слотов предперевода",
+        "request-started": "Запрос начат",
+        "output-received": "Ответ получен",
+        "output-invalid": "Ответ отклонён",
+        "retrying": "Повтор",
+        "rendered": "Показано",
+        "render-deferred": "Отложенный показ",
+        "render-disconnected": "Сообщение скрыто",
+        "render-text-changed": "Оригинал изменён",
+        "render-identity-changed": "Сообщение изменено",
+        "render-request-stale": "Запрос устарел",
+        "render-outside-viewport": "Вне экрана",
+        "manual-line-present": "Есть ручной перевод",
+        "failure": "Сбой",
+        "stale-dom": "Страница изменилась",
+        "local-unavailable": "Локал. сервер недоступен",
+        "request-success": "Запрос успешен",
+        "request-error": "Ошибка запроса",
+        "request-dedupe": "Запросы объединены",
+        "missing-api": "Нет настроек API",
+        "missing-config": "Нет настроек",
+        "cache-set": "Сохранено в кэш",
+        "cache-miss": "Промах кэша",
+        "cache-expired": "Кэш истёк",
+        "cache-delete": "Кэш удалён",
+        "cache-persist": "Кэш записан",
+        "cache-persist-error": "Сбой записи кэша",
+        "auto-disabled": "Автоперевод выкл.",
+        "route-change": "Смена канала",
+        "cooldown-expired": "Пауза окончена",
+        "viewport-settling": "Стабилизация экрана",
+        "write-cancelled": "Вставка отменена",
+        "write-failed": "Сбой вставки",
+        "disabled": "Выкл.",
+        "empty": "Пусто",
+        "skipped": "Пропущено",
+        "cacheHit": "Из кэша",
+        "queuedVisible": "В очереди (экран)",
+        "queuedPrefetch": "В очереди (предперевод)",
+        "queuedLongText": "В очереди (длинное)",
+        "inFlight": "Переводится",
+        "validating": "Проверка ответа",
+        "cached": "В кэше",
+        "failed": "Ошибка",
+        "stale": "Устарело",
+        "cancelled": "Отменено",
+        "manual": "Вручную",
+        "visible": "На экране",
+        "longText": "Длинные сообщения",
+        "prefetch": "Предперевод",
+        "history": "Доперевод истории",
+        "queueLength": "В очереди",
+        "inFlightItems": "В обработке",
+        "prefetchInFlight": "Предперевод идёт",
+        "pendingTargets": "Ожидают показа",
+        "auto": "Автоперевод",
+        "cache": "Кэш",
+        "model": "Запросы к модели",
+        "polish": "Улучшение",
+        "public-bilingual": "Двуязычный ввод",
+        "quick-settings": "Быстрые настройки",
+        "source-incomplete": "Неполный оригинал",
+        "whole-pass-failed": "Сбой всего сообщения",
+        "chunk-failed": "Сбой части",
+        "subchunk-failed": "Сбой фрагмента",
+        "validator-rejected": "Ответ отклонён",
+        "render-blocked": "Не удалось показать",
+        "cache-identity-mismatch": "Несовпадение кэша",
+        "provider-output-bad": "Некорректный ответ",
+        "auth": "Ошибка ключа",
+        "quota": "Квота исчерпана",
+        "rate-limit": "Лимит запросов",
+        "timeout": "Тайм-аут",
+        "network": "Ошибка сети",
+        "server": "Ошибка сервера",
+        "client": "Запрос отклонён",
+        "invalid-output": "Неверный ответ",
+        "truncated": "Ответ обрезан",
+        "source": "Чтение оригинала",
+        "plan": "Разбиение",
+        "queue": "Очередь",
+        "request": "Запрос",
+        "output": "Ответ",
+        "validation": "Проверка",
+        "render": "Показ",
+        "intake": "Сбор сообщений",
+        "persist": "Сохранение данных",
+        "settings": "Обновление настроек",
+        "mixed": "Несколько этапов"
+      },
+      ar: {
+        "discovered": "تم العثور",
+        "not-eligible-language": "لغة لا تحتاج ترجمة",
+        "prefetch-disabled": "الترجمة المسبقة متوقفة",
+        "layout-unstable-prefetch": "بانتظار استقرار الصفحة",
+        "google-prefetch-disabled": "Google بلا ترجمة مسبقة",
+        "current-translation-present": "مترجم بالفعل",
+        "recent-render-present": "عُرض للتو",
+        "cache-hit": "إصابة التخزين المؤقت",
+        "text-cache-hit": "إصابة تخزين النص",
+        "invalid-cache": "تخزين مؤقت غير صالح",
+        "dedupe-active": "قيد الترجمة بالفعل",
+        "terminal-failure": "توقف بعد عدة إخفاقات",
+        "retry-cooldown": "بانتظار إعادة المحاولة",
+        "api-work-blocked": "الطلبات متوقفة مؤقتاً",
+        "config-missing": "إعدادات ناقصة",
+        "batch-limit": "الدفعة ممتلئة",
+        "queue-limit": "الطابور ممتلئ",
+        "enqueued": "في الطابور",
+        "requeued": "أُعيد للطابور",
+        "provider-cooldown": "تهدئة الخدمة",
+        "local-provider-health": "فحص الخادم المحلي",
+        "prefetch-slot": "خانات الجلب ممتلئة",
+        "request-started": "بدأ الطلب",
+        "output-received": "وصلت النتيجة",
+        "output-invalid": "نتيجة مرفوضة",
+        "retrying": "إعادة المحاولة",
+        "rendered": "تم العرض",
+        "render-deferred": "تأجل العرض",
+        "render-disconnected": "غادرت الرسالة الصفحة",
+        "render-text-changed": "تغير النص الأصلي",
+        "render-identity-changed": "تغيرت الرسالة",
+        "render-request-stale": "طلب قديم",
+        "render-outside-viewport": "خارج الشاشة",
+        "manual-line-present": "توجد ترجمة يدوية",
+        "failure": "فشل",
+        "stale-dom": "تغيرت الصفحة",
+        "local-unavailable": "الخادم المحلي غير متاح",
+        "request-success": "نجح الطلب",
+        "request-error": "خطأ في الطلب",
+        "request-dedupe": "دُمج الطلب المكرر",
+        "missing-api": "إعدادات API ناقصة",
+        "missing-config": "إعدادات ناقصة",
+        "cache-set": "حُفظ في المؤقت",
+        "cache-miss": "فقدان من المؤقت",
+        "cache-expired": "انتهت صلاحية المؤقت",
+        "cache-delete": "حُذف المؤقت",
+        "cache-persist": "خُزّن المؤقت",
+        "cache-persist-error": "خطأ حفظ المؤقت",
+        "auto-disabled": "الترجمة الآلية متوقفة",
+        "route-change": "تغيرت القناة",
+        "cooldown-expired": "انتهت التهدئة",
+        "viewport-settling": "استقرار الصفحة",
+        "write-cancelled": "أُلغيت الكتابة",
+        "write-failed": "فشلت الكتابة",
+        "disabled": "متوقف",
+        "empty": "فارغ",
+        "skipped": "تم التخطي",
+        "cacheHit": "من التخزين المؤقت",
+        "queuedVisible": "بالطابور (مرئي)",
+        "queuedPrefetch": "بالطابور (مسبق)",
+        "queuedLongText": "بالطابور (نص طويل)",
+        "inFlight": "قيد الترجمة",
+        "validating": "فحص النتيجة",
+        "cached": "مخزن مؤقتاً",
+        "failed": "فشل",
+        "stale": "قديم",
+        "cancelled": "ملغى",
+        "manual": "يدوي",
+        "visible": "على الشاشة",
+        "longText": "رسائل طويلة",
+        "prefetch": "ترجمة مسبقة",
+        "history": "ترجمة السجل",
+        "queueLength": "بالطابور",
+        "inFlightItems": "رسائل قيد التنفيذ",
+        "prefetchInFlight": "ترجمة مسبقة جارية",
+        "pendingTargets": "بانتظار العرض",
+        "auto": "ترجمة تلقائية",
+        "cache": "تخزين مؤقت",
+        "model": "طلبات النموذج",
+        "polish": "تحسين",
+        "public-bilingual": "ثنائي اللغة",
+        "quick-settings": "إعدادات سريعة",
+        "source-incomplete": "الأصل غير مكتمل",
+        "whole-pass-failed": "فشلت الرسالة كاملة",
+        "chunk-failed": "فشل جزء",
+        "subchunk-failed": "فشل مقطع صغير",
+        "validator-rejected": "رُفضت النتيجة",
+        "render-blocked": "تعذر العرض",
+        "cache-identity-mismatch": "عدم تطابق المؤقت",
+        "provider-output-bad": "استجابة خدمة معيبة",
+        "auth": "فشل المصادقة",
+        "quota": "نفاد الحصة",
+        "rate-limit": "تجاوز المعدل",
+        "timeout": "انتهاء المهلة",
+        "network": "خطأ شبكة",
+        "server": "خطأ خادم",
+        "client": "رُفض الطلب",
+        "invalid-output": "مخرجات غير صالحة",
+        "truncated": "رد مقطوع",
+        "source": "قراءة الأصل",
+        "plan": "تقسيم",
+        "queue": "طابور",
+        "request": "طلب",
+        "output": "نتيجة",
+        "validation": "تحقق",
+        "render": "عرض",
+        "intake": "رصد الرسائل",
+        "persist": "حفظ البيانات",
+        "settings": "تحديث الإعدادات",
+        "mixed": "مراحل متعددة"
+      },
+      es: {
+        "discovered": "Detectado",
+        "not-eligible-language": "Idioma no traducible",
+        "prefetch-disabled": "Pretraducción apagada",
+        "layout-unstable-prefetch": "Esperando a la página",
+        "google-prefetch-disabled": "Google omite precarga",
+        "current-translation-present": "Ya traducido",
+        "recent-render-present": "Recién mostrado",
+        "cache-hit": "Acierto de caché",
+        "text-cache-hit": "Acierto caché texto",
+        "invalid-cache": "Caché no válida",
+        "dedupe-active": "Ya traduciéndose",
+        "terminal-failure": "Detenido tras fallos",
+        "retry-cooldown": "Esperando reintento",
+        "api-work-blocked": "Solicitudes en pausa",
+        "config-missing": "Faltan ajustes",
+        "batch-limit": "Lote lleno",
+        "queue-limit": "Cola llena",
+        "enqueued": "En cola",
+        "requeued": "Reencolado",
+        "provider-cooldown": "Servicio en espera",
+        "local-provider-health": "Revisando servidor local",
+        "prefetch-slot": "Cupos precarga llenos",
+        "request-started": "Solicitud iniciada",
+        "output-received": "Respuesta recibida",
+        "output-invalid": "Respuesta rechazada",
+        "retrying": "Reintentando",
+        "rendered": "Mostrado",
+        "render-deferred": "Mostrado después",
+        "render-disconnected": "Mensaje fuera de página",
+        "render-text-changed": "Original modificado",
+        "render-identity-changed": "Mensaje modificado",
+        "render-request-stale": "Solicitud obsoleta",
+        "render-outside-viewport": "Fuera de pantalla",
+        "manual-line-present": "Traducción manual activa",
+        "failure": "Fallo",
+        "stale-dom": "Página cambiada",
+        "local-unavailable": "Servidor local inactivo",
+        "request-success": "Solicitud correcta",
+        "request-error": "Error de solicitud",
+        "request-dedupe": "Solicitud fusionada",
+        "missing-api": "Faltan ajustes API",
+        "missing-config": "Faltan ajustes",
+        "cache-set": "Guardado en caché",
+        "cache-miss": "Fallo de caché",
+        "cache-expired": "Caché caducada",
+        "cache-delete": "Caché borrada",
+        "cache-persist": "Caché guardada",
+        "cache-persist-error": "Error al guardar caché",
+        "auto-disabled": "Autotraducción apagada",
+        "route-change": "Canal cambiado",
+        "cooldown-expired": "Espera terminada",
+        "viewport-settling": "Estabilizando página",
+        "write-cancelled": "Escritura cancelada",
+        "write-failed": "Fallo de escritura",
+        "disabled": "Desactivado",
+        "empty": "Vacío",
+        "skipped": "Omitido",
+        "cacheHit": "En caché",
+        "queuedVisible": "En cola (visible)",
+        "queuedPrefetch": "En cola (precarga)",
+        "queuedLongText": "En cola (texto largo)",
+        "inFlight": "Traduciendo",
+        "validating": "Verificando resultado",
+        "cached": "En caché",
+        "failed": "Fallido",
+        "stale": "Obsoleto",
+        "cancelled": "Cancelado",
+        "manual": "Manual",
+        "visible": "En pantalla",
+        "longText": "Mensajes largos",
+        "prefetch": "Pretraducción",
+        "history": "Historial cargado",
+        "queueLength": "En cola",
+        "inFlightItems": "Mensajes en curso",
+        "prefetchInFlight": "Precarga en curso",
+        "pendingTargets": "Por mostrar",
+        "auto": "Autotraducción",
+        "cache": "Caché",
+        "model": "Peticiones al modelo",
+        "polish": "Pulido",
+        "public-bilingual": "Bilingüe público",
+        "quick-settings": "Ajustes rápidos",
+        "source-incomplete": "Original incompleto",
+        "whole-pass-failed": "Falló mensaje entero",
+        "chunk-failed": "Falló fragmento",
+        "subchunk-failed": "Falló subfragmento",
+        "validator-rejected": "Resultado rechazado",
+        "render-blocked": "No se pudo mostrar",
+        "cache-identity-mismatch": "Caché no coincide",
+        "provider-output-bad": "Salida inválida",
+        "auth": "Error de clave",
+        "quota": "Cuota agotada",
+        "rate-limit": "Límite de tasa",
+        "timeout": "Tiempo agotado",
+        "network": "Error de red",
+        "server": "Error servidor",
+        "client": "Petición rechazada",
+        "invalid-output": "Salida inválida",
+        "truncated": "Respuesta cortada",
+        "source": "Leyendo original",
+        "plan": "Dividiendo",
+        "queue": "Cola",
+        "request": "Solicitud",
+        "output": "Resultado",
+        "validation": "Validación",
+        "render": "Mostrando",
+        "intake": "Detección mensajes",
+        "persist": "Guardado local",
+        "settings": "Cambio de ajustes",
+        "mixed": "Varias etapas"
       }
     };
     function getDiagnosticCodeLabel(code, locale = "zh-CN") {
@@ -26413,15 +32959,19 @@ var require_tab_sections = __commonJS({
     var { SETTINGS_TAB_DATA, MESSAGE_BUTTON_MODE_OFF } = require_settings_schema();
     var { buildHostHealthCard } = require_host_health_card();
     var { getDiagnosticCodeLabel } = require_diagnostic_labels();
+    var { UI_LOCALES } = require_i18n();
     var methods = {
       createGeneralSection() {
         const group = this.createSettingsGroup(this.plugin.t("settingsGroupCommon"), "general");
         group.appendChild(this.plugin.createCheckboxRow("ui.autoTranslateMessages", this.plugin.t("autoTranslateMessages"), { description: this.plugin.t("autoTranslateMessagesDesc") }));
         group.appendChild(this.createCurrentChannelPolicyRow());
-        group.appendChild(this.plugin.createSelectRow("ui.language", this.plugin.t("interfaceLanguage"), [
-          ["zh-CN", this.plugin.t("languageZh")],
-          ["en", this.plugin.t("languageEn")]
-        ], { description: this.plugin.t("interfaceLanguageDesc") }));
+        group.appendChild(this.createQuickLanguageBar({ surface: "overview", fullLabels: true }));
+        group.appendChild(this.plugin.createSelectRow(
+          "ui.language",
+          this.plugin.t("interfaceLanguage"),
+          UI_LOCALES.map((item) => [item.code, item.label]),
+          { description: this.plugin.t("interfaceLanguageDesc") }
+        ));
         return group;
       },
       createTranslateTabContent() {
@@ -26702,6 +33252,7 @@ var require_tab_sections = __commonJS({
       createPublicBilingualDependencyRow() {
         const summary = document.createElement("div");
         summary.className = "dait-provider-summary";
+        summary.dataset.daitPublicBilingualSummary = "true";
         summary.textContent = this.getPublicBilingualFlowText();
         if (typeof setTimeout === "function") {
           this.plugin.unrefTimer(setTimeout(() => {
@@ -26995,7 +33546,7 @@ var require_tab_sections = __commonJS({
         if (!iso) return "-";
         const date = new Date(iso);
         if (!Number.isFinite(date.getTime())) return String(iso);
-        const locale = this.plugin.getLocale() === "en" ? "en-US" : "zh-CN";
+        const locale = typeof this.plugin.getUiLocaleBcp47 === "function" ? this.plugin.getUiLocaleBcp47() : this.plugin.getLocale() === "en" ? "en-US" : this.plugin.getLocale();
         try {
           return date.toLocaleString(locale, { hour12: false });
         } catch {
@@ -27114,7 +33665,9 @@ var require_prompt_manager = __commonJS({
       },
       buildPromptEditorBlock(kind, idBase) {
         const promptBlock = document.createElement("div");
-        promptBlock.className = "dait-prompt-editor";
+        promptBlock.className = "dait-prompt-editor dait-settings-search-target";
+        promptBlock.dataset.daitSearchLabel = this.plugin.t("prompt");
+        promptBlock.dataset.daitSearchDescription = this.plugin.t("promptDesc");
         const promptLabel = document.createElement("span");
         promptLabel.id = `${idBase}-label`;
         promptLabel.textContent = this.plugin.t("prompt");
@@ -27379,6 +33932,7 @@ var require_settings_controls = __commonJS({
         input.placeholder = this.plugin.isProviderApiKeyOptional(provider) ? this.plugin.t("apiKeyOptionalPlaceholder") : ["deepseek", "openaiCompatible"].includes(provider) ? "sk-..." : "";
         input.autocomplete = "off";
         input.spellcheck = false;
+        input.setAttribute("dir", "ltr");
         input.value = this.plugin.getSetting(`${kind}.apiKey`) ?? "";
         input.addEventListener("change", () => this.plugin.setSetting(`${kind}.apiKey`, input.value));
         const row = this.createRow(this.plugin.t("apiKey"), input, { description: this.getProviderFieldHelp("apiKey", provider), stacked: true });
@@ -27412,6 +33966,9 @@ var require_settings_controls = __commonJS({
         input.dataset.daitPath = path;
         input.placeholder = placeholder || "";
         input.value = this.plugin.getSetting(path) ?? "";
+        if (/\.(?:endpoint|model|region|appId|secretKey|apiKey)$/.test(path)) {
+          input.setAttribute("dir", "ltr");
+        }
         Object.entries(attrs).forEach(([key, value]) => input.setAttribute(key, value));
         const commit = (options = {}) => {
           const saveOptions = options.immediate ? { save: "immediate", retryOnError: false } : options.live ? { save: "debounce", live: true } : void 0;
@@ -27429,7 +33986,7 @@ var require_settings_controls = __commonJS({
           }
           const raw = String(input.value ?? "").trim();
           if (!raw) {
-            if (options.force) this.plugin.syncSettingControls(path, this.plugin.getSetting(path));
+            if (options.force) this.plugin.syncSettingControls(path, this.plugin.getSetting(path), { includeActive: true });
             return;
           }
           const parsed = Number(raw);
@@ -27441,10 +33998,10 @@ var require_settings_controls = __commonJS({
           this.plugin.setSetting(path, parsed, saveOptions);
         };
         if (type === "number") {
-          input.addEventListener("input", () => commit());
+          input.addEventListener("input", () => commit({ live: true }));
           input.addEventListener("blur", () => commit({ force: true, immediate: true }));
-          input.addEventListener("pointerup", () => setTimeout(() => commit(), 0));
-          input.addEventListener("keyup", () => setTimeout(() => commit(), 0));
+          input.addEventListener("pointerup", () => setTimeout(() => commit({ live: true }), 0));
+          input.addEventListener("keyup", () => setTimeout(() => commit({ live: true }), 0));
         } else {
           input.addEventListener("input", () => commit({ live: true }));
           input.addEventListener("blur", () => commit({ force: true, immediate: true }));
@@ -27457,6 +34014,7 @@ var require_settings_controls = __commonJS({
         textarea.dataset.daitPath = path;
         textarea.rows = 6;
         textarea.value = this.plugin.getSetting(path) ?? "";
+        textarea.setAttribute("dir", path === "googleTranslate.keyPoolText" ? "ltr" : "auto");
         this.bindSettingsTextarea(textarea);
         textarea.addEventListener("change", () => this.plugin.preserveSettingsScroll(textarea, () => this.plugin.setSetting(path, textarea.value)));
         return this.createRow(labelText, textarea, { ...rowOptions, stacked: true });
@@ -27745,7 +34303,13 @@ var require_settings_controls = __commonJS({
         group.addEventListener("keydown", (event) => {
           const buttons = group.__daitSegmentedButtons.filter((button) => !button.disabled);
           if (!buttons.length) return;
-          const steps = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 };
+          const rtl = Boolean(this.plugin.isRtlLocale?.());
+          const steps = {
+            ArrowRight: rtl ? -1 : 1,
+            ArrowDown: 1,
+            ArrowLeft: rtl ? 1 : -1,
+            ArrowUp: -1
+          };
           const index = Math.max(0, buttons.findIndex((button) => button.getAttribute("aria-checked") === "true"));
           let next = null;
           if (steps[event?.key]) next = (index + steps[event.key] + buttons.length) % buttons.length;
@@ -27777,7 +34341,10 @@ var require_settings_controls = __commonJS({
       segmentedLabelsFit(labels, controlWidth = SETTINGS_CONTROL_WIDTH) {
         const count = labels.length || 1;
         const available = controlWidth - 6 - 2 * (count - 1);
-        const needed = labels.reduce((total, label) => total + 12 + [...String(label || "")].reduce((sum, char) => sum + (/[⺀-鿿豈-﫿＀-￯]/.test(char) ? 15 : 8.3), 0), 0);
+        const needed = labels.reduce((total, label) => total + 12 + [...String(label || "")].reduce((sum, char) => {
+          if (new RegExp("\\p{M}", "u").test(char)) return sum;
+          return sum + (/[⺀-鿿豈-﫿＀-￯]/.test(char) ? 15 : 8.3);
+        }, 0), 0);
         return needed <= available;
       },
       syncSettingControls(path, value, options = {}) {
@@ -27823,6 +34390,11 @@ var require_settings_controls = __commonJS({
         this.syncSettingsDependentRows(null, path);
         if (/^(polish|translation)\.(provider|apiKey|endpoint|model|enableThinking|region|deeplPlan|appId|secretKey)$/.test(path) || path === "googleTranslate.keyPoolText") {
           this.refreshSavedServiceConfigControls();
+        }
+        if (/^(polish\.(enabled|provider|apiKey|endpoint|model|targetLanguage)|translation\.(provider|targetLanguage)|ui\.publicBilingual)/.test(path)) {
+          document.querySelectorAll?.("[data-dait-public-bilingual-summary='true']")?.forEach((node) => {
+            if (typeof this.getPublicBilingualFlowText === "function") node.textContent = this.getPublicBilingualFlowText();
+          });
         }
         this.scheduleOverviewStatusRefresh(path);
       },
@@ -27890,7 +34462,11 @@ var require_settings_controls = __commonJS({
         this.plugin.quickPanel?.rerender?.("language");
         this.plugin.restoreAllTranslationSourceVisibility();
         document.querySelectorAll(".dait-message-button, .dait-polish-button, .dait-polish-preset-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-menu-button, .dait-input-action-menu, .dait-polish-preset-menu, .dait-input-action-group, .dait-quick-settings-button").forEach((node) => node.remove());
-        document.querySelectorAll(".dait-translation-line, .dait-translation-box").forEach((node) => node.remove());
+        document.querySelectorAll(".dait-translation-line").forEach((node) => {
+          if (typeof this.plugin.disposeTranslationLine === "function") this.plugin.disposeTranslationLine(node);
+          else node.remove();
+        });
+        document.querySelectorAll(".dait-translation-box").forEach((node) => node.remove());
         this.plugin.unpatchContextMenus();
         this.plugin.patchMessageContextMenu();
         this.plugin.queueScan();
@@ -27901,7 +34477,10 @@ var require_settings_controls = __commonJS({
         if (typeof document === "undefined") return 0;
         const locale = this.plugin.getLocale();
         this.getQuickSettingsModalRoots().forEach((root) => {
-          this.findQuickSettingsDialog(root)?.setAttribute?.("aria-label", this.plugin.t("settingsTitle"));
+          this.plugin.applyPanelTheme?.(root);
+          const dialog = this.findQuickSettingsDialog(root);
+          dialog?.setAttribute?.("aria-label", this.plugin.t("settingsTitle"));
+          if (dialog) this.plugin.applyPanelTheme?.(dialog);
         });
         let rebuilt = 0;
         [...document.querySelectorAll?.(".dait-settings") || []].forEach((panel) => {
@@ -28405,9 +34984,13 @@ var require_settings_modal = __commonJS({
         if (root?.remove) root.remove();
         if (!root || root === this.plugin.quickSettingsModalRoot) this.plugin.quickSettingsModalRoot = null;
         const previousFocus = this.plugin.quickSettingsPreviousFocus;
+        const launcherWasRail = Boolean(previousFocus?.classList?.contains?.("dait-quick-settings-rail"));
+        const launcherWasButton = launcherWasRail || Boolean(previousFocus?.classList?.contains?.("dait-quick-settings-button"));
         this.plugin.quickSettingsPreviousFocus = null;
         this.setQuickSettingsLauncherButton(null, false);
+        let focusedLauncher = false;
         if (previousFocus?.focus && this.isNodeConnected(previousFocus)) {
+          focusedLauncher = true;
           try {
             previousFocus.focus({ preventScroll: true });
           } catch {
@@ -28418,6 +35001,21 @@ var require_settings_modal = __commonJS({
           }
         }
         this.resumeQuickSettingsDeferredWork(reason);
+        if (!focusedLauncher && launcherWasButton && typeof document !== "undefined") {
+          this.plugin.injectQuickSettingsButtons?.();
+          const selector = launcherWasRail ? ".dait-quick-settings-rail, .dait-quick-settings-button" : ".dait-quick-settings-panel, .dait-quick-settings-button";
+          const liveLauncher = document.querySelector?.(selector) || null;
+          if (liveLauncher?.focus && this.isNodeConnected(liveLauncher)) {
+            try {
+              liveLauncher.focus({ preventScroll: true });
+            } catch {
+              try {
+                liveLauncher.focus();
+              } catch {
+              }
+            }
+          }
+        }
       }
     };
     module2.exports = methods;
@@ -28516,8 +35114,12 @@ var require_confirm_dialog = __commonJS({
       // a readable modal background it brings its own background in the current palette (css/08-dialogs).
       getDialogPanelThemeProps() {
         const discordTheme = this.plugin.panelTheme.getDiscordTheme();
+        const locale = typeof this.plugin.getLocale === "function" ? this.plugin.getLocale() : "zh-CN";
+        const dir = typeof this.plugin.isRtlLocale === "function" && this.plugin.isRtlLocale(locale) ? "rtl" : "ltr";
         const props = {
           "data-dait-panel-theme": discordTheme || this.plugin.resolvePanelTheme(),
+          dir,
+          lang: locale,
           ref: (node) => this.syncDialogPanelTheme(node)
         };
         if (!discordTheme) props["data-dait-dialog-surface"] = "true";
@@ -28725,6 +35327,11 @@ var require_quick_panel = __commonJS({
       POLISH_REPOLISH_SOURCE_ORIGINAL,
       POLISH_REPOLISH_SOURCE_LAST_RESULT
     } = require_constants();
+    var {
+      UI_LOCALES,
+      getUiLocaleButtonTooltip,
+      getLocalizedPresetLanguageName
+    } = require_i18n();
     var { PLUGIN_VERSION } = require_version();
     var { getChannelRouteParts, getChannelRuleKey } = require_channel_rule();
     var { SETTINGS_TAB_COMPOSE } = require_settings_schema();
@@ -28805,6 +35412,7 @@ var require_quick_panel = __commonJS({
         this.tryRunToken = null;
         this.tryHistory = { text: "", results: [] };
         this.tryContextSignature = "";
+        this.pendingLangFocusCode = "";
       }
       // --- Active tab ---
       getActiveTab() {
@@ -28925,8 +35533,17 @@ var require_quick_panel = __commonJS({
         const previous = this.root;
         const previousFocusables = this.controls?.focusables || [];
         const previousTryInput = String(this.controls?.tryInput?.value || "");
+        const previousTryResult = this.controls?.tryResult;
+        const trySnapshot = previousTryResult && !previousTryResult.hidden ? {
+          error: Boolean(previousTryResult.classList?.contains?.("dait-try-result-error")),
+          output: String(this.controls?.tryOutput?.textContent || ""),
+          time: String(this.controls?.tryTime?.textContent || ""),
+          timeHidden: Boolean(this.controls?.tryTime?.hidden)
+        } : null;
         const active = typeof document !== "undefined" ? document.activeElement : null;
         const focusInside = Boolean(active && (active === previous || previous.contains?.(active)));
+        const focusedLangCode = this.pendingLangFocusCode || (focusInside && active?.dataset?.daitUiLang ? String(active.dataset.daitUiLang) : "");
+        this.pendingLangFocusCode = "";
         const focusIndex = focusInside ? previousFocusables.indexOf(active) : -1;
         let root = null;
         try {
@@ -28943,6 +35560,15 @@ var require_quick_panel = __commonJS({
         if (previous.classList?.contains?.(POINTER_OPENED_CLASS)) root.classList.add(POINTER_OPENED_CLASS);
         root.dataset.daitRerendered = "true";
         if (this.controls?.tryInput && previousTryInput) this.controls.tryInput.value = previousTryInput;
+        if (trySnapshot && this.controls?.tryResult) {
+          this.controls.tryResult.hidden = false;
+          this.controls.tryResult.classList?.toggle?.("dait-try-result-error", trySnapshot.error);
+          if (this.controls.tryOutput) this.controls.tryOutput.textContent = trySnapshot.output;
+          if (this.controls.tryTime) {
+            this.controls.tryTime.hidden = trySnapshot.timeHidden;
+            this.controls.tryTime.textContent = trySnapshot.time;
+          }
+        }
         this.plugin.applyPanelTheme(root);
         if (root.style && previous.style) {
           root.style.left = previous.style.left;
@@ -28955,7 +35581,10 @@ var require_quick_panel = __commonJS({
         this.root = root;
         this.bindListeners();
         this.update();
-        if (focusInside) {
+        if (focusedLangCode) {
+          const langButton = this.controls?.langButtons?.find((item) => item.dataset?.daitUiLang === focusedLangCode) || this.controls?.langButtons?.find((item) => item.getAttribute("aria-checked") === "true");
+          if (langButton) this.focusElement(langButton);
+        } else if (focusInside) {
           const focusables = this.controls?.focusables || [];
           this.focusElement(focusables[focusIndex] || this.getFocusableElements()[0] || root);
         }
@@ -29073,7 +35702,8 @@ var require_quick_panel = __commonJS({
           return button;
         });
         group.addEventListener("keydown", (event) => {
-          const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[event?.key];
+          const rtl = Boolean(this.plugin.isRtlLocale?.());
+          const step = { ArrowRight: rtl ? -1 : 1, ArrowDown: 1, ArrowLeft: rtl ? 1 : -1, ArrowUp: -1 }[event?.key];
           const edge = { Home: 0, End: buttons.length - 1 }[event?.key];
           if (step === void 0 && edge === void 0) return;
           const enabled = buttons.filter((button) => !button.disabled);
@@ -29170,7 +35800,8 @@ var require_quick_panel = __commonJS({
           return button;
         });
         list.addEventListener("keydown", (event) => {
-          const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[event?.key];
+          const rtl = Boolean(this.plugin.isRtlLocale?.());
+          const step = { ArrowRight: rtl ? -1 : 1, ArrowDown: 1, ArrowLeft: rtl ? 1 : -1, ArrowUp: -1 }[event?.key];
           const edge = { Home: 0, End: tabs.length - 1 }[event?.key];
           if (step === void 0 && edge === void 0) return;
           event.preventDefault?.();
@@ -29183,6 +35814,63 @@ var require_quick_panel = __commonJS({
         controls.modeTabs = tabs;
         controls.modeTabMeta = tabMeta;
         return bar;
+      }
+      buildLanguageBar(controls) {
+        const t = (key, vars) => this.plugin.t(key, vars);
+        const bar = this.createElement("div", "dait-qp-lang-bar");
+        bar.setAttribute("role", "radiogroup");
+        bar.setAttribute("aria-label", t("quickLanguageBarLabel"));
+        const currentLocale = String(this.plugin.getLocale?.() || "zh-CN");
+        const selectLocale = (code) => {
+          if (!code || code === this.plugin.getLocale?.()) return;
+          this.pendingLangFocusCode = code;
+          if (typeof this.plugin.setSetting === "function") {
+            this.plugin.setSetting("ui.language", code);
+          } else if (this.plugin.settings?.ui) {
+            this.plugin.settings.ui.language = code;
+            this.rerender("language");
+          }
+        };
+        const buttons = UI_LOCALES.map((item) => {
+          const active = item.code === currentLocale;
+          const button = this.createButton("dait-qp-lang-pill", item.shortLabel, () => selectLocale(item.code));
+          button.dataset.daitUiLang = item.code;
+          button.setAttribute("role", "radio");
+          button.setAttribute("aria-checked", active ? "true" : "false");
+          button.setAttribute("tabindex", active ? "0" : "-1");
+          button.setAttribute("lang", item.code);
+          button.setAttribute("dir", item.dir);
+          const tooltip = getUiLocaleButtonTooltip(item);
+          button.title = tooltip;
+          button.setAttribute("aria-label", tooltip);
+          bar.appendChild(button);
+          return button;
+        });
+        bar.addEventListener("keydown", (event) => {
+          const rtl = Boolean(this.plugin.isRtlLocale?.());
+          const step = { ArrowRight: rtl ? -1 : 1, ArrowDown: 1, ArrowLeft: rtl ? 1 : -1, ArrowUp: -1 }[event?.key];
+          const edge = { Home: 0, End: buttons.length - 1 }[event?.key];
+          if (step === void 0 && edge === void 0) return;
+          event.preventDefault?.();
+          event.stopPropagation?.();
+          const current = buttons.findIndex((button) => button.getAttribute("aria-checked") === "true");
+          const next = edge !== void 0 ? buttons[edge] : buttons[(Math.max(0, current) + step + buttons.length) % buttons.length];
+          if (!next) return;
+          selectLocale(next.dataset.daitUiLang);
+        });
+        controls.langBar = bar;
+        controls.langButtons = buttons;
+        return bar;
+      }
+      syncLanguageBar() {
+        const buttons = this.controls?.langButtons;
+        if (!Array.isArray(buttons) || !buttons.length) return;
+        const currentLocale = String(this.plugin.getLocale?.() || "zh-CN");
+        buttons.forEach((button) => {
+          const active = button.dataset?.daitUiLang === currentLocale;
+          button.setAttribute("aria-checked", active ? "true" : "false");
+          button.setAttribute("tabindex", active ? "0" : "-1");
+        });
       }
       buildTranslationPanel(controls) {
         const t = (key, vars) => this.plugin.t(key, vars);
@@ -29510,6 +36198,7 @@ var require_quick_panel = __commonJS({
         header.appendChild(controls.headerOpenFull);
         header.appendChild(controls.close);
         root.appendChild(header);
+        root.appendChild(this.buildLanguageBar(controls));
         root.appendChild(this.buildModeTabs(controls));
         const body = this.createElement("div", "dait-qp-body");
         body.appendChild(this.buildTranslationPanel(controls));
@@ -29523,6 +36212,7 @@ var require_quick_panel = __commonJS({
         controls.focusables = [
           controls.headerOpenFull,
           controls.close,
+          ...controls.langButtons,
           ...controls.modeTabs,
           controls.test,
           controls.translationService,
@@ -29562,6 +36252,7 @@ var require_quick_panel = __commonJS({
         const translation = settings.translation || {};
         const polish = settings.polish || {};
         const activeTab = this.getActiveTab();
+        this.syncLanguageBar();
         this.root.dataset.daitTab = activeTab;
         controls.modeTabs.forEach((button) => {
           const selected = button.dataset.daitTab === activeTab;
@@ -29614,9 +36305,14 @@ var require_quick_panel = __commonJS({
         controls.publicBilingualAfter.disabled = !polishOn;
         const trySignature = [
           String(polish.provider || ""),
+          String(polish.endpoint || ""),
           String(polish.model || ""),
+          String(polish.sourceLanguage || ""),
           String(polish.targetLanguage || ""),
           String(polish.activePromptTemplate || ""),
+          String(polish.prompt || ""),
+          String(Boolean(polish.enableThinking)),
+          String(polish.maxTokens || ""),
           tempText
         ].join("\n");
         if (this.tryContextSignature && this.tryContextSignature !== trySignature) {
@@ -29668,10 +36364,9 @@ var require_quick_panel = __commonJS({
       }
       getLanguageDisplayName(value) {
         if (!value) return "";
-        const english = this.plugin.getLocale?.() === "en";
         const found = LANGUAGE_PRESETS.find((language) => language.value === value);
         if (!found) return value;
-        return english ? found.en : found.zh;
+        return getLocalizedPresetLanguageName(found, this.plugin.getLocale?.());
       }
       syncPolishTemperatureUi(temperature, options = {}) {
         const controls = this.controls;
@@ -29755,8 +36450,8 @@ var require_quick_panel = __commonJS({
       }
       syncLanguageOptions(select, current) {
         if (!select) return;
-        const english = this.plugin.getLocale() === "en";
-        const options = LANGUAGE_PRESETS.map((language) => [language.value, english ? language.en : language.zh]);
+        const locale = this.plugin.getLocale?.();
+        const options = LANGUAGE_PRESETS.map((language) => [language.value, getLocalizedPresetLanguageName(language, locale)]);
         if (current && !options.some(([value]) => value === current)) options.unshift([current, current]);
         this.syncSelectOptions(select, options, current);
       }
@@ -29791,7 +36486,8 @@ var require_quick_panel = __commonJS({
         const task = this.plugin.settings?.[kind] || {};
         const activeId = String(task.activePromptTemplate || "");
         const activeTemplate = templates.find((item) => item && item.id === activeId) || null;
-        const matchesActive = Boolean(activeTemplate && String(activeTemplate.prompt || "") === String(task.prompt || ""));
+        const normalizePrompt = (value) => String(value ?? "").replace(/\r\n?/g, "\n").trim();
+        const matchesActive = Boolean(activeTemplate && normalizePrompt(activeTemplate.prompt) === normalizePrompt(task.prompt));
         const options = templates.map((template) => {
           const name = this.plugin.getPromptTemplateDisplayName?.(template) || template.name || "";
           const code = String(template.serial || "").trim();
@@ -29828,6 +36524,15 @@ var require_quick_panel = __commonJS({
                 this.setText(controls.tryRun, this.plugin.t(hasResult ? "quickPanelTryPolishAgain" : "quickPanelTryPolishRun"));
                 this.position();
               } else {
+                if (this.controls?.tryResult && controls.tryResult && !controls.tryResult.hidden) {
+                  this.controls.tryResult.hidden = false;
+                  this.controls.tryResult.classList?.toggle?.("dait-try-result-error", Boolean(controls.tryResult.classList?.contains?.("dait-try-result-error")));
+                  if (this.controls.tryOutput && controls.tryOutput) this.setText(this.controls.tryOutput, String(controls.tryOutput.textContent || ""));
+                  if (this.controls.tryTime && controls.tryTime) {
+                    this.controls.tryTime.hidden = Boolean(controls.tryTime.hidden);
+                    this.setText(this.controls.tryTime, String(controls.tryTime.textContent || ""));
+                  }
+                }
                 this.update();
               }
             }
@@ -30304,19 +37009,19 @@ var require_quick_panel = __commonJS({
         let state = "ok";
         let detail = t("quickStatusPolishActive");
         let note = "";
-        if (polish.enabled === false) {
+        if (testing) {
+          state = "busy";
+          detail = t("quickStatusTesting");
+        } else if (polish.enabled === false) {
           state = "off";
           detail = t("quickStatusPolishOff");
         } else if (!configured) {
           state = "needs-you";
           detail = t("quickStatusNeedsYou", { reason: t("quickStatusReasonConfig") });
-        } else if (api.state === "failed" && !testing) {
+        } else if (api.state === "failed") {
           state = "needs-you";
           detail = t("quickStatusNeedsYou", { reason: t("quickStatusReasonFailed") });
           note = String(api.message || "").trim();
-        } else if (testing) {
-          state = "busy";
-          detail = t("quickStatusTesting");
         } else {
           const btnHint = t(ui.injectInputButton !== false ? "quickStatusPolishBtnOn" : "quickStatusPolishBtnOff");
           const hotkeyHint = ui.enablePolishHotkey !== false && String(ui.polishHotkey || "").trim() ? String(ui.polishHotkey).trim() : t("quickStatusPolishHotkeyOff");
@@ -30723,8 +37428,9 @@ var require_stores = __commonJS({
         return store;
       }
       getMessageStore() {
+        const hasMessageCollection = (candidate) => Boolean(candidate && (typeof candidate.getMessages === "function" || typeof candidate.getMessagesForChannel === "function"));
         const named = this.getStore("MessageStore");
-        if (named && (typeof named.getMessage === "function" || typeof named.getMessages === "function" || typeof named.getMessagesForChannel === "function")) return named;
+        if (hasMessageCollection(named)) return named;
         const fallbackKey = "__MessageStoreByKeys";
         const cached = this.stores.get(fallbackKey);
         if (cached?.store) return cached.store;
@@ -30732,7 +37438,8 @@ var require_stores = __commonJS({
         if (cached && now < cached.retryAt) return null;
         let found = null;
         try {
-          found = globalThis.BdApi?.Webpack?.getByKeys?.("getMessage", "getMessages") || null;
+          const candidate = globalThis.BdApi?.Webpack?.getByKeys?.("getMessage", "getMessages") || null;
+          found = hasMessageCollection(candidate) ? candidate : null;
         } catch {
           found = null;
         }
@@ -31736,7 +38443,12 @@ var require_chat_observer = __commonJS({
         return target === root || Boolean(root.contains?.(target));
       },
       hasPotentialDiscordObserverRootMutation(mutations = []) {
-        const selectors = this.getDiscordChatMutationObserverSelectors().join(",");
+        const selectors = [
+          ...this.getDiscordChatMutationObserverSelectors(),
+          "[class*='searchResultsWrap']",
+          "[class*='messagesPopout']",
+          "[class*='recentMentionsPopout']"
+        ].join(",");
         return [...mutations || []].some((mutation) => {
           if (mutation?.type !== "childList") return false;
           return [...mutation.addedNodes || [], ...mutation.removedNodes || []].some((node) => {
@@ -31771,10 +38483,15 @@ var require_chat_observer = __commonJS({
       getDiscordChatMutationObserverRoot() {
         if (typeof document === "undefined" || !document.querySelector) return null;
         const appMount = document.getElementById?.("app-mount") || null;
+        const secondarySurfaces = typeof document.querySelectorAll === "function" ? [...document.querySelectorAll("[class*='searchResultsWrap'], [class*='messagesPopout'], [class*='recentMentionsPopout']") || []].filter((el) => el?.nodeType === 1) : [];
         for (const selector of this.getDiscordChatMutationObserverSelectors()) {
           const queriedAll = typeof document.querySelectorAll === "function" ? [...document.querySelectorAll(selector) || []].filter((el) => el?.nodeType === 1) : [];
-          const matches = queriedAll.length ? queriedAll : [document.querySelector(selector)].filter((el) => el?.nodeType === 1);
-          if (!matches.length) continue;
+          const primaryMatches = queriedAll.length ? queriedAll : [document.querySelector(selector)].filter((el) => el?.nodeType === 1);
+          if (!primaryMatches.length) continue;
+          const matches = [...primaryMatches];
+          secondarySurfaces.forEach((surface) => {
+            if (!matches.includes(surface)) matches.push(surface);
+          });
           if (matches.length === 1) return matches[0];
           let lca = matches[0];
           for (let index = 1; index < matches.length && lca; index++) {
@@ -33948,7 +40665,7 @@ var require_discord_markup = __commonJS({
     var PLACEHOLDER_START = "";
     var PLACEHOLDER_END = "";
     var PLACEHOLDER_PATTERN = /\uE000(\d+)\uE001/g;
-    var CODE_OR_ESCAPE_PATTERN = /```(?:[A-Za-z0-9_+.#-]{1,32}\r?\n)?([\s\S]*?)```|``([\s\S]+?)``|`([^`]+?)`|\\([^A-Za-z0-9\s])/g;
+    var CODE_OR_ESCAPE_PATTERN = /```(?:[A-Za-z0-9_+.#-]{1,32}[ \t]*\r?\n)?([\s\S]*?)```|``([\s\S]+?)``|`([^`]+?)`|\\([^A-Za-z0-9\s])/g;
     var BARE_URL_PATTERN = /(?:https?|steam|discord):\/\/[^\s<>]*[^\s<>.,:;"')\]]/g;
     var SPOILER_PATTERN = /\|\|[\s\S]+?\|\|/;
     var TIMESTAMP_PATTERN = /<t:-?\d+(?::[A-Za-z])?>/;
@@ -33960,7 +40677,7 @@ var require_discord_markup = __commonJS({
     var CHANNEL_MENTION_PATTERN = /<#(\d{15,25})>/g;
     var AUTOLINK_PATTERN = /<((?:https?|steam|discord):\/\/[^\s<>]+)>/g;
     var MASKED_LINK_PATTERN = /\[([^[\]\n]+?)\]\(\s*(?:<(?:https?:\/\/[^\s<>]+)>|https?:\/\/(?:[^\s()<>]+|\([^\s()<>]*\))+)\s*\)/g;
-    var EMOJI_SHORTCODE_PATTERN = /:([a-z0-9_+-]{1,64}):/g;
+    var EMOJI_SHORTCODE_PATTERN = /(?<![A-Za-z0-9_~:/]):([a-z0-9_+-]{1,64}):(?![A-Za-z0-9_~:/])/g;
     var UNKNOWN_MARKUP_PATTERN = /<[^<>\s]*\d{15,25}[^<>\s]*>/;
     function convertDiscordMarkupToDisplayText(text, resolvers = {}) {
       let value = String(text ?? "").replace(/\r\n?/g, "\n");
@@ -34009,12 +40726,12 @@ ${protect(block)}
           emoji = "";
         }
         if (isStandardEmojiText(emoji)) return emoji;
-        if (/[a-z]/.test(name)) unknownEmoji = true;
+        if (/[a-z+-]/.test(name) || name === "100" || name === "1234") unknownEmoji = true;
         return match;
       });
       if (unknownEmoji) return "";
-      value = value.replace(/^>>> ?/m, "");
-      value = value.replace(/^> ?/gm, "");
+      value = value.replace(/^>>>(?: |(?=\n|$))/m, "");
+      value = value.replace(/^>(?: |(?=\n|$))/gm, "");
       value = value.replace(/^#{1,3} +/gm, "");
       value = value.replace(/^-# +/gm, "");
       value = value.replace(/^( *)[-*] +/gm, "$1");
@@ -34082,6 +40799,9 @@ var require_message_extractor = __commonJS({
             }
             this.plugin.translateMessage(messageNode, currentContent, button);
           });
+        } else {
+          const nextTitle = this.plugin.t("translateTitleAttr", { targetLanguage: this.plugin.getDisplayLanguage(this.plugin.settings.translation.targetLanguage) });
+          if (button.title !== nextTitle) button.title = nextTitle;
         }
         this.plugin.applyMessageButtonVisibilityToButton(button, content || messageNode);
         if (created || button.parentElement !== content || this.hasNonPluginSiblingAfter(button)) {
@@ -34933,6 +41653,20 @@ var require_message_extractor = __commonJS({
           const name = element.name.trim();
           return name.startsWith("@") ? name : `@${name}`;
         }
+        if (/timestamp/i.test(type) || element.parsed?.full) {
+          const full = String(element.parsed?.full || element.raw || "").trim();
+          if (/^<t:-?\d{1,12}(?::[tTdDfFR])?>$/.test(full)) return full;
+          const ts = element.timestamp ?? element.parsed?.timestamp;
+          const style = String(element.style ?? element.parsed?.style ?? "").trim();
+          if (/^-?\d{1,12}$/.test(String(ts ?? "").trim())) {
+            return style && /^[tTdDfFR]$/.test(style) ? `<t:${String(ts).trim()}:${style}>` : `<t:${String(ts).trim()}>`;
+          }
+        }
+        const commandId = id(element.commandId ?? element.command?.id);
+        const commandName = String(element.commandName ?? element.command?.displayName ?? element.command?.name ?? "").trim();
+        if (commandId && commandName && !/[<>:\n]/.test(commandName)) {
+          return `</${commandName}:${commandId}>`;
+        }
         return null;
       },
       isExcludedExtractedTextRoot(element, excludedSelectors = []) {
@@ -35406,9 +42140,34 @@ var require_scroll_anchor = __commonJS({
         let high = messages.length;
         while (low < high) {
           const middle = low + high >> 1;
-          const rect = this.plugin.getCachedElementRect(messages[middle], context);
-          if (rect && Number(rect.bottom) <= band.top) low = middle + 1;
-          else high = middle;
+          let probe = middle;
+          let rect = this.plugin.getCachedElementRect(messages[probe], context);
+          if (!rect || !(Number(rect.height) > 0)) {
+            let offset = 1;
+            probe = -1;
+            while (middle - offset >= low || middle + offset < high) {
+              if (middle - offset >= low) {
+                const leftRect = this.plugin.getCachedElementRect(messages[middle - offset], context);
+                if (leftRect && Number(leftRect.height) > 0) {
+                  probe = middle - offset;
+                  rect = leftRect;
+                  break;
+                }
+              }
+              if (middle + offset < high) {
+                const rightRect = this.plugin.getCachedElementRect(messages[middle + offset], context);
+                if (rightRect && Number(rightRect.height) > 0) {
+                  probe = middle + offset;
+                  rect = rightRect;
+                  break;
+                }
+              }
+              offset++;
+            }
+          }
+          if (probe < 0) break;
+          if (Number(rect.bottom) <= band.top) low = Math.max(middle, probe) + 1;
+          else high = Math.min(middle, probe);
         }
         const nearby = [];
         let below = 0;
@@ -35438,6 +42197,7 @@ var require_scroll_anchor = __commonJS({
         const content = candidate?.content;
         const text = String(candidate?.text || "");
         if (!text || !messageNode?.isConnected || !content?.isConnected) return { status: "nothing" };
+        if (this.plugin.autoRequestPipeline?.isCandidateChannelPolicyDisabled?.(candidate)) return { status: "nothing" };
         const domText = candidate.domText || text;
         if (this.hasFinishedTranslationLine(content, messageNode, domText)) return { status: "drawn" };
         if (this.plugin.isManualTranslationInFlight(content, domText, messageNode)) return { status: "pending" };
@@ -36134,1526 +42894,6 @@ var require_scroll_anchor = __commonJS({
       DiscordScrollAnchorController,
       SCROLL_ANCHOR_METHOD_NAMES
     };
-  }
-});
-
-// src/i18n.js
-var require_i18n = __commonJS({
-  "src/i18n.js"(exports2, module2) {
-    "use strict";
-    var I18N = {
-      "zh-CN": {
-        messageButtonVisibility: "翻译按钮显示方式",
-        messageButtonVisibilityDesc: "一直显示消息旁的翻译按钮，或只在悬停时显示。",
-        messageButtonVisibilityAlways: "一直显示",
-        messageButtonVisibilityHover: "悬停时显示",
-        messageButtonMode: "消息旁的翻译按钮",
-        messageButtonModeDesc: "在每条消息旁显示“翻译”按钮的方式。",
-        messageButtonModeHover: "悬停时显示",
-        messageButtonModeAlways: "一直显示",
-        messageButtonModeOff: "不显示",
-        settingsTitle: "Discord AI 翻译助手",
-        settingsNote: "润色和翻译分别设置；API Key 只保存在本机。",
-        generalTitle: "基础设置",
-        interfaceLanguage: "界面语言",
-        interfaceLanguageDesc: "只影响插件界面文案，不影响润色或翻译的目标语言。",
-        languageZh: "中文",
-        languageEn: "English",
-        polishTitle: "输入润色",
-        polishDescription: "读取当前输入框草稿，根据提示词改写后回填输入框。",
-        translationTitle: "频道消息翻译",
-        translationDescription: "将频道里的已有消息翻译到指定目标语言。",
-        enabled: "启用",
-        enabledDesc: "关闭后不显示这项功能的按钮，也不发送请求。",
-        provider: "服务商",
-        providerDesc: "大语言模型可与润色共用配置；专业翻译引擎仅支持翻译。",
-        providerPolishDesc: "润色需按提示词改写，仅支持大语言模型；可直接选用已保存配置。",
-        providerGroupAi: "大语言模型（支持翻译 + 润色）",
-        providerGroupMachine: "专业翻译引擎（仅支持翻译）",
-        savedServiceConfigs: "已保存配置",
-        savedServiceConfigsDesc: "测试通过后自动保存，翻译和润色都能直接选用。",
-        savedServiceConfigsPlaceholder: "选择已保存配置（共 {count} 个）",
-        savedServiceConfigsEmpty: "暂无已保存配置（测试通过后自动保存）",
-        savedServiceConfigApplied: "已应用配置：{name}",
-        savedServiceConfigDeleted: "已删除该保存配置。",
-        savedServiceConfigDelete: "删除",
-        syncConfigToPolish: "同步到润色",
-        syncConfigToTranslation: "同步到翻译",
-        syncConfigUnsupportedPolish: "专业翻译引擎仅支持翻译，无法同步到输入润色。",
-        syncConfigMissing: "请先填完当前服务商的必要配置。",
-        syncConfigDonePolish: "已同步配置到输入润色。",
-        syncConfigDoneTranslation: "已同步配置到频道消息翻译。",
-        providerOpenAI: "OpenAI 兼容",
-        providerSakuraLocal: "Sakura 本地",
-        providerGoogleCloud: "Google Cloud 翻译",
-        googleTranslateTitle: "Google Cloud 翻译 Key 池",
-        googleTranslateKeys: "Google API Key 池",
-        googleTranslateKeysDesc: "每行一个 Key，也可写成 名称|Key|月上限。",
-        googleTranslateDefaultLimit: "Google 单 Key 默认月上限",
-        googleTranslateDefaultLimitDesc: "Key 行没写上限时使用；建议 420000-450000，留出余量。",
-        googleTranslateAllowPrefetch: "允许预翻译使用 Google",
-        googleTranslateAllowPrefetchDesc: "关闭后只翻译屏幕上的消息，预翻译不消耗 Google 额度。",
-        googleTranslateStats: "Google 用量",
-        googleTranslateStatsDesc: "本月 {used}/{limit} 字符；可用 Key {available}/{total}；当前月份 {month}。",
-        googleTranslateStatsCooldown: "冷却中的 Key {count} 个，最早 {time} 恢复。",
-        googleTranslateResetStats: "重置本月 Google 统计",
-        googleTranslateResetConfirm: "只清零本机记录的本月字符数，Google Cloud 后台的实际用量不变。",
-        googleTranslateStatsReset: "Google 本月统计已重置。",
-        googleTranslateNoKey: "Google Cloud 翻译没有可用 API Key。",
-        googleTranslateQuotaExceeded: "Google Cloud 翻译 Key 池本月额度已用完。",
-        googleTranslateKeysCooling: "Google Cloud 翻译的 Key 都在冷却中，{time} 恢复。",
-        googleTranslateKeyError: "Key「{label}」：{error}",
-        apiKey: "API Key",
-        apiKeyDesc: "只保存在本机，不会写进消息；Sakura 本地可以留空。",
-        apiKeyDeepSeekDesc: "DeepSeek 开放平台的 API Key，只保存在本机。",
-        apiKeyOpenAIDesc: "服务给你的 API Key，只保存在本机，不会写进消息。",
-        apiKeyLocalDesc: "可选，本机服务通常不需要。",
-        apiKeyMicrosoftDesc: "Azure Translator 资源的密钥，只保存在本机。",
-        apiKeyDeepLDesc: "DeepL API 的认证密钥，只保存在本机。",
-        apiKeyOptionalPlaceholder: "可留空",
-        apiTest: "测试",
-        apiTestBusy: "检测中",
-        apiStatusUntested: "未检测",
-        apiStatusTesting: "检测中",
-        apiStatusSuccess: "连接正常",
-        apiStatusFailed: "连接失败",
-        apiTestSuccess: "{name} API 连接正常。",
-        apiTestSuccessSaved: "{name} API 连接正常，已保存为可用配置。",
-        apiTestSuccessSynced: "{name} API 连接正常，已保存配置并同步到{target}。",
-        apiTestFailed: "{name} API 连接失败：{error}",
-        apiTestJustNow: "刚刚",
-        apiTestMinutesAgo: "{count} 分钟前",
-        apiTestHoursAgo: "{count} 小时前",
-        apiTestNotYet: "还没测试",
-        thinkingMode: "DeepSeek 思考模式",
-        thinkingModeDesc: "模型先推理再回答，可能更准，但更慢、用量更多。",
-        endpoint: "接口地址",
-        endpointDesc: "服务的 API 地址，一般保持默认即可。",
-        endpointDeepSeekDesc: "DeepSeek 的接口地址，一般保持默认即可。",
-        endpointOpenAIDesc: "可填 /v1 基础地址或完整 chat/completions 地址，远程需 https。",
-        endpointLocalDesc: "本机服务的地址，只有本机地址可以用 http。",
-        endpointMicrosoftDesc: "Azure Translator 的接口地址，一般保持默认即可。",
-        endpointBaiduDesc: "百度翻译的接口地址，一般保持默认即可。",
-        deepseekPreset: "DeepSeek V4 预设",
-        deepseekPresetDesc: "在 DeepSeek V4 Flash 和 Pro 之间快速切换。",
-        customModel: "自定义（填写下方模型名）",
-        model: "模型",
-        modelDesc: "直接填写任意模型名，自动记住上次使用的模型。",
-        modelOpenAIDesc: "服务提供的模型名，可点“检测模型”列出。",
-        modelLocalDesc: "local-model 表示使用服务端已加载的模型。",
-        modelLocalLoadedDesc: "local-model 使用服务端已加载的模型，现在是 {model}。",
-        modelDetect: "检测模型",
-        modelDetectBusy: "检测中",
-        modelDetectFound: "检测到 {count} 个模型，可在列表中选择。",
-        modelDetectFoundLoaded: "检测到 {count} 个模型，已加载：{model}。",
-        modelDetectNone: "服务端没有列出模型。",
-        modelDetectFailed: "检测失败：{error}",
-        modelDetectUnsupported: "这个服务不支持检测模型。",
-        modelDetectConfirmOrigin: "确认 API Key 的使用地址",
-        modelDetectConfirmOriginDesc: "允许将当前 API Key 发送到 {origin}，并将密钥绑定到此来源？",
-        apiKeyOriginMismatch: "当前 API Key 绑定到其他来源。请为此地址更换密钥，或点击「检测模型」确认当前来源。",
-        modelPicker: "可选的模型",
-        modelPickerOther: "其他（填写上方的模型名）",
-        modelPickerServerLoaded: "使用服务端已加载的模型（local-model）",
-        modelPickerDetected: "服务端列出的模型",
-        modelPickerPresets: "常用模型",
-        modelPickerLoadedTag: "{model}（已加载）",
-        outputLanguage: "输出语言",
-        outputLanguageDesc: "润色结果使用的语言。",
-        inputLanguage: "输入语言",
-        inputLanguageDesc: "草稿原来的语言；一般保持自动检测，识别错了再指定。",
-        messageLanguage: "原文语言",
-        messageLanguageDesc: "频道消息原来的语言；一般保持自动检测，识别错了再指定。",
-        autoDetectLanguage: "自动检测",
-        targetLanguage: "目标语言",
-        targetLanguageDesc: "频道消息翻译成哪种语言。",
-        languagePreset: "常用语言",
-        customLanguage: "自定义语言",
-        customLanguagePlaceholder: "例如：繁体中文、韩语、Brazilian Portuguese",
-        customLanguageDesc: "自定义语言名会原样交给模型。",
-        temperature: "创造性",
-        temperatureDesc: "越低越稳定；翻译建议 0.1-⁠0.3，润色建议 0.3-⁠0.7。",
-        maxTokens: "最大输出长度",
-        maxTokensDesc: "单次回复的长度上限；长消息被截断时调高。",
-        afterPolishing: "润色后动作",
-        afterPolishingDesc: "润色结果写入输入框后，是否再询问发送。",
-        afterReplace: "覆盖输入框",
-        afterDirectReplace: "覆盖输入框",
-        afterConfirmSend: "发送前询问",
-        repolishSource: "再次润色输入源",
-        repolishSourceDesc: "再次润色时，基于最初草稿还是上一次的结果。",
-        repolishSourceOriginal: "使用原文",
-        repolishSourceLastResult: "使用上一次润色结果",
-        restoreOriginal: "还原原文",
-        restoreOriginalChanged: "草稿已有改动，无法还原原文。",
-        polishResultTitle: "润色结果",
-        polishResultCopy: "复制",
-        polishResultCopied: "已复制",
-        polishResultReplace: "写入输入框",
-        polishResultApplyFailed: "没能写入输入框，请点“复制”后手动粘贴。",
-        polishResultClose: "关闭",
-        prompt: "提示词",
-        promptDesc: "告诉模型怎么润色或翻译，可以用中文写。",
-        promptUsingTemplate: "正在使用模板：{code} · {name}",
-        promptTemplateNameNaturalChat: "自然聊天润色",
-        promptTemplateNamePolite: "礼貌清晰",
-        promptTemplateNameShort: "简短直接",
-        promptTemplateNameNativeCasual: "地道口语（去翻译腔）",
-        promptTemplateNameTechBug: "技术 / Bug 反馈",
-        promptTemplateNameGamingChat: "游戏 / 开黑社区",
-        promptTemplateNameTactful: "高情商 / 委婉沟通",
-        promptTemplateNameFormalNotice: "正式 / 公告与合作",
-        promptTemplateNameDialectCantoneseGuangfu: "广府白话（两广日常口语）",
-        promptTemplateNameDialectCantoneseHk: "港式粤语（地道港味）",
-        promptTemplateNameDialectHakka: "客家话（客话口语）",
-        promptTemplateNameDialectChaoshan: "潮汕话（胶己人风味）",
-        promptTemplateNameDialectGuangxi: "广西老表（南普风味）",
-        promptTemplateNameDialectMinnan: "闽南话（泉漳厦腔）",
-        promptTemplateNameDialectTaiwan: "台湾腔（台式口语）",
-        promptTemplateNameDialectSichuan: "川渝话（巴适摆龙门阵）",
-        promptTemplateNameDialectYunnan: "云南话（滇味口语）",
-        promptTemplateNameDialectGuizhou: "贵州话（黔味西南话）",
-        promptTemplateNameDialectDongbei: "东北话（豪爽唠嗑）",
-        promptTemplateNameDialectBeijing: "京味儿（地道北京话）",
-        promptTemplateNameDialectTianjin: "天津话（哏儿都相声味）",
-        promptTemplateNameDialectShaanxi: "陕西话（关中老陕）",
-        promptTemplateNameDialectHenan: "河南话（中州口语）",
-        promptTemplateNameDialectShandong: "山东话（齐鲁胶东味）",
-        promptTemplateNameDialectXinjiang: "新疆话（疆味普通话）",
-        promptTemplateNameDialectShanghai: "上海话（沪语腔）",
-        promptTemplateNameDialectJiangzhe: "江浙软语（苏杭吴语味）",
-        promptTemplateNameDialectNanjing: "南京话（蓝鲸腔）",
-        promptTemplateNameDialectWuhan: "武汉话（汉味直爽）",
-        promptTemplateNameDialectHunan: "湖南话（湘味霸蛮）",
-        promptTemplateCategoryLabel: "预设分类",
-        promptTemplateCategoryGeneral: "一般",
-        promptTemplateCategoryDialect: "方言",
-        promptTemplateCategoryPersona: "大能",
-        promptTemplateRegionSouthChina: "两广 · 闽台",
-        promptTemplateRegionSouthwest: "西南",
-        promptTemplateRegionNorth: "北方",
-        promptTemplateRegionEastCentral: "华东 · 华中",
-        promptTemplateRegionCustom: "自定义方言",
-        promptTemplateNamePersonaQinShihuang: "秦始皇 · 嬴政（千古一帝诏令）",
-        promptTemplateNamePersonaHanWudi: "汉武帝 · 刘彻（大汉雄风诏书）",
-        promptTemplateNamePersonaZhuYuanzhang: "朱元璋 · 洪武大帝（大明大白话圣旨）",
-        promptTemplateNamePersonaChiangKaiShek: "蒋介石 · 委员长（民国电报微操）",
-        promptTemplateNamePersonaCaoCao: "曹操 · 魏武帝（枭雄豪迈坦荡）",
-        promptTemplateNamePersonaLiShimin: "唐太宗 · 李世民（贞观明君风度）",
-        promptTemplateNamePersonaYongzheng: "雍正 · 四爷（毒舌朱批体）",
-        promptTemplateNamePersonaZhugeLiang: "诸葛亮 · 武侯（出师表恳切风）",
-        promptTemplateNamePersonaSimaYi: "司马懿 · 冢虎（隐忍老谋深算）",
-        promptTemplateNamePersonaSunTzu: "孙子 · 孙武（兵法冷静箴言）",
-        promptTemplateNamePersonaXiangYu: "项羽 · 西楚霸王（悲壮狂傲气魄）",
-        promptTemplateNamePersonaLuXun: "鲁迅 · 周树人（犀利冷幽默杂文）",
-        promptTemplateNamePersonaLinDaiyu: "林黛玉 · 潇湘妃子（傲娇柔中带刺）",
-        promptTemplateNamePersonaWangYangming: "王阳明 · 阳明先生（知行合一心学）",
-        promptTemplateNamePersonaLiBai: "李白 · 诗仙（豪放飘逸诗意）",
-        promptTemplateNamePersonaSuShi: "苏轼 · 东坡居士（豁达自嘲烟火气）",
-        promptTemplateNamePersonaConfucius: "孔子 · 圣人（论语温润格言）",
-        promptTemplateNamePersonaZhuangzi: "庄子 · 逍遥游（奇谲佛系寓言）",
-        promptTemplateNamePersonaEileenChang: "张爱玲（冷艳民国都市金句）",
-        promptTemplateNamePersonaQianZhongshu: "钱钟书（围城毒舌妙喻）",
-        promptTemplateNamePersonaWangXiaobo: "王小波（黑色幽默反讽）",
-        promptTemplateNamePersonaGuoDegang: "郭德纲（德云社单口相声）",
-        promptTemplateNamePersonaShakespeare: "莎士比亚（戏剧咏叹独白）",
-        promptTemplateNamePersonaTrump: "特朗普 · 懂王（美式夸张感叹）",
-        promptTemplateNamePersonaNietzsche: "尼采（深渊超人警句）",
-        promptTemplateNamePersonaMarx: "马克思（辩证批判理论风）",
-        promptTemplateNamePersonaNapoleon: "拿破仑（铁血统帅战报）",
-        promptTemplateNamePersonaChurchill: "丘吉尔（英式铁血演说与冷幽默）",
-        promptTemplateNamePersonaMusk: "马斯克（第一性原理极客短句）",
-        promptTemplatePersonaGroupMonarchs: "帝王将相",
-        promptTemplatePersonaGroupStrategists: "谋圣兵家",
-        promptTemplatePersonaGroupLiterati: "文豪名士",
-        promptTemplatePersonaGroupGlobal: "海外大能",
-        promptTemplatePersonaGroupCustom: "自定义大能",
-        promptTemplateNameNatural: "自然翻译",
-        promptTemplateNameLiteral: "准确直译",
-        promptTemplateNameSlangCasual: "社区梗与口语（接地气）",
-        promptTemplateNameTechDev: "技术 / AI / 开发频道",
-        promptTemplateNameGamingAcg: "游戏 / 二次元社区",
-        promptTemplateNameFormalChangelog: "官方公告 / 更新日志",
-        promptTemplates: "提示词模板",
-        promptTemplatesDesc: "选中模板只预览；点“使用这个模板”才会替换提示词。",
-        promptSearch: "搜索模板名称或编号",
-        promptTemplateSelect: "选择模板",
-        promptTemplateCustom: "当前提示词未保存为模板",
-        promptTemplateEdited: "基于 {code} · {name}，修改尚未存入模板",
-        promptPreview: "模板预览",
-        promptPreviewActive: "正在使用",
-        promptApply: "使用这个模板",
-        promptSave: "保存为模板",
-        promptUpdate: "更新当前模板",
-        promptUpdateTitle: "用编辑后的提示词覆盖 {code} · {name}",
-        promptDelete: "删除模板",
-        promptRestorePresets: "补充内置预设",
-        promptPresetsRestored: "已补充 {count} 个内置模板。",
-        promptPresetsComplete: "已包含全部内置模板。",
-        promptCopy: "复制提示词",
-        promptCopied: "提示词已复制。",
-        copiedToClipboard: "已复制。",
-        promptCopyFailed: "复制失败：{error}",
-        clipboardUnavailable: "无法访问剪贴板，请手动选中文字复制。",
-        promptNamePlaceholder: "给这个模板起个名字",
-        promptSaveNameLabel: "新模板名称",
-        promptNameRequired: "请先填写模板名称。",
-        promptSaved: "模板已保存：{code} · {name}",
-        promptUpdated: "模板已更新：{code} · {name}",
-        promptDeleted: "模板已删除。",
-        promptApplied: "已使用模板：{code} · {name}",
-        promptApplyUnsavedTitle: "替换当前提示词？",
-        promptApplyUnsavedConfirm: "当前提示词有未保存的修改，使用 {code} · {name} 后会被替换。",
-        promptDeleteConfirm: "删除这个提示词模板？",
-        promptDeleteActiveNote: "这是正在使用的模板，删除后提示词会换成 {code} · {name}。",
-        promptNoTemplate: "没有可用模板。",
-        uiTitle: "界面",
-        showPolishButton: "在输入框附近显示润色按钮",
-        showPolishButtonDesc: "在 Discord 输入框旁添加“润色”快捷按钮。",
-        showMessageButtons: "在消息旁显示翻译按钮",
-        showMessageButtonsDesc: "在频道消息旁添加“翻译”按钮。",
-        autoTranslateMessages: "自动翻译可见外语消息",
-        autoTranslateMessagesDesc: "自动翻译屏幕上不是目标语言的消息。",
-        autoTranslatePrefetch: "预翻译附近消息",
-        autoTranslatePrefetchDesc: "空闲时提前翻译屏幕上下的消息，并发数需至少为 2。",
-        autoTranslatePrefetchRange: "预翻译范围",
-        autoTranslatePrefetchRangeDesc: "屏幕上方和下方各提前翻译多少条消息。",
-        autoTranslateConcurrency: "自动翻译并发数",
-        autoTranslateConcurrencyDesc: "同时进行的翻译请求数，默认 {default}，范围 {min}-{max}。",
-        autoTranslateStrictRetry: "译文语言不对时严格重试",
-        autoTranslateStrictRetryDesc: "先重试失败的部分，再逐条严格翻译，仍失败才显示重试按钮。",
-        showAutoTranslateWarnings: "失败时在消息下提示",
-        showAutoTranslateWarningsDesc: "超时、网络波动等一般失败也会提示；需要你处理的错误总会显示。",
-        showAutoTranslateToasts: "自动翻译失败时弹出提示",
-        showAutoTranslateToastsDesc: "需要你处理的问题（如 Key 无效）总会提示一次。",
-        translationCacheTtl: "缓存时间",
-        translationCacheTtlDesc: "重启 Discord 后仍可用，过期后重新翻译。",
-        translationCacheMaxEntries: "最多缓存消息数",
-        translationCacheMaxEntriesDesc: "超出后先删除最久没用的译文，最多 15000 条。",
-        translationCacheStats: "缓存命中统计",
-        translationCacheStatsDesc: "本次会话命中 {hits} 次，未命中 {misses} 次；内存 {memory} 条消息，已保存 {persistent} 条消息。",
-        clearTranslationCacheStats: "清空统计",
-        clearTranslationCache: "清空翻译缓存",
-        clearTranslationCacheConfirm: "所有已保存的译文都会删除，之后相同内容需要重新翻译。",
-        clearTranslationCacheDesc: "删除所有已保存的译文，相同内容以后要重新翻译。",
-        translationCacheStatsCleared: "缓存命中统计已清空，已保存译文未删除。",
-        translationCacheCleared: "翻译缓存已清空。",
-        cacheTtl3h: "3 小时",
-        cacheTtl6h: "6 小时",
-        cacheTtl12h: "12 小时",
-        cacheTtl1d: "1 天",
-        cacheTtl2d: "2 天",
-        cacheTtl7d: "7 天",
-        translationPosition: "译文位置",
-        translationPositionDesc: "译文显示在原消息上方还是下方。",
-        translationBeforeOriginal: "译文在前，原文在后",
-        translationAfterOriginal: "原文在前，译文在后",
-        translationPositionAbove: "在原文上方",
-        translationPositionBelow: "在原文下方",
-        maskTranslations: "默认遮蔽译文",
-        maskTranslationsDesc: "译文先显示为灰条，点击或按 Enter 再展开。",
-        translationStyle: "译文样式",
-        translationStyleDesc: "三种样式都跟随 Discord 主题颜色。",
-        translationStyleTint: "淡底色",
-        translationStyleMuted: "弱化文字",
-        translationStyleTag: "带“译”标记",
-        translationTextScale: "译文字号",
-        translationTextScaleDesc: "相对聊天正文的大小。",
-        panelTheme: "窗口主题",
-        panelThemeDesc: "设置窗口、快捷面板和菜单的配色；确认对话框跟随 Discord。",
-        panelThemeAuto: "跟随 Discord",
-        panelThemeLight: "浅色",
-        panelThemeDark: "深色",
-        translationTag: "译",
-        showContextMenu: "在消息右键菜单显示翻译入口",
-        showContextMenuDesc: "右键消息时显示“翻译”菜单项。",
-        enableHotkey: "启用输入润色快捷键",
-        enableHotkeyDesc: "输入框聚焦时，按已设置的快捷键直接润色当前草稿。",
-        polishHotkey: "润色快捷键",
-        polishHotkeyDesc: "点快捷键按钮，再按下新的组合键；需包含 Ctrl、Alt 或 Win。",
-        hotkeyRecord: "录制快捷键",
-        hotkeyRecording: "请按组合键...",
-        hotkeyReset: "恢复默认",
-        hotkeyNotSet: "未设置",
-        hotkeySaved: "快捷键已保存：{shortcut}",
-        hotkeyInvalid: "快捷键无效：请用 Ctrl、Alt 或 Win 加一个按键（可再加 Shift），且不能占用复制、粘贴等编辑快捷键。",
-        tryTranslate: "试译一句",
-        tryTranslateDesc: "用当前设置翻译一句话，不会发到 Discord。",
-        tryTranslatePlaceholder: "例如：See you tomorrow, same time?",
-        tryTranslateRun: "试译",
-        tryPolish: "试润色",
-        tryPolishDesc: "用当前设置润色一句话，不会发到 Discord。",
-        tryPolishPlaceholder: "例如：明天老时间见？",
-        tryPolishRun: "试润色",
-        tryBusy: "处理中",
-        tryInputRequired: "先输入一句话。",
-        tryResultTime: "用时 {time}",
-        reset: "恢复默认设置",
-        resetConfirm: "设置、频道规则和显示选项会恢复默认；API Key、Google Key 池和提示词模板会保留。",
-        resetDialogTitle: "恢复默认设置？",
-        resetDialogLead: "以下内容会恢复默认，不能撤销：",
-        resetDialogItemSettings: "翻译和润色的服务设置、开关与数值",
-        resetDialogItemChannelRules: "各频道的自动翻译规则",
-        resetDialogItemDisplay: "显示和界面选项（界面语言不变）",
-        resetDialogItemCredentials: "API Key、Google Key 池和自定义提示词模板",
-        resetDialogItemCredentialsNote: "仅在取消勾选下方选项时清除",
-        resetKeepCredentials: "保留 API Key、Google Key 池和提示词模板",
-        dialogConfirm: "确定",
-        dialogCancel: "取消",
-        settingsLoadBlocked: "无法读取已保存的设置，本次修改不会保存。请检查插件文件夹中的 DiscordAITranslator.config.json，修复后重新启用插件。",
-        pluginStarted: "Discord AI 翻译助手 v{version} 已启动。",
-        polishButton: "润色",
-        polishBusy: "润色中",
-        polishRunning: "正在润色当前草稿...",
-        composerChanged: "输入框已切换，请再试一次。",
-        composerResultHeld: "结果没有自动写入：草稿已改变，或你正在别处输入。可在弹出的面板里复制或写入。",
-        polishTitleAttr: "用 AI 润色当前草稿。快捷键：{shortcut}。",
-        translateButton: "翻译",
-        translateBusy: "翻译中...",
-        translateTitleAttr: "翻译为 {targetLanguage}",
-        translateMenu: "翻译为 {targetLanguage}",
-        translateRetry: "重试",
-        translateRetryTitle: "重新翻译这条消息",
-        translationFailedInline: "翻译失败：{error}",
-        translationLoading: "翻译中…",
-        translationRevealLabel: "显示被遮蔽的译文",
-        translationActionsLabel: "译文操作",
-        translationActionCopy: "复制译文",
-        translationActionRetranslate: "重新翻译（不用缓存）",
-        translationActionHide: "隐藏译文",
-        translationCopied: "已复制译文。",
-        translationPartialOne: "第 {parts} 段（共 {total} 段）没有翻译出来",
-        translationPartialMany: "第 {parts} 段（共 {total} 段）没有翻译出来",
-        translationPartialUnknown: "有一部分没有翻译出来",
-        translationRetranslate: "重新翻译",
-        translationRetranslateTitle: "不用缓存，重新翻译整条消息",
-        translationErrorAuth: "翻译服务拒绝了 API Key",
-        translationErrorMissingKey: "还没有填写翻译用的 API Key",
-        translationErrorMissingEndpoint: "还没有填写翻译接口地址",
-        translationErrorMissingModel: "还没有选择翻译模型",
-        translationErrorQuota: "翻译服务的额度用完了",
-        translationErrorLocal: "本地翻译服务没有响应",
-        translationErrorLocalAt: "本地翻译服务没有响应（{host}）",
-        translationErrorRateLimit: "请求太多，请稍后再试",
-        translationErrorRateLimitWait: "请求太多，请 {seconds} 秒后再试",
-        translationOpenSettings: "打开设置",
-        translationOpenSettingsTitle: "打开翻译设置",
-        translationTestConnection: "测试连接",
-        translationTestConnectionTitle: "测试翻译服务能不能连上",
-        autoTranslateFailed: "自动翻译失败：{error}",
-        autoTranslateNeedsAttention: "自动翻译需要你处理：{error}",
-        autoTranslateTargetFailed: "模型输出不是目标语言，已跳过这条译文。",
-        manualTranslateRescueFailed: "多次尝试后仍没有得到可用的译文，可以再试一次。",
-        contextPatchFailed: "无法注入消息右键菜单：{error}",
-        polishDisabled: "输入润色已禁用。",
-        textboxMissing: "找不到 Discord 输入框。",
-        inputEmpty: "输入框是空的。",
-        confirmSend: "发送润色后的消息？",
-        confirmSendAction: "发送",
-        confirmSendDraftChanged: "草稿已有改动，没有发送。",
-        translationDisabled: "频道消息翻译已禁用。",
-        noTranslatableText: "这条消息没有可翻译文本。",
-        messageMissing: "找不到要翻译的消息。",
-        modelSet: "模型已设置为 {model}。",
-        hideTranslation: "隐藏翻译",
-        translationLabel: "AI 翻译为 {targetLanguage}",
-        polishedReady: "润色结果已写入输入框。",
-        apiKeyMissingPolish: "输入润色 API Key 未配置。",
-        apiKeyMissingTranslation: "频道翻译 API Key 未配置。",
-        endpointMissing: "API 接口地址未配置。",
-        modelMissing: "模型未配置。",
-        invalidJson: "API 返回了无效 JSON。",
-        emptyResult: "API 返回了空结果。",
-        errorUnauthorized: "API Key 无效或没有权限。",
-        errorRateLimited: "API 请求过快，已进入冷却。",
-        errorQuotaExceeded: "API 额度或账户余额已用完。",
-        errorLanguageUnsupported: "当前服务商不支持所选目标语言，请换一个目标语言或服务商。",
-        errorIpNotAllowed: "服务商拒绝了当前 IP 地址，请检查服务商后台的 IP 白名单。",
-        errorProviderRequestRejected: "服务商拒绝了请求，请检查账号权限、目标语言和服务设置。",
-        errorOutputTruncated: "模型回复被截断，请在设置里调高“最大输出长度”后重试。",
-        errorSaveFailed: "无法保存到本地，请稍后重试。",
-        errorServer: "API 服务暂时不可用。",
-        errorCancelled: "请求已取消。",
-        errorInvalidEndpoint: "接口地址无效，请填写完整的 API 地址。",
-        errorEndpointNotFound: "找不到接口地址或模型，请检查接口地址和模型名称。",
-        errorUnsafeEndpoint: "接口地址不安全：远程服务须使用 HTTPS，本机服务可用 HTTP，地址中不能包含用户名或密码。",
-        localIntakeFixed: "本地服务固定扫描页面发现消息，无需修改。",
-        localConcurrencyDesc: "可设为 {min}-{max}；按本地服务的并行槽位和显存设置。",
-        localFallbackUnavailable: "本地服务不会转到云端服务，此项不可用。",
-        errorTimeout: "API 请求超时。",
-        errorNetwork: "网络连接失败。",
-        unknownError: "未知错误"
-      },
-      en: {
-        settingsTitle: "Discord AI Translator",
-        settingsNote: "Polishing and translation are set up separately. API keys stay on this computer.",
-        generalTitle: "General",
-        interfaceLanguage: "Interface language",
-        interfaceLanguageDesc: "Changes the plugin's own text only, not the polish or translation language.",
-        languageZh: "中文",
-        languageEn: "English",
-        polishTitle: "Input polishing",
-        polishDescription: "Rewrites the current draft and returns the result to the input box.",
-        translationTitle: "Channel translation",
-        translationDescription: "Translates existing channel messages into the selected target language.",
-        enabled: "Enabled",
-        enabledDesc: "When off, its buttons are hidden and no requests are sent.",
-        provider: "Service",
-        providerDesc: "LLMs work for both translation and polishing; translation engines translate only.",
-        providerPolishDesc: "Polishing needs prompt-capable LLMs; pick any saved LLM config above.",
-        providerGroupAi: "LLMs (translate & polish)",
-        providerGroupMachine: "Translation engines (translate only)",
-        savedServiceConfigs: "Saved configurations",
-        savedServiceConfigsDesc: "Tested services save automatically for reuse across translation and polishing.",
-        savedServiceConfigsPlaceholder: "Choose a saved config ({count})",
-        savedServiceConfigsEmpty: "No saved configs yet (saved automatically after Test)",
-        savedServiceConfigApplied: "Applied configuration: {name}",
-        savedServiceConfigDeleted: "Saved configuration removed.",
-        savedServiceConfigDelete: "Remove",
-        syncConfigToPolish: "Sync to polish",
-        syncConfigToTranslation: "Sync to translate",
-        syncConfigUnsupportedPolish: "Translation engines cannot rewrite drafts for input polishing.",
-        syncConfigMissing: "Finish configuring the current service first.",
-        syncConfigDonePolish: "Synced configuration to input polishing.",
-        syncConfigDoneTranslation: "Synced configuration to channel translation.",
-        providerOpenAI: "OpenAI-compatible",
-        providerSakuraLocal: "Sakura local",
-        providerGoogleCloud: "Google Cloud Translation",
-        googleTranslateTitle: "Google Cloud Translation key pool",
-        googleTranslateKeys: "Google API key pool",
-        googleTranslateKeysDesc: "One key per line, or Label|KEY|monthly limit.",
-        googleTranslateDefaultLimit: "Default monthly limit per Google key",
-        googleTranslateDefaultLimitDesc: "Used when a key line has no limit; 420000-450000 leaves a safety margin.",
-        googleTranslateAllowPrefetch: "Allow Google for prefetch",
-        googleTranslateAllowPrefetchDesc: "When off, only on-screen messages use Google; prefetch spends no Google characters.",
-        googleTranslateStats: "Google usage",
-        googleTranslateStatsDesc: "This month {used}/{limit} chars; available keys {available}/{total}; month {month}.",
-        googleTranslateStatsCooldown: "{count} key(s) cooling down; the first comes back at {time}.",
-        googleTranslateResetStats: "Reset Google monthly stats",
-        googleTranslateResetConfirm: "Only the count kept on this computer is cleared; real Google Cloud usage is unchanged.",
-        googleTranslateStatsReset: "Google monthly stats reset.",
-        googleTranslateNoKey: "Google Cloud Translation has no available API key.",
-        googleTranslateQuotaExceeded: "Google Cloud Translation key pool monthly quota is exhausted.",
-        googleTranslateKeysCooling: "All Google Cloud Translation keys are cooling down until {time}.",
-        googleTranslateKeyError: 'Key "{label}": {error}',
-        apiKey: "API key",
-        apiKeyDesc: "Stored only on this computer, never in messages; Sakura local can leave it empty.",
-        apiKeyDeepSeekDesc: "Your DeepSeek platform API key, stored only on this computer.",
-        apiKeyOpenAIDesc: "The API key your service gave you, stored only on this computer.",
-        apiKeyLocalDesc: "Optional; local servers usually don't need one.",
-        apiKeyMicrosoftDesc: "Your Azure Translator resource key, stored only on this computer.",
-        apiKeyDeepLDesc: "Your DeepL API authentication key, stored only on this computer.",
-        apiKeyOptionalPlaceholder: "Optional",
-        apiTest: "Test",
-        apiTestBusy: "Testing",
-        apiStatusUntested: "Untested",
-        apiStatusTesting: "Testing",
-        apiStatusSuccess: "Connected",
-        apiStatusFailed: "Failed",
-        apiTestSuccess: "{name} API connection succeeded.",
-        apiTestSuccessSaved: "{name} API connected and saved as a reusable configuration.",
-        apiTestSuccessSynced: "{name} API connected, saved, and synced to {target}.",
-        apiTestFailed: "{name} API connection failed: {error}",
-        apiTestJustNow: "just now",
-        apiTestMinutesAgo: "{count} min ago",
-        apiTestHoursAgo: "{count} h ago",
-        apiTestNotYet: "Not tested yet",
-        thinkingMode: "DeepSeek thinking mode",
-        thinkingModeDesc: "The model reasons before answering: maybe better, but slower and uses more tokens.",
-        endpoint: "Endpoint",
-        endpointDesc: "The service's API address; the default usually works.",
-        endpointDeepSeekDesc: "DeepSeek's API address; the default usually works.",
-        endpointOpenAIDesc: "Accepts a /v1 base URL or full chat/completions URL; remote needs https.",
-        endpointLocalDesc: "Your local server's address; only local addresses may use http.",
-        endpointMicrosoftDesc: "Azure Translator's API address; the default usually works.",
-        endpointBaiduDesc: "Baidu Translate's API address; the default usually works.",
-        deepseekPreset: "DeepSeek V4 preset",
-        deepseekPresetDesc: "Switch quickly between DeepSeek V4 Flash and Pro.",
-        customModel: "Custom (type it below)",
-        model: "Model",
-        modelDesc: "Type any model name; your last entry is remembered automatically.",
-        modelOpenAIDesc: "The model name your service offers; Detect models lists them.",
-        modelLocalDesc: "local-model uses whichever model the server has loaded.",
-        modelLocalLoadedDesc: "local-model uses the server's loaded model, now {model}.",
-        modelDetect: "Detect models",
-        modelDetectBusy: "Detecting",
-        modelDetectFound: "Found {count} models; pick one from the list.",
-        modelDetectFoundLoaded: "Found {count} models; loaded: {model}.",
-        modelDetectNone: "The server listed no models.",
-        modelDetectFailed: "Detection failed: {error}",
-        modelDetectUnsupported: "This service can't list its models.",
-        modelDetectConfirmOrigin: "Confirm where to use this API key",
-        modelDetectConfirmOriginDesc: "Allow the current API key to be sent to {origin} and bind it to this origin?",
-        apiKeyOriginMismatch: "This API key is bound to a different origin. Enter a key for this address or use Detect models to confirm the current origin.",
-        modelPicker: "Available models",
-        modelPickerOther: "Other (type it above)",
-        modelPickerServerLoaded: "Use the server's loaded model (local-model)",
-        modelPickerDetected: "Listed by the server",
-        modelPickerPresets: "Common models",
-        modelPickerLoadedTag: "{model} (loaded)",
-        outputLanguage: "Output language",
-        outputLanguageDesc: "The language of the polished text.",
-        inputLanguage: "Input language",
-        inputLanguageDesc: "The language of your draft; keep auto-detect unless it guesses wrong.",
-        messageLanguage: "Message language",
-        messageLanguageDesc: "The language of channel messages; keep auto-detect unless it guesses wrong.",
-        autoDetectLanguage: "Auto-detect",
-        targetLanguage: "Target language",
-        targetLanguageDesc: "The language channel messages are translated into.",
-        languagePreset: "Common language",
-        customLanguage: "Custom language",
-        customLanguagePlaceholder: "Examples: Traditional Chinese, Korean, Brazilian Portuguese",
-        customLanguageDesc: "Custom names go to the model as typed.",
-        temperature: "Creativity",
-        temperatureDesc: "Lower is steadier: 0.1-⁠0.3 for translation, 0.3-⁠0.7 for polishing.",
-        maxTokens: "Max output length",
-        maxTokensDesc: "Longest reply the model may write; raise it if long messages get cut off.",
-        afterPolishing: "After polishing",
-        afterPolishingDesc: "Whether to ask before sending once the polished text is in the input box.",
-        afterReplace: "Replace input",
-        afterDirectReplace: "Replace input",
-        afterConfirmSend: "Ask before sending",
-        repolishSource: "Re-polish source",
-        repolishSourceDesc: "When you polish again, start from the original draft or the last result.",
-        repolishSourceOriginal: "Use original draft",
-        repolishSourceLastResult: "Use previous result",
-        restoreOriginal: "Restore original",
-        restoreOriginalChanged: "The draft has changed, so the original can't be restored.",
-        polishResultTitle: "Polished result",
-        polishResultCopy: "Copy",
-        polishResultCopied: "Copied",
-        polishResultReplace: "Insert into input",
-        polishResultApplyFailed: "Could not insert into the input box. Use Copy and paste it instead.",
-        polishResultClose: "Close",
-        prompt: "Prompt",
-        promptDesc: "Tells the model how to polish or translate; any language works.",
-        promptUsingTemplate: "Using template: {code} · {name}",
-        promptTemplateNameNaturalChat: "Natural chat",
-        promptTemplateNamePolite: "Polite and clear",
-        promptTemplateNameShort: "Short and direct",
-        promptTemplateNameNativeCasual: "Native casual",
-        promptTemplateNameTechBug: "Tech & bug report",
-        promptTemplateNameGamingChat: "Gaming & squad chat",
-        promptTemplateNameTactful: "Tactful & diplomatic",
-        promptTemplateNameFormalNotice: "Formal & announcement",
-        promptTemplateNameDialectCantoneseGuangfu: "Guangfu Cantonese (Everyday)",
-        promptTemplateNameDialectCantoneseHk: "Hong Kong Cantonese",
-        promptTemplateNameDialectHakka: "Hakka (Casual)",
-        promptTemplateNameDialectChaoshan: "Chaoshan / Teochew",
-        promptTemplateNameDialectGuangxi: "Guangxi Nanpu",
-        promptTemplateNameDialectMinnan: "Minnan / Hokkien",
-        promptTemplateNameDialectTaiwan: "Taiwanese Mandarin",
-        promptTemplateNameDialectSichuan: "Sichuan & Chongqing",
-        promptTemplateNameDialectYunnan: "Yunnan Dialect",
-        promptTemplateNameDialectGuizhou: "Guizhou Dialect",
-        promptTemplateNameDialectDongbei: "Northeastern (Dongbei)",
-        promptTemplateNameDialectBeijing: "Beijing Mandarin",
-        promptTemplateNameDialectTianjin: "Tianjin Dialect",
-        promptTemplateNameDialectShaanxi: "Shaanxi (Guanzhong)",
-        promptTemplateNameDialectHenan: "Henan Dialect",
-        promptTemplateNameDialectShandong: "Shandong Dialect",
-        promptTemplateNameDialectXinjiang: "Xinjiang Style",
-        promptTemplateNameDialectShanghai: "Shanghainese",
-        promptTemplateNameDialectJiangzhe: "Suzhou & Hangzhou Wu",
-        promptTemplateNameDialectNanjing: "Nanjing Dialect",
-        promptTemplateNameDialectWuhan: "Wuhan Dialect",
-        promptTemplateNameDialectHunan: "Hunan Dialect",
-        promptTemplateCategoryLabel: "Preset category",
-        promptTemplateCategoryGeneral: "General",
-        promptTemplateCategoryDialect: "Dialect",
-        promptTemplateCategoryPersona: "Persona",
-        promptTemplateRegionSouthChina: "South China & Min-Tai",
-        promptTemplateRegionSouthwest: "Southwest",
-        promptTemplateRegionNorth: "North",
-        promptTemplateRegionEastCentral: "East & Central",
-        promptTemplateRegionCustom: "Custom dialects",
-        promptTemplateNamePersonaQinShihuang: "Qin Shi Huang (Imperial Decree)",
-        promptTemplateNamePersonaHanWudi: "Emperor Wu of Han (Grand Edict)",
-        promptTemplateNamePersonaZhuYuanzhang: "Zhu Yuanzhang (Plain-Speech Edict)",
-        promptTemplateNamePersonaChiangKaiShek: "Chiang Kai-shek (Republic Telegram)",
-        promptTemplateNamePersonaCaoCao: "Cao Cao (Bold Warlord)",
-        promptTemplateNamePersonaLiShimin: "Emperor Taizong (Tang Statesman)",
-        promptTemplateNamePersonaYongzheng: "Yongzheng (Sharp Imperial Notes)",
-        promptTemplateNamePersonaZhugeLiang: "Zhuge Liang (Earnest Memorial)",
-        promptTemplateNamePersonaSimaYi: "Sima Yi (Patient Strategist)",
-        promptTemplateNamePersonaSunTzu: "Sun Tzu (Art of War Maxim)",
-        promptTemplateNamePersonaXiangYu: "Xiang Yu (Fierce Hegemon)",
-        promptTemplateNamePersonaLuXun: "Lu Xun (Dry Satirical Essay)",
-        promptTemplateNamePersonaLinDaiyu: "Lin Daiyu (Witty & Playful Barb)",
-        promptTemplateNamePersonaWangYangming: "Wang Yangming (Mind Philosophy)",
-        promptTemplateNamePersonaLiBai: "Li Bai (Free-Spirited Poet)",
-        promptTemplateNamePersonaSuShi: "Su Shi (Warm & Witty Scholar)",
-        promptTemplateNamePersonaConfucius: "Confucius (Analects Aphorism)",
-        promptTemplateNamePersonaZhuangzi: "Zhuangzi (Daoist Parable)",
-        promptTemplateNamePersonaEileenChang: "Eileen Chang (Cool Urban Wit)",
-        promptTemplateNamePersonaQianZhongshu: "Qian Zhongshu (Sharp Metaphor)",
-        promptTemplateNamePersonaWangXiaobo: "Wang Xiaobo (Deadpan Irony)",
-        promptTemplateNamePersonaGuoDegang: "Guo Degang (Crosstalk Banter)",
-        promptTemplateNamePersonaShakespeare: "Shakespeare (Stage Monologue)",
-        promptTemplateNamePersonaTrump: "Donald Trump (Bold Hyperbole)",
-        promptTemplateNamePersonaNietzsche: "Nietzsche (Abyss Aphorism)",
-        promptTemplateNamePersonaMarx: "Karl Marx (Dialectical Critique)",
-        promptTemplateNamePersonaNapoleon: "Napoleon (Battlefield Dispatch)",
-        promptTemplateNamePersonaChurchill: "Churchill (Resolute Wit)",
-        promptTemplateNamePersonaMusk: "Elon Musk (First-Principles Terse)",
-        promptTemplatePersonaGroupMonarchs: "Monarchs & Rulers",
-        promptTemplatePersonaGroupStrategists: "Strategists & Generals",
-        promptTemplatePersonaGroupLiterati: "Writers & Thinkers",
-        promptTemplatePersonaGroupGlobal: "Global Icons",
-        promptTemplatePersonaGroupCustom: "Custom personas",
-        promptTemplateNameNatural: "Natural",
-        promptTemplateNameLiteral: "Literal",
-        promptTemplateNameSlangCasual: "Slang & casual chat",
-        promptTemplateNameTechDev: "Tech, AI & dev",
-        promptTemplateNameGamingAcg: "Gaming & ACG",
-        promptTemplateNameFormalChangelog: "Formal & changelog",
-        promptTemplates: "Prompt templates",
-        promptTemplatesDesc: "Choosing a template only previews it; “Use template” replaces the prompt.",
-        promptSearch: "Search template name or code",
-        promptTemplateSelect: "Select template",
-        promptTemplateCustom: "Current prompt is not saved as a template",
-        promptTemplateEdited: "Based on {code} · {name}; edits not saved to the template",
-        promptPreview: "Template preview",
-        promptPreviewActive: "In use",
-        promptApply: "Use template",
-        promptSave: "Save as template",
-        promptUpdate: "Update current template",
-        promptUpdateTitle: "Overwrite {code} · {name} with the edited prompt",
-        promptDelete: "Delete template",
-        promptRestorePresets: "Restore built-in presets",
-        promptPresetsRestored: "Restored {count} built-in template(s).",
-        promptPresetsComplete: "All built-in templates are already present.",
-        promptCopy: "Copy prompt",
-        promptCopied: "Prompt copied.",
-        copiedToClipboard: "Copied.",
-        promptCopyFailed: "Copy failed: {error}",
-        clipboardUnavailable: "The clipboard is not available. Select the text and copy it manually.",
-        promptNamePlaceholder: "Name this template",
-        promptSaveNameLabel: "New template name",
-        promptNameRequired: "Enter a template name first.",
-        promptSaved: "Template saved: {code} · {name}",
-        promptUpdated: "Template updated: {code} · {name}",
-        promptDeleted: "Template deleted.",
-        promptApplied: "Template applied: {code} · {name}",
-        promptApplyUnsavedTitle: "Replace the current prompt?",
-        promptApplyUnsavedConfirm: "Your prompt has unsaved edits; using {code} · {name} replaces them.",
-        promptDeleteConfirm: "Delete this prompt template?",
-        promptDeleteActiveNote: "This template is in use; deleting it switches the prompt to {code} · {name}.",
-        promptNoTemplate: "No templates available.",
-        uiTitle: "UI",
-        showPolishButton: "Show Polish button near the input box",
-        showPolishButtonDesc: "Adds a Polish shortcut button near the Discord input box.",
-        publicBilingualInputButton: "Show public bilingual button near the input box",
-        publicBilingualInputButtonDesc: "Writes your draft as translation plus hidden original, for you to check and send.",
-        publicBilingualUseInitialOriginal: "Use initial draft as hidden original",
-        publicBilingualUseInitialOriginalDesc: "If you polished first, the hidden original keeps your unpolished draft.",
-        publicBilingualAfterPolish: "Auto-create public bilingual message after polishing",
-        publicBilingualAfterPolishDesc: "After Polish, also turns the result into a bilingual message; nothing is sent.",
-        publicBilingualPolishBeforeTranslate: "Auto-polish before public bilingual",
-        publicBilingualPolishBeforeTranslateDesc: "Clicking Bilingual polishes the draft first, then translates the result.",
-        showMessageButtons: "Show Translate buttons on messages",
-        showMessageButtonsDesc: "Adds a Translate button beside channel messages.",
-        messageButtonVisibility: "Translate button visibility",
-        messageButtonVisibilityDesc: "Show the Translate button all the time, or only when you hover a message.",
-        messageButtonVisibilityAlways: "Always shown",
-        messageButtonVisibilityHover: "Shown on hover",
-        messageButtonMode: "Translate button on messages",
-        messageButtonModeDesc: "How the Translate button appears next to each message.",
-        messageButtonModeHover: "Show on hover",
-        messageButtonModeAlways: "Always show",
-        messageButtonModeOff: "Don't show",
-        autoTranslateMessages: "Auto-translate visible foreign messages",
-        autoTranslateMessagesDesc: "Translates on-screen messages that aren't in your target language.",
-        autoTranslatePrefetch: "Prefetch nearby messages",
-        autoTranslatePrefetchDesc: "Translates nearby off-screen messages when idle; needs a concurrency of 2 or more.",
-        autoTranslatePrefetchRange: "Prefetch range",
-        autoTranslatePrefetchRangeDesc: "How many messages above and below the screen to prefetch.",
-        autoTranslateConcurrency: "Auto-translation concurrency",
-        autoTranslateConcurrencyDesc: "How many translation requests run at once: default {default}, range {min}-{max}.",
-        autoTranslateStrictRetry: "Retry strictly when the output language is wrong",
-        autoTranslateStrictRetryDesc: "Retries failed parts, then one message at a time, before showing Retry.",
-        showAutoTranslateWarnings: "Show failures under messages",
-        showAutoTranslateWarningsDesc: "Includes timeouts and network hiccups; errors you must fix always show.",
-        showAutoTranslateToasts: "Show a pop-up when auto-translation fails",
-        showAutoTranslateToastsDesc: "Problems you must fix, like an invalid key, are always shown once.",
-        diagnosticLogs: "Diagnostic logs",
-        diagnosticLogsDesc: "Records requests, cache use and failure reasons (up to 500 entries) for export.",
-        diagnosticLogsStats: "Logs: {entries}; compressed repeated events: {compressed}.",
-        diagnosticSummary: "Diagnostic summary",
-        diagnosticSummaryEmpty: "Turn on diagnostics and reproduce the issue to see a summary here.",
-        diagnosticSummaryEvents: "Events: {events}, grouped by state, reason and service; latest {latest}.",
-        diagnosticSummaryStates: "States",
-        diagnosticSummaryReasons: "Reasons",
-        diagnosticSummaryFlows: "Flows",
-        diagnosticSummaryQueues: "Queues",
-        diagnosticSummaryProviders: "Services",
-        diagnosticSummaryFailures: "Failures",
-        diagnosticSummaryFailureLayers: "Failure stages",
-        diagnosticSummaryFlowStages: "Flow stages",
-        clearDiagnosticLogs: "Clear logs",
-        clearDiagnosticLogsConfirm: "All diagnostic logs will be deleted. Export them first if you need them.",
-        clearDiagnosticLogsDesc: "Deletes every diagnostic log; export them first if you need them.",
-        exportDiagnosticLogs: "Export logs",
-        copyDiagnosticLogs: "Copy logs",
-        exportDiagnosticJson: "Export JSON",
-        exportDiagnosticTxt: "Export TXT",
-        diagnosticLogsCleared: "Diagnostic logs cleared.",
-        diagnosticLogsCopied: "Diagnostic logs copied.",
-        diagnosticLogsEmpty: "No diagnostic logs yet.",
-        diagnosticLogsExported: "Diagnostic logs exported.",
-        settingsSnapshot: "Settings snapshot",
-        settingsSnapshotDesc: "Downloads your settings as JSON with keys hidden, safe to share for troubleshooting.",
-        exportSettingsSnapshot: "Download settings",
-        settingsSnapshotExported: "Settings snapshot downloaded; secrets are hidden.",
-        settingsSnapshotCopied: "Settings snapshot copied; secrets are hidden.",
-        translationCacheTtl: "Cache lifetime",
-        translationCacheTtlDesc: "Kept across Discord restarts; expired translations are fetched again.",
-        translationCacheMaxEntries: "Max cached messages",
-        translationCacheMaxEntriesDesc: "When full, the least recently used translations go first; up to 15000.",
-        translationCacheStats: "Cache hit stats",
-        translationCacheStatsDesc: "This session: {hits} hits, {misses} misses; {memory} in memory, {persistent} saved.",
-        clearTranslationCacheStats: "Clear stats",
-        clearTranslationCache: "Clear translation cache",
-        clearTranslationCacheConfirm: "All saved translations will be deleted and fetched again when needed.",
-        clearTranslationCacheDesc: "Deletes every saved translation; the same text is translated again when needed.",
-        translationCacheStatsCleared: "Cache hit stats cleared. Saved translations were kept.",
-        translationCacheCleared: "Translation cache cleared.",
-        cacheTtl3h: "3 hours",
-        cacheTtl6h: "6 hours",
-        cacheTtl12h: "12 hours",
-        cacheTtl1d: "1 day",
-        cacheTtl2d: "2 days",
-        cacheTtl7d: "7 days",
-        translationPosition: "Translation position",
-        translationPositionDesc: "Show the translation above or below the original message.",
-        translationBeforeOriginal: "Translation first, original below",
-        translationAfterOriginal: "Original first, translation below",
-        translationPositionAbove: "Above original",
-        translationPositionBelow: "Below original",
-        maskTranslations: "Mask translations by default",
-        maskTranslationsDesc: "Translations show as a gray bar until you click it or press Enter.",
-        translationStyle: "Translation style",
-        translationStyleDesc: "All styles follow Discord's theme colors.",
-        translationStyleTint: "Faint background",
-        translationStyleMuted: "Dimmer text",
-        translationStyleTag: '"TR" tag',
-        translationTextScale: "Translation text size",
-        translationTextScaleDesc: "Relative to the chat text size.",
-        panelTheme: "Window theme",
-        panelThemeDesc: "Colors of the settings window, quick panel and menus; confirmation dialogs follow Discord.",
-        panelThemeAuto: "Follow Discord",
-        panelThemeLight: "Light",
-        panelThemeDark: "Dark",
-        translationTag: "TR",
-        hideOriginalAfterTranslation: "Hide original after translation",
-        hideOriginalAfterTranslationDesc: "Shows the original as a gray bar until you hover or focus it; only you see this.",
-        showContextMenu: "Show Translate action in message right-click menus",
-        showContextMenuDesc: "Adds Translate to the message right-click menu.",
-        enableHotkey: "Enable input polishing hotkey",
-        enableHotkeyDesc: "When the input box is focused, the configured shortcut polishes the current draft.",
-        polishHotkey: "Polishing hotkey",
-        polishHotkeyDesc: "Click the shortcut button, then press a new combination with Ctrl, Alt or Win.",
-        hotkeyRecord: "Record shortcut",
-        hotkeyRecording: "Press shortcut...",
-        hotkeyReset: "Reset default",
-        hotkeyNotSet: "Not set",
-        hotkeySaved: "Shortcut saved: {shortcut}",
-        hotkeyInvalid: "Invalid shortcut. Use Ctrl, Alt, or Win plus a key (Shift is optional); editing shortcuts such as copy and paste are not allowed.",
-        tryTranslate: "Try a sentence",
-        tryTranslateDesc: "Translates one sentence with these settings; nothing goes to Discord.",
-        tryTranslatePlaceholder: "e.g. Bis morgen, gleiche Zeit?",
-        tryTranslateRun: "Translate",
-        tryPolish: "Try polishing",
-        tryPolishDesc: "Polishes one sentence with these settings; nothing goes to Discord.",
-        tryPolishPlaceholder: "e.g. see u tmrw same time?",
-        tryPolishRun: "Polish",
-        tryBusy: "Working",
-        tryInputRequired: "Type a sentence first.",
-        tryResultTime: "took {time}",
-        reset: "Reset to defaults",
-        resetConfirm: "Settings, channel rules and display options return to defaults; API keys, the Google key pool and prompt templates are kept.",
-        resetDialogTitle: "Reset to defaults?",
-        resetDialogLead: "These return to their defaults. This can't be undone:",
-        resetDialogItemSettings: "Service settings, switches and numbers for translation and polishing",
-        resetDialogItemChannelRules: "Auto-translation rules for each channel",
-        resetDialogItemDisplay: "Display and interface options (the interface language stays)",
-        resetDialogItemCredentials: "API keys, the Google key pool and custom prompt templates",
-        resetDialogItemCredentialsNote: "Only if you untick the box below",
-        resetKeepCredentials: "Keep API keys, the Google key pool and prompt templates",
-        dialogConfirm: "OK",
-        dialogCancel: "Cancel",
-        settingsLoadBlocked: "Saved settings could not be read, so changes will not be saved. Check DiscordAITranslator.config.json in the plugins folder, then re-enable the plugin.",
-        pluginStarted: "Discord AI Translator v{version} started.",
-        polishButton: "Polish",
-        polishBusy: "Polishing",
-        polishRunning: "Polishing the current draft...",
-        composerChanged: "The input box changed. Please try again.",
-        composerResultHeld: "The result was not inserted because the draft changed or you were typing elsewhere. Copy or insert it from the panel.",
-        polishTitleAttr: "Polish current draft with AI. Shortcut: {shortcut}.",
-        publicBilingualButton: "Bilingual",
-        publicBilingualBusy: "Translating",
-        publicBilingualTitleAttr: "Write a public bilingual message using {targetLanguage}; everyone can see it after you send.",
-        publicBilingualReady: "Bilingual message is ready. Review it, then send.",
-        publicBilingualFailed: "Could not write the bilingual message: {error}",
-        publicBilingualInputChanged: "Input changed while translating, so the bilingual result was not written.",
-        errorComposerWriteFailed: "The input box did not accept the text. The result is shown in the panel so you can copy it.",
-        publicBilingualTooLong: "Bilingual message is too long for one Discord message ({length}/{limit}).",
-        publicBilingualPolishSkipped: "Polishing is disabled, so the bilingual message used the current draft.",
-        translateButton: "Translate",
-        translateBusy: "Translating...",
-        translateTitleAttr: "Translate to {targetLanguage}",
-        translateMenu: "Translate to {targetLanguage}",
-        translateRetry: "Retry",
-        translateRetryTitle: "Retry translating this message",
-        translationFailedInline: "Translation failed: {error}",
-        translationLoading: "Translating…",
-        translationRevealLabel: "Show hidden translation",
-        translationActionsLabel: "Translation actions",
-        translationActionCopy: "Copy translation",
-        translationActionRetranslate: "Translate again (skip cache)",
-        translationActionHide: "Hide translation",
-        translationCopied: "Translation copied.",
-        translationPartialOne: "Part {parts} of {total} could not be translated",
-        translationPartialMany: "Parts {parts} of {total} could not be translated",
-        translationPartialUnknown: "Part of this message could not be translated",
-        translationRetranslate: "Retranslate",
-        translationRetranslateTitle: "Translate the whole message again without the cache",
-        translationErrorAuth: "The translation service rejected the API key",
-        translationErrorMissingKey: "No API key is set for translation",
-        translationErrorMissingEndpoint: "No endpoint is set for translation",
-        translationErrorMissingModel: "No model is chosen for translation",
-        translationErrorQuota: "The translation service quota is used up",
-        translationErrorLocal: "The local translation service is not responding",
-        translationErrorLocalAt: "The local translation service is not responding ({host})",
-        translationErrorRateLimit: "Too many requests. Try again shortly",
-        translationErrorRateLimitWait: "Too many requests. Try again in {seconds} s",
-        translationOpenSettings: "Open settings",
-        translationOpenSettingsTitle: "Open translation settings",
-        translationTestConnection: "Test connection",
-        translationTestConnectionTitle: "Check whether the translation service can be reached",
-        autoTranslateFailed: "Auto-translation failed: {error}",
-        autoTranslateNeedsAttention: "Auto-translation needs your attention: {error}",
-        autoTranslateTargetFailed: "Model output was not in the target language, so this translation was skipped.",
-        manualTranslateRescueFailed: "No usable translation after several attempts. You can try again.",
-        contextPatchFailed: "Could not patch message context menu: {error}",
-        polishDisabled: "Input polishing is disabled.",
-        textboxMissing: "Could not find the Discord input box.",
-        inputEmpty: "Input box is empty.",
-        confirmSend: "Send the polished message?",
-        confirmSendAction: "Send",
-        confirmSendDraftChanged: "The draft changed, so nothing was sent.",
-        translationDisabled: "Channel translation is disabled.",
-        noTranslatableText: "Message has no translatable text.",
-        messageMissing: "Could not find a message to translate.",
-        modelSet: "Model set to {model}.",
-        hideTranslation: "Hide translation",
-        translationLabel: "AI translation to {targetLanguage}",
-        polishedReady: "Polished text is ready.",
-        apiKeyMissingPolish: "Polishing API key is not configured.",
-        apiKeyMissingTranslation: "Translation API key is not configured.",
-        endpointMissing: "API endpoint is not configured.",
-        modelMissing: "Model is not configured.",
-        invalidJson: "API returned invalid JSON.",
-        emptyResult: "API returned an empty result.",
-        errorUnauthorized: "API key is invalid or does not have permission.",
-        errorRateLimited: "API rate limit reached; automatic retries are cooling down.",
-        errorQuotaExceeded: "API quota or account balance is used up.",
-        errorLanguageUnsupported: "This service does not support the selected target language. Choose another language or service.",
-        errorIpNotAllowed: "The service rejected your IP address. Check the IP allowlist in the service console.",
-        errorProviderRequestRejected: "The service rejected the request. Check account permissions, target language and service settings.",
-        errorOutputTruncated: "The model's reply was cut off. Raise “Max output length” in settings and try again.",
-        errorSaveFailed: "Could not save locally. Try again later.",
-        errorServer: "API service is temporarily unavailable.",
-        errorCancelled: "Request cancelled.",
-        errorInvalidEndpoint: "Invalid endpoint. Enter a complete API URL.",
-        errorEndpointNotFound: "Endpoint or model not found. Check the API URL and the model name.",
-        errorUnsafeEndpoint: "Unsafe endpoint: remote services require HTTPS; loopback services may use HTTP. Do not embed a username or password in the URL.",
-        localIntakeFixed: "Local services always scan the page for messages; nothing to change.",
-        localConcurrencyDesc: "Can be set from {min} to {max}; match your local server's parallel slots and VRAM.",
-        localFallbackUnavailable: "Local services never fall back to the cloud, so this is unavailable.",
-        errorTimeout: "API request timed out.",
-        errorNetwork: "Network request failed.",
-        errorLocalProviderUnavailable: "Sakura local service is not reachable. Auto-translation is paused; start Sakura or test the connection to resume.",
-        unknownError: "Unknown error"
-      }
-    };
-    Object.assign(I18N["zh-CN"], {
-      diagnosticLogs: "诊断日志",
-      diagnosticLogsDesc: "记录自动翻译的请求、缓存和失败原因，最多 500 条，可导出排查。",
-      diagnosticLogsStats: "日志 {entries} 条，已压缩 {compressed} 条重复事件。",
-      diagnosticSummary: "诊断摘要",
-      diagnosticSummaryEmpty: "开启诊断并复现问题后，这里会显示诊断摘要。",
-      diagnosticSummaryEvents: "共 {events} 个事件，按状态、原因和服务商汇总，最近一次 {latest}。",
-      diagnosticSummaryStates: "状态",
-      diagnosticSummaryReasons: "原因",
-      diagnosticSummaryFlows: "流程",
-      diagnosticSummaryQueues: "队列",
-      diagnosticSummaryProviders: "服务商",
-      diagnosticSummaryFailures: "失败",
-      diagnosticSummaryFailureLayers: "失败环节",
-      diagnosticSummaryFlowStages: "流程阶段",
-      clearDiagnosticLogs: "清空日志",
-      clearDiagnosticLogsConfirm: "所有诊断日志都会删除；需要的话请先导出。",
-      clearDiagnosticLogsDesc: "删除全部诊断日志；需要的话请先导出。",
-      exportDiagnosticLogs: "导出日志",
-      copyDiagnosticLogs: "复制日志",
-      exportDiagnosticJson: "导出 JSON",
-      exportDiagnosticTxt: "导出 TXT",
-      diagnosticLogsCleared: "诊断日志已清空。",
-      diagnosticLogsCopied: "诊断日志已复制。",
-      diagnosticLogsEmpty: "暂无诊断日志。",
-      diagnosticLogsExported: "诊断日志已导出。",
-      settingsSnapshot: "设置快照",
-      settingsSnapshotDesc: "下载当前设置（JSON），API Key 等已隐藏，可放心发给别人排查。",
-      exportSettingsSnapshot: "下载设置",
-      settingsSnapshotExported: "设置快照已下载，密钥已隐藏。",
-      settingsSnapshotCopied: "设置快照已复制，密钥已隐藏。"
-    });
-    Object.assign(I18N["zh-CN"], {
-      providerMicrosoft: "Microsoft 翻译",
-      providerDeepL: "DeepL",
-      providerBaidu: "百度翻译",
-      providerRegion: "区域",
-      providerRegionDesc: "Azure Translator 的资源区域；全局资源可留空。",
-      deeplPlan: "DeepL 方案",
-      deeplPlanDesc: "Free 使用 api-free.deepl.com，Pro 使用 api.deepl.com。",
-      deeplPlanFree: "Free",
-      deeplPlanPro: "Pro",
-      baiduAppId: "百度 App ID",
-      baiduAppIdDesc: "百度翻译开放平台的 App ID，只保存在本机。",
-      baiduSecretKey: "百度密钥",
-      baiduSecretKeyDesc: "百度翻译开放平台的密钥，只保存在本机，不写入日志。",
-      autoTranslateIntakeMode: "消息发现方式",
-      autoTranslateIntakeModeDesc: "“自动”在装有 BDFDB 插件库时用它识别消息，否则扫描页面。",
-      autoTranslateIntakeAuto: "自动",
-      autoTranslateIntakeDom: "只扫描页面",
-      autoTranslateIntakeBdfdb: "优先用 BDFDB",
-      settingsTabPolish: "输入润色",
-      settingsTabTranslation: "频道翻译",
-      settingsTabPublicBilingual: "公开双语",
-      settingsTabDisplay: "显示・缓存・诊断",
-      settingsTabOverview: "概览",
-      settingsTabTranslate: "翻译消息",
-      settingsTabCompose: "输入框工具",
-      settingsTabAppearance: "显示",
-      settingsTabAdvanced: "高级",
-      settingsTabData: "数据与诊断",
-      settingsTabsLabel: "设置分类",
-      settingsSearchPlaceholder: "搜索设置",
-      settingsSearchResults: "找到 {count} 项设置",
-      settingsSearchEmpty: "没有找到与“{query}”相关的设置",
-      settingsClose: "关闭设置",
-      settingsGroupCommon: "常用",
-      overviewSetupTitle: "开始使用：还差 {count} 步",
-      overviewSetupProgress: "{done} / {total} · 全部完成后这张卡片会自动收起",
-      overviewSetupService: "选择翻译服务",
-      overviewSetupServiceOff: "消息翻译已关闭",
-      overviewSetupServiceMissing: "{provider} 还没填完",
-      overviewSetupTest: "测试连接",
-      overviewSetupTestBlocked: "先选好翻译服务",
-      overviewSetupTarget: "目标语言",
-      overviewSetupAuto: "开启自动翻译",
-      overviewSetupAutoOn: "已开启",
-      overviewSetupAutoOff: "目前关闭，只能手动点“翻译”",
-      overviewSetupAutoChannel: "总开关关闭，本频道总是翻译",
-      overviewSetupChannel: "本频道",
-      overviewSetupChannelNone: "现在不在频道里",
-      overviewSetupChannelNever: "本频道设为不翻译",
-      overviewStateDone: "已完成",
-      overviewStateTodo: "未完成",
-      overviewSetUp: "去设置",
-      overviewTurnOn: "开启",
-      overviewChange: "更改",
-      overviewServicesTitle: "服务状态",
-      overviewCardTranslation: "翻译消息",
-      overviewCardPolish: "输入框润色",
-      overviewServiceOff: "已关闭",
-      overviewServiceMissing: "未配置：缺少 {field}",
-      settingsGroupAutoTranslate: "自动翻译",
-      settingsGroupHistoryBackfill: "历史补翻",
-      settingsGroupFallback: "手动翻译备用服务",
-      settingsGroupTranslatedText: "译文显示",
-      settingsGroupNotices: "提示与入口",
-      settingsGroupWindows: "窗口外观",
-      settingsMoreModelParams: "更多模型参数",
-      settingsApiKeyOptional: "API Key（可选）",
-      settingsRequiresParent: "先开启“{parent}”",
-      settingsDangerZone: "危险操作",
-      settingsResetDesc: "恢复默认设置，可选择保留 API Key 和提示词模板，操作前会先确认。",
-      providerSettingsTitle: "服务商配置",
-      providerSettingsDesc: "只显示当前服务商用到的选项，切换回来时其他配置仍在。",
-      polishControlsTitle: "输入体验",
-      translationControlsTitle: "消息翻译入口",
-      autoTranslateSettingsTitle: "自动翻译调度",
-      publicBilingualTitle: "公开双语输入",
-      publicBilingualDependencyTitle: "当前链路",
-      publicBilingualDependencyDesc: "双语消息是普通 Discord 文本，发送后所有人都能看到。",
-      publicBilingualDependencyStatus: "双语前润色：{polishProvider}；翻译：{translationProvider}；目标语言：{targetLanguage}。",
-      publicBilingualDependencyFlowDesc: "润色服务已配置时由它翻译，目标语言跟随润色输出语言。",
-      publicBilingualDependencyPolishOff: "不润色",
-      displaySettingsTitle: "显示行为",
-      cacheSettingsTitle: "翻译缓存",
-      diagnosticsSettingsTitle: "诊断",
-      providerStatus: "服务状态",
-      providerStatusDesc: "用当前设置测试一次连接。",
-      quickSettingsOpen: "打开 Discord AI Translator 设置",
-      quickSettingsDone: "完成",
-      quickSettingsOpenFailed: "快捷设置打开失败：{error}",
-      quickSettingsFallbackTitle: "快捷设置未能完整渲染",
-      quickSettingsFallbackHint: "已记录打开链路诊断；关闭此窗口后可导出诊断 JSON 继续排查。",
-      quickPanelTitle: "AI 翻译助手",
-      quickPanelLauncherLabel: "AI 翻译助手：{status}",
-      quickPanelOpenFull: "打开完整设置",
-      quickPanelClose: "关闭",
-      quickPanelEscHint: "Esc 关闭",
-      quickPanelAutoTranslate: "自动翻译",
-      quickPanelAutoTranslateDesc: "翻译屏幕上的外语消息",
-      quickPanelChannel: "本频道",
-      quickPanelChannelNone: "未打开频道",
-      quickPanelChannelDm: "私信",
-      quickPanelRuleInherit: "跟随总开关",
-      quickPanelRuleEnabled: "总是翻译",
-      quickPanelRuleDisabled: "不翻译",
-      quickPanelRuleInheritFull: "跟随总开关",
-      quickPanelRuleEnabledFull: "总是翻译",
-      quickPanelRuleDisabledFull: "不翻译",
-      quickPanelRuleCaptionInheritOn: "现在：会自动翻译（跟随总开关）",
-      quickPanelRuleCaptionInheritOff: "现在：不自动翻译（跟随总开关）",
-      quickPanelRuleCaptionEnabled: "总开关关闭时，这个频道也会自动翻译",
-      quickPanelRuleCaptionDisabled: "这个频道不自动翻译；手动翻译不受影响",
-      quickPanelRuleCaptionNoChannel: "打开一个频道后可以单独设置",
-      quickPanelRuleCaptionTranslationOff: "频道翻译已关闭，这里的规则暂不生效",
-      quickPanelTargetLanguage: "翻译成",
-      quickPanelDisplay: "显示",
-      quickPanelMask: "遮蔽译文",
-      quickPanelMaskDesc: "先显示灰条，点一下再看",
-      quickPanelHideOriginal: "翻译后遮挡原文",
-      quickPanelHideOriginalDesc: "悬停在消息上可看原文",
-      quickPanelPosition: "译文位置",
-      quickPanelPositionAbove: "原文上方",
-      quickPanelPositionBelow: "原文下方",
-      quickStatusActive: "本频道自动翻译中",
-      quickStatusBusy: "正在翻译 {inFlight} 条，排队 {queued} 条",
-      quickStatusTesting: "正在测试连接…",
-      quickStatusLatency: "{ms} ms",
-      quickStatusWaiting: "{reason}，稍后自动继续",
-      quickStatusWaitingSeconds: "{reason}，约 {seconds} 秒后自动继续",
-      quickStatusReasonRateLimit: "服务繁忙",
-      quickStatusReasonServer: "服务出错",
-      quickStatusReasonNetwork: "连接不稳定",
-      quickStatusReasonParse: "返回内容异常",
-      quickStatusNeedsYou: "需要处理：{reason}",
-      quickStatusReasonConfig: "缺少 API Key 等配置",
-      quickStatusReasonAuth: "API Key 无效或没有权限",
-      quickStatusReasonQuota: "额度用完或余额不足",
-      quickStatusReasonLocal: "本地服务没有响应",
-      quickStatusReasonFailed: "连接测试没有通过",
-      quickStatusReasonEndpoint: "接口地址不可用",
-      quickStatusReasonNotFound: "找不到接口或模型",
-      quickStatusNotConfigured: "未配置",
-      quickStatusOffChannel: "本频道不自动翻译",
-      quickStatusOffDisabled: "频道翻译已关闭",
-      quickStatusManualHint: "手动翻译仍可用",
-      quickPanelTabsLabel: "快捷面板功能切换",
-      quickPanelTabTranslation: "频道翻译",
-      quickPanelTabPolish: "输入润色",
-      quickPanelTabTransAutoOn: "自动开 · {language}",
-      quickPanelTabTransManual: "手动 · {language}",
-      quickPanelTabTransOff: "已关闭",
-      quickPanelTabPolishOn: "开 · {language}",
-      quickPanelTabPolishOff: "已关闭",
-      quickPanelTranslationService: "翻译服务",
-      quickPanelPolishService: "润色服务",
-      quickPanelSavedServiceCurrent: "当前：{label}",
-      quickPanelSavedServiceEmpty: "暂无已保存服务（测试通过后自动保存）",
-      quickPanelServiceShared: "与翻译共用",
-      quickPanelServiceIndependent: "独立服务",
-      quickPanelTranslationTemplate: "翻译模板",
-      quickPanelTemplateCustom: "自定义提示词",
-      quickStatusPolishActive: "输入润色可用",
-      quickStatusPolishOff: "输入润色已关闭",
-      quickStatusPolishBtnOn: "输入框按钮已显示",
-      quickStatusPolishBtnOff: "输入框按钮已隐藏",
-      quickStatusPolishHotkeyOff: "快捷键已关",
-      quickPanelPolishTestTitle: "测试输入润色服务能不能连上",
-      quickPanelPolishEnabled: "启用输入润色",
-      quickPanelPolishEnabledDesc: "改写输入框草稿并回填",
-      quickPanelPolishOutputLanguage: "输出语言",
-      quickPanelPolishTemplate: "润色模板",
-      quickPanelPolishCreativity: "创造性",
-      quickPanelPolishCreativitySteady: "稳妥 0.3",
-      quickPanelPolishCreativityBalanced: "自然 0.7",
-      quickPanelPolishCreativityCreative: "发散 1.2",
-      quickPanelPolishCreativityDescSteady: "稳妥忠实，贴近原句结构",
-      quickPanelPolishCreativityDescBalanced: "自然均衡，适合日常聊天",
-      quickPanelPolishCreativityDescCreative: "高发散，再次润色会明显换说法",
-      quickPanelPolishBehavior: "润色行为",
-      quickPanelPolishAfterAction: "润色后",
-      quickPanelPolishRepolishSource: "再次润色",
-      quickPanelPolishRepolishOriginal: "最初原文",
-      quickPanelPolishRepolishLast: "上次结果",
-      quickPanelPublicBilingual: "公开双语按钮",
-      quickPanelPublicBilingualDesc: "在输入框旁显示“双语”按钮",
-      quickPanelPublicBilingualAfterPolish: "润色后自动生成双语",
-      quickPanelPublicBilingualAfterPolishDesc: "润色完顺带附带折叠原文",
-      quickPanelTryPolishToggle: "快速试润色",
-      quickPanelTryPolishPlaceholder: "输入一句试试当前模板和语言…",
-      quickPanelTryPolishRun: "试润色",
-      quickPanelTryPolishAgain: "再润一次",
-      quickPanelOpenFullPolish: "编辑模板与完整设置",
-      inputActionMenu: "AI 操作",
-      inputActionOpenSettings: "设置",
-      restoreOriginalShort: "↶",
-      polishButtonShort: "润",
-      polishTitleAttrWithTone: "用 AI 润色当前草稿（当前语气：{tone}）。快捷键：{shortcut}。",
-      polishPresetPicker: "切换润色语气",
-      polishPresetPickerTitle: "切换润色语气（当前：{tone}）",
-      polishPresetMenuTitle: "润色语气",
-      polishPresetMenuTabsLabel: "润色语气分类",
-      polishPresetMenuCustomNote: "当前为自定义提示词，选择下方预设可切换",
-      polishPresetMenuEmpty: "暂无可用预设，可前往设置新增",
-      polishPresetMenuEmptyPersona: "大能风味即将上线（历史人物等），也可先前往设置自定义添加",
-      polishPresetMenuManage: "管理 / 自定义语气…",
-      polishPresetMenuItemAction: "切换润色语气…",
-      publicBilingualButtonShort: "双",
-      showQuickSettingsPanelButton: "显示用户栏快捷设置",
-      showQuickSettingsPanelButtonDesc: "在左下角用户控制栏的 Discord 设置齿轮附近显示 AI 入口。"
-    });
-    Object.assign(I18N.en, {
-      providerMicrosoft: "Microsoft Translator",
-      providerDeepL: "DeepL",
-      providerBaidu: "Baidu Translate",
-      providerRegion: "Region",
-      providerRegionDesc: "Azure Translator resource region; leave empty for global resources.",
-      deeplPlan: "DeepL plan",
-      deeplPlanDesc: "Free uses api-free.deepl.com; Pro uses api.deepl.com.",
-      deeplPlanFree: "Free",
-      deeplPlanPro: "Pro",
-      baiduAppId: "Baidu App ID",
-      baiduAppIdDesc: "Your Baidu Translate App ID, stored only on this computer.",
-      baiduSecretKey: "Baidu secret key",
-      baiduSecretKeyDesc: "Your Baidu Translate secret key; stored locally and never logged.",
-      autoTranslateIntakeMode: "Message intake",
-      autoTranslateIntakeModeDesc: "Auto uses the BDFDB plugin library to identify messages if present, else scans the page.",
-      autoTranslateIntakeAuto: "Auto",
-      autoTranslateIntakeDom: "Page scan only",
-      autoTranslateIntakeBdfdb: "Prefer BDFDB",
-      settingsTabPolish: "Input polish",
-      settingsTabTranslation: "Channel translation",
-      settingsTabPublicBilingual: "Public bilingual",
-      settingsTabDisplay: "Display, cache, diagnostics",
-      settingsTabOverview: "Overview",
-      settingsTabTranslate: "Translate messages",
-      settingsTabCompose: "Composer tools",
-      settingsTabAppearance: "Display",
-      settingsTabAdvanced: "Advanced",
-      settingsTabData: "Data & diagnostics",
-      settingsTabsLabel: "Settings sections",
-      settingsSearchPlaceholder: "Search settings",
-      settingsSearchResults: "{count} matching settings",
-      settingsSearchEmpty: 'No settings match "{query}"',
-      settingsClose: "Close settings",
-      settingsGroupCommon: "Everyday",
-      overviewSetupTitle: "Get started: {count} to go",
-      overviewSetupProgress: "{done} of {total} done · this card hides when all are done",
-      overviewSetupService: "Choose a service",
-      overviewSetupServiceOff: "Message translation is off",
-      overviewSetupServiceMissing: "{provider} is not set up yet",
-      overviewSetupTest: "Test the connection",
-      overviewSetupTestBlocked: "Set up the service first",
-      overviewSetupTarget: "Target language",
-      overviewSetupAuto: "Turn on auto-⁠translate",
-      overviewSetupAutoOn: "On",
-      overviewSetupAutoOff: "Off: only the Translate button works",
-      overviewSetupAutoChannel: "Main switch off; this channel always translates",
-      overviewSetupChannel: "This channel",
-      overviewSetupChannelNone: "Not in a channel right now",
-      overviewSetupChannelNever: "Set to never translate",
-      overviewStateDone: "Done",
-      overviewStateTodo: "To do",
-      overviewSetUp: "Set up",
-      overviewTurnOn: "Turn on",
-      overviewChange: "Change",
-      overviewServicesTitle: "Service status",
-      overviewCardTranslation: "Translate messages",
-      overviewCardPolish: "Composer polishing",
-      overviewServiceOff: "Off",
-      overviewServiceMissing: "Not set up: {field} missing",
-      settingsGroupAutoTranslate: "Auto-translate",
-      settingsGroupHistoryBackfill: "History backfill",
-      settingsGroupFallback: "Manual translation fallback",
-      settingsGroupTranslatedText: "Translated text",
-      settingsGroupNotices: "Notices and shortcuts",
-      settingsGroupWindows: "Window appearance",
-      settingsMoreModelParams: "More model parameters",
-      settingsApiKeyOptional: "API key (optional)",
-      settingsRequiresParent: 'Turn on "{parent}" first',
-      settingsDangerZone: "Danger zone",
-      settingsResetDesc: "Restores the defaults after you confirm; you can keep API keys and prompt templates.",
-      providerSettingsTitle: "Service settings",
-      providerSettingsDesc: "Shows only this service's options; the others are kept for when you switch back.",
-      polishControlsTitle: "Input experience",
-      translationControlsTitle: "Message translation entry points",
-      autoTranslateSettingsTitle: "Auto-translation scheduling",
-      publicBilingualTitle: "Public bilingual input",
-      publicBilingualDependencyTitle: "Current flow",
-      publicBilingualDependencyDesc: "A bilingual message is plain Discord text that everyone can see once sent.",
-      publicBilingualDependencyStatus: "Polish before bilingual: {polishProvider}; translation: {translationProvider}; target: {targetLanguage}.",
-      publicBilingualDependencyFlowDesc: "Uses the polish service to translate when it is set up, into the polish output language.",
-      publicBilingualDependencyPolishOff: "no",
-      displaySettingsTitle: "Display behavior",
-      cacheSettingsTitle: "Translation cache",
-      diagnosticsSettingsTitle: "Diagnostics",
-      providerStatus: "Service status",
-      providerStatusDesc: "Runs a quick connection test with the current settings.",
-      quickSettingsOpen: "Open Discord AI Translator settings",
-      quickSettingsDone: "Done",
-      quickSettingsOpenFailed: "Quick settings failed to open: {error}",
-      quickSettingsFallbackTitle: "Quick settings did not render completely",
-      quickSettingsFallbackHint: "The opening path has been logged. Close this window, then export diagnostics JSON if more debugging is needed.",
-      quickPanelTitle: "AI Translator",
-      quickPanelLauncherLabel: "AI Translator: {status}",
-      quickPanelOpenFull: "Open full settings",
-      quickPanelClose: "Close",
-      quickPanelEscHint: "Esc to close",
-      quickPanelAutoTranslate: "Auto-translate",
-      quickPanelAutoTranslateDesc: "Translate foreign messages on screen",
-      quickPanelChannel: "This channel",
-      quickPanelChannelNone: "no channel open",
-      quickPanelChannelDm: "Direct message",
-      quickPanelRuleInherit: "Follow main",
-      quickPanelRuleEnabled: "Always",
-      quickPanelRuleDisabled: "Never",
-      quickPanelRuleInheritFull: "Follow main switch",
-      quickPanelRuleEnabledFull: "Always translate",
-      quickPanelRuleDisabledFull: "Never translate",
-      quickPanelRuleCaptionInheritOn: "Now: auto-translating (follows the main switch)",
-      quickPanelRuleCaptionInheritOff: "Now: not auto-translating (follows the main switch)",
-      quickPanelRuleCaptionEnabled: "Auto-translates here even when the main switch is off",
-      quickPanelRuleCaptionDisabled: "No auto-translation here; manual translation still works",
-      quickPanelRuleCaptionNoChannel: "Open a channel to set a rule for it",
-      quickPanelRuleCaptionTranslationOff: "Channel translation is off; this rule applies once it is on",
-      quickPanelTargetLanguage: "Translate to",
-      quickPanelDisplay: "Display",
-      quickPanelMask: "Mask translations",
-      quickPanelMaskDesc: "Show a bar first; click it to read",
-      quickPanelHideOriginal: "Hide original after translation",
-      quickPanelHideOriginalDesc: "Hover a message to see the original",
-      quickPanelPosition: "Show translation",
-      quickPanelPositionAbove: "Above",
-      quickPanelPositionBelow: "Below",
-      quickStatusActive: "Auto-translating in this channel",
-      quickStatusBusy: "Translating {inFlight}, {queued} queued",
-      quickStatusTesting: "Testing the connection…",
-      quickStatusLatency: "{ms} ms",
-      quickStatusWaiting: "{reason}; resumes automatically",
-      quickStatusWaitingSeconds: "{reason}; resumes in about {seconds} s",
-      quickStatusReasonRateLimit: "Service busy",
-      quickStatusReasonServer: "Service error",
-      quickStatusReasonNetwork: "Connection unstable",
-      quickStatusReasonParse: "Unexpected response",
-      quickStatusNeedsYou: "Needs attention: {reason}",
-      quickStatusReasonConfig: "API key or other settings missing",
-      quickStatusReasonAuth: "API key rejected",
-      quickStatusReasonQuota: "quota or balance used up",
-      quickStatusReasonLocal: "local service not responding",
-      quickStatusReasonFailed: "connection test failed",
-      quickStatusReasonEndpoint: "API URL not usable",
-      quickStatusReasonNotFound: "API URL or model not found",
-      quickStatusNotConfigured: "Not set up",
-      quickStatusOffChannel: "Not auto-translating in this channel",
-      quickStatusOffDisabled: "Channel translation is off",
-      quickStatusManualHint: "Manual translation still works",
-      quickPanelTabsLabel: "Quick panel modes",
-      quickPanelTabTranslation: "Translate",
-      quickPanelTabPolish: "Polish",
-      quickPanelTabTransAutoOn: "Auto · {language}",
-      quickPanelTabTransManual: "Manual · {language}",
-      quickPanelTabTransOff: "Off",
-      quickPanelTabPolishOn: "On · {language}",
-      quickPanelTabPolishOff: "Off",
-      quickPanelTranslationService: "Translation service",
-      quickPanelPolishService: "Polish service",
-      quickPanelSavedServiceCurrent: "Current: {label}",
-      quickPanelSavedServiceEmpty: "No saved services yet (saved after Test)",
-      quickPanelServiceShared: "Shared",
-      quickPanelServiceIndependent: "Separate",
-      quickPanelTranslationTemplate: "Translation template",
-      quickPanelTemplateCustom: "Custom prompt",
-      quickStatusPolishActive: "Input polish ready",
-      quickStatusPolishOff: "Input polish is off",
-      quickStatusPolishBtnOn: "Input button shown",
-      quickStatusPolishBtnOff: "Input button hidden",
-      quickStatusPolishHotkeyOff: "Hotkey off",
-      quickPanelPolishTestTitle: "Test the input polish service connection",
-      quickPanelPolishEnabled: "Enable input polish",
-      quickPanelPolishEnabledDesc: "Rewrites your draft and returns it to the input box",
-      quickPanelPolishOutputLanguage: "Output language",
-      quickPanelPolishTemplate: "Polish template",
-      quickPanelPolishCreativity: "Creativity",
-      quickPanelPolishCreativitySteady: "Steady 0.3",
-      quickPanelPolishCreativityBalanced: "Natural 0.7",
-      quickPanelPolishCreativityCreative: "Creative 1.2",
-      quickPanelPolishCreativityDescSteady: "Closer to your original wording",
-      quickPanelPolishCreativityDescBalanced: "Balanced for everyday chat",
-      quickPanelPolishCreativityDescCreative: "More varied phrasing when re-polishing",
-      quickPanelPolishBehavior: "Behavior",
-      quickPanelPolishAfterAction: "After polish",
-      quickPanelPolishRepolishSource: "Re-polish",
-      quickPanelPolishRepolishOriginal: "Original",
-      quickPanelPolishRepolishLast: "Last result",
-      quickPanelPublicBilingual: "Public bilingual button",
-      quickPanelPublicBilingualDesc: "Show the Bilingual button near the input box",
-      quickPanelPublicBilingualAfterPolish: "Auto-bilingual after polish",
-      quickPanelPublicBilingualAfterPolishDesc: "Also add hidden original after polishing",
-      quickPanelTryPolishToggle: "Quick try polish",
-      quickPanelTryPolishPlaceholder: "Type a line to test template & language...",
-      quickPanelTryPolishRun: "Try",
-      quickPanelTryPolishAgain: "Try again",
-      quickPanelOpenFullPolish: "Templates & full settings",
-      inputActionMenu: "AI actions",
-      inputActionOpenSettings: "Settings",
-      restoreOriginalShort: "↶",
-      polishButtonShort: "P",
-      polishTitleAttrWithTone: "Polish current draft with AI (Tone: {tone}). Shortcut: {shortcut}.",
-      polishPresetPicker: "Switch polish tone",
-      polishPresetPickerTitle: "Switch polish tone (Current: {tone})",
-      polishPresetMenuTitle: "Polish tone",
-      polishPresetMenuTabsLabel: "Polish tone categories",
-      polishPresetMenuCustomNote: "Using a custom prompt; pick a preset below to switch",
-      polishPresetMenuEmpty: "No presets yet. Add one in Settings.",
-      polishPresetMenuEmptyPersona: "Persona presets (historical figures, etc.) coming soon — or add custom ones in Settings.",
-      polishPresetMenuManage: "Manage / custom tones...",
-      polishPresetMenuItemAction: "Switch polish tone...",
-      publicBilingualButtonShort: "Bi",
-      showQuickSettingsPanelButton: "Show user panel quick settings",
-      showQuickSettingsPanelButtonDesc: "Adds an AI entry near Discord's lower-left user controls and settings gear."
-    });
-    Object.assign(I18N["zh-CN"], {
-      currentChannelAutoTranslatePolicy: "本频道自动翻译",
-      currentChannelAutoTranslatePolicyDesc: "只影响本频道的自动翻译，手动翻译不受影响。",
-      channelPolicyInherit: "跟随总开关",
-      channelPolicyEnabled: "总是翻译",
-      channelPolicyDisabled: "不翻译",
-      channelRuleFollow: "跟随总开关",
-      channelRuleAlways: "总是翻译",
-      channelRuleNever: "不翻译",
-      historyBackfillEnabled: "允许补翻已加载的历史消息",
-      historyBackfillEnabledDesc: "开启后可以手动补翻已加载的消息，不会自己运行。",
-      historyBackfillLimit: "每次历史补翻上限",
-      historyBackfillLimitDesc: "每次最多补翻多少条已加载的消息（1-100）。",
-      historyBackfillRun: "补翻已加载消息",
-      historyBackfillRunning: "补翻中...",
-      historyBackfillRunDesc: "把已加载但还没翻译的消息排进低优先级队列。",
-      historyBackfillQueued: "已加入历史补翻队列：{count} 条。",
-      historyBackfillNoWork: "没有可补翻的已加载消息。",
-      historyBackfillContextMenu: "补翻已加载消息",
-      providerFallbackEnabled: "手动翻译失败时换用备用服务",
-      providerFallbackEnabledDesc: "只用于手动翻译和公开双语；本地服务不会转到云端。",
-      providerFallbackOrder: "备用服务顺序",
-      providerFallbackOrderListDesc: "勾选要用的备用服务，用箭头调整先后顺序。",
-      providerFallbackMoveUp: "把 {provider} 上移",
-      providerFallbackMoveDown: "把 {provider} 下移",
-      providerFallbackCurrent: "（当前服务）",
-      providerFallbackOrderDesc: "用逗号或换行分隔，可用：{providers}。"
-    });
-    Object.assign(I18N.en, {
-      currentChannelAutoTranslatePolicy: "Auto-translate in this channel",
-      currentChannelAutoTranslatePolicyDesc: "Affects auto-translation in this channel only; manual translation is unchanged.",
-      channelPolicyInherit: "Follow main switch",
-      channelPolicyEnabled: "Always translate",
-      channelPolicyDisabled: "Never translate",
-      channelRuleFollow: "Follow main switch",
-      channelRuleAlways: "Always translate",
-      channelRuleNever: "Never translate",
-      historyBackfillEnabled: "Allow backfilling loaded history",
-      historyBackfillEnabledDesc: "Lets you translate already-loaded messages on demand; it never runs by itself."
-    });
-    Object.assign(I18N.en, {
-      historyBackfillLimit: "History backfill limit",
-      historyBackfillLimitDesc: "Most loaded messages to backfill per run (1-100).",
-      historyBackfillRun: "Backfill loaded messages",
-      historyBackfillRunning: "Backfilling...",
-      historyBackfillRunDesc: "Queues loaded, untranslated messages at low priority.",
-      historyBackfillQueued: "Queued history backfill: {count} messages.",
-      historyBackfillNoWork: "No loaded messages need backfill.",
-      historyBackfillContextMenu: "Backfill loaded messages",
-      providerFallbackEnabled: "Use backup services when manual translation fails",
-      providerFallbackEnabledDesc: "Only for manual translation and public bilingual; local services never use the cloud.",
-      providerFallbackOrder: "Backup service order",
-      providerFallbackOrderListDesc: "Tick the fallback services to use; the arrows set their order.",
-      providerFallbackMoveUp: "Move {provider} up",
-      providerFallbackMoveDown: "Move {provider} down",
-      providerFallbackCurrent: " (current service)",
-      providerFallbackOrderDesc: "Separate with commas or new lines; available: {providers}."
-    });
-    Object.assign(I18N["zh-CN"], {
-      hideOriginalAfterTranslation: "翻译后遮挡原文",
-      hideOriginalAfterTranslationDesc: "原文变成灰条，悬停或聚焦时显示，只影响你自己。",
-      publicBilingualInputButton: "在输入框附近显示公开双语按钮",
-      publicBilingualInputButtonDesc: "把草稿写成“译文 + 隐藏原文”，由你检查后发送。",
-      publicBilingualUseInitialOriginal: "双语隐藏原文使用最初草稿",
-      publicBilingualUseInitialOriginalDesc: "先润色再做双语时，隐藏原文保留润色前的草稿。",
-      publicBilingualAfterPolish: "润色后自动生成公开双语",
-      publicBilingualAfterPolishDesc: "点“润色”后接着把结果写成公开双语，不会自动发送。",
-      publicBilingualPolishBeforeTranslate: "双语前自动润色",
-      publicBilingualPolishBeforeTranslateDesc: "点“双语”时先润色草稿，再翻译润色结果。",
-      publicBilingualButton: "双语",
-      publicBilingualBusy: "翻译中",
-      publicBilingualTitleAttr: "写入面向所有人可见的双语消息，目标语言：{targetLanguage}",
-      publicBilingualReady: "双语消息已写入，检查后再发送。",
-      publicBilingualFailed: "无法写入双语消息：{error}",
-      publicBilingualInputChanged: "翻译期间输入已改变，未覆盖当前草稿。",
-      errorComposerWriteFailed: "输入框没有接受写入，结果已显示在面板中，可手动复制。",
-      publicBilingualTooLong: "双语消息超过 Discord 单条长度（{length}/{limit}）。",
-      publicBilingualPolishSkipped: "润色功能已关闭，本次双语直接使用当前草稿。",
-      errorLocalProviderUnavailable: "Sakura 本地服务无法连接，自动翻译已暂停；启动 Sakura 后等待自动恢复，或在设置里点击测试连接立即恢复。",
-      composerMassMentionBlocked: "已拦截模型新增的全体/身份组提及（{mentions}），避免误触发通知。",
-      composerChannelChanged: "当前已切换频道，未自动写入刚才的润色/双语结果；请手动复制或切回原频道。",
-      hostHealthTitle: "Discord 宿主兼容自检",
-      hostHealthDesc: "检测当前 Discord 关键挂载点，客户端更新后可一键定位失效项。",
-      hostHealthRecheck: "重新检测",
-      hostHealthCopyReport: "复制自检报告",
-      hostHealthCopied: "宿主自检报告已复制。",
-      hostHealthSummaryOk: "全部正常（{ok}/{total}）",
-      hostHealthSummaryWarn: "部分待注意（正常 {ok} · 警告 {warn} · 异常 {error}）",
-      hostHealthSummaryError: "发现兼容异常（正常 {ok} · 警告 {warn} · 异常 {error}）",
-      hostHealthItemBdApi: "BetterDiscord API",
-      hostHealthItemStores: "Discord 内部 Store（MessageStore / ChannelStore）",
-      hostHealthItemChatRoot: "聊天容器挂载点",
-      hostHealthItemMessages: "聊天消息节点与正文提取",
-      hostHealthItemComposer: "输入框与工具栏锚点",
-      hostHealthItemUserPanel: "左下角用户面板与 AI 入口",
-      hostHealthItemContextMenu: "右键菜单补丁",
-      hostHealthItemTheme: "当前检测主题",
-      hostHealthStateOk: "正常",
-      hostHealthStateWarn: "待观察",
-      hostHealthStateError: "异常"
-    });
-    Object.assign(I18N.en, {
-      composerMassMentionBlocked: "Defanged mass/role mention(s) added by the model ({mentions}) to prevent accidental pings.",
-      composerChannelChanged: "Channel changed before applying; result was not inserted into another channel. Copy it or switch back.",
-      hostHealthTitle: "Discord host health check",
-      hostHealthDesc: "Checks live Discord and BetterDiscord anchors to spot breaking updates.",
-      hostHealthRecheck: "Recheck",
-      hostHealthCopyReport: "Copy report",
-      hostHealthCopied: "Host health report copied.",
-      hostHealthSummaryOk: "All healthy ({ok}/{total})",
-      hostHealthSummaryWarn: "Needs attention ({ok} ok · {warn} warn · {error} error)",
-      hostHealthSummaryError: "Compatibility issue ({ok} ok · {warn} warn · {error} error)",
-      hostHealthItemBdApi: "BetterDiscord API",
-      hostHealthItemStores: "Discord stores (MessageStore / ChannelStore)",
-      hostHealthItemChatRoot: "Chat container root",
-      hostHealthItemMessages: "Message nodes & content anchor",
-      hostHealthItemComposer: "Composer textbox & toolbar",
-      hostHealthItemUserPanel: "User panel & AI launcher",
-      hostHealthItemContextMenu: "Message context menu patch",
-      hostHealthItemTheme: "Detected Discord theme",
-      hostHealthStateOk: "OK",
-      hostHealthStateWarn: "Check",
-      hostHealthStateError: "Broken"
-    });
-    module2.exports = { I18N };
   }
 });
 
@@ -38500,20 +43740,26 @@ var require_translation_line_dom = __commonJS({
         if (typeof document === "undefined") return;
         const selector = "[data-dait-source-hidden='true']";
         const messageNodes = [...new Set(context?.messageNodes || [])].filter((node) => node?.querySelectorAll);
+        const roots = !messageNodes.length && context?.dirtyOnly && Array.isArray(context.roots) ? context.roots.filter((node) => node?.querySelectorAll) : [];
         const hiddenNodes = [];
         const seen = /* @__PURE__ */ new Set();
-        if (messageNodes.length) {
-          messageNodes.forEach((messageNode) => {
-            if (messageNode.dataset?.daitSourceHidden === "true" && !seen.has(messageNode)) {
-              seen.add(messageNode);
-              hiddenNodes.push(messageNode);
+        const collectWithin = (containers) => {
+          containers.forEach((container) => {
+            if (container.dataset?.daitSourceHidden === "true" && !seen.has(container)) {
+              seen.add(container);
+              hiddenNodes.push(container);
             }
-            for (const node of messageNode.querySelectorAll?.(selector) || []) {
+            for (const node of container.querySelectorAll?.(selector) || []) {
               if (!node || seen.has(node)) continue;
               seen.add(node);
               hiddenNodes.push(node);
             }
           });
+        };
+        if (messageNodes.length) {
+          collectWithin(messageNodes);
+        } else if (context?.dirtyOnly) {
+          if (roots.length) collectWithin(roots);
         } else {
           for (const node of document.querySelectorAll?.(selector) || []) {
             if (!node || seen.has(node)) continue;
@@ -38530,7 +43776,23 @@ var require_translation_line_dom = __commonJS({
       getTranslationLinesForReconcile(context = null) {
         const selector = ".dait-translation-line[data-dait-owner]";
         const messageNodes = [...new Set(context?.messageNodes || [])].filter((node) => node?.querySelectorAll);
-        if (!messageNodes.length) return [...document.querySelectorAll?.(selector) || []];
+        if (!messageNodes.length) {
+          if (context?.dirtyOnly) {
+            const roots = Array.isArray(context.roots) ? context.roots.filter((node) => node?.querySelectorAll) : [];
+            if (!roots.length) return [];
+            const scoped = [];
+            const seenScoped = /* @__PURE__ */ new Set();
+            roots.forEach((root) => {
+              for (const line of root.querySelectorAll?.(selector) || []) {
+                if (!line || seenScoped.has(line)) continue;
+                seenScoped.add(line);
+                scoped.push(line);
+              }
+            });
+            return scoped;
+          }
+          return [...document.querySelectorAll?.(selector) || []];
+        }
         const lines = [];
         const seen = /* @__PURE__ */ new Set();
         messageNodes.forEach((messageNode) => {
@@ -38974,7 +44236,8 @@ var require_translation_line_dom = __commonJS({
         const codes = [Number(error?.status || 0) || "", String(error?.baiduErrorCode || "")].filter(Boolean);
         if (!codes.length) return "";
         const text = codes.join(", ");
-        return this.plugin.getLocale() === "en" ? ` (${text})` : `（${text}）`;
+        const locale = this.plugin.getLocale();
+        return locale === "zh-CN" || locale === "zh-TW" ? `（${text}）` : ` (${text})`;
       },
       getTranslationRejectionMessageKey(error) {
         if (error?.providerLanguageUnsupported) return "errorLanguageUnsupported";
@@ -39378,9 +44641,17 @@ var require_translation_line_dom = __commonJS({
       },
       formatTranslationPartList(parts) {
         const values = parts.map(String);
-        if (this.plugin.getLocale() !== "en") return values.join("、");
+        const locale = this.plugin.getLocale();
+        if (locale === "zh-CN" || locale === "zh-TW") return values.join("、");
         if (values.length < 2) return values.join("");
-        return `${values.slice(0, -1).join(", ")} and ${values[values.length - 1]}`;
+        const conjunctions = {
+          en: [", ", " and "],
+          es: [", ", " y "],
+          ru: [", ", " и "],
+          ar: ["، ", " و"]
+        };
+        const [sep, joiner] = conjunctions[locale] || conjunctions.en;
+        return `${values.slice(0, -1).join(sep)}${joiner}${values[values.length - 1]}`;
       },
       retranslateMessage(messageNode, content, textOptions = null) {
         if (!messageNode || !content?.isConnected) {
@@ -40061,7 +45332,6 @@ var require_slate_composer = __commonJS({
           } catch {
           }
         });
-        this.selectTextboxContents(textbox);
         ["keydown", "keypress", "keyup"].forEach((type) => {
           try {
             textbox.dispatchEvent(new KeyboardEvent(type, {
@@ -40240,8 +45510,18 @@ var require_slate_composer = __commonJS({
           const first = textNodes[0];
           const last = textNodes[textNodes.length - 1];
           const range = document.createRange();
-          range.setStart(first, 0);
-          range.setEnd(last, String(last.nodeValue || "").length);
+          const voidStart = first?.parentElement?.closest?.("[data-slate-void='true']");
+          const voidEnd = last?.parentElement?.closest?.("[data-slate-void='true']");
+          if (voidStart && element.contains?.(voidStart) && typeof range.setStartBefore === "function") {
+            range.setStartBefore(voidStart);
+          } else {
+            range.setStart(first, 0);
+          }
+          if (voidEnd && element.contains?.(voidEnd) && typeof range.setEndAfter === "function") {
+            range.setEndAfter(voidEnd);
+          } else {
+            range.setEnd(last, String(last.nodeValue || "").length);
+          }
           selection.removeAllRanges();
           selection.addRange(range);
           return true;
@@ -40350,7 +45630,12 @@ var require_slate_composer = __commonJS({
         if (!selection || !document.createRange || !document.createTreeWalker || !textbox) return false;
         try {
           const walker = document.createTreeWalker(textbox, 4, {
-            acceptNode: (node2) => String(node2?.nodeValue || "").replace(/\u200b/g, "").length ? 1 : 2
+            acceptNode: (node2) => {
+              const parent = node2?.parentElement || node2?.parentNode;
+              if (!parent) return 2;
+              if (parent.closest?.(".dait-polish-result-panel, .dait-polish-restore-control, [data-slate-placeholder='true']")) return 2;
+              return String(node2?.nodeValue || "").replace(/\u200b/g, "").length ? 1 : 2;
+            }
           });
           let last = null;
           let node = walker.nextNode();
@@ -40360,7 +45645,12 @@ var require_slate_composer = __commonJS({
           }
           if (!last) return false;
           const range = document.createRange();
-          range.setStart(last, String(last.nodeValue || "").length);
+          const voidEnd = last?.parentElement?.closest?.("[data-slate-void='true']");
+          if (voidEnd && textbox.contains?.(voidEnd) && typeof range.setStartAfter === "function") {
+            range.setStartAfter(voidEnd);
+          } else {
+            range.setStart(last, String(last.nodeValue || "").length);
+          }
           range.collapse(true);
           selection.removeAllRanges();
           selection.addRange(range);
@@ -40486,6 +45776,9 @@ var require_slate_composer = __commonJS({
             which: 13
           }));
         });
+        if (this.plugin.polishSession && (this.plugin.polishSession.textbox === textbox || this.plugin.polishSession.composerKey === this.plugin.getTextboxComposerKey?.(textbox))) {
+          this.plugin.polishSession = null;
+        }
         return true;
       }
     };
@@ -40876,9 +46169,11 @@ var require_scheduler = __commonJS({
       makeRoomForItem(item, queueLimit) {
         const plugin = this.plugin;
         const limit = Math.max(1, Number(queueLimit) || plugin.getAutoTranslateQueueLimit());
-        if (plugin.autoTranslationQueue.length + plugin.autoTranslationInFlightItems < limit) return true;
+        const isAlreadyInFlight = Boolean(item?.cacheKey && plugin.autoTranslationInFlightKeys?.has?.(item.cacheKey));
+        const effectiveInFlightItems = Math.max(0, plugin.autoTranslationInFlightItems - (isAlreadyInFlight ? 1 : 0));
+        if (plugin.autoTranslationQueue.length + effectiveInFlightItems < limit) return true;
         const incoming = plugin.withAutoTranslationPriority(item);
-        if (!plugin.autoTranslationQueue.length && !this.isPrefetchItem(incoming)) return true;
+        if (!plugin.autoTranslationQueue.length && (isAlreadyInFlight || !this.isPrefetchItem(incoming))) return true;
         const incomingPriority = incoming.priority ?? Number.MAX_SAFE_INTEGER;
         let worstIndex = -1;
         let worstPriority = incomingPriority;
@@ -40945,6 +46240,7 @@ var require_service_profiles = __commonJS({
       DEFAULT_SETTINGS
     } = require_constants();
     var { PLUGIN_VERSION } = require_version();
+    var { getLocalizedPresetLanguageLabel } = require_i18n();
     var SAFE_DIAGNOSTIC_KEYS = /* @__PURE__ */ new Set([
       "textcachehits",
       "autotranslatemessages",
@@ -41025,7 +46321,7 @@ var require_service_profiles = __commonJS({
     };
     var methods = {
       getLanguageLabel(language) {
-        return this.plugin.getLocale() === "en" ? language.en : `${language.zh} - ${language.en}`;
+        return getLocalizedPresetLanguageLabel(language, this.plugin.getLocale());
       },
       getDisplayLanguage(language) {
         if (!language || language === AUTO_LANGUAGE_VALUE) return this.plugin.t("autoDetectLanguage");
@@ -41209,18 +46505,64 @@ var require_service_profiles = __commonJS({
           "English": "英语",
           "英文": "英语",
           "英语": "英语",
+          "英語": "英语",
+          "Английский": "英语",
+          "الإنجليزية": "英语",
+          "Inglés": "英语",
           "Spanish": "西班牙语",
+          "西班牙語": "西班牙语",
+          "Español": "西班牙语",
+          "Испанский": "西班牙语",
+          "الإسبانية": "西班牙语",
           "Russian": "俄语",
+          "俄語": "俄语",
+          "Русский": "俄语",
+          "الروسية": "俄语",
+          "Ruso": "俄语",
           "German": "德语",
+          "德語": "德语",
+          "Немецкий": "德语",
+          "الألمانية": "德语",
+          "Alemán": "德语",
           "French": "法语",
+          "法語": "法语",
+          "Французский": "法语",
+          "الفرنسية": "法语",
+          "Francés": "法语",
           "Japanese": "日语",
+          "日語": "日语",
+          "Японский": "日语",
+          "اليابانية": "日语",
+          "Japonés": "日语",
           "Arabic": "阿拉伯语",
+          "阿拉伯語": "阿拉伯语",
+          "العربية": "阿拉伯语",
+          "Арабский": "阿拉伯语",
+          "Árabe": "阿拉伯语",
           "Vietnamese": "越南语",
+          "越南語": "越南语",
+          "Вьетнамский": "越南语",
+          "الفيتنامية": "越南语",
+          "Vietnamita": "越南语",
           "Hindi": "印地语",
+          "印地語": "印地语",
+          "Хинди": "印地语",
+          "الهندية": "印地语",
           "Korean": "朝鲜语",
           "韩语": "朝鲜语",
+          "韓語": "朝鲜语",
           "朝鲜语": "朝鲜语",
-          "Italian": "意大利语"
+          "Корейский": "朝鲜语",
+          "الكورية": "朝鲜语",
+          "Coreano": "朝鲜语",
+          "Italian": "意大利语",
+          "義大利語": "意大利语",
+          "Итальянский": "意大利语",
+          "الإيطالية": "意大利语",
+          "Italiano": "意大利语",
+          "Китайский (трад.)": "繁體中文",
+          "الصينية التقليدية": "繁體中文",
+          "Chino tradicional": "繁體中文"
         };
         return aliases[value] || value;
       },
@@ -41413,9 +46755,9 @@ var require_service_profiles = __commonJS({
         for (const raw of list) {
           const entry = this.normalizeSavedServiceConfigEntry(raw);
           if (!entry) continue;
-          const identity = this.getServiceConfigIdentityKey(entry);
-          if (!identity || seenKeys.has(identity)) continue;
-          seenKeys.add(identity);
+          const dedupeKey = this.getSavedServiceConfigDedupeKey(entry);
+          if (!dedupeKey || seenKeys.has(dedupeKey)) continue;
+          seenKeys.add(dedupeKey);
           while (seenIds.has(entry.id)) {
             entry.id = `svc-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
           }
@@ -41610,11 +46952,34 @@ var require_service_profiles = __commonJS({
           if (!tab?.tabpanel) return;
           const renderedProvider = tab.tabpanel.querySelector?.(".dait-provider-settings-block")?.dataset?.daitProvider || "";
           if (renderedProvider && currentProvider && renderedProvider !== currentProvider && tab.tabpanel.replaceWith) {
-            const isVisible = !tab.tabpanel.hidden;
+            const active = typeof document !== "undefined" ? document.activeElement : null;
+            const focusedSavedKind = active && tab.tabpanel.contains?.(active) ? String(active.dataset?.daitSavedConfigs || "") : "";
+            const focusedPath = !focusedSavedKind && active && tab.tabpanel.contains?.(active) ? String((active.dataset?.daitPath ? active : active.closest?.("[data-dait-path]"))?.dataset?.daitPath || "") : "";
+            const isVisible = !state.searchQuery && !tab.tabpanel.hidden;
             const fresh = this.plugin.createSettingsTabPanel(state, tab, isVisible);
             tab.tabpanel.replaceWith(fresh);
             tab.tabpanel = fresh;
             this.plugin.syncSettingsDependentRows?.(fresh);
+            if (kind === "translation") {
+              const advancedTab = state?.tabs?.find?.((item) => item.id === "advanced");
+              if (advancedTab?.tabpanel?.replaceWith) {
+                const advVisible = !state.searchQuery && !advancedTab.tabpanel.hidden;
+                const freshAdv = this.plugin.createSettingsTabPanel(state, advancedTab, advVisible);
+                advancedTab.tabpanel.replaceWith(freshAdv);
+                advancedTab.tabpanel = freshAdv;
+                this.plugin.syncSettingsDependentRows?.(freshAdv);
+              }
+            }
+            if (state.searchQuery) {
+              this.plugin.runSettingsSearch?.(state, state.searchInput?.value || state.searchQuery);
+            }
+            if (focusedSavedKind) {
+              const nextSelect = fresh.querySelector?.(`[data-dait-saved-configs='${focusedSavedKind}']`);
+              if (nextSelect) this.plugin.focusSettingsElement?.(nextSelect);
+            } else if (focusedPath) {
+              const nextControl = fresh.querySelector?.(`[data-dait-path='${focusedPath}']`);
+              if (nextControl) this.plugin.focusSettingsElement?.(nextControl);
+            }
           }
         });
         const task = this.plugin.settings[kind];
@@ -41803,7 +47168,8 @@ var require_service_profiles = __commonJS({
         this.plugin.settings[kind].secretKey = profile?.secretKey ?? preset.secretKey ?? "";
         if (options.restoreProfile) {
           this.plugin.settings[kind].apiKey = profile?.apiKey ?? "";
-          this.plugin.settings[kind].apiKeyOrigin = profile?.apiKeyOrigin;
+          if (typeof profile?.apiKeyOrigin === "string") this.plugin.settings[kind].apiKeyOrigin = profile.apiKeyOrigin;
+          else delete this.plugin.settings[kind].apiKeyOrigin;
           this.plugin.settings[kind].enableThinking = typeof profile?.enableThinking === "boolean" ? profile.enableThinking : false;
           const credentialFields = this.plugin.providerLayer?.registry?.getCredentialFields?.(provider) || [];
           credentialFields.forEach((field) => {
@@ -42808,9 +48174,9 @@ var require_prompt_policy = __commonJS({
         }
         return this.findFirstJsonPayload(value) || value;
       },
-      findFirstJsonPayload(source) {
+      findFirstJsonPayload(source, startIndex = 0) {
         const text = String(source || "");
-        for (let start = 0; start < text.length; start++) {
+        for (let start = Math.max(0, Number(startIndex) || 0); start < text.length; start++) {
           const open = text[start];
           if (open !== "{" && open !== "[") continue;
           const stack = [];
@@ -42845,6 +48211,20 @@ var require_prompt_policy = __commonJS({
           }
         }
         return "";
+      },
+      findJsonPayloads(source) {
+        const text = String(source || "");
+        const payloads = [];
+        let cursor = 0;
+        while (cursor < text.length) {
+          const found = this.findFirstJsonPayload(text, cursor);
+          if (!found) break;
+          const pos = text.indexOf(found, cursor);
+          if (pos < 0) break;
+          payloads.push(found);
+          cursor = pos + found.length;
+        }
+        return payloads;
       },
       getManualForceTargetTranslationOptions(sourceText, badOutput = "", invalidReason = "", options = this.getManualTranslationRequestOptions()) {
         const targetLanguageValue = this.plugin.getAutoTranslationTargetLanguage(options);
@@ -43302,7 +48682,7 @@ var require_prompt_policy = __commonJS({
         return words.filter((word) => !this.isLikelyPreservedTokenLine(word));
       },
       isBenignEmbeddedLatinToken(word) {
-        const normalized = String(word || "").trim().toLocaleLowerCase().replace(/['鈥檚]+$/u, "");
+        const normalized = String(word || "").trim().toLocaleLowerCase().replace(/(?:['’]s|['’]+)$/u, "");
         if (!normalized) return false;
         const benign = /* @__PURE__ */ new Set([
           "ai",
@@ -43602,7 +48982,101 @@ var require_prompt_policy = __commonJS({
         const words = normalized.match(new RegExp("\\p{Script=Latin}+", "gu")) || [];
         const joined = ` ${words.join(" ")} `;
         const dictionaries = {
-          english: [" the ", " and ", " are ", " you ", " can ", " help ", " me ", " with ", " this ", " that ", " what ", " have ", " been ", " for ", " to ", " is ", " in ", " of ", " hello ", " hi ", " bro ", " thanks ", " thank ", " okay ", " ok ", " lately ", " up "],
+          english: [
+            " the ",
+            " and ",
+            " are ",
+            " you ",
+            " can ",
+            " help ",
+            " me ",
+            " with ",
+            " this ",
+            " that ",
+            " what ",
+            " have ",
+            " been ",
+            " for ",
+            " to ",
+            " is ",
+            " in ",
+            " of ",
+            " hello ",
+            " hi ",
+            " hey ",
+            " bro ",
+            " thanks ",
+            " thank ",
+            " okay ",
+            " ok ",
+            " lately ",
+            " up ",
+            " i ",
+            " we ",
+            " they ",
+            " he ",
+            " she ",
+            " it ",
+            " my ",
+            " your ",
+            " our ",
+            " not ",
+            " do ",
+            " does ",
+            " did ",
+            " don ",
+            " doesn ",
+            " didn ",
+            " will ",
+            " won ",
+            " would ",
+            " could ",
+            " should ",
+            " ll ",
+            " ve ",
+            " re ",
+            " am ",
+            " was ",
+            " were ",
+            " be ",
+            " has ",
+            " had ",
+            " on ",
+            " at ",
+            " by ",
+            " from ",
+            " as ",
+            " out ",
+            " all ",
+            " just ",
+            " now ",
+            " see ",
+            " get ",
+            " got ",
+            " good ",
+            " great ",
+            " no ",
+            " yes ",
+            " please ",
+            " sorry ",
+            " today ",
+            " tomorrow ",
+            " tonight ",
+            " morning ",
+            " afternoon ",
+            " evening ",
+            " night ",
+            " let ",
+            " want ",
+            " need ",
+            " there ",
+            " here ",
+            " right ",
+            " problem ",
+            " time ",
+            " moved ",
+            " meeting "
+          ],
           spanish: [" el ", " la ", " los ", " las ", " que ", " de ", " y ", " en ", " un ", " una ", " para ", " con ", " por ", " es ", " estoy ", " hola ", " amigo ", " canal ", " soporte ", " gratis "],
           french: [" le ", " la ", " les ", " des ", " est ", " pour ", " avec ", " que ", " une ", " vous ", " dans ", " pas ", " je ", " de ", " bonjour ", " salut ", " merci "],
           german: [" der ", " die ", " das ", " und ", " ist ", " nicht ", " mit ", " für ", " ich ", " zu ", " ein ", " eine ", " auf ", " danke ", " hallo "],
@@ -43622,14 +49096,20 @@ var require_prompt_policy = __commonJS({
         }
         if (accentTests[language]?.test(text)) score += 2;
         let foreignScore = 0;
+        let hasForeignAccent = false;
         Object.entries(dictionaries).forEach(([name, tokens]) => {
           if (name === language) return;
           for (const token of tokens) {
             if (joined.includes(token)) foreignScore++;
           }
+          if (accentTests[name]?.test(text)) hasForeignAccent = true;
         });
         if (foreignScore >= 2 && foreignScore >= score) return false;
-        return score >= (language === "english" ? 2 : 1);
+        if (language === "english") {
+          if (score >= 2) return true;
+          return score >= 1 && foreignScore === 0 && !hasForeignAccent;
+        }
+        return score >= 1;
       }
     };
     var PROMPT_POLICY_METHOD_NAMES = attachControllerMethods(PromptPolicyController, [methods]);
@@ -43828,12 +49308,14 @@ var require_manual_translation = __commonJS({
         const plan = typeof planOrCacheKey === "object" && planOrCacheKey !== null ? planOrCacheKey : null;
         const cacheKey = plan?.autoCacheKey || plan?.cacheKey || String(planOrCacheKey || "");
         const options = plan?.autoRequestOptions || plan?.requestOptions || requestOptions || this.plugin.getAutoTranslationOptions();
+        const servedKey = cacheKey && typeof this.plugin.getServedModelTranslationCacheKey === "function" ? this.plugin.getServedModelTranslationCacheKey(cacheKey, options) : "";
         const text = plan?.text || "";
         this.plugin.clearAutoTranslationFailure(cacheKey, options);
+        if (servedKey && servedKey !== cacheKey) this.plugin.clearAutoTranslationFailure(servedKey, options);
         if (text) this.plugin.clearAutoTextTranslationFailure(text, options);
         this.plugin.clearAutoTranslationPendingTargets(cacheKey);
         this.plugin.removeQueuedAutoTranslationItem(cacheKey);
-        this.plugin.clearAutoTranslationPartialResult(cacheKey, plan?.cacheKey);
+        this.plugin.clearAutoTranslationPartialResult(cacheKey, plan?.cacheKey, servedKey !== cacheKey ? servedKey : "");
         if (plan?.cacheKey && plan.cacheKey !== cacheKey) {
           this.plugin.clearAutoTranslationFailure(plan.cacheKey, plan.requestOptions || options);
           this.plugin.clearAutoTranslationPendingTargets(plan.cacheKey);
@@ -43851,14 +49333,23 @@ var require_manual_translation = __commonJS({
       runManualTranslationPlan(plan) {
         return this.runManualRescueTranslationPlan(plan);
       },
-      getManualRescueAttemptOptions(plan, attemptName, previousOutput = "", previousReason = "") {
+      getManualRescueAttemptOptions(plan, attemptName, previousOutput = "", previousReason = "", previousError = null) {
+        let nextOptions = plan.requestOptions;
         if (attemptName === "manual-force-target") {
-          return this.plugin.getManualForceTargetTranslationOptions(plan.text, previousOutput, previousReason, plan.requestOptions);
+          nextOptions = this.plugin.getManualForceTargetTranslationOptions(plan.text, previousOutput, previousReason, plan.requestOptions);
+        } else if (attemptName === "manual-repair") {
+          nextOptions = this.plugin.getManualRepairTranslationOptions(plan.text, previousOutput, previousReason, plan.requestOptions);
         }
-        if (attemptName === "manual-repair") {
-          return this.plugin.getManualRepairTranslationOptions(plan.text, previousOutput, previousReason, plan.requestOptions);
+        if ((previousReason === "truncated" || previousError?.modelOutputTruncated) && attemptName !== "manual-normal") {
+          const multiplier = attemptName === "manual-repair" ? 2.2 : 1.8;
+          const raised = this.plugin.withRaisedAutoTranslationMaxTokens(nextOptions, plan.text, multiplier, previousError);
+          nextOptions = {
+            ...raised,
+            truncationRetry: true,
+            requestTimeoutMs: this.plugin.getTruncatedAutoTranslationRetryTimeoutMs(plan.requestOptions, raised, plan.text)
+          };
         }
-        return plan.requestOptions;
+        return nextOptions;
       },
       // requestOptions is this attempt's own copy: a partial long result is recorded on it for
       // validation and for the partial note (longTextPartialInfo).
@@ -43962,7 +49453,7 @@ var require_manual_translation = __commonJS({
             });
             break;
           }
-          const baseAttemptOptions = this.getManualRescueAttemptOptions(plan, attemptName, previousOutput, previousReason);
+          const baseAttemptOptions = this.getManualRescueAttemptOptions(plan, attemptName, previousOutput, previousReason, lastError);
           const requestOptions = {
             ...baseAttemptOptions,
             requestContext: {}
@@ -44435,7 +49926,13 @@ var require_discord_ai_translator = __commonJS({
       API_ENDPOINT_ERROR_MESSAGE_KEYS,
       DEFAULT_SETTINGS
     } = require_constants();
-    var { I18N } = require_i18n();
+    var {
+      I18N,
+      UI_LOCALES,
+      normalizeUiLocale,
+      getUiLocaleMeta,
+      isRtlLocale
+    } = require_i18n();
     module2.exports = class DiscordAITranslator {
       constructor() {
         this.events = new EventBus();
@@ -44798,7 +50295,18 @@ var require_discord_ai_translator = __commonJS({
           this.translationCache.clear();
           this.translationCacheMeta.clear();
           this.translationCacheNegativeLookup.clear();
+          this.localProviderDetectedModels.clear();
+        } else {
+          for (const entry of this.localProviderDetectedModels.values()) {
+            if (entry && typeof entry === "object") {
+              entry.expiresAt = 0;
+              entry.retryAt = 0;
+            }
+          }
         }
+        this.localProviderModelDetections.clear();
+        this.dismissedTranslationMessages.clear();
+        this.discordMarkupDisplayTextMemo?.clear?.();
         if (this.translationCacheDirtyTimer) clearTimeout(this.translationCacheDirtyTimer);
         this.translationCacheDirtyTimer = null;
         this.translationCacheDirtyAt = 0;
@@ -44867,6 +50375,9 @@ var require_discord_ai_translator = __commonJS({
         this.autoTranslationRetryTimer = null;
         this.autoTranslationRetryAt = 0;
         this.autoTranslationViewportBusyUntil = 0;
+        this.autoTranslationViewportStableAnchor = "";
+        this.autoTranslationViewportStableScans = 0;
+        this.autoTranslationViewportRequiresStableScan = false;
         this.autoTranslationJumpCooldownUntil = 0;
         this.autoTranslationRenderPausedUntil = 0;
         this.autoTranslationLastScrollY = null;
@@ -44917,11 +50428,23 @@ var require_discord_ai_translator = __commonJS({
         return this.isStarted && Number(token) === Number(this.lifecycleToken);
       }
       getLocale() {
-        return I18N[this.settings.ui?.language] ? this.settings.ui.language : "zh-CN";
+        const raw = this.settings.ui?.language;
+        if (raw && I18N[raw]) return raw;
+        const normalized = normalizeUiLocale(raw, "zh-CN");
+        return I18N[normalized] ? normalized : "zh-CN";
+      }
+      isRtlLocale(locale = this.getLocale()) {
+        return isRtlLocale(locale);
+      }
+      getUiLocales() {
+        return UI_LOCALES;
+      }
+      getUiLocaleBcp47(locale = this.getLocale()) {
+        return getUiLocaleMeta(locale).bcp47;
       }
       t(key, vars = {}) {
         const locale = this.getLocale();
-        const template = I18N[locale]?.[key] ?? I18N.en[key] ?? key;
+        const template = I18N[locale]?.[key] ?? (locale === "zh-TW" ? I18N["zh-CN"]?.[key] : void 0) ?? I18N.en[key] ?? key;
         return String(template).replace(/\{(\w+)\}/g, (match, name) => vars[name] ?? match);
       }
       // --- QuickPanel public entrypoints ---
@@ -44982,8 +50505,9 @@ var require_discord_ai_translator = __commonJS({
         else if (Object.hasOwn(API_ENDPOINT_ERROR_MESSAGE_KEYS, error?.code)) message = this.t(API_ENDPOINT_ERROR_MESSAGE_KEYS[error.code]);
         else if (error?.code === "CLIPBOARD_UNAVAILABLE") message = this.t("clipboardUnavailable");
         else if (error?.manualTranslationRescueFailed) message = this.t("manualTranslateRescueFailed");
-        else if (error?.modelOutputTruncated) message = this.t("errorOutputTruncated");
-        else if (this.isTimeoutError(error)) message = this.t("errorTimeout");
+        else if (error?.modelOutputTruncated) {
+          message = error?.taskKind === "polish" ? this.t("errorOutputTruncatedPolish") : error?.taskKind === "translation" ? this.t("errorOutputTruncatedTranslation") : this.t("errorOutputTruncated");
+        } else if (this.isTimeoutError(error)) message = this.t("errorTimeout");
         else if (error?.localProviderUnavailable) message = this.t("errorLocalProviderUnavailable");
         else if (providerCoded && error?.providerLanguageUnsupported) message = this.t("errorLanguageUnsupported");
         else if (providerCoded && error?.providerIpRejected) message = this.t("errorIpNotAllowed");

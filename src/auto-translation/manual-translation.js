@@ -207,13 +207,17 @@ const methods = {
         const plan = typeof planOrCacheKey === "object" && planOrCacheKey !== null ? planOrCacheKey : null;
         const cacheKey = plan?.autoCacheKey || plan?.cacheKey || String(planOrCacheKey || "");
         const options = plan?.autoRequestOptions || plan?.requestOptions || requestOptions || this.plugin.getAutoTranslationOptions();
+        const servedKey = cacheKey && typeof this.plugin.getServedModelTranslationCacheKey === "function"
+            ? this.plugin.getServedModelTranslationCacheKey(cacheKey, options)
+            : "";
         const text = plan?.text || "";
         this.plugin.clearAutoTranslationFailure(cacheKey, options);
+        if (servedKey && servedKey !== cacheKey) this.plugin.clearAutoTranslationFailure(servedKey, options);
         if (text) this.plugin.clearAutoTextTranslationFailure(text, options);
         this.plugin.clearAutoTranslationPendingTargets(cacheKey);
         this.plugin.removeQueuedAutoTranslationItem(cacheKey);
         // A kept partial result must not be drawn back over a manual retranslation.
-        this.plugin.clearAutoTranslationPartialResult(cacheKey, plan?.cacheKey);
+        this.plugin.clearAutoTranslationPartialResult(cacheKey, plan?.cacheKey, servedKey !== cacheKey ? servedKey : "");
         if (plan?.cacheKey && plan.cacheKey !== cacheKey) {
             this.plugin.clearAutoTranslationFailure(plan.cacheKey, plan.requestOptions || options);
             this.plugin.clearAutoTranslationPendingTargets(plan.cacheKey);
@@ -235,14 +239,24 @@ const methods = {
         return this.runManualRescueTranslationPlan(plan);
     },
 
-    getManualRescueAttemptOptions(plan, attemptName, previousOutput = "", previousReason = "") {
+    getManualRescueAttemptOptions(plan, attemptName, previousOutput = "", previousReason = "", previousError = null) {
+        let nextOptions = plan.requestOptions;
         if (attemptName === "manual-force-target") {
-            return this.plugin.getManualForceTargetTranslationOptions(plan.text, previousOutput, previousReason, plan.requestOptions);
+            nextOptions = this.plugin.getManualForceTargetTranslationOptions(plan.text, previousOutput, previousReason, plan.requestOptions);
         }
-        if (attemptName === "manual-repair") {
-            return this.plugin.getManualRepairTranslationOptions(plan.text, previousOutput, previousReason, plan.requestOptions);
+        else if (attemptName === "manual-repair") {
+            nextOptions = this.plugin.getManualRepairTranslationOptions(plan.text, previousOutput, previousReason, plan.requestOptions);
         }
-        return plan.requestOptions;
+        if ((previousReason === "truncated" || previousError?.modelOutputTruncated) && attemptName !== "manual-normal") {
+            const multiplier = attemptName === "manual-repair" ? 2.2 : 1.8;
+            const raised = this.plugin.withRaisedAutoTranslationMaxTokens(nextOptions, plan.text, multiplier, previousError);
+            nextOptions = {
+                ...raised,
+                truncationRetry: true,
+                requestTimeoutMs: this.plugin.getTruncatedAutoTranslationRetryTimeoutMs(plan.requestOptions, raised, plan.text)
+            };
+        }
+        return nextOptions;
     },
 
     // requestOptions is this attempt's own copy: a partial long result is recorded on it for
@@ -355,7 +369,7 @@ const methods = {
                 });
                 break;
             }
-            const baseAttemptOptions = this.getManualRescueAttemptOptions(plan, attemptName, previousOutput, previousReason);
+            const baseAttemptOptions = this.getManualRescueAttemptOptions(plan, attemptName, previousOutput, previousReason, lastError);
             const requestOptions = {
                 ...baseAttemptOptions,
                 requestContext: {}

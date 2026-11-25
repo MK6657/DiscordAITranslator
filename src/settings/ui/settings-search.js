@@ -82,12 +82,27 @@ const methods = {
             .join(" ");
     },
 
-    // A Latin or numeric term matches at the start of a word ("reset" is not found in "preset"); other scripts,
-    // which do not separate words with spaces, match anywhere.
+    // A Latin, Cyrillic or numeric term matches at the start of a word ("reset" is not found in "preset", "digo" is
+    // not found in "código"); unaccented Latin also matches accented Spanish words ("rapido" -> "rápido"). Scripts
+    // without space word boundaries (CJK) or with attached prefixes (Arabic "ال") match anywhere.
     matchesSettingsSearchTerm(haystack, term) {
-        if (!/^[a-z0-9]/.test(term)) return haystack.includes(term);
-        for (let index = haystack.indexOf(term); index >= 0; index = haystack.indexOf(term, index + 1)) {
-            if (index === 0 || !/[a-z0-9]/.test(haystack[index - 1])) return true;
+        const stripArabicMarks = text => String(text || "").replace(/[\u0640\u064B-\u065F\u0670]/g, "");
+        if (/[\u0600-\u06FF]/.test(term)) {
+            return stripArabicMarks(haystack).includes(stripArabicMarks(term));
+        }
+        if (!/^[\p{Script=Latin}\p{Script=Cyrillic}\p{N}]/u.test(term)) {
+            return haystack.includes(term);
+        }
+        const matchWordStart = (target, needle) => {
+            for (let index = target.indexOf(needle); index >= 0; index = target.indexOf(needle, index + 1)) {
+                if (index === 0 || !/[\p{L}\p{M}\p{N}]/u.test(target[index - 1])) return true;
+            }
+            return false;
+        };
+        if (matchWordStart(haystack, term)) return true;
+        if (/^[\p{Script=Latin}\p{N}]+$/u.test(term) && !/[\u0300-\u036f]/.test(term.normalize("NFD"))) {
+            const foldedHaystack = haystack.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+            if (foldedHaystack !== haystack && matchWordStart(foldedHaystack, term)) return true;
         }
         return false;
     },
@@ -101,7 +116,13 @@ const methods = {
             return [];
         }
         const terms = query.split(/\s+/).filter(Boolean);
-        const entries = this.getSettingsSearchEntries(state).filter(entry => terms.every(term => this.matchesSettingsSearchTerm(entry.haystack, term)));
+        const matchedEntries = this.getSettingsSearchEntries(state).filter(entry => terms.every(term => this.matchesSettingsSearchTerm(entry.haystack, term)));
+        const entries = state.activeTab
+            ? [
+                ...matchedEntries.filter(entry => entry.tabId === state.activeTab),
+                ...matchedEntries.filter(entry => entry.tabId !== state.activeTab)
+            ]
+            : matchedEntries;
         state.searchEntries = entries;
         // The results replace every tab page, so no tab is selected meanwhile; the current one stays reachable with Tab.
         state.tabs.forEach(tab => {
@@ -165,6 +186,7 @@ const methods = {
     },
 
     handleSettingsSearchKeydown(state, event) {
+        if (event?.isComposing || event?.keyCode === 229) return;
         const entries = state?.searchEntries || [];
         if (event?.key === "Enter") {
             event.preventDefault?.();
@@ -184,6 +206,7 @@ const methods = {
     },
 
     handleSettingsSearchResultKeydown(state, event, index) {
+        if (event?.isComposing || event?.keyCode === 229) return;
         const entries = state?.searchEntries || [];
         if (event?.key === "ArrowDown" || event?.key === "ArrowUp") {
             event.preventDefault?.();
@@ -212,6 +235,7 @@ const methods = {
                 this.cleanupSettingsPanelListeners(state.panel);
                 return;
             }
+            if (event?.isComposing || event?.keyCode === 229) return;
             if (event?.key !== "Escape" || !(state.searchQuery || state.searchInput?.value)) return;
             const active = typeof document !== "undefined" ? document.activeElement : null;
             if (!active || !(active === state.searchInput || state.results?.contains?.(active))) return;

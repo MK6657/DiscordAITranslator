@@ -31,8 +31,10 @@ class DiscordStores {
     }
 
     getMessageStore() {
+        const hasMessageCollection = candidate => Boolean(candidate
+            && (typeof candidate.getMessages === "function" || typeof candidate.getMessagesForChannel === "function"));
         const named = this.getStore("MessageStore");
-        if (named && (typeof named.getMessage === "function" || typeof named.getMessages === "function" || typeof named.getMessagesForChannel === "function")) return named;
+        if (hasMessageCollection(named)) return named;
         const fallbackKey = "__MessageStoreByKeys";
         const cached = this.stores.get(fallbackKey);
         if (cached?.store) return cached.store;
@@ -40,7 +42,8 @@ class DiscordStores {
         if (cached && now < cached.retryAt) return null;
         let found = null;
         try {
-            found = globalThis.BdApi?.Webpack?.getByKeys?.("getMessage", "getMessages") || null;
+            const candidate = globalThis.BdApi?.Webpack?.getByKeys?.("getMessage", "getMessages") || null;
+            found = hasMessageCollection(candidate) ? candidate : null;
         }
         catch {
             found = null;

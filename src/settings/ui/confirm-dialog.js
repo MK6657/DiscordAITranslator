@@ -92,8 +92,12 @@ const methods = {
     // a readable modal background it brings its own background in the current palette (css/08-dialogs).
     getDialogPanelThemeProps() {
         const discordTheme = this.plugin.panelTheme.getDiscordTheme();
+        const locale = typeof this.plugin.getLocale === "function" ? this.plugin.getLocale() : "zh-CN";
+        const dir = typeof this.plugin.isRtlLocale === "function" && this.plugin.isRtlLocale(locale) ? "rtl" : "ltr";
         const props = {
             "data-dait-panel-theme": discordTheme || this.plugin.resolvePanelTheme(),
+            dir,
+            lang: locale,
             ref: node => this.syncDialogPanelTheme(node)
         };
         if (!discordTheme) props["data-dait-dialog-surface"] = "true";

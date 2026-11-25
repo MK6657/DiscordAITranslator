@@ -6,6 +6,7 @@ const {
     PROMPT_TEMPLATE_CATEGORY_DIALECT,
     DIAGNOSTIC_MESSAGE_STATES,
     DIAGNOSTIC_REASON_CODES,
+    MODEL_REQUEST_TIMEOUT_MS,
     DEFAULT_SETTINGS
 } = require("../constants");
 
@@ -91,21 +92,31 @@ const methods = {
         return session.textbox?.isConnected !== false && textbox.isConnected !== false;
     },
 
-    getPolishSourceText(session) {
+    getPolishSourceText(session, currentDraft) {
         if (!session) return "";
-        if (this.getPolishRepolishSource() === POLISH_REPOLISH_SOURCE_LAST_RESULT && session.lastResult) {
+        if (currentDraft !== undefined) {
+            const normalizedCurrent = this.normalizeDraftRawText(currentDraft);
+            if (this.areDraftTextsEqualStrict(normalizedCurrent, session.originalRawText ?? session.originalText)) {
+                return session.originalRawText || session.originalText;
+            }
+        }
+        if (this.getPolishRepolishSource() === POLISH_REPOLISH_SOURCE_LAST_RESULT
+            && session.lastResult
+            && (currentDraft === undefined || Boolean(session.lastWrittenRawText || session.lastWrittenText))) {
             return session.lastResultRawText || session.lastResult;
         }
         return session.originalRawText || session.originalText;
     },
 
-    updatePolishSessionAfterResult(session, textbox, polished, written) {
+    updatePolishSessionAfterResult(session, textbox, polished, written, options = {}) {
         if (!session) return;
         session.textbox = textbox;
         const normalized = this.plugin.normalizeExtractedText(polished);
         const raw = this.normalizeDraftRawText(polished);
-        session.lastResult = normalized;
-        session.lastResultRawText = raw;
+        if (written || options.updateLastResult !== false) {
+            session.lastResult = normalized;
+            session.lastResultRawText = raw;
+        }
         if (raw.trim()) {
             const history = Array.isArray(session.previousResults) ? session.previousResults : [];
             if (!history.some(item => this.areComparableTextsEqual(item, raw))) {
@@ -269,7 +280,7 @@ const methods = {
         let pendingSend = null;
         try {
             const session = this.getPolishSession(textbox, draft);
-            const sourceText = this.getPolishSourceText(session);
+            const sourceText = this.getPolishSourceText(session, draft);
             if (!sourceText) {
                 this.plugin.showToast(this.plugin.t("inputEmpty"), "info");
                 return;
@@ -371,15 +382,28 @@ const methods = {
                     polishRequestId: writeToken.id,
                     skipAutoPolish: true
                 });
-                if (bilingualResult?.wrote || bilingualResult?.stale
-                    || !this.isPolishedSendStillCurrent(writtenDraft, lifecycleToken)) return;
+                if (bilingualResult?.stale || !this.plugin.isLifecycleTokenCurrent(lifecycleToken)) return;
+                if (bilingualResult?.wrote) {
+                    const bilingualDraft = {
+                        ...writtenDraft,
+                        text: session.lastBilingualRawText || this.plugin.getTextboxDraftText(textbox)
+                    };
+                    if (action === "confirmSend" && this.isPolishedSendStillCurrent(bilingualDraft, lifecycleToken)) {
+                        pendingSend = bilingualDraft;
+                    }
+                }
+                else if (this.isPolishedSendStillCurrent(writtenDraft, lifecycleToken)) {
+                    this.plugin.showRestoreOriginalControl(textbox, session, button);
+                    if (action === "confirmSend") pendingSend = writtenDraft;
+                }
             }
-            this.plugin.showRestoreOriginalControl(textbox, session, button);
-
-            if (action === "confirmSend") {
-                // Asked after the busy state and the write token are released (below), so an open dialog
-                // never holds the button or blocks a newer run.
-                pendingSend = writtenDraft;
+            else {
+                this.plugin.showRestoreOriginalControl(textbox, session, button);
+                if (action === "confirmSend") {
+                    // Asked after the busy state and the write token are released (below), so an open dialog
+                    // never holds the button or blocks a newer run.
+                    pendingSend = writtenDraft;
+                }
             }
         }
         catch (error) {
@@ -399,7 +423,9 @@ const methods = {
         }
         finally {
             this.plugin.composerWriter.finishWriteToken(writeToken);
-            if (this.plugin.isLifecycleTokenCurrent(lifecycleToken)) this.plugin.setButtonBusy(button, false, this.plugin.t("polishButton"));
+            if (this.plugin.isLifecycleTokenCurrent(lifecycleToken) && !this.plugin.composerWriter?.hasActiveWrite?.(textbox)) {
+                this.plugin.setButtonBusy(button, false, this.plugin.t("polishButton"));
+            }
         }
         if (pendingSend) await this.confirmPolishedSend(pendingSend, lifecycleToken);
     },
@@ -422,7 +448,9 @@ const methods = {
         this.clearPolishSubmitTimer();
         this.plugin.polishSubmitTimer = setTimeout(() => {
             this.plugin.polishSubmitTimer = null;
-            if (this.isPolishedSendStillCurrent(pending, lifecycleToken)) this.plugin.composerWriter.submit(pending.textbox);
+            if (!this.isComposerFocusElsewhere(pending.textbox) && this.isPolishedSendStillCurrent(pending, lifecycleToken)) {
+                this.plugin.composerWriter.submit(pending.textbox);
+            }
         }, 80);
         return true;
     },
@@ -431,9 +459,12 @@ const methods = {
         const textbox = pending?.textbox;
         if (!this.plugin.isLifecycleTokenCurrent(lifecycleToken)) return false;
         if (!textbox || textbox.isConnected === false) return false;
+        const composerRoot = this.getTextboxComposerRoot(textbox);
+        const activeToken = this.plugin.composerWriter?.getActiveWrite?.(textbox);
+        if (activeToken && activeToken.id !== pending.requestId) return false;
         if (pending.composerKey && this.getTextboxComposerKey(textbox) !== pending.composerKey) return false;
         if (pending.routeKey !== undefined && this.plugin.getCurrentRouteKey() !== pending.routeKey) return false;
-        if (pending.requestId !== undefined && this.plugin.latestPolishRequestIds.get(this.getTextboxComposerRoot(textbox)) !== pending.requestId) return false;
+        if (pending.requestId !== undefined && this.plugin.latestPolishRequestIds.get(composerRoot) !== pending.requestId) return false;
         return this.isCurrentDraftText(textbox, pending.text);
     },
 
@@ -446,26 +477,70 @@ const methods = {
     async runPolishWithGuards(sourceText, options = {}) {
         const polishConfig = this.plugin.getTaskConfig("polish") || {};
         const activeTemplate = this.plugin.getActivePolishTemplate(polishConfig);
-        const isDialectTemplate = Boolean(activeTemplate && this.plugin.getPolishTemplateCategory(activeTemplate) === PROMPT_TEMPLATE_CATEGORY_DIALECT);
+        const templateCategory = activeTemplate ? this.plugin.getPolishTemplateCategory(activeTemplate) : "";
+        const isDialectOrPersonaTemplate = templateCategory === PROMPT_TEMPLATE_CATEGORY_DIALECT || templateCategory === "persona";
         const targetLanguage = this.plugin.getEffectivePolishTargetLanguage(polishConfig);
-        const allowDialectScriptMix = Boolean(isDialectTemplate && !this.plugin.isTraditionalChineseTarget(targetLanguage));
+        const allowDialectScriptMix = Boolean(isDialectOrPersonaTemplate && !this.plugin.isTraditionalChineseTarget(targetLanguage));
         const previousResults = Array.isArray(options.previousResults)
             ? options.previousResults.map(item => String(item || "").trim()).filter(Boolean).slice(-5)
             : [];
-        const firstOptions = previousResults.length || options.mode
+        const configuredMaxTokens = this.plugin.normalizeRequestNumber(
+            polishConfig.maxTokens,
+            DEFAULT_SETTINGS.polish.maxTokens,
+            { min: 1, integer: true }
+        );
+        const isReasoning = Boolean(polishConfig.enableThinking)
+            || /(?:reasoner|\br1\b|qwq|qwen3|(?:^|\/)(?:o[134]|gpt-5)(?:[-_:]|$)|gemini-2\.5|glm-z1|thinking)/i.test(String(polishConfig.model || ""));
+        const lengthFloor = String(sourceText || "").length >= 300
+            ? Math.min(4096, Math.ceil(String(sourceText || "").length * 1.8) + 256)
+            : 0;
+        const effectiveMaxTokens = Math.max(configuredMaxTokens, lengthFloor, isReasoning ? 4096 : 0);
+        const needsMaxTokensOverride = effectiveMaxTokens > configuredMaxTokens;
+        const firstOverrides = {
+            ...(needsMaxTokensOverride ? { maxTokens: effectiveMaxTokens } : {}),
+            ...(previousResults.length ? {
+                previousPolishResults: previousResults,
+                repolishAttempt: previousResults.length + 1
+            } : {})
+        };
+        const hasFirstOverrides = Object.keys(firstOverrides).length > 0;
+        const firstOptions = hasFirstOverrides || options.mode
             ? {
                 ...(options.mode ? { mode: options.mode } : {}),
-                ...(previousResults.length ? {
-                    configOverrides: {
-                        previousPolishResults: previousResults,
-                        repolishAttempt: previousResults.length + 1
-                    }
-                } : {})
+                ...(hasFirstOverrides ? { configOverrides: firstOverrides } : {})
             }
             : undefined;
-        const first = firstOptions !== undefined
-            ? await this.plugin.runModelTask("polish", sourceText, firstOptions)
-            : await this.plugin.runModelTask("polish", sourceText);
+        const runPolishAttemptWithTruncationRetry = async (attemptOptions, baseMaxTokens) => {
+            try {
+                return attemptOptions !== undefined
+                    ? await this.plugin.runModelTask("polish", sourceText, attemptOptions)
+                    : await this.plugin.runModelTask("polish", sourceText);
+            }
+            catch (error) {
+                if (!error?.modelOutputTruncated || (options.isStillCurrent && !options.isStillCurrent())) throw error;
+                const usedMax = Math.max(1, Number(attemptOptions?.configOverrides?.maxTokens || baseMaxTokens || configuredMaxTokens));
+                const minRetry = Number(error.partialOutputLength || 0) === 0 ? 4096 : 2400;
+                const raisedMaxTokens = Math.min(8192, Math.max(usedMax + 512, Math.ceil(usedMax * 2), minRetry));
+                if (raisedMaxTokens <= usedMax) throw error;
+                const baseTimeout = Number(attemptOptions?.timeoutMs || MODEL_REQUEST_TIMEOUT_MS);
+                const retryTimeoutMs = Math.min(90000, Math.max(baseTimeout, Math.round(baseTimeout * Math.min(2.5, raisedMaxTokens / Math.max(256, usedMax)))));
+                this.plugin.logDiagnostic("polish.truncated", "retry", {
+                    sourceHash: this.plugin.getStrongTextFingerprint(sourceText),
+                    maxTokens: raisedMaxTokens,
+                    timeoutMs: retryTimeoutMs
+                });
+                return this.plugin.runModelTask("polish", sourceText, {
+                    ...(attemptOptions || {}),
+                    timeoutMs: retryTimeoutMs,
+                    configOverrides: {
+                        ...(attemptOptions?.configOverrides || {}),
+                        maxTokens: raisedMaxTokens
+                    }
+                });
+            }
+        };
+
+        const first = await runPolishAttemptWithTruncationRetry(firstOptions, effectiveMaxTokens);
         if (options.isStillCurrent && !options.isStillCurrent()) return first;
 
         let violation = this.plugin.getPolishOutputLanguageViolation(sourceText, first, targetLanguage, {
@@ -483,16 +558,17 @@ const methods = {
             ? Math.min(2, Math.max(configuredTemp, 0.95))
             : Math.min(configuredTemp, 0.35);
         try {
-            const repaired = await this.plugin.runModelTask("polish", sourceText, {
+            const repaired = await runPolishAttemptWithTruncationRetry({
                 ...(options.mode ? { mode: options.mode } : {}),
                 configOverrides: {
+                    ...(needsMaxTokensOverride ? { maxTokens: effectiveMaxTokens } : {}),
                     temperature: repairTemp,
                     previousPolishResults: previousResults,
                     repolishAttempt: previousResults.length + 1,
                     polishRepairReason: violation,
                     polishPreviousInvalidOutput: String(first || "")
                 }
-            });
+            }, effectiveMaxTokens);
             if (options.isStillCurrent && !options.isStillCurrent()) return repaired;
             const cleaned = String(repaired || "").trim();
             if (!cleaned) return first;
@@ -505,7 +581,7 @@ const methods = {
                 repairViolation,
                 targetLanguage
             });
-            if (!repairViolation || violation === "duplicate-repolish") return repaired;
+            if (!repairViolation) return repaired;
             return first;
         }
         catch (error) {

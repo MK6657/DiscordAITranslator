@@ -1,4 +1,4 @@
-# Architecture (v0.5.3)
+# Architecture (v0.6.0)
 
 ## Distribution Model
 
@@ -15,7 +15,7 @@ flowchart TD
     Composer["src/composer/ (ComposerWriter, ComposerUiController, PolishWorkflow, Bilingual)"]
     Discord["src/discord/ (DiscordHostAdapter -> Selectors, Stores, ContextMenu, Observer, Extractor, LineDOM, ScrollAnchor, Slate)"]
     Quick["src/quick-panel/ (QuickPanel Dual-Mode Popover & Status Badge)"]
-    Support["src/cache/, src/validation/, src/diagnostics/, src/intake/, src/css/, src/i18n.js"]
+    Support["src/cache/, src/validation/, src/diagnostics/, src/intake/, src/css/, src/i18n/* (6 Locales)"]
 
     Entry --> Core
     Entry --> Settings
