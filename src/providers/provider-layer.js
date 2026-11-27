@@ -56,6 +56,7 @@ class ProviderLayer {
         // Connection tests in flight per task (the saved "testing" status can outlive its test, e.g. after a
         // settings change cut the test short).
         this.runningApiTests = new Map();
+        this.apiTestRuns = new Map();
         // Origins where a fallback to BdApi.Net.fetch succeeded (session-only).
         this.bdNetPreferredOrigins = new Set();
     }
@@ -136,7 +137,17 @@ class ProviderLayer {
         return this.normalizeChatCompletionEndpoint(raw);
     }
 
-    getEffectiveProviderEndpoint(config, defaultConfig = {}) {
+    getEffectiveProviderEndpoint(kindOrConfig, configOrDefaults = {}) {
+        let config = kindOrConfig;
+        let defaultConfig = configOrDefaults;
+        if (typeof kindOrConfig === "string" && (kindOrConfig === "translation" || kindOrConfig === "polish")) {
+            config = configOrDefaults && typeof configOrDefaults === "object"
+                ? configOrDefaults
+                : (this.plugin.getTaskConfig?.(kindOrConfig) || {});
+            defaultConfig = DEFAULT_SETTINGS[kindOrConfig] || {};
+        }
+        config = config && typeof config === "object" ? config : {};
+        defaultConfig = defaultConfig && typeof defaultConfig === "object" ? defaultConfig : {};
         const adapter = this.registry.get(config);
         if (adapter?.getEffectiveEndpoint) return adapter.getEffectiveEndpoint(config, defaultConfig, this.plugin);
         return this.getEffectiveChatCompletionEndpoint(config, defaultConfig);
@@ -224,9 +235,24 @@ class ProviderLayer {
         return this.registry.supportsModelDetection(provider);
     }
 
+    isAlwaysReasoningModelName(model) {
+        return /(?:reasoner|\br1\b|qwq|qwen3|(?:^|\/)(?:o[134]|gpt-5)(?:[-_:]|$)|gemini-2\.5|gemini-3|glm-z1|thinking)/i.test(String(model || ""));
+    }
+
+    hasConfiguredProviderCredentials(config) {
+        if (!config || typeof config !== "object") return false;
+        if (String(config.apiKey || "").trim()) return true;
+        const nonSecretFields = new Set(["region", "deeplPlan"]);
+        for (const field of this.registry.getCredentialFields(config)) {
+            if (!field || nonSecretFields.has(field)) continue;
+            if (String(config[field] || "").trim()) return true;
+        }
+        return false;
+    }
+
     getEffectiveRequestApiKey(config) {
         if (config?.provider === "googleCloud") {
-            return this.peekGoogleTranslateAvailableKey(1)?.apiKey || "";
+            return (/** @type {any} */ (this)).peekGoogleTranslateAvailableKey(1)?.apiKey || "";
         }
         if (config?.provider === "baidu") {
             return String(config?.secretKey || "").trim();
@@ -359,7 +385,7 @@ class ProviderLayer {
     // The model named in a chat-completions reply ("model": "..."), shortened to its file name.
     getReportedResponseModel(raw) {
         try {
-            const data = typeof raw === "string" ? this.parseApiJson(raw) : raw;
+            const data = typeof raw === "string" ? (/** @type {any} */ (this)).parseApiJson(raw) : raw;
             const model = typeof data?.model === "string" ? data.model.trim() : "";
             return model ? this.plugin.getDiagnosticModelLabel(model) : "";
         }
@@ -434,7 +460,10 @@ class ProviderLayer {
             || origin === "manual" || origin === "public-bilingual";
         if (!eligibleMode) return false;
         const type = this.plugin.getAutoTranslationFailureType(error);
-        return ["auth", "quota", "rate-limit", "server", "timeout", "network", "parse", "client", "invalid-output", "truncated"].includes(type);
+        if (type === "truncated") {
+            return Boolean(options?.truncationRetry || options?.allowTruncationFallback);
+        }
+        return ["auth", "quota", "rate-limit", "server", "timeout", "network", "parse", "client", "invalid-output"].includes(type);
     }
 
     getIsolatedFallbackCredentialFields(baseConfig, targetProvider, extraConfig = null) {
@@ -579,6 +608,12 @@ class ProviderLayer {
                         ? Boolean(sanitizedOverrides.enableThinking)
                         : fallbackConfig.enableThinking
                 };
+                if (firstType === "truncated" && !this.isDirectTranslateProvider(provider)) {
+                    fallbackOverrides.maxTokens = Math.min(
+                        65536,
+                        Math.max(2400, Math.ceil((Number(fallbackOverrides.maxTokens) || 1200) * 2))
+                    );
+                }
                 for (const field of this.registry.getCredentialFields(provider)) {
                     fallbackOverrides[field] = fallbackConfig[field] ?? "";
                 }
@@ -628,7 +663,7 @@ class ProviderLayer {
             ? requestOptions.configOverrides
             : this.plugin.getEffectiveTaskConfig("translation", requestOptions?.configOverrides);
         const config = this.plugin.getCacheConfigSnapshot("translation", rawConfig);
-        if (config.provider === "googleCloud") return this.getGoogleTranslateProviderKey();
+        if (config.provider === "googleCloud") return (/** @type {any} */ (this)).getGoogleTranslateProviderKey();
         const adapter = this.registry.get(rawConfig);
         let apiKeySource = "";
         if (typeof adapter?.getAuthFingerprint === "function") {
@@ -711,7 +746,7 @@ class ProviderLayer {
         try {
             taskConfig = this.resolveEffectiveRequestConfig(kind, options);
             const defaultConfig = DEFAULT_SETTINGS[kind] || {};
-            if (this.shouldAutoDetectLocalProviderModel(taskConfig, defaultConfig)) {
+            if ((/** @type {any} */ (this)).shouldAutoDetectLocalProviderModel(taskConfig, defaultConfig)) {
                 // Never forward generation timeoutMs (45-90s) into the shared /v1/models probe,
                 // so a stalled local server fails fast at LOCAL_PROVIDER_MODEL_DETECTION_TIMEOUT_MS (5s).
                 await this.plugin.refreshLocalProviderDetectedModel(taskConfig, {
@@ -793,6 +828,13 @@ class ProviderLayer {
                     });
                 }
                 catch (error) {
+                    if (error && typeof error === "object" && request?.provider === "googleCloud" && !error.googleTranslateApiKey && request?.googleTranslate?.apiKey) {
+                        const status = Number(error.status || 0);
+                        if (status >= 400 || error.providerRateLimited || error.providerAuthFailed || error.googleTranslateQuotaExceeded || error.providerServerError) {
+                            error.googleTranslateApiKey = request.googleTranslate.apiKey;
+                            error.googleTranslateKeyId = request.googleTranslate.keyId || "";
+                        }
+                    }
                     if (error?.googleTranslateApiKey && !sharedSignal.aborted) {
                         this.plugin.markGoogleTranslateKeyFailure(error.googleTranslateApiKey, error);
                     }
@@ -801,8 +843,11 @@ class ProviderLayer {
             });
             this.throwIfProviderRequestCancelled(signal);
             if (requestStillCurrent()) {
+                if (!options.providerProfilePinned && request?.provider === "googleCloud") {
+                    this.plugin.markGoogleTranslateProviderSuccess?.(request);
+                }
                 if (providerSnapshotKey && this.isLocalTranslationProvider(taskConfig)) {
-                    this.markLocalProviderHealthy(providerSnapshotKey);
+                    (/** @type {any} */ (this)).markLocalProviderHealthy(providerSnapshotKey);
                     this.plugin.setApiRuntimeStatus("translation", "success", this.plugin.t("apiStatusSuccess"));
                 }
                 else if (providerSnapshotKey && taskConfig.provider === this.plugin.settings.translation?.provider
@@ -853,6 +898,35 @@ class ProviderLayer {
                 longTextSourceLength: Number(options.longTextSourceLength || 0) || 0,
                 ms: Date.now() - startedAt
             });
+            const modeStr = String(options.mode || options.configOverrides?.mode || "");
+            const originStr = String(options.requestOrigin || options.configOverrides?.requestOrigin || "");
+            const isInteractiveGooglePoolFlow = /^manual/.test(modeStr)
+                || /^public-bilingual(?:-|$)/.test(modeStr)
+                || originStr === "manual"
+                || originStr === "public-bilingual";
+            if (request?.provider === "googleCloud"
+                && isInteractiveGooglePoolFlow
+                && !signal?.aborted
+                && options.isCurrent?.() !== false
+                && !options._googlePoolRetried
+                && this.plugin.isGoogleTranslatePoolServing?.(error)) {
+                let canConsumePoolRetry = !options.requestBudget;
+                if (options.requestBudget && !this.plugin.isAutoTranslationRequestBudgetExhausted?.(options.requestBudget)) {
+                    try {
+                        this.plugin.consumeAutoTranslationRequestBudget({ requestBudget: options.requestBudget });
+                        canConsumePoolRetry = true;
+                    }
+                    catch (budgetError) {
+                        if (!this.plugin.isAutoTranslationRequestBudgetError?.(budgetError)) throw budgetError;
+                    }
+                }
+                if (canConsumePoolRetry) {
+                    return await this.runModelTaskWithResult(kind, input, {
+                        ...options,
+                        _googlePoolRetried: true
+                    });
+                }
+            }
             const fallback = await this.plugin.tryProviderFallbackModelTask(kind, input, { ...options, requestContext: undefined }, error, taskConfig, diagnosticMode);
             this.throwIfProviderRequestCancelled(signal, lifecycleToken);
             if (!fallback?.used) {
@@ -894,18 +968,18 @@ class ProviderLayer {
             if (adapter?.parseResponse) {
                 return adapter.parseResponse(raw, request, options, this.plugin);
             }
-            return this.parseModelResponse(raw);
+            return (/** @type {any} */ (this)).parseModelResponse(raw);
         }
         catch (error) {
             // Queued work orphaned by a settings change is aborted, but Google already received the
             // request and counts its characters: so does the key's monthly usage.
             if (request?.responseParser === "googleTranslate" && error?.requestSent && this.isRequestCancelled(error)) {
-                this.markGoogleTranslateKeyUsage(request.googleTranslate?.apiKey, request.googleTranslate?.charCount || 0);
+                (/** @type {any} */ (this)).markGoogleTranslateKeyUsage(request.googleTranslate?.apiKey, request.googleTranslate?.charCount || 0);
             }
             throw error;
         }
         finally {
-            this.releaseGoogleTranslateRequestReservation(request);
+            (/** @type {any} */ (this)).releaseGoogleTranslateRequestReservation(request);
         }
     }
 
@@ -984,8 +1058,15 @@ class ProviderLayer {
         return error?.code === "REQUEST_CANCELLED" || error?.name === "AbortError";
     }
 
+    isRedirectBlockedFetchError(error) {
+        if (!error) return false;
+        if (error?.code === "API_REDIRECT_BLOCKED" || error?.cause?.code === "API_REDIRECT_BLOCKED") return true;
+        const message = `${String(error?.message || "")} ${String(error?.cause?.message || "")}`;
+        return /unexpected redirect|redirect mode is (?:set to )?['"]?error['"]?|redirected/i.test(message);
+    }
+
     isNetworkError(error) {
-        if (this.isRequestCancelled(error)) return false;
+        if (this.isRequestCancelled(error) || this.isRedirectBlockedFetchError(error)) return false;
         return /Failed to fetch|NetworkError|Load failed|fetch failed|Network request failed|ERR_[A-Z_]+|ECONNREFUSED|ECONNRESET|ECONNABORTED|ENOTFOUND|EHOSTUNREACH|ENETUNREACH|connection refused|connection reset|socket hang up|NS_ERROR_CONNECTION_REFUSED/i
             .test(this.plugin.getErrorSignalText(error));
     }
@@ -1030,6 +1111,7 @@ class ProviderLayer {
             controller?.signal.throwIfAborted();
             const method = String(request?.method || "POST").trim().toUpperCase() || "POST";
             const readOnly = method === "GET" || method === "HEAD";
+            /** @type {RequestInit} */
             const fetchOptions = {
                 method,
                 headers: request.headers,
@@ -1059,6 +1141,14 @@ class ProviderLayer {
                     response = await fetch(endpoint, fetchOptions);
                 }
                 catch (fetchError) {
+                    if (this.isRedirectBlockedFetchError(fetchError)) {
+                        throw fetchError?.code === "API_REDIRECT_BLOCKED"
+                            ? fetchError
+                            : Object.assign(new Error("Redirect blocked", { cause: fetchError }), {
+                                code: "API_REDIRECT_BLOCKED",
+                                requestSent: true
+                            });
+                    }
                     sent = !this.isBrowserRequestUnsent(fetchError);
                     const canFallbackBdNet = hasBdNet && !controller?.signal.aborted
                         && !this.isRequestCancelled(fetchError) && !this.isTimeoutError(fetchError)
@@ -1077,7 +1167,7 @@ class ProviderLayer {
             if (!response.ok) {
                 const apiError = this.plugin.createApiError(response, raw);
                 if (request?.provider === "googleCloud") {
-                    this.annotateGoogleTranslateApiError(apiError, raw, request);
+                    (/** @type {any} */ (this)).annotateGoogleTranslateApiError(apiError, raw, request);
                 }
                 this.plugin.annotateTranslateProviderApiError(apiError, raw, request);
                 this.annotateChatCompletionApiError(apiError, raw, request);
@@ -1323,7 +1413,9 @@ class ProviderLayer {
         ].join("\n---\n");
     }
 
-    async testApiConnection(kind, button, status, { onStart } = {}) {
+    /** @param {any} kind @param {any} button @param {any} status @param {{ onStart?: Function }} [options] */
+    async testApiConnection(kind, button, status, options = {}) {
+        const { onStart } = options;
         const lifecycleToken = this.ctx.getLifecycleToken();
         if (!this.ctx.isLifecycleTokenCurrent(lifecycleToken)) return false;
         const config = this.plugin.getTaskConfig(kind);
@@ -1333,7 +1425,8 @@ class ProviderLayer {
             ...this.registry.getCredentialFields(config)
         ])];
         const testConfig = Object.freeze(Object.fromEntries(fields.map(field => [field, config[field]])));
-        const getGooglePoolConfig = () => this.normalizeGoogleTranslateKeyPool().keyPoolText;
+        const self = /** @type {any} */ (this);
+        const getGooglePoolConfig = () => self.normalizeGoogleTranslateKeyPool().keyPoolText;
         const googlePoolConfig = testConfig.provider === "googleCloud" ? getGooglePoolConfig() : null;
         const runs = this.apiTestRuns ??= new Map();
         const previous = runs.get(kind);
@@ -1376,7 +1469,7 @@ class ProviderLayer {
             }
             this.plugin.setApiStatus(status, "success", this.plugin.t("apiStatusSuccess"), "", kind);
             this.plugin.clearAutoTranslationProviderFailureForCurrentConfig(kind);
-            if (kind === "translation" && this.isLocalTranslationProvider(testConfig)) this.markLocalProviderHealthy(providerSnapshotKey);
+            if (kind === "translation" && this.isLocalTranslationProvider(testConfig)) self.markLocalProviderHealthy(providerSnapshotKey);
             if (!isCurrent()) return false;
             const saved = this.plugin.saveVerifiedServiceConfig?.(kind, testConfig, {
                 latencyMs: recorded?.latencyMs,
@@ -1406,7 +1499,7 @@ class ProviderLayer {
                 ? this.getAutoTranslationProviderKey({ configOverrides: testConfig })
                 : "";
             const defaultConfig = DEFAULT_SETTINGS[kind] || {};
-            if (this.shouldAutoDetectLocalProviderModel(testConfig, defaultConfig)) {
+            if (self.shouldAutoDetectLocalProviderModel(testConfig, defaultConfig)) {
                 if (!isCurrent()) return false;
                 await this.plugin.refreshLocalProviderDetectedModel(testConfig, {
                     configOverrides: testConfig, defaultConfig, force: true, signal, isCurrent
@@ -1418,12 +1511,38 @@ class ProviderLayer {
             endpoint = test.endpoint;
             testRequest = test.request;
             requestStartedAt = Date.now();
-            await this.plugin.fetchModelResponse(test.endpoint, test.request, API_TEST_REQUEST_TIMEOUT_MS, {
-                lifecycleToken,
-                signal,
-                connectionTest: true,
-                onRawResponse: raw => { reportedModel = this.getReportedResponseModel(raw); }
-            });
+            try {
+                await this.plugin.fetchModelResponse(test.endpoint, test.request, API_TEST_REQUEST_TIMEOUT_MS, {
+                    lifecycleToken,
+                    signal,
+                    connectionTest: true,
+                    onRawResponse: raw => { reportedModel = this.getReportedResponseModel(raw); }
+                });
+            }
+            catch (firstError) {
+                const initialMaxTokens = Number(testRequest?.body?.max_tokens ?? testRequest?.body?.max_completion_tokens ?? 0);
+                const canRetryTruncatedProbe = Boolean(
+                    firstError?.modelOutputTruncated
+                    && !this.isDirectTranslateProvider(testConfig)
+                    && initialMaxTokens > 0
+                    && initialMaxTokens <= 32
+                    && isCurrent()
+                    && !this.plugin.isAcceptableConnectionTestTruncation(firstError, kind, testConfig)
+                );
+                if (!canRetryTruncatedProbe) throw firstError;
+                const retryTest = this.buildConnectionTestRequest(kind, testConfig, { maxTokensOverride: 512 });
+                if (!isCurrent()) return false;
+                endpoint = retryTest.endpoint;
+                testRequest = retryTest.request;
+                requestStartedAt = Date.now();
+                reportedModel = "";
+                await this.plugin.fetchModelResponse(retryTest.endpoint, retryTest.request, API_TEST_REQUEST_TIMEOUT_MS, {
+                    lifecycleToken,
+                    signal,
+                    connectionTest: true,
+                    onRawResponse: raw => { reportedModel = this.getReportedResponseModel(raw); }
+                });
+            }
             return completeSuccess();
         }
         catch (error) {
@@ -1437,12 +1556,15 @@ class ProviderLayer {
                 });
                 return completeSuccess();
             }
+            if (error?.modelOutputTruncated && typeof error === "object") {
+                error.connectionTestTruncated = true;
+            }
             this.annotateModelRequestError(error, kind, endpoint || testConfig.endpoint, testConfig, { configOverrides: testConfig });
             if (kind === "translation") {
                 if (error?.googleTranslateApiKey) this.plugin.markGoogleTranslateKeyFailure(error.googleTranslateApiKey, error);
                 if (error.localProviderUnavailable) this.plugin.markAutoTranslationProviderFailure(this.plugin.getAutoTranslationOptions(), error);
             }
-            const message = this.formatGoogleTranslateKeyError(error);
+            const message = this.plugin.formatGoogleTranslateKeyError(error);
             if (!isCurrent()) return false;
             record(false, message);
             this.plugin.setApiStatus(status, "failed", this.plugin.t("apiStatusFailed"), message, kind);
@@ -1464,12 +1586,13 @@ class ProviderLayer {
         }
     }
 
-    buildConnectionTestRequest(kind, config = this.plugin.getTaskConfig(kind)) {
+    buildConnectionTestRequest(kind, config = this.plugin.getTaskConfig(kind), options = {}) {
+        const self = /** @type {any} */ (this);
         const safeConfig = this.stripNonRequestTaskFields(config);
         const defaultConfig = DEFAULT_SETTINGS[kind] || {};
         const adapter = this.registry.get(safeConfig?.provider);
         if (typeof adapter?.buildTestRequest === "function") {
-            return adapter.buildTestRequest(kind, safeConfig, defaultConfig, this.plugin);
+            return (/** @type {any} */ (adapter.buildTestRequest))(kind, safeConfig, defaultConfig, this.plugin, options);
         }
         if (this.isDirectTranslateProvider(safeConfig)) {
             // Test the language pair the user actually translates into: some targets are
@@ -1478,7 +1601,7 @@ class ProviderLayer {
             const testConfig = {
                 ...safeConfig,
                 sourceLanguage: AUTO_LANGUAGE_VALUE,
-                targetLanguageCode: this.getTargetLanguageCode(safeConfig.targetLanguage)
+                targetLanguageCode: self.getTargetLanguageCode(safeConfig.targetLanguage)
             };
             if (adapter?.buildRequest) {
                 return adapter.buildRequest("translation", "hello", testConfig, defaultConfig, {
@@ -1486,25 +1609,29 @@ class ProviderLayer {
                     connectionTest: true
                 }, this.plugin);
             }
-            if (this.isGoogleTranslateProvider(safeConfig)) return this.buildGoogleTranslateRequest("hello", testConfig, { ignoreCooldown: true });
-            if (this.isMicrosoftTranslateProvider(safeConfig)) return this.buildMicrosoftTranslateRequest("hello", testConfig);
-            if (this.isDeepLTranslateProvider(safeConfig)) return this.buildDeepLTranslateRequest("hello", testConfig);
-            return this.buildBaiduTranslateRequest("hello", testConfig);
+            if (this.isGoogleTranslateProvider(safeConfig)) return self.buildGoogleTranslateRequest("hello", testConfig, { ignoreCooldown: true });
+            if (this.isMicrosoftTranslateProvider(safeConfig)) return self.buildMicrosoftTranslateRequest("hello", testConfig);
+            if (this.isDeepLTranslateProvider(safeConfig)) return self.buildDeepLTranslateRequest("hello", testConfig);
+            return self.buildBaiduTranslateRequest("hello", testConfig);
         }
         const apiKey = this.getEffectiveRequestApiKey(safeConfig);
         if (!apiKey) throw new Error(kind === "polish" ? this.plugin.t("apiKeyMissingPolish") : this.plugin.t("apiKeyMissingTranslation"));
         const endpoint = this.getEffectiveChatCompletionEndpoint(safeConfig, defaultConfig);
-        const model = this.getEffectiveChatCompletionModel(kind, safeConfig, defaultConfig);
+        const model = self.getEffectiveChatCompletionModel(kind, safeConfig, defaultConfig);
         if (!endpoint) throw new Error(this.plugin.t("endpointMissing"));
         if (this.plugin.isChatCompletionProvider(safeConfig) && !model) throw new Error(this.plugin.t("modelMissing"));
-        const isAlwaysThinkingModel = /(?:reasoner|\br1\b|qwq|qwen3|(?:^|\/)(?:o[134]|gpt-5)(?:[-_:]|$)|thinking)/i.test(String(model || ""));
+        const isAlwaysThinkingModel = this.isAlwaysReasoningModelName(model);
+        const overrideMaxTokens = Number(options?.maxTokensOverride);
+        const probeMaxTokens = Number.isFinite(overrideMaxTokens) && overrideMaxTokens > 0
+            ? Math.min(65536, Math.max(1, Math.round(overrideMaxTokens)))
+            : (isAlwaysThinkingModel ? 512 : 32);
         const body = this.applyProviderBodyOptions({ ...safeConfig, enableThinking: false }, {
             model,
             messages: [
                 { role: "user", content: "Reply with OK only." }
             ],
             temperature: 0,
-            max_tokens: isAlwaysThinkingModel ? 512 : 32,
+            max_tokens: probeMaxTokens,
             stream: false
         });
 
@@ -1526,7 +1653,7 @@ class ProviderLayer {
         if (adapter?.buildRequest) {
             return adapter.buildRequest(kind, input, effectiveConfig, defaultConfig, options, this.plugin);
         }
-        return this.buildChatCompletionRequest(kind, input, effectiveConfig, defaultConfig);
+        return (/** @type {any} */ (this)).buildChatCompletionRequest(kind, input, effectiveConfig, defaultConfig);
     }
 
     applyProviderBodyOptions(config, body) {
@@ -1538,4 +1665,23 @@ class ProviderLayer {
 
 attachControllerMethods(ProviderLayer, [localModelHealthMethods, googleKeyPoolMethods, providerCodecMethods]);
 
-module.exports = { ProviderLayer };
+const PROVIDER_LAYER_INTERNAL_METHODS = new Set([
+    "constructor",
+    "normalizeChatCompletionEndpoint",
+    "getProviderEndpointIdentity",
+    "createProviderRequestCancelledError",
+    "throwIfProviderRequestCancelled",
+    "subscribeToProviderRequest",
+    "renderStatusBadge",
+    "isBrowserRequestUnsent",
+    "readResponseTextWithAbort",
+    "fetchViaBetterDiscordNet"
+]);
+
+const PROVIDER_LAYER_METHOD_NAMES = Object.getOwnPropertyNames(ProviderLayer.prototype).filter(
+    name => !name.startsWith("_")
+        && !PROVIDER_LAYER_INTERNAL_METHODS.has(name)
+        && typeof ProviderLayer.prototype[name] === "function"
+);
+
+module.exports = { ProviderLayer, PROVIDER_LAYER_METHOD_NAMES };

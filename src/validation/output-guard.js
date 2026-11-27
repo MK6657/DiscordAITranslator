@@ -67,6 +67,8 @@ class OutputGuard {
         const fenced = raw.match(/^```[A-Za-z0-9_-]*\s*([\s\S]*?)\s*```$/);
         if (fenced && !fenced[1].includes("```") && !source.startsWith("```")) push(fenced[1]);
 
+        const sourceHasKeyValuePrefix = !/^\s*(?:https?|steam|discord):\/\//i.test(source)
+            && /^\s*[^\n:：]{1,16}[:：]\s*\S/.test(source);
         const labeled = raw.match(/^((?:translation|translated text|translated_text|translated message|translated_message|translated-message|translatedMessage|result|answer|output|target|final)|(?:\u4ee5\u4e0b\u662f|\u8fd9\u662f).{0,8}(?:\u7ffb\u8bd1|\u8bd1\u6587)|(?:\u7ffb\u8bd1|\u8bd1\u6587|\u7ffb\u8bd1\u7ed3\u679c))\s*[:\uff1a]\s*([\s\S]+)$/i);
         if (labeled) {
             const prefix = String(labeled[1] || "").trim().toLowerCase();
@@ -77,18 +79,39 @@ class OutputGuard {
                 target: /^(?:target|\u76ee\u6807)\s*[:\uff1a]/i,
                 final: /^(?:final|\u6700\u7ec8)\s*[:\uff1a]/i
             }[prefix];
-            const sourceSharesGenericPrefix = Boolean(equivalentSourcePrefix && equivalentSourcePrefix.test(source));
+            const sourceSharesGenericPrefix = Boolean(equivalentSourcePrefix && (equivalentSourcePrefix.test(source) || sourceHasKeyValuePrefix));
             if (!sourceSharesGenericPrefix) push(labeled[2]);
         }
 
         const wrapped = raw.match(/^<\s*(translation|translatedText|translated_text|translatedMessage|targetMessage|target_message|answer|output|result|response)\b[^>]*>([\s\S]*?)<\/\s*\1\s*>$/i);
         if (wrapped) push(wrapped[2]);
 
+        const quotePairs = {
+            "\"": "\"",
+            "'": "'",
+            "\u201c": "\u201d",
+            "\u2018": "\u2019",
+            "\u300c": "\u300d",
+            "\u300e": "\u300f",
+            "\u00ab": "\u00bb",
+            "\u2039": "\u203a",
+            "\u201e": "\u201c"
+        };
+        const sourceTrimmedForQuotes = /[.!?。！？]$/.test(source) ? source.slice(0, -1) : source;
+        const sourceClosingQuote = sourceTrimmedForQuotes[0] === "\u201e" && sourceTrimmedForQuotes.endsWith("\u201d")
+            ? "\u201d"
+            : quotePairs[sourceTrimmedForQuotes[0]];
+        const sourceWrappedInOuterQuotes = Boolean(
+            sourceClosingQuote
+            && sourceTrimmedForQuotes.length >= 2
+            && sourceTrimmedForQuotes.endsWith(sourceClosingQuote)
+            && !sourceTrimmedForQuotes.slice(1, -1).includes(sourceClosingQuote)
+        );
+
         if (options?.includeQuoted !== false) {
-            const quotePairs = { '"': '"', "'": "'", "\u201c": "\u201d", "\u2018": "\u2019", "\u300c": "\u300d", "\u300e": "\u300f" };
-            const closingQuote = quotePairs[raw[0]];
-            const sourceClosingQuote = quotePairs[source[0]];
-            const sourceWrappedInOuterQuotes = Boolean(sourceClosingQuote && source.length >= 2 && source.endsWith(sourceClosingQuote) && !source.slice(1, -1).includes(sourceClosingQuote));
+            const closingQuote = raw[0] === "\u201e" && raw.endsWith("\u201d")
+                ? "\u201d"
+                : quotePairs[raw[0]];
             if (closingQuote && raw.endsWith(closingQuote) && !sourceWrappedInOuterQuotes) {
                 const inner = raw.slice(1, -1);
                 if (!inner.includes(closingQuote)) push(inner);
@@ -98,6 +121,9 @@ class OutputGuard {
                 /\u201c([^\u201c\u201d]{1,220})\u201d/gu,
                 /\u300c([^\u300c\u300d]{1,220})\u300d/gu,
                 /\u300e([^\u300e\u300f]{1,220})\u300f/gu,
+                /\u00ab([^\u00ab\u00bb]{1,220})\u00bb/gu,
+                /\u2039([^\u2039\u203a]{1,220})\u203a/gu,
+                /\u201e([^\u201e\u201c\u201d]{1,220})[\u201c\u201d]/gu,
                 /(?<![\p{L}\p{N}])'([^'\n]{1,220})'(?![\p{L}\p{N}])/gu,
                 /(?<![\p{L}\p{N}])\u2018([^\u2018\u2019\n]{1,220})\u2019(?![\p{L}\p{N}])/gu
             ];
@@ -105,7 +131,9 @@ class OutputGuard {
                 .flatMap(pattern => [...raw.matchAll(pattern)])
                 .sort((left, right) => Number(left.index || 0) - Number(right.index || 0));
             if (quotedMatches.length && (options.allowQuotedFragments?.() ?? true)) {
+                const rawTrimmedForQuotes = /[.!?。！？]$/.test(raw) ? raw.slice(0, -1) : raw;
                 quotedMatches.forEach(match => {
+                    if (sourceWrappedInOuterQuotes && Number(match.index || 0) === 0 && (match[0] === raw || match[0] === rawTrimmedForQuotes)) return;
                     const rest = raw.slice(match.index + match[0].length);
                     if (/^\s*:/.test(rest)) return;
                     push(match[1]);
@@ -114,7 +142,7 @@ class OutputGuard {
         }
 
         const sourceLooksJson = /^[\[{]/.test(source);
-        if (!sourceLooksJson && (raw[0] === "{" || raw[0] === "[" || raw[0] === "\"")) {
+        if (!sourceLooksJson && (raw[0] === "{" || raw[0] === "[" || (raw[0] === "\"" && !sourceWrappedInOuterQuotes))) {
             try {
                 const parsed = JSON.parse(raw);
                 push(this.plugin.extractTranslationValue(parsed));
@@ -132,35 +160,116 @@ class OutputGuard {
         return Boolean(this.plugin.getAutoTranslationInvalidOutputReason(sourceText, translatedText, targetLanguage));
     }
 
-    getDiscordEmojiTokenCounts(text) {
-        const value = String(text || "");
-        if (!value) return new Map();
-        const counts = new Map();
-        const bump = name => {
-            if (name) counts.set(name, Number(counts.get(name) || 0) + 1);
-        };
-        const withoutCode = value
+    _stripCodeAndUrlsForEmojiScan(text) {
+        const withoutCode = String(text || "")
             .replace(/```[\s\S]*?```/g, " ")
             .replace(/~~~[\s\S]*?~~~/g, " ")
             .replace(/`[^`\n]+`/g, " ");
-        for (const match of withoutCode.matchAll(/<a?:([A-Za-z0-9_~]{1,64}):\d+>/g)) {
-            bump(match[1]);
-        }
         const withoutTagsAndUrls = withoutCode
             .replace(/<a?:[A-Za-z0-9_~]{1,64}:\d+>/g, " ")
             .replace(/(?:https?|steam|discord):\/\/[^\s<>"']+/gi, " ")
             .replace(/\bwww\.[^\s<>"']+/gi, " ");
-        const shortcodePattern = /(?<![A-Za-z0-9_~:/]):([A-Za-z0-9_~]{2,64}):(?![A-Za-z0-9_~:/])/g;
-        for (const match of withoutTagsAndUrls.matchAll(shortcodePattern)) {
+        return { withoutCode, withoutTagsAndUrls };
+    }
+
+    _collectKnownDiscordEmojiNames(sourceText, translatedText = "") {
+        const knownSet = new Set();
+        const { withoutCode: srcWithoutCode, withoutTagsAndUrls: srcPlain } = this._stripCodeAndUrlsForEmojiScan(sourceText);
+        for (const match of srcWithoutCode.matchAll(/<a?:([A-Za-z0-9_~]{1,64}):\d+>/g)) {
+            if (match[1]) knownSet.add(match[1]);
+        }
+        for (const match of srcPlain.matchAll(/(?<![A-Za-z_~:/]):([A-Za-z0-9_~]{2,64}):(?![A-Za-z0-9_~:/])/g)) {
             const name = match[1] || "";
-            if (/[A-Za-z_]/.test(name)) bump(name);
+            if (/[A-Za-z_]/.test(name)) knownSet.add(name);
+        }
+        if (translatedText) {
+            const { withoutTagsAndUrls: outPlain } = this._stripCodeAndUrlsForEmojiScan(translatedText);
+            for (const match of outPlain.matchAll(/(?<![A-Za-z0-9_~:/]):([A-Za-z0-9_~]{2,64}):(?![A-Za-z0-9_~:/])/g)) {
+                const name = match[1] || "";
+                if (/[A-Za-z_]/.test(name) && srcPlain.includes(`:${name}:`)) knownSet.add(name);
+            }
+        }
+        return knownSet;
+    }
+
+    getDiscordEmojiTokenCounts(text, knownNames = null) {
+        const value = String(text || "");
+        if (!value) return new Map();
+        const counts = new Map();
+        const knownSet = new Set();
+        if (knownNames && typeof knownNames[Symbol.iterator] === "function") {
+            for (const item of knownNames) {
+                const name = String(item || "");
+                if (name) knownSet.add(name);
+            }
+        }
+        const bump = name => {
+            if (name) counts.set(name, Number(counts.get(name) || 0) + 1);
+        };
+        const { withoutCode, withoutTagsAndUrls } = this._stripCodeAndUrlsForEmojiScan(value);
+        for (const match of withoutCode.matchAll(/<a?:([A-Za-z0-9_~]{1,64}):\d+>/g)) {
+            bump(match[1]);
+            if (match[1]) knownSet.add(match[1]);
+        }
+
+        let cursor = 0;
+        let lastMatchedClose = -1;
+        while (cursor < withoutTagsAndUrls.length) {
+            const open = withoutTagsAndUrls.indexOf(":", cursor);
+            if (open < 0) break;
+            if (withoutTagsAndUrls[open + 1] === "/" && withoutTagsAndUrls[open + 2] === "/") {
+                cursor = open + 3;
+                continue;
+            }
+            if (withoutTagsAndUrls[open + 1] === ":") {
+                cursor = open + 2;
+                while (withoutTagsAndUrls[cursor] === ":") cursor++;
+                continue;
+            }
+            if (open > 0 && withoutTagsAndUrls[open - 1] === ":" && open - 1 !== lastMatchedClose) {
+                cursor = open + 1;
+                continue;
+            }
+            const close = withoutTagsAndUrls.indexOf(":", open + 1);
+            if (close < 0) break;
+            const name = withoutTagsAndUrls.slice(open + 1, close);
+            if (!name || name.length > 64 || !/^[A-Za-z0-9_~]+$/.test(name)) {
+                cursor = close;
+                continue;
+            }
+            if (withoutTagsAndUrls[close + 1] === "/" && withoutTagsAndUrls[close + 2] === "/") {
+                cursor = close + 3;
+                continue;
+            }
+            const prevChar = open > 0 ? withoutTagsAndUrls[open - 1] : "";
+            const nextChar = close + 1 < withoutTagsAndUrls.length ? withoutTagsAndUrls[close + 1] : "";
+            let matched = false;
+            if (knownSet.has(name)) {
+                const insideNumericTimestamp = /^\d+$/.test(name) && /\d/.test(prevChar) && /\d/.test(nextChar);
+                matched = !insideNumericTimestamp;
+            }
+            else if (name.length >= 2 && /[A-Za-z_]/.test(name)) {
+                const prevBlocked = Boolean(prevChar && open - 1 !== lastMatchedClose && /[A-Za-z0-9_~:/]/.test(prevChar));
+                const nextStartsEmoji = nextChar === ":" && /^:[A-Za-z0-9_~]{2,64}:/.test(withoutTagsAndUrls.slice(close + 1));
+                const nextBlocked = Boolean(nextChar && !nextStartsEmoji && /[A-Za-z0-9_~:/]/.test(nextChar));
+                matched = !prevBlocked && !nextBlocked;
+            }
+            if (matched) {
+                bump(name);
+                lastMatchedClose = close;
+                cursor = close + 1;
+            }
+            else {
+                cursor = close;
+            }
         }
         return counts;
     }
 
     hasDiscordEmojiTokenMismatch(sourceText, translatedText) {
-        const sourceCounts = this.getDiscordEmojiTokenCounts(sourceText);
-        const outputCounts = this.getDiscordEmojiTokenCounts(translatedText);
+        const knownNames = this._collectKnownDiscordEmojiNames(sourceText, translatedText);
+        const sourceCounts = this.getDiscordEmojiTokenCounts(sourceText, knownNames);
+        const outputCounts = this.getDiscordEmojiTokenCounts(translatedText, knownNames);
         if (sourceCounts.size !== outputCounts.size) return true;
         for (const [name, count] of sourceCounts) {
             if (Number(outputCounts.get(name) || 0) !== count) return true;
@@ -180,11 +289,61 @@ class OutputGuard {
         const groupMentionPattern = /@(everyone|here)(?![a-z0-9_])/gi;
         const roleMentionPattern = /<@&(\d{15,})>/g;
         // Discord's simple-markdown closes a code block on the first ``` even when opened by 4+ backticks,
-        // and triggers @everyone / @here without requiring a leading whitespace boundary.
-        const maskLiteralText = value => String(value || "").replace(
-            /```[\s\S]*?```|``[\s\S]*?``|`[^`\n]+?`|\\[\s\S]/g,
-            match => " ".repeat(match.length)
-        );
+        // allows inline `code` / ``code`` spans to close across line breaks, and triggers @everyone / @here
+        // without a leading whitespace boundary.
+        const findInlineCodeClose = (str, from, length) => {
+            let pos = from;
+            while (pos < str.length) {
+                const start = str.indexOf("`", pos);
+                if (start < 0) return -1;
+                let end = start;
+                while (str[end] === "`") end++;
+                if (end - start === length && start > from) return start;
+                pos = end;
+            }
+            return -1;
+        };
+        const maskLiteralText = value => {
+            const str = String(value || "");
+            let masked = "";
+            let index = 0;
+            while (index < str.length) {
+                const char = str[index];
+                if (char === "\\" && index + 1 < str.length && /[^A-Za-z0-9\s]/.test(str[index + 1])) {
+                    masked += "  ";
+                    index += 2;
+                    continue;
+                }
+                if (char !== "`") {
+                    masked += char;
+                    index++;
+                    continue;
+                }
+                let runEnd = index;
+                while (str[runEnd] === "`") runEnd++;
+                const tickCount = runEnd - index;
+                if (tickCount >= 3) {
+                    const close = str.indexOf("```", index + 3);
+                    if (close >= 0) {
+                        masked += " ".repeat(close + 3 - index);
+                        index = close + 3;
+                        continue;
+                    }
+                    masked += " ".repeat(tickCount);
+                    index = runEnd;
+                    continue;
+                }
+                const close = findInlineCodeClose(str, runEnd, tickCount);
+                if (close >= 0) {
+                    masked += " ".repeat(close + tickCount - index);
+                    index = close + tickCount;
+                    continue;
+                }
+                masked += " ".repeat(tickCount);
+                index = runEnd;
+            }
+            return masked;
+        };
 
         const countMentions = value => {
             const cleaned = maskLiteralText(value);
@@ -272,10 +431,13 @@ class OutputGuard {
         if (targetScript === "unknown") return "";
         if (targetScript === "latin") {
             if (this.plugin.isLikelyTargetLanguage(output, targetLanguage)) return "";
+            if (this._isAcceptableNonLatinToLatinShortPhrase(source, output, targetLanguage)) return "";
             const scriptCounts = this.plugin.countTextScriptsForValidation(output);
             if (Number(scriptCounts.latin || 0) >= 2 && Number(scriptCounts.latin || 0) / Math.max(1, Number(scriptCounts.total || 0)) >= 0.65 && source) {
                 const stripped = output.replace(/[^\p{Script=Latin}\p{N}\s.,!?;:'"’“”()-]+/gu, token => (source.includes(token) ? " " : token));
-                if (stripped !== output && this.plugin.isLikelyTargetLanguage(stripped, targetLanguage)) return "";
+                if (stripped !== output && (this.plugin.isLikelyTargetLanguage(stripped, targetLanguage) || this._isAcceptableNonLatinToLatinShortPhrase(source, stripped, targetLanguage))) {
+                    return "";
+                }
             }
             return "target-language";
         }
@@ -309,7 +471,7 @@ class OutputGuard {
         return offCount / Math.max(1, hanCount) <= 0.12 && onCount >= offCount;
     }
 
-    hasPromptLeakageAutoTranslationOutput(sourceText, translatedText, targetLanguage = this.plugin.settings.translation.targetLanguage) {
+    hasPromptLeakageAutoTranslationOutput(sourceText, translatedText, _targetLanguage = this.plugin.settings.translation.targetLanguage) {
         const output = String(translatedText || "").trim();
         if (!output) return false;
 
@@ -443,7 +605,9 @@ class OutputGuard {
         const value = String(text || "").trim();
         if (!value) return false;
         const source = String(sourceText || "").trim();
-        if (/^(?:Output)\s*[:\uff1a]/i.test(value) && /^(?:Output|\u8f93\u51fa)\s*[:\uff1a]/i.test(source)) return false;
+        const sourceHasKeyValuePrefix = !/^\s*(?:https?|steam|discord):\/\//i.test(source)
+            && /^\s*[^\n:：]{1,16}[:：]\s*\S/.test(source);
+        if (/^(?:Output)\s*[:\uff1a]/i.test(value) && (/^(?:Output|\u8f93\u51fa)\s*[:\uff1a]/i.test(source) || sourceHasKeyValuePrefix)) return false;
         if (/^(?:Note|\u6ce8\u91ca)\s*[:\uff1a]/i.test(value) && /^(?:Note|\u6ce8\u610f|\u6ce8\u91ca)\s*[:\uff1a]/i.test(source)) return false;
         if (/^(?:Source|\u539f\u6587)\s*[:\uff1a]/i.test(value) && /^(?:Source|\u6765\u6e90|\u539f\u6587)\s*[:\uff1a]/i.test(source)) return false;
         if (/^(?:Label|\u6807\u7b7e)\s*[:\uff1a]/i.test(value) && /^(?:Label|\u6807\u7b7e)\s*[:\uff1a]/i.test(source)) return false;
@@ -529,15 +693,83 @@ class OutputGuard {
             && words.join(" ").length >= token.length * 3;
     }
 
+    _isAcceptableNonLatinToLatinShortPhrase(sourceText, outputText, targetLanguage = this.plugin.settings.translation.targetLanguage) {
+        const value = String(outputText || "").trim();
+        const source = String(sourceText || "").trim();
+        if (!value || !source || value.length > 40) return false;
+        if (/<\/?[A-Za-z][^>]*>/.test(value) || /\?{3,}|\uFFFD/.test(value)) return false;
+        if (this.plugin.getTargetLanguageScript(targetLanguage) !== "latin") return false;
+        if (this.hasPromptLeakageAutoTranslationOutput(source, value, targetLanguage)) return false;
+        if (this.hasRefusalAutoTranslationOutput(value, source) || this.hasLabeledAutoTranslationOutput(value, source)) return false;
+        if (this.hasDictionaryStyleAutoTranslationOutput(source, value, targetLanguage)) return false;
+        if (this.hasExplanatoryAutoTranslationOutput(source, value)) return false;
+
+        const sourceLetters = (source.match(/\p{L}/gu) || []).length;
+        if (sourceLetters < 1 || sourceLetters > 32) return false;
+        const rawSourceCounts = this.plugin.countTextScripts(source);
+        const nonLatinSourceLetters = Number(rawSourceCounts.han || 0)
+            + Number(rawSourceCounts.kana || 0)
+            + Number(rawSourceCounts.hangul || 0)
+            + Number(rawSourceCounts.cyrillic || 0)
+            + Number(rawSourceCounts.arabic || 0)
+            + Number(rawSourceCounts.devanagari || 0)
+            + Number(rawSourceCounts.other || 0);
+        if (nonLatinSourceLetters < 1) return false;
+        const sourceValidationCounts = this.plugin.countTextScriptsForValidation(source);
+        if (Number(sourceValidationCounts.latin || 0) > 0) return false;
+
+        const strippedOutput = this.stripProtectedTokensForPolishValidation(value);
+        const checkedOutput = strippedOutput || value;
+        const outCounts = this.plugin.countTextScripts(checkedOutput);
+        if (Number(outCounts.latin || 0) < 2) return false;
+        const nonLatinOutLetters = Number(outCounts.han || 0)
+            + Number(outCounts.kana || 0)
+            + Number(outCounts.hangul || 0)
+            + Number(outCounts.cyrillic || 0)
+            + Number(outCounts.arabic || 0)
+            + Number(outCounts.devanagari || 0)
+            + Number(outCounts.other || 0);
+        if (nonLatinOutLetters > 0) return false;
+
+        const words = checkedOutput.match(/\p{Script=Latin}+(?:['’-]\p{Script=Latin}+)*/gu) || [];
+        if (words.length < 1 || words.length > 5) return false;
+
+        const target = this.plugin.normalizeLanguageName(targetLanguage);
+        const isEnglishTarget = ["英语", "English"].includes(target);
+        if (isEnglishTarget) {
+            if (this.plugin.isLikelyTargetLanguage(checkedOutput, targetLanguage)) return true;
+            const otherLatin = ["spanish", "french", "german", "italian", "portuguese", "vietnamese"];
+            if (otherLatin.some(lang => this.plugin.looksLikeLatinLanguage?.(checkedOutput, lang))) return false;
+            return true;
+        }
+
+        if (this.plugin.isLikelyTargetLanguage(checkedOutput, targetLanguage)) return true;
+        if (this.plugin.looksLikeLatinLanguage?.(checkedOutput, "english")) return false;
+        const normalizedPhrase = checkedOutput.toLocaleLowerCase().replace(/[’]/g, "'").replace(/[^a-z0-9_'+-]+/g, " ").trim();
+        const obviousEnglishOnly = new Set([
+            "yes", "thanks", "thank you", "done", "sure", "nice", "good", "bad", "same",
+            "hi", "hello", "hey", "morning", "good morning", "good afternoon", "good evening", "good night",
+            "no problem", "see you", "got it", "on my way", "well done", "great job", "good job", "all good",
+            "sounds good", "of course", "my bad", "welcome", "you're welcome", "bye", "goodbye", "take care"
+        ]);
+        if (obviousEnglishOnly.has(normalizedPhrase)) return false;
+        return true;
+    }
+
     isAcceptableTargetShortTranslation(output, targetLanguage = this.plugin.settings.translation.targetLanguage, sourceText = "") {
         const value = String(output || "").trim();
-        if (!value || value.length > 24) return false;
+        if (!value || value.length > 40) return false;
         if (/<\/?[A-Za-z][^>]*>/.test(value)) return false;
-        if (this.hasRefusalAutoTranslationOutput(value) || this.hasLabeledAutoTranslationOutput(value)) return false;
+        if (this.hasRefusalAutoTranslationOutput(value, sourceText) || this.hasLabeledAutoTranslationOutput(value, sourceText)) return false;
         if (this.hasDictionaryStyleAutoTranslationOutput(sourceText, value, targetLanguage)) return false;
         const normalizedSource = String(sourceText || "").replace(/\s+/g, " ").trim().toLocaleLowerCase();
         const normalizedValue = value.replace(/\s+/g, " ").trim().toLocaleLowerCase();
         if (normalizedSource && normalizedSource === normalizedValue) return false;
+        const targetScript = this.plugin.getTargetLanguageScript(targetLanguage);
+        if (targetScript === "latin" && !String(sourceText || "").includes("\n") && this._isAcceptableNonLatinToLatinShortPhrase(sourceText, value, targetLanguage)) {
+            return true;
+        }
+        if (value.length > 24) return false;
         if (this.plugin.isLowValueAutoTranslationShortText(sourceText, targetLanguage) && this.plugin.isLowValueAutoTranslationShortText(value, targetLanguage)) return true;
         const sourceLetters = (String(sourceText || "").match(/\p{L}/gu) || []).length;
         if (sourceLetters > 16) return false;
@@ -552,7 +784,6 @@ class OutputGuard {
             ]);
             return common.has(normalized);
         }
-        const targetScript = this.plugin.getTargetLanguageScript(targetLanguage);
         if (targetScript === "han") {
             const counts = this.plugin.countTextScriptsForValidation(value);
             if ((counts.han || 0) <= 0) return false;
@@ -642,7 +873,7 @@ class OutputGuard {
     isAcceptableConnectionTestTruncation(error, kind, config = this.plugin.getTaskConfig(kind)) {
         return Boolean(error?.modelOutputTruncated
             && Number(error.partialOutputLength || 0) > 0
-            && kind === "translation"
+            && (kind === "translation" || kind === "polish")
             && this.plugin.isLocalTranslationProvider(config));
     }
 }

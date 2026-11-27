@@ -167,6 +167,16 @@ const methods = {
 
         const { search, select, apply, remove, previewLabel, preview } = picker;
         const { textarea, status, update, restorePresets, copy, nameInput, categorySelect, save } = editor;
+        search.dataset.daitUiFocusId = `prompt-${kind}-search`;
+        select.dataset.daitUiFocusId = `prompt-${kind}-select`;
+        apply.dataset.daitUiFocusId = `prompt-${kind}-apply`;
+        remove.dataset.daitUiFocusId = `prompt-${kind}-delete`;
+        nameInput.dataset.daitUiFocusId = `prompt-${kind}-name`;
+        if (categorySelect) categorySelect.dataset.daitUiFocusId = `prompt-${kind}-category`;
+        save.dataset.daitUiFocusId = `prompt-${kind}-save`;
+        update.dataset.daitUiFocusId = `prompt-${kind}-update`;
+        restorePresets.dataset.daitUiFocusId = `prompt-${kind}-restore`;
+        copy.dataset.daitUiFocusId = `prompt-${kind}-copy`;
 
         const getPromptValue = () => textarea.value ?? this.plugin.settings[kind]?.prompt ?? "";
         const findTemplate = id => (id ? this.plugin.getPromptTemplates(kind).find(template => template.id === id) : null) || null;
@@ -333,6 +343,29 @@ const methods = {
             syncStatus();
         });
 
+        manager.__daitGetDraftState = () => ({
+            name: String(nameInput.value || ""),
+            category: categorySelect ? String(categorySelect.value || "") : "",
+            search: String(search.value || ""),
+            selectedId: String(select.value || ""),
+            prompt: String(textarea.value ?? "")
+        });
+        manager.__daitApplyDraftState = draft => {
+            if (!draft || typeof draft !== "object") return;
+            if (typeof draft.name === "string") nameInput.value = draft.name;
+            if (categorySelect && typeof draft.category === "string" && POLISH_PROMPT_TEMPLATE_CATEGORIES.includes(draft.category)) {
+                categorySelect.value = draft.category;
+                [...(categorySelect.options || [])].forEach(opt => {
+                    opt.selected = opt.value === draft.category;
+                });
+            }
+            if (typeof draft.search === "string") search.value = draft.search;
+            if (typeof draft.prompt === "string" && draft.prompt !== textarea.value) {
+                textarea.value = draft.prompt;
+            }
+            renderOptions(typeof draft.selectedId === "string" ? draft.selectedId : "");
+            syncStatus();
+        };
         manager.__daitRefresh = () => {
             if (textarea !== (typeof document !== "undefined" ? document.activeElement : null)) {
                 textarea.value = this.plugin.settings[kind]?.prompt ?? "";

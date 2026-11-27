@@ -622,6 +622,113 @@ module.exports = require("../betterdiscord.app.asar");
         }
     }
 
+    # Pass 2 live-watcher transactional rollback + first-install watcher protection:
+    # 1) When a\plugins.json starts as false and z\plugins.json becomes corrupt during the 350ms settle window
+    #    (both when a\plugins.json stayed true and when Discord's watcher flipped a\plugins.json back to false
+    #    before Pass 2 re-enabled it), Pass 2 failure must roll back the plugin file AND roll a\plugins.json
+    #    back to false with zero leftover plugins.json.bak-enable-* files.
+    # 2) First-time installs (no previous plugin file) while Discord is running also run the 350ms Pass 2 check.
+    foreach ($watcherFlipA in @($false, $true)) {
+        & {
+            $caseTag = if ($watcherFlipA) { "flipped" } else { "untouched" }
+            $pass2AppData = Join-Path $testRoot "live-watcher-pass2-rollback-$caseTag"
+            $pass2Plugins = Join-Path $pass2AppData "BetterDiscord\plugins"
+            $pass2Destination = Join-Path $pass2Plugins "DiscordAITranslator.plugin.js"
+            $pass2ProfileA = Join-Path $pass2AppData "BetterDiscord\data\a\plugins.json"
+            $pass2ProfileZ = Join-Path $pass2AppData "BetterDiscord\data\z\plugins.json"
+            New-Item -ItemType Directory -Force -Path $pass2Plugins, (Split-Path -Parent $pass2ProfileA), (Split-Path -Parent $pass2ProfileZ) | Out-Null
+            Set-Utf8NoBomContent -Path $pass2Destination -Value "/**`n * @name DiscordAITranslator`n * @version 0.5.1`n */`nmodule.exports = class OldPlugin {};"
+            Set-Utf8NoBomContent -Path $pass2ProfileA -Value '{"DiscordAITranslator":false,"OtherPlugin":true}'
+            Set-Utf8NoBomContent -Path $pass2ProfileZ -Value '{"DiscordAITranslator":true,"KeepPlugin":true}'
+            $oldPass2DestinationHash = Get-TestSha256 -Path $pass2Destination
+            $oldPass2ProfileAHash = Get-TestSha256 -Path $pass2ProfileA
+            $pass2State = @{ Corrupted = $false }
+            $env:APPDATA = $pass2AppData
+            $env:DAIT_TEST_FORCE_LIVE_DISCORD_WATCHER = "1"
+            function Get-Process {
+                [CmdletBinding()]
+                param([string[]]$Name)
+                return @([pscustomobject]@{ Name = "Discord" })
+            }
+            function Start-Sleep {
+                [CmdletBinding()]
+                param([int]$Milliseconds)
+                if ($Milliseconds -ge 300 -and -not $pass2State.Corrupted) {
+                    $pass2State.Corrupted = $true
+                    $midA = Microsoft.PowerShell.Utility\ConvertFrom-Json -InputObject ([System.IO.File]::ReadAllText($pass2ProfileA))
+                    if ($midA.DiscordAITranslator -ne $true) {
+                        throw "Pass 1 did not enable a\plugins.json before the 350ms settle window ($caseTag)."
+                    }
+                    if ($watcherFlipA) {
+                        Set-Utf8NoBomContent -Path $pass2ProfileA -Value '{"DiscordAITranslator":false,"OtherPlugin":true}'
+                    }
+                    Set-Utf8NoBomContent -Path $pass2ProfileZ -Value '{corrupt pass2 json'
+                }
+            }
+            $pass2Error = $null
+            try {
+                & $installer -PluginPath $source -PluginsDir $pass2Plugins -SkipSyntaxCheck | Out-Null
+            }
+            catch {
+                $pass2Error = $_
+            }
+            finally {
+                Remove-Item Env:\DAIT_TEST_FORCE_LIVE_DISCORD_WATCHER -ErrorAction SilentlyContinue
+            }
+            if ($null -eq $pass2Error -or -not $pass2State.Corrupted) {
+                throw "Expected Pass 2 to fail on the corrupted z\plugins.json fixture ($caseTag)."
+            }
+            if ((Get-TestSha256 -Path $pass2Destination) -ne $oldPass2DestinationHash) {
+                throw "Plugin destination was not rolled back after Pass 2 failure ($caseTag)."
+            }
+            $rolledBackA = Microsoft.PowerShell.Utility\ConvertFrom-Json -InputObject ([System.IO.File]::ReadAllText($pass2ProfileA))
+            if ($rolledBackA.DiscordAITranslator -ne $false -or $rolledBackA.OtherPlugin -ne $true -or (Get-TestSha256 -Path $pass2ProfileA) -ne $oldPass2ProfileAHash) {
+                throw "Profile a\plugins.json was not rolled back to false after Pass 2 failure ($caseTag)."
+            }
+            $leftoverPass2Backups = @(Get-ChildItem -LiteralPath (Join-Path $pass2AppData "BetterDiscord\data") -Recurse -Filter "plugins.json.bak-enable-*")
+            if ($leftoverPass2Backups.Count -ne 0) {
+                throw "Pass 2 rollback left transient plugins.json.bak-enable-* backups behind ($caseTag): $($leftoverPass2Backups.FullName -join ', ')"
+            }
+        }
+    }
+
+    & {
+        $firstWatcherAppData = Join-Path $testRoot "live-watcher-first-install"
+        $firstWatcherPlugins = Join-Path $firstWatcherAppData "BetterDiscord\plugins"
+        $firstWatcherProfile = Join-Path $firstWatcherAppData "BetterDiscord\data\stable\plugins.json"
+        New-Item -ItemType Directory -Force -Path $firstWatcherPlugins, (Split-Path -Parent $firstWatcherProfile) | Out-Null
+        Set-Utf8NoBomContent -Path $firstWatcherProfile -Value '{"OtherPlugin":true}'
+        $firstWatcherState = @{ Flipped = $false }
+        $env:APPDATA = $firstWatcherAppData
+        $env:DAIT_TEST_FORCE_LIVE_DISCORD_WATCHER = "1"
+        function Get-Process {
+            [CmdletBinding()]
+            param([string[]]$Name)
+            return @([pscustomobject]@{ Name = "Discord" })
+        }
+        function Start-Sleep {
+            [CmdletBinding()]
+            param([int]$Milliseconds)
+            if ($Milliseconds -ge 300 -and -not $firstWatcherState.Flipped) {
+                $firstWatcherState.Flipped = $true
+                Set-Utf8NoBomContent -Path $firstWatcherProfile -Value '{"DiscordAITranslator":false,"OtherPlugin":true}'
+            }
+        }
+        try {
+            & $installer -PluginPath $source -PluginsDir $firstWatcherPlugins -SkipSyntaxCheck | Out-Null
+        }
+        finally {
+            Remove-Item Env:\DAIT_TEST_FORCE_LIVE_DISCORD_WATCHER -ErrorAction SilentlyContinue
+        }
+        $afterFirstWatcher = Microsoft.PowerShell.Utility\ConvertFrom-Json -InputObject ([System.IO.File]::ReadAllText($firstWatcherProfile))
+        if (-not $firstWatcherState.Flipped -or $afterFirstWatcher.DiscordAITranslator -ne $true -or $afterFirstWatcher.OtherPlugin -ne $true) {
+            throw "First-time install while Discord is running did not recover from watcher disable race."
+        }
+        if (@(Get-ChildItem -LiteralPath (Split-Path -Parent $firstWatcherProfile) -Filter "plugins.json.bak-enable-*").Count -ne 0) {
+            throw "First-time live install left plugins.json.bak-enable-* behind."
+        }
+    }
+
     $env:APPDATA = $originalAppData
     Write-Host "Installer verification passed."
 }

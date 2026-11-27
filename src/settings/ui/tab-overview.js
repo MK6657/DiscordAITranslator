@@ -242,6 +242,9 @@ const methods = {
             test.dataset.daitAction = "apiTest";
             test.dataset.daitKind = kind;
             test.setAttribute("aria-label", `${this.plugin.t("apiTest")}: ${title.textContent}`);
+            if (this.plugin.isApiTestRunning?.(kind)) {
+                this.plugin.setButtonBusy(test, true, this.plugin.t("apiTestBusy"));
+            }
             test.addEventListener("click", event => {
                 event?.preventDefault?.();
                 this.runOverviewApiTest(kind, test, line.querySelector?.(".dait-api-status"));
@@ -260,11 +263,29 @@ const methods = {
         });
     },
 
+    isSafeServiceEndpointUrl(rawEndpoint) {
+        const text = String(rawEndpoint || "").trim();
+        if (!text) return false;
+        let url;
+        try {
+            url = new URL(text);
+        }
+        catch {
+            return false;
+        }
+        if (url.username || url.password) return false;
+        if (url.protocol === "https:") return true;
+        if (url.protocol === "http:") return Boolean(this.plugin.isLoopbackEndpoint?.(url.href));
+        return false;
+    },
+
     // The first field a task's service still needs, or its provider select.
     getMissingServiceSettingPath(kind) {
         const config = this.plugin.getTaskConfig(kind) || {};
         const provider = String(config.provider || "");
-        const defaults = this.plugin.getProviderDefaults(provider) || {};
+        const preset = provider ? this.plugin.getProviderDefaults(provider) : null;
+        if (!provider || !preset) return `${kind}.provider`;
+        const defaults = preset || {};
         const ui = this.plugin.getProviderCapabilities(provider)?.ui || {};
         if (provider === "baidu") {
             if (!String(config.appId || "").trim()) return `${kind}.appId`;
@@ -272,8 +293,24 @@ const methods = {
         }
         if (provider === "googleCloud" && !this.plugin.getEffectiveRequestApiKey(config)) return "googleTranslate.keyPoolText";
         if (ui.apiKey && !this.plugin.isProviderApiKeyOptional(provider) && !String(config.apiKey || "").trim()) return `${kind}.apiKey`;
+        const customCredentialFields = (this.plugin.providerLayer?.registry?.getCredentialFields?.(provider) || [])
+            .filter(field => field && !["apiKey", "region", "deeplPlan", "appId", "secretKey"].includes(field));
+        if (!this.plugin.isProviderApiKeyOptional(provider) && !String(config.apiKey || "").trim()) {
+            const missingCustomField = customCredentialFields.find(field => !String(config[field] || "").trim());
+            if (missingCustomField) return `${kind}.${missingCustomField}`;
+        }
         if (ui.endpoint && !String(config.endpoint || defaults.endpoint || "").trim()) return `${kind}.endpoint`;
         if (ui.model && !String(config.model || defaults.model || "").trim()) return `${kind}.model`;
+        if (this.plugin.hasApiKeyOriginMismatch?.(config)) return `${kind}.endpoint`;
+        if (typeof this.plugin.getEffectiveProviderEndpoint === "function") {
+            const effectiveEndpoint = this.plugin.getEffectiveProviderEndpoint(kind, config);
+            if (!effectiveEndpoint || !this.isSafeServiceEndpointUrl(effectiveEndpoint)) return `${kind}.endpoint`;
+        }
+        else if (ui.endpoint) {
+            const effectiveEndpoint = this.plugin.providerLayer?.getEffectiveProviderEndpoint?.(kind, config)
+                || String(config.endpoint || defaults.endpoint || "").trim();
+            if (!this.isSafeServiceEndpointUrl(effectiveEndpoint)) return `${kind}.endpoint`;
+        }
         return `${kind}.provider`;
     },
 
@@ -289,7 +326,8 @@ const methods = {
             provider: "provider",
             enabled: "enabled"
         };
-        return this.plugin.t(keys[field] || "provider");
+        if (keys[field]) return this.plugin.t(keys[field]);
+        return field || this.plugin.t("provider");
     },
 
     // "#general" for the current channel when Discord's store knows it.
@@ -374,6 +412,19 @@ const methods = {
         catch {}
         badges.forEach(badge => this.renderApiStatusBadge(badge, kind, status.state, this.plugin.getApiStatusText(status.state), status.message || ""));
         details.forEach(detail => this.syncApiTestDetail(detail, kind));
+        if (!this.plugin.isApiTestRunning?.(kind)) {
+            let testButtons = [];
+            try {
+                testButtons = [...(document.querySelectorAll?.(`.dait-settings [data-dait-action='apiTest'][data-dait-kind='${kind}']`) || [])];
+            }
+            catch {}
+            const label = this.plugin.t("apiTest");
+            testButtons.forEach(btn => {
+                if (btn?.getAttribute?.("aria-busy") === "true") {
+                    this.plugin.setButtonBusy(btn, false, label);
+                }
+            });
+        }
         if (kind === "translation") {
             let headerProviders = [];
             try {

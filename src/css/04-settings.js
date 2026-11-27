@@ -1921,6 +1921,8 @@ module.exports = `.dait-settings {
 }
 
 .dait-settings[dir="rtl"] :is(
+    input[type="number"],
+    input[type="password"],
     [data-dait-path$=".apiKey"],
     [data-dait-path$=".secretKey"],
     [data-dait-path$=".appId"],
@@ -1928,11 +1930,20 @@ module.exports = `.dait-settings {
     [data-dait-path$=".model"],
     [data-dait-path$=".region"],
     [data-dait-path="googleTranslate.keyPoolText"],
-    .dait-hotkey-recorder,
+    .dait-model-picker,
+    .dait-hotkey-recorder:not([data-recording="true"]),
     .dait-settings-version
 ) {
     direction: ltr;
     text-align: left;
     unicode-bidi: isolate;
+}
+
+.dait-settings[dir="rtl"] select.dait-model-picker {
+    background-position:
+        calc(100% - 16px) 50%,
+        calc(100% - 11px) 50%;
+    padding-left: 10px;
+    padding-right: 30px;
 }
 `;

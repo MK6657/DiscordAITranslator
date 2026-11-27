@@ -180,6 +180,7 @@ const methods = {
             this.plugin.observerRetryTimer = null;
         }
 
+        if (typeof document === "undefined" || typeof MutationObserver !== "function") return;
         if (!document.body) {
             this.plugin.observerRetryTimer = setTimeout(() => {
                 this.plugin.observerRetryTimer = null;
@@ -219,11 +220,18 @@ const methods = {
             settingsSurfaceByElement: new Map()
         };
         try {
+            this.maybeResumeAfterDiscordSettingsClose(mutations);
             if (this.plugin.observerRoot === document.body) {
-                this.maybeResumeAfterDiscordSettingsClose(mutations);
                 if (this.hasPotentialDiscordObserverRootMutation(mutations)) {
                     const nextRoot = this.getDiscordChatMutationObserverRoot();
                     if (nextRoot && nextRoot !== document.body) this.plugin.scheduleDiscordObserverRebind("chat-root-available");
+                }
+            }
+            else if (this.plugin.observerRoot && this.hasRemovedDiscordObserverRootMutation(mutations)) {
+                const nextRoot = this.getDiscordChatMutationObserverRoot();
+                if (!nextRoot || (nextRoot !== this.plugin.observerRoot
+                    && (this.plugin.observerRoot.contains?.(nextRoot) || this.plugin.observerRoot.isConnected === false))) {
+                    this.plugin.scheduleDiscordObserverRebind("chat-root-shrunk");
                 }
             }
             this.recoverDetachedHiddenSourceLines(mutations);
@@ -311,8 +319,10 @@ const methods = {
             if (!outsideMutations.length) return;
             if (this.hasPotentialDiscordObserverRootMutation(outsideMutations)) {
                 const nextRoot = this.getDiscordChatMutationObserverRoot();
-                if (nextRoot && nextRoot !== this.plugin.observerRoot && !this.plugin.observerRoot.contains?.(nextRoot)) {
-                    this.plugin.scheduleDiscordObserverRebind("chat-root-replaced");
+                if (nextRoot && nextRoot !== this.plugin.observerRoot) {
+                    this.plugin.scheduleDiscordObserverRebind(
+                        this.plugin.observerRoot.contains?.(nextRoot) ? "chat-root-shrunk" : "chat-root-replaced"
+                    );
                 }
             }
             this.maybeResumeAfterDiscordSettingsClose(outsideMutations);
@@ -367,6 +377,38 @@ const methods = {
                 }
             });
         });
+    },
+
+    hasRemovedDiscordObserverRootMutation(mutations = []) {
+        if (!mutations?.length) return false;
+        let selectors = "";
+        return [...mutations].some(mutation => {
+            if (mutation?.type !== "childList" || !mutation.removedNodes?.length) return false;
+            return [...mutation.removedNodes].some(node => {
+                const element = node?.nodeType === 3 ? node.parentElement : node;
+                if (!element || element.nodeType !== 1) return false;
+                const tagName = String(element.tagName || "").toUpperCase();
+                if (tagName && OBSERVER_ROOT_LEAF_TAGS.has(tagName)) return false;
+                if (!selectors) {
+                    selectors = [
+                        ...this.getDiscordChatMutationObserverSelectors(),
+                        "[class*='searchResultsWrap']",
+                        "[class*='messagesPopout']",
+                        "[class*='recentMentionsPopout']"
+                    ].join(",");
+                }
+                try {
+                    return Boolean(element.matches?.(selectors) || element.querySelector?.(selectors));
+                }
+                catch {
+                    return false;
+                }
+            });
+        });
+    },
+
+    scheduleObserverRebind(reason = "chat-root-change") {
+        return this.plugin.scheduleDiscordObserverRebind(reason);
     },
 
     scheduleDiscordObserverRebind(reason = "chat-root-change") {
@@ -489,27 +531,48 @@ const methods = {
         }
     },
 
+    clearMessageElementRuntimeCaches(element) {
+        if (!element) return;
+        this.plugin.elementTextCache?.delete?.(element);
+        this.plugin.cachedDrawMessageMemo?.delete?.(element);
+        this.plugin.nonTranslatableMessageCache?.delete?.(element);
+    },
+
     invalidateElementTextCacheFromNode(node) {
         let element = node?.nodeType === 3 ? node.parentElement : node;
         let depth = 0;
         let hitMessage = false;
         while (element && element.nodeType === 1 && depth < 32) {
-            this.plugin.elementTextCache?.delete?.(element);
-            this.plugin.cachedDrawMessageMemo?.delete(element);
-            this.plugin.nonTranslatableMessageCache?.delete?.(element);
+            this.clearMessageElementRuntimeCaches(element);
             if (this.plugin.isDiscordMessageElement(element)) {
                 hitMessage = true;
+                let outer = element.parentElement;
+                let outerGuard = 0;
+                while (outer && outer.nodeType === 1 && outerGuard < 6) {
+                    if (this.plugin.isDiscordMessageElement(outer)) {
+                        this.clearMessageElementRuntimeCaches(outer);
+                        outer = outer.parentElement;
+                    }
+                    else {
+                        const ancestorMsg = outer.closest?.(DISCORD_MESSAGE_NODE_SELECTOR);
+                        if (!ancestorMsg) break;
+                        this.clearMessageElementRuntimeCaches(ancestorMsg);
+                        outer = ancestorMsg.parentElement;
+                    }
+                    outerGuard++;
+                }
                 break;
             }
             element = element.parentElement;
             depth++;
         }
         if (!hitMessage && element && element.nodeType === 1) {
-            const messageAncestor = element.closest?.(DISCORD_MESSAGE_NODE_SELECTOR);
-            if (messageAncestor) {
-                this.plugin.elementTextCache?.delete?.(messageAncestor);
-                this.plugin.cachedDrawMessageMemo?.delete(messageAncestor);
-                this.plugin.nonTranslatableMessageCache?.delete?.(messageAncestor);
+            let messageAncestor = element.closest?.(DISCORD_MESSAGE_NODE_SELECTOR);
+            let outerGuard = 0;
+            while (messageAncestor && outerGuard < 6) {
+                this.clearMessageElementRuntimeCaches(messageAncestor);
+                messageAncestor = messageAncestor.parentElement?.closest?.(DISCORD_MESSAGE_NODE_SELECTOR) || null;
+                outerGuard++;
             }
         }
     },
@@ -691,7 +754,7 @@ const methods = {
         return open;
     },
 
-    enterDiscordMediaViewerQuietMode(reason = "media-viewer", durationMs = DISCORD_MEDIA_VIEWER_QUIET_MS) {
+    enterDiscordMediaViewerQuietMode(_reason = "media-viewer", durationMs = DISCORD_MEDIA_VIEWER_QUIET_MS) {
         const now = Date.now();
         this.plugin.mediaViewerQuietUntil = Math.max(Number(this.plugin.mediaViewerQuietUntil || 0), now + Math.max(250, Number(durationMs) || DISCORD_MEDIA_VIEWER_QUIET_MS));
         this.plugin.mediaViewerProbeAt = now;

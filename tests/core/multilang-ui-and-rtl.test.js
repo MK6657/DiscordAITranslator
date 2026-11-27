@@ -5,8 +5,6 @@ const test = require("node:test");
 const Plugin = require("../../src");
 const { PLUGIN_CSS } = require("../../src/styles");
 const {
-    UI_LOCALES,
-    UI_LOCALE_CODES,
     normalizeUiLocale,
     isRtlLocale
 } = require("../../src/i18n");

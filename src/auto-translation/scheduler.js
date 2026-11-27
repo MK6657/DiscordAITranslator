@@ -91,7 +91,7 @@ class TranslationScheduler {
         return item?.requestOptions?.providerKey || this.plugin.getAutoTranslationProviderKey(item?.requestOptions);
     }
 
-    markProviderFailure(requestOptions, error, itemFailure = null, options = {}) {
+    markProviderFailure(requestOptions, error, _itemFailure = null, options = {}) {
         const plugin = this.plugin;
         const type = plugin.getAutoTranslationFailureType(error);
         if (!["auth", "quota", "rate-limit", "server", "timeout", "network", "parse", "local-unavailable"].includes(type)) return;

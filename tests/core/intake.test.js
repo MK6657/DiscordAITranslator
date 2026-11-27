@@ -294,8 +294,6 @@ function createFakeDocument() {
 
 const el = (tagName, attributes = {}, children = []) => new FakeElement(tagName, attributes, children);
 const mention = name => el("span", { class: "mention wrapper_f61d60 interactive", role: "button", tabindex: "0" }, [`@${name}`]);
-const roleMention = name => el("span", { class: "roleMention_f61d60 wrapper_f61d60", role: "button" }, [`@${name}`]);
-const channelMention = name => el("span", { class: "channelMention wrapper_f61d60 interactive", role: "link" }, [el("span", { class: "name_abc" }, [name])]);
 const customEmoji = name => el("img", { class: "emoji", alt: `:${name}:`, "aria-label": `:${name}:`, "data-type": "emoji", "data-name": `:${name}:`, "data-id": EMOJI, src: `https://cdn.example/emojis/${EMOJI}.webp` });
 const unicodeEmoji = (character, name) => el("img", { class: "emoji", alt: character, "aria-label": character, "data-type": "emoji", "data-name": `:${name}:`, src: "/assets/emoji.svg" });
 const link = (label, href, title = href) => el("a", { class: "anchor_edefb8 anchorUnderlineOnHover_edefb8", href, title, rel: "noreferrer noopener", target: "_blank", role: "button", tabindex: "0" }, [label]);

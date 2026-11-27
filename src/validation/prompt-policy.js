@@ -1112,6 +1112,7 @@ const methods = {
         if (["法语", "French"].includes(target)) return this.looksLikeLatinLanguage(text, "french");
         if (["德语", "German"].includes(target)) return this.looksLikeLatinLanguage(text, "german");
         if (["意大利语", "Italian"].includes(target)) return this.looksLikeLatinLanguage(text, "italian");
+        if (["葡萄牙语", "Portuguese", "Português", "pt", "pt-BR", "pt-PT"].includes(target)) return this.looksLikeLatinLanguage(text, "portuguese");
         if (["越南语", "Vietnamese"].includes(target)) return this.looksLikeLatinLanguage(text, "vietnamese");
         return false;
     },
@@ -1125,7 +1126,7 @@ const methods = {
         if (["印地语", "Hindi"].includes(target)) return "devanagari";
         if (["朝鲜语", "韩语", "Korean"].includes(target)) return "hangul";
         if (["日语", "Japanese"].includes(target)) return "kana";
-        if (["英语", "English", "西班牙语", "Spanish", "法语", "French", "德语", "German", "意大利语", "Italian", "越南语", "Vietnamese"].includes(target)) return "latin";
+        if (["英语", "English", "西班牙语", "Spanish", "法语", "French", "德语", "German", "意大利语", "Italian", "葡萄牙语", "Portuguese", "Português", "pt", "pt-BR", "pt-PT", "越南语", "Vietnamese"].includes(target)) return "latin";
         return "unknown";
     },
 
@@ -1206,40 +1207,90 @@ const methods = {
                 " by ", " from ", " as ", " out ", " all ", " just ", " now ", " see ", " get ", " got ",
                 " good ", " great ", " no ", " yes ", " please ", " sorry ", " today ", " tomorrow ",
                 " tonight ", " morning ", " afternoon ", " evening ", " night ", " let ", " want ", " need ",
-                " there ", " here ", " right ", " problem ", " time ", " moved ", " meeting "
+                " there ", " here ", " right ", " problem ", " time ", " moved ", " meeting ",
+                " chance ", " work ", " job ", " nice ", " sure ", " fine ", " done ", " well ", " soon ",
+                " bye ", " goodbye ", " welcome ", " friend "
             ],
-            spanish: [" el ", " la ", " los ", " las ", " que ", " de ", " y ", " en ", " un ", " una ", " para ", " con ", " por ", " es ", " estoy ", " hola ", " amigo ", " canal ", " soporte ", " gratis "],
-            french: [" le ", " la ", " les ", " des ", " est ", " pour ", " avec ", " que ", " une ", " vous ", " dans ", " pas ", " je ", " de ", " bonjour ", " salut ", " merci "],
-            german: [" der ", " die ", " das ", " und ", " ist ", " nicht ", " mit ", " für ", " ich ", " zu ", " ein ", " eine ", " auf ", " danke ", " hallo "],
-            italian: [" il ", " lo ", " la ", " gli ", " le ", " che ", " di ", " e ", " per ", " con ", " non ", " una ", " sono ", " ciao ", " grazie "],
-            vietnamese: [" và ", " của ", " không ", " một ", " là ", " tôi ", " bạn ", " trong ", " cho ", " với ", " chào ", " cảm "]
+            spanish: [
+                " el ", " la ", " los ", " las ", " que ", " de ", " y ", " en ", " un ", " una ",
+                " para ", " con ", " por ", " es ", " estoy ", " hola ", " amigo ", " canal ", " soporte ", " gratis ",
+                " gracias ", " muchas ", " mucho ", " muy ", " buen ", " bueno ", " buenos ", " buena ", " buenas ",
+                " trabajo ", " hasta ", " luego ", " pronto ", " mañana ", " todo ", " todos ", " bien ", " claro ",
+                " vamos ", " vale ", " entendido ", " acuerdo ", " perfecto ", " genial ", " nada ", " favor ",
+                " perdón ", " disculpa ", " días ", " tardes ", " noches ", " sí ", " como ", " cómo ", " está ", " están "
+            ],
+            french: [
+                " le ", " la ", " les ", " des ", " est ", " pour ", " avec ", " que ", " une ", " vous ",
+                " dans ", " pas ", " je ", " de ", " bonjour ", " salut ", " merci ",
+                " travail ", " bon ", " bonne ", " bonnes ", " bons ", " tout ", " tous ", " bien ", " très ",
+                " beaucoup ", " chance ", " oui ", " non ", " mon ", " ami ", " mais ", " sur ", " sont ",
+                " fait ", " accord ", " compris ", " parfait ", " super ", " bientôt ", " demain ",
+                " soir ", " journée ", " soirée ", " revoir ", " désolé ", " pardon "
+            ],
+            german: [
+                " der ", " die ", " das ", " und ", " ist ", " nicht ", " mit ", " für ", " ich ", " zu ",
+                " ein ", " eine ", " auf ", " danke ", " hallo ",
+                " klar ", " alles ", " arbeit ", " gut ", " gute ", " guten ", " guter ", " gutes ",
+                " bis ", " bald ", " morgen ", " abend ", " nacht ", " tag ", " vielen ", " dank ",
+                " bitte ", " schön ", " sehr ", " ja ", " nein ", " wir ", " sie ", " du ", " ihr ",
+                " sind ", " wird ", " haben ", " verstanden ", " super ", " perfekt ", " tschüss ", " wiedersehen "
+            ],
+            italian: [
+                " il ", " lo ", " la ", " gli ", " le ", " che ", " di ", " e ", " per ", " con ",
+                " non ", " una ", " sono ", " ciao ", " grazie ",
+                " bene ", " buon ", " buono ", " buona ", " buoni ", " buone ", " lavoro ", " tutto ", " tutti ",
+                " molto ", " mille ", " presto ", " domani ", " giorno ", " buongiorno ", " buonasera ", " buonanotte ",
+                " arrivederci ", " prego ", " scusa ", " certo ", " chiaro ", " capito ", " perfetto ", " ottimo ",
+                " siamo ", " anche "
+            ],
+            portuguese: [
+                " o ", " a ", " os ", " as ", " um ", " uma ", " de ", " do ", " da ", " em ", " no ", " na ",
+                " para ", " com ", " por ", " não ", " sim ", " mais ", " muito ", " obrigado ", " obrigada ",
+                " bom ", " boa ", " bons ", " boas ", " trabalho ", " tudo ", " bem ", " claro ", " até ", " logo ",
+                " amanhã ", " olá ", " oi ", " tchau ", " valeu ", " entendido ", " perfeito "
+            ],
+            vietnamese: [
+                " và ", " của ", " không ", " một ", " là ", " tôi ", " bạn ", " trong ", " cho ", " với ",
+                " chào ", " cảm ", " ơn ", " nhiều ", " tốt ", " lắm ", " rất ", " được ", " rồi ", " nhé ",
+                " nha ", " vâng ", " dạ ", " xin ", " tạm ", " biệt ", " hẹn ", " gặp ", " lại ", " chúc ",
+                " buổi ", " sáng ", " tối ", " ngon ", " việc "
+            ]
         };
         const accentTests = {
             spanish: /[áéíóúñü¿¡]/i,
             french: /[àâçéèêëîïôûùüÿœæ]/i,
             german: /[äöüß]/i,
             italian: /[àèéìíîòóùú]/i,
+            portuguese: /[áâãàçéêíóôõú]/i,
             vietnamese: /[ăâđêôơưáàảãạắằẳẵặấầẩẫậéèẻẽẹếềểễệíìỉĩịóòỏõọốồổỗộớờởỡợúùủũụứừửữựýỳỷỹỵ]/i
         };
 
+        const targetTokens = new Set(dictionaries[language] || []);
         let score = 0;
-        for (const token of dictionaries[language] || []) {
+        for (const token of targetTokens) {
             if (joined.includes(token)) score++;
         }
         if (accentTests[language]?.test(text)) score += 2;
-        let foreignScore = 0;
+        let maxForeignScore = 0;
+        let hasForeignToken = false;
         let hasForeignAccent = false;
         Object.entries(dictionaries).forEach(([name, tokens]) => {
             if (name === language) return;
+            let langScore = 0;
             for (const token of tokens) {
-                if (joined.includes(token)) foreignScore++;
+                if (targetTokens.has(token)) continue;
+                if (joined.includes(token)) {
+                    langScore++;
+                    hasForeignToken = true;
+                }
             }
+            if (langScore > maxForeignScore) maxForeignScore = langScore;
             if (accentTests[name]?.test(text)) hasForeignAccent = true;
         });
-        if (foreignScore >= 2 && foreignScore >= score) return false;
+        if (maxForeignScore >= 2 && maxForeignScore >= score) return false;
         if (language === "english") {
             if (score >= 2) return true;
-            return score >= 1 && foreignScore === 0 && !hasForeignAccent;
+            return score >= 1 && !hasForeignToken && !hasForeignAccent;
         }
 
         return score >= 1;

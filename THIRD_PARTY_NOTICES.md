@@ -1,8 +1,8 @@
 # Third-Party Notices and Provenance
 
-## Build Dependency
+## Build and Development Dependencies
 
-This project uses `esbuild` as a development-only bundler. The installed version and transitive platform package are pinned by `package-lock.json`. The generated BetterDiscord plugin has no runtime dependency on esbuild or `node_modules`.
+This project uses `esbuild` as a development-only bundler, alongside `eslint` and `typescript` solely for local and CI static analysis (`npm run lint` and `npm run typecheck`). All installed versions and transitive packages are pinned by `package-lock.json`. None of `esbuild`, `eslint`, or `typescript` are ever bundled into `DiscordAITranslator.plugin.js`, and the generated BetterDiscord plugin has no runtime dependency on them or on `node_modules`.
 
 ## Local Reference Checkout
 

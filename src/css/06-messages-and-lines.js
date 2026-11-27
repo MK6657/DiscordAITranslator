@@ -18,7 +18,7 @@ module.exports = `.dait-message-button {
     box-shadow: 1px 1px 0 rgba(0, 0, 0, 0.16);
     color: color-mix(in srgb, var(--text-normal, #dbdee1) 82%, var(--text-muted, #949ba4));
     justify-content: center;
-    margin-left: 8px;
+    margin-inline-start: 8px;
     margin-top: 4px;
     opacity: 0.82;
     padding: 3px 7px;
@@ -210,7 +210,7 @@ module.exports = `.dait-message-button {
 }
 
 .dait-translation-line.dait-translation-preview.dait-translation-revealed {
-    border-left: 0;
+    border-inline-start: 0;
     padding: 0 2px;
 }
 
@@ -321,7 +321,8 @@ module.exports = `.dait-message-button {
     font-size: 0.875rem;
     line-height: 1.25rem;
     min-height: 1.75rem;
-    padding: 1px 4px 1px 8px;
+    padding-block: 1px;
+    padding-inline: 8px 4px;
     row-gap: 2px;
     user-select: text;
     white-space: normal;
@@ -427,7 +428,8 @@ module.exports = `.dait-message-button {
     margin: 4px 0 2px;
     max-width: 100%;
     min-height: 1.75rem;
-    padding: 1px 4px 1px 8px;
+    padding-block: 1px;
+    padding-inline: 8px 4px;
     row-gap: 2px;
     user-select: text;
     white-space: normal;

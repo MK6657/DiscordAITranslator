@@ -127,24 +127,17 @@ module.exports = [
         }
     },
     {
-        // Prevent unused imports or dead local variables anywhere in src/
-        files: ["src/**/*.js"],
+        // Prevent unused imports, dead local variables, or unmarked unused parameters across src/ and scripts/
+        files: ["src/**/*.js", "scripts/**/*.js"],
         rules: {
-            "no-unused-vars": ["error", { vars: "all", args: "none", caughtErrors: "none", ignoreRestSiblings: true }]
+            "no-unused-vars": ["error", { vars: "all", argsIgnorePattern: "^_", varsIgnorePattern: "^_", caughtErrorsIgnorePattern: "^_", ignoreRestSiblings: true }]
         }
     },
     {
-        // Stricter rules for newly created V0.5 modular code
-        files: [
-            "src/core/**/*.js",
-            "src/presets/**/*.js",
-            "src/providers/registry.js",
-            "src/providers/adapters/**/*.js",
-            "src/auto-translation/state-machine.js",
-            "src/auto-translation/cooldown-store.js"
-        ],
+        // Prevent unused imports or dead local variables in tests/
+        files: ["tests/**/*.js"],
         rules: {
-            "no-unused-vars": ["error", { argsIgnorePattern: "^_", varsIgnorePattern: "^_", caughtErrorsIgnorePattern: "^_" }]
+            "no-unused-vars": ["error", { vars: "all", args: "none", caughtErrors: "none", ignoreRestSiblings: true }]
         }
     }
 ];

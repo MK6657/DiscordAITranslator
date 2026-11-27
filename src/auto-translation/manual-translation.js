@@ -14,6 +14,45 @@ class ManualTranslationController {
     constructor(plugin) {
         this.plugin = plugin;
         this.activeContentRuns = typeof WeakMap === "function" ? new WeakMap() : null;
+        this.activeManualPlans = new Set();
+    }
+
+    _createCancelledError() {
+        if (typeof this.plugin.createProviderRequestCancelledError === "function") {
+            return this.plugin.createProviderRequestCancelledError();
+        }
+        if (typeof this.plugin.providerLayer?.createProviderRequestCancelledError === "function") {
+            return this.plugin.providerLayer.createProviderRequestCancelledError();
+        }
+        return Object.assign(new Error("Request cancelled"), { name: "AbortError", code: "REQUEST_CANCELLED" });
+    }
+
+    _ensurePlanSignal(plan) {
+        if (!plan || typeof plan !== "object") return undefined;
+        const externalSignal = plan.signal && plan.signal !== plan.abortController?.signal ? plan.signal : null;
+        if (!plan.abortController && typeof AbortController === "function") {
+            plan.abortController = new AbortController();
+            if (externalSignal) {
+                if (externalSignal.aborted) plan.abortController.abort(externalSignal.reason);
+                else externalSignal.addEventListener?.("abort", () => plan.abortController?.abort(externalSignal.reason), { once: true });
+            }
+        }
+        if (plan.abortController) {
+            plan.signal = plan.abortController.signal;
+        }
+        return plan.signal;
+    }
+
+    _abortPlan(plan) {
+        const controller = plan?.abortController;
+        if (!controller || controller.signal?.aborted) return false;
+        try {
+            controller.abort();
+            return true;
+        }
+        catch {
+            return false;
+        }
     }
 }
 
@@ -140,14 +179,24 @@ const methods = {
         const messageNode = plan?.messageNode;
         const content = plan?.content;
         if (!messageNode?.isConnected || !content?.isConnected || messageNode.contains?.(content) === false) return false;
-        if (this.plugin.getCurrentRouteKey() !== plan.requestOptions.routeKey) return false;
+        if (plan.requestOptions?.routeKey !== undefined && this.plugin.getCurrentRouteKey() !== plan.requestOptions.routeKey) return false;
         const messageId = this.plugin.messageTracker.getNodeMessageIds(messageNode)?.messageId || "";
-        if (messageId !== plan.domMessageId) return false;
+        if (plan.domMessageId !== undefined && messageId !== plan.domMessageId) return false;
         this.plugin.elementTextCache?.delete(content);
-        const currentText = this.plugin.normalizeExtractedText(this.plugin.getElementText(content, plan.textOptions));
+        const extractedText = this.plugin.getElementText(content, plan.textOptions);
+        const rawText = (!extractedText
+            && typeof content?.text === "string"
+            && content.textContent === undefined
+            && content.innerText === undefined
+            && !content.childNodes
+            && !content.cloneNode)
+            ? content.text
+            : extractedText;
+        const currentText = this.plugin.normalizeExtractedText(rawText);
         return Boolean(currentText)
             && currentText === this.plugin.normalizeExtractedText(plan.domText ?? plan.text)
-            && this.plugin.getMessageIdentity(messageNode, content, currentText) === plan.requestOptions.messageIdentity;
+            && (plan.requestOptions?.messageIdentity === undefined
+                || this.plugin.getMessageIdentity(messageNode, content, currentText) === plan.requestOptions.messageIdentity);
     },
 
     beginManualTranslationRequest(content) {
@@ -168,10 +217,62 @@ const methods = {
         const options = plan?.requestOptions;
         if (!options) return true;
         const settings = this.plugin.settings.translation;
-        if (!settings.enabled || options.targetLanguage !== settings.targetLanguage) return false;
+        if (!settings?.enabled) return false;
+        if (options.targetLanguage !== undefined && options.targetLanguage !== settings.targetLanguage) return false;
         if (Number(options.version ?? this.plugin.autoTranslationConfigVersion) !== this.plugin.autoTranslationConfigVersion) return false;
         const providerKey = String(options.providerKey || "");
         return !providerKey || this.plugin.isAutoTranslationProviderSnapshotCurrent(providerKey, options);
+    },
+
+    isManualTranslationPlanActive(plan) {
+        if (!plan || typeof plan !== "object") return false;
+        if (plan.signal?.aborted || plan.abortController?.signal?.aborted) return false;
+        if (this.plugin.apiRequestsClosed || !this.plugin.isStarted) return false;
+        if (plan.lifecycleToken !== undefined && plan.lifecycleToken !== null && !this.plugin.isLifecycleTokenCurrent(plan.lifecycleToken)) {
+            return false;
+        }
+        if (!this.plugin.isManualTranslationRequestCurrent(plan)) return false;
+        if (!this.plugin.isManualTranslationConfigCurrent(plan)) return false;
+        if (plan.messageNode || plan.content) {
+            return this.plugin.isManualTranslationSourceStillCurrent(plan);
+        }
+        if (plan.requestOptions?.routeKey && this.plugin.getCurrentRouteKey() !== plan.requestOptions.routeKey) {
+            return false;
+        }
+        return true;
+    },
+
+    abortManualTranslationRequests(reason = "invalidated") {
+        if (!this.activeManualPlans?.size) return false;
+        const normalizedReason = String(reason || "invalidated").trim();
+        const autoOnlyReasons = new Set([
+            "auto-disabled",
+            "setting-disabled",
+            "channel-policy",
+            "channel-policy-disabled",
+            "disabled",
+            "scroll",
+            "resize",
+            "mutation",
+            "jump"
+        ]);
+        if (autoOnlyReasons.has(normalizedReason)) return false;
+        const abortAll = normalizedReason === "stop"
+            || normalizedReason === "route"
+            || normalizedReason === "config"
+            || normalizedReason === "invalidated"
+            || !this.plugin.isStarted
+            || Boolean(this.plugin.apiRequestsClosed);
+        let aborted = 0;
+        for (const plan of [...this.activeManualPlans]) {
+            if (abortAll || !this.plugin.isManualTranslationPlanActive(plan)) {
+                if (this._abortPlan(plan)) aborted++;
+            }
+        }
+        if (aborted > 0) {
+            this.plugin.logDiagnostic?.("manual.translate", "abort", { reason: normalizedReason, aborted });
+        }
+        return aborted > 0;
     },
 
     // text is the request text; domText is what the message shows, which keys the message identity
@@ -182,6 +283,7 @@ const methods = {
         const autoRequestOptions = this.plugin.withMessageIdentity(this.plugin.getAutoTranslationRequestOptionsForText(text, this.plugin.getAutoTranslationOptions()), messageNode, content, domText);
         const cacheKey = this.plugin.getTranslationCacheKey(text, requestOptions);
         const autoCacheKey = this.plugin.getTranslationCacheKey(text, autoRequestOptions);
+        const abortController = typeof AbortController === "function" ? new AbortController() : null;
         return {
             mode: "manual",
             messageNode,
@@ -199,7 +301,8 @@ const methods = {
             sourceHash: this.plugin.getStrongTextFingerprint(text),
             startedAt: Date.now(),
             lifecycleToken: this.plugin.getLifecycleToken(),
-            requestToken: this.beginManualTranslationRequest(content)
+            requestToken: this.beginManualTranslationRequest(content),
+            ...(abortController ? { abortController, signal: abortController.signal } : {})
         };
     },
 
@@ -239,21 +342,36 @@ const methods = {
         return this.runManualRescueTranslationPlan(plan);
     },
 
-    getManualRescueAttemptOptions(plan, attemptName, previousOutput = "", previousReason = "", previousError = null) {
+    getManualRescueAttemptOptions(plan, attemptName, previousOutput = "", previousReason = "", previousError = null, truncatedError = null) {
         let nextOptions = plan.requestOptions;
+        if (attemptName === "manual-normal") {
+            if (nextOptions?.truncationRetry || nextOptions?.allowTruncationFallback) {
+                nextOptions = { ...nextOptions };
+                delete nextOptions.truncationRetry;
+                delete nextOptions.allowTruncationFallback;
+            }
+            return nextOptions;
+        }
         if (attemptName === "manual-force-target") {
             nextOptions = this.plugin.getManualForceTargetTranslationOptions(plan.text, previousOutput, previousReason, plan.requestOptions);
         }
         else if (attemptName === "manual-repair") {
             nextOptions = this.plugin.getManualRepairTranslationOptions(plan.text, previousOutput, previousReason, plan.requestOptions);
         }
-        if ((previousReason === "truncated" || previousError?.modelOutputTruncated) && attemptName !== "manual-normal") {
+        const effectiveTruncatedError = previousError?.modelOutputTruncated ? previousError : truncatedError;
+        if (previousReason === "truncated" || effectiveTruncatedError) {
             const multiplier = attemptName === "manual-repair" ? 2.2 : 1.8;
-            const raised = this.plugin.withRaisedAutoTranslationMaxTokens(nextOptions, plan.text, multiplier, previousError);
+            const raised = this.plugin.withRaisedAutoTranslationMaxTokens(nextOptions, plan.text, multiplier, effectiveTruncatedError);
             nextOptions = {
                 ...raised,
                 truncationRetry: true,
                 requestTimeoutMs: this.plugin.getTruncatedAutoTranslationRetryTimeoutMs(plan.requestOptions, raised, plan.text)
+            };
+        }
+        else if (attemptName === "manual-repair") {
+            nextOptions = {
+                ...nextOptions,
+                allowTruncationFallback: true
             };
         }
         return nextOptions;
@@ -262,14 +380,24 @@ const methods = {
     // requestOptions is this attempt's own copy: a partial long result is recorded on it for
     // validation and for the partial note (longTextPartialInfo).
     async runManualRescueModelAttempt(plan, requestOptions, requestBudget = null) {
+        const signal = this._ensurePlanSignal(plan);
+        const heartbeat = () => this.plugin.isManualTranslationPlanActive(plan);
+        if (!heartbeat()) throw this._createCancelledError();
+        const baseTaskOptions = {
+            ...(signal ? { signal } : {}),
+            heartbeat,
+            ...(requestBudget ? { requestBudget } : {})
+        };
         if (this.plugin.isLongAutoTranslationText(plan.text)) {
+            /** @type {Record<string, any>} */
             const taskOptions = {
+                ...baseTaskOptions,
                 retryInvalidOutput: false,
-                manualRescue: true,
-                ...(requestBudget ? { requestBudget } : {})
+                manualRescue: true
             };
             const wholePass = await this.plugin.runManualLongTextWholePass(plan, requestOptions, taskOptions);
             if (wholePass !== null) return wholePass;
+            if (!heartbeat()) throw this._createCancelledError();
             const translated = await this.plugin.runAutoTranslationTask(plan.text, requestOptions, taskOptions);
             if (taskOptions.longTextPartial) {
                 requestOptions.longTextPartial = true;
@@ -280,7 +408,10 @@ const methods = {
             return translated;
         }
         this.plugin.consumeAutoTranslationRequestBudget({ requestBudget });
-        return this.plugin.runAutoTranslationModelAttempt(plan.text, requestOptions, requestBudget ? { requestBudget } : {});
+        return this.plugin.runAutoTranslationModelAttempt(plan.text, requestOptions, {
+            ...baseTaskOptions,
+            manualRescue: true
+        });
     },
 
     getManualRescueValidation(plan, translated, requestOptions) {
@@ -349,83 +480,118 @@ const methods = {
     },
 
     async runManualRescueTranslationPlan(plan) {
+        this._ensurePlanSignal(plan);
+        const trackedHere = Boolean(plan && typeof plan === "object" && !this.activeManualPlans.has(plan));
+        const contentKey = plan?.content && (typeof plan.content === "object" || typeof plan.content === "function")
+            ? plan.content
+            : null;
+        let standaloneRunEntry = null;
+        if (trackedHere) {
+            this.activeManualPlans.add(plan);
+            if (contentKey && this.activeContentRuns) {
+                const existingEntry = this.activeContentRuns.get(contentKey);
+                if (existingEntry?.plan && existingEntry.plan !== plan) {
+                    this._abortPlan(existingEntry.plan);
+                }
+                if (!existingEntry || existingEntry.plan !== plan) {
+                    standaloneRunEntry = { button: null, previousLineState: null, domText: plan.domText, plan };
+                    this.activeContentRuns.set(contentKey, standaloneRunEntry);
+                }
+            }
+        }
         const attemptNames = ["manual-normal", "manual-force-target", "manual-repair"];
         const attempts = [];
         let previousOutput = "";
         let previousReason = "";
         let lastValidation = null;
         let lastError = null;
+        let truncatedError = null;
         // One click may cause at most this many model requests across all attempts and chunks.
         const requestBudget = this.plugin.createAutoTranslationRequestBudget(this.plugin.getManualTranslationRequestBudgetLimit(plan.text, plan.requestOptions));
 
-        for (let index = 0; index < attemptNames.length; index++) {
-            const attemptName = attemptNames[index];
-            if (this.plugin.isAutoTranslationRequestBudgetExhausted(requestBudget)) {
-                this.plugin.logDiagnostic("manual.rescue", "budget-exhausted", {
-                    key: this.plugin.getTextFingerprint(plan.cacheKey),
-                    sourceHash: plan.sourceHash,
-                    attemptName,
-                    requestCount: requestBudget.used
-                });
-                break;
-            }
-            const baseAttemptOptions = this.getManualRescueAttemptOptions(plan, attemptName, previousOutput, previousReason, lastError);
-            const requestOptions = {
-                ...baseAttemptOptions,
-                requestContext: {}
-            };
-            let translated = "";
-            let validation = null;
-            try {
-                translated = await this.plugin.runManualRescueModelAttempt(plan, requestOptions, requestBudget);
-                validation = this.getManualRescueValidation(plan, translated, requestOptions);
-                this.logManualRescueAttempt(plan, attemptName, index, requestOptions, translated, validation, null);
-                attempts.push({
-                    attemptName,
-                    invalidReason: validation.reasonCode || "",
-                    validationQuality: validation.quality || "",
-                    renderable: Boolean(validation.renderable),
-                    cacheable: Boolean(validation.cacheable)
-                });
-                if (validation.renderable) {
-                    if (plan?.requestOptions?.requestContext && typeof plan.requestOptions.requestContext === "object") {
-                        if (requestOptions.requestContext.fallbackProvider) {
-                            plan.requestOptions.requestContext.fallbackProvider = requestOptions.requestContext.fallbackProvider;
-                        }
-                        else {
-                            delete plan.requestOptions.requestContext.fallbackProvider;
-                        }
-                    }
-                    return { translated, validation, requestOptions, attemptName, attempts };
+        try {
+            for (let index = 0; index < attemptNames.length; index++) {
+                if (!this.plugin.isManualTranslationPlanActive(plan)) {
+                    throw this._createCancelledError();
                 }
-                previousOutput = String(translated || "");
-                previousReason = validation.reasonCode || "invalid-output";
-                lastValidation = validation;
-                lastError = this.plugin.createFinalInvalidAutoTranslationError(previousReason, {
-                    terminal: false,
-                    validationQuality: validation.quality
-                });
+                const attemptName = attemptNames[index];
+                if (this.plugin.isAutoTranslationRequestBudgetExhausted(requestBudget)) {
+                    this.plugin.logDiagnostic("manual.rescue", "budget-exhausted", {
+                        key: this.plugin.getTextFingerprint(plan.cacheKey),
+                        sourceHash: plan.sourceHash,
+                        attemptName,
+                        requestCount: requestBudget.used
+                    });
+                    break;
+                }
+                const baseAttemptOptions = this.getManualRescueAttemptOptions(plan, attemptName, previousOutput, previousReason, lastError, truncatedError);
+                const requestOptions = {
+                    ...baseAttemptOptions,
+                    requestContext: {}
+                };
+                let translated = "";
+                let validation = null;
+                try {
+                    translated = await this.plugin.runManualRescueModelAttempt(plan, requestOptions, requestBudget);
+                    validation = this.getManualRescueValidation(plan, translated, requestOptions);
+                    this.logManualRescueAttempt(plan, attemptName, index, requestOptions, translated, validation, null);
+                    attempts.push({
+                        attemptName,
+                        invalidReason: validation.reasonCode || "",
+                        validationQuality: validation.quality || "",
+                        renderable: Boolean(validation.renderable),
+                        cacheable: Boolean(validation.cacheable)
+                    });
+                    if (validation.renderable) {
+                        if (plan?.requestOptions?.requestContext && typeof plan.requestOptions.requestContext === "object") {
+                            if (requestOptions.requestContext.fallbackProvider) {
+                                plan.requestOptions.requestContext.fallbackProvider = requestOptions.requestContext.fallbackProvider;
+                            }
+                            else {
+                                delete plan.requestOptions.requestContext.fallbackProvider;
+                            }
+                        }
+                        return { translated, validation, requestOptions, attemptName, attempts };
+                    }
+                    previousOutput = String(translated || "");
+                    previousReason = validation.reasonCode || "invalid-output";
+                    lastValidation = validation;
+                    lastError = this.plugin.createFinalInvalidAutoTranslationError(previousReason, {
+                        terminal: false,
+                        validationQuality: validation.quality
+                    });
+                }
+                catch (error) {
+                    if (this.plugin.isAutoTranslationRequestBudgetError(error)) break;
+                    if (this.plugin.isAbandonedTranslationError?.(error) || this.plugin.isRequestCancelled?.(error)) throw error;
+                    lastError = error;
+                    if (error?.modelOutputTruncated) truncatedError = error;
+                    previousReason = error?.autoTranslationInvalidReason || error?.autoTranslationCancelReason || this.plugin.getAutoTranslationFailureType(error) || "invalid-output";
+                    this.logManualRescueAttempt(plan, attemptName, index, requestOptions, previousOutput, null, error);
+                    attempts.push({
+                        attemptName,
+                        invalidReason: previousReason,
+                        validationQuality: error?.autoTranslationValidationQuality || "",
+                        renderable: false,
+                        cacheable: false,
+                        failureType: this.plugin.getAutoTranslationFailureType(error)
+                    });
+                    if (!this.isManualRescueRetryableError(error)) throw error;
+                }
             }
-            catch (error) {
-                if (this.plugin.isAutoTranslationRequestBudgetError(error)) break;
-                lastError = error;
-                previousReason = error?.autoTranslationInvalidReason || error?.autoTranslationCancelReason || this.plugin.getAutoTranslationFailureType(error) || "invalid-output";
-                this.logManualRescueAttempt(plan, attemptName, index, requestOptions, previousOutput, null, error);
-                attempts.push({
-                    attemptName,
-                    invalidReason: previousReason,
-                    validationQuality: error?.autoTranslationValidationQuality || "",
-                    renderable: false,
-                    cacheable: false,
-                    failureType: this.plugin.getAutoTranslationFailureType(error)
-                });
-                if (!this.isManualRescueRetryableError(error)) throw error;
+
+            const finalReason = previousReason || lastValidation?.reasonCode || lastError?.autoTranslationInvalidReason || "invalid-output";
+            const finalQuality = lastValidation?.quality || lastError?.autoTranslationValidationQuality || "";
+            throw this.createManualRescueFailureError(finalReason, finalQuality, attempts);
+        }
+        finally {
+            if (trackedHere) {
+                this.activeManualPlans.delete(plan);
+                if (standaloneRunEntry && contentKey && this.activeContentRuns?.get(contentKey) === standaloneRunEntry) {
+                    this.activeContentRuns.delete(contentKey);
+                }
             }
         }
-
-        const finalReason = previousReason || lastValidation?.reasonCode || lastError?.autoTranslationInvalidReason || "invalid-output";
-        const finalQuality = lastValidation?.quality || lastError?.autoTranslationValidationQuality || "";
-        throw this.createManualRescueFailureError(finalReason, finalQuality, attempts);
     },
 
     renderManualFailure(plan, error) {
@@ -495,11 +661,15 @@ const methods = {
         }
         const priorRun = content && this.activeContentRuns ? (this.activeContentRuns.get(content) || null) : null;
         const plan = this.plugin.createManualTranslationPlan(messageNode, content, text, textOptions, source);
+        this._ensurePlanSignal(plan);
         const requestOptions = plan.requestOptions;
         const cacheKey = plan.cacheKey;
         const startedAt = plan.startedAt;
         const lifecycleToken = plan.lifecycleToken;
         const releaseSupersededButton = () => {
+            if (priorRun?.plan && priorRun.plan !== plan) {
+                this._abortPlan(priorRun.plan);
+            }
             if (priorRun?.button && priorRun.button !== button && this.plugin.isLifecycleTokenCurrent(lifecycleToken)) {
                 this.plugin.setButtonBusy(priorRun.button, false, this.plugin.t("translateButton"));
             }
@@ -565,8 +735,9 @@ const methods = {
                 || (priorRun?.domText === plan.domText ? priorRun.previousLineState || null : null))
             : null;
         releaseSupersededButton();
-        const runEntry = { button, previousLineState, domText: plan.domText };
+        const runEntry = { button, previousLineState, domText: plan.domText, plan, controller: plan.abortController || null };
         if (content && this.activeContentRuns) this.activeContentRuns.set(content, runEntry);
+        this.activeManualPlans.add(plan);
         plan.loadingLine = this.plugin.renderManualLoading(plan);
         this.plugin.setButtonBusy(button, true, this.plugin.t("translateBusy"));
         try {
@@ -667,6 +838,11 @@ const methods = {
                 this.removeManualTranslationLoading(plan);
                 return;
             }
+            if (this.plugin.isAbandonedTranslationError?.(error) || this.plugin.isRequestCancelled?.(error)) {
+                if (previousLineState) this.restoreTranslationLineState(plan, previousLineState, keptAutoPartial);
+                else this.removeManualTranslationLoading(plan);
+                return;
+            }
             this.plugin.logDiagnostic("manual.translate", "error", {
                 ...this.plugin.getTranslationDiagnosticMeta("manual", {
                     requestOptions,
@@ -694,6 +870,7 @@ const methods = {
             if (!silentManualFailure || translateOptions?.bypassCache) this.plugin.showToast(this.plugin.formatError(error), "error");
         }
         finally {
+            this.activeManualPlans.delete(plan);
             if (content && this.activeContentRuns?.get(content) === runEntry) {
                 this.activeContentRuns.delete(content);
             }
@@ -777,7 +954,7 @@ const methods = {
     },
 
     annotateTranslateProviderApiError(error, raw = "", request = {}) {
-        if (!error || !["microsoft", "deepl", "baidu"].includes(String(request?.provider || ""))) return error;
+        if (!error || !this.plugin.isDirectTranslateProvider(request?.provider) || request?.provider === "googleCloud") return error;
         error.providerKey = request.providerKey || "";
         // Decide by the HTTP status and whole words only: digits such as "456" also appear in
         // request ids. Baidu error codes arrive with HTTP 200 and are mapped by its parser.
@@ -813,7 +990,12 @@ const methods = {
     },
 
     normalizeRequestNumber(value, fallback, options = {}) {
-        const number = Number(value);
+        const useFallback = value === null
+            || value === undefined
+            || typeof value === "boolean"
+            || typeof value === "object"
+            || (typeof value === "string" && !value.trim());
+        const number = useFallback ? Number(fallback) : Number(value);
         let normalized = Number.isFinite(number) ? number : Number(fallback);
         if (!Number.isFinite(normalized)) normalized = 0;
         if (options.integer) normalized = Math.round(normalized);

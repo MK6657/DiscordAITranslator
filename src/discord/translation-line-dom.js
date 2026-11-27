@@ -158,7 +158,9 @@ const methods = {
                     const renderCacheKey = identityUpgrade?.cacheKey || this.plugin.getServedModelTranslationCacheKey(item.cacheKey, item.requestOptions);
                     if (identityUpgrade?.cacheKey) upgradedCacheTargets.set(identityUpgrade.cacheKey, identityUpgrade);
                     cacheable = true;
-                    if (this.plugin.hasManualTranslationLine(target.content, this.plugin.getAutoTranslationTargetDomText(target))) {
+                    const domText = this.plugin.getAutoTranslationTargetDomText(target);
+                    if (this.plugin.hasManualTranslationLine(target.content, domText)
+                        || this.plugin.isManualTranslationInFlight(target.content, domText, target.messageNode)) {
                         this.logAutoTranslationRenderSkip(item, target, "manual-line");
                         return;
                     }
@@ -248,7 +250,8 @@ const methods = {
         const renderCacheKey = identityUpgrade?.cacheKey || this.plugin.getServedModelTranslationCacheKey(item.cacheKey, item.requestOptions);
         if (identityUpgrade?.cacheKey && validationResult.cacheable) this.plugin.cacheAutoTranslationResultWithOptions(identityUpgrade.cacheKey, item.text, identityUpgrade.requestOptions, translated);
         const domText = this.plugin.getAutoTranslationTargetDomText(target);
-        if (this.plugin.hasManualTranslationLine(target.content, domText)) {
+        if (this.plugin.hasManualTranslationLine(target.content, domText)
+            || this.plugin.isManualTranslationInFlight(target.content, domText, target.messageNode)) {
             this.logAutoTranslationRenderSkip(item, target, "manual-line");
             return false;
         }
@@ -475,6 +478,7 @@ const methods = {
     // A translation the user asked for (translate, retranslate, retry) owns its line until it settles:
     // the cached-draw pass and the scan must not draw the old cached translation over its loading line.
     isManualTranslationInFlight(content, sourceText = null, messageNode = null) {
+        if (content && this.plugin.manualTranslation?.activeContentRuns?.has?.(content)) return true;
         return Boolean(this.plugin.getTranslationLine(content)?.classList?.contains?.("dait-translation-loading"))
             && this.plugin.hasManualTranslationLine(content, sourceText, messageNode);
     },
@@ -607,7 +611,8 @@ const methods = {
             return;
         }
         const domText = this.plugin.getAutoTranslationTargetDomText(target);
-        if (this.plugin.hasManualTranslationLine(target.content, domText)) {
+        if (this.plugin.hasManualTranslationLine(target.content, domText)
+            || this.plugin.isManualTranslationInFlight(target.content, domText, target.messageNode)) {
             this.logAutoTranslationRenderSkip({ ...target, cacheKey, requestOptions }, target, "manual-line");
             return;
         }
@@ -645,8 +650,13 @@ const methods = {
                 );
                 return;
             }
+            const domText = this.plugin.getAutoTranslationTargetDomText(target);
+            if (this.plugin.hasManualTranslationLine(target.content, domText, target.messageNode)
+                || this.plugin.isManualTranslationInFlight(target.content, domText, target.messageNode)) {
+                return;
+            }
             if (target.messageNode.isConnected && target.content.isConnected && this.plugin.isElementVisibleInViewport(target.messageNode) && this.plugin.isElementVisibleInViewport(target.content) && this.plugin.isAutoTranslationTargetDomTextCurrent(target)) {
-                this.plugin.renderTranslationLoading(target.messageNode, target.content, item.cacheKey, this.plugin.getAutoTranslationTargetDomText(target));
+                this.plugin.renderTranslationLoading(target.messageNode, target.content, item.cacheKey, domText);
                 this.plugin.logAutoTranslationMessageState(
                     "auto.message.state",
                     "loading",
@@ -1188,9 +1198,30 @@ const methods = {
         if (typeof document === "undefined" || !document.querySelectorAll) return;
         const lines = [...document.querySelectorAll(".dait-translation-line[data-dait-owner]")];
         if (!lines.length) return;
-        // A new text size, style or position changes the height of every line at once. One snapshot
-        // around the whole restyle keeps the first message in view where it was.
-        this.plugin.withTranslationScrollStability(this.getTranslationRestyleScrollAnchor(lines), () => lines.forEach(line => {
+        // A new text size, style or position changes the height of every line at once. Group lines by
+        // their scroll container so split-view dual panes (main channel + Thread) each keep their own
+        // visible message in place while still batching all DOM writes into a single pass.
+        const scrollerGroups = new Map();
+        lines.forEach(/** @param {any} line */ line => {
+            if (!line?.isConnected) return;
+            const scroller = this.plugin.getTranslationScrollContainer(line);
+            const key = scroller || null;
+            let group = scrollerGroups.get(key);
+            if (!group) {
+                group = [];
+                scrollerGroups.set(key, group);
+            }
+            group.push(line);
+        });
+        const anchors = [...scrollerGroups.entries()].map(([scroller, groupLines]) =>
+            this.getTranslationRestyleScrollAnchorForScroller(scroller, groupLines)
+        );
+        const primaryAnchor = anchors[0] ?? this.getTranslationRestyleScrollAnchor(lines);
+        const scrollOptions = { allowScrollCorrectionWhilePaused: true, keepAnchorTop: true };
+        const extraSnapshots = anchors.slice(1).map(anchor =>
+            anchor ? this.plugin.getTranslationScrollSnapshot(anchor, scrollOptions) : null
+        );
+        this.plugin.withTranslationScrollStability(primaryAnchor, () => lines.forEach(/** @param {any} line */ line => {
             const content = this.plugin.getTranslationContentForLine(line);
             if (!content?.isConnected) return;
             const isStateLine = line.classList?.contains?.("dait-translation-loading")
@@ -1203,14 +1234,21 @@ const methods = {
             }
             this.positionExistingTranslationLine(line, content);
             this.plugin.syncTranslationSourceVisibility(line, content);
-        }), { allowScrollCorrectionWhilePaused: true, keepAnchorTop: true });
+        }), scrollOptions);
+        extraSnapshots.forEach(snapshot => {
+            if (snapshot) this.plugin.restoreTranslationScrollSnapshot(snapshot);
+        });
     },
 
     // The first message whose top is inside the visible chat (else the one partly in view): lines
     // above its top may change height, and keeping that top in place keeps what the user reads in place.
     getTranslationRestyleScrollAnchor(lines) {
-        const first = lines.find(line => line?.isConnected);
+        const first = (lines || []).find(line => line?.isConnected);
         const scroller = first ? this.plugin.getTranslationScrollContainer(first) : null;
+        return this.getTranslationRestyleScrollAnchorForScroller(scroller, lines);
+    },
+
+    getTranslationRestyleScrollAnchorForScroller(scroller, _lines = []) {
         const band = scroller ? this.plugin.getScrollContainerBand(scroller) : null;
         if (!band) return null;
         const root = this.plugin.isDocumentScroller(scroller) ? document : scroller;
@@ -1293,8 +1331,34 @@ const methods = {
         if (!descriptors.length) return false;
 
         const descriptorCounts = new Map();
-        descriptors.forEach(descriptor => descriptorCounts.set(descriptor.name, Number(descriptorCounts.get(descriptor.name) || 0) + 1));
-        const outputCounts = this.plugin.getDiscordEmojiTokenCounts(translatedText);
+        descriptors.forEach(descriptor => {
+            if (descriptor?.name) descriptorCounts.set(descriptor.name, Number(descriptorCounts.get(descriptor.name) || 0) + 1);
+        });
+        if (!descriptorCounts.size) return false;
+
+        const escapeRegex = text => String(text || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const escapedNames = [...descriptorCounts.keys()]
+            .sort((left, right) => right.length - left.length)
+            .map(escapeRegex)
+            .join("|");
+        const tokenPattern = new RegExp(
+            `(?:[Hh][Tt][Tt][Pp][Ss]?|[Ss][Tt][Ee][Aa][Mm]|[Dd][Ii][Ss][Cc][Oo][Rr][Dd]):\\/\\/[^\\s<>"']+|\\b[Ww][Ww][Ww]\\.[^\\s<>"']+|<a?:(${escapedNames}):\\d+>|:((?:${escapedNames})):(?!\\/\\/)`,
+            "g"
+        );
+
+        const value = String(translatedText || "");
+        const matchedTokens = [];
+        const outputCounts = new Map();
+        let match = tokenPattern.exec(value);
+        while (match) {
+            const name = match[1] || match[2] || "";
+            if (name) {
+                outputCounts.set(name, Number(outputCounts.get(name) || 0) + 1);
+                matchedTokens.push({ name, start: match.index, end: tokenPattern.lastIndex });
+            }
+            match = tokenPattern.exec(value);
+        }
+
         // Every real emoji (backed by a DOM image descriptor) needs a token in the output. Extra
         // tokens of the same name (a literal ":name:" typed in the message) stay plain text, as does
         // other ":token:"-shaped text such as "12:30:45"; neither may veto the render.
@@ -1308,26 +1372,20 @@ const methods = {
             queues.get(descriptor.name).push(descriptor);
         });
 
-        const value = String(translatedText || "");
-        const tokenPattern = /<a?:([A-Za-z0-9_~]{1,64}):\d+>|:([A-Za-z0-9_~]{1,64}):/g;
         const parts = [];
         let cursor = 0;
         let handled = false;
-        let match = tokenPattern.exec(value);
-        while (match) {
-            const name = match[1] || match[2] || "";
-            const queue = queues.get(name);
-            if (queue?.length) {
-                const before = value.slice(cursor, match.index);
-                if (before) parts.push(document.createTextNode(before));
-                const descriptor = queue.shift();
-                const emoji = this.cloneTranslationEmojiNode(descriptor);
-                if (!emoji) return false;
-                parts.push(emoji);
-                cursor = tokenPattern.lastIndex;
-                handled = true;
-            }
-            match = tokenPattern.exec(value);
+        for (const token of matchedTokens) {
+            const queue = queues.get(token.name);
+            if (!queue?.length) continue;
+            const before = value.slice(cursor, token.start);
+            if (before) parts.push(document.createTextNode(before));
+            const descriptor = queue.shift();
+            const emoji = this.cloneTranslationEmojiNode(descriptor);
+            if (!emoji) return false;
+            parts.push(emoji);
+            cursor = token.end;
+            handled = true;
         }
 
         if (!handled) return false;
@@ -1399,14 +1457,15 @@ const methods = {
             line.dataset.daitLoadingAt = String(Date.now());
             this.resetTranslationLineState(line);
             this.applyTranslationLineDismissal(line, messageNode, content);
+            this.applyUiStateElementLocale(line);
             line.setAttribute?.("role", "status");
             line.setAttribute?.("aria-busy", "true");
-            line.textContent = this.plugin.t("translationLoading");
+            line.textContent = I18N.en?.translating ? this.plugin.t("translating") : this.plugin.t("translationLoading");
             return line;
         });
     },
 
-    renderTranslationError(messageNode, content, error, cacheKey = "", sourceText = null) {
+    renderTranslationError(messageNode, content, error, cacheKey = "", sourceText = null, options = null) {
         return this.plugin.withTranslationScrollStability(content, () => {
             const line = this.plugin.ensureTranslationNode(messageNode, content);
             line.classList.remove("dait-translation-loading", "dait-translation-masked", "dait-translation-revealed", "dait-translation-partial");
@@ -1418,7 +1477,9 @@ const methods = {
             delete line.dataset.daitValidationQuality;
             delete line.dataset.daitValidationReason;
             this.resetTranslationLineState(line);
+            line.__daitErrorState = { error, options, messageNode, content, waitEndsAt: 0 };
             this.applyTranslationLineDismissal(line, messageNode, content);
+            this.applyUiStateElementLocale(line);
             this.fillTranslationErrorLine(line, messageNode, content, error);
             return line;
         });
@@ -1669,6 +1730,9 @@ const methods = {
         this.clearTranslationErrorWaitTimer(line);
         const delay = Number(waitMs || 0);
         if (!(delay > 0) || typeof setTimeout !== "function") return;
+        if (line.__daitErrorState && typeof line.__daitErrorState === "object") {
+            line.__daitErrorState.waitEndsAt = Date.now() + delay;
+        }
         const token = `${Date.now()}:${Math.random().toString(36).slice(2)}`;
         line.dataset.daitErrorToken = token;
         const lifecycleToken = this.plugin.getLifecycleToken();
@@ -1720,7 +1784,6 @@ const methods = {
         if (button?.disabled) return false;
         const lifecycleToken = this.plugin.getLifecycleToken();
         if (!this.plugin.isLifecycleTokenCurrent(lifecycleToken)) return false;
-        const label = button?.textContent || this.plugin.t("translationTestConnection");
         // The test reports its own result; a failure must not also raise the auto-translate notice.
         this.rememberTranslationAttentionNotice(null, this.getTranslationAttentionProviderKey(null), "local-unavailable");
         this.plugin.setButtonBusy(button, true, this.plugin.t("apiTestBusy"));
@@ -1728,7 +1791,9 @@ const methods = {
             return (await this.plugin.testApiConnection("translation", null, null)) !== false;
         }
         finally {
-            if (this.plugin.isLifecycleTokenCurrent(lifecycleToken)) this.plugin.setButtonBusy(button, false, label);
+            if (this.plugin.isLifecycleTokenCurrent(lifecycleToken)) {
+                this.plugin.setButtonBusy(button, false, this.plugin.t("translationTestConnection"));
+            }
         }
     },
 
@@ -1740,11 +1805,31 @@ const methods = {
             delete line.dataset.daitErrorAction;
             delete line.dataset.daitErrorToken;
             delete line.dataset.daitTag;
+            delete line.dataset.daitMaskHint;
         }
         ["dait-translation-style-tint", "dait-translation-style-muted", "dait-translation-style-tag", "dait-translation-scale-90", "dait-translation-dismissed"]
             .forEach(name => line.classList?.remove?.(name));
         delete line.__daitPartialInfo;
+        delete line.__daitErrorState;
         this.plugin.translationLineTexts?.delete?.(line);
+    },
+
+    applyUiStateElementLocale(element) {
+        if (!element) return;
+        const isRtlUi = Boolean(this.plugin.isRtlLocale?.());
+        const localeCode = this.plugin.getUiLocaleBcp47?.() || this.plugin.getLocale();
+        if (isRtlUi) {
+            element.setAttribute?.("dir", "rtl");
+            if (localeCode) element.setAttribute?.("lang", localeCode);
+            return;
+        }
+        if (this.isRightToLeftElement(element.parentElement)) {
+            element.setAttribute?.("dir", "ltr");
+            if (localeCode) element.setAttribute?.("lang", localeCode);
+            return;
+        }
+        element.removeAttribute?.("dir");
+        element.removeAttribute?.("lang");
     },
 
     getTranslationLineLanguage(targetLanguage = this.plugin.settings.translation?.targetLanguage) {
@@ -1805,13 +1890,18 @@ const methods = {
     // A masked translation is a real button: focusable, and Enter or Space reveals it.
     applyTranslationLineMaskState(line) {
         if (!line) return;
+        const maskHint = I18N.en?.translationMaskedHint
+            ? this.plugin.t("translationMaskedHint")
+            : this.plugin.t("translationRevealLabel");
         if (line.classList?.contains?.("dait-translation-masked")) {
             line.setAttribute?.("role", "button");
             line.setAttribute?.("tabindex", "0");
             line.setAttribute?.("aria-expanded", "false");
-            line.setAttribute?.("aria-label", this.plugin.t("translationRevealLabel"));
+            line.setAttribute?.("aria-label", maskHint);
+            if (line.dataset) line.dataset.daitMaskHint = maskHint;
             return;
         }
+        if (line.dataset) delete line.dataset.daitMaskHint;
         if (line.getAttribute?.("role") !== "button") return;
         ["role", "aria-expanded", "aria-label"].forEach(name => line.removeAttribute?.(name));
         if (typeof document !== "undefined" && document?.activeElement === line) line.setAttribute?.("tabindex", "-1");
@@ -1935,9 +2025,8 @@ const methods = {
         if (toolbar.dataset.daitPlacement !== placement) toolbar.dataset.daitPlacement = placement;
     },
 
-    // Contract with the long-text pipeline: renderOptions.partialInfo = { missingSegments: [1-based], totalSegments }.
-    createTranslationPartialNote(line, messageNode, content, partialInfo) {
-        if (!partialInfo || typeof partialInfo !== "object") return null;
+    getTranslationPartialNoteText(partialInfo) {
+        if (!partialInfo || typeof partialInfo !== "object") return this.plugin.t("translationPartialUnknown");
         const total = Number(partialInfo.totalSegments);
         const hasTotal = Number.isInteger(total) && total > 0;
         const missing = Array.isArray(partialInfo.missingSegments)
@@ -1945,15 +2034,24 @@ const methods = {
                 .filter(index => Number.isInteger(index) && index > 0 && (!hasTotal || index <= total))
                 .sort((left, right) => left - right)
             : [];
-        const text = missing.length && hasTotal
+        return missing.length && hasTotal
             ? this.plugin.t(missing.length === 1 ? "translationPartialOne" : "translationPartialMany", {
                 parts: this.formatTranslationPartList(missing),
                 total: String(total)
             })
             : this.plugin.t("translationPartialUnknown");
+    },
+
+    // Contract with the long-text pipeline: renderOptions.partialInfo = { missingSegments: [1-based], totalSegments }.
+    createTranslationPartialNote(line, messageNode, content, partialInfo) {
+        if (!partialInfo || typeof partialInfo !== "object") return null;
+        const text = this.getTranslationPartialNoteText(partialInfo);
+        /** @type {any} */
         const note = document.createElement("div");
         note.className = "dait-translation-note";
         note.setAttribute?.("role", "note");
+        note.__daitPartialInfo = partialInfo;
+        this.applyUiStateElementLocale(note);
         const message = document.createElement("span");
         message.className = "dait-translation-note-message";
         message.textContent = text;
@@ -1975,6 +2073,137 @@ const methods = {
         });
         note.appendChild(button);
         return note;
+    },
+
+    refreshAllTranslationLinesLocale() {
+        if (typeof document === "undefined" || typeof document.querySelectorAll !== "function") return;
+        const tagLabel = this.plugin.t("translationTag");
+        const maskHint = I18N.en?.translationMaskedHint
+            ? this.plugin.t("translationMaskedHint")
+            : this.plugin.t("translationRevealLabel");
+        const loadingText = I18N.en?.translating
+            ? this.plugin.t("translating")
+            : this.plugin.t("translationLoading");
+        const actionsLabel = this.plugin.t("translationActionsLabel");
+        const copyLabel = this.plugin.t("translationActionCopy");
+        const retranslateLabel = this.plugin.t("translationActionRetranslate");
+        const hideLabel = this.plugin.t("translationActionHide");
+
+        document.querySelectorAll(".dait-translation-line").forEach(/** @param {any} line */ line => {
+            if (!line || line.isConnected === false) return;
+
+            if (line.classList?.contains?.("dait-translation-loading")) {
+                line.textContent = loadingText;
+                this.applyUiStateElementLocale(line);
+                return;
+            }
+
+            if (line.classList?.contains?.("dait-translation-error")) {
+                this.applyUiStateElementLocale(line);
+                const errorState = line.__daitErrorState;
+                if (errorState && "error" in errorState) {
+                    const error = errorState.error;
+                    const presentation = this.getTranslationErrorPresentation(error);
+                    const messageEl = line.querySelector?.(".dait-translation-error-message");
+                    const waitTimerActive = Boolean(line.__daitWaitTimer && line.dataset?.daitErrorAction === "wait");
+                    const waitAlreadyEnded = Boolean(!line.__daitWaitTimer && line.dataset?.daitErrorAction === "retry" && presentation.action === "wait");
+
+                    if (waitTimerActive) {
+                        const remainingMs = errorState.waitEndsAt > 0
+                            ? Math.max(1000, errorState.waitEndsAt - Date.now())
+                            : Math.max(1000, Number(presentation.waitMs || 0));
+                        const waitMessage = error?.googleTranslateKeysCooling
+                            ? this.plugin.formatGoogleTranslateCooldownMessage(Number(error.googleTranslateCooldownUntil || 0)).replace(/[。.]\s*$/, "")
+                            : this.plugin.t("translationErrorRateLimitWait", { seconds: String(Math.ceil(remainingMs / 1000)) });
+                        if (messageEl) messageEl.textContent = waitMessage;
+                        line.title = this.plugin.formatError(error);
+                    }
+                    else if (waitAlreadyEnded) {
+                        if (messageEl) messageEl.textContent = this.plugin.t("translationErrorRateLimit");
+                        line.removeAttribute?.("title");
+                    }
+                    else {
+                        if (messageEl) messageEl.textContent = presentation.message;
+                        if (presentation.action !== "retry") line.title = this.plugin.formatError(error);
+                        else line.removeAttribute?.("title");
+                    }
+
+                    const errorBtn = /** @type {any} */ (line.querySelector?.(".dait-translation-error-button"));
+                    if (errorBtn) {
+                        if (line.dataset?.daitErrorAction === "settings" || presentation.action === "settings") {
+                            errorBtn.textContent = this.plugin.t("translationOpenSettings");
+                            errorBtn.title = this.plugin.t("translationOpenSettingsTitle");
+                        }
+                        else if (line.dataset?.daitErrorAction === "test" || presentation.action === "test") {
+                            errorBtn.textContent = errorBtn.disabled
+                                ? this.plugin.t("apiTestBusy")
+                                : this.plugin.t("translationTestConnection");
+                            errorBtn.title = this.plugin.t("translationTestConnectionTitle");
+                        }
+                    }
+                }
+                const retryBtn = /** @type {any} */ (line.querySelector?.(".dait-translation-retry"));
+                if (retryBtn) {
+                    retryBtn.textContent = this.plugin.t("translateRetry");
+                    retryBtn.title = this.plugin.t("translateRetryTitle");
+                }
+                const errorHideBtn = /** @type {any} */ (line.querySelector?.(".dait-translation-action-hide"));
+                if (errorHideBtn) {
+                    errorHideBtn.title = hideLabel;
+                    errorHideBtn.setAttribute?.("aria-label", hideLabel);
+                }
+                return;
+            }
+
+            if (line.classList?.contains?.("dait-translation-style-tag") || line.dataset?.daitTag !== undefined) {
+                if (line.dataset) line.dataset.daitTag = tagLabel;
+            }
+            if (line.classList?.contains?.("dait-translation-masked")) {
+                if (line.dataset) line.dataset.daitMaskHint = maskHint;
+                line.setAttribute?.("aria-label", maskHint);
+            }
+            else if (line.dataset?.daitMaskHint !== undefined) {
+                line.dataset.daitMaskHint = maskHint;
+            }
+
+            const anchor = line.querySelector?.(":scope > .dait-translation-actions-anchor") || line.querySelector?.(".dait-translation-actions-anchor");
+            if (anchor) anchor.setAttribute?.("aria-label", actionsLabel);
+
+            const toolbar = line.querySelector?.(":scope > .dait-translation-actions") || line.querySelector?.(".dait-translation-actions");
+            if (toolbar) {
+                toolbar.setAttribute?.("aria-label", actionsLabel);
+                const copyBtn = /** @type {any} */ (toolbar.querySelector?.(".dait-translation-action-copy"));
+                if (copyBtn) {
+                    copyBtn.title = copyLabel;
+                    copyBtn.setAttribute?.("aria-label", copyLabel);
+                }
+                const retranslateBtn = /** @type {any} */ (toolbar.querySelector?.(".dait-translation-action-retranslate"));
+                if (retranslateBtn) {
+                    retranslateBtn.title = retranslateLabel;
+                    retranslateBtn.setAttribute?.("aria-label", retranslateLabel);
+                }
+                const hideBtn = /** @type {any} */ (toolbar.querySelector?.(".dait-translation-action-hide"));
+                if (hideBtn) {
+                    hideBtn.title = hideLabel;
+                    hideBtn.setAttribute?.("aria-label", hideLabel);
+                }
+            }
+
+            const note = /** @type {any} */ (line.querySelector?.(":scope > .dait-translation-note") || line.querySelector?.(".dait-translation-note"));
+            if (note) {
+                const partialInfo = note.__daitPartialInfo || line.__daitPartialInfo;
+                if (partialInfo && typeof partialInfo === "object") {
+                    const noteMsg = note.querySelector?.(".dait-translation-note-message");
+                    if (noteMsg) noteMsg.textContent = this.getTranslationPartialNoteText(partialInfo);
+                }
+                const noteBtn = /** @type {any} */ (note.querySelector?.(".dait-translation-note-button"));
+                if (noteBtn) {
+                    noteBtn.textContent = this.plugin.t("translationRetranslate");
+                    noteBtn.title = this.plugin.t("translationRetranslateTitle");
+                }
+                this.applyUiStateElementLocale(note);
+            }
+        });
     },
 
     formatTranslationPartList(parts) {
@@ -2015,8 +2244,11 @@ const methods = {
     },
 
     getTranslatedLineForContextTarget(target) {
-        const messageNode = target?.closest?.("[id^='chat-messages-'], [data-list-item-id*='chat-messages']");
-        const content = messageNode ? this.plugin.getMessageContentElement(messageNode) : null;
+        const element = target?.nodeType === 3 ? target.parentElement : target;
+        const messageNode = element?.closest?.("[id^='chat-messages-'], [data-list-item-id*='chat-messages']");
+        const content = messageNode
+            ? (this.plugin.resolveMessageContentForTarget?.(element, messageNode) || this.plugin.getMessageContentElement(messageNode))
+            : null;
         const line = content ? this.plugin.getTranslationLine(content) : null;
         if (!line || ["dait-translation-loading", "dait-translation-error", "dait-translation-dismissed"].some(name => line.classList?.contains?.(name))) return null;
         return { messageNode, content, line };

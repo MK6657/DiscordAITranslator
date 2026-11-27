@@ -88,6 +88,7 @@ const methods = {
             const configId = String(select.value || "").trim();
             if (!configId) return;
             const panel = select.closest?.(".dait-settings");
+            if (panel) this.plugin.commitSettingsControls?.(panel);
             if (this.plugin.applySavedServiceConfig(kind, configId)) {
                 if (panel && panel.isConnected !== false) {
                     const rebuilt = this.plugin.replaceSettingsPanelElement(panel);
@@ -206,20 +207,20 @@ const methods = {
         block.appendChild(header);
 
         let hasRows = false;
-        const append = (node, parent = block) => {
+        const append = (node, /** @type {HTMLElement} */ parent = block) => {
             if (!node) return;
             hasRows = true;
             parent.appendChild(node);
         };
         const apiKeyOptional = Boolean(ui.apiKey && this.plugin.isProviderApiKeyOptional(provider));
 
+        if (ui.endpoint) append(this.createInputRow(`${kind}.endpoint`, this.plugin.t("endpoint"), "text", defaults.endpoint || "", {}, { description: this.getProviderFieldHelp("endpoint", provider), stacked: true }));
         if (ui.apiKey && !apiKeyOptional) append(this.createApiKeyRow(kind));
         const customCredentialFields = (this.plugin.providerLayer?.registry?.getCredentialFields?.(provider) || [])
             .filter(field => field && !["apiKey", "region", "deeplPlan", "appId", "secretKey"].includes(field));
         customCredentialFields.forEach(field => {
             append(this.createInputRow(`${kind}.${field}`, field, "password", "", {}, { stacked: true }));
         });
-        if (ui.endpoint) append(this.createInputRow(`${kind}.endpoint`, this.plugin.t("endpoint"), "text", defaults.endpoint || "", {}, { description: this.getProviderFieldHelp("endpoint", provider), stacked: true }));
         if (ui.region) append(this.createInputRow(`${kind}.region`, this.plugin.t("providerRegion"), "text", "eastus", {}, { description: this.plugin.t("providerRegionDesc") }));
         if (ui.deeplPlan) append(this.plugin.createSelectRow(`${kind}.deeplPlan`, this.plugin.t("deeplPlan"), [
             ["free", this.plugin.t("deeplPlanFree")],
@@ -250,7 +251,7 @@ const methods = {
                     const originChanged = origin !== previousOrigin;
                     previousOrigin = origin;
                     if (!this.plugin.isStarted || config.provider !== provider || originChanged || !origin || !String(endpoint || "").trim()) return;
-                    if ((apiKeyOrigin ?? origin) !== origin || (!this.plugin.isLoopbackEndpoint(origin) && !String(apiKey || "").trim())) return;
+                    if ((apiKeyOrigin ?? origin) !== origin || (!this.plugin.isLoopbackEndpoint(origin) && !this.hasAnySecretCredential(config))) return;
                     const extraFields = this.plugin.providerLayer?.registry?.getCredentialFields?.(provider) || [];
                     const snapshot = { provider, endpoint, apiKey, apiKeyOrigin };
                     extraFields.forEach(field => {
@@ -349,16 +350,27 @@ const methods = {
         const detect = this.createSmallButton(this.plugin.t("modelDetect"), "outline");
         detect.dataset.daitAction = "detectModels";
         detect.dataset.daitKind = kind;
+        detect.dataset.daitUiFocusId = `model-${kind}-detect`;
+        const activeDetection = this.plugin.modelDetectionRuns?.get?.(kind);
+        if (activeDetection?.controller && !activeDetection.controller.signal.aborted && this.plugin.isLifecycleTokenCurrent(activeDetection.lifecycleToken)) {
+            this.plugin.setButtonBusy(detect, true, this.plugin.t("modelDetectBusy"));
+        }
         line.appendChild(detect);
         field.appendChild(line);
+
+        const cachedDetection = this.plugin.detectedModelPickerCache?.get?.(this.getDetectedModelCacheKey(kind));
+        const cachedModels = Array.isArray(cachedDetection?.models) ? cachedDetection.models : [];
+        const cachedLoaded = String(cachedDetection?.loaded || "");
+        if (cachedModels.length) this.refreshModelHistoryDatalist(input, kind, cachedModels);
 
         const picker = document.createElement("select");
         picker.className = "dait-model-picker";
         picker.dataset.daitModelPreset = kind;
+        picker.dataset.daitUiFocusId = `model-${kind}-picker`;
         picker.setAttribute("aria-label", this.plugin.t("modelPicker"));
-        this.renderModelPickerOptions(picker, kind, []);
+        this.renderModelPickerOptions(picker, kind, cachedModels, cachedLoaded);
         // OpenAI-compatible services have no presets: the picker appears once the server has listed its models.
-        picker.hidden = !local;
+        picker.hidden = !local && !cachedModels.length;
         picker.addEventListener("change", () => {
             if (!picker.value) {
                 this.focusSettingsElement(input);
@@ -375,6 +387,7 @@ const methods = {
         }
         const row = this.createRow(this.plugin.t("model"), field, { description, stacked: true, labelFor: input });
         row.classList.add("dait-model-field-row");
+        row.dataset.daitModelRowKind = kind;
         const status = row.__daitDescription;
         status?.setAttribute?.("aria-live", "polite");
         const detectUi = { button: detect, picker, status, input };
@@ -434,9 +447,57 @@ const methods = {
         picker.value = known ? current : "";
     },
 
+    hasAnySecretCredential(config) {
+        if (!config || typeof config !== "object") return false;
+        if (typeof this.plugin.hasConfiguredProviderCredentials === "function") {
+            return Boolean(this.plugin.hasConfiguredProviderCredentials(config));
+        }
+        if (String(config.apiKey || "").trim()) return true;
+        const extraFields = (this.plugin.providerLayer?.registry?.getCredentialFields?.(config) || [])
+            .filter(field => field && !["region", "deeplPlan"].includes(field));
+        return extraFields.some(field => Boolean(String(config[field] || "").trim()));
+    },
+
+    getDetectedModelCacheKey(kind, config = this.plugin.getTaskConfig(kind)) {
+        const provider = String(config?.provider || "").trim();
+        if (!provider) return "";
+        const endpointIdentity = this.plugin.providerLayer?.getProviderEndpointIdentity?.(config)
+            || String(config?.endpoint || "").trim();
+        return `${kind}\n${provider}\n${endpointIdentity}`;
+    },
+
+    getLiveSettingsModelDetectUis(kind, initialUi = null) {
+        const list = [];
+        if (initialUi && (initialUi.button || initialUi.picker || initialUi.status || initialUi.input)) {
+            list.push(initialUi);
+        }
+        const disconnected = initialUi && (
+            initialUi.button?.isConnected === false
+            || initialUi.picker?.isConnected === false
+            || initialUi.status?.isConnected === false
+            || initialUi.input?.isConnected === false
+        );
+        if (disconnected && typeof document !== "undefined") {
+            try {
+                [...(document.querySelectorAll?.(`.dait-settings [data-dait-model-row-kind='${kind}']`) || [])].forEach(row => {
+                    if (row?.isConnected === false || !row?.__daitModelDetectUi) return;
+                    if (!list.some(item => item.button === row.__daitModelDetectUi.button && item.picker === row.__daitModelDetectUi.picker)) {
+                        list.push(row.__daitModelDetectUi);
+                    }
+                });
+            }
+            catch {}
+        }
+        return list;
+    },
+
     getProviderEndpointOrigin(config) {
         try {
-            const url = new URL(this.plugin.getEffectiveChatCompletionEndpoint(config));
+            const rawEndpoint = typeof this.plugin.getEffectiveProviderEndpoint === "function"
+                ? this.plugin.getEffectiveProviderEndpoint("translation", config)
+                : (this.plugin.providerLayer?.getEffectiveProviderEndpoint?.("translation", config)
+                    || this.plugin.getEffectiveChatCompletionEndpoint(config));
+            const url = new URL(rawEndpoint);
             return url.protocol === "https:" || url.protocol === "http:" ? url.origin : "";
         }
         catch {
@@ -447,7 +508,7 @@ const methods = {
     hasApiKeyOriginMismatch(config) {
         return this.plugin.isModelDetectionProvider(config?.provider)
             && typeof config.apiKeyOrigin === "string"
-            && Boolean(String(config.apiKey || "").trim())
+            && this.hasAnySecretCredential(config)
             && config.apiKeyOrigin !== this.getProviderEndpointOrigin(config);
     },
 
@@ -472,6 +533,7 @@ const methods = {
         const previousOrigin = apiKeyOrigin ?? origin;
         if (auto && (!origin || previousOrigin !== origin)) return null;
 
+        const initialUi = { button, picker, status, input };
         const runs = this.plugin.modelDetectionRuns ??= new Map();
         const previous = runs.get(kind);
         const sequence = (previous?.sequence || 0) + 1;
@@ -490,7 +552,7 @@ const methods = {
         try {
             let omitApiKey = false;
             if (origin && previousOrigin !== origin) {
-                const hasKey = Boolean(String(apiKey || "").trim());
+                const hasKey = this.hasAnySecretCredential(snapshot);
                 const loopback = this.plugin.isLoopbackEndpoint(origin);
                 if (hasKey && !loopback) {
                     const confirmed = await this.plugin.confirmAction({
@@ -514,35 +576,52 @@ const methods = {
             if (!isCurrent()) return null;
             const { models, loaded } = await this.plugin.detectProviderModels(kind, { config: snapshot, omitApiKey, signal, isCurrent });
             if (!isCurrent()) return null;
-            this.renderModelPickerOptions(picker, kind, models, loaded);
-            if (picker && models.length) picker.hidden = false;
-            if (input && models.length) this.refreshModelHistoryDatalist(input, kind, models);
+            const cacheKey = this.getDetectedModelCacheKey(kind, snapshot);
+            if (cacheKey) {
+                const cache = this.plugin.detectedModelPickerCache ??= new Map();
+                cache.set(cacheKey, {
+                    models: Array.isArray(models) ? [...models] : [],
+                    loaded: String(loaded || "")
+                });
+            }
             const text = !models.length
                 ? this.plugin.t("modelDetectNone")
                 : loaded
                     ? this.plugin.t("modelDetectFoundLoaded", { count: models.length, model: this.plugin.getDiagnosticModelLabel(loaded) })
                     : this.plugin.t("modelDetectFound", { count: models.length });
-            if (status) {
-                status.textContent = text;
-                status.hidden = false;
-                status.classList?.remove?.("dait-row-description-error");
-            }
+            this.getLiveSettingsModelDetectUis(kind, initialUi).forEach(targetUi => {
+                this.renderModelPickerOptions(targetUi.picker, kind, models, loaded);
+                if (targetUi.picker && models.length) targetUi.picker.hidden = false;
+                if (targetUi.input && models.length) this.refreshModelHistoryDatalist(targetUi.input, kind, models);
+                if (targetUi.status) {
+                    targetUi.status.textContent = text;
+                    targetUi.status.hidden = false;
+                    targetUi.status.classList?.remove?.("dait-row-description-error");
+                }
+            });
             return { models, loaded };
         }
         catch (error) {
             if (!isCurrent() || this.plugin.isRequestCancelled(error)) return null;
             const text = this.plugin.t("modelDetectFailed", { error: this.plugin.formatError(error) });
-            if (status) {
-                status.textContent = text;
-                status.hidden = false;
-                status.classList?.add?.("dait-row-description-error");
-            }
+            this.getLiveSettingsModelDetectUis(kind, initialUi).forEach(targetUi => {
+                if (targetUi.status) {
+                    targetUi.status.textContent = text;
+                    targetUi.status.hidden = false;
+                    targetUi.status.classList?.add?.("dait-row-description-error");
+                }
+            });
             return null;
         }
         finally {
             if (isLatest()) {
                 runs.set(kind, { sequence });
-                if (this.plugin.isLifecycleTokenCurrent(lifecycleToken)) this.plugin.setButtonBusy(button, false, this.plugin.t("modelDetect"));
+                if (this.plugin.isLifecycleTokenCurrent(lifecycleToken)) {
+                    const detectLabel = this.plugin.t("modelDetect");
+                    this.getLiveSettingsModelDetectUis(kind, initialUi).forEach(targetUi => {
+                        this.plugin.setButtonBusy(targetUi.button, false, detectLabel);
+                    });
+                }
             }
         }
     },
@@ -560,12 +639,18 @@ const methods = {
         const input = document.createElement("input");
         input.type = "text";
         input.className = "dait-try-input";
+        input.dataset.daitUiFocusId = `try-${kind}-input`;
         input.placeholder = this.plugin.t(polish ? "tryPolishPlaceholder" : "tryTranslatePlaceholder");
         input.autocomplete = "off";
         line.appendChild(input);
         const run = this.createSmallButton(this.plugin.t(polish ? "tryPolishRun" : "tryTranslateRun"));
         run.dataset.daitAction = "tryTask";
         run.dataset.daitKind = kind;
+        run.dataset.daitUiFocusId = `try-${kind}-run`;
+        const activeTryRun = this.plugin.settingsTryRuns?.get?.(kind);
+        if (activeTryRun && this.plugin.isLifecycleTokenCurrent(activeTryRun.lifecycleToken)) {
+            this.plugin.setButtonBusy(run, true, this.plugin.t("tryBusy"));
+        }
         line.appendChild(run);
         wrap.appendChild(line);
 
@@ -581,8 +666,16 @@ const methods = {
         result.appendChild(time);
         wrap.appendChild(result);
 
-        const tryHistory = { text: "", results: [] };
-        const start = () => this.plugin.runTryTask(kind, input.value, { button: run, result, output, time, tryHistory });
+        const tryHistoryMap = this.plugin.settingsTryHistory ??= {};
+        const tryHistory = tryHistoryMap[kind] ??= { text: "", results: [] };
+        const start = () => this.plugin.runTryTask(kind, input.value, {
+            button: run,
+            result,
+            output,
+            time,
+            tryHistory,
+            fromSettingsWindow: true
+        });
         run.addEventListener("click", event => {
             event?.preventDefault?.();
             start();
@@ -600,28 +693,73 @@ const methods = {
         });
         // The result shows under the help text (its own grid area in CSS), so the help stays next to the field.
         row.classList.add("dait-try-row");
+        row.dataset.daitTryKind = kind;
+        row.__daitTryUi = { input, button: run, result, output, time };
         return row;
     },
 
-    async runTryTask(kind, text, { button = null, result = null, output = null, time = null, tryHistory = null } = {}) {
+    getLiveSettingsTryUis(kind, initialUi, fromSettingsWindow = false) {
+        const list = [];
+        if (initialUi && (initialUi.button || initialUi.result || initialUi.output || initialUi.time)) {
+            list.push({ ...initialUi, isOriginal: true });
+        }
+        const disconnected = fromSettingsWindow && initialUi && (
+            initialUi.button?.isConnected === false
+            || initialUi.result?.isConnected === false
+            || initialUi.output?.isConnected === false
+        );
+        if (disconnected && typeof document !== "undefined") {
+            try {
+                [...(document.querySelectorAll?.(`.dait-settings [data-dait-try-kind='${kind}']`) || [])].forEach(row => {
+                    if (row?.isConnected === false || !row?.__daitTryUi) return;
+                    if (!list.some(item => item.button === row.__daitTryUi.button && item.result === row.__daitTryUi.result)) {
+                        list.push({ ...row.__daitTryUi, isOriginal: false });
+                    }
+                });
+            }
+            catch {}
+        }
+        return list;
+    },
+
+    async runTryTask(kind, text, { button = null, result = null, output = null, time = null, tryHistory = null, fromSettingsWindow = false } = {}) {
         const sample = String(text || "").trim();
-        const show = (value, seconds = "", failed = false) => {
-            if (output) output.textContent = value;
-            if (time) {
-                time.textContent = seconds ? this.plugin.t("tryResultTime", { time: seconds }) : "";
-                time.hidden = !seconds;
-            }
-            if (result) {
-                result.hidden = !value;
-                result.classList?.toggle?.("dait-try-result-error", Boolean(failed));
-            }
+        const isSettingsTry = Boolean(fromSettingsWindow || button?.closest?.(".dait-settings") || result?.closest?.(".dait-settings"));
+        const initialUi = { button, result, output, time };
+        const show = (value, seconds = "", failed = false, errorKind = "") => {
+            this.getLiveSettingsTryUis(kind, initialUi, isSettingsTry).forEach(targetUi => {
+                if (targetUi.output) targetUi.output.textContent = value;
+                if (targetUi.time) {
+                    if (seconds) {
+                        if (targetUi.time.dataset) targetUi.time.dataset.daitLatency = String(seconds);
+                        targetUi.time.textContent = this.plugin.t("tryResultTime", { time: seconds });
+                        targetUi.time.hidden = false;
+                    }
+                    else {
+                        if (targetUi.time.dataset) delete targetUi.time.dataset.daitLatency;
+                        targetUi.time.textContent = "";
+                        targetUi.time.hidden = true;
+                    }
+                }
+                if (targetUi.result) {
+                    targetUi.result.hidden = !value;
+                    targetUi.result.classList?.toggle?.("dait-try-result-error", Boolean(failed));
+                    if (targetUi.result.dataset) {
+                        if (errorKind) targetUi.result.dataset.daitTryErrorKind = errorKind;
+                        else delete targetUi.result.dataset.daitTryErrorKind;
+                    }
+                }
+            });
         };
         if (!sample) {
-            show(this.plugin.t("tryInputRequired"), "", true);
+            show(this.plugin.t("tryInputRequired"), "", true, "input-required");
             return null;
         }
         const lifecycleToken = this.plugin.getLifecycleToken();
         const label = button?.textContent || "";
+        const tryRuns = isSettingsTry ? (this.plugin.settingsTryRuns ??= new Map()) : null;
+        const runToken = Symbol("settings-try");
+        if (tryRuns) tryRuns.set(kind, { token: runToken, lifecycleToken });
         this.plugin.setButtonBusy(button, true, this.plugin.t("tryBusy"));
         const startedAt = Date.now();
         try {
@@ -677,7 +815,14 @@ const methods = {
             return null;
         }
         finally {
-            if (this.plugin.isLifecycleTokenCurrent(lifecycleToken)) this.plugin.setButtonBusy(button, false, label);
+            if (tryRuns && tryRuns.get(kind)?.token === runToken) tryRuns.delete(kind);
+            if (this.plugin.isLifecycleTokenCurrent(lifecycleToken)) {
+                const localizedRunLabel = this.plugin.t(kind === "polish" ? "tryPolishRun" : "tryTranslateRun");
+                this.getLiveSettingsTryUis(kind, initialUi, isSettingsTry).forEach(targetUi => {
+                    const restoreLabel = isSettingsTry ? localizedRunLabel : label;
+                    this.plugin.setButtonBusy(targetUi.button, false, restoreLabel);
+                });
+            }
         }
     },
 
@@ -703,6 +848,9 @@ const methods = {
         const test = this.createSmallButton(this.plugin.t("apiTest"));
         test.dataset.daitAction = "apiTest";
         test.dataset.daitKind = kind;
+        if (this.plugin.isApiTestRunning?.(kind)) {
+            this.plugin.setButtonBusy(test, true, this.plugin.t("apiTestBusy"));
+        }
         test.addEventListener("click", event => {
             event?.preventDefault?.();
             event?.stopPropagation?.();

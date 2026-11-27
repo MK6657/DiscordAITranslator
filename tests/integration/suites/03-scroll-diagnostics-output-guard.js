@@ -807,12 +807,6 @@ function run(harness, shared) {
     assert.equal(indexedPrefetchContext.messageNodes.includes(indexedFarMessage), true);
     assert.equal(plugin.isElementNearViewport(indexedFarMessage.content, 480, indexedPrefetchContext), false);
     assert.equal(plugin.isAutoTranslationTargetInScanRange(indexedFarMessage.content, indexedPrefetchContext), true);
-    const classOnlyMessageNode = {
-        className: "messageListItem__fake",
-        isConnected: true,
-        nodeType: 1,
-        getBoundingClientRect: () => ({ top: 300, bottom: 360, left: 10, right: 100, width: 90, height: 60 })
-    };
     global.document = {
         documentElement: { clientHeight: 800, clientWidth: 1200 },
         querySelectorAll: selector => {

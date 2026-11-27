@@ -16,14 +16,29 @@ const GOOGLE_API_KEY_PATTERN = /AIza[0-9A-Za-z_-]{10,}/;
 const GOOGLE_TRANSLATE_PROTECT_PATTERNS = [
     /```[\s\S]*?```/g,
     /`[^`\n]+`/g,
-    /https?:\/\/[^\s<>"']+/gi,
+    /(?:https?|steam|discord):\/\/[^\s<>"']+/gi,
     /<a?:[A-Za-z0-9_~.-]+:\d{15,}>/g,
+    /<\/[^:<>\n]{1,100}:\d{15,25}>/g,
+    /<id:[A-Za-z_-]+>/g,
     /<[@#][!&]?\d{15,}>/g,
     /<@&\d{15,}>/g,
-    /<t:\d{1,12}(?::[tTdDfFR])?>/g,
-    /:[A-Za-z0-9_~.-]{2,}:/g,
+    /<t:-?\d{1,12}(?::[tTdDfFR])?>/g,
+    /(?<![<A-Za-z0-9_~:/-]):(?=[A-Za-z0-9_~.-]*[A-Za-z_~])[A-Za-z0-9_~.-]{2,64}:(?![>A-Za-z0-9_~:/-])/g,
     /\b[A-Za-z]:\\[^\s]+/g
 ];
+
+const GOOGLE_PLACEHOLDER_BIDI_CLASS = "[\\u200B-\\u200F\\u202A-\\u202E\\u2066-\\u2069]";
+const GOOGLE_PLACEHOLDER_GAP_CLASS = "(?:[\\s\\u200B-\\u200F\\u202A-\\u202E\\u2066-\\u2069]*)";
+const GOOGLE_PLACEHOLDER_RESTORE_RE = new RegExp(
+    `${GOOGLE_PLACEHOLDER_BIDI_CLASS}*[_\uFF3F]${GOOGLE_PLACEHOLDER_GAP_CLASS}[_\uFF3F]${GOOGLE_PLACEHOLDER_GAP_CLASS}`
+    + `D${GOOGLE_PLACEHOLDER_BIDI_CLASS}*A${GOOGLE_PLACEHOLDER_BIDI_CLASS}*I${GOOGLE_PLACEHOLDER_BIDI_CLASS}*T${GOOGLE_PLACEHOLDER_GAP_CLASS}`
+    + `[_\uFF3F]${GOOGLE_PLACEHOLDER_GAP_CLASS}`
+    + `K${GOOGLE_PLACEHOLDER_BIDI_CLASS}*E${GOOGLE_PLACEHOLDER_BIDI_CLASS}*E${GOOGLE_PLACEHOLDER_BIDI_CLASS}*P${GOOGLE_PLACEHOLDER_GAP_CLASS}`
+    + `[_\uFF3F]${GOOGLE_PLACEHOLDER_GAP_CLASS}`
+    + `(\\d${GOOGLE_PLACEHOLDER_BIDI_CLASS}*\\d${GOOGLE_PLACEHOLDER_BIDI_CLASS}*\\d)${GOOGLE_PLACEHOLDER_GAP_CLASS}`
+    + `[_\uFF3F]${GOOGLE_PLACEHOLDER_GAP_CLASS}[_\uFF3F]${GOOGLE_PLACEHOLDER_BIDI_CLASS}*`,
+    "gi"
+);
 
 const methods = {
     getGoogleTranslateKeys() {
@@ -624,8 +639,9 @@ const methods = {
     restoreGoogleTranslateText(text, tokens = []) {
         let output = String(text || "");
         if (!Array.isArray(tokens) || !tokens.length) return output;
-        output = output.replace(/__\s*DAIT\s*_\s*KEEP\s*_\s*(\d{3})\s*__/gi, (full, rawIndex) => {
-            const token = tokens[Number.parseInt(rawIndex, 10)];
+        output = output.replace(GOOGLE_PLACEHOLDER_RESTORE_RE, (full, rawIndex) => {
+            const index = Number.parseInt(String(rawIndex || "").replace(/\D/g, ""), 10);
+            const token = tokens[index];
             return token && token.value !== undefined ? String(token.value) : full;
         });
         tokens.forEach(token => {

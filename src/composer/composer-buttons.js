@@ -3,10 +3,22 @@
 const { PLUGIN_NAME } = require("../constants");
 
 const methods = {
+    isEditableComposerTextbox(node) {
+        if (!node) return false;
+        const contentEditableAttr = node.getAttribute?.("contenteditable");
+        if (typeof contentEditableAttr === "string" && contentEditableAttr.toLowerCase() === "false") return false;
+        if (typeof node.contentEditable === "string" && node.contentEditable.toLowerCase() === "false") return false;
+        const ariaDisabled = node.getAttribute?.("aria-disabled");
+        if (typeof ariaDisabled === "string" && ariaDisabled.toLowerCase() === "true") return false;
+        if (node.readOnly === true || node.disabled === true) return false;
+        return true;
+    },
+
     getComposerTextboxes() {
         const textboxes = [];
         const add = node => {
             if (!node || node.isConnected === false || textboxes.includes(node)) return;
+            if (!this.isEditableComposerTextbox(node)) return;
             if (this.plugin.isOwnPluginElement(node)) return;
             textboxes.push(node);
         };
@@ -31,16 +43,34 @@ const methods = {
     resolveLiveComposerForButton(button = null, fallbackTextbox = null) {
         const root = button?.closest?.("form, [class*='channelTextArea']") || null;
         let textbox = null;
-        if (root?.querySelector) {
+        if (root?.querySelectorAll) {
+            try {
+                const candidates = root.querySelectorAll("[role='textbox'][data-slate-editor='true'], [role='textbox'][contenteditable='true']") || [];
+                for (const candidate of candidates) {
+                    if (candidate && candidate.isConnected !== false
+                        && this.isEditableComposerTextbox(candidate)
+                        && !this.plugin.isOwnPluginElement(candidate)) {
+                        textbox = candidate;
+                        break;
+                    }
+                }
+            }
+            catch {}
+        }
+        else if (root?.querySelector) {
             try {
                 const candidate = root.querySelector("[role='textbox'][data-slate-editor='true'], [role='textbox'][contenteditable='true']");
-                if (candidate && candidate.isConnected !== false && !this.plugin.isOwnPluginElement(candidate)) textbox = candidate;
+                if (candidate && candidate.isConnected !== false
+                    && this.isEditableComposerTextbox(candidate)
+                    && !this.plugin.isOwnPluginElement(candidate)) {
+                    textbox = candidate;
+                }
             }
             catch {}
         }
         if (!textbox) {
             for (const candidate of [button?.__daitTextbox, fallbackTextbox]) {
-                if (candidate && candidate.isConnected !== false) {
+                if (candidate && candidate.isConnected !== false && this.isEditableComposerTextbox(candidate)) {
                     textbox = candidate;
                     break;
                 }
@@ -48,10 +78,10 @@ const methods = {
         }
         if (!textbox) {
             const active = this.plugin.getActiveTextbox();
-            if (active && active.isConnected !== false) textbox = active;
+            if (active && active.isConnected !== false && this.isEditableComposerTextbox(active)) textbox = active;
             else {
                 const fallback = this.plugin.getTextbox();
-                if (fallback && fallback.isConnected !== false) textbox = fallback;
+                if (fallback && fallback.isConnected !== false && this.isEditableComposerTextbox(fallback)) textbox = fallback;
             }
         }
         const composerKey = textbox ? this.getTextboxComposerKey(textbox) : "";
@@ -161,7 +191,12 @@ const methods = {
         if (!group?.querySelectorAll) return false;
         const polishOff = this.plugin.settings.polish?.enabled === false;
         const bilingualOff = !this.isPublicBilingualFeatureEnabled();
-        const session = this.plugin.polishSession;
+        const groupTextbox = group.__daitTextbox || null;
+        const groupComposerKey = groupTextbox ? this.getTextboxComposerKey(groupTextbox) : "";
+        const existingRestore = group.querySelector?.(".dait-polish-restore-button") || null;
+        const session = (groupComposerKey ? this.getPolishSessionForComposer(groupComposerKey, groupTextbox) : null)
+            || existingRestore?.__daitRestoreSession
+            || this.plugin.polishSession;
         const hasPolishedRestore = Boolean(session?.lastResultRawText || session?.lastResult);
         const hasBilingualRestore = Boolean(session?.lastBilingualRawText || session?.lastBilingualText);
         const dropRestore = (polishOff && bilingualOff)
@@ -235,15 +270,21 @@ const methods = {
             button?.__daitTextbox
         ].filter(Boolean);
         for (const textbox of candidates) {
-            if (!textbox || textbox.isConnected === false) continue;
+            if (!textbox || textbox.isConnected === false || !this.isEditableComposerTextbox(textbox)) continue;
             if (!expectedComposerKey || this.getTextboxComposerKey(textbox) === expectedComposerKey) return textbox;
         }
-        if (!expectedComposerKey) {
-            const activeTextbox = this.plugin.getActiveTextbox();
-            if (activeTextbox?.isConnected !== false) return activeTextbox;
-            const textbox = this.plugin.getTextbox();
-            if (textbox?.isConnected !== false) return textbox;
+        if (expectedComposerKey) {
+            for (const item of this.getComposerTextboxes()) {
+                if (item && item.isConnected !== false && this.getTextboxComposerKey(item) === expectedComposerKey) {
+                    return item;
+                }
+            }
+            return null;
         }
+        const activeTextbox = this.plugin.getActiveTextbox();
+        if (activeTextbox && activeTextbox.isConnected !== false && this.isEditableComposerTextbox(activeTextbox)) return activeTextbox;
+        const textbox = this.plugin.getTextbox();
+        if (textbox && textbox.isConnected !== false && this.isEditableComposerTextbox(textbox)) return textbox;
         return null;
     },
 
@@ -302,14 +343,29 @@ const methods = {
     syncInputRestoreButtonState(group, textbox, options = {}) {
         if (!group) return;
         const existing = group.querySelector?.(".dait-polish-restore-button");
-        if (!options.restoreSession && this.plugin.polishSession && textbox && textbox.isConnected !== false) {
+        const composerKey = textbox ? this.getTextboxComposerKey(textbox) : "";
+        const trackedSession = composerKey
+            ? this.getPolishSessionForComposer(composerKey, textbox)
+            : this.plugin.polishSession;
+        let clearedEmpty = false;
+        if (!options.restoreSession && trackedSession && textbox && textbox.isConnected !== false) {
             if (!this.plugin.composerWriter?.hasActiveWrite?.(textbox)
-                && this.plugin.polishSession.composerKey === this.getTextboxComposerKey(textbox)
+                && trackedSession.composerKey === composerKey
                 && !this.plugin.normalizeExtractedText(this.plugin.getTextboxDraftText(textbox))) {
-                this.plugin.polishSession = null;
+                this.clearPolishSession(composerKey);
+                clearedEmpty = true;
             }
         }
-        const session = options.restoreSession || this.plugin.polishSession;
+        const currentSession = clearedEmpty
+            ? null
+            : (composerKey ? this.getPolishSessionForComposer(composerKey, textbox) : this.plugin.polishSession);
+        const fallbackExisting = (!clearedEmpty
+            && existing?.__daitRestoreSession
+            && !this._clearedPolishSessions?.has?.(existing.__daitRestoreSession)
+            && (!composerKey || existing.__daitRestoreSession.composerKey === composerKey))
+            ? existing.__daitRestoreSession
+            : null;
+        const session = options.restoreSession || currentSession || fallbackExisting;
         const canRestore = Boolean(session && this.canRestorePolishOriginal(textbox, session));
         if (!canRestore) {
             existing?.remove?.();
@@ -434,7 +490,7 @@ const methods = {
         this.openInputActionMenu(group, textbox, container, button);
     },
 
-    openInputActionMenu(group, textbox = null, container = null, button = null) {
+    openInputActionMenu(group, textbox = null, _container = null, button = null) {
         if (typeof document === "undefined" || !document.body) return null;
         this.removePolishPresetMenu();
         this.removeInputActionMenu();
@@ -444,6 +500,11 @@ const methods = {
         menu.setAttribute("aria-label", this.plugin.t("inputActionMenu"));
         this.plugin.applyPanelTheme(menu);
 
+        if (textbox) {
+            const menuComposerKey = this.getTextboxComposerKey(textbox);
+            const menuSession = this.getPolishSessionForComposer(menuComposerKey, textbox);
+            if (menuSession) this.rememberPolishSession(menuSession);
+        }
         for (const { label, title, action } of this.plugin.discordHost.contextMenu.getComposerMenuItems(menu, group, textbox, button)) {
             const item = document.createElement("button");
             item.className = "dait-input-action-menu-item";
@@ -530,12 +591,19 @@ const methods = {
                 return;
             }
             if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
-            if (!menu.contains?.(event.target) && event.target !== button && !menu.contains?.(activeEl) && activeEl !== button) return;
+            const allowNavigation = !activeEl
+                || activeEl === document.body
+                || activeEl === document.documentElement
+                || menu.contains?.(activeEl)
+                || activeEl === button
+                || menu.contains?.(event.target)
+                || event.target === button;
+            if (!allowNavigation) return;
             const items = [...(menu.querySelectorAll?.(".dait-input-action-menu-item") || [])].filter(item => !item.disabled);
             if (!items.length) return;
             event.preventDefault?.();
             event.stopPropagation?.();
-            const currentIndex = items.indexOf(document.activeElement);
+            const currentIndex = items.indexOf(activeEl);
             let nextIndex = 0;
             if (event.key === "Home") nextIndex = 0;
             else if (event.key === "End") nextIndex = items.length - 1;

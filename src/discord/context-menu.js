@@ -35,9 +35,14 @@ class DiscordContextMenuAdapter {
 
     getMessageTarget(target) {
         if (!target || target.isConnected === false) return null;
-        if (typeof target.closest !== "function") return target.id ? { identity: String(target.id) } : null;
-        const messageNode = target.closest(DISCORD_MESSAGE_NODE_SELECTOR);
-        const content = messageNode && this.plugin.getMessageContentElement(messageNode);
+        const element = target.nodeType === 3 ? target.parentElement : target;
+        if (!element || element.isConnected === false) return null;
+        if (typeof element.closest !== "function") return element.id ? { identity: String(element.id) } : null;
+        const messageNode = element.closest(DISCORD_MESSAGE_NODE_SELECTOR);
+        const content = messageNode && (
+            this.plugin.resolveMessageContentForTarget?.(element, messageNode)
+            || this.plugin.getMessageContentElement(messageNode)
+        );
         if (!messageNode?.isConnected || !content?.isConnected || messageNode.contains?.(content) === false) return null;
 
         this.plugin.elementTextCache?.delete(content);
@@ -144,6 +149,7 @@ class DiscordContextMenuAdapter {
     }
 
     patchMessageMenus() {
+        if (!this.plugin.isStarted) return false;
         const bdApi = globalThis.BdApi;
         if (!this.plugin.settings?.ui?.injectMessageContextMenu || !bdApi?.ContextMenu?.patch || !bdApi.ContextMenu?.buildMenuChildren) {
             return false;

@@ -1,12 +1,12 @@
-# Architecture (v0.6.0)
+# Architecture (v0.6.1)
 
 ## Distribution Model
 
-BetterDiscord users install a single generated file: `DiscordAITranslator.plugin.js`. Contributors edit files under `src/`, and `npm run build` bundles `src/index.js` via esbuild into the root artifact. The bundle stays unminified for BetterDiscord security review, preserves the BetterDiscord metadata block at byte 0, exports the plugin class via CommonJS, and executes cleanly inside Electron's renderer sandbox with **zero `node:*` imports**.
+BetterDiscord users install a single generated file: `DiscordAITranslator.plugin.js`. Contributors edit files under `src/`, and `npm run build` bundles `src/index.js` via esbuild into the root artifact. The bundle stays unminified for BetterDiscord security review, preserves the BetterDiscord metadata block at byte 0, exports the plugin class via CommonJS, and executes cleanly inside Electron's renderer sandbox with **zero top-level Node module imports** (the only external `require(...)` call in the artifact is an optional `try/catch`-guarded `node:crypto` / `crypto` fast path inside `createMd5Hash`, backed by a pure-JS RFC 1321 MD5 fallback `md5HexFallback` and pure-JS SHA-256).
 
 ```mermaid
 flowchart TD
-    Entry["src/index.js -> src/discord-ai-translator.js (758L Lifecycle Shell)"]
+    Entry["src/index.js -> src/discord-ai-translator.js (Lifecycle Shell)"]
     Core["src/core/ (DisposableScope, EventBus, PluginContext, DelegateMethods)"]
     Presets["src/presets/ (59 Polish Presets + 6 Translation Templates)"]
     Settings["src/settings/ (SettingsStore, Schema, PanelTheme, ServiceProfiles, ui/*)"]
@@ -15,7 +15,7 @@ flowchart TD
     Composer["src/composer/ (ComposerWriter, ComposerUiController, PolishWorkflow, Bilingual)"]
     Discord["src/discord/ (DiscordHostAdapter -> Selectors, Stores, ContextMenu, Observer, Extractor, LineDOM, ScrollAnchor, Slate)"]
     Quick["src/quick-panel/ (QuickPanel Dual-Mode Popover & Status Badge)"]
-    Support["src/cache/, src/validation/, src/diagnostics/, src/intake/, src/css/, src/i18n/* (6 Locales)"]
+    Support["src/cache/, src/validation/, src/diagnostics/, src/intake/, src/ui/, src/css/, src/i18n/* (6 Locales)"]
 
     Entry --> Core
     Entry --> Settings
@@ -35,7 +35,7 @@ flowchart TD
 
 ## Module Map (`src/`)
 
-- **`src/discord-ai-translator.js`** (~760 lines, 30 explicit class methods): Thin BetterDiscord plugin lifecycle shell (`start`, `stop`, `flushPendingPersistence`, `t`/`getLocale`, `formatError`, `injectStyles`/`removeStyles`, domain event subscriptions, and declarative prototype/state bridges preserving legacy white-box test contracts).
+- **`src/discord-ai-translator.js`** (~870 lines, 31 explicit class methods): Thin BetterDiscord plugin lifecycle shell (`start`, `stop`, `flushPendingPersistence`, `t`/`getLocale`, `formatError`, `injectStyles`/`removeStyles`, domain event subscriptions, and declarative prototype/state bridges preserving legacy white-box test contracts).
 - **`src/core/`** (all `// @ts-check`):
   - `disposable-scope.js` (`DisposableScope`): Unified resource cleanup for timers, RAF/idle callbacks, DOM listeners, AbortControllers, and child scopes (`start()` wires global listeners and reset-focus timers onto `runtimeScope`; UI controllers resolve live child scopes across `start()`/`stop()` cycles).
   - `event-bus.js` (`EventBus`): Isolated synchronous pub/sub bus connecting `ProviderLayer`, `AutoTranslationQueueCore`, lifecycle transitions, settings changes, and `QuickPanel`.
@@ -63,13 +63,14 @@ flowchart TD
   - `src/validation/{output-guard,prompt-policy}.js`: Output integrity checks & prompt/mention protection rules.
   - `src/diagnostics/{diagnostics-recorder,diagnostic-labels}.js`: Redacted diagnostics recording and export.
   - `src/quick-panel/quick-panel.js`: Bottom-left AI launcher badge and dual-mode quick popover.
-  - `src/intake/{discord-markup,emoji-text}.js`, `src/ui/host-health-card.js`, `src/css/*`, `src/i18n.js`, `src/constants.js`.
+  - `src/i18n.js` & `src/i18n/{locales,zh-CN,zh-TW,en,ru,ar,es}.js`: Modular 6-language UI dictionaries (`zh-CN`, `zh-TW`, `en`, `ru`, `ar`, `es`) with BCP-47 locale normalization and RTL metadata.
+  - `src/intake/{discord-markup,emoji-text}.js`, `src/ui/{host-health-card,pixel-icons}.js`, `src/css/*`, `src/constants.js`.
 
 ## Verification & Quality Guardrails
 
-- **Static checks**: `npm run check` (`node --check` + version sync across `package.json`, `package-lock.json`, `src/metadata.txt`), `npm run lint` (ESLint across `src/`, `scripts/`, `tests/`), `npm run typecheck` (`tsc -p jsconfig.json --noEmit` covering 43 of 90 `src/` JS modules across `src/core/`, `src/presets/`, `src/providers/adapters/`, `src/discord/`, and pure state/schema/intake helpers), and `tests/core/i18n-integrity.test.js` (0 missing/orphaned i18n keys).
+- **Static checks**: `npm run check` (`node --check` + version sync across `package.json`, `package-lock.json`, `src/metadata.txt`), `npm run lint` (ESLint with strict `no-unused-vars` across `src/`, `scripts/`, `tests/`), `npm run typecheck` (`tsc -p jsconfig.json --noEmit` covering **all 97 of 97 `src/` JS modules** with `src/types/plugin-globals.d.ts`), and `tests/core/i18n-integrity.test.js` (0 missing/orphaned i18n keys across 6 locales).
 - **Automated tests**:
   - `npm run test:core`: Focused unit & audit suites under `tests/core/` (including `provider-plugin-extensibility.test.js`, `auto-state-machine.test.js`, `core-primitives.test.js`, `presets-and-css-build.test.js`).
   - `npm run test:plugin` / `npm run test:integration`: Runs 9 modular domain regression suites (`tests/integration/suites/01-*.js` through `09-*.js`) directly against the built `DiscordAITranslator.plugin.js` artifact via the slim `scripts/verify-plugin.js` runner.
-  - `npm run test:installer` & `npm run artifact:check`: BetterDiscord Windows installer rollback tests + BetterDiscord renderer sandbox load & size check (< 2.50 MB).
+  - `npm run test:installer` & `npm run artifact:check`: BetterDiscord Windows installer rollback tests + BetterDiscord renderer sandbox load, external `require(...)` allowlist, & size check (< 3.50 MB; current bundle ~2.79 MB).
   - `npm run release:check`: Full Windows CI release gate (MIT license, secret/private-path scan, Git index checks, and full `npm run ci`).

@@ -99,6 +99,7 @@ module.exports = class DiscordAITranslator {
         this.settingsDirtyTimer = null;
         this.settingsDirtyAt = 0;
         this.settingsDirty = false;
+        this.settingsLoaded = false;
         this.settingsLoadBlocked = false;
         this.dataLoadFailures = new Set();
         this.translationCache = new Map();
@@ -214,8 +215,9 @@ module.exports = class DiscordAITranslator {
         this.mediaViewerProbeOpen = false;
         this.inputComposerBusyUntil = 0;
         this.unpatches = [];
-        this.boundKeydown = this.handleKeydown.bind(this);
-        this.boundViewportScan = this.queueViewportScan.bind(this);
+        const self = /** @type {any} */ (this);
+        this.boundKeydown = self.handleKeydown.bind(this);
+        this.boundViewportScan = self.queueViewportScan.bind(this);
         this.inputButtonScanTimer = null;
         this.inputButtonScanDueAt = 0;
         this.lightweightButtonRecoveryRoots = new Set();
@@ -232,6 +234,7 @@ module.exports = class DiscordAITranslator {
         this.textboxReplacementCleanupTimers = [];
         this.textboxReplacementCleanupRafs = [];
         this.polishSession = null;
+        this.polishSessionsByComposer = new Map();
         this.latestPolishRequestIds = new WeakMap();
         this.polishResultPanel = null;
         this.polishResultPanelCleanup = null;
@@ -270,13 +273,14 @@ module.exports = class DiscordAITranslator {
 
     start() {
         if (this.lifecycleStarted && this.isStarted) return false;
+        const self = /** @type {any} */ (this);
         this.lifecycleStarted = true;
         this.lifecycleToken++;
         this.isStarted = true;
         this.apiRequestsClosed = false;
         this.runtimeScope.reset();
         try {
-            this.resetDiscordMessageStoreCache();
+            self.resetDiscordMessageStoreCache();
             const unsavedDiagnostics = Boolean(this.diagnosticLogsDirty);
             if (!unsavedDiagnostics) {
                 this.diagnosticLogs = [];
@@ -284,35 +288,36 @@ module.exports = class DiscordAITranslator {
                 this.diagnosticLogsLoaded = false;
             }
             if (!this.settingsLoadBlocked && this.googleTranslateRuntimeDirty) {
-                this.flushGoogleTranslateRuntimeState({ retryOnError: false });
+                self.flushGoogleTranslateRuntimeState({ retryOnError: false });
             }
             if (!this.settingsLoadBlocked && this.settingsDirty) {
-                this.flushSettings({ retryOnError: false });
-                if (this.settingsDirty) this.scheduleSettingsPersist();
+                self.flushSettings({ retryOnError: false });
+                if (this.settingsDirty) self.scheduleSettingsPersist();
             }
-            const settingsLoaded = (this.settingsLoadBlocked || !this.settingsDirty) && this.loadSettings() === true;
-            try { this.migrateLegacyDataStores(); }
-            catch (error) { this.warnSanitized("Data store migration failed; old data kept", error); }
+            const settingsLoaded = (this.settingsLoadBlocked || !this.settingsDirty) && self.loadSettings() === true;
+            if (settingsLoaded) this.settingsLoaded = true;
+            try { self.migrateLegacyDataStores(); }
+            catch (error) { self.warnSanitized("Data store migration failed; old data kept", error); }
             if (settingsLoaded && this.settingsStore.diagnosticsDisabledInStoredSettings) {
-                const storedDiagnostics = unsavedDiagnostics ? null : this.loadData(DIAGNOSTIC_DATA_KEY);
+                const storedDiagnostics = unsavedDiagnostics ? null : self.loadData(DIAGNOSTIC_DATA_KEY);
                 const storedLogs = Array.isArray(storedDiagnostics) ? storedDiagnostics : storedDiagnostics?.logs;
                 if (unsavedDiagnostics || (!this.dataLoadFailures.has(DIAGNOSTIC_DATA_KEY) && Array.isArray(storedLogs) && storedLogs.length)) {
-                    this.disableDiagnosticLogging();
+                    self.disableDiagnosticLogging();
                 }
             }
             else if (unsavedDiagnostics) {
-                if (this.flushDiagnosticLogs({ retryOnError: false }) === false) this.scheduleDiagnosticLogsPersist();
+                if (self.flushDiagnosticLogs({ retryOnError: false }) === false) self.scheduleDiagnosticLogsPersist();
             }
             else if (this.settings.ui?.diagnosticsEnabled) {
-                this.loadDiagnosticLogs({ keepLogged: true });
+                self.loadDiagnosticLogs({ keepLogged: true });
             }
-            if (this.translationCacheDirty) this.flushTranslationCache({ retryOnError: false });
-            if (!this.translationCacheDirty) this.loadTranslationCache();
-            else this.scheduleTranslationCachePersist();
+            if (this.translationCacheDirty) self.flushTranslationCache({ retryOnError: false });
+            if (!this.translationCacheDirty) self.loadTranslationCache();
+            else self.scheduleTranslationCachePersist();
             this.injectStyles();
             this.panelTheme.startWatching();
-            this.patchMessageContextMenu();
-            this.startObserver();
+            self.patchMessageContextMenu();
+            self.startObserver();
             this.runtimeScope.on(document, "keydown", this.boundKeydown, true);
             this.runtimeScope.on(window, "scroll", this.boundViewportScan, { capture: true, passive: true });
             this.runtimeScope.on(window, "resize", this.boundViewportScan, { capture: true, passive: true });
@@ -320,16 +325,16 @@ module.exports = class DiscordAITranslator {
             this.runtimeScope.on(document, "visibilitychange", this.boundViewportScan, true);
             this.runtimeScope.on(window, "pagehide", this.getPageHideHandler(), true);
             this.runtimeScope.on(window, "beforeunload", this.getPageHideHandler(), true);
-            this.queueScan();
+            self.queueScan();
             this.events.emit("lifecycle:start", { version: PLUGIN_VERSION, token: this.lifecycleToken });
             this.showToast(this.t("pluginStarted", { version: PLUGIN_VERSION }), "success");
             return true;
         }
         catch (error) {
-            this.warnSanitized("Plugin start failed; rolling back partial initialization", error);
+            self.warnSanitized("Plugin start failed; rolling back partial initialization", error);
             try { this.stop(); }
             catch (cleanupError) {
-                this.warnSanitized("Plugin start rollback failed", cleanupError);
+                self.warnSanitized("Plugin start rollback failed", cleanupError);
                 this.isStarted = false;
                 this.lifecycleStarted = false;
                 this.lifecycleToken++;
@@ -340,6 +345,7 @@ module.exports = class DiscordAITranslator {
     }
 
     stop() {
+        const self = /** @type {any} */ (this);
         this.isStarted = false;
         this.lifecycleStarted = false;
         this.lifecycleToken++;
@@ -349,70 +355,74 @@ module.exports = class DiscordAITranslator {
         this.panelTheme.stopWatching();
         if (this.observerRebindTimer) clearTimeout(this.observerRebindTimer);
         if (this.observerRetryTimer) clearTimeout(this.observerRetryTimer);
-        this.cancelHeavyPersistenceIdle("diagnostics");
-        this.cancelHeavyPersistenceIdle("cache");
+        self.cancelHeavyPersistenceIdle("diagnostics");
+        self.cancelHeavyPersistenceIdle("cache");
         if (this.scanTimer) clearTimeout(this.scanTimer);
-        this.cancelIncrementalMessageScan();
+        self.cancelIncrementalMessageScan();
         if (this.cacheOnlyScanTimer) clearTimeout(this.cacheOnlyScanTimer);
         if (this.inputButtonScanTimer) clearTimeout(this.inputButtonScanTimer);
         if (this.quickSettingsRetryTimer) clearTimeout(this.quickSettingsRetryTimer);
         if (this.quickSettingsOpenTimer) clearTimeout(this.quickSettingsOpenTimer);
-        this.cleanupQuickSettingsLauncherObserver();
-        this.cancelQuickSettingsModalVerify();
-        if (this.autoTranslationRetryTimer) clearTimeout(this.autoTranslationRetryTimer);
-        this.cancelAutoTranslationRenderQueue();
-        this.clearTranslationErrorWaitTimers();
+        self.cleanupQuickSettingsLauncherObserver();
+        self.cancelQuickSettingsModalVerify();
+        if (self.autoTranslationRetryTimer) clearTimeout(self.autoTranslationRetryTimer);
+        self.cancelAutoTranslationRenderQueue();
+        self.clearTranslationErrorWaitTimers();
         if (this.settingsDirtyTimer) clearTimeout(this.settingsDirtyTimer);
         if (this.translationCacheDirtyTimer) clearTimeout(this.translationCacheDirtyTimer);
         if (this.googleTranslateRuntimeDirtyTimer) clearTimeout(this.googleTranslateRuntimeDirtyTimer);
         if (this.diagnosticLogsDirtyTimer) clearTimeout(this.diagnosticLogsDirtyTimer);
         this.apiRequestsClosed = true;
-        this.abortAutoTranslationRequests("stop");
-        this.abortActiveApiRequests();
+        self.abortAutoTranslationRequests("stop");
+        self.abortManualTranslationRequests?.("stop");
+        self.abortActiveApiRequests();
         this.providerLayer.apiTestRuns?.forEach?.((run, key) => {
             run?.controller?.abort?.();
             this.providerLayer.apiTestRuns.set(key, { sequence: run?.sequence || 0 });
         });
         this.providerLayer.runningApiTests?.clear?.();
-        this.modelDetectionRuns?.forEach?.((run, key) => {
+        self.modelDetectionRuns?.forEach?.((run, key) => {
             run?.controller?.abort?.();
-            this.modelDetectionRuns.set(key, { sequence: run?.sequence || 0 });
+            self.modelDetectionRuns.set(key, { sequence: run?.sequence || 0 });
         });
         this.composerWriter.cancelAll("stop");
-        this.clearHotkeyRecording();
-        this.clearPolishSubmitTimer();
-        this.cancelPendingConfirmDialogs();
-        this.cancelTextboxReplacementCleanup();
+        self.clearHotkeyRecording();
+        self.clearPolishSubmitTimer();
+        self.cancelPendingConfirmDialogs();
+        self.cancelTextboxReplacementCleanup();
         this.localProviderHealthChecks.clear();
         this.localProviderHealthProbeStartedAt.clear();
         this.localProviderHealthyKeys.clear();
-        this.autoTranslationPrecheckSkips.clear();
+        self.autoTranslationPrecheckSkips.clear();
         this.googleTranslateReservedChars.clear();
         if (typeof document !== "undefined") {
-            document.querySelectorAll?.(".dait-settings")?.forEach(panel => this.commitSettingsControls?.(panel));
+            document.querySelectorAll?.(".dait-settings")?.forEach(panel => self.commitSettingsControls?.(panel));
         }
-        this.closeQuickSettingsPanel(null, "stop");
-        const translationCachePersisted = this.flushTranslationCache({ retryOnError: false }) !== false;
-        this.flushGoogleTranslateRuntimeState({ retryOnError: false });
-        this.flushSettings({ force: true, retryOnError: false });
-        const diagnosticLogsPersisted = this.flushDiagnosticLogs({ retryOnError: false }) !== false;
-        this.unpatchContextMenus();
-        this.removePolishResultPanel();
-        this.removePolishRestoreControl();
-        this.removeInputActionMenu();
-        this.removePolishPresetMenu();
-        this.cancelLightweightButtonRecovery();
+        self.closeQuickSettingsPanel(null, "stop");
+        const translationCachePersisted = self.flushTranslationCache({ retryOnError: false }) !== false;
+        self.flushGoogleTranslateRuntimeState({ retryOnError: false });
+        self.flushSettings({ force: true, retryOnError: false });
+        const diagnosticLogsPersisted = self.flushDiagnosticLogs({ retryOnError: false }) !== false;
+        self.unpatchContextMenus();
+        self.removePolishResultPanel();
+        self.removePolishRestoreControl();
+        self.removeInputActionMenu();
+        self.removePolishPresetMenu();
+        self.cancelLightweightButtonRecovery();
         this.nonTranslatableMessageCache = typeof WeakMap === "function" ? new WeakMap() : null;
         this.lastMissingMessageButtonSweepAt = 0;
         this.polishSession = null;
+        this.polishSessionsByComposer?.clear?.();
         this.latestPolishRequestIds = new WeakMap();
         this.quickPanel.destroy("stop");
         if (typeof document !== "undefined") {
-            document.querySelectorAll?.(".dait-settings")?.forEach(panel => this.destroySettingsModalSizing(panel));
+            document.querySelectorAll?.(".dait-settings")?.forEach(panel => self.destroySettingsModalSizing(panel));
         }
-        this.restoreAllTranslationSourceVisibility();
-        document.querySelectorAll(".dait-message-button, .dait-polish-button, .dait-polish-preset-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-menu-button, .dait-input-action-menu, .dait-polish-preset-menu, .dait-quick-settings-button, .dait-translation-line, .dait-translation-box, .dait-input-action-group").forEach(node => node.remove());
-        document.querySelectorAll(".dait-input-actions-host").forEach(node => node.classList?.remove?.("dait-input-actions-host"));
+        self.restoreAllTranslationSourceVisibility();
+        if (typeof document !== "undefined" && typeof document.querySelectorAll === "function") {
+            document.querySelectorAll(".dait-message-button, .dait-polish-button, .dait-polish-preset-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-menu-button, .dait-input-action-menu, .dait-polish-preset-menu, .dait-quick-settings-button, .dait-translation-line, .dait-translation-box, .dait-input-action-group").forEach(node => node.remove());
+            document.querySelectorAll(".dait-input-actions-host").forEach(node => node.classList?.remove?.("dait-input-actions-host"));
+        }
         this.removeStyles();
         if (translationCachePersisted) {
             this.translationCache.clear();
@@ -430,7 +440,7 @@ module.exports = class DiscordAITranslator {
         }
         this.localProviderModelDetections.clear();
         this.dismissedTranslationMessages.clear();
-        this.discordMarkupDisplayTextMemo?.clear?.();
+        self.discordMarkupDisplayTextMemo?.clear?.();
         if (this.translationCacheDirtyTimer) clearTimeout(this.translationCacheDirtyTimer);
         this.translationCacheDirtyTimer = null;
         this.translationCacheDirtyAt = 0;
@@ -448,6 +458,9 @@ module.exports = class DiscordAITranslator {
             this.overviewStatusRefreshTimer = null;
         }
         this.quickSettingsPress = null;
+        this.quickSettingsPanelSettingsButton = null;
+        this.quickSettingsPanelContainer = null;
+        this.quickSettingsPanelTargetLookupBlockedUntil = 0;
         if (diagnosticLogsPersisted) this.quickSettingsDiagnosticLogs = [];
         if (translationCachePersisted) this.persistentTranslationCacheCount = 0;
         if (diagnosticLogsPersisted) {
@@ -461,10 +474,10 @@ module.exports = class DiscordAITranslator {
         this.diagnosticLogsDirty = !diagnosticLogsPersisted;
         this.diagnosticLogsPersistenceDeferredSince = 0;
         this.translationRequests.clear();
-        this.autoTranslationPartialResults?.clear?.();
+        self.autoTranslationPartialResults?.clear?.();
         this.autoStateMachine.resetAll();
         this.autoCooldowns.clearAll();
-        this.cancelCachedTranslationDrawPass();
+        self.cancelCachedTranslationDrawPass();
         this.cachedDrawMemo.clear();
         this.cachedDrawMessageMemo = new WeakMap();
         this.cachedDrawScroller = null;
@@ -498,8 +511,8 @@ module.exports = class DiscordAITranslator {
         this.mediaViewerProbeAt = 0;
         this.mediaViewerProbeOpen = false;
         this.inputComposerBusyUntil = 0;
-        this.autoTranslationRetryTimer = null;
-        this.autoTranslationRetryAt = 0;
+        self.autoTranslationRetryTimer = null;
+        self.autoTranslationRetryAt = 0;
         this.autoTranslationViewportBusyUntil = 0;
         this.autoTranslationViewportStableAnchor = "";
         this.autoTranslationViewportStableScans = 0;
@@ -513,7 +526,7 @@ module.exports = class DiscordAITranslator {
         this.discordThemeCacheEpoch++;
         this.discordThemeGlobalCandidatesCache = null;
         this.discordThemeVariableValuesCache = null;
-        this.resetDiscordMessageStoreCache();
+        self.resetDiscordMessageStoreCache();
         this.discordHost?.resetRuntimeCaches?.();
         this.events.emit("lifecycle:stop", { token: this.lifecycleToken });
     }
@@ -526,17 +539,18 @@ module.exports = class DiscordAITranslator {
     // A reload or quit may not call stop(), so save what the debounce and busy-deferral timers still hold.
     // Each flush is a no-op when nothing is dirty; none of them schedules a retry.
     flushPendingPersistence(reason = "pagehide") {
+        const self = /** @type {any} */ (this);
         const results = {};
-        [
-            ["cache", () => this.flushTranslationCache({ retryOnError: false })],
-            ["google", () => this.flushGoogleTranslateRuntimeState({ retryOnError: false })],
-            ["settings", () => this.flushSettings({ retryOnError: false })],
-            ["diagnostics", () => this.flushDiagnosticLogs({ retryOnError: false })]
-        ].forEach(([name, flush]) => {
+        /** @type {Array<[string, () => any]>} */ ([
+            ["cache", () => self.flushTranslationCache({ retryOnError: false })],
+            ["google", () => self.flushGoogleTranslateRuntimeState({ retryOnError: false })],
+            ["settings", () => self.flushSettings({ retryOnError: false })],
+            ["diagnostics", () => self.flushDiagnosticLogs({ retryOnError: false })]
+        ]).forEach(([name, flush]) => {
             try { results[name] = flush() !== false; }
             catch (error) {
                 results[name] = false;
-                this.warnSanitized(`Persist on ${reason} failed for ${name}`, error);
+                self.warnSanitized(`Persist on ${reason} failed for ${name}`, error);
             }
         });
         return results;
@@ -585,12 +599,12 @@ module.exports = class DiscordAITranslator {
     }
 
     // --- QuickPanel public entrypoints ---
-    toggleQuickPopover(...args) { return this.quickPanel.toggle(...args); }
-    openQuickPopover(...args) { return this.quickPanel.open(...args); }
-    closeQuickPopover(...args) { return this.quickPanel.close(...args); }
-    isQuickPopoverOpen(...args) { return this.quickPanel.isOpen(...args); }
-    getLauncherStatus(...args) { return this.quickPanel.getStatus(...args); }
-    requestLauncherStatusUpdate(...args) { return this.quickPanel.requestStatusUpdate(...args); }
+    toggleQuickPopover(...args) { return (/** @type {any} */ (this.quickPanel.toggle))(...args); }
+    openQuickPopover(...args) { return (/** @type {any} */ (this.quickPanel.open))(...args); }
+    closeQuickPopover(...args) { return (/** @type {any} */ (this.quickPanel.close))(...args); }
+    isQuickPopoverOpen(...args) { return (/** @type {any} */ (this.quickPanel.isOpen))(...args); }
+    getLauncherStatus(...args) { return (/** @type {any} */ (this.quickPanel.getStatus))(...args); }
+    requestLauncherStatusUpdate(...args) { return (/** @type {any} */ (this.quickPanel.requestStatusUpdate))(...args); }
 
     // --- Read-only task-state diagnostics surface ---
     getAutoTranslationTaskSnapshot(cacheKey) { return this.taskState.getTaskSnapshot(cacheKey); }
@@ -608,6 +622,20 @@ module.exports = class DiscordAITranslator {
         return result;
     }
 
+    translateMessageFromContextTarget(target) {
+        const self = /** @type {any} */ (this);
+        const element = target?.nodeType === 3 ? target.parentElement : target;
+        const messageNode = element?.closest?.("[id^='chat-messages-'], [data-list-item-id*='chat-messages']");
+        const content = messageNode
+            ? (self.resolveMessageContentForTarget?.(element, messageNode) || self.getMessageContentElement(messageNode))
+            : null;
+        if (!messageNode || !content) {
+            this.showToast(this.t("messageMissing"), "error");
+            return;
+        }
+        return self.translateMessage(messageNode, content);
+    }
+
     formatError(error, options = {}) {
         const message = this.getFriendlyErrorMessage(error, options);
         return message.length > 480 ? `${message.slice(0, 480)}...` : message;
@@ -616,6 +644,7 @@ module.exports = class DiscordAITranslator {
     // options.includeRetry: add the automatic retry wait; only auto-translation notices
     // want it (for polish or manual translation it is an internal scheduling detail).
     getFriendlyErrorMessage(error, options = {}) {
+        const self = /** @type {any} */ (this);
         const status = Number(error?.status || 0);
         const rawMessage = String(error?.message || "");
         // HTTP errors and Baidu error codes carry provider text, never shown as-is.
@@ -626,18 +655,23 @@ module.exports = class DiscordAITranslator {
             DATA_SAVE_UNAVAILABLE: "errorSaveFailed"
         };
         let message = "";
-        if (this.isRequestCancelled(error)) message = this.t("errorCancelled");
+        if (self.isRequestCancelled(error)) message = this.t("errorCancelled");
         else if (Object.hasOwn(API_ENDPOINT_ERROR_MESSAGE_KEYS, error?.code)) message = this.t(API_ENDPOINT_ERROR_MESSAGE_KEYS[error.code]);
         else if (error?.code === "CLIPBOARD_UNAVAILABLE") message = this.t("clipboardUnavailable");
         else if (error?.manualTranslationRescueFailed) message = this.t("manualTranslateRescueFailed");
         else if (error?.modelOutputTruncated) {
-            message = error?.taskKind === "polish"
-                ? this.t("errorOutputTruncatedPolish")
-                : error?.taskKind === "translation"
-                    ? this.t("errorOutputTruncatedTranslation")
-                    : this.t("errorOutputTruncated");
+            if (error?.connectionTest || error?.connectionTestTruncated) {
+                message = this.t("errorOutputTruncated");
+            }
+            else {
+                message = error?.taskKind === "polish"
+                    ? this.t("errorOutputTruncatedPolish")
+                    : error?.taskKind === "translation"
+                        ? this.t("errorOutputTruncatedTranslation")
+                        : this.t("errorOutputTruncated");
+            }
         }
-        else if (this.isTimeoutError(error)) message = this.t("errorTimeout");
+        else if (self.isTimeoutError(error)) message = this.t("errorTimeout");
         else if (error?.localProviderUnavailable) message = this.t("errorLocalProviderUnavailable");
         else if (providerCoded && error?.providerLanguageUnsupported) message = this.t("errorLanguageUnsupported");
         else if (providerCoded && error?.providerIpRejected) message = this.t("errorIpNotAllowed");
@@ -649,7 +683,7 @@ module.exports = class DiscordAITranslator {
         else if (status === 401 || status === 403) message = this.t("errorUnauthorized");
         else if (status === 429) message = this.t("errorRateLimited");
         else if (status >= 500) message = this.t("errorServer");
-        else if (this.isNetworkError(error)) message = this.t("errorNetwork");
+        else if (self.isNetworkError(error)) message = this.t("errorNetwork");
         else if (error?.baiduApiError) message = this.t("errorProviderRequestRejected");
         else if (rawMessage === "API_ERROR") {
             // A wrong base URL (404/405) or model name is fixed in the endpoint and model settings.
@@ -686,6 +720,7 @@ module.exports = class DiscordAITranslator {
     // panel the reset came from, whose new reset button takes the focus.
     refreshOpenSettingsPanels(sourcePanel = null) {
         if (typeof document === "undefined") return 0;
+        const self = /** @type {any} */ (this);
         const panels = new Set();
         if (sourcePanel) panels.add(sourcePanel);
         document.querySelectorAll?.(".dait-settings")?.forEach(panel => panels.add(panel));
@@ -698,7 +733,7 @@ module.exports = class DiscordAITranslator {
             // The reset put the default tab back; the new panel is built on the tab this one shows.
             const activeTab = panel.__daitSettingsUi?.activeTab;
             if (activeTab && this.settings?.ui) this.settings.ui.settingsActiveTab = activeTab;
-            const next = this.replaceSettingsPanelElement(panel, this.getSettingsPanel({ quickSettings }));
+            const next = self.replaceSettingsPanelElement(panel, self.getSettingsPanel({ quickSettings }));
             if (!next) return;
             replaced++;
             if (panel === sourcePanel) rebuiltSource = next;
@@ -711,18 +746,19 @@ module.exports = class DiscordAITranslator {
     // The focused reset button left with the old panel. BetterDiscord's dialog hands the focus back to it once it
     // has finished closing, which leaves the focus nowhere, so the new button is focused again then.
     focusSettingsResetControl(panel) {
+        const self = /** @type {any} */ (this);
         const target = () => {
             const button = panel?.querySelector?.("[data-dait-action='resetSettings']");
             if (button && !button.closest?.("[hidden]")) return button;
             const state = panel?.__daitSettingsUi;
             return state?.tabs?.find(tab => tab.id === state.activeTab)?.button || null;
         };
-        this.focusSettingsElement(target());
+        self.focusSettingsElement(target());
         if (typeof setTimeout !== "function") return;
         [300, 1000].forEach(delay => this.runtimeScope.setTimeout(() => {
             if (!panel?.isConnected || typeof document === "undefined") return;
             const active = document.activeElement;
-            if (!active || active === document.body || active.isConnected === false) this.focusSettingsElement(target());
+            if (!active || active === document.body || active.isConnected === false) self.focusSettingsElement(target());
         }, delay, { unref: true }));
     }
 
@@ -794,7 +830,7 @@ installPrototypeBridge(module.exports.prototype, "composerUi", COMPOSER_UI_METHO
 installPrototypeBridge(module.exports.prototype, "serviceProfiles", SERVICE_PROFILES_METHOD_NAMES);
 installPrototypeBridge(module.exports.prototype, "promptPolicy", PROMPT_POLICY_METHOD_NAMES);
 installPrototypeBridge(module.exports.prototype, "manualTranslation", MANUAL_TRANSLATION_METHOD_NAMES);
-for (const [prop, methodNames] of DISCORD_HOST_BRIDGES) {
+for (const [prop, methodNames] of /** @type {Array<[string, string[]]>} */ (DISCORD_HOST_BRIDGES)) {
     installPrototypeBridge(module.exports.prototype, prop, methodNames);
 }
 

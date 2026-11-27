@@ -88,7 +88,7 @@ const LOCALE_ALIASES = Object.freeze({
 
 const LANGUAGE_PRESET_LOCALIZED_NAMES = Object.freeze({
     "zh-TW": Object.freeze({
-        "汉语": "漢語",
+        "汉语": "簡體中文",
         "繁體中文": "繁體中文",
         "英语": "英語",
         "西班牙语": "西班牙語",

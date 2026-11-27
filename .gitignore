@@ -26,9 +26,10 @@ DiscordAITranslator-handoff-*.zip
 # Local reverse-engineering/reference checkout (GPL-2.0; not part of this project)
 /external/
 
-# Local agent state
+# Local agent state and local review drafts
 /.agents/
 /.claude/
+/codex-*.md
 
 # Local browser profiles (headless Chrome/Edge user-data folders used for previews and smoke tests)
 /.chrome-*/

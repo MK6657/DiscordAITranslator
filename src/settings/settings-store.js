@@ -184,7 +184,14 @@ class SettingsStore {
 
     normalizeTaskTemperature(kind, value) {
         const fallback = Number(DEFAULT_SETTINGS[kind]?.temperature ?? 0.2);
-        if (value === "" || value === null || value === undefined || typeof value === "boolean") return fallback;
+        if (
+            value === null
+            || value === undefined
+            || (typeof value !== "number" && typeof value !== "string")
+            || (typeof value === "string" && !value.trim())
+        ) {
+            return fallback;
+        }
         const numeric = Number(value);
         if (!Number.isFinite(numeric)) return fallback;
         return Math.min(2, Math.max(0, Math.round(numeric * 100) / 100));
@@ -192,13 +199,47 @@ class SettingsStore {
 
     normalizeTaskMaxTokens(kind, value) {
         const fallback = Number(DEFAULT_SETTINGS[kind]?.maxTokens ?? 1000);
-        if (value === "" || value === null || value === undefined || typeof value === "boolean") return fallback;
+        if (
+            value === null
+            || value === undefined
+            || (typeof value !== "number" && typeof value !== "string")
+            || (typeof value === "string" && !value.trim())
+        ) {
+            return fallback;
+        }
         const numeric = Number(value);
         if (!Number.isFinite(numeric)) return fallback;
         return Math.min(65536, Math.max(1, Math.round(numeric)));
     }
 
+    ensureSettingsLoadedBeforeMutation() {
+        if (
+            this.plugin.settingsLoaded
+            || this.plugin.lifecycleStarted
+            || this.plugin.settingsDirty
+            || this.plugin.settingsLoadBlocked
+        ) {
+            return false;
+        }
+        const bdApi = globalThis.BdApi;
+        if (typeof bdApi?.Data?.load !== "function" && typeof bdApi?.loadData !== "function") {
+            return false;
+        }
+        let stored;
+        try {
+            stored = this.readDataStore(PLUGIN_NAME, DATA_KEY);
+        }
+        catch {
+            return this.loadSettings();
+        }
+        if (stored && typeof stored === "object" && !Array.isArray(stored) && Object.keys(stored).length > 0) {
+            return this.loadSettings();
+        }
+        return false;
+    }
+
     applyPromptTemplate(kind, templateId) {
+        this.ensureSettingsLoadedBeforeMutation();
         const template = this.getPromptTemplates(kind).find(item => item.id === templateId);
         if (!template) return;
 
@@ -214,6 +255,7 @@ class SettingsStore {
     }
 
     savePromptTemplate(kind, name, prompt, options = {}) {
+        this.ensureSettingsLoadedBeforeMutation();
         const templates = this.getPromptTemplates(kind);
         const used = new Set(templates.map(template => template.serial).filter(Boolean));
         const template = {
@@ -234,6 +276,7 @@ class SettingsStore {
     }
 
     updatePromptTemplate(kind, templateId, prompt) {
+        this.ensureSettingsLoadedBeforeMutation();
         const template = this.getPromptTemplates(kind).find(item => item.id === templateId);
         if (!template) return;
 
@@ -255,6 +298,7 @@ class SettingsStore {
     }
 
     deletePromptTemplate(kind, templateId) {
+        this.ensureSettingsLoadedBeforeMutation();
         const templates = this.getPromptTemplates(kind);
         const index = templates.findIndex(item => item.id === templateId);
         if (index < 0) return;
@@ -319,6 +363,7 @@ class SettingsStore {
     }
 
     restoreMissingBuiltInPromptTemplates(kind, options = {}) {
+        this.ensureSettingsLoadedBeforeMutation();
         const task = this.plugin.settings[kind];
         if (!task) return 0;
         const missing = this.getMissingBuiltInPromptTemplates(kind);
@@ -363,6 +408,7 @@ class SettingsStore {
         const stored = storedValue || {};
         this.diagnosticsDisabledInStoredSettings = stored.ui?.diagnosticsEnabled === false;
         this.plugin.settings = this.mergeSettings(DEFAULT_SETTINGS, stored);
+        this.plugin.settingsLoaded = true;
         this.ensureSettingsShape(stored);
         return true;
     }
@@ -1046,6 +1092,7 @@ class SettingsStore {
     }
 
     setSetting(path, value, options = {}) {
+        this.ensureSettingsLoadedBeforeMutation();
         const parts = path.split(".");
         if (path === "ui.currentChannelAutoTranslatePolicy") {
             // options.routeKey: the channel the control was built for (it may no longer be the current one).
@@ -1139,8 +1186,16 @@ class SettingsStore {
             if (leaf === "endpoint" && typeof cursor.apiKeyOrigin !== "string") {
                 cursor.apiKeyOrigin = this.plugin.getProviderEndpointOrigin(cursor);
             }
-            if (leaf === "apiKey" && String(value ?? "").trim() !== String(cursor.apiKey ?? "").trim()) {
-                cursor.apiKeyOrigin = this.plugin.getProviderEndpointOrigin(cursor);
+            const credentialFields = (this.plugin.providerLayer?.registry?.getCredentialFields?.(cursor.provider) || ["apiKey"])
+                .filter(field => field && field !== "region" && field !== "deeplPlan");
+            const secretFields = credentialFields.includes("apiKey") ? credentialFields : ["apiKey", ...credentialFields];
+            if (secretFields.includes(leaf) && String(value ?? "").trim() !== String(cursor[leaf] ?? "").trim()) {
+                const nextConfig = { ...cursor, [leaf]: value };
+                const hasSecret = typeof this.plugin.hasAnySecretCredential === "function"
+                    ? this.plugin.hasAnySecretCredential(nextConfig)
+                    : secretFields.some(field => Boolean(String(nextConfig[field] || "").trim()));
+                if (hasSecret) cursor.apiKeyOrigin = this.plugin.getProviderEndpointOrigin(cursor);
+                else delete cursor.apiKeyOrigin;
             }
         }
         cursor[leaf] = value;
@@ -1297,6 +1352,7 @@ class SettingsStore {
     // false. Applies the same runtime effects setSetting applies to each changed setting. Stable entry point for
     // the reset dialog.
     resetSettingsToDefaults({ keepCredentials = true, keepLanguage = true } = {}) {
+        if (keepCredentials) this.ensureSettingsLoadedBeforeMutation();
         const previous = this.plugin.settings && typeof this.plugin.settings === "object" ? this.plugin.settings : {};
         const next = this.plugin.clone(DEFAULT_SETTINGS);
         if (keepCredentials) this.carryOverResetCredentials(previous, next);
@@ -1308,7 +1364,15 @@ class SettingsStore {
         }
         const language = previous.ui?.language;
         if (keepLanguage && typeof language === "string" && language) next.ui.language = language;
+        this.plugin.detectedModelPickerCache?.clear?.();
+        this.plugin.settingsTryHistory = {};
+        if (typeof document !== "undefined" && document.querySelectorAll) {
+            document.querySelectorAll(".dait-settings")?.forEach(panel => {
+                if (panel) panel.__daitResetPending = true;
+            });
+        }
         this.plugin.settings = next;
+        this.plugin.settingsLoaded = true;
         this.ensureSettingsShape();
         const saved = this.plugin.saveSettings();
         this.applySettingsResetEffects(previous);
@@ -1344,7 +1408,7 @@ class SettingsStore {
             RESET_KEPT_CONNECTION_FIELDS.forEach(field => {
                 if (isFilled(source[field])) picked[field] = source[field];
             });
-            if (picked.apiKey && typeof source.apiKeyOrigin === "string") picked.apiKeyOrigin = source.apiKeyOrigin;
+            if (hasSecret && typeof source.apiKeyOrigin === "string") picked.apiKeyOrigin = source.apiKeyOrigin;
             return picked;
         };
         ["polish", "translation"].forEach(kind => {
@@ -1414,10 +1478,7 @@ class SettingsStore {
         this.syncAllSettingControls();
         this.plugin.invalidateAutoTranslationQueue();
         if (!this.plugin.isAutoTranslateEnabled()) this.plugin.cancelAutoTranslationRuntimeWork("settings-reset");
-        if (changed("language")) {
-            this.plugin.refreshLocalizedUi();
-        }
-        else if (changed("injectMessageContextMenu")) {
+        if (!changed("language") && changed("injectMessageContextMenu")) {
             this.plugin.unpatchContextMenus();
             this.plugin.patchMessageContextMenu();
         }
@@ -1466,6 +1527,7 @@ class SettingsStore {
     }
 
     setTaskProvider(kind, provider) {
+        this.ensureSettingsLoadedBeforeMutation();
         if (!this.plugin.settings[kind]) return;
         const nextProvider = this.plugin.normalizeProviderForTask(kind, provider);
         const previousProvider = this.plugin.normalizeProviderForTask(kind, this.plugin.settings[kind].provider);

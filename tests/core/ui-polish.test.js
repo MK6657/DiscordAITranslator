@@ -350,7 +350,6 @@ function createPlugin(t, setup = {}) {
 
 const rect = width => ({ left: 0, top: 0, right: width, bottom: 600, width, height: 600 });
 const rowByLabel = (root, label) => root.querySelectorAll(".dait-settings-row").find(row => row.querySelector(".dait-row-label")?.textContent === label) || null;
-const buttonsOf = row => row.querySelectorAll("button");
 const labelsIn = root => root.querySelectorAll(".dait-settings-row").map(row => row.querySelector(".dait-row-label")?.textContent);
 // A short name for an element in assertion messages (the fake elements are circular).
 const describe = element => `${element.tagName.toLowerCase()}${element.dataset.daitPath ? `[${element.dataset.daitPath}]` : ""} ${String(element.textContent || "").slice(0, 20)}`.trim();

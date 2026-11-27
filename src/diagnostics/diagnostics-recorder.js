@@ -31,10 +31,15 @@ class DiagnosticsRecorder {
 
     warnSanitized(message, error = null, meta = {}) {
         try {
-            const payload = this.plugin.sanitizeDiagnosticObject({
+            const rawCause = error?.cause;
+            const sanitizedCause = rawCause !== undefined && rawCause !== null
+                ? this._sanitizeDiagnosticElement(rawCause, 1, "errorCause")
+                : undefined;
+            const payload = this.sanitizeDiagnosticMeta({
                 ...meta,
                 errorName: error?.name || "",
                 errorText: error ? this.plugin.formatError(error) : "",
+                ...(sanitizedCause !== undefined ? { errorCause: sanitizedCause } : {}),
                 status: Number(error?.status || 0),
                 retryAfterMs: Number(error?.retryAfterMs || 0),
                 requestId: error?.requestId || "",
@@ -84,15 +89,16 @@ class DiagnosticsRecorder {
 
     getDiagnosticMessageState(state) {
         const value = String(state || "").trim();
-        return KNOWN_DIAGNOSTIC_MESSAGE_STATES.has(value) ? value : "";
+        return KNOWN_DIAGNOSTIC_MESSAGE_STATES.has(/** @type {any} */ (value)) ? value : "";
     }
 
     getDiagnosticReasonCode(reasonCode) {
         const value = String(reasonCode || "").trim();
-        return KNOWN_DIAGNOSTIC_REASON_CODES.has(value) ? value : value.slice(0, 80);
+        return KNOWN_DIAGNOSTIC_REASON_CODES.has(/** @type {any} */ (value)) ? value : value.slice(0, 80);
     }
 
     enrichDiagnosticMeta(action = "", status = "info", meta = {}) {
+        /** @type {Record<string, any>} */
         const source = meta && typeof meta === "object" ? meta : {};
         const flowStage = source.flowStage || this.plugin.inferDiagnosticStageFromAction(action, status, source);
         const failure = this.classifyDiagnosticFailure(action, status, source, flowStage);
@@ -132,7 +138,7 @@ class DiagnosticsRecorder {
         if (!existingLayer && failureClass === DIAGNOSTIC_FAILURE_CLASSES.WHOLE_PASS_FAILED) failureLayer = DIAGNOSTIC_FAILURE_LAYERS.REQUEST;
         if (!failureLayer) {
             if (failureClass === DIAGNOSTIC_FAILURE_CLASSES.SOURCE_INCOMPLETE) failureLayer = DIAGNOSTIC_FAILURE_LAYERS.SOURCE;
-            else if ([DIAGNOSTIC_FAILURE_CLASSES.CHUNK_FAILED, DIAGNOSTIC_FAILURE_CLASSES.SUBCHUNK_FAILED, DIAGNOSTIC_FAILURE_CLASSES.VALIDATOR_REJECTED].includes(failureClass)) failureLayer = DIAGNOSTIC_FAILURE_LAYERS.VALIDATION;
+            else if (/** @type {string[]} */ ([DIAGNOSTIC_FAILURE_CLASSES.CHUNK_FAILED, DIAGNOSTIC_FAILURE_CLASSES.SUBCHUNK_FAILED, DIAGNOSTIC_FAILURE_CLASSES.VALIDATOR_REJECTED]).includes(failureClass)) failureLayer = DIAGNOSTIC_FAILURE_LAYERS.VALIDATION;
             else if (failureClass === DIAGNOSTIC_FAILURE_CLASSES.RENDER_BLOCKED) failureLayer = DIAGNOSTIC_FAILURE_LAYERS.RENDER;
             else failureLayer = DIAGNOSTIC_FAILURE_LAYERS.OUTPUT;
         }
@@ -221,29 +227,51 @@ class DiagnosticsRecorder {
         return entry;
     }
 
+    _sanitizeDiagnosticElement(value, depth = 0, key = "") {
+        if (value === undefined || typeof value === "function") return undefined;
+        if (value === null || ["string", "number", "boolean"].includes(typeof value)) {
+            return typeof value === "string" && String(key || "").toLowerCase().includes("model")
+                ? this.plugin.getDiagnosticModelLabel(value)
+                : this.plugin.sanitizeDiagnosticValue(value);
+        }
+        if (depth >= 3) return "[truncated]";
+        if (Array.isArray(value)) {
+            return value
+                .slice(0, 12)
+                .map(elem => this._sanitizeDiagnosticElement(elem, depth + 1))
+                .filter(elem => elem !== undefined);
+        }
+        if (value instanceof Error) {
+            const errObj = {
+                name: this.plugin.sanitizeDiagnosticValue(value.name || "Error"),
+                errorText: this.plugin.sanitizeDiagnosticValue(this.plugin.formatError(value))
+            };
+            if (value.code) errObj.code = this.plugin.sanitizeDiagnosticValue(value.code);
+            if (value.cause !== undefined && value.cause !== null) {
+                const nestedCause = this._sanitizeDiagnosticElement(value.cause, depth + 1, "cause");
+                if (nestedCause !== undefined) errObj.cause = nestedCause;
+            }
+            return errObj;
+        }
+        if (typeof value === "object") {
+            const nested = {};
+            Object.entries(value).slice(0, 24).forEach(([childKey, childValue]) => {
+                if (this.plugin.isSensitiveDiagnosticKey(childKey)) return;
+                const sanitized = this._sanitizeDiagnosticElement(childValue, depth + 1, childKey);
+                if (sanitized !== undefined) nested[childKey] = sanitized;
+            });
+            return nested;
+        }
+        return this.plugin.sanitizeDiagnosticValue(value);
+    }
+
     sanitizeDiagnosticMeta(meta = {}) {
         const result = {};
         if (!meta || typeof meta !== "object") return result;
         Object.entries(meta).forEach(([key, value]) => {
             if (this.plugin.isSensitiveDiagnosticKey(key)) return;
-            if (value === undefined || typeof value === "function") return;
-            if (value === null || ["string", "number", "boolean"].includes(typeof value)) {
-                result[key] = typeof value === "string" && String(key || "").toLowerCase().includes("model")
-                    ? this.plugin.getDiagnosticModelLabel(value)
-                    : this.plugin.sanitizeDiagnosticValue(value);
-                return;
-            }
-            if (Array.isArray(value)) {
-                result[key] = value.slice(0, 12).map(item => (
-                    item && typeof item === "object" && !Array.isArray(item)
-                        ? this.plugin.sanitizeDiagnosticObject(item)
-                        : this.plugin.sanitizeDiagnosticValue(item)
-                ));
-                return;
-            }
-            if (typeof value === "object") {
-                result[key] = this.plugin.sanitizeDiagnosticObject(value);
-            }
+            const sanitized = this._sanitizeDiagnosticElement(value, 0, key);
+            if (sanitized !== undefined) result[key] = sanitized;
         });
         return result;
     }

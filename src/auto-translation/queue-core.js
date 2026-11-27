@@ -111,7 +111,7 @@ class AutoTranslationQueueCore {
             }
             // The in-flight work below is orphaned: stop its HTTP requests too, so they do not
             // keep a local server busy while the next scan starts new ones.
-            this.abortAutoTranslationRequests("invalidated");
+            this.abortAutoTranslationRequests(options.reason || "invalidated");
             this.plugin.autoTranslationPartialResults?.clear?.();
             this.plugin.autoStateMachine.clearInFlight();
             this.plugin.autoCooldowns.precheckSkips.clear();
@@ -441,7 +441,8 @@ class AutoTranslationQueueCore {
                 preserveRetry: !routeScopeChanged,
                 preserveNodes: true,
                 preserveVersion: !routeScopeChanged,
-                clearRetryTimer: routeScopeChanged
+                clearRetryTimer: routeScopeChanged,
+                reason: routeScopeChanged ? "route" : type
             });
             this.resetAutoTranslationViewportStability();
             this.enterAutoTranslationJumpCooldown(type);
@@ -470,7 +471,7 @@ class AutoTranslationQueueCore {
         return Math.max(0, Number(this.plugin.autoTranslationRenderPausedUntil || 0) - now);
     }
 
-    enterAutoTranslationJumpCooldown(type = "jump") {
+    enterAutoTranslationJumpCooldown(_type = "jump") {
         const now = Date.now();
         this.plugin.autoTranslationJumpCooldownUntil = Math.max(
             Number(this.plugin.autoTranslationJumpCooldownUntil || 0),
@@ -788,7 +789,7 @@ class AutoTranslationQueueCore {
         if (blockedPrefetch.length) this.restoreBlockedAutoTranslationPrefetch(blockedPrefetch);
     }
 
-    retainProviderBlockedVisibleAutoTranslationBatch(batch = [], retryMs = 0, reasonCode = DIAGNOSTIC_REASON_CODES.LOCAL_UNAVAILABLE) {
+    retainProviderBlockedVisibleAutoTranslationBatch(batch = [], retryMs = 0, reasonCode = /** @type {string} */ (DIAGNOSTIC_REASON_CODES.LOCAL_UNAVAILABLE)) {
         const retainedKeys = new Set();
         const queueLimit = this.plugin.getAutoTranslateQueueLimit();
         batch.forEach(item => {
@@ -858,9 +859,10 @@ class AutoTranslationQueueCore {
     }
 
     shouldRetainAutoTranslationProviderBlockedItem(item) {
-        return Boolean(item?.cacheKey
-            && this.plugin.isAutoTranslationRequestCurrent(item?.requestOptions)
-            && (this.plugin.isAutoTranslationVisibleItem(item) || item?.daitHistoryRequest));
+        if (!item?.cacheKey || !this.plugin.isAutoTranslationRequestCurrent(item?.requestOptions)) return false;
+        const domText = this.plugin.getAutoTranslationTargetDomText(item);
+        if (this.plugin.isManualTranslationInFlight(item.content, domText, item.messageNode)) return false;
+        return Boolean(this.plugin.isAutoTranslationVisibleItem(item) || item?.daitHistoryRequest);
     }
 
     shouldRetainAutoTranslationFailureItem(item, error, failure = null) {
@@ -1098,7 +1100,7 @@ class AutoTranslationQueueCore {
         return batch;
     }
 
-    shouldDeferShortAutoTranslationItemForVisibleLong(item, options = {}) {
+    shouldDeferShortAutoTranslationItemForVisibleLong(_item, _options = {}) {
         return false;
     }
 
@@ -1148,6 +1150,7 @@ class AutoTranslationQueueCore {
         if (!target?.messageNode?.isConnected || !target?.content?.isConnected) return false;
         if (!this.plugin.isAutoTranslationTargetIdentityCurrent(target)) return false;
         const domText = this.plugin.getAutoTranslationTargetDomText(target);
+        if (this.plugin.isManualTranslationInFlight(target.content, domText, target.messageNode)) return false;
         if (this.plugin.hasCurrentTranslationLine(target.content, cacheKey, domText, this.plugin.getTranslationLineCacheAliases(target.text, target.requestOptions || {}), null, target.text)) return false;
         const messageInRange = this.plugin.isAutoTranslationTargetInScanRange(target.messageNode, context);
         const contentInRange = this.plugin.isAutoTranslationTargetInScanRange(target.content, context);
@@ -1203,7 +1206,8 @@ class AutoTranslationQueueCore {
             preserveNodes: staleRouteOnly,
             preserveNotices: true,
             preserveFailures: true,
-            clearRetryTimer: true
+            clearRetryTimer: true,
+            reason: staleRouteOnly ? "route" : reason
         });
         this.plugin.logDiagnostic("auto.queue.cancel", "ok", { reason });
         return true;
@@ -1291,7 +1295,7 @@ class AutoTranslationQueueCore {
         else if (options.save === "immediate") this.plugin.saveSettings({ retryOnError: options.retryOnError });
         else this.plugin.saveSettings({ debounce: true, delayMs: options.delayMs });
         this.plugin.syncSettingControls("ui.currentChannelAutoTranslatePolicy", normalized, syncOptions);
-        this.plugin.invalidateAutoTranslationQueue();
+        this.plugin.invalidateAutoTranslationQueue({ reason: "channel-policy" });
         // 'inherit' with the main switch off stops auto-translation here as well as 'disabled' does.
         if (!this.plugin.isAutoTranslateEnabled()) this.plugin.cancelAutoTranslationRuntimeWork("channel-policy-disabled");
         this.plugin.logDiagnostic("auto.channel-policy", "updated", {
@@ -1607,7 +1611,7 @@ class AutoTranslationQueueCore {
                 });
             }
 
-            if (pending.size && requestError && !translations.length && !this.plugin.isAutoTranslationStrictRetryEnabled()) {
+            if (pending.size && requestError && !translations.length && (!this.plugin.isAutoTranslationStrictRetryEnabled() || Boolean(requestError.modelOutputTruncated))) {
                 this.settleFailedAutoTranslationBatchRequest(pending, requestError);
             }
             else if (pending.size && !this.plugin.isAutoTranslationStrictRetryEnabled()) {
@@ -1640,8 +1644,10 @@ class AutoTranslationQueueCore {
                     ...taskOptions,
                     markRendered: item => renderedItems.add(item)
                 };
-                heartbeat(pending);
-                await this.plugin.runAutoTranslationBatchRetryItems(pending, retryTaskOptions);
+                if (!requestError?.modelOutputTruncated) {
+                    heartbeat(pending);
+                    await this.plugin.runAutoTranslationBatchRetryItems(pending, retryTaskOptions);
+                }
                 heartbeat(pending);
                 await this.plugin.runAutoTranslationFallbackItems(pending, retryTaskOptions);
             }
@@ -2095,9 +2101,10 @@ class AutoTranslationQueueCore {
     }
 
     abortAutoTranslationRequests(reason = "invalidated") {
+        const manualAborted = Boolean(this.plugin.abortManualTranslationRequests?.(reason));
         const controller = this.plugin.autoTranslationAbortController;
         this.plugin.autoTranslationAbortController = null;
-        if (!controller || controller.signal.aborted) return false;
+        if (!controller || controller.signal.aborted) return manualAborted;
         const inFlight = Number(this.stateMachine.inFlight || 0);
         try {
             controller.abort();

@@ -78,9 +78,14 @@ const methods = {
         const baseConfig = this.getPublicBilingualBaseConfig();
         const targetLanguageValue = this.getPublicBilingualTargetLanguage();
         const targetLanguage = this.plugin.getAutoTranslationTargetInstruction(targetLanguageValue);
+        const model = String(baseConfig.model || "");
+        const isReasoning = Boolean(baseConfig.enableThinking)
+            || Boolean(this.plugin.isAlwaysReasoningModelName?.(model))
+            || /(?:reasoner|\br1\b|qwq|qwen3|(?:^|\/)(?:o[134]|gpt-5)(?:[-_:]|$)|gemini-2\.5|gemini-3|glm-z1|thinking)/i.test(model);
         const maxTokens = Math.max(
             this.plugin.normalizeRequestNumber(baseConfig.maxTokens, DEFAULT_SETTINGS.translation.maxTokens, { min: 1, integer: true }),
-            this.plugin.normalizeRequestNumber(this.plugin.settings.translation?.maxTokens, DEFAULT_SETTINGS.translation.maxTokens, { min: 1, integer: true })
+            this.plugin.normalizeRequestNumber(this.plugin.settings.translation?.maxTokens, DEFAULT_SETTINGS.translation.maxTokens, { min: 1, integer: true }),
+            isReasoning ? 4096 : 0
         );
 
         const overrides = {
@@ -161,17 +166,23 @@ const methods = {
         const output = String(translatedText || "");
         if (!source || !output || !source.includes("<") || !output.includes(":")) return output;
         const byName = new Map();
-        for (const match of source.matchAll(/<a?:([A-Za-z0-9_~]{1,64}):\d{15,25}>/g)) {
+        for (const match of source.matchAll(/<a?:([A-Za-z0-9_~]{1,64}):\d+>/g)) {
             const name = match[1];
             const full = match[0];
             const prev = byName.get(name);
             if (!prev) byName.set(name, full);
             else if (prev !== full) byName.set(name, null);
         }
-        if (!byName.size) return output;
-        return output.replace(/(?<![<A-Za-z0-9_~:/]):([A-Za-z0-9_~]{2,64}):(?![>A-Za-z0-9_~:/\d])/g, (full, name) => {
-            const token = byName.get(name);
-            return token || full;
+        const validNames = [...byName.entries()]
+            .filter(([, token]) => Boolean(token))
+            .map(([name]) => name)
+            .sort((left, right) => right.length - left.length);
+        if (!validNames.length) return output;
+        const escapedNames = validNames.map(name => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+        const pattern = new RegExp(`<a?:[A-Za-z0-9_~]{1,64}:\\d+>|<t:\\d+(?::[A-Za-z])?>|(?<!<[aA]?):(${escapedNames}):(?!\\/\\/)`, "g");
+        return output.replace(pattern, (full, name) => {
+            if (!name) return full;
+            return byName.get(name) || full;
         });
     },
 
@@ -179,6 +190,8 @@ const methods = {
         const requestBudget = options?.requestBudget
             || this.plugin.createAutoTranslationRequestBudget?.(MANUAL_TRANSLATION_REQUEST_BUDGET)
             || null;
+        const baseConfig = this.getPublicBilingualBaseConfig();
+        const usesPolishProfile = Boolean(this.plugin.settings?.polish && baseConfig === this.plugin.settings.polish);
         const resetFallbackContext = ctx => {
             if (ctx && typeof ctx === "object") delete ctx.fallbackProvider;
         };
@@ -186,20 +199,22 @@ const methods = {
         const dynamicMaxTokens = String(text || "").length >= 420 && typeof this.plugin.getLongTextMaxTokensForLength === "function"
             ? this.plugin.getLongTextMaxTokensForLength(String(text || "").length, targetLangForLength)
             : 0;
+        let lastSuccessfulMaxTokens = 0;
         const withEffectiveMaxTokens = attemptOptions => {
             const configured = Number(attemptOptions?.configOverrides?.maxTokens || DEFAULT_SETTINGS.translation.maxTokens);
-            if (dynamicMaxTokens <= configured) return attemptOptions;
+            const targetMax = Math.max(configured, dynamicMaxTokens, lastSuccessfulMaxTokens);
+            if (targetMax <= configured) return attemptOptions;
             return {
                 ...attemptOptions,
                 configOverrides: {
                     ...attemptOptions.configOverrides,
-                    maxTokens: dynamicMaxTokens
+                    maxTokens: targetMax
                 }
             };
         };
         const runAttempt = async (mode, rawAttemptOptions) => {
             const attemptOptions = withEffectiveMaxTokens(rawAttemptOptions);
-            const execute = async (overrideMaxTokens = 0, timeoutMs = MODEL_REQUEST_TIMEOUT_MS) => {
+            const execute = async (overrideMaxTokens = 0, timeoutMs = MODEL_REQUEST_TIMEOUT_MS, extraOptions = {}) => {
                 if (requestBudget) this.plugin.consumeAutoTranslationRequestBudget({ requestBudget });
                 resetFallbackContext(attemptOptions.requestContext);
                 const overrides = overrideMaxTokens > 0
@@ -212,20 +227,24 @@ const methods = {
                     requestContext: attemptOptions.requestContext,
                     providerProfilePinned: true,
                     isolatedConfig: true,
+                    ...(extraOptions.truncationRetry ? { truncationRetry: true } : {}),
                     ...(requestBudget ? { requestBudget } : {})
                 });
             };
+            const usedMax = Math.max(1, Number(attemptOptions?.configOverrides?.maxTokens || DEFAULT_SETTINGS.translation.maxTokens));
             let rawTranslated = "";
             try {
                 rawTranslated = await execute(0, MODEL_REQUEST_TIMEOUT_MS);
+                lastSuccessfulMaxTokens = Math.max(lastSuccessfulMaxTokens, usedMax);
             }
             catch (error) {
                 if (!error?.modelOutputTruncated) throw error;
-                const usedMax = Math.max(1, Number(attemptOptions?.configOverrides?.maxTokens || DEFAULT_SETTINGS.translation.maxTokens));
                 const minRetry = Number(error.partialOutputLength || 0) === 0 ? 4096 : 2400;
-                const raisedMax = Math.min(8192, Math.max(usedMax + 512, Math.ceil(usedMax * 2), minRetry));
+                const raisedMax = Math.min(65536, Math.max(usedMax + 512, Math.ceil(usedMax * 2), minRetry));
+                if (raisedMax <= usedMax) throw error;
                 const retryTimeout = Math.min(90000, Math.max(MODEL_REQUEST_TIMEOUT_MS, Math.round(MODEL_REQUEST_TIMEOUT_MS * Math.min(2.5, raisedMax / Math.max(256, usedMax)))));
-                rawTranslated = await execute(raisedMax, retryTimeout);
+                rawTranslated = await execute(raisedMax, retryTimeout, { truncationRetry: true });
+                lastSuccessfulMaxTokens = Math.max(lastSuccessfulMaxTokens, raisedMax);
             }
             const targetLang = this.plugin.getAutoTranslationTargetLanguage(attemptOptions);
             const restoredEmojis = this.restoreCustomEmojiTokensFromSource(text, rawTranslated);
@@ -246,6 +265,9 @@ const methods = {
             if (!this.plugin.isInvalidAutoTranslationOutput(text, finalText, this.plugin.getAutoTranslationTargetLanguage(finalOptions))) return finalText;
         }
         catch (error) {
+            if (error?.modelOutputTruncated && usesPolishProfile) {
+                error.taskKind = "polish";
+            }
             if (!this.plugin.isAutoTranslationRequestBudgetError?.(error)) throw error;
         }
 
@@ -409,9 +431,12 @@ const methods = {
                 if (hasLifecycleToken && !this.plugin.isLifecycleTokenCurrent(options.lifecycleToken)) {
                     return { stale: true, lifecycleStale: true, session, translationSource: draft, spoilerOriginal: this.getPublicBilingualSpoilerOriginal(session, draft, draft), usedPolish, skippedPolish };
                 }
+                const sessionComposerKey = session.composerKey || this.getTextboxComposerKey(textbox);
                 if ((writeToken && !this.plugin.composerWriter.isWriteTokenCurrent(writeToken))
                     || (options.routeKey !== undefined && options.routeKey !== this.plugin.getCurrentRouteKey())
-                    || this.plugin.polishSession !== session || textbox?.isConnected === false || !this.isCurrentDraftText(textbox, draft)) {
+                    || this.getPolishSessionForComposer(sessionComposerKey, textbox) !== session
+                    || textbox?.isConnected === false
+                    || !this.isCurrentDraftText(textbox, draft)) {
                     return { stale: true, session, translationSource: draft, spoilerOriginal: this.getPublicBilingualSpoilerOriginal(session, draft, draft), usedPolish, skippedPolish };
                 }
                 const polished = this.sanitizeComposerGeneratedOutput(mentionBaseline, result, "public-bilingual.polish");
@@ -466,7 +491,15 @@ const methods = {
         const isLatestRequest = () => this.plugin.latestPolishRequestIds.get(composer) === requestId && !this.isComposerWriteSuperseded(writeToken);
         const originRouteKey = this.plugin.getCurrentRouteKey();
         const originComposerKey = writeToken.composerKey;
-        this.plugin.setButtonBusy(button, true, this.plugin.t("publicBilingualBusy"));
+        const ownsButtonBusy = !behaviorOptions.parentBusyToken;
+        const buttonBusyToken = behaviorOptions.parentBusyToken || Symbol("daitButtonBusy");
+        if (ownsButtonBusy) {
+            if (button) button.__daitBusyToken = buttonBusyToken;
+            this.plugin.setButtonBusy(button, true, this.plugin.t("publicBilingualBusy"));
+        }
+        else if (button && button.__daitBusyToken === buttonBusyToken) {
+            this.plugin.setButtonBusy(button, true, this.plugin.t("publicBilingualBusy"));
+        }
         const lifecycleToken = this.plugin.getLifecycleToken();
         const startedAt = Date.now();
         const requestOptions = this.getPublicBilingualTranslationOptions();
@@ -520,12 +553,18 @@ const methods = {
             if (composed.length > DISCORD_MESSAGE_MAX_LENGTH) {
                 throw new Error(this.plugin.t("publicBilingualTooLong", { length: composed.length, limit: DISCORD_MESSAGE_MAX_LENGTH }));
             }
+            const isSessionCurrent = (targetBox = textbox) => this.getPolishSessionForComposer(originComposerKey, targetBox) === payload.session;
             // The panel's "Insert into input" writes the result: record it like this run's own write,
             // so running bilingual again translates the source instead of nesting, and Restore works.
             const recordPanelInsert = target => {
-                if (!this.plugin.isLifecycleTokenCurrent(lifecycleToken) || !isLatestRequest() || this.plugin.polishSession !== payload.session) return;
-                payload.session.composerKey = this.getTextboxComposerKey(target);
+                if (!this.plugin.isLifecycleTokenCurrent(lifecycleToken) || !isLatestRequest() || !isSessionCurrent(target)) return;
+                const nextKey = this.getTextboxComposerKey(target);
+                if (payload.session.composerKey && payload.session.composerKey !== nextKey) {
+                    this.getPolishSessionsMap().delete(payload.session.composerKey);
+                }
+                payload.session.composerKey = nextKey;
                 this.updatePolishSessionAfterBilingual(payload.session, target, composed, payload.translationSource, true);
+                this.plugin.showRestoreOriginalControl(target, payload.session, button);
             };
             const staleReason = this.plugin.getCurrentRouteKey() !== originRouteKey || this.getTextboxComposerKey(textbox) !== originComposerKey
                 ? "composer-changed"
@@ -547,6 +586,7 @@ const methods = {
                 // A finished result is never dropped silently: offer it for Copy or Apply instead.
                 this.plugin.showPolishResultPanel(this.getComposerResultPanelAnchor(textbox), composed, {
                     sourceButton: button,
+                    panelKind: "public-bilingual",
                     title: this.plugin.t("publicBilingualButton"),
                     ariaLabel: this.plugin.t("publicBilingualTitleAttr", { targetLanguage: this.plugin.getDisplayLanguage(this.getPublicBilingualTargetLanguage()) }),
                     adjustTextboxSelection: false,
@@ -568,7 +608,7 @@ const methods = {
             if (!this.plugin.isLifecycleTokenCurrent(lifecycleToken)) {
                 return { ok: false, wrote: Boolean(writeResult?.ok), stale: true, phase: "lifecycle" };
             }
-            if (!isLatestRequest() || this.plugin.polishSession !== payload.session) {
+            if (!isLatestRequest() || !isSessionCurrent()) {
                 return { ok: false, wrote: Boolean(writeResult?.ok), stale: true, phase: "superseded" };
             }
             if (!writeResult.ok) {
@@ -586,6 +626,7 @@ const methods = {
                 });
                 this.plugin.showPolishResultPanel(textbox, composed, {
                     sourceButton: button,
+                    panelKind: "public-bilingual",
                     title: this.plugin.t("publicBilingualButton"),
                     ariaLabel: this.plugin.t("publicBilingualTitleAttr", { targetLanguage: this.plugin.getDisplayLanguage(this.getPublicBilingualTargetLanguage()) }),
                     adjustTextboxSelection: false,
@@ -606,6 +647,9 @@ const methods = {
             }
 
             this.updatePolishSessionAfterBilingual(payload.session, textbox, composed, payload.translationSource, true);
+            if (!writeResult.userEditedAfter) {
+                this.plugin.showRestoreOriginalControl(textbox, payload.session, button);
+            }
             this.plugin.logDiagnostic("public.bilingual", result.cached ? "cache-hit" : "success", {
                 ...this.plugin.getDiagnosticBaseMeta("public-bilingual", "public-bilingual", result.cached ? DIAGNOSTIC_REASON_CODES.CACHE_HIT : DIAGNOSTIC_REASON_CODES.RENDERED, {
                     messageState: result.cached ? DIAGNOSTIC_MESSAGE_STATES.CACHE_HIT : DIAGNOSTIC_MESSAGE_STATES.RENDERED,
@@ -645,8 +689,16 @@ const methods = {
         }
         finally {
             this.plugin.composerWriter.finishWriteToken(writeToken);
-            if (this.plugin.isLifecycleTokenCurrent(lifecycleToken) && !this.plugin.composerWriter?.hasActiveWrite?.(textbox)) {
-                this.plugin.setButtonBusy(button, false, this.plugin.t("publicBilingualButton"));
+            if (ownsButtonBusy && this.plugin.isLifecycleTokenCurrent(lifecycleToken)) {
+                if (button) {
+                    if (button.__daitBusyToken === buttonBusyToken) {
+                        delete button.__daitBusyToken;
+                        this.plugin.setButtonBusy(button, false, this.plugin.t("publicBilingualButton"));
+                    }
+                }
+                else if (!this.plugin.composerWriter?.hasActiveWrite?.(textbox)) {
+                    this.plugin.setButtonBusy(button, false, this.plugin.t("publicBilingualButton"));
+                }
             }
         }
     }

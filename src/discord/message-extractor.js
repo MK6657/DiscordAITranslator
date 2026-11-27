@@ -20,44 +20,60 @@ const methods = {
     injectMessageButton(messageNode, context = null) {
         if (!this.plugin.shouldInjectMessageButtons()) return false;
         if (!messageNode || messageNode.isConnected === false) return false;
-        const content = this.plugin.getMessageContentElement(messageNode, context);
-        if (!content) return false;
+        const contents = this.plugin.getMessageContentElements(messageNode, context);
+        if (!contents.length) return false;
 
-        const text = this.plugin.getCachedElementText(content, context);
-        if (!this.hasTranslatableMessageText(text)) {
+        let injected = false;
+        const nextTitle = this.plugin.t("translateTitleAttr", {
+            targetLanguage: this.plugin.getDisplayLanguage(this.plugin.settings.translation.targetLanguage)
+        });
+        for (const content of contents) {
+            const text = this.plugin.getCachedElementText(content, context);
+            if (!this.plugin.hasTranslatableMessageText(text)) {
+                content.querySelector?.(":scope > .dait-message-button")?.remove?.();
+                continue;
+            }
+            injected = true;
+
+            /** @type {any} */
+            let button = content.querySelector?.(":scope > .dait-message-button");
+            const created = !button;
+            if (!button) {
+                button = document.createElement("button");
+                button.type = "button";
+                button.className = this.plugin.getMessageButtonClassName();
+                button.textContent = this.plugin.t("translateButton");
+                button.title = nextTitle;
+                button.setAttribute?.("aria-label", nextTitle);
+                button.addEventListener("click", event => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    const currentContent = (content?.isConnected && messageNode?.contains?.(content) !== false)
+                        ? content
+                        : this.plugin.getMessageContentElement(messageNode);
+                    if (!currentContent) {
+                        this.plugin.showToast(this.plugin.t("messageMissing"), "error");
+                        return;
+                    }
+                    this.plugin.translateMessage(messageNode, currentContent, button);
+                });
+            }
+            else {
+                if (button.title !== nextTitle) button.title = nextTitle;
+                if (button.getAttribute?.("aria-label") !== nextTitle) button.setAttribute?.("aria-label", nextTitle);
+            }
+            this.plugin.applyMessageButtonVisibilityToButton(button, content || messageNode);
+
+            if (created || button.parentElement !== content || this.hasNonPluginSiblingAfter(button)) {
+                content.appendChild(button);
+            }
+        }
+
+        if (!injected) {
             this.plugin.nonTranslatableMessageCache?.set?.(messageNode, true);
             return false;
         }
         this.plugin.nonTranslatableMessageCache?.delete?.(messageNode);
-
-        let button = content.querySelector(":scope > .dait-message-button");
-        const created = !button;
-        if (!button) {
-            button = document.createElement("button");
-            button.type = "button";
-            button.className = this.plugin.getMessageButtonClassName();
-            button.textContent = this.plugin.t("translateButton");
-            button.title = this.plugin.t("translateTitleAttr", { targetLanguage: this.plugin.getDisplayLanguage(this.plugin.settings.translation.targetLanguage) });
-            button.addEventListener("click", event => {
-                event.preventDefault();
-                event.stopPropagation();
-                const currentContent = this.plugin.getMessageContentElement(messageNode);
-                if (!currentContent) {
-                    this.plugin.showToast(this.plugin.t("messageMissing"), "error");
-                    return;
-                }
-                this.plugin.translateMessage(messageNode, currentContent, button);
-            });
-        }
-        else {
-            const nextTitle = this.plugin.t("translateTitleAttr", { targetLanguage: this.plugin.getDisplayLanguage(this.plugin.settings.translation.targetLanguage) });
-            if (button.title !== nextTitle) button.title = nextTitle;
-        }
-        this.plugin.applyMessageButtonVisibilityToButton(button, content || messageNode);
-
-        if (created || button.parentElement !== content || this.hasNonPluginSiblingAfter(button)) {
-            content.appendChild(button);
-        }
         return true;
     },
 
@@ -76,15 +92,42 @@ const methods = {
         if (context?.contentByMessage?.has(messageNode)) return context.contentByMessage.get(messageNode);
 
         const candidates = this.getMessageContentCandidates(messageNode, context);
+        let firstNonEmpty = null;
         for (const candidate of candidates) {
-            if (this.plugin.getCachedElementText(candidate, context)) {
+            const text = this.plugin.getCachedElementText(candidate, context);
+            if (!text) continue;
+            if (!firstNonEmpty) firstNonEmpty = candidate;
+            if (this.plugin.hasTranslatableMessageText(text)) {
                 context?.contentByMessage?.set(messageNode, candidate);
                 return candidate;
             }
         }
 
-        context?.contentByMessage?.set(messageNode, null);
-        return null;
+        context?.contentByMessage?.set(messageNode, firstNonEmpty);
+        return firstNonEmpty;
+    },
+
+    resolveMessageContentForTarget(target, messageNode = null, context = null) {
+        const element = target?.nodeType === 3 ? target.parentElement : target;
+        const resolvedMessage = messageNode || element?.closest?.(DISCORD_MESSAGE_NODE_SELECTOR) || null;
+        if (!resolvedMessage) return null;
+
+        const clickedLine = element?.closest?.(".dait-translation-line");
+        if (clickedLine) {
+            const lineContent = this.plugin.getTranslationContentForLine?.(clickedLine);
+            if (lineContent && resolvedMessage.contains?.(lineContent) !== false) return lineContent;
+        }
+
+        const candidates = this.getMessageContentCandidates(resolvedMessage, context);
+        if (candidates.length > 1 && element) {
+            const matching = candidates.filter(candidate => candidate === element || candidate.contains?.(element));
+            const innermost = matching.find(candidate => !matching.some(other => other !== candidate && candidate.contains?.(other)))
+                || matching[0]
+                || null;
+            if (innermost && this.plugin.getCachedElementText(innermost, context)) return innermost;
+        }
+
+        return this.plugin.getMessageContentElement(resolvedMessage, context);
     },
 
     getMessageContentElements(messageNode, context = null) {
@@ -251,7 +294,7 @@ const methods = {
         }
         if (!this.plugin.isAutoTranslateEnabled()) {
             this.plugin.logDiagnostic("auto.history-backfill", "blocked", {
-                ...this.plugin.getDiagnosticBaseMeta("auto", "history", "auto-disabled"),
+                ...this.plugin.getDiagnosticBaseMeta("auto", "history", DIAGNOSTIC_REASON_CODES.AUTO_DISABLED || "auto-disabled"),
                 limit
             });
             return result;
@@ -613,21 +656,41 @@ const methods = {
         return this.plugin.getElementText(target?.content, target?.textOptions) === this.getAutoTranslationTargetDomText(target);
     },
 
+    isEditableTextbox(textbox) {
+        if (!textbox || textbox.isConnected === false) return false;
+        if (textbox.disabled === true || textbox.readOnly === true) return false;
+        const contentEditable = String(textbox.getAttribute?.("contenteditable") ?? textbox.contentEditable ?? "").toLowerCase();
+        if (contentEditable === "false") return false;
+        const ariaDisabled = String(textbox.getAttribute?.("aria-disabled") || "").toLowerCase();
+        if (ariaDisabled === "true") return false;
+        const ariaReadOnly = String(textbox.getAttribute?.("aria-readonly") || "").toLowerCase();
+        if (ariaReadOnly === "true") return false;
+        return true;
+    },
+
     getTextbox() {
-        return typeof document !== "undefined"
-            ? document.querySelector?.("[role='textbox'][data-slate-editor='true'], [role='textbox'][contenteditable='true']") || null
-            : null;
+        if (typeof document === "undefined") return null;
+        const selector = "[role='textbox'][data-slate-editor='true'], [role='textbox'][contenteditable='true']";
+        const all = typeof document.querySelectorAll === "function"
+            ? [...(document.querySelectorAll(selector) || [])]
+            : [];
+        if (all.length) {
+            return all.find(candidate => this.isEditableTextbox(candidate)) || null;
+        }
+        const single = document.querySelector?.(selector) || null;
+        return this.isEditableTextbox(single) ? single : null;
     },
 
     getActiveTextbox() {
+        if (typeof document === "undefined") return null;
         const active = document.activeElement;
         if (!active) return null;
 
         const textbox = active.closest?.("[role='textbox'][data-slate-editor='true'], [role='textbox'][contenteditable='true']");
-        if (textbox) return textbox;
+        if (textbox && this.isEditableTextbox(textbox)) return textbox;
 
         const fallback = this.getTextbox();
-        if (fallback?.contains(active)) return fallback;
+        if (fallback?.contains?.(active)) return fallback;
         return null;
     },
 

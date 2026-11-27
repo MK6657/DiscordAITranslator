@@ -284,13 +284,11 @@ function createShell(t, setup = {}, env = null) {
     return { doc, win, plugin, panel, state: panel.__daitSettingsUi };
 }
 
-const pathsIn = root => new Set(root.querySelectorAll("[data-dait-path]").map(control => control.dataset.daitPath));
 const tabs = panel => panel.querySelectorAll("[role=tab]");
 const tabPanels = panel => panel.querySelectorAll("[role=tabpanel]");
 const visibleTab = panel => tabPanels(panel).filter(tabpanel => !tabpanel.hidden).map(tabpanel => tabpanel.dataset.daitSettingsTabPanel);
 const rowOf = control => control.closest(".dait-settings-row");
 const descriptionOf = control => rowOf(control).querySelector(".dait-row-description")?.textContent ?? "";
-const allDisabled = control => control.querySelectorAll("input, button").every(node => node.disabled === true);
 
 // ---------------------------------------------------------------------------------------------
 // A small reading of the stylesheet: which declaration wins for an element (selectors the fake DOM can match:

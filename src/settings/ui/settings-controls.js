@@ -66,13 +66,25 @@ const methods = {
         return this.createRow(this.plugin.t("polishHotkey"), controls, { ...rowOptions, description: this.plugin.t("polishHotkeyDesc") });
     },
 
+    getDefaultNumericSetting(path) {
+        const parts = String(path || "").split(".");
+        let cursor = DEFAULT_SETTINGS;
+        for (const part of parts) {
+            if (!cursor || typeof cursor !== "object" || !Object.prototype.hasOwnProperty.call(cursor, part)) {
+                return undefined;
+            }
+            cursor = cursor[part];
+        }
+        return typeof cursor === "number" && Number.isFinite(cursor) ? cursor : undefined;
+    },
+
     createInputRow(path, labelText, type, placeholder, attrs = {}, rowOptions = {}) {
         const input = document.createElement("input");
         input.type = type;
         input.dataset.daitPath = path;
         input.placeholder = placeholder || "";
         input.value = this.plugin.getSetting(path) ?? "";
-        if (/\.(?:endpoint|model|region|appId|secretKey|apiKey)$/.test(path)) {
+        if (type === "number" || type === "password" || /\.(?:endpoint|model|region|appId|secretKey|apiKey)$/.test(path)) {
             input.setAttribute("dir", "ltr");
         }
         Object.entries(attrs).forEach(([key, value]) => input.setAttribute(key, value));
@@ -94,7 +106,18 @@ const methods = {
             }
             const raw = String(input.value ?? "").trim();
             if (!raw) {
-                if (options.force) this.plugin.syncSettingControls(path, this.plugin.getSetting(path), { includeActive: true });
+                if (options.force) {
+                    const defaultNumeric = this.getDefaultNumericSetting(path);
+                    if (defaultNumeric !== undefined) {
+                        this.plugin.setSetting(path, defaultNumeric, saveOptions);
+                        const resolved = this.plugin.getSetting(path) ?? defaultNumeric;
+                        input.value = String(resolved);
+                        this.plugin.syncSettingControls(path, resolved, { includeActive: true });
+                    }
+                    else {
+                        this.plugin.syncSettingControls(path, this.plugin.getSetting(path), { includeActive: true });
+                    }
+                }
                 return;
             }
             const parsed = Number(raw);
@@ -161,15 +184,21 @@ const methods = {
         });
 
         select.addEventListener("change", () => {
+            const panel = select.closest?.(".dait-settings");
             if (path.endsWith(".provider")) {
+                if (panel) this.commitSettingsControls(panel, { excludePaths: [path] });
                 this.plugin.setTaskProvider(path.split(".")[0], select.value);
                 this.replaceSettingsPanelFrom(select);
                 return;
             }
+            if (path === "ui.language" && panel) {
+                this.commitSettingsControls(panel, { excludePaths: [path] });
+            }
             this.plugin.setSetting(path, select.value, routeKey !== null ? { routeKey } : undefined);
             if (path === "ui.language") {
-                const panel = select.closest?.(".dait-settings");
-                if (panel) this.plugin.replaceSettingsPanelElement(panel);
+                if (panel && !panel.__daitReplacedBy && panel.dataset?.daitLocale !== this.plugin.getLocale()) {
+                    this.plugin.replaceSettingsPanelElement(panel);
+                }
             }
         });
 
@@ -567,12 +596,15 @@ const methods = {
         this.scheduleOverviewStatusRefresh(path);
     },
 
-    commitSettingsControls(root = null) {
+    commitSettingsControls(root = null, options = {}) {
         const scope = root?.querySelectorAll ? root : (typeof document !== "undefined" ? document : null);
         if (!scope?.querySelectorAll) return;
+        const excludePaths = options?.excludePaths instanceof Set
+            ? options.excludePaths
+            : new Set(Array.isArray(options?.excludePaths) ? options.excludePaths : []);
         scope.querySelectorAll("[data-dait-path]").forEach(control => {
             const path = String(control?.dataset?.daitPath || "");
-            if (!path) return;
+            if (!path || excludePaths.has(path)) return;
             // The channel rule saves on change and is scoped to the channel it was built for; re-committing it on
             // close would copy that value onto whichever channel is current now.
             if (path === "ui.currentChannelAutoTranslatePolicy") return;
@@ -598,10 +630,17 @@ const methods = {
             }
             else if (control.type === "number") {
                 const raw = String(control.value ?? "").trim();
-                if (!raw) return;
-                const parsed = Number(raw);
-                if (!Number.isFinite(parsed)) return;
-                nextValue = parsed;
+                if (!raw) {
+                    const defaultNumeric = this.getDefaultNumericSetting(path);
+                    if (defaultNumeric === undefined) return;
+                    nextValue = defaultNumeric;
+                    control.value = String(defaultNumeric);
+                }
+                else {
+                    const parsed = Number(raw);
+                    if (!Number.isFinite(parsed)) return;
+                    nextValue = parsed;
+                }
             }
             else if (control.type) {
                 const rawValue = String(control.value ?? "");
@@ -628,25 +667,117 @@ const methods = {
         });
     },
 
+    refreshLocalizedComposerButtons() {
+        if (typeof document === "undefined" || !document.querySelectorAll) return;
+        const polishFull = this.plugin.t("polishButton");
+        const polishShort = this.plugin.t("polishButtonShort");
+        const polishTitle = typeof this.plugin.getPolishButtonTitleAttr === "function"
+            ? this.plugin.getPolishButtonTitleAttr()
+            : polishFull;
+        const bilingualFull = this.plugin.t("publicBilingualButton");
+        const bilingualShort = this.plugin.t("publicBilingualButtonShort");
+        const bilingualTarget = typeof this.plugin.getPublicBilingualTargetLanguage === "function"
+            ? this.plugin.getPublicBilingualTargetLanguage()
+            : this.plugin.settings?.translation?.targetLanguage;
+        const bilingualTitle = this.plugin.t("publicBilingualTitleAttr", {
+            targetLanguage: this.plugin.getDisplayLanguage(bilingualTarget)
+        });
+        const restoreFull = this.plugin.t("restoreOriginal");
+        const restoreShort = this.plugin.t("restoreOriginalShort");
+        const menuLabel = this.plugin.t("inputActionMenu");
+
+        document.querySelectorAll(".dait-polish-button").forEach(btn => {
+            if (!btn || btn.isConnected === false) return;
+            if (btn.dataset) {
+                btn.dataset.daitFullLabel = polishFull;
+                btn.dataset.daitShortLabel = polishShort;
+            }
+            btn.title = polishTitle;
+            btn.setAttribute?.("aria-label", polishTitle);
+            if (btn.disabled) btn.textContent = this.plugin.t("polishBusy");
+            else if (typeof this.plugin.renderInputActionButtonLabel === "function") this.plugin.renderInputActionButtonLabel(btn);
+            else btn.textContent = polishFull;
+        });
+
+        document.querySelectorAll(".dait-public-bilingual-button").forEach(btn => {
+            if (!btn || btn.isConnected === false) return;
+            if (btn.dataset) {
+                btn.dataset.daitFullLabel = bilingualFull;
+                btn.dataset.daitShortLabel = bilingualShort;
+            }
+            btn.title = bilingualTitle;
+            btn.setAttribute?.("aria-label", bilingualTitle);
+            if (btn.disabled) btn.textContent = this.plugin.t("publicBilingualBusy");
+            else if (typeof this.plugin.renderInputActionButtonLabel === "function") this.plugin.renderInputActionButtonLabel(btn);
+            else btn.textContent = bilingualFull;
+        });
+
+        document.querySelectorAll(".dait-polish-restore-button").forEach(btn => {
+            if (!btn || btn.isConnected === false) return;
+            if (btn.dataset) {
+                btn.dataset.daitFullLabel = restoreFull;
+                btn.dataset.daitShortLabel = restoreShort;
+            }
+            btn.title = restoreFull;
+            btn.setAttribute?.("aria-label", restoreFull);
+            if (typeof this.plugin.renderInputActionButtonLabel === "function") this.plugin.renderInputActionButtonLabel(btn);
+            else btn.textContent = restoreFull;
+        });
+
+        document.querySelectorAll(".dait-input-action-menu-button").forEach(btn => {
+            if (!btn || btn.isConnected === false) return;
+            btn.title = menuLabel;
+            btn.setAttribute?.("aria-label", menuLabel);
+        });
+
+        this.plugin.syncPolishPresetControls?.();
+
+        document.querySelectorAll(".dait-input-actions-host").forEach(host => {
+            if (!host?.querySelector?.(".dait-input-action-group")) {
+                host?.classList?.remove?.("dait-input-actions-host");
+            }
+        });
+    },
+
     refreshLocalizedUi() {
         if (typeof document === "undefined") return;
         this.plugin.cancelLightweightButtonRecovery();
         this.plugin.nonTranslatableMessageCache = typeof WeakMap === "function" ? new WeakMap() : null;
         this.plugin.lastMissingMessageButtonSweepAt = 0;
-        this.plugin.removePolishResultPanel();
-        this.plugin.removePolishRestoreControl();
         this.plugin.removeInputActionMenu();
         this.plugin.removePolishPresetMenu();
+        if (typeof this.plugin.refreshPolishResultPanelLocale === "function") {
+            this.plugin.refreshPolishResultPanelLocale();
+        }
         // The settings windows and the quick panel stay open and switch language in place.
         this.refreshSettingsWindowsLocale();
         this.plugin.quickPanel?.rerender?.("language");
-        this.plugin.restoreAllTranslationSourceVisibility();
-        document.querySelectorAll(".dait-message-button, .dait-polish-button, .dait-polish-preset-button, .dait-public-bilingual-button, .dait-polish-restore-button, .dait-input-action-menu-button, .dait-input-action-menu, .dait-polish-preset-menu, .dait-input-action-group, .dait-quick-settings-button").forEach(node => node.remove());
-        document.querySelectorAll(".dait-translation-line").forEach(node => {
-            if (typeof this.plugin.disposeTranslationLine === "function") this.plugin.disposeTranslationLine(node);
-            else node.remove();
-        });
-        document.querySelectorAll(".dait-translation-box").forEach(node => node.remove());
+        if (typeof this.plugin.refreshAllTranslationLinesLocale === "function") {
+            this.plugin.refreshAllTranslationLinesLocale();
+        }
+        if (typeof this.plugin.refreshLocalizedLauncherAndButtons === "function") {
+            this.plugin.refreshLocalizedLauncherAndButtons();
+        }
+        else if (document.querySelectorAll) {
+            const targetLabel = this.plugin.getDisplayLanguage(this.plugin.settings?.translation?.targetLanguage);
+            const buttonTitle = this.plugin.t("translateTitleAttr", { targetLanguage: targetLabel });
+            const idleText = this.plugin.t("translateButton");
+            const busyText = this.plugin.t("translateBusy");
+            document.querySelectorAll(".dait-message-button").forEach(btn => {
+                if (!btn || btn.isConnected === false) return;
+                btn.textContent = btn.disabled ? busyText : idleText;
+                btn.title = buttonTitle;
+                btn.setAttribute?.("aria-label", buttonTitle);
+            });
+            const launcherLabel = this.plugin.t("quickSettingsOpen");
+            document.querySelectorAll(".dait-quick-settings-button").forEach(btn => {
+                if (!btn || btn.isConnected === false) return;
+                btn.title = launcherLabel;
+                btn.setAttribute?.("aria-label", launcherLabel);
+                this.plugin.quickPanel?.decorateLauncher?.(btn);
+            });
+        }
+        this.refreshLocalizedComposerButtons();
         this.plugin.unpatchContextMenus();
         this.plugin.patchMessageContextMenu();
         this.plugin.queueScan();
@@ -666,6 +797,7 @@ const methods = {
         let rebuilt = 0;
         [...(document.querySelectorAll?.(".dait-settings") || [])].forEach(panel => {
             if (!panel || panel.isConnected === false || panel.dataset?.daitLocale === locale) return;
+            this.commitSettingsControls(panel, { excludePaths: ["ui.language"] });
             if (this.plugin.replaceSettingsPanelElement(panel)) rebuilt++;
         });
         return rebuilt;

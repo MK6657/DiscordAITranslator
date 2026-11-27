@@ -130,10 +130,21 @@ const methods = {
         return this.plugin.isElementVisibleInViewport(target.messageNode) && this.plugin.isElementVisibleInViewport(target.content);
     },
 
+    getContextCacheDrawBand(element, context = null) {
+        if (context?.cacheDrawBandByNode && element) {
+            if (context.cacheDrawBandByNode.has(element)) return context.cacheDrawBandByNode.get(element);
+            for (let current = element.parentElement; current; current = current.parentElement) {
+                if (context.cacheDrawBandByNode.has(current)) return context.cacheDrawBandByNode.get(current);
+            }
+        }
+        return context?.cacheDrawBand || null;
+    },
+
     isElementNearChatBand(element, context = null) {
         const rect = this.plugin.getCachedElementRect(element, context);
         if (!rect || !(Number(rect.width) > 0) || !(Number(rect.height) > 0)) return null;
-        const band = context?.cacheDrawBand || this.getScrollContainerBand(this.getTranslationScrollContainer(element));
+        const band = this.getContextCacheDrawBand(element, context)
+            || this.getScrollContainerBand(this.getTranslationScrollContainer(element));
         if (!band) return null;
         const buffer = this.getCachedDrawBufferPx(band);
         return Number(rect.bottom) > band.top - buffer && Number(rect.top) < band.bottom + buffer;
@@ -262,26 +273,95 @@ const methods = {
         return !scroller || (typeof document !== "undefined" && (scroller === document.scrollingElement || scroller === document.documentElement));
     },
 
-    // Mounted messages in and around the visible chat, nearest first. Messages are in document order,
-    // top to bottom: a binary search finds the first one not above the chat, then the walk goes outward.
+    // Mounted messages in and around the visible chat(s), nearest first. Supports both single-channel
+    // views and split-view dual panes (e.g. main channel + right-side Thread / Voice text chat), running
+    // monotonic binary search independently within each scroll container's own message list.
     getCachedDrawMessageNodes(context = null) {
-        const firstMessage = document.querySelector?.(DISCORD_MESSAGE_NODE_SELECTOR);
-        if (!firstMessage) {
-            // No chat is mounted: do not keep the last channel's detached message list alive.
-            this.plugin.cachedDrawScroller = null;
-            return { nodes: [], band: null };
+        let rawMessages = [...(document.querySelectorAll?.(DISCORD_MESSAGE_NODE_SELECTOR) || [])];
+        if (!rawMessages.length) {
+            const firstMessage = document.querySelector?.(DISCORD_MESSAGE_NODE_SELECTOR);
+            if (!firstMessage) {
+                // No chat is mounted: do not keep the last channel's detached message list alive.
+                this.plugin.cachedDrawScroller = null;
+                return { nodes: [], band: null };
+            }
+            const fallbackScroller = this.getTranslationScrollContainer(firstMessage);
+            const fallbackRoot = (!this.isDocumentScroller(fallbackScroller) && fallbackScroller)
+                || firstMessage.closest?.("[data-list-id*='chat-messages']")
+                || firstMessage.parentElement
+                || document;
+            rawMessages = [...(fallbackRoot.querySelectorAll?.(DISCORD_MESSAGE_NODE_SELECTOR) || [firstMessage])];
         }
-        let scroller = this.plugin.cachedDrawScroller;
-        if (!scroller?.isConnected || !scroller.contains?.(firstMessage)) {
-            scroller = this.getTranslationScrollContainer(firstMessage);
-            // The document fallback only means the chat does not overflow yet, so it is not kept.
-            this.plugin.cachedDrawScroller = this.isDocumentScroller(scroller) ? null : scroller;
+
+        // Resolve scroll containers without letting a stale single-pane cachedDrawScroller claim sibling panes.
+        this.plugin.cachedDrawScroller = null;
+        const parentCache = new Map();
+        const paneMap = new Map();
+        const scrollableScrollers = new Set();
+
+        for (const node of rawMessages) {
+            if (!node || node.isConnected === false) continue;
+            const parent = node.parentElement || null;
+            let parentMeta = parent ? parentCache.get(parent) : null;
+            if (!parentMeta) {
+                const nested = Boolean(parent?.closest?.(DISCORD_MESSAGE_NODE_SELECTOR));
+                const scroller = nested ? null : this.getTranslationScrollContainer(node);
+                const docScroller = this.isDocumentScroller(scroller);
+                const paneKey = nested
+                    ? null
+                    : (!docScroller
+                        ? scroller
+                        : (node.closest?.("[data-list-id*='chat-messages'], [class*='chatContent']") || parent || scroller || document));
+                parentMeta = { nested, scroller, docScroller, paneKey };
+                if (parent) parentCache.set(parent, parentMeta);
+            }
+            if (parentMeta.nested || !parentMeta.paneKey) continue;
+            if (!parentMeta.docScroller && parentMeta.scroller) scrollableScrollers.add(parentMeta.scroller);
+            let group = paneMap.get(parentMeta.paneKey);
+            if (!group) {
+                group = { scroller: parentMeta.scroller, messages: [] };
+                paneMap.set(parentMeta.paneKey, group);
+            }
+            group.messages.push(node);
         }
-        const band = this.getScrollContainerBand(scroller);
-        if (!band) return { nodes: [], band: null };
-        const root = this.plugin.cachedDrawScroller || firstMessage.closest?.("[data-list-id*='chat-messages']") || firstMessage.parentElement || document;
-        const messages = [...(root.querySelectorAll?.(DISCORD_MESSAGE_NODE_SELECTOR) || [])]
-            .filter(node => node?.isConnected && !node.parentElement?.closest?.(DISCORD_MESSAGE_NODE_SELECTOR));
+
+        // The document fallback only means the chat does not overflow yet, so it is not kept;
+        // multiple independent scrollers also skip the single-scroller shortcut.
+        this.plugin.cachedDrawScroller = scrollableScrollers.size === 1 ? [...scrollableScrollers][0] : null;
+        if (!paneMap.size) return { nodes: [], band: null };
+
+        const paneSelections = [];
+        for (const group of paneMap.values()) {
+            const band = this.getScrollContainerBand(group.scroller);
+            if (!band || !group.messages.length) continue;
+            const entries = this.selectCachedDrawEntriesForPane(group.messages, band, context);
+            paneSelections.push({ band, entries });
+        }
+        if (!paneSelections.length) return { nodes: [], band: null };
+
+        if (paneSelections.length === 1) {
+            const [{ band, entries }] = paneSelections;
+            return { nodes: entries.map(entry => entry.node), band };
+        }
+
+        const bandByNode = new Map();
+        const merged = [];
+        for (const { band, entries } of paneSelections) {
+            for (const entry of entries) {
+                bandByNode.set(entry.node, band);
+                merged.push(entry);
+            }
+        }
+        merged.sort((left, right) => left.distance - right.distance || left.top - right.top);
+        const maxTotal = AUTO_TRANSLATE_CACHE_DRAW_MAX_MESSAGES * paneSelections.length;
+        if (context) context.cacheDrawBandByNode = bandByNode;
+        return {
+            nodes: merged.slice(0, maxTotal).map(entry => entry.node),
+            band: paneSelections[0].band
+        };
+    },
+
+    selectCachedDrawEntriesForPane(messages, band, context = null) {
         const buffer = this.getCachedDrawBufferPx(band);
         const measure = index => {
             const rect = this.plugin.getCachedElementRect(messages[index], context);
@@ -342,7 +422,7 @@ const methods = {
             above++;
         }
         nearby.sort((left, right) => left.distance - right.distance || left.top - right.top);
-        return { nodes: nearby.slice(0, AUTO_TRANSLATE_CACHE_DRAW_MAX_MESSAGES).map(entry => entry.node), band };
+        return nearby.slice(0, AUTO_TRANSLATE_CACHE_DRAW_MAX_MESSAGES);
     },
 
     // Outcome statuses: drawn (already shows a finished line), nothing (memoised skip or miss),
@@ -457,7 +537,7 @@ const methods = {
 
     getCachedDrawPriority(content, context = null) {
         const rect = this.plugin.getCachedElementRect(content, context);
-        const band = context?.cacheDrawBand;
+        const band = this.getContextCacheDrawBand(content, context);
         if (!rect || !band) return undefined;
         if (Number(rect.bottom) <= band.top) return AUTO_TRANSLATE_PREFETCH_PRIORITY_BASE + band.top - Number(rect.bottom);
         if (Number(rect.top) >= band.bottom) return AUTO_TRANSLATE_PREFETCH_PRIORITY_BASE + Number(rect.top) - band.bottom;
@@ -678,7 +758,9 @@ const methods = {
             );
             return false;
         }
-        if (this.plugin.hasManualTranslationLine(target.content, this.plugin.getAutoTranslationTargetDomText(target), target.messageNode)) {
+        const domText = this.plugin.getAutoTranslationTargetDomText(target);
+        if (this.plugin.hasManualTranslationLine(target.content, domText, target.messageNode)
+            || this.plugin.isManualTranslationInFlight(target.content, domText, target.messageNode)) {
             this.plugin.logAutoTranslationMessageState(
                 "auto.message.state",
                 "render-skip",

@@ -11,26 +11,62 @@ const methods = {
 
     // Rebuilds the panel in place (provider or language change, reset) and keeps the tab, the scroll position and
     // the focused control.
-    replaceSettingsPanelElement(panel, nextPanel = null) {
+    replaceSettingsPanelElement(panel, nextPanel = null, options = {}) {
         if (!panel) return null;
         // Already rebuilt earlier in the same change (the language select rebuilds its panel after setSetting, which
         // has rebuilt it for the new language): hand back that panel instead of building a third one.
         if (panel.__daitReplacedBy && panel.isConnected === false) return panel.__daitReplacedBy;
-        const scrollTop = Number(panel.__daitSettingsUi?.content?.scrollTop || 0);
+        const isReset = Boolean(options?.isReset || panel.__daitResetPending);
+        delete panel.__daitResetPending;
+        const oldState = panel.__daitSettingsUi || null;
+        const scrollTop = Number(oldState?.content?.scrollTop || 0);
         const active = typeof document !== "undefined" ? document.activeElement : null;
-        const focusOwner = active && panel.contains?.(active)
+        const focusedSearchInput = Boolean(!isReset && active && oldState?.searchInput && active === oldState.searchInput);
+        const focusOwner = !focusedSearchInput && active && panel.contains?.(active)
             ? (active.dataset?.daitPath ? active : active.closest?.("[data-dait-path]"))
             : null;
         const focusPath = focusOwner ? String(focusOwner.dataset?.daitPath || "") : "";
-        const focusSavedKind = !focusPath && active && panel.contains?.(active) ? String(active.dataset?.daitSavedConfigs || "") : "";
-        const focusUiId = !focusPath && !focusSavedKind && active && panel.contains?.(active) ? String(active.dataset?.daitUiFocusId || "") : "";
+        const focusSavedKind = !focusedSearchInput && !focusPath && active && panel.contains?.(active)
+            ? String(active.dataset?.daitSavedConfigs || "")
+            : "";
+        const focusUiId = !focusedSearchInput && !focusPath && !focusSavedKind && active && panel.contains?.(active)
+            ? String(active.dataset?.daitUiFocusId || "")
+            : "";
         const openDetails = new Set(
             [...(panel.querySelectorAll?.("details[data-dait-details-key]") || [])]
                 .filter(node => node?.open)
                 .map(node => `${node.closest?.(".dait-settings-tabpanel")?.dataset?.daitSettingsTabPanel || ""}:${node.dataset?.daitDetailsKey || ""}`)
         );
+        const searchSnapshot = !isReset && oldState?.searchQuery
+            ? String(oldState.searchInput?.value || oldState.searchQuery || "")
+            : "";
+        const promptDrafts = new Map();
+        const trySnapshots = new Map();
+        if (!isReset) {
+            [...(panel.querySelectorAll?.("[data-dait-prompt-manager]") || [])].forEach(node => {
+                const kind = String(node?.dataset?.daitPromptManager || "");
+                const draft = kind ? node.__daitGetDraftState?.() : null;
+                if (kind && draft) promptDrafts.set(kind, draft);
+            });
+            [...(panel.querySelectorAll?.("[data-dait-try-kind]") || [])].forEach(row => {
+                const kind = String(row?.dataset?.daitTryKind || "");
+                const tryUi = row?.__daitTryUi;
+                if (!kind || !tryUi) return;
+                trySnapshots.set(kind, {
+                    provider: String(row.closest?.(".dait-provider-settings-block")?.dataset?.daitProvider || ""),
+                    inputValue: String(tryUi.input?.value ?? ""),
+                    resultHidden: Boolean(tryUi.result?.hidden),
+                    isError: Boolean(tryUi.result?.classList?.contains?.("dait-try-result-error")),
+                    errorKind: String(tryUi.result?.dataset?.daitTryErrorKind || ""),
+                    outputText: String(tryUi.output?.textContent ?? ""),
+                    latency: String(tryUi.time?.dataset?.daitLatency || ""),
+                    timeHidden: Boolean(tryUi.time?.hidden),
+                    timeText: String(tryUi.time?.textContent ?? "")
+                });
+            });
+        }
         // A reset restores the default tab; the rebuilt panel still opens where the user was.
-        const activeTab = panel.__daitSettingsUi?.activeTab;
+        const activeTab = oldState?.activeTab;
         if (activeTab && this.plugin.settings?.ui) this.plugin.settings.ui.settingsActiveTab = activeTab;
         nextPanel = nextPanel || this.plugin.getSettingsPanel({ quickSettings: panel.dataset?.daitQuickSettings === "true" });
         if (openDetails.size) {
@@ -39,6 +75,55 @@ const methods = {
                 if (openDetails.has(detailsId)) node.open = true;
             });
         }
+        if (promptDrafts.size) {
+            [...(nextPanel.querySelectorAll?.("[data-dait-prompt-manager]") || [])].forEach(node => {
+                const kind = String(node?.dataset?.daitPromptManager || "");
+                const draft = promptDrafts.get(kind);
+                if (draft) node.__daitApplyDraftState?.(draft);
+            });
+        }
+        if (trySnapshots.size) {
+            [...(nextPanel.querySelectorAll?.("[data-dait-try-kind]") || [])].forEach(row => {
+                const kind = String(row?.dataset?.daitTryKind || "");
+                const snap = trySnapshots.get(kind);
+                const nextTryUi = row?.__daitTryUi;
+                if (!snap || !nextTryUi) return;
+                if (nextTryUi.input && snap.inputValue) nextTryUi.input.value = snap.inputValue;
+                const nextProvider = String(row.closest?.(".dait-provider-settings-block")?.dataset?.daitProvider || "");
+                if (!snap.resultHidden && (!snap.provider || snap.provider === nextProvider) && nextTryUi.result) {
+                    nextTryUi.result.hidden = false;
+                    nextTryUi.result.classList?.toggle?.("dait-try-result-error", snap.isError);
+                    if (nextTryUi.output) {
+                        if (snap.errorKind === "input-required") {
+                            if (nextTryUi.result.dataset) nextTryUi.result.dataset.daitTryErrorKind = "input-required";
+                            nextTryUi.output.textContent = this.plugin.t("tryInputRequired");
+                        }
+                        else {
+                            nextTryUi.output.textContent = snap.outputText;
+                        }
+                    }
+                    if (nextTryUi.time) {
+                        if (snap.latency) {
+                            if (nextTryUi.time.dataset) nextTryUi.time.dataset.daitLatency = snap.latency;
+                            nextTryUi.time.textContent = this.plugin.t("tryResultTime", { time: snap.latency });
+                            nextTryUi.time.hidden = false;
+                        }
+                        else if (!snap.timeHidden && snap.timeText) {
+                            nextTryUi.time.textContent = snap.timeText;
+                            nextTryUi.time.hidden = false;
+                        }
+                        else {
+                            nextTryUi.time.hidden = true;
+                        }
+                    }
+                }
+            });
+        }
+        const nextState = nextPanel.__daitSettingsUi || null;
+        if (searchSnapshot && nextState?.searchInput) {
+            nextState.searchInput.value = searchSnapshot;
+            this.runSettingsSearch?.(nextState, searchSnapshot);
+        }
         ["--dait-host-chrome", "--dait-host-max"].forEach(name => {
             const value = panel.style?.getPropertyValue?.(name);
             if (value) nextPanel.style?.setProperty?.(name, value);
@@ -46,9 +131,12 @@ const methods = {
         this.destroySettingsModalSizing(panel);
         panel.replaceWith?.(nextPanel);
         panel.__daitReplacedBy = nextPanel;
-        const content = nextPanel.__daitSettingsUi?.content;
+        const content = nextState?.content;
         if (content && scrollTop) content.scrollTop = scrollTop;
-        if (focusPath) {
+        if (focusedSearchInput && nextState?.searchInput) {
+            this.focusSettingsElement(nextState.searchInput);
+        }
+        else if (focusPath) {
             const control = [...(nextPanel.querySelectorAll?.(`[data-dait-path='${focusPath}']`) || [])].find(node => !node.closest?.("[hidden]"));
             const focusTarget = control?.dataset?.daitControl === "language"
                 ? (control.querySelector?.("input:not([hidden]), select") || control)
@@ -384,8 +472,8 @@ const methods = {
         if (resize) {
             if (resize.raf !== null && typeof cancelAnimationFrame === "function") cancelAnimationFrame(resize.raf);
             if (typeof window !== "undefined") {
-                window.removeEventListener?.("resize", resize.listener, { passive: true });
-                window.visualViewport?.removeEventListener?.("resize", resize.listener, { passive: true });
+                window.removeEventListener?.("resize", resize.listener);
+                window.visualViewport?.removeEventListener?.("resize", resize.listener);
             }
             panel.__daitSettingsResize = null;
         }

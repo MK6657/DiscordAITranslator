@@ -139,13 +139,16 @@ const methods = {
         tabs.setAttribute("role", "tablist");
         tabs.setAttribute("aria-label", this.plugin.t("polishPresetMenuTabsLabel"));
         POLISH_PROMPT_TEMPLATE_CATEGORIES.forEach(category => {
+            const isSelectedCategory = category === activeCategory;
             const tab = document.createElement("button");
             tab.className = "dait-polish-preset-tab";
             tab.type = "button";
             tab.dataset.daitCategory = category;
             tab.textContent = this.plugin.getPolishTemplateCategoryLabel(category);
             tab.setAttribute("role", "tab");
-            tab.setAttribute("aria-selected", category === activeCategory ? "true" : "false");
+            tab.setAttribute("aria-selected", isSelectedCategory ? "true" : "false");
+            tab.setAttribute("tabindex", isSelectedCategory ? "0" : "-1");
+            tab.tabIndex = isSelectedCategory ? 0 : -1;
             tab.addEventListener("click", event => {
                 event.preventDefault();
                 event.stopPropagation();

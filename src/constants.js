@@ -486,6 +486,7 @@ const TRANSLATION_VALIDATION_QUALITIES = Object.freeze({
 });
 const DIAGNOSTIC_REASON_CODES = Object.freeze({
     DISCOVERED: "discovered",
+    AUTO_DISABLED: "auto-disabled",
     NOT_ELIGIBLE_LANGUAGE: "not-eligible-language",
     PREFETCH_DISABLED: "prefetch-disabled",
     LAYOUT_UNSTABLE_PREFETCH: "layout-unstable-prefetch",

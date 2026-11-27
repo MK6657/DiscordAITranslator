@@ -86,7 +86,7 @@ class QuickPanel {
         this.updateTimer = null;
         this.routeTimer = null;
         this.countdownTimer = null;
-        this.testRuns = { translation: false, polish: false };
+        this.testRuns = { translation: null, polish: null };
         this.statusPending = false;
         this.statusTimer = null;
         this.statusExpiryTimer = null;
@@ -230,7 +230,7 @@ class QuickPanel {
         this.launcherRef = null;
         this.configError = null;
         this.tryRunToken = null;
-        this.testRuns = { translation: false, polish: false };
+        this.testRuns = { translation: null, polish: null };
     }
 
     // The interface language changed while the panel is open: build it again where it is (same channel, same tab,
@@ -245,6 +245,7 @@ class QuickPanel {
             ? {
                 error: Boolean(previousTryResult.classList?.contains?.("dait-try-result-error")),
                 output: String(this.controls?.tryOutput?.textContent || ""),
+                latency: String(this.controls?.tryTime?.dataset?.daitLatency || ""),
                 time: String(this.controls?.tryTime?.textContent || ""),
                 timeHidden: Boolean(this.controls?.tryTime?.hidden)
             }
@@ -276,7 +277,13 @@ class QuickPanel {
             if (this.controls.tryOutput) this.controls.tryOutput.textContent = trySnapshot.output;
             if (this.controls.tryTime) {
                 this.controls.tryTime.hidden = trySnapshot.timeHidden;
-                this.controls.tryTime.textContent = trySnapshot.time;
+                if (trySnapshot.latency) {
+                    this.controls.tryTime.dataset.daitLatency = trySnapshot.latency;
+                    this.controls.tryTime.textContent = this.plugin.t("tryResultTime", { time: trySnapshot.latency });
+                }
+                else {
+                    this.controls.tryTime.textContent = trySnapshot.time;
+                }
             }
         }
         this.plugin.applyPanelTheme(root);
@@ -1090,7 +1097,8 @@ class QuickPanel {
         }
         else {
             controls.tryRun.disabled = !polishOn;
-            this.setText(controls.tryRun, t(controls.tryResult.hidden ? "quickPanelTryPolishRun" : "quickPanelTryPolishAgain"));
+            const hasResult = !controls.tryResult.hidden && !controls.tryResult.classList?.contains?.("dait-try-result-error");
+            this.setText(controls.tryRun, t(hasResult ? "quickPanelTryPolishAgain" : "quickPanelTryPolishRun"));
         }
 
         // --- Mode tab summary chips & indicators ---
@@ -1315,7 +1323,14 @@ class QuickPanel {
                             if (this.controls.tryOutput && controls.tryOutput) this.setText(this.controls.tryOutput, String(controls.tryOutput.textContent || ""));
                             if (this.controls.tryTime && controls.tryTime) {
                                 this.controls.tryTime.hidden = Boolean(controls.tryTime.hidden);
-                                this.setText(this.controls.tryTime, String(controls.tryTime.textContent || ""));
+                                const latency = String(controls.tryTime.dataset?.daitLatency || "");
+                                if (latency) {
+                                    this.controls.tryTime.dataset.daitLatency = latency;
+                                    this.setText(this.controls.tryTime, this.plugin.t("tryResultTime", { time: latency }));
+                                }
+                                else {
+                                    this.setText(this.controls.tryTime, String(controls.tryTime.textContent || ""));
+                                }
                             }
                         }
                         this.update();
@@ -1494,7 +1509,7 @@ class QuickPanel {
         }
         finally {
             if (this.testRuns[taskKind] === run) {
-                this.testRuns[taskKind] = false;
+                this.testRuns[taskKind] = null;
                 if (plugin.isLifecycleTokenCurrent(lifecycleToken)) {
                     this.requestStatusUpdate();
                     if (this.isOpen()) this.update();

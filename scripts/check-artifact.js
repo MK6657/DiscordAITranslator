@@ -25,6 +25,265 @@ const metadataVersion = text.match(/@version\s+([^\s]+)/)?.[1] || "";
 if (metadataVersion !== packageJson.version) throw new Error("Plugin metadata and package versions do not match.");
 if (artifact.length > 3_500_000) throw new Error(`Plugin artifact is unexpectedly large: ${artifact.length} bytes.`);
 
+// Static external require(...) allowlist check: esbuild bundles internal modules via __commonJS/__require
+// closures, so any bare top-level/nested require(...) in code is a real runtime Node module lookup. Only
+// the optional try/catch-guarded crypto fast path in createMd5Hash (backed by pure-JS RFC 1321 MD5) is allowed.
+const ALLOWED_EXTERNAL_REQUIRES = new Set(["crypto", "node:crypto"]);
+const REGEX_PRECEDING_KEYWORDS = new Set([
+    "return", "throw", "case", "typeof", "void", "delete", "in", "instanceof", "new", "yield", "await", "else", "do"
+]);
+const REGEX_PRECEDING_PUNCTUATION = new Set([
+    "(", ",", "=", ":", "[", "!", "&", "|", "?", "{", "}", ";", "+", "-", "*", "%", "<", ">", "^", "~"
+]);
+
+function isIdentStart(ch) {
+    return (ch >= "a" && ch <= "z") || (ch >= "A" && ch <= "Z") || ch === "_" || ch === "$";
+}
+
+function isIdentPart(ch) {
+    return isIdentStart(ch) || (ch >= "0" && ch <= "9");
+}
+
+function skipWhitespaceAndComments(source, start) {
+    let i = start;
+    while (i < source.length) {
+        const ch = source[i];
+        if (ch === " " || ch === "\t" || ch === "\r" || ch === "\n") {
+            i++;
+            continue;
+        }
+        if (ch === "/" && source[i + 1] === "/") {
+            i += 2;
+            while (i < source.length && source[i] !== "\n") i++;
+            continue;
+        }
+        if (ch === "/" && source[i + 1] === "*") {
+            const end = source.indexOf("*/", i + 2);
+            i = end >= 0 ? end + 2 : source.length;
+            continue;
+        }
+        break;
+    }
+    return i;
+}
+
+function readSimpleQuotedString(source, start) {
+    const quote = source[start];
+    if (quote !== "\"" && quote !== "'" && quote !== "`") return null;
+    let i = start + 1;
+    let value = "";
+    while (i < source.length) {
+        const ch = source[i];
+        if (ch === "\\") {
+            if (i + 1 >= source.length) return null;
+            value += source[i + 1];
+            i += 2;
+            continue;
+        }
+        if (quote === "`" && ch === "$" && source[i + 1] === "{") return null;
+        if (ch === quote) return { value, end: i + 1 };
+        value += ch;
+        i++;
+    }
+    return null;
+}
+
+function scanTemplateSegment(source, startAfterOpen) {
+    let i = startAfterOpen;
+    while (i < source.length) {
+        const ch = source[i];
+        if (ch === "\\") {
+            i += 2;
+            continue;
+        }
+        if (ch === "`") return { kind: "end", next: i + 1 };
+        if (ch === "$" && source[i + 1] === "{") return { kind: "expr", next: i + 2 };
+        i++;
+    }
+    return { kind: "end", next: source.length };
+}
+
+function findExternalRequires(source) {
+    const found = [];
+    const templateBraceStack = [];
+    let line = 1;
+    let prevToken = "";
+    let prevIsKeyword = false;
+
+    const advanceTo = target => {
+        while (cursor < target) {
+            if (source[cursor] === "\n") line++;
+            cursor++;
+        }
+    };
+
+    let cursor = 0;
+    while (cursor < source.length) {
+        const ch = source[cursor];
+        if (ch === "\n") {
+            line++;
+            cursor++;
+            continue;
+        }
+        if (ch === " " || ch === "\t" || ch === "\r") {
+            cursor++;
+            continue;
+        }
+        if (ch === "/" && source[cursor + 1] === "/") {
+            let end = cursor + 2;
+            while (end < source.length && source[end] !== "\n") end++;
+            advanceTo(end);
+            continue;
+        }
+        if (ch === "/" && source[cursor + 1] === "*") {
+            const end = source.indexOf("*/", cursor + 2);
+            advanceTo(end >= 0 ? end + 2 : source.length);
+            continue;
+        }
+        if (ch === "\"" || ch === "'") {
+            let end = cursor + 1;
+            while (end < source.length) {
+                if (source[end] === "\\") {
+                    end += 2;
+                    continue;
+                }
+                if (source[end] === ch) {
+                    end++;
+                    break;
+                }
+                end++;
+            }
+            advanceTo(end);
+            prevToken = "string";
+            prevIsKeyword = false;
+            continue;
+        }
+        if (ch === "`") {
+            const seg = scanTemplateSegment(source, cursor + 1);
+            advanceTo(seg.next);
+            if (seg.kind === "expr") {
+                templateBraceStack.push(0);
+                prevToken = "{";
+                prevIsKeyword = false;
+            }
+            else {
+                prevToken = "string";
+                prevIsKeyword = false;
+            }
+            continue;
+        }
+        if (ch === "/" && (!prevToken || REGEX_PRECEDING_PUNCTUATION.has(prevToken) || (prevIsKeyword && REGEX_PRECEDING_KEYWORDS.has(prevToken)))) {
+            let end = cursor + 1;
+            let inClass = false;
+            while (end < source.length) {
+                const rc = source[end];
+                if (rc === "\\") {
+                    end += 2;
+                    continue;
+                }
+                if (rc === "[") inClass = true;
+                else if (rc === "]") inClass = false;
+                else if (rc === "/" && !inClass) {
+                    end++;
+                    while (end < source.length && isIdentPart(source[end])) end++;
+                    break;
+                }
+                else if ((rc === "\n" || rc === "\r") && !inClass) {
+                    end = cursor + 1;
+                    break;
+                }
+                end++;
+            }
+            advanceTo(end);
+            prevToken = "regex";
+            prevIsKeyword = false;
+            continue;
+        }
+        if (ch === "{") {
+            if (templateBraceStack.length > 0) templateBraceStack[templateBraceStack.length - 1]++;
+            cursor++;
+            prevToken = "{";
+            prevIsKeyword = false;
+            continue;
+        }
+        if (ch === "}") {
+            if (templateBraceStack.length > 0 && templateBraceStack[templateBraceStack.length - 1] === 0) {
+                templateBraceStack.pop();
+                const seg = scanTemplateSegment(source, cursor + 1);
+                advanceTo(seg.next);
+                if (seg.kind === "expr") {
+                    templateBraceStack.push(0);
+                    prevToken = "{";
+                    prevIsKeyword = false;
+                }
+                else {
+                    prevToken = "string";
+                    prevIsKeyword = false;
+                }
+                continue;
+            }
+            if (templateBraceStack.length > 0) templateBraceStack[templateBraceStack.length - 1]--;
+            cursor++;
+            prevToken = "}";
+            prevIsKeyword = false;
+            continue;
+        }
+        if (isIdentStart(ch)) {
+            let end = cursor + 1;
+            while (end < source.length && isIdentPart(source[end])) end++;
+            const ident = source.slice(cursor, end);
+            const callLine = line;
+            if (ident === "require" && prevToken !== "." && prevToken !== "?." && prevToken !== "function") {
+                const afterIdent = skipWhitespaceAndComments(source, end);
+                if (source[afterIdent] === "(") {
+                    const argStart = skipWhitespaceAndComments(source, afterIdent + 1);
+                    const parsedString = readSimpleQuotedString(source, argStart);
+                    const afterArg = parsedString ? skipWhitespaceAndComments(source, parsedString.end) : -1;
+                    if (parsedString && source[afterArg] === ")") {
+                        found.push({
+                            static: true,
+                            specifier: parsedString.value,
+                            raw: `require(${JSON.stringify(parsedString.value)})`,
+                            line: callLine
+                        });
+                    }
+                    else {
+                        const closeParen = source.indexOf(")", afterIdent + 1);
+                        const snippet = source.slice(cursor, closeParen >= 0 ? Math.min(closeParen + 1, cursor + 80) : cursor + 80).replace(/\s+/g, " ");
+                        found.push({
+                            static: false,
+                            specifier: "",
+                            raw: snippet,
+                            line: callLine
+                        });
+                    }
+                }
+            }
+            cursor = end;
+            prevToken = ident;
+            prevIsKeyword = true;
+            continue;
+        }
+        if (ch === "?" && source[cursor + 1] === ".") {
+            cursor += 2;
+            prevToken = "?.";
+            prevIsKeyword = false;
+            continue;
+        }
+        cursor++;
+        prevToken = ch;
+        prevIsKeyword = false;
+    }
+    return found;
+}
+
+const externalRequires = findExternalRequires(text);
+const disallowedRequires = externalRequires.filter(item => !item.static || !ALLOWED_EXTERNAL_REQUIRES.has(item.specifier));
+if (disallowedRequires.length) {
+    const listed = disallowedRequires.map(item => `${item.raw} at line ${item.line}`).join(", ");
+    throw new Error(`Plugin artifact contains disallowed external require(...) calls: ${listed}`);
+}
+
 delete require.cache[require.resolve(artifactPath)];
 const Plugin = require(artifactPath);
 if (typeof Plugin !== "function") throw new Error("Plugin artifact does not export a class/function.");

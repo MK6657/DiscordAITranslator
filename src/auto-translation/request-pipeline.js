@@ -42,6 +42,16 @@ class AutoTranslationRequestPipeline {
         this.ctx = ctx;
     }
 
+    _createCancelledError() {
+        if (typeof this.plugin.createProviderRequestCancelledError === "function") {
+            return this.plugin.createProviderRequestCancelledError();
+        }
+        if (typeof this.plugin.providerLayer?.createProviderRequestCancelledError === "function") {
+            return this.plugin.providerLayer.createProviderRequestCancelledError();
+        }
+        return Object.assign(new Error("Request cancelled"), { name: "AbortError", code: "REQUEST_CANCELLED" });
+    }
+
     get stateMachine() { return this.ctx.stateMachine; }
     get cooldowns() { return this.ctx.cooldowns; }
 
@@ -885,6 +895,7 @@ class AutoTranslationRequestPipeline {
                 pending.delete(item);
                 return;
             }
+            item.daitSingleRequest = true;
             taskOptions?.releaseBatchItem?.(item);
             this.plugin.requeueAutoTranslationItem(item, { allowActiveRequeue: true });
             pending.delete(item);
@@ -910,6 +921,7 @@ class AutoTranslationRequestPipeline {
                 DIAGNOSTIC_REASON_CODES.REQUEUED,
                 { reason: "fallback-limit" }
             );
+            item.daitSingleRequest = true;
             taskOptions?.releaseBatchItem?.(item);
             this.plugin.requeueAutoTranslationItem(item, { delayMs: AUTO_TRANSLATE_FALLBACK_REQUEUE_DELAY_MS, allowActiveRequeue: true });
             pending.delete(item);
@@ -1074,7 +1086,7 @@ class AutoTranslationRequestPipeline {
         ]);
     }
 
-    buildLocalAutoTranslationUserMessage(input, config, options = {}) {
+    buildLocalAutoTranslationUserMessage(input, _config, _options = {}) {
         return String(input ?? "");
     }
 
@@ -1379,11 +1391,19 @@ class AutoTranslationRequestPipeline {
         const parentRequestContext = longOptions?.requestContext && typeof longOptions.requestContext === "object"
             ? longOptions.requestContext
             : null;
+        const isManualLongTask = Boolean(
+            taskOptions?.manualRescue
+            || longOptions?.requestOrigin === "manual"
+            || options?.requestOrigin === "manual"
+            || /^manual(?:-|$)/.test(String(options?.mode || longOptions?.mode || ""))
+        );
         for (let index = 0; index < chunks.length; index++) {
-            if (typeof taskOptions.heartbeat === "function" && taskOptions.heartbeat() === false) {
-                throw this.createAutoTranslationStaleError("long-text-stale-before-chunk");
+            if (taskOptions?.signal?.aborted || (typeof taskOptions.heartbeat === "function" && taskOptions.heartbeat() === false)) {
+                throw isManualLongTask
+                    ? this._createCancelledError()
+                    : this.createAutoTranslationStaleError("long-text-stale-before-chunk");
             }
-            if (this.isAutoTranslationCodeOnlyText(chunks[index]) || this.isAutoTranslationTokenOnlyText?.(chunks[index])) {
+            if (this.isAutoTranslationCodeOnlyText(chunks[index]) || this.isAutoTranslationTokenOnlyText(chunks[index])) {
                 translatedChunks.push(String(chunks[index] || "").trim());
                 continue;
             }
@@ -1465,8 +1485,10 @@ class AutoTranslationRequestPipeline {
                     translated = "";
                 }
             }
-            if (typeof taskOptions.heartbeat === "function" && taskOptions.heartbeat() === false) {
-                throw this.createAutoTranslationStaleError("long-text-stale-after-chunk");
+            if (taskOptions?.signal?.aborted || (typeof taskOptions.heartbeat === "function" && taskOptions.heartbeat() === false)) {
+                throw isManualLongTask
+                    ? this._createCancelledError()
+                    : this.createAutoTranslationStaleError("long-text-stale-after-chunk");
             }
             const trimmedTranslated = String(translated || "").trim();
             if (trimmedTranslated && !this.plugin.hasLongAutoTranslationChunkFailurePlaceholder(trimmedTranslated)) {
@@ -1545,12 +1567,20 @@ class AutoTranslationRequestPipeline {
             { name: "chunk-repair", options: this.getAutoTranslationFinalFallbackOptions(chunkText, chunkOptions) }
         ];
         let lastError = firstError;
+        let truncatedError = firstError?.modelOutputTruncated ? firstError : null;
         for (let attemptIndex = 0; attemptIndex < attempts.length; attemptIndex++) {
+            if (taskOptions?.signal?.aborted || (typeof taskOptions?.heartbeat === "function" && taskOptions.heartbeat() === false)) {
+                throw this._createCancelledError();
+            }
             const attempt = attempts[attemptIndex];
             const attemptContext = parentRequestContext ? {} : null;
             let attemptOptions = attemptContext ? { ...attempt.options, requestContext: attemptContext } : attempt.options;
-            if (lastError?.modelOutputTruncated) {
-                attemptOptions = this.buildTruncationRetryOptions(attemptOptions, chunkOptions, chunkText, attemptIndex === 0 ? 1.8 : 2.2, lastError);
+            const effectiveTruncatedError = lastError?.modelOutputTruncated ? lastError : truncatedError;
+            if (effectiveTruncatedError) {
+                attemptOptions = this.buildTruncationRetryOptions(attemptOptions, chunkOptions, chunkText, attemptIndex === 0 ? 1.8 : 2.2, effectiveTruncatedError);
+            }
+            else if (attemptIndex === attempts.length - 1) {
+                attemptOptions = { ...attemptOptions, allowTruncationFallback: true };
             }
             try {
                 const translated = await this.plugin.runAutoTranslationTaskWithOptions(chunkText, attemptOptions, {
@@ -1591,6 +1621,7 @@ class AutoTranslationRequestPipeline {
             catch (error) {
                 if (this.isAbandonedTranslationError(error)) throw error;
                 lastError = error;
+                if (error?.modelOutputTruncated) truncatedError = error;
                 this.plugin.logDiagnostic("auto.long-text.chunk-rescue", "failed", {
                     sourceHash: meta.sourceHash || this.plugin.getStrongTextFingerprint(chunkText),
                     chunkIndex: Number(meta.chunkIndex || 0),
@@ -1604,6 +1635,9 @@ class AutoTranslationRequestPipeline {
                 // Provider errors and an exhausted request budget end the rescue at once.
                 if (!this.plugin.isManualRescueRetryableError(error)) throw error;
             }
+        }
+        if (taskOptions?.signal?.aborted || (typeof taskOptions?.heartbeat === "function" && taskOptions.heartbeat() === false)) {
+            throw this._createCancelledError();
         }
         const subchunkRescue = await this.runLongAutoTranslationSubchunkManualRescue(chunkText, chunkOptions, taskOptions, meta);
         if (subchunkRescue?.translated) return subchunkRescue;
@@ -1626,6 +1660,9 @@ class AutoTranslationRequestPipeline {
         const translatedParts = [];
         const failures = [];
         for (let index = 0; index < parts.length; index++) {
+            if (taskOptions?.signal?.aborted || (typeof taskOptions?.heartbeat === "function" && taskOptions.heartbeat() === false)) {
+                throw this._createCancelledError();
+            }
             const part = parts[index];
             const partOptions = this.getLongTextChunkTranslationOptions(chunkOptions, part, index, parts.length, meta.sourceHash || this.plugin.getStrongTextFingerprint(text));
             const partContext = parentRequestContext ? {} : null;
@@ -1746,11 +1783,21 @@ class AutoTranslationRequestPipeline {
     async runAutoTranslationModelAttempt(text, options = this.getAutoTranslationOptions(), taskOptions = {}) {
         const timeoutMs = this.getAutoTranslationRequestTimeoutMs(options, text);
         const isCurrent = () => this.isAutoTranslationAttemptCurrent(options, taskOptions);
-        if (!isCurrent()) throw this.createAutoTranslationStaleError("model-attempt-stale");
         const requestOrigin = options?.requestOrigin
             || (taskOptions?.manualRescue || /^manual(?:-|$)/.test(String(options?.mode || ""))
                 ? "manual"
                 : (/^public-bilingual(?:-|$)/.test(String(options?.mode || "")) ? "public-bilingual" : ""));
+        if (!isCurrent()) {
+            if (requestOrigin === "manual") {
+                throw this._createCancelledError();
+            }
+            throw this.createAutoTranslationStaleError("model-attempt-stale");
+        }
+        const signal = taskOptions?.signal || options?.signal || null;
+        const allowProviderFallback = taskOptions?.allowProviderFallback === false || options?.allowProviderFallback === false
+            ? false
+            : undefined;
+        const allowTruncationFallback = Boolean(taskOptions?.allowTruncationFallback || options?.allowTruncationFallback);
         const translated = await this.plugin.runModelTask("translation", text, {
             configOverrides: options.configOverrides,
             timeoutMs,
@@ -1760,8 +1807,10 @@ class AutoTranslationRequestPipeline {
             isCurrent,
             longTextChunk: Boolean(options.longTextChunk),
             longTextSourceLength: Number(options.longTextSourceLength || String(text || "").length) || 0,
-            ...(options.truncationRetry ? { truncationRetry: true } : {}),
-            ...(taskOptions?.signal ? { signal: taskOptions.signal } : {}),
+            ...(options.truncationRetry || taskOptions?.truncationRetry ? { truncationRetry: true } : {}),
+            ...(allowTruncationFallback ? { allowTruncationFallback: true } : {}),
+            ...(allowProviderFallback === false ? { allowProviderFallback: false } : {}),
+            ...(signal ? { signal } : {}),
             ...(taskOptions?.requestBudget ? { requestBudget: taskOptions.requestBudget } : {})
         });
         return this.plugin.sanitizeAutoTranslationOutput(text, translated, this.getAutoTranslationTargetLanguage(options), this.getAutoTranslationOutputValidationOptions(text, translated, options));
@@ -2317,7 +2366,9 @@ class AutoTranslationRequestPipeline {
     }
 
     isAutoTranslationAttemptCurrent(options, taskOptions) {
-        if (taskOptions?.signal?.aborted) return false;
+        if (options?.signal?.aborted || taskOptions?.signal?.aborted) return false;
+        if (typeof options?.heartbeat === "function" && options.heartbeat() === false) return false;
+        if (typeof taskOptions?.heartbeat === "function" && taskOptions.heartbeat() === false) return false;
         if (taskOptions?.requestBudget || taskOptions?.manualRescue || /^manual(?:-|$)/.test(options?.mode || "")) return true;
         return this.plugin.isAutoTranslationRequestCurrent(options);
     }
@@ -3117,6 +3168,37 @@ class AutoTranslationRequestPipeline {
         return withoutCode.length === 0;
     }
 
+    isAutoTranslationTokenOnlyText(text) {
+        const raw = String(text || "");
+        const withoutEmoji = String(
+            typeof this.plugin.removeStandardEmoji === "function"
+                ? this.plugin.removeStandardEmoji(raw)
+                : removeStandardEmoji(raw)
+        );
+        const trimmed = withoutEmoji.trim();
+        if (!trimmed) return true;
+        if (!this.plugin.hasLetters(trimmed)) return true;
+        if (this.isAutoTranslationLinkOnlyText(trimmed) || this.isAutoTranslationCodeOnlyText(trimmed)) return true;
+        const strippedTokens = trimmed
+            .replace(/```[\s\S]*?```/g, " ")
+            .replace(/~~~[\s\S]*?~~~/g, " ")
+            .replace(/`[^`]+`/g, " ")
+            .replace(/<(?:https?|steam|discord):\/\/[^\s<>]+>/gi, " ")
+            .replace(/(?:https?|steam|discord):\/\/[^\s<>"']+/gi, " ")
+            .replace(/\bwww\.[^\s<>"']+/gi, " ")
+            .replace(/<a?:[A-Za-z0-9_~.-]{1,64}:\d+>/g, " ")
+            .replace(/<[@#][!&]?\d+>/g, " ")
+            .replace(/<\/[^:<>\n]{1,100}:\d+>/g, " ")
+            .replace(/<t:-?\d{1,13}(?::[tTdDfFR])?>/g, " ")
+            .replace(/<id:[A-Za-z0-9_:-]+>/g, " ")
+            .replace(/:[A-Za-z0-9_~]{2,64}:/g, " ")
+            .replace(/(?<![\p{L}\p{N}_])[@#][A-Za-z0-9_.-]{1,64}(?![\p{L}\p{N}_])/gu, " ")
+            .trim();
+        if (!strippedTokens || !this.plugin.hasLetters(strippedTokens)) return true;
+        const lines = trimmed.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+        return lines.length > 0 && lines.every(line => this.plugin.isLikelyPreservedTokenLine(line));
+    }
+
     shouldAutoTranslateText(text, targetLanguage = this.plugin.settings.translation.targetLanguage) {
         const value = String(text || "").trim();
         if (value.length < 2) return false;
@@ -3158,9 +3240,10 @@ class AutoTranslationRequestPipeline {
         const prompt = this.plugin.isLocalTranslationProvider(config)
             ? this.buildCompactLocalAutoTranslationPrompt(raised, "longText")
             : this.buildPromptPolicyLongTextPrompt(raised);
-        return {
+        const wholeOptions = {
             ...raised,
             mode: `${requestOptions?.mode || "manual"}-whole`,
+            allowProviderFallback: false,
             longTextWholePass: true,
             longTextMerged: true,
             longTextSourceLength: String(plan?.text || "").length,
@@ -3176,6 +3259,9 @@ class AutoTranslationRequestPipeline {
                 prompt
             }
         };
+        delete wholeOptions.truncationRetry;
+        delete wholeOptions.allowTruncationFallback;
+        return wholeOptions;
     }
 
     async runManualLongTextWholePass(plan, requestOptions, taskOptions = {}) {
@@ -3201,6 +3287,7 @@ class AutoTranslationRequestPipeline {
         try {
             const translated = await this.plugin.runAutoTranslationTaskWithOptions(plan.text, wholeOptions, {
                 ...taskOptions,
+                allowProviderFallback: false,
                 longTextStrategy: false,
                 retryInvalidOutput: false,
                 manualRescue: false
@@ -3221,11 +3308,20 @@ class AutoTranslationRequestPipeline {
         }
         catch (error) {
             if (this.isAbandonedTranslationError(error)) throw error;
-            // A provider-wide failure (or no requests left) ends the click here. A timeout may be
+            // A provider-wide failure (or no requests left) ends the click here unless an eligible
+            // fallback provider is configured and ready for the chunked pipeline. A timeout may be
             // down to the size of the whole pass, so the smaller chunk requests still get a turn.
-            if (this.isAutoTranslationRequestBudgetError(error)
-                || (this.shouldStopLongAutoTranslationOnChunkError(error) && !this.plugin.isTimeoutError(error))) {
-                throw error;
+            if (this.isAutoTranslationRequestBudgetError(error)) throw error;
+            if (this.shouldStopLongAutoTranslationOnChunkError(error) && !this.plugin.isTimeoutError(error)) {
+                const currentConfig = this.plugin.getEffectiveTaskConfig("translation", wholeOptions?.configOverrides);
+                const hasUsableFallback = Boolean(
+                    this.plugin.shouldTryProviderFallback?.("translation", requestOptions || { mode: "manual" }, currentConfig, error)
+                    && (this.plugin.getProviderFallbackOrder?.("translation", currentConfig) || []).some(provider => {
+                        const fallbackConfig = this.plugin.getProviderFallbackConfig?.("translation", provider, currentConfig);
+                        return fallbackConfig && this.plugin.hasUsableApiConfig?.("translation", fallbackConfig, { isolatedConfig: true });
+                    })
+                );
+                if (!hasUsableFallback) throw error;
             }
             this.plugin.logDiagnostic("manual.long-text.whole-pass", "failed", {
                 ...this.plugin.getTranslationDiagnosticMeta("manual", {

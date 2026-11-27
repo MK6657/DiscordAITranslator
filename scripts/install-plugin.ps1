@@ -143,6 +143,55 @@ function Restore-InstallerBackup {
     }
 }
 
+function Test-InstallerProfileStatesEqual {
+    param(
+        [Parameter(Mandatory = $true)][System.Collections.IDictionary]$Left,
+        [Parameter(Mandatory = $true)][System.Collections.IDictionary]$Right,
+        [string]$IgnoreKey = ""
+    )
+
+    foreach ($key in $Left.Keys) {
+        $keyText = [string]$key
+        if ($IgnoreKey -and [string]::Equals($keyText, $IgnoreKey, [System.StringComparison]::Ordinal)) { continue }
+        if (-not $Right.Contains($key)) { return $false }
+        $leftValue = $Left[$key]
+        $rightValue = $Right[$key]
+        if ($null -eq $leftValue -or $null -eq $rightValue) {
+            if ($null -ne $leftValue -or $null -ne $rightValue) { return $false }
+            continue
+        }
+        if ($leftValue.GetType() -ne $rightValue.GetType()) { return $false }
+        if ($leftValue -is [bool] -or $leftValue -is [string] -or $leftValue -is [ValueType]) {
+            if ($leftValue -cne $rightValue) { return $false }
+            continue
+        }
+        if ((ConvertTo-Json -InputObject $leftValue -Compress -Depth 100) -cne (ConvertTo-Json -InputObject $rightValue -Compress -Depth 100)) {
+            return $false
+        }
+    }
+    foreach ($key in $Right.Keys) {
+        $keyText = [string]$key
+        if ($IgnoreKey -and [string]::Equals($keyText, $IgnoreKey, [System.StringComparison]::Ordinal)) { continue }
+        if (-not $Left.Contains($key)) { return $false }
+    }
+    return $true
+}
+
+function Find-InstallerProfileChange {
+    param(
+        [AllowNull()][AllowEmptyCollection()][System.Collections.Generic.List[object]]$ProfileChanges = $null,
+        [Parameter(Mandatory = $true)][string]$Path
+    )
+
+    if ($null -eq $ProfileChanges) { return $null }
+    foreach ($item in $ProfileChanges) {
+        if ([string]::Equals($item.Path, $Path, [System.StringComparison]::OrdinalIgnoreCase)) {
+            return $item
+        }
+    }
+    return $null
+}
+
 function Undo-InstallerProfileChange {
     param(
         [Parameter(Mandatory = $true)][pscustomobject]$Change,
@@ -152,8 +201,11 @@ function Undo-InstallerProfileChange {
     $path = $Change.Path
     $backup = $Change.Backup
     if (-not $Change.Committed) {
-        if ([System.IO.File]::Exists($backup) -and -not [System.IO.File]::Exists($path)) {
+        if ($backup -and [System.IO.File]::Exists($backup) -and -not [System.IO.File]::Exists($path)) {
             Restore-InstallerBackup -Path $path -Backup $backup
+        }
+        if ([System.IO.File]::Exists($path) -and $backup -and [System.IO.File]::Exists($backup)) {
+            Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue
         }
         return
     }
@@ -161,6 +213,18 @@ function Undo-InstallerProfileChange {
     $current = Read-InstallerProfile -Path $path
     if ($current.Hash -eq $Change.InstalledHash) {
         Restore-InstallerBackup -Path $path -Backup $backup -ExpectedHash $current.Hash
+        if ($backup -and [System.IO.File]::Exists($backup)) {
+            Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue
+        }
+        return
+    }
+
+    $originalProfile = Read-InstallerProfile -Path $backup
+    if (Test-InstallerProfileStatesEqual -Left $current.State -Right $originalProfile.State -IgnoreKey $PluginName) {
+        Restore-InstallerBackup -Path $path -Backup $backup -ExpectedHash $current.Hash
+        if ($backup -and [System.IO.File]::Exists($backup)) {
+            Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue
+        }
         return
     }
 
@@ -170,7 +234,7 @@ function Undo-InstallerProfileChange {
         return
     }
 
-    $original = (Read-InstallerProfile -Path $backup).State
+    $original = $originalProfile.State
     if ($original.Contains($PluginName)) {
         $state[$PluginName] = $original[$PluginName]
     }
@@ -196,15 +260,24 @@ function Undo-InstallerProfileChange {
 function Enable-BetterDiscordPlugin {
     param(
         [Parameter(Mandatory = $true)][AllowNull()][AllowEmptyCollection()][string[]]$ProfileFiles,
-        [Parameter(Mandatory = $true)][string]$PluginName
+        [Parameter(Mandatory = $true)][string]$PluginName,
+        [switch]$DeferBackupCleanup,
+        [AllowNull()][AllowEmptyCollection()][System.Collections.Generic.List[object]]$TransactionChanges = $null,
+        [AllowNull()][System.Collections.Generic.HashSet[string]]$OriginallyEnabledProfiles = $null
     )
 
     $changes = [System.Collections.Generic.List[object]]::new()
     try {
         foreach ($pluginsJson in $ProfileFiles) {
+            $existingChange = Find-InstallerProfileChange -ProfileChanges $TransactionChanges -Path $pluginsJson
             $original = Read-InstallerProfile -Path $pluginsJson
             $state = $original.State
-            if ($state[$PluginName] -is [bool] -and $state[$PluginName]) { continue }
+            if ($state[$PluginName] -is [bool] -and $state[$PluginName]) {
+                if ($null -ne $OriginallyEnabledProfiles -and $null -eq $existingChange) {
+                    [void]$OriginallyEnabledProfiles.Add($pluginsJson)
+                }
+                continue
+            }
             $state[$PluginName] = $true
             $runId = [guid]::NewGuid().ToString("N")
             $temp = "$pluginsJson.tmp-$runId"
@@ -218,17 +291,53 @@ function Enable-BetterDiscordPlugin {
                 if ((Get-Sha256 -Path $pluginsJson) -ne $original.Hash) {
                     throw "Profile file changed during installation: $pluginsJson"
                 }
+                $wasOriginallyEnabled = ($null -ne $OriginallyEnabledProfiles -and $OriginallyEnabledProfiles.Contains($pluginsJson))
                 $change = [pscustomobject]@{
                     Path = $pluginsJson
                     Backup = $backup
+                    ExistedBefore = [bool]$original.State.Contains($PluginName)
                     InstalledHash = $staged.Hash
+                    InstalledState = $staged.State
                     Committed = $false
                 }
                 $changes.Add($change)
-                [System.IO.File]::Replace($temp, $pluginsJson, $backup, $true)
-                $change.Committed = $true
+                if ($null -ne $TransactionChanges -and $null -eq $existingChange -and -not $wasOriginallyEnabled) {
+                    $TransactionChanges.Add($change)
+                }
+                try {
+                    [System.IO.File]::Replace($temp, $pluginsJson, $backup, $true)
+                    $change.Committed = $true
+                }
+                catch {
+                    if (($null -ne $existingChange -or $wasOriginallyEnabled) -and [System.IO.File]::Exists($backup) -and -not [System.IO.File]::Exists($pluginsJson)) {
+                        Invoke-InstallerRollback -Restore { Restore-InstallerBackup -Path $pluginsJson -Backup $backup }
+                        if ([System.IO.File]::Exists($pluginsJson) -and [System.IO.File]::Exists($backup)) {
+                            Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue
+                        }
+                    }
+                    throw
+                }
                 if ((Get-Sha256 -Path $backup) -ne $original.Hash) {
+                    if (($null -ne $existingChange -or $wasOriginallyEnabled) -and [System.IO.File]::Exists($backup)) {
+                        Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue
+                    }
                     throw "Profile file changed during installation: $pluginsJson"
+                }
+                if ($null -ne $existingChange) {
+                    if ($existingChange.Committed -and (Test-InstallerProfileStatesEqual -Left $existingChange.InstalledState -Right $staged.State -IgnoreKey $PluginName)) {
+                        $existingChange.InstalledHash = $staged.Hash
+                        $existingChange.InstalledState = $staged.State
+                    }
+                    if ([System.IO.File]::Exists($backup)) {
+                        Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue
+                    }
+                    $change.Backup = $existingChange.Backup
+                }
+                elseif ($wasOriginallyEnabled -and $null -ne $TransactionChanges) {
+                    if ([System.IO.File]::Exists($backup)) {
+                        Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue
+                    }
+                    $change.Backup = ""
                 }
             }
             finally {
@@ -239,25 +348,30 @@ function Enable-BetterDiscordPlugin {
         }
     }
     catch {
-        for ($index = $changes.Count - 1; $index -ge 0; $index--) {
-            $change = $changes[$index]
-            try {
-                Invoke-InstallerRollback -Restore { Undo-InstallerProfileChange -Change $change -PluginName $PluginName }
-            }
-            catch {
-                Write-Warning "Profile rollback failed for '$($change.Path)'. Recovery backup: '$($change.Backup)'. $($_.Exception.Message)" -WarningAction Continue
+        if ($null -eq $TransactionChanges) {
+            for ($index = $changes.Count - 1; $index -ge 0; $index--) {
+                $change = $changes[$index]
+                try {
+                    Invoke-InstallerRollback -Restore { Undo-InstallerProfileChange -Change $change -PluginName $PluginName }
+                }
+                catch {
+                    Write-Warning "Profile rollback failed for '$($change.Path)'. Recovery backup: '$($change.Backup)'. $($_.Exception.Message)" -WarningAction Continue
+                }
             }
         }
         throw
     }
 
-    foreach ($change in $changes) {
-        if ($change.Committed -and $change.Backup -and [System.IO.File]::Exists($change.Backup)) {
-            Remove-Item -LiteralPath $change.Backup -Force -ErrorAction SilentlyContinue
+    if (-not $DeferBackupCleanup) {
+        foreach ($change in $changes) {
+            if ($change.Committed -and $change.Backup -and [System.IO.File]::Exists($change.Backup)) {
+                Remove-Item -LiteralPath $change.Backup -Force -ErrorAction SilentlyContinue
+            }
         }
+        return $changes | ForEach-Object { $_.Path }
     }
 
-    return $changes | ForEach-Object { $_.Path }
+    return $changes.ToArray()
 }
 
 function Test-LiveDiscordWatcherRisk {
@@ -423,6 +537,8 @@ if ($PSCmdlet.ShouldProcess($target, "Install DiscordAITranslator plugin")) {
     $backupCreated = $false
     $replaceAttempted = $false
     $destinationReplaced = $false
+    $profileChanges = [System.Collections.Generic.List[object]]::new()
+    $originallyEnabledProfiles = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
 
     try {
         if (Test-Path -LiteralPath $destination -PathType Leaf) {
@@ -463,17 +579,28 @@ if ($PSCmdlet.ShouldProcess($target, "Install DiscordAITranslator plugin")) {
 
         $enabledFiles = @()
         if (-not $NoEnable) {
-            $enabledFiles = @(Enable-BetterDiscordPlugin -ProfileFiles $profileFiles -PluginName $pluginName)
-            if ($previousHash -and $profileFiles.Count -gt 0 -and (Test-LiveDiscordWatcherRisk -PluginsDir $resolvedPluginsDir)) {
+            $pass1Changes = @(Enable-BetterDiscordPlugin -ProfileFiles $profileFiles -PluginName $pluginName -DeferBackupCleanup -TransactionChanges $profileChanges -OriginallyEnabledProfiles $originallyEnabledProfiles)
+            $enabledFiles = @($pass1Changes | Where-Object { $_.Committed } | ForEach-Object { $_.Path })
+            if ($profileFiles.Count -gt 0 -and (Test-LiveDiscordWatcherRisk -PluginsDir $resolvedPluginsDir)) {
                 Start-Sleep -Milliseconds 350
-                $reEnabledFiles = @(Enable-BetterDiscordPlugin -ProfileFiles $profileFiles -PluginName $pluginName)
-                if ($reEnabledFiles.Count) {
+                $pass2Changes = @(Enable-BetterDiscordPlugin -ProfileFiles $profileFiles -PluginName $pluginName -DeferBackupCleanup -TransactionChanges $profileChanges -OriginallyEnabledProfiles $originallyEnabledProfiles)
+                if ($pass2Changes.Count) {
+                    $reEnabledFiles = @($pass2Changes | Where-Object { $_.Committed } | ForEach-Object { $_.Path })
                     $enabledFiles = @(@($enabledFiles) + @($reEnabledFiles) | Select-Object -Unique)
                 }
             }
         }
     }
     catch {
+        for ($index = $profileChanges.Count - 1; $index -ge 0; $index--) {
+            $change = $profileChanges[$index]
+            try {
+                Invoke-InstallerRollback -Restore { Undo-InstallerProfileChange -Change $change -PluginName $pluginName }
+            }
+            catch {
+                Write-Warning "Profile rollback failed for '$($change.Path)'. Recovery backup: '$($change.Backup)'. $($_.Exception.Message)" -WarningAction Continue
+            }
+        }
         $recovery = if (($destinationReplaced -or $replaceAttempted) -and [System.IO.File]::Exists($backup)) {
             " Backup retained: '$backup'."
         }
@@ -505,6 +632,12 @@ if ($PSCmdlet.ShouldProcess($target, "Install DiscordAITranslator plugin")) {
     finally {
         if ([System.IO.File]::Exists($temp)) {
             Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    foreach ($change in $profileChanges) {
+        if ($change.Committed -and $change.Backup -and [System.IO.File]::Exists($change.Backup)) {
+            Remove-Item -LiteralPath $change.Backup -Force -ErrorAction SilentlyContinue
         }
     }
 

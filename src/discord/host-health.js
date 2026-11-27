@@ -4,8 +4,140 @@
 // Lets maintainers and users see immediately which Discord anchor broke after a client update.
 
 const { PLUGIN_VERSION } = require("../version");
+const { normalizeUiLocale } = require("../i18n");
+
+const HOST_HEALTH_DETAILS = Object.freeze({
+    "zh-CN": Object.freeze({
+        bdApiMissing: ({ items }) => `缺少：${items}`,
+        bdApiUnavailable: () => "BdApi 不可用",
+        chatRootFound: ({ tag, bound }) => `<${tag}>（${bound ? "观察器已绑定" : "观察器空闲"}）`,
+        chatRootSettings: () => "当前处于 Discord 设置页（返回聊天频道可检测实时 DOM）",
+        chatRootMissing: () => "当前视图未挂载聊天容器",
+        messagesFound: ({ count, sample, total }) => `已挂载 ${count} 条消息（抽样可读 ${sample}/${total}）`,
+        hiddenBehindSettings: () => "已被 Discord 设置层遮挡",
+        messagesEmpty: () => "当前视图没有已挂载的聊天消息",
+        composerReady: () => "输入框与工具栏锚点就绪",
+        composerNoToolbar: () => "已找到输入框，缺少工具栏锚点",
+        composerMissing: () => "当前视图没有可编辑输入框",
+        disabledInSettings: () => "已在设置中关闭",
+        userPanelReady: () => "AI 快捷入口已挂载到用户栏",
+        userPanelSettings: () => "Discord 设置层已打开（用户栏暂时隐藏）",
+        userPanelUnmounted: () => "已找到设置齿轮，AI 快捷入口未挂载",
+        userPanelMissing: () => "未找到左下角用户栏设置锚点",
+        contextMenuActive: ({ count }) => `${count} 个菜单补丁已生效`,
+        contextMenuMissing: () => "未注册右键菜单补丁",
+        themeDetail: ({ discordTheme, resolvedPanelTheme }) => `Discord：${discordTheme} → 面板：${resolvedPanelTheme}`
+    }),
+    "zh-TW": Object.freeze({
+        bdApiMissing: ({ items }) => `缺少：${items}`,
+        bdApiUnavailable: () => "BdApi 無法使用",
+        chatRootFound: ({ tag, bound }) => `<${tag}>（${bound ? "觀察器已綁定" : "觀察器閒置"}）`,
+        chatRootSettings: () => "目前處於 Discord 設定頁（返回聊天頻道可檢測即時 DOM）",
+        chatRootMissing: () => "目前檢視未掛載聊天容器",
+        messagesFound: ({ count, sample, total }) => `已掛載 ${count} 則訊息（抽樣可讀 ${sample}/${total}）`,
+        hiddenBehindSettings: () => "已被 Discord 設定層遮擋",
+        messagesEmpty: () => "目前檢視沒有已掛載的聊天訊息",
+        composerReady: () => "輸入框與工具列錨點就緒",
+        composerNoToolbar: () => "已找到輸入框，缺少工具列錨點",
+        composerMissing: () => "目前檢視沒有可編輯輸入框",
+        disabledInSettings: () => "已在設定中關閉",
+        userPanelReady: () => "AI 快捷入口已掛載至使用者列",
+        userPanelSettings: () => "Discord 設定層已開啟（使用者列暫時隱藏）",
+        userPanelUnmounted: () => "已找到設定齒輪，AI 快捷入口未掛載",
+        userPanelMissing: () => "找不到左下角使用者列設定錨點",
+        contextMenuActive: ({ count }) => `${count} 個選單修補已生效`,
+        contextMenuMissing: () => "尚未註冊右鍵選單修補",
+        themeDetail: ({ discordTheme, resolvedPanelTheme }) => `Discord：${discordTheme} → 面板：${resolvedPanelTheme}`
+    }),
+    en: Object.freeze({
+        bdApiMissing: ({ items }) => `Missing: ${items}`,
+        bdApiUnavailable: () => "BdApi unavailable",
+        chatRootFound: ({ tag, bound }) => `<${tag}> (${bound ? "observer bound" : "observer idle"})`,
+        chatRootSettings: () => "Discord settings view active (return to a chat channel to inspect live DOM)",
+        chatRootMissing: () => "Chat container not mounted on current view",
+        messagesFound: ({ count, sample, total }) => `${count} nodes (${sample}/${total} readable)`,
+        hiddenBehindSettings: () => "Hidden behind Discord settings overlay",
+        messagesEmpty: () => "No chat messages mounted in current view",
+        composerReady: () => "Textbox + toolbar anchor ready",
+        composerNoToolbar: () => "Textbox found, toolbar anchor missing",
+        composerMissing: () => "No editable composer on current view",
+        disabledInSettings: () => "Disabled in settings",
+        userPanelReady: () => "AI launcher mounted in user panel",
+        userPanelSettings: () => "Discord settings overlay open (user panel hidden)",
+        userPanelUnmounted: () => "Settings button found, AI launcher not mounted",
+        userPanelMissing: () => "User panel settings anchor not found",
+        contextMenuActive: ({ count }) => `${count} menu patch(es) active`,
+        contextMenuMissing: () => "No context menu patches registered",
+        themeDetail: ({ discordTheme, resolvedPanelTheme }) => `Discord: ${discordTheme} → Panel: ${resolvedPanelTheme}`
+    }),
+    ru: Object.freeze({
+        bdApiMissing: ({ items }) => `Отсутствует: ${items}`,
+        bdApiUnavailable: () => "BdApi недоступен",
+        chatRootFound: ({ tag, bound }) => `<${tag}> (${bound ? "наблюдатель привязан" : "наблюдатель ожидает"})`,
+        chatRootSettings: () => "Открыты настройки Discord (вернитесь в чат для проверки DOM)",
+        chatRootMissing: () => "Контейнер чата не смонтирован в текущем виде",
+        messagesFound: ({ count, sample, total }) => `Узлов: ${count} (читаемо ${sample}/${total})`,
+        hiddenBehindSettings: () => "Скрыто за окном настроек Discord",
+        messagesEmpty: () => "В текущем виде нет сообщений чата",
+        composerReady: () => "Поле ввода и панель инструментов готовы",
+        composerNoToolbar: () => "Поле ввода найдено, якорь панели отсутствует",
+        composerMissing: () => "Нет доступного поля ввода в текущем виде",
+        disabledInSettings: () => "Отключено в настройках",
+        userPanelReady: () => "Кнопка AI установлена в панели пользователя",
+        userPanelSettings: () => "Открыты настройки Discord (панель пользователя скрыта)",
+        userPanelUnmounted: () => "Кнопка настроек найдена, кнопка AI не установлена",
+        userPanelMissing: () => "Якорь настроек панели пользователя не найден",
+        contextMenuActive: ({ count }) => `Активно патчей меню: ${count}`,
+        contextMenuMissing: () => "Патчи контекстного меню не зарегистрированы",
+        themeDetail: ({ discordTheme, resolvedPanelTheme }) => `Discord: ${discordTheme} → Панель: ${resolvedPanelTheme}`
+    }),
+    ar: Object.freeze({
+        bdApiMissing: ({ items }) => `مفقود: \u2066${items}\u2069`,
+        bdApiUnavailable: () => "BdApi غير متاح",
+        chatRootFound: ({ tag, bound }) => `${bound ? "المراقب مرتبط" : "المراقب خامل"} (\u2066<${tag}>\u2069)`,
+        chatRootSettings: () => "عرض إعدادات Discord نشط (عُد إلى قناة دردشة لفحص DOM المباشر)",
+        chatRootMissing: () => "حاوية الدردشة غير مثبتة في العرض الحالي",
+        messagesFound: ({ count, sample, total }) => `العقد: ${count} (قابل للقراءة \u2066${sample}/${total}\u2069)`,
+        hiddenBehindSettings: () => "مخفي خلف طبقة إعدادات Discord",
+        messagesEmpty: () => "لا توجد رسائل دردشة مثبتة في العرض الحالي",
+        composerReady: () => "مربع النص ومرساة شريط الأدوات جاهزان",
+        composerNoToolbar: () => "تم العثور على مربع النص، مرساة شريط الأدوات مفقودة",
+        composerMissing: () => "لا يوجد مربع إدخال قابل للتحرير في العرض الحالي",
+        disabledInSettings: () => "معطّل في الإعدادات",
+        userPanelReady: () => "تم تثبيت مشغّل AI في لوحة المستخدم",
+        userPanelSettings: () => "طبقة إعدادات Discord مفتوحة (لوحة المستخدم مخفية)",
+        userPanelUnmounted: () => "تم العثور على زر الإعدادات، مشغّل AI غير مثبت",
+        userPanelMissing: () => "لم يتم العثور على مرساة إعدادات لوحة المستخدم",
+        contextMenuActive: ({ count }) => `تعديلات القائمة النشطة: ${count}`,
+        contextMenuMissing: () => "لا توجد تعديلات مسجلة لقائمة النقر الأيمن",
+        themeDetail: ({ discordTheme, resolvedPanelTheme }) => `سمة Discord: \u2066${discordTheme}\u2069 ← اللوحة: \u2066${resolvedPanelTheme}\u2069`
+    }),
+    es: Object.freeze({
+        bdApiMissing: ({ items }) => `Falta: ${items}`,
+        bdApiUnavailable: () => "BdApi no disponible",
+        chatRootFound: ({ tag, bound }) => `<${tag}> (${bound ? "observador vinculado" : "observador inactivo"})`,
+        chatRootSettings: () => "Vista de ajustes de Discord activa (vuelve a un canal para inspeccionar el DOM)",
+        chatRootMissing: () => "Contenedor de chat no montado en la vista actual",
+        messagesFound: ({ count, sample, total }) => `${count} nodos (${sample}/${total} legibles)`,
+        hiddenBehindSettings: () => "Oculto tras la capa de ajustes de Discord",
+        messagesEmpty: () => "No hay mensajes montados en la vista actual",
+        composerReady: () => "Cuadro de texto y barra de herramientas listos",
+        composerNoToolbar: () => "Cuadro de texto encontrado, falta anclaje de barra",
+        composerMissing: () => "No hay cuadro de texto editable en la vista actual",
+        disabledInSettings: () => "Desactivado en ajustes",
+        userPanelReady: () => "Botón AI montado en el panel de usuario",
+        userPanelSettings: () => "Ajustes de Discord abiertos (panel de usuario oculto)",
+        userPanelUnmounted: () => "Botón de ajustes encontrado, botón AI no montado",
+        userPanelMissing: () => "No se encontró el anclaje del panel de usuario",
+        contextMenuActive: ({ count }) => `${count} parche(s) de menú activos`,
+        contextMenuMissing: () => "No hay parches de menú contextual registrados",
+        themeDetail: ({ discordTheme, resolvedPanelTheme }) => `Discord: ${discordTheme} → Panel: ${resolvedPanelTheme}`
+    })
+});
 
 function runHostHealthCheck(plugin) {
+    const locale = normalizeUiLocale(plugin?.getLocale?.() || plugin?.settings?.ui?.language, "zh-CN");
+    const strings = HOST_HEALTH_DETAILS[locale] || HOST_HEALTH_DETAILS.en;
     const checks = [];
     const add = (id, labelKey, status, detail, meta = {}) => {
         checks.push({ id, labelKey, status, detail, meta });
@@ -26,7 +158,7 @@ function runHostHealthCheck(plugin) {
         missingBd.length === 0 ? "ok" : bdApi ? "warn" : "error",
         missingBd.length === 0
             ? "Data / DOM / UI / Webpack / ContextMenu"
-            : bdApi ? `Missing: ${missingBd.join(", ")}` : "BdApi unavailable",
+            : bdApi ? strings.bdApiMissing({ items: missingBd.join(", ") }) : strings.bdApiUnavailable(),
         bdCaps
     );
 
@@ -58,10 +190,13 @@ function runHostHealthCheck(plugin) {
         "hostHealthItemChatRoot",
         chatRoot ? "ok" : "warn",
         chatRoot
-            ? `<${String(chatRoot.tagName || "div").toLowerCase()}> (${plugin.observerRoot ? "observer bound" : "observer idle"})`
+            ? strings.chatRootFound({
+                tag: String(chatRoot.tagName || "div").toLowerCase(),
+                bound: Boolean(plugin.observerRoot)
+            })
             : settingsOverlayOpen
-                ? "Discord settings view active (return to a chat channel to inspect live DOM)"
-                : "Chat container not mounted on current view",
+                ? strings.chatRootSettings()
+                : strings.chatRootMissing(),
         { found: Boolean(chatRoot), observerBound: Boolean(plugin.observerRoot), settingsOverlayOpen }
     );
 
@@ -73,10 +208,14 @@ function runHostHealthCheck(plugin) {
         "hostHealthItemMessages",
         messageNodes.length > 0 && sampleContent > 0 ? "ok" : "warn",
         messageNodes.length > 0
-            ? `${messageNodes.length} nodes (${sampleContent}/${Math.min(5, messageNodes.length)} readable)`
+            ? strings.messagesFound({
+                count: messageNodes.length,
+                sample: sampleContent,
+                total: Math.min(5, messageNodes.length)
+            })
             : settingsOverlayOpen
-                ? "Hidden behind Discord settings overlay"
-                : "No chat messages mounted in current view",
+                ? strings.hiddenBehindSettings()
+                : strings.messagesEmpty(),
         { messageCount: messageNodes.length, readableSample: sampleContent, settingsOverlayOpen }
     );
 
@@ -87,12 +226,12 @@ function runHostHealthCheck(plugin) {
         "hostHealthItemComposer",
         textbox && toolbar ? "ok" : textbox ? "warn" : "warn",
         textbox && toolbar
-            ? "Textbox + toolbar anchor ready"
+            ? strings.composerReady()
             : textbox
-                ? "Textbox found, toolbar anchor missing"
+                ? strings.composerNoToolbar()
                 : settingsOverlayOpen
-                    ? "Hidden behind Discord settings overlay"
-                    : "No editable composer on current view",
+                    ? strings.hiddenBehindSettings()
+                    : strings.composerMissing(),
         { hasTextbox: Boolean(textbox), hasToolbar: Boolean(toolbar), settingsOverlayOpen }
     );
 
@@ -104,14 +243,14 @@ function runHostHealthCheck(plugin) {
         "hostHealthItemUserPanel",
         !launcherEnabled ? "ok" : launcher ? "ok" : (userSettingsBtn || settingsOverlayOpen) ? "warn" : "error",
         !launcherEnabled
-            ? "Disabled in settings"
+            ? strings.disabledInSettings()
             : launcher
-                ? "AI launcher mounted in user panel"
+                ? strings.userPanelReady()
                 : settingsOverlayOpen
-                    ? "Discord settings overlay open (user panel hidden)"
+                    ? strings.userPanelSettings()
                     : userSettingsBtn
-                        ? "Settings button found, AI launcher not mounted"
-                        : "User panel settings anchor not found",
+                        ? strings.userPanelUnmounted()
+                        : strings.userPanelMissing(),
         { enabled: launcherEnabled, hasSettingsButton: Boolean(userSettingsBtn), hasLauncher: Boolean(launcher), settingsOverlayOpen }
     );
 
@@ -122,10 +261,10 @@ function runHostHealthCheck(plugin) {
         "hostHealthItemContextMenu",
         !contextEnabled ? "ok" : patchCount > 0 ? "ok" : (bdCaps.ContextMenu ? "warn" : "error"),
         !contextEnabled
-            ? "Disabled in settings"
+            ? strings.disabledInSettings()
             : patchCount > 0
-                ? `${patchCount} menu patch(es) active`
-                : "No context menu patches registered",
+                ? strings.contextMenuActive({ count: patchCount })
+                : strings.contextMenuMissing(),
         { enabled: contextEnabled, patchCount }
     );
 
@@ -135,7 +274,7 @@ function runHostHealthCheck(plugin) {
         "theme",
         "hostHealthItemTheme",
         "ok",
-        `Discord: ${discordTheme} → Panel: ${resolvedPanelTheme}`,
+        strings.themeDetail({ discordTheme, resolvedPanelTheme }),
         { discordTheme, resolvedPanelTheme, setting: plugin.settings?.ui?.panelTheme || "auto" }
     );
 

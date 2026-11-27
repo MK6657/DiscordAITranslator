@@ -773,6 +773,32 @@ const methods = {
         document.querySelectorAll(".dait-message-button").forEach(button => this.applyMessageButtonVisibilityToButton(button));
     },
 
+    refreshLocalizedLauncherAndButtons() {
+        if (typeof document === "undefined" || typeof document.querySelectorAll !== "function") return;
+        const targetLabel = this.plugin.getDisplayLanguage(this.plugin.settings.translation?.targetLanguage);
+        const buttonTitle = this.plugin.t("translateTitleAttr", { targetLanguage: targetLabel });
+        const idleText = this.plugin.t("translateButton");
+        const busyText = this.plugin.t("translateBusy");
+        document.querySelectorAll(".dait-message-button").forEach(/** @param {any} button */ button => {
+            if (!button || button.isConnected === false) return;
+            button.textContent = button.disabled ? busyText : idleText;
+            button.title = buttonTitle;
+            button.setAttribute?.("aria-label", buttonTitle);
+        });
+
+        const launcherFallbackLabel = this.plugin.t("quickSettingsOpen");
+        if (this.plugin.quickPanel) {
+            this.plugin.quickPanel.lastStatus = null;
+            this.plugin.quickPanel.lastStatusSignature = "";
+        }
+        document.querySelectorAll(".dait-quick-settings-button").forEach(/** @param {any} button */ button => {
+            if (!button || button.isConnected === false) return;
+            button.title = launcherFallbackLabel;
+            button.setAttribute?.("aria-label", launcherFallbackLabel);
+            this.plugin.quickPanel?.decorateLauncher?.(button);
+        });
+    },
+
     // The per-message Translate button and context-menu item exist only while channel translation is on.
     shouldInjectMessageButtons() {
         return Boolean(this.plugin.settings.translation?.enabled && this.plugin.settings.ui?.injectMessageButtons);
@@ -791,6 +817,7 @@ const methods = {
     },
 
     handleKeydown(event) {
+        if (!event || event.isComposing || event.keyCode === 229) return;
         if (!this.plugin.isStarted || event.repeat) return;
         if (!this.plugin.settings.ui.enablePolishHotkey) return;
         // Polish switched off: the shortcut is not ours, so the key goes to Discord untouched.
@@ -845,6 +872,7 @@ const methods = {
                 cleanup();
                 return;
             }
+            if (!event || event.isComposing || event.keyCode === 229) return;
             event.preventDefault();
             event.stopPropagation();
 

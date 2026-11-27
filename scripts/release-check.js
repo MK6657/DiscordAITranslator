@@ -31,7 +31,10 @@ const secretPatterns = [
     /\bgithub_pat_[0-9A-Za-z_]{40,}\b/,
     /\bnpm_[0-9A-Za-z]{36}\b/,
     /\bAKIA[0-9A-Z]{16}\b/,
-    /\bBearer\s+[A-Za-z0-9._-]{24,}\b/i
+    /\bBearer\s+[A-Za-z0-9._-]{24,}\b/i,
+    /\b[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}:fx\b/i,
+    /\bDeepL-Auth-Key(?:\s*[:=]\s*|\s+)(?!(?:my-super-secret|fake|test|dummy|example|placeholder|redacted)\b)[A-Za-z0-9:_-]{20,}/i,
+    /https:\/\/(?:ptb\.|canary\.)?discord(?:app)?\.com\/api\/webhooks\/\d+\/[A-Za-z0-9_-]{20,}/i
 ];
 
 const gitignore = fs.readFileSync(path.join(root, ".gitignore"), "utf8");
@@ -112,7 +115,18 @@ const privatePathNeedles = [...new Set([
     username ? `/home/${username}` : ""
 ].filter(item => item && item.length > 8).flatMap(item => {
     const lower = item.toLowerCase();
-    return [lower, lower.replace(/\\/g, "/"), lower.replace(/\//g, "\\")];
+    const slash = lower.replace(/\\/g, "/");
+    const backslash = lower.replace(/\//g, "\\");
+    return [
+        lower,
+        slash,
+        backslash,
+        lower.replace(/\\/g, "\\\\"),
+        backslash.replace(/\\/g, "\\\\"),
+        encodeURIComponent(item).toLowerCase(),
+        encodeURIComponent(slash).toLowerCase(),
+        encodeURIComponent(backslash).toLowerCase()
+    ];
 }))];
 const isScannedText = file => textExtensions.has(path.extname(file).toLowerCase());
 for (const text of collectPublishedTexts(root, indexEntries, isScannedText)) {

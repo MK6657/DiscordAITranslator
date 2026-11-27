@@ -42,6 +42,154 @@ const SENSITIVE_DIAGNOSTIC_KEYS = new Set([
     "translation", "translated", "translatedtext", "rawtranslation", "appid"
 ]);
 
+const GENERIC_CHINESE_LANGUAGE_ALIASES = new Set([
+    "chinese",
+    "mandarin chinese",
+    "zh",
+    "中文",
+    "漢語",
+    "китайский",
+    "الصينية",
+    "chino"
+]);
+
+const SIMPLIFIED_CHINESE_LANGUAGE_ALIASES = new Set([
+    "simplified chinese",
+    "chinese simplified",
+    "zh-cn",
+    "zh-hans",
+    "汉语",
+    "简体中文",
+    "簡體中文",
+    "упрощённый китайский",
+    "упрощенный китайский",
+    "الصينية المبسطة",
+    "chino simplificado"
+]);
+
+const TRADITIONAL_CHINESE_LANGUAGE_ALIASES = new Set([
+    "traditional chinese",
+    "chinese traditional",
+    "zh-tw",
+    "zh-hant",
+    "zh-hk",
+    "zh-mo",
+    "繁体中文",
+    "繁體中文",
+    "традиционный китайский",
+    "китайский (трад.)",
+    "الصينية التقليدية",
+    "chino tradicional"
+]);
+
+const LANGUAGE_NAME_ALIAS_MAP = new Map([
+    ["chinese", "汉语"],
+    ["simplified chinese", "汉语"],
+    ["chinese simplified", "汉语"],
+    ["traditional chinese", "繁體中文"],
+    ["chinese traditional", "繁體中文"],
+    ["mandarin chinese", "汉语"],
+    ["zh", "汉语"],
+    ["zh-cn", "汉语"],
+    ["zh-hans", "汉语"],
+    ["zh-tw", "繁體中文"],
+    ["zh-hant", "繁體中文"],
+    ["zh-hk", "繁體中文"],
+    ["zh-mo", "繁體中文"],
+    ["中文", "汉语"],
+    ["汉语", "汉语"],
+    ["漢語", "汉语"],
+    ["简体中文", "汉语"],
+    ["簡體中文", "汉语"],
+    ["繁体中文", "繁體中文"],
+    ["繁體中文", "繁體中文"],
+    ["китайский", "汉语"],
+    ["упрощённый китайский", "汉语"],
+    ["упрощенный китайский", "汉语"],
+    ["традиционный китайский", "繁體中文"],
+    ["китайский (трад.)", "繁體中文"],
+    ["الصينية", "汉语"],
+    ["الصينية المبسطة", "汉语"],
+    ["الصينية التقليدية", "繁體中文"],
+    ["chino", "汉语"],
+    ["chino simplificado", "汉语"],
+    ["chino tradicional", "繁體中文"],
+    ["english", "英语"],
+    ["英文", "英语"],
+    ["英语", "英语"],
+    ["英語", "英语"],
+    ["английский", "英语"],
+    ["الإنجليزية", "英语"],
+    ["inglés", "英语"],
+    ["ingles", "英语"],
+    ["spanish", "西班牙语"],
+    ["西班牙语", "西班牙语"],
+    ["西班牙語", "西班牙语"],
+    ["español", "西班牙语"],
+    ["espanol", "西班牙语"],
+    ["испанский", "西班牙语"],
+    ["الإسبانية", "西班牙语"],
+    ["russian", "俄语"],
+    ["俄语", "俄语"],
+    ["俄語", "俄语"],
+    ["русский", "俄语"],
+    ["الروسية", "俄语"],
+    ["ruso", "俄语"],
+    ["german", "德语"],
+    ["德语", "德语"],
+    ["德語", "德语"],
+    ["немецкий", "德语"],
+    ["الألمانية", "德语"],
+    ["alemán", "德语"],
+    ["aleman", "德语"],
+    ["french", "法语"],
+    ["法语", "法语"],
+    ["法語", "法语"],
+    ["французский", "法语"],
+    ["الفرنسية", "法语"],
+    ["francés", "法语"],
+    ["frances", "法语"],
+    ["japanese", "日语"],
+    ["日语", "日语"],
+    ["日語", "日语"],
+    ["японский", "日语"],
+    ["اليابانية", "日语"],
+    ["japonés", "日语"],
+    ["japones", "日语"],
+    ["arabic", "阿拉伯语"],
+    ["阿拉伯语", "阿拉伯语"],
+    ["阿拉伯語", "阿拉伯语"],
+    ["العربية", "阿拉伯语"],
+    ["арабский", "阿拉伯语"],
+    ["árabe", "阿拉伯语"],
+    ["arabe", "阿拉伯语"],
+    ["vietnamese", "越南语"],
+    ["越南语", "越南语"],
+    ["越南語", "越南语"],
+    ["вьетнамский", "越南语"],
+    ["الفيتنامية", "越南语"],
+    ["vietnamita", "越南语"],
+    ["hindi", "印地语"],
+    ["印地语", "印地语"],
+    ["印地語", "印地语"],
+    ["хинди", "印地语"],
+    ["الهندية", "印地语"],
+    ["korean", "朝鲜语"],
+    ["韩语", "朝鲜语"],
+    ["韓語", "朝鲜语"],
+    ["朝鲜语", "朝鲜语"],
+    ["корейский", "朝鲜语"],
+    ["الكورية", "朝鲜语"],
+    ["coreano", "朝鲜语"],
+    ["italian", "意大利语"],
+    ["意大利语", "意大利语"],
+    ["義大利語", "意大利语"],
+    ["итальянский", "意大利语"],
+    ["الإيطالية", "意大利语"],
+    ["italiano", "意大利语"]
+]);
+const SNAPSHOT_SECRET_KEY_PATTERN = /api[_-]?key|secret|token|password|auth(?:orization)?|credential|private[_-]?key/i;
+
 class ServiceProfilesController {
     constructor(plugin) {
         this.plugin = plugin;
@@ -228,120 +376,22 @@ const methods = {
 
     normalizeLanguageName(language) {
         const value = String(language || "").trim();
+        if (!value) return value;
         if (this.isTraditionalChineseLanguageAlias(value)) return "繁體中文";
         if (this.isSimplifiedChineseLanguageAlias(value) || this.isGenericChineseLanguageAlias(value)) return "汉语";
-        const aliases = {
-            "Chinese": "汉语",
-            "Simplified Chinese": "汉语",
-            "Traditional Chinese": "繁體中文",
-            "Chinese Traditional": "繁體中文",
-            "Mandarin Chinese": "汉语",
-            "zh-TW": "繁體中文",
-            "zh-Hant": "繁體中文",
-            "zh-HK": "繁體中文",
-            "zh-MO": "繁體中文",
-            "中文": "汉语",
-            "汉语": "汉语",
-            "漢語": "繁體中文",
-            "繁体中文": "繁體中文",
-            "繁體中文": "繁體中文",
-            "English": "英语",
-            "英文": "英语",
-            "英语": "英语",
-            "英語": "英语",
-            "Английский": "英语",
-            "الإنجليزية": "英语",
-            "Inglés": "英语",
-            "Spanish": "西班牙语",
-            "西班牙語": "西班牙语",
-            "Español": "西班牙语",
-            "Испанский": "西班牙语",
-            "الإسبانية": "西班牙语",
-            "Russian": "俄语",
-            "俄語": "俄语",
-            "Русский": "俄语",
-            "الروسية": "俄语",
-            "Ruso": "俄语",
-            "German": "德语",
-            "德語": "德语",
-            "Немецкий": "德语",
-            "الألمانية": "德语",
-            "Alemán": "德语",
-            "French": "法语",
-            "法語": "法语",
-            "Французский": "法语",
-            "الفرنسية": "法语",
-            "Francés": "法语",
-            "Japanese": "日语",
-            "日語": "日语",
-            "Японский": "日语",
-            "اليابانية": "日语",
-            "Japonés": "日语",
-            "Arabic": "阿拉伯语",
-            "阿拉伯語": "阿拉伯语",
-            "العربية": "阿拉伯语",
-            "Арабский": "阿拉伯语",
-            "Árabe": "阿拉伯语",
-            "Vietnamese": "越南语",
-            "越南語": "越南语",
-            "Вьетнамский": "越南语",
-            "الفيتنامية": "越南语",
-            "Vietnamita": "越南语",
-            "Hindi": "印地语",
-            "印地語": "印地语",
-            "Хинди": "印地语",
-            "الهندية": "印地语",
-            "Korean": "朝鲜语",
-            "韩语": "朝鲜语",
-            "韓語": "朝鲜语",
-            "朝鲜语": "朝鲜语",
-            "Корейский": "朝鲜语",
-            "الكورية": "朝鲜语",
-            "Coreano": "朝鲜语",
-            "Italian": "意大利语",
-            "義大利語": "意大利语",
-            "Итальянский": "意大利语",
-            "الإيطالية": "意大利语",
-            "Italiano": "意大利语",
-            "Китайский (трад.)": "繁體中文",
-            "الصينية التقليدية": "繁體中文",
-            "Chino tradicional": "繁體中文"
-        };
-        return aliases[value] || value;
+        return LANGUAGE_NAME_ALIAS_MAP.get(value.toLowerCase()) || value;
     },
 
     isGenericChineseLanguageAlias(value) {
-        return new Set([
-            "Chinese",
-            "Mandarin Chinese",
-            "zh",
-            "中文"
-        ]).has(String(value || "").trim());
+        return GENERIC_CHINESE_LANGUAGE_ALIASES.has(String(value || "").trim().toLowerCase());
     },
 
     isSimplifiedChineseLanguageAlias(value) {
-        return new Set([
-            "Simplified Chinese",
-            "zh-CN",
-            "zh-Hans",
-            "汉语",
-            "简体中文",
-            "簡體中文"
-        ]).has(String(value || "").trim());
+        return SIMPLIFIED_CHINESE_LANGUAGE_ALIASES.has(String(value || "").trim().toLowerCase());
     },
 
     isTraditionalChineseLanguageAlias(value) {
-        return new Set([
-            "Traditional Chinese",
-            "Chinese Traditional",
-            "zh-TW",
-            "zh-Hant",
-            "zh-HK",
-            "zh-MO",
-            "漢語",
-            "繁体中文",
-            "繁體中文"
-        ]).has(String(value || "").trim());
+        return TRADITIONAL_CHINESE_LANGUAGE_ALIASES.has(String(value || "").trim().toLowerCase());
     },
 
     isChineseLanguageAlias(value) {
@@ -351,8 +401,9 @@ const methods = {
     },
 
     normalizeSourceLanguage(language) {
-        if (!language || language === AUTO_LANGUAGE_VALUE || language === "auto") return AUTO_LANGUAGE_VALUE;
-        return this.normalizeLanguageName(language);
+        const trimmed = String(language || "").trim();
+        if (!trimmed || trimmed === AUTO_LANGUAGE_VALUE || trimmed.toLowerCase() === "auto") return AUTO_LANGUAGE_VALUE;
+        return this.normalizeLanguageName(trimmed);
     },
 
     scheduleSettingsPersist(delayMs = SETTINGS_WRITE_DEBOUNCE_MS) {
@@ -479,6 +530,7 @@ const methods = {
         const appId = typeof entry.appId === "string" ? entry.appId.trim() : "";
         const secretKey = typeof entry.secretKey === "string" ? entry.secretKey : "";
         const enableThinking = entry.enableThinking === true;
+        const maxTokens = Number(entry.maxTokens);
         const verifiedAt = Number(entry.verifiedAt);
         const latencyMs = Number(entry.latencyMs);
         const reportedModel = this.getDiagnosticModelLabel(entry.reportedModel || "");
@@ -490,6 +542,9 @@ const methods = {
             endpoint,
             model,
             enableThinking,
+            ...(Number.isFinite(maxTokens) && maxTokens > 0
+                ? { maxTokens: Math.min(65536, Math.max(1, Math.round(maxTokens))) }
+                : {}),
             region,
             deeplPlan,
             appId,
@@ -667,6 +722,18 @@ const methods = {
         return [...fields];
     },
 
+    maybePromoteTranslationThinkingMaxTokens(source = null) {
+        const translation = this.plugin.settings?.translation;
+        if (!translation || translation.enableThinking !== true) return false;
+        const currentMaxTokens = Number(translation.maxTokens) || 0;
+        if (currentMaxTokens > 1200) return false;
+        const promoted = Math.max(Number(source?.maxTokens) || 0, 4096);
+        translation.maxTokens = typeof this.plugin.normalizeTaskMaxTokens === "function"
+            ? this.plugin.normalizeTaskMaxTokens("translation", promoted)
+            : Math.min(65536, Math.max(1, Math.round(promoted)));
+        return true;
+    },
+
     saveVerifiedServiceConfig(kind, configOverride = null, options = {}) {
         const source = configOverride || this.plugin.settings?.[kind];
         if (!source || !this.plugin.hasUsableApiConfig(kind, source)) return { entry: null, syncedTo: "" };
@@ -676,6 +743,7 @@ const methods = {
             endpoint: source.endpoint,
             model: source.model,
             enableThinking: source.enableThinking,
+            maxTokens: source.maxTokens,
             region: source.region,
             deeplPlan: source.deeplPlan,
             appId: source.appId,
@@ -702,6 +770,10 @@ const methods = {
         if (this.plugin.settings.serviceConfigs.length > MAX_SAVED_SERVICE_CONFIGS) {
             this.plugin.settings.serviceConfigs.length = MAX_SAVED_SERVICE_CONFIGS;
         }
+        if (kind === "translation" && entry.enableThinking === true) {
+            const promoted = this.maybePromoteTranslationThinkingMaxTokens(source);
+            if (promoted) entry.maxTokens = this.plugin.settings.translation.maxTokens;
+        }
         this.saveTaskProviderProfile(kind, entry.provider);
         if (entry.model) this.rememberTaskProviderModel(kind, entry.provider, entry.model);
 
@@ -713,13 +785,21 @@ const methods = {
                 && this.plugin.settings[otherKind]?.enabled !== false
                 && this.isTaskAtPristineDefault(otherKind)
             ) {
-                if (this.applySavedServiceConfig(otherKind, entry.id, { silent: true, save: false, refreshUi: false })) {
+                if (this.applySavedServiceConfig(otherKind, entry.id, {
+                    silent: true,
+                    save: false,
+                    refreshUi: false,
+                    sourceMaxTokens: source.maxTokens
+                })) {
                     syncedTo = otherKind;
                 }
             }
         }
         if (options.save !== false) this.plugin.saveSettings({ debounce: true });
         if (options.refreshUi !== false) {
+            if (kind === "translation") {
+                this.plugin.syncSettingControls("translation.maxTokens", this.plugin.settings.translation?.maxTokens, { includeActive: true });
+            }
             if (syncedTo) this.syncTaskControlsInOpenPanels(syncedTo);
             this.plugin.refreshSavedServiceConfigControls();
         }
@@ -778,7 +858,7 @@ const methods = {
         });
         const task = this.plugin.settings[kind];
         if (!task) return;
-        ["provider", "apiKey", "endpoint", "model", "enableThinking"].forEach(field => {
+        ["provider", "apiKey", "endpoint", "model", "enableThinking", "maxTokens"].forEach(field => {
             this.plugin.syncSettingControls(`${kind}.${field}`, task[field], { includeActive: true });
         });
         if (kind === "translation") {
@@ -818,6 +898,9 @@ const methods = {
             task.deeplPlan = ["free", "pro"].includes(entry.deeplPlan) ? entry.deeplPlan : (preset.deeplPlan || "free");
             task.appId = entry.appId || "";
             task.secretKey = entry.secretKey || "";
+            if (task.enableThinking === true) {
+                this.maybePromoteTranslationThinkingMaxTokens({ maxTokens: options.sourceMaxTokens ?? entry.maxTokens });
+            }
             this.plugin.applyProviderIntakeMode(entry.provider);
         }
         const savedCredentialFields = this.plugin.providerLayer?.registry?.getCredentialFields?.(entry.provider) || [];
@@ -849,6 +932,7 @@ const methods = {
             this.plugin.syncSettingControls(`${kind}.endpoint`, task.endpoint, { includeActive: true });
             this.plugin.syncSettingControls(`${kind}.model`, task.model, { includeActive: true });
             this.plugin.syncSettingControls(`${kind}.enableThinking`, task.enableThinking, { includeActive: true });
+            this.plugin.syncSettingControls(`${kind}.maxTokens`, task.maxTokens, { includeActive: true });
             if (kind === "translation") {
                 this.plugin.syncSettingControls("translation.region", task.region, { includeActive: true });
                 this.plugin.syncSettingControls("translation.deeplPlan", task.deeplPlan, { includeActive: true });
@@ -907,6 +991,9 @@ const methods = {
             toTask.deeplPlan = ["free", "pro"].includes(fromTask.deeplPlan) ? fromTask.deeplPlan : (preset.deeplPlan || "free");
             toTask.appId = typeof fromTask.appId === "string" ? fromTask.appId : (preset.appId || "");
             toTask.secretKey = typeof fromTask.secretKey === "string" ? fromTask.secretKey : (preset.secretKey || "");
+            if (toTask.enableThinking === true) {
+                this.maybePromoteTranslationThinkingMaxTokens(fromTask);
+            }
         }
         const syncCredentialFields = this.plugin.providerLayer?.registry?.getCredentialFields?.(provider) || [];
         syncCredentialFields.forEach(field => {
@@ -1106,20 +1193,32 @@ const methods = {
     },
 
     sanitizeDiagnosticObject(value, depth = 0) {
+        const sanitizeArray = (arr, currentDepth) => {
+            if (currentDepth > 3) return "[truncated]";
+            return arr.slice(0, 12).map(elem => {
+                if (elem === undefined || typeof elem === "function") return null;
+                if (Array.isArray(elem)) {
+                    return currentDepth >= 3 ? "[truncated]" : sanitizeArray(elem, currentDepth + 1);
+                }
+                if (elem && typeof elem === "object") {
+                    return currentDepth >= 3 ? "[truncated]" : this.sanitizeDiagnosticObject(elem, currentDepth + 1);
+                }
+                return this.sanitizeDiagnosticValue(elem);
+            });
+        };
+        if (Array.isArray(value)) {
+            return depth >= 3 ? "[truncated]" : sanitizeArray(value, depth + 1);
+        }
         const result = {};
         Object.entries(value || {}).slice(0, 24).forEach(([key, item]) => {
             if (this.isSensitiveDiagnosticKey(key)) return;
             if (item === undefined || typeof item === "function") return;
             if (Array.isArray(item)) {
-                result[key] = item.slice(0, 12).map(elem => (
-                    elem && typeof elem === "object" && !Array.isArray(elem) && depth < 3
-                        ? this.sanitizeDiagnosticObject(elem, depth + 1)
-                        : this.sanitizeDiagnosticValue(elem)
-                ));
+                result[key] = depth >= 3 ? "[truncated]" : sanitizeArray(item, depth + 1);
                 return;
             }
-            if (item && typeof item === "object" && depth < 3) {
-                result[key] = this.sanitizeDiagnosticObject(item, depth + 1);
+            if (item && typeof item === "object") {
+                result[key] = depth >= 3 ? "[truncated]" : this.sanitizeDiagnosticObject(item, depth + 1);
                 return;
             }
             result[key] = typeof item === "string" && String(key || "").toLowerCase().includes("model")
@@ -1144,9 +1243,13 @@ const methods = {
         const text = String(value)
             .replace(/Bearer(?:[:=]\s*|\s+)[A-Za-z0-9._~+/=-]+/gi, "Bearer [redacted]")
             .replace(/DeepL-Auth-Key(?:[:=]\s*|\s+)[A-Za-z0-9._~+/=:-]+/gi, "DeepL-Auth-Key [redacted]")
+            .replace(/X-Goog-Api-Key(?:[:=]\s*|\s+)[A-Za-z0-9._~+/=-]+/gi, "X-Goog-Api-Key [redacted]")
+            .replace(/Ocp-Apim-Subscription-Key(?:[:=]\s*|\s+)[A-Za-z0-9._~+/=-]+/gi, "Ocp-Apim-Subscription-Key [redacted]")
             .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, "[redacted-api-key]")
             .replace(/\bAIza[0-9A-Za-z_-]{10,}\b/g, "[redacted-google-key]")
-            .replace(/https?:\/\/[^\s"'<>]+/gi, "[redacted-url]");
+            .replace(/(?:https?|wss?|socks\d*h?|ftps?):\/\/[^\s"'<>]+/gi, "[redacted-url]")
+            .replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>/]+@[^\s"'<>]+/gi, "[redacted-url]")
+            .replace(/:\/\/[^\s"'<>/]+@[^\s"'<>]+/g, "://[redacted-url]");
         return text.length > 180 ? `${text.slice(0, 180)}...` : text;
     },
 
@@ -1403,11 +1506,14 @@ const methods = {
         ]);
         const sanitize = (value, key = "", defaults = undefined) => {
             const name = String(key).toLowerCase();
-            if (secretKeys.has(name)) {
+            if (name === "endpoint" || name === "apikeyorigin") return this.getSettingsSnapshotEndpoint(value);
+            if (
+                secretKeys.has(name)
+                || (typeof value !== "boolean" && !SAFE_DIAGNOSTIC_KEYS.has(name) && SNAPSHOT_SECRET_KEY_PATTERN.test(name))
+            ) {
                 if (Array.isArray(value)) return value.length ? `[hidden: ${value.length}]` : [];
                 return String(value ?? "").trim() ? "[hidden]" : "";
             }
-            if (name === "endpoint") return this.getSettingsSnapshotEndpoint(value);
             // A model can be a local file path that contains the Windows user name.
             if (name === "model" || name === "reportedmodel") return this.getDiagnosticModelLabel(value);
             if (name === "recentmodels" && Array.isArray(value)) return value.map(item => this.getDiagnosticModelLabel(item));

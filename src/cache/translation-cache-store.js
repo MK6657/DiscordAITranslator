@@ -435,7 +435,9 @@ class TranslationCacheStore {
             servedModel: true,
             legacyModel: false
         });
-        config.endpoint = this.getTranslationCacheEndpoint(taskConfig);
+        if (!config._adapterScopedEndpoint) {
+            config.endpoint = this.getTranslationCacheEndpoint(taskConfig);
+        }
         if (!config._adapterScopedPolicy) {
             config.promptPolicyVersion = this.plugin.getPromptPolicyCacheVersion("translation", options, config);
         }
@@ -589,7 +591,12 @@ class TranslationCacheStore {
             servedModel: true,
             legacyModel: Boolean(cacheOptions.legacyModel)
         });
-        config.endpoint = cacheOptions.legacyEndpoint ?? this.getTranslationCacheEndpoint(taskConfig);
+        if (cacheOptions.legacyEndpoint !== undefined) {
+            config.endpoint = cacheOptions.legacyEndpoint;
+        }
+        else if (!config._adapterScopedEndpoint) {
+            config.endpoint = this.getTranslationCacheEndpoint(taskConfig);
+        }
         if (!config._adapterScopedPolicy) {
             config.promptPolicyVersion = this.plugin.getPromptPolicyCacheVersion("translation", options, config);
         }
@@ -671,7 +678,7 @@ class TranslationCacheStore {
             sourceLanguage: String(config.sourceLanguage || defaults.sourceLanguage || "").trim(),
             targetLanguage: String(config.targetLanguage || defaults.targetLanguage || "").trim(),
             temperature: this.plugin.normalizeRequestNumber(config.temperature, defaults.temperature ?? 0.2, { min: 0, max: 2 }),
-            maxTokens: this.plugin.normalizeRequestNumber(config.maxTokens, defaults.maxTokens ?? 800, { min: 1, integer: true }),
+            maxTokens: this.plugin.normalizeRequestNumber(config.maxTokens, defaults.maxTokens ?? 800, { min: 1, max: 65536, integer: true }),
             enableThinking: Boolean(config.enableThinking),
             region: String(config.region || "").trim(),
             deeplPlan: this.plugin.normalizeDeepLPlan(config.deeplPlan),
@@ -688,10 +695,35 @@ class TranslationCacheStore {
             snapshot.prompt = "";
         }
         const beforeScopePolicy = snapshot.promptPolicyVersion;
+        const beforeScopeEndpoint = snapshot.endpoint;
         if (typeof adapter?.applyCacheScope === "function") {
+            let endpointWritten = false;
+            let currentEndpoint = snapshot.endpoint;
+            Object.defineProperty(snapshot, "endpoint", {
+                configurable: true,
+                enumerable: true,
+                get: () => currentEndpoint,
+                set: value => {
+                    endpointWritten = true;
+                    currentEndpoint = value;
+                }
+            });
             adapter.applyCacheScope(config, snapshot, this.plugin, options);
+            Object.defineProperty(snapshot, "endpoint", {
+                configurable: true,
+                enumerable: true,
+                writable: true,
+                value: currentEndpoint
+            });
             if (snapshot.promptPolicyVersion !== beforeScopePolicy) {
                 Object.defineProperty(snapshot, "_adapterScopedPolicy", {
+                    value: true,
+                    enumerable: false,
+                    configurable: true
+                });
+            }
+            if (endpointWritten || snapshot.endpoint !== beforeScopeEndpoint) {
+                Object.defineProperty(snapshot, "_adapterScopedEndpoint", {
                     value: true,
                     enumerable: false,
                     configurable: true

@@ -120,7 +120,7 @@ const methods = {
         if (!effectiveEndpoint) throw new Error(this.plugin.t("endpointMissing"));
         if (!effectiveModel) throw new Error(this.plugin.t("modelMissing"));
         const temperature = this.plugin.normalizeRequestNumber(effectiveConfig.temperature, defaultConfig.temperature ?? 0.2, { min: 0, max: 2 });
-        const maxTokens = this.plugin.normalizeRequestNumber(effectiveConfig.maxTokens, defaultConfig.maxTokens ?? (kind === "polish" ? 2000 : 1200), { min: 1, integer: true });
+        const maxTokens = this.plugin.normalizeRequestNumber(effectiveConfig.maxTokens, defaultConfig.maxTokens ?? (kind === "polish" ? 2000 : 1200), { min: 1, max: 65536, integer: true });
 
         const systemPrompt = this.plugin.buildSystemPrompt(kind, effectiveConfig);
         const body = this.plugin.applyProviderBodyOptions(effectiveConfig, {

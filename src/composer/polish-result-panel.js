@@ -46,10 +46,11 @@ const methods = {
         const actions = document.createElement("div");
         actions.className = "dait-polish-result-actions";
 
+        let apply = null;
         if (textbox && options.allowApply !== false) {
             const panelOriginRouteKey = options.originRouteKey !== undefined ? String(options.originRouteKey || "") : this.plugin.getCurrentRouteKey();
             const panelOriginComposerKey = options.originComposerKey !== undefined ? String(options.originComposerKey || "") : this.getTextboxComposerKey(textbox);
-            const apply = document.createElement("button");
+            apply = document.createElement("button");
             apply.className = "dait-polish-result-action dait-polish-result-apply";
             apply.type = "button";
             apply.textContent = this.plugin.t("polishResultReplace");
@@ -92,13 +93,24 @@ const methods = {
         actions.appendChild(copy);
 
         panel.appendChild(actions);
+        panel.__daitResultPanelRefs = {
+            title,
+            close,
+            apply,
+            copy,
+            textbox,
+            sourceButton: options.sourceButton || null,
+            panelKind: options.panelKind || "",
+            hasCustomTitle: Boolean(options.title && !options.panelKind),
+            hasCustomAriaLabel: Boolean(options.ariaLabel && !options.panelKind)
+        };
         ["pointerdown", "mousedown", "click"].forEach(type => {
             panel.addEventListener(type, event => event.stopPropagation());
         });
 
         document.body.appendChild(panel);
         this.plugin.polishResultPanel = panel;
-        const anchorNode = textbox || options.sourceButton;
+        const anchorNode = (textbox && textbox.isConnected !== false ? textbox : null) || options.sourceButton || textbox;
         let repositionRaf = null;
         const reposition = () => {
             repositionRaf = null;
@@ -176,9 +188,16 @@ const methods = {
         catch {}
     },
 
+    getUsableAnchorRect(node) {
+        if (!node || node.isConnected === false) return null;
+        const rect = node.getBoundingClientRect?.() || null;
+        if (!rect) return null;
+        return (Number(rect.width) > 0 || Number(rect.height) > 0) ? rect : null;
+    },
+
     positionPolishResultPanel(panel, textbox, sourceButton = null) {
         if (!panel?.style || typeof window === "undefined") return;
-        const anchor = textbox?.getBoundingClientRect?.() || sourceButton?.getBoundingClientRect?.() || null;
+        const anchor = this.getUsableAnchorRect(textbox) || this.getUsableAnchorRect(sourceButton);
         const viewportWidth = Number(window.innerWidth || document.documentElement?.clientWidth || 0) || 900;
         const viewportHeight = Number(window.innerHeight || document.documentElement?.clientHeight || 0) || 700;
         const width = Math.min(440, Math.max(260, viewportWidth - 32));
@@ -192,6 +211,60 @@ const methods = {
         panel.style.bottom = `${safeBottom}px`;
         panel.style.maxHeight = `${maxHeight}px`;
         panel.style.width = `${width}px`;
+    },
+
+    refreshPolishResultPanelLocale() {
+        const panel = this.plugin.polishResultPanel;
+        if (panel?.isConnected) {
+            this.plugin.applyPanelTheme?.(panel);
+            const refs = panel.__daitResultPanelRefs || null;
+            const titleEl = refs?.title || panel.querySelector?.(".dait-polish-result-title") || null;
+            const closeBtn = refs?.close || panel.querySelector?.(".dait-polish-result-icon") || null;
+            const applyBtn = refs?.apply || panel.querySelector?.(".dait-polish-result-apply") || null;
+            const copyBtn = refs?.copy
+                || [...(panel.querySelectorAll?.(".dait-polish-result-action") || [])]
+                    .find(btn => btn !== applyBtn && !btn.classList?.contains?.("dait-polish-result-apply"))
+                || null;
+            if (refs?.panelKind === "public-bilingual") {
+                const nextTitle = this.plugin.t("publicBilingualButton");
+                const nextAriaLabel = this.plugin.t("publicBilingualTitleAttr", {
+                    targetLanguage: this.plugin.getDisplayLanguage(this.getPublicBilingualTargetLanguage())
+                });
+                if (titleEl) titleEl.textContent = nextTitle;
+                panel.setAttribute?.("aria-label", nextAriaLabel);
+            }
+            else {
+                const nextTitle = this.plugin.t("polishResultTitle");
+                if (titleEl && !refs?.hasCustomTitle) titleEl.textContent = nextTitle;
+                if (!refs?.hasCustomAriaLabel) {
+                    panel.setAttribute?.("aria-label", (refs?.hasCustomTitle && titleEl?.textContent) || nextTitle);
+                }
+            }
+            if (closeBtn) {
+                const closeLabel = this.plugin.t("polishResultClose");
+                closeBtn.title = closeLabel;
+                closeBtn.setAttribute?.("aria-label", closeLabel);
+            }
+            if (applyBtn) applyBtn.textContent = this.plugin.t("polishResultReplace");
+            if (copyBtn) copyBtn.textContent = this.plugin.t("polishResultCopy");
+            this.positionPolishResultPanel(panel, refs?.textbox || null, refs?.sourceButton || null);
+        }
+        const restoreControl = this.plugin.polishRestoreControl;
+        if (restoreControl?.isConnected) {
+            this.plugin.syncDiscordThemeClasses?.(restoreControl, restoreControl.__daitRestoreAnchor || null);
+            if (typeof this.plugin.isRtlLocale === "function") {
+                restoreControl.setAttribute?.("dir", this.plugin.isRtlLocale() ? "rtl" : "ltr");
+            }
+            const restoreLabel = this.plugin.t("restoreOriginal");
+            restoreControl.textContent = restoreLabel;
+            restoreControl.title = restoreLabel;
+            restoreControl.setAttribute?.("aria-label", restoreLabel);
+            this.positionPolishRestoreControl(
+                restoreControl,
+                restoreControl.__daitRestoreTextbox || null,
+                restoreControl.__daitRestoreSourceButton || null
+            );
+        }
     },
 
     removePolishResultPanel() {
@@ -219,12 +292,15 @@ const methods = {
             this.plugin.showToast(this.plugin.t("composerChannelChanged"), "info");
             return false;
         }
-        const target = textbox && textbox.isConnected !== false ? textbox : this.plugin.resolveInputActionTextbox(null, {});
+        const originComposerKey = String(options.originComposerKey || "");
+        const target = textbox && textbox.isConnected !== false
+            ? textbox
+            : (this.plugin.resolveInputActionTextbox(null, { composerKey: originComposerKey })
+                || this.plugin.resolveInputActionTextbox(null, {}));
         if (!target) {
             this.plugin.showToast(this.plugin.t("textboxMissing"), "error");
             return false;
         }
-        const originComposerKey = String(options.originComposerKey || "");
         const targetComposerKey = this.getTextboxComposerKey(target);
         if (originComposerKey && targetComposerKey && originComposerKey !== targetComposerKey) {
             disableApplyButton();
@@ -274,8 +350,17 @@ const methods = {
         const button = document.createElement("button");
         button.className = "dait-polish-restore-control";
         this.plugin.syncDiscordThemeClasses(button, textbox || sourceButton);
+        if (typeof this.plugin.isRtlLocale === "function") {
+            button.setAttribute?.("dir", this.plugin.isRtlLocale() ? "rtl" : "ltr");
+        }
         button.type = "button";
-        button.textContent = this.plugin.t("restoreOriginal");
+        const restoreLabel = this.plugin.t("restoreOriginal");
+        button.textContent = restoreLabel;
+        button.title = restoreLabel;
+        button.setAttribute?.("aria-label", restoreLabel);
+        button.__daitRestoreAnchor = textbox || sourceButton || null;
+        button.__daitRestoreTextbox = textbox || null;
+        button.__daitRestoreSourceButton = sourceButton || null;
         ["pointerdown", "mousedown"].forEach(type => {
             button.addEventListener(type, event => {
                 event.preventDefault();
@@ -378,7 +463,7 @@ const methods = {
                 session.lastBilingualSourceText = "";
                 session.lastBilingualSourceRawText = "";
                 session.updatedAt = Date.now();
-                this.plugin.polishSession = session;
+                this.rememberPolishSession(session);
                 this.removePolishRestoreControl();
                 this.removeInputActionMenu();
                 this.plugin.injectInputButtons();
@@ -392,26 +477,28 @@ const methods = {
         }
     },
 
-    canRestorePolishOriginal(textbox, session) {
-        if (!textbox || textbox.isConnected === false || !session) return false;
-        if (session.composerKey && this.getTextboxComposerKey(textbox) !== session.composerKey) return false;
+    canRestorePolishOriginal(textbox, session = null) {
+        if (!textbox || textbox.isConnected === false) return false;
+        const targetSession = session || this.getPolishSessionForComposer(this.getTextboxComposerKey(textbox), textbox);
+        if (!targetSession) return false;
+        if (targetSession.composerKey && this.getTextboxComposerKey(textbox) !== targetSession.composerKey) return false;
         const current = this.plugin.getTextboxDraftText(textbox);
         // Nothing to restore when the draft already is the original (for example right after a restore).
-        if (this.areDraftTextsEqualStrict(current, session.originalRawText ?? session.originalText)) return false;
+        if (this.areDraftTextsEqualStrict(current, targetSession.originalRawText ?? targetSession.originalText)) return false;
         const candidates = [
-            session.lastWrittenRawText,
-            session.lastResultRawText,
-            session.lastBilingualRawText,
-            session.lastWrittenText,
-            session.lastResult,
-            session.lastBilingualText
+            targetSession.lastWrittenRawText,
+            targetSession.lastResultRawText,
+            targetSession.lastBilingualRawText,
+            targetSession.lastWrittenText,
+            targetSession.lastResult,
+            targetSession.lastBilingualText
         ].filter(value => value !== undefined && value !== null && value !== "");
         return candidates.some(value => this.areDraftTextsEqualStrict(current, value));
     },
 
     positionPolishRestoreControl(button, textbox, sourceButton = null) {
         if (!button?.style || typeof window === "undefined") return;
-        const anchor = sourceButton?.getBoundingClientRect?.() || textbox?.getBoundingClientRect?.() || null;
+        const anchor = this.getUsableAnchorRect(sourceButton) || this.getUsableAnchorRect(textbox);
         const viewportWidth = Number(window.innerWidth || document.documentElement?.clientWidth || 0) || 900;
         const viewportHeight = Number(window.innerHeight || document.documentElement?.clientHeight || 0) || 700;
         const width = 86;

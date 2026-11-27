@@ -120,7 +120,21 @@ const DIAGNOSTIC_CODE_LABELS = {
         "intake": "消息发现",
         "persist": "本地存储",
         "settings": "设置更新",
-        "mixed": "综合阶段"
+        "mixed": "综合阶段",
+        "parse": "解析失败",
+        "budget-exhausted": "单次请求次数达上限",
+        "cache-legacy-adopted": "迁移旧版缓存",
+        "cache-only": "仅读取缓存",
+        "render-paused": "滚动暂停显示",
+        "jump-cooldown": "跳转冷却中",
+        "stability-pending": "等待视口稳定",
+        "channel-disabled": "本频道已禁用",
+        "channel-policy": "频道规则",
+        "local": "本地模型",
+        "provider": "服务商",
+        "api": "连接测试",
+        "data": "数据存储",
+        "scan": "消息扫描"
     },
     "zh-TW": {
         "discovered": "發現訊息",
@@ -232,7 +246,21 @@ const DIAGNOSTIC_CODE_LABELS = {
         "intake": "訊息發現",
         "persist": "本機儲存",
         "settings": "設定更新",
-        "mixed": "綜合階段"
+        "mixed": "綜合階段",
+        "parse": "解析失敗",
+        "budget-exhausted": "單次請求次數達上限",
+        "cache-legacy-adopted": "遷移舊版快取",
+        "cache-only": "僅讀取快取",
+        "render-paused": "捲動暫停顯示",
+        "jump-cooldown": "跳轉冷卻中",
+        "stability-pending": "等待畫面穩定",
+        "channel-disabled": "此頻道已停用",
+        "channel-policy": "頻道規則",
+        "local": "本機模型",
+        "provider": "服務商",
+        "api": "連線測試",
+        "data": "資料儲存",
+        "scan": "訊息掃描"
     },
     en: {
         // Reason codes
@@ -350,7 +378,21 @@ const DIAGNOSTIC_CODE_LABELS = {
         "intake": "Message intake",
         "persist": "Saving data",
         "settings": "Settings update",
-        "mixed": "Multiple stages"
+        "mixed": "Multiple stages",
+        "parse": "Parse error",
+        "budget-exhausted": "Request budget used",
+        "cache-legacy-adopted": "Legacy cache migrated",
+        "cache-only": "Cache-only pass",
+        "render-paused": "Display paused",
+        "jump-cooldown": "Jump cooldown",
+        "stability-pending": "Waiting for stability",
+        "channel-disabled": "Disabled in channel",
+        "channel-policy": "Channel rule",
+        "local": "Local model",
+        "provider": "Provider",
+        "api": "API check",
+        "data": "Data storage",
+        "scan": "Message scan"
     },
     ru: {
         "discovered": "Найдено",
@@ -462,7 +504,21 @@ const DIAGNOSTIC_CODE_LABELS = {
         "intake": "Сбор сообщений",
         "persist": "Сохранение данных",
         "settings": "Обновление настроек",
-        "mixed": "Несколько этапов"
+        "mixed": "Несколько этапов",
+        "parse": "Ошибка разбора",
+        "budget-exhausted": "Лимит попыток исчерпан",
+        "cache-legacy-adopted": "Старый кэш обновлён",
+        "cache-only": "Только из кэша",
+        "render-paused": "Показ приостановлен",
+        "jump-cooldown": "Пауза после перехода",
+        "stability-pending": "Ожидание стабильности",
+        "channel-disabled": "Отключено в канале",
+        "channel-policy": "Правило канала",
+        "local": "Локал. модель",
+        "provider": "Сервис",
+        "api": "Проверка API",
+        "data": "Хранилище",
+        "scan": "Сканирование"
     },
     ar: {
         "discovered": "تم العثور",
@@ -574,7 +630,21 @@ const DIAGNOSTIC_CODE_LABELS = {
         "intake": "رصد الرسائل",
         "persist": "حفظ البيانات",
         "settings": "تحديث الإعدادات",
-        "mixed": "مراحل متعددة"
+        "mixed": "مراحل متعددة",
+        "parse": "خطأ تحليل الرد",
+        "budget-exhausted": "استُنفد حد الطلبات",
+        "cache-legacy-adopted": "تحديث مؤقت قديم",
+        "cache-only": "قراءة المؤقت فقط",
+        "render-paused": "العرض متوقف مؤقتاً",
+        "jump-cooldown": "تهدئة بعد الانتقال",
+        "stability-pending": "بانتظار ثبات العرض",
+        "channel-disabled": "متوقف في هذه القناة",
+        "channel-policy": "قاعدة القناة",
+        "local": "نموذج محلي",
+        "provider": "مزود الخدمة",
+        "api": "فحص API",
+        "data": "تخزين البيانات",
+        "scan": "فحص الرسائل"
     },
     es: {
         "discovered": "Detectado",
@@ -686,7 +756,21 @@ const DIAGNOSTIC_CODE_LABELS = {
         "intake": "Detección mensajes",
         "persist": "Guardado local",
         "settings": "Cambio de ajustes",
-        "mixed": "Varias etapas"
+        "mixed": "Varias etapas",
+        "parse": "Error de análisis",
+        "budget-exhausted": "Límite de intentos",
+        "cache-legacy-adopted": "Caché antigua migrada",
+        "cache-only": "Solo lectura de caché",
+        "render-paused": "Visualización en pausa",
+        "jump-cooldown": "Espera tras salto",
+        "stability-pending": "Esperando estabilidad",
+        "channel-disabled": "Desactivado en canal",
+        "channel-policy": "Regla del canal",
+        "local": "Modelo local",
+        "provider": "Proveedor",
+        "api": "Prueba de API",
+        "data": "Datos locales",
+        "scan": "Escaneo"
     }
 };
 

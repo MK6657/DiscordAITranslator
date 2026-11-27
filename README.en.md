@@ -5,7 +5,7 @@
 **A Windows-first BetterDiscord plugin for AI message translation, writing polish, and public bilingual chat**
 
 [![Windows CI](https://github.com/MK6657/DiscordAITranslator/actions/workflows/ci.yml/badge.svg)](https://github.com/MK6657/DiscordAITranslator/actions/workflows/ci.yml)
-![Release](https://img.shields.io/badge/release-v0.6.0-2EA043)
+![Release](https://img.shields.io/badge/release-v0.6.1-2EA043)
 ![Platform](https://img.shields.io/badge/platform-Windows%20BetterDiscord-0078D4)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
@@ -81,7 +81,7 @@ Discord AI Translator brings seamless multilingual communication and expressive 
 ### 🧱 V0.5/V0.6 Modular Architecture & Engineering Guardrails
 - **Clean layered codebase**: `src/discord-ai-translator.js` is now a ~760-line lifecycle shell coordinating `src/core/` (`DisposableScope`, `EventBus`, `PluginContext`), `src/i18n/` (6-locale dictionaries & metadata), `src/presets/`, `src/settings/ui/`, `src/composer/`, `src/discord/` (unified behind `DiscordHostAdapter`), and `src/auto-translation/` (single state machine + cooldown store).
 - **Pluggable provider registry**: All 7 built-in providers live as standalone adapters under `src/providers/adapters/`, with `ProviderRegistry` driving request building/parsing, task capability checks, fallback order, saved profiles, and connection testing (registering a new adapter wires it into those paths automatically; custom non-standard settings inputs or localized labels can be added in settings UI / i18n as needed).
-- **Automated quality gates**: ESLint (including `no-unused-vars` across `src/`), TypeScript `checkJs`, 6-locale i18n key & placeholder parity audit, 780+ core unit tests, 9 domain artifact regression suites, and Windows installer rollback verification.
+- **Automated quality gates**: ESLint (strict `no-unused-vars` across `src/`, `scripts/`, and `tests/`), 100% TypeScript `checkJs` across all 97 `src/` modules, 6-locale i18n key & placeholder parity audit, 790+ core unit tests, 9 domain artifact regression suites, and Windows installer rollback verification.
 
 ## Supported Providers
 
@@ -101,11 +101,11 @@ Message translation and composer polishing store **separate** provider profiles,
 
 ## Install the plugin
 
-The **latest published release** is `v0.6.0` (November 26, 2026):
+The **latest published release** is `v0.6.1` (November 28, 2026):
 
 1. Install [BetterDiscord](https://betterdiscord.app/) for the Discord desktop client.
 2. Open Discord Settings -> `BetterDiscord` -> `Plugins` -> `Open Plugins Folder`.
-3. Download [DiscordAITranslator.plugin.js from the v0.6.0 Release](https://github.com/MK6657/DiscordAITranslator/releases/download/v0.6.0/DiscordAITranslator.plugin.js).
+3. Download [DiscordAITranslator.plugin.js from the v0.6.1 Release](https://github.com/MK6657/DiscordAITranslator/releases/download/v0.6.1/DiscordAITranslator.plugin.js).
 4. Place the file into your plugins folder, enable it, and configure your provider from the bottom-left AI button.
 
 Typical Windows plugins directory:
@@ -115,7 +115,7 @@ Typical Windows plugins directory:
 
 ### Current branch source preview
 
-To grab the bundle directly from the current `main` branch (`v0.6.0`) or install via the Windows PowerShell installer script (see [CHANGELOG.md](CHANGELOG.md)):
+To grab the bundle directly from the current `main` branch (`v0.6.1`) or install via the Windows PowerShell installer script (see [CHANGELOG.md](CHANGELOG.md)):
 
 - **Option 1 (Direct file download)**: Download the raw [DiscordAITranslator.plugin.js](DiscordAITranslator.plugin.js) directly from the repository root and place it in your BetterDiscord plugins folder (no Node.js required).
 - **Option 2 (Windows installer script)**: Clone the repository and run from a **standard Windows PowerShell** opened from the Start menu (verifies syntax & SHA-256, backs up any previous version, and transactionally enables the plugin):
@@ -177,7 +177,7 @@ npm run verify
 <details>
 <summary>Updates, Removal & Troubleshooting</summary>
 
-- **Updating**: Replace `DiscordAITranslator.plugin.js` and re-enable it; the installer automatically creates a timestamped backup. Upgrading from `v0.3.0` to `v0.6.0` automatically migrates cache and diagnostic logs into separate files and preserves existing channel-rule semantics without enabling auto-translation on unexpected channels.
+- **Updating**: Replace `DiscordAITranslator.plugin.js` and re-enable it; the installer automatically creates a timestamped backup. Upgrading from `v0.3.0` to `v0.6.1` automatically migrates cache and diagnostic logs into separate files and preserves existing channel-rule semantics without enabling auto-translation on unexpected channels.
 - **Uninstalling**: Disable and delete `DiscordAITranslator.plugin.js` in BetterDiscord. To remove local data as well, delete `DiscordAITranslator.config.json`, `DiscordAITranslator.cache.config.json`, and `DiscordAITranslator.diagnostics.config.json` from your plugins directory.
 - **`npm ci` fails**: Ensure Node.js 22 or 24 LTS is installed, remove a partial `node_modules` folder, and retry (keep `package-lock.json`).
 - **`build:check` reports a stale bundle**: Run `npm run build`.
@@ -190,7 +190,7 @@ npm run verify
 <summary>Known Limitations & Maintainer Docs</summary>
 
 - Desktop BetterDiscord only (Android/mobile clients are not supported). Upstream Discord DOM, Webpack module, and BetterDiscord API changes remain ongoing compatibility risks.
-- Validated on Windows 11 + Discord Stable; `v0.6.0` modular architecture, 6-language UI & RTL support, performance/security hardening, and provider paths are verified by 780+ automated unit tests, 9 offline artifact regression suites, and Windows local deployment checks (previous `main` snapshots are archived on `backup/v0.5.3` and `backup/v0.4.0`).
+- Validated on Windows 11 + Discord Stable; `v0.6.1` modular architecture, 6-language UI & RTL support, performance/security hardening, and provider paths are verified by 790+ automated unit tests, 9 offline artifact regression suites, and Windows local deployment checks (previous `main` snapshots are archived on `backup/v0.6.0`, `backup/v0.5.3`, and `backup/v0.4.0`).
 - Documentation & maintenance links:
   - [CHANGELOG.md](CHANGELOG.md) — Version history and upgrade/downgrade notes
   - [CONTRIBUTING.md](CONTRIBUTING.md) — Contribution guidelines

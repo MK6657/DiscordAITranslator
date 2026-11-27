@@ -86,6 +86,18 @@ class DiscordHostAdapter {
         return this.contextMenu.unpatchAll();
     }
 
+    refreshAllTranslationLinesLocale() {
+        return /** @type {any} */ (this.translationLineDom).refreshAllTranslationLinesLocale();
+    }
+
+    refreshLocalizedLauncherAndButtons() {
+        return /** @type {any} */ (this.launcherTheme).refreshLocalizedLauncherAndButtons();
+    }
+
+    resolveMessageContentForTarget(target, messageNode = null, context = null) {
+        return /** @type {any} */ (this.messageExtractor).resolveMessageContentForTarget(target, messageNode, context);
+    }
+
     runHealthCheck() {
         return runHostHealthCheck(this.plugin);
     }

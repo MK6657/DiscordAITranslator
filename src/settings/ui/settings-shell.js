@@ -15,6 +15,7 @@ const { UI_LOCALES, getUiLocaleButtonTooltip } = require("../../i18n");
 
 const methods = {
     getSettingsPanel(options = {}) {
+        this.plugin.ensureSettingsLoadedBeforeMutation?.();
         const startedAt = this.plugin.getDiagnosticTime();
         const quickSettings = Boolean(options.quickSettings);
         const panel = document.createElement("div");
@@ -240,7 +241,7 @@ const methods = {
 
     // The one title bar of every settings window: the plugin's own window has no header of its own, so the panel
     // shows the title and the close button there too.
-    createSettingsHeader() {
+    createSettingsHeader(_options = {}) {
         const header = document.createElement("div");
         header.className = "dait-settings-header";
 
@@ -288,9 +289,12 @@ const methods = {
         const currentLocale = this.plugin.getLocale();
         const selectLocale = code => {
             if (!code || code === this.plugin.getLocale()) return;
-            this.plugin.setSetting("ui.language", code);
             const panel = bar.closest?.(".dait-settings");
-            if (panel) this.plugin.replaceSettingsPanelElement(panel);
+            if (panel) this.plugin.commitSettingsControls?.(panel);
+            this.plugin.setSetting("ui.language", code);
+            if (panel && !panel.__daitReplacedBy && panel.dataset?.daitLocale !== this.plugin.getLocale()) {
+                this.plugin.replaceSettingsPanelElement(panel);
+            }
         };
         const buttons = UI_LOCALES.map(item => {
             const active = item.code === currentLocale;

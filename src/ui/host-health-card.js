@@ -100,6 +100,12 @@ function buildHostHealthCard(plugin, options = {}) {
 
             const detail = document.createElement("span");
             detail.className = "dait-host-health-detail";
+            const pureTechnical = item.id === "stores" || (item.id === "bdApi" && item.status === "ok");
+            detail.setAttribute?.("dir", pureTechnical ? "ltr" : "auto");
+            if (detail.style) {
+                detail.style.setProperty?.("unicode-bidi", pureTechnical ? "isolate" : "plaintext");
+                detail.style.unicodeBidi = pureTechnical ? "isolate" : "plaintext";
+            }
             detail.textContent = item.detail || "";
             detail.title = item.detail || "";
             li.appendChild(detail);

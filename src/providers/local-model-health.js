@@ -287,7 +287,11 @@ const methods = {
             error.code = "MODEL_DETECTION_UNSUPPORTED";
             throw error;
         }
-        const endpoint = this.plugin.getEffectiveChatCompletionEndpoint(config, defaultConfig);
+        const taskKind = kind === "polish" ? "polish" : "translation";
+        const endpoint = (typeof this.plugin.getEffectiveProviderEndpoint === "function"
+            ? this.plugin.getEffectiveProviderEndpoint(taskKind, config)
+            : this.getEffectiveProviderEndpoint?.(taskKind, config))
+            || this.plugin.getEffectiveChatCompletionEndpoint(config, defaultConfig);
         const modelsEndpoint = this.plugin.getLocalProviderModelsEndpoint(endpoint);
         const local = this.plugin.isLocalTranslationProvider(config);
         const timeoutMs = Math.max(1000, Number(options.timeoutMs || (local ? LOCAL_PROVIDER_MODEL_DETECTION_TIMEOUT_MS : API_TEST_REQUEST_TIMEOUT_MS)) || API_TEST_REQUEST_TIMEOUT_MS);
